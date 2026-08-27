@@ -1,0 +1,38 @@
+{
+  "name": "portfolio-finantial-analysis",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bookworm",
+  "features": {
+    "ghcr.io/va-h/devcontainers-features/uv:1": {
+      "version": "latest",
+      "shellAutocompletion": true
+    }
+  },
+  "postCreateCommand": "uv sync --frozen --group dev && uv run pre-commit install --install-hooks",
+  "remoteEnv": {
+    "UV_LINK_MODE": "copy"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.mypy-type-checker",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "ruff.configuration": "${workspaceFolder}/.code_quality/ruff.toml",
+        "mypy-type-checker.args": ["--config-file=${workspaceFolder}/.code_quality/mypy.ini"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.fixAll.ruff": "explicit",
+            "source.organizeImports.ruff": "explicit"
+          }
+        }
+      }
+    }
+  }
+}
