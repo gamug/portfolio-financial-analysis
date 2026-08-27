@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: lint / type-check / pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project (locked)
+        run: uv sync --frozen --group dev
+
+      - name: Ruff lint
+        run: uv run ruff check --config .code_quality/ruff.toml --output-format github .
+
+      - name: Ruff format
+        run: uv run ruff format --config .code_quality/ruff.toml --check --diff .
+
+      # mypy runs via the pre-commit hook below: it degrades gracefully while the
+      # repo has no .py files yet, whereas `mypy .` would hard-error on an empty tree.
+      - name: pre-commit
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+        env:
+          SKIP: commitizen-branch
