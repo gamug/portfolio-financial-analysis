@@ -1,0 +1,28 @@
+[project]
+name = "portfolio-finantial-analysis"
+version = "0.1.0"
+description = "Portfolio financial analysis."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.2",
+    "mypy>=1.11",
+    "pre-commit>=4.0",
+    "commitizen>=4.17",
+]
+
+[tool.uv]
+# This is an application/analysis workspace, not a distributable package:
+# uv manages the environment but never tries to build/install the project itself.
+package = false
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+major_version_zero = true
+update_changelog_on_bump = true

@@ -1,0 +1,25 @@
+# Normalise line endings: the repo stores LF, checkout is native per-OS.
+* text=auto eol=lf
+
+*.py   text eol=lf
+*.pyi  text eol=lf
+*.toml text eol=lf
+*.cfg  text eol=lf
+*.ini  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+
+# Generated / vendored: keep out of diffs and language stats.
+uv.lock                        linguist-generated=true -diff
+.devcontainer/devcontainer-lock.json linguist-generated=true -diff
+
+# Binary assets.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.parquet binary
+*.xlsx binary
