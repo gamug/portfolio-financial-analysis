@@ -7,7 +7,8 @@
 SQLite database named by `KG_FINANTIAL_DB`.
 
 **Pipeline per filing:** pull statements from the EDGAR gateway → compute deterministic
-ratios (profitability, liquidity, leverage, efficiency, growth, cash flow) → a
+ratios (profitability, liquidity, leverage, efficiency, growth, cash flow, roic, cagr,
+and — when a period-end share price is on hand — valuation) → a
 [Strands](https://strandsagents.com) *metrics-master* agent decides which specialist
 agents to consult and gathers their readings → a synthesis step produces a
 `FundamentalAssessment` (score 0-100, `bullish`/`neutral`/`bearish` rating, narrative,
@@ -48,6 +49,13 @@ Note: the LLM synthesis parses a JSON reply rather than using
 `Agent.structured_output`, because DeepSeek does not currently accept OpenAI
 `response_format` json-schema. If the model returns nothing usable, a rule-based
 score derived from the computed ratios is stored instead.
+
+**Valuation / free-cash-flow yield.** The `valuation` group (equity and enterprise FCF
+yield, an SBC-adjusted variant, market cap, enterprise value) needs a market price. It
+reads the last `price_daily` close on or before each filing's period-end — the table the
+pricing collector below fills — with a plain `SELECT`, no import of `pricing_agent`. Run
+`pricing_agent` first for these metrics; without price rows the group is silently skipped
+and every other metric is unaffected.
 
 ## S&P 500 pricing collector
 

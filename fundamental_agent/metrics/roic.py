@@ -14,7 +14,11 @@ _DEFAULT_TAX_RATE = 0.21  # US federal statutory rate, used when the filing give
 _MAX_TAX_RATE = 0.50
 
 
-def _effective_tax_rate(tax: float | None, pretax: float | None) -> float:
+def effective_tax_rate(tax: float | None, pretax: float | None) -> float:
+    """Cash tax / pre-tax income, clamped to ``[0, _MAX_TAX_RATE]``; statutory when unusable.
+
+    Also reused by :mod:`fundamental_agent.metrics.valuation` for the unlevered FCF proxy.
+    """
     if tax is None or pretax is None or pretax <= 0.0:
         return _DEFAULT_TAX_RATE
     return min(max(tax / pretax, 0.0), _MAX_TAX_RATE)
@@ -31,7 +35,7 @@ def compute(stmts: Statements, period_key: str, prior_key: str | None = None) ->
         stmts.get("short_term_debt", period_key),
     )
 
-    rate = _effective_tax_rate(tax, pretax)
+    rate = effective_tax_rate(tax, pretax)
     nopat = operating * (1.0 - rate) if operating is not None else None
     invested = sum_present(debt, equity)
     invested_ex_cash = invested - cash if invested is not None and cash is not None else invested

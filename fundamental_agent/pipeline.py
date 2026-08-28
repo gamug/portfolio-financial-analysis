@@ -20,6 +20,7 @@ from fundamental_agent.agents import FilingContext, FundamentalAnalyst, build_mo
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
 from fundamental_agent.edgar_client import EdgarClient, EdgarNotFoundError, normalize_ticker
+from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.statements import Period, Statements, iter_facts
 from fundamental_agent.universe import fetch_sp500
 
@@ -267,6 +268,7 @@ def _analyze_one(
         stmts=stmts,
         period_key=target.period.key,
         prior_key=target.prior.key if target.prior else None,
+        price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(engine.conn, filing_id, result.metrics)
