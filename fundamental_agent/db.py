@@ -172,10 +172,13 @@ def connect(path: str | Path) -> sqlite3.Connection:
     """Open *path*, creating parent directories, with sane pragmas."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    # NOTE: no WAL. KG_FINANTIAL_DB can live on a bind mount whose shared-memory
+    # (-shm) support is unreliable, where WAL raises "disk I/O error"; the default
+    # rollback journal works there. This agent is single-writer anyway.
     return conn
 
 

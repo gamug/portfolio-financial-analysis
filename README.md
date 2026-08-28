@@ -49,6 +49,30 @@ Note: the LLM synthesis parses a JSON reply rather than using
 `response_format` json-schema. If the model returns nothing usable, a rule-based
 score derived from the computed ratios is stored instead.
 
+## S&P 500 pricing collector
+
+`pricing_agent/` is a **standalone** module (no `fundamental_agent` coupling; cross-module
+orchestration is a separate branch) that collects daily-pricing window summaries from the
+pricing gateway and writes them to the same `KG_FINANTIAL_DB` under its own tables.
+
+**Per ticker:** one `GET /pricing/{ticker}?start_date&end_date` call over the whole range,
+then a `price_window` row with the first/last trading day and close, period return, trading
+days, **daily log-return std-dev**, **annualized volatility** (`std · √252`), min/max close and
+average volume. `--by-year` adds one window per calendar year; `--store-daily` also keeps every
+OHLCV bar in `price_daily`. The tracked universe comes from the gateway's `/universe` endpoint
+(`assets`/`sectors` created only if missing, never clobbered). Share-class tickers are retried
+across spellings (`BRK.B` → `BRK-B`); tickers the gateway returns empty are logged, not fatal.
+
+```bash
+uv run python -m pricing_agent run                          # full universe, 2022-01-01 → today
+uv run python -m pricing_agent run --limit 5 --by-year      # first 5 tickers, per-year windows
+uv run python -m pricing_agent run --tickers AAPL,NVDA --store-daily
+```
+
+Config: `KG_FINANTIAL_DB` (required); `PRICING_BASE_URL` (optional, defaults to
+`http://host.docker.internal:8000/pricing`). Re-runs skip windows already stored; `--fresh`
+recomputes. Progress + ETA via `tqdm`; run stats land in `pricing_run` / `pricing_run_error`.
+
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment management and
