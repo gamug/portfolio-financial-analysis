@@ -1,0 +1,94 @@
+"""Fetch a filing's primary document straight from SEC EDGAR.
+
+The analysis gateway only serves structured financials, so narrative text is pulled
+from ``www.sec.gov`` using the ``accession_number`` + ``cik`` already stored on
+``sec_filings`` / ``assets``. SEC requires a descriptive ``User-Agent`` with a
+contact and rate-limits to ~10 req/s; override the UA via ``SEC_USER_AGENT``.
+
+A gateway text endpoint can replace :func:`fetch_primary_document` later without
+touching :mod:`fundamental_agent.sections`.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import time
+from typing import Any
+
+import httpx
+
+# XBRL viewer fragments SEC lists alongside the primary document.
+_FRAGMENT_RE = re.compile(r"^r\d+\.html?$", re.IGNORECASE)
+
+_SEC_BASE = "https://www.sec.gov"
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_BACKOFF_SECONDS = 8.0
+_DEFAULT_USER_AGENT = (
+    "portfolio-finantial-analysis/0.1 "
+    "(+https://github.com/portfolio-finantial-analysis; research use) python-httpx"
+)
+
+
+class FilingTextError(RuntimeError):
+    """The primary document could not be fetched or located."""
+
+
+def _user_agent() -> str:
+    return os.environ.get("SEC_USER_AGENT", _DEFAULT_USER_AGENT)
+
+
+def _accession_nodash(accession_number: str) -> str:
+    return accession_number.replace("-", "")
+
+
+def _get(client: httpx.Client, url: str, *, max_retries: int = 3) -> httpx.Response:
+    last: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            resp = client.get(url, headers={"User-Agent": _user_agent()})
+        except httpx.TransportError as exc:
+            last = exc
+            time.sleep(min(2.0**attempt, _MAX_BACKOFF_SECONDS))
+            continue
+        if resp.status_code in _RETRYABLE_STATUS:
+            last = FilingTextError(f"{url} -> {resp.status_code}")
+            time.sleep(min(2.0**attempt, _MAX_BACKOFF_SECONDS))
+            continue
+        resp.raise_for_status()
+        return resp
+    raise FilingTextError(f"{url} failed after {max_retries} attempts") from last
+
+
+def _primary_document_name(index: dict[str, Any]) -> str:
+    items = index.get("directory", {}).get("item", [])
+    htmls = [
+        str(it["name"])
+        for it in items
+        if str(it.get("name", "")).lower().endswith((".htm", ".html"))
+        and "index" not in str(it.get("name", "")).lower()
+        and not _FRAGMENT_RE.match(str(it.get("name", "")))
+    ]
+    if not htmls:
+        raise FilingTextError("no primary .htm in filing directory listing")
+    # SEC lists the primary document first in the directory.
+    return htmls[0]
+
+
+def fetch_primary_document(
+    cik: str, accession_number: str, *, client: httpx.Client | None = None
+) -> tuple[str, str]:
+    """Return ``(html, source_url)`` for the filing's primary document."""
+    owned = client is None
+    client = client or httpx.Client(base_url=_SEC_BASE, timeout=30.0, follow_redirects=True)
+    try:
+        cik_int = int(str(cik).lstrip("0") or "0")
+        folder = f"/Archives/edgar/data/{cik_int}/{_accession_nodash(accession_number)}"
+        index = _get(client, f"{folder}/index.json").json()
+        name = _primary_document_name(index)
+        url = f"{folder}/{name}"
+        html = _get(client, url).text
+        return html, f"{_SEC_BASE}{url}"
+    finally:
+        if owned:
+            client.close()

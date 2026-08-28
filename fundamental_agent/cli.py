@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-scrape the S&P 500 list before running",
     )
+    run_cmd.add_argument(
+        "--sections",
+        action="store_true",
+        help="also fetch each filing's primary document and extract MD&A / risk-factor text",
+    )
 
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
@@ -79,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         tickers=_split(args.tickers),
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
+        sections=args.sections,
     )
     report = run(settings, params)
 

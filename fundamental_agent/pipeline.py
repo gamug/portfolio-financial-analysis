@@ -20,7 +20,9 @@ from fundamental_agent.agents import FilingContext, FundamentalAnalyst, build_mo
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
 from fundamental_agent.edgar_client import EdgarClient, EdgarNotFoundError, normalize_ticker
+from fundamental_agent.filing_text import fetch_primary_document
 from fundamental_agent.pricing import close_on_or_before
+from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
 from fundamental_agent.universe import fetch_sp500
 
@@ -42,6 +44,7 @@ class RunParams:
     tickers: Sequence[str] | None = None
     fresh: bool = False  # re-analyze even if a snapshot exists
     refresh_universe: bool = False
+    sections: bool = False  # also extract narrative filing text (MD&A, risk factors)
 
     def resolved_until(self) -> int:
         return self.until_year or datetime.now(tz=UTC).year
@@ -242,6 +245,35 @@ def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
     ]
 
 
+def _extract_sections(
+    engine: _Engine, task: _YearTask, filing_id: int, target: _Target, meta: FilingMeta
+) -> None:
+    """Best-effort narrative-text extraction. A failure here never fails the filing."""
+    if not meta.accession_number:
+        return
+    row = engine.conn.execute("SELECT cik FROM assets WHERE id = ?", (task.asset_id,)).fetchone()
+    cik = row["cik"] if row else None
+    if not cik:
+        return
+    try:
+        html, source_url = fetch_primary_document(cik, meta.accession_number)
+        sections = split_sections(html, task.form)
+        if sections:
+            db.insert_filing_sections(
+                engine.conn,
+                filing_id,
+                sections,
+                event_time=meta.filing_date or target.period.date,
+                source_url=source_url,
+            )
+    except Exception as exc:  # non-fatal: section text is best-effort, recorded for triage
+        db.record_error(
+            engine.conn,
+            engine.report.run_id,
+            RunError(task.ticker, task.form, target.fiscal_period, "sections", str(exc)),
+        )
+
+
 def _analyze_one(
     engine: _Engine,
     task: _YearTask,
@@ -265,6 +297,8 @@ def _analyze_one(
         filing_version=meta.accession_number or db.FACTS_ENGINE_VERSION,
         event_time=target.period.date,
     )
+    if engine.params.sections:
+        _extract_sections(engine, task, filing_id, target, meta)
 
     ctx = FilingContext(
         ticker=task.ticker,

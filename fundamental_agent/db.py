@@ -419,6 +419,66 @@ def record_metrics(
     conn.commit()
 
 
+# -- filing sections (narrative text) ---------------------------------
+
+
+SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v1"
+
+
+def insert_filing_sections(  # noqa: PLR0913 - keyword-only provenance fields
+    conn: sqlite3.Connection,
+    filing_id: int,
+    sections: Iterable[Any],
+    *,
+    engine_version: str = SECTIONS_ENGINE_VERSION,
+    event_time: str,
+    source_url: str | None = None,
+    run_id: int | None = None,
+) -> int:
+    """Append extracted narrative sections. Immutable per
+    ``(filing_id, section_type, ordinal, engine_version)``. *sections* items are
+    :class:`fundamental_agent.sections.Section`."""
+    now = _now()
+    rows = [
+        (
+            filing_id,
+            s.section_type,
+            s.item_number,
+            s.heading,
+            s.ordinal,
+            s.char_start,
+            s.char_end,
+            s.text,
+            s.sha256,
+            s.word_count,
+            engine_version,
+            source_url,
+            event_time,
+            now,
+            engine_version,
+            run_id,
+        )
+        for s in sections
+    ]
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO sec_filing_section
+            (filing_id, section_type, item_number, heading, ordinal, char_start, char_end,
+             text, text_sha256, word_count, extraction_method, source_url, event_time,
+             retrieved_at, engine_version, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def filings_with_sections(conn: sqlite3.Connection) -> set[int]:
+    """``filing_id`` values that already have at least one extracted section."""
+    return {int(r[0]) for r in conn.execute("SELECT DISTINCT filing_id FROM sec_filing_section")}
+
+
 # -- snapshots & resume -------------------------------------------------
 
 
