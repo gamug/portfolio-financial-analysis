@@ -81,6 +81,54 @@ Config: `KG_FINANTIAL_DB` (required); `PRICING_BASE_URL` (optional, defaults to
 `http://host.docker.internal:8000/pricing`). Re-runs skip windows already stored; `--fresh`
 recomputes. Progress + ETA via `tqdm`; run stats land in `pricing_run` / `pricing_run_error`.
 
+## Knowledge-graph projection layer
+
+The relational tables above are the *source* the integration repo projects into an
+RDF knowledge graph. This repo owns making that output rich and lossless enough to
+project; the integration repo owns triple emission + SHACL validation + named-graph
+minting.
+
+`kg_schema/` is a passive, behaviour-free package both agents call from
+`ensure_schema`. It adds (all `CREATE TABLE IF NOT EXISTS` / nullable
+`ADD COLUMN` — safe to ship against the shared DB anytime):
+
+| Table | Roadmap concept | Written by |
+|---|---|---|
+| `score_snapshot` | `ScoreSnapshot` (`FUNDAMENTAL` / `QUANTITATIVE` / `TECHNICAL` / `SEMANTIC`) | fundamental agent, `cycle`, integration repo |
+| `universe_membership` | `UniverseMembership` (`valid_from` / `valid_to`) | both agents' `sync_universe` |
+| `price_observation` | `PriceObservation` (close/return/ATR/vol/drawdown/momentum) | `pricing_agent run --observations` |
+| `sec_filing_section` | `SECFilingSection` (MD&A, risk factors) | `fundamental_agent run --sections` |
+| `veto` / `rule_catalog` | `Veto` / `RuleClause` | `cycle` |
+| `portfolio_position` / `cycle_ranking` | `PortfolioPosition` | `cycle select` |
+| `shared_executive_edge` | `sharedExecutiveWith` | `entity_resolution build` |
+| `cycle_run` / `cycle_checkpoint` | orchestrator provenance / resume | `cycle` |
+
+Read-contract `v_*` VIEWs (documented in `kg_schema/views.py`) are what the
+integration repo consumes; the physical schema can evolve underneath them.
+
+**Non-additive migrations** (widening unique keys, `fundamental_snapshot` →
+`score_snapshot` + a compatibility view) are gated behind an explicit command and
+advance `schema_version` (a floor other repos can assert against):
+
+```bash
+uv run python -m fundamental_agent migrate     # quiesce other writers first; back up the DB
+uv run python -m pricing_agent migrate         # (idempotent -- a no-op after the first)
+```
+
+### New collectors / cycles
+
+```bash
+uv run python -m pricing_agent run --observations          # + PriceObservation analytics
+uv run python -m fundamental_agent run --sections          # + narrative filing text (fetches www.sec.gov)
+uv run python -m entity_resolution build --min-weight 3    # sharedExecutiveWith from urls.db news co-occurrence
+uv run python -m cycle select --date 2026-06-30 --top-n 30 # score, veto, rank, open positions
+uv run python -m cycle monitor --date 2026-07-31           # refresh vetoes / ranking only
+```
+
+`entity_resolution` reads the news repo's `urls.db` strictly read-only (via
+`KG_NEWS_DB`, default `/workspaces/thesis/data/urls.db`). The SEMANTIC score
+aggregation itself lives in the integration repo, not here.
+
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment management and
