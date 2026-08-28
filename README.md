@@ -1,5 +1,54 @@
 # portfolio-finantial-analysis
 
+## Fundamental SEC-filings analysis agent
+
+`fundamental_agent/` runs a fundamental economic analysis over S&P 500 SEC filings
+(10-K annual, 10-Q quarterly, fiscal years >= 2022) and writes the results to the
+SQLite database named by `KG_FINANTIAL_DB`.
+
+**Pipeline per filing:** pull statements from the EDGAR gateway → compute deterministic
+ratios (profitability, liquidity, leverage, efficiency, growth, cash flow) → a
+[Strands](https://strandsagents.com) *metrics-master* agent decides which specialist
+agents to consult and gathers their readings → a synthesis step produces a
+`FundamentalAssessment` (score 0-100, `bullish`/`neutral`/`bearish` rating, narrative,
+strengths, risks). Each `(asset, form, fiscal_period)` produces one immutable
+`fundamental_snapshot` row; re-running skips filings already analyzed.
+
+### Configuration (`.env`)
+
+| Variable | Purpose |
+|---|---|
+| `KG_FINANTIAL_DB` | SQLite path. `assets` / `sectors` are created only if missing and never overwritten; all other tables are owned by this agent. |
+| `LLM_API_KEY` / `LLM_MODEL` / `LLM_URL` | OpenAI-compatible LLM (DeepSeek). Used via Strands' `OpenAIModel`. |
+| `EDGAR_BASE_URL` | Optional; defaults to `http://host.docker.internal:8000/edgar/edgar`. |
+| `WIKIPEDIA_USER_AGENT` | Optional; set a descriptive UA with a real contact URL for the S&P 500 scrape. |
+
+### Run
+
+```bash
+uv run python -m fundamental_agent run                       # full universe, 10-K + 10-Q, since 2022
+uv run python -m fundamental_agent run --limit 5             # first 5 tickers (dev)
+uv run python -m fundamental_agent run --tickers AAPL,NVDA --forms 10-K --since-year 2023
+uv run python -m fundamental_agent run --fresh               # re-analyze instead of resuming
+```
+
+The universe is scraped once from Wikipedia's S&P 500 list into `assets`/`sectors`
+(re-scrape with `--refresh-universe`). A `tqdm` bar shows progress and ETA; failures
+are recorded in `analysis_run_error` and do not stop the batch.
+
+### Inspect results
+
+```bash
+uv run python -c "import os,sqlite3; c=sqlite3.connect(os.environ['KG_FINANTIAL_DB']); \
+  [print(r) for r in c.execute('SELECT a.ticker,s.form,s.fiscal_period,round(s.score,1),s.rating \
+   FROM fundamental_snapshot s JOIN assets a ON a.id=s.asset_id ORDER BY 1,3')]"
+```
+
+Note: the LLM synthesis parses a JSON reply rather than using
+`Agent.structured_output`, because DeepSeek does not currently accept OpenAI
+`response_format` json-schema. If the model returns nothing usable, a rule-based
+score derived from the computed ratios is stored instead.
+
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment management and

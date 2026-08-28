@@ -1,0 +1,452 @@
+"""SQLite persistence for the fundamental analysis agent.
+
+``assets`` and ``sectors`` may already be owned by another process, so they are only
+ever created when missing -- never altered or dropped. Everything else in this module
+is owned by this agent. ``fundamental_snapshot`` is append-only: one immutable row per
+``(asset, form, fiscal_period)``, which is also what makes re-runs resumable.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.universe import Company
+
+
+@dataclass(frozen=True)
+class FilingKey:
+    """Natural key for a ``sec_filings`` row."""
+
+    asset_id: int
+    form: str
+    fiscal_year: int
+    fiscal_period: str
+
+
+@dataclass(frozen=True)
+class FilingMeta:
+    """Mutable metadata for a filing, refreshed on every fetch."""
+
+    filing_date: str | None = None
+    accession_number: str | None = None
+    period_end: str | None = None
+
+
+@dataclass(frozen=True)
+class SnapshotRow:
+    """A complete immutable fundamental snapshot ready to persist."""
+
+    asset_id: int
+    filing_id: int
+    form: str
+    fiscal_period: str
+    score: float
+    rating: str
+    narrative: str
+    strengths: Sequence[str]
+    risks: Sequence[str]
+    model: str
+    metrics: dict[str, float | None]
+
+
+@dataclass(frozen=True)
+class RunError:
+    """One failure to record against a run."""
+
+    ticker: str
+    form: str | None
+    fiscal_period: str | None
+    stage: str
+    message: str
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS sectors (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS assets (
+    id           INTEGER PRIMARY KEY,
+    ticker       TEXT NOT NULL UNIQUE,
+    company_name TEXT,
+    cik          TEXT,
+    sector_id    INTEGER REFERENCES sectors(id),
+    sub_industry TEXT
+);
+
+CREATE TABLE IF NOT EXISTS sec_filings (
+    id               INTEGER PRIMARY KEY,
+    asset_id         INTEGER NOT NULL REFERENCES assets(id),
+    form             TEXT NOT NULL,
+    fiscal_year      INTEGER NOT NULL,
+    fiscal_period    TEXT NOT NULL,
+    filing_date      TEXT,
+    accession_number TEXT,
+    period_end       TEXT,
+    retrieved_at     TEXT NOT NULL,
+    UNIQUE (asset_id, form, fiscal_period)
+);
+
+CREATE TABLE IF NOT EXISTS financial_facts (
+    id               INTEGER PRIMARY KEY,
+    filing_id        INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    statement        TEXT NOT NULL,
+    concept          TEXT NOT NULL,
+    standard_concept TEXT,
+    label            TEXT,
+    period_key       TEXT NOT NULL,
+    value            REAL,
+    UNIQUE (filing_id, statement, concept, period_key)
+);
+
+CREATE TABLE IF NOT EXISTS fundamental_metrics (
+    id          INTEGER PRIMARY KEY,
+    filing_id   INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    metric_group TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    value       REAL,
+    unit        TEXT,
+    inputs_json TEXT,
+    computed_at TEXT NOT NULL,
+    UNIQUE (filing_id, metric_group, metric_name)
+);
+
+CREATE TABLE IF NOT EXISTS fundamental_snapshot (
+    id             INTEGER PRIMARY KEY,
+    asset_id       INTEGER NOT NULL REFERENCES assets(id),
+    filing_id      INTEGER NOT NULL REFERENCES sec_filings(id),
+    form           TEXT NOT NULL,
+    fiscal_period  TEXT NOT NULL,
+    score          REAL NOT NULL,
+    rating         TEXT NOT NULL,
+    narrative      TEXT NOT NULL,
+    strengths_json TEXT,
+    risks_json     TEXT,
+    model          TEXT NOT NULL,
+    metrics_json   TEXT,
+    created_at     TEXT NOT NULL,
+    UNIQUE (asset_id, form, fiscal_period)
+);
+
+CREATE TABLE IF NOT EXISTS analysis_run (
+    id              INTEGER PRIMARY KEY,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    universe_size   INTEGER,
+    planned_units   INTEGER,
+    completed_units INTEGER DEFAULT 0,
+    skipped_units   INTEGER DEFAULT 0,
+    failed_units    INTEGER DEFAULT 0,
+    params_json     TEXT,
+    status          TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS analysis_run_error (
+    id            INTEGER PRIMARY KEY,
+    run_id        INTEGER NOT NULL REFERENCES analysis_run(id) ON DELETE CASCADE,
+    ticker        TEXT,
+    form          TEXT,
+    fiscal_period TEXT,
+    stage         TEXT,
+    message       TEXT,
+    created_at    TEXT NOT NULL
+);
+"""
+
+_REQUIRED_ASSET_COLUMNS = {"id", "ticker", "company_name", "cik", "sector_id", "sub_industry"}
+
+
+def _now() -> str:
+    return datetime.now(tz=UTC).isoformat(timespec="seconds")
+
+
+def connect(path: str | Path) -> sqlite3.Connection:
+    """Open *path*, creating parent directories, with sane pragmas."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    return conn
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create any missing tables and verify a pre-existing ``assets`` is usable."""
+    conn.executescript(SCHEMA)
+    conn.commit()
+    # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk); index by
+    # position so this works regardless of the connection's row_factory.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(assets)")}
+    missing = _REQUIRED_ASSET_COLUMNS - columns
+    if missing:
+        raise RuntimeError(
+            "existing 'assets' table is missing columns required by this agent: "
+            f"{', '.join(sorted(missing))}"
+        )
+
+
+# -- universe ---------------------------------------------------------------
+
+
+def sync_universe(conn: sqlite3.Connection, companies: Iterable[Company]) -> int:
+    """Insert/update assets and sectors from *companies*. Returns the row count."""
+    count = 0
+    for company in companies:
+        sector_id = _upsert_sector(conn, company.sector)
+        conn.execute(
+            """
+            INSERT INTO assets (ticker, company_name, cik, sector_id, sub_industry)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (ticker) DO UPDATE SET
+                company_name = excluded.company_name,
+                cik          = excluded.cik,
+                sector_id    = excluded.sector_id,
+                sub_industry = excluded.sub_industry
+            """,
+            (
+                company.symbol,
+                company.name,
+                company.cik,
+                sector_id,
+                company.sub_industry,
+            ),
+        )
+        count += 1
+    conn.commit()
+    return count
+
+
+def _upsert_sector(conn: sqlite3.Connection, name: str) -> int | None:
+    if not name:
+        return None
+    conn.execute("INSERT OR IGNORE INTO sectors (name) VALUES (?)", (name,))
+    row = conn.execute("SELECT id FROM sectors WHERE name = ?", (name,)).fetchone()
+    return int(row["id"]) if row else None
+
+
+def load_universe(
+    conn: sqlite3.Connection,
+    *,
+    tickers: Sequence[str] | None = None,
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Return asset rows, optionally filtered to *tickers* and capped at *limit*."""
+    query = "SELECT id, ticker, company_name, cik FROM assets"
+    params: list[Any] = []
+    if tickers:
+        placeholders = ", ".join("?" * len(tickers))
+        query += f" WHERE ticker IN ({placeholders})"
+        params.extend(t.upper() for t in tickers)
+    query += " ORDER BY ticker"
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    return list(conn.execute(query, params))
+
+
+# -- filings & facts ------------------------------------------------------
+
+
+def upsert_filing(conn: sqlite3.Connection, key: FilingKey, meta: FilingMeta) -> int:
+    conn.execute(
+        """
+        INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period,
+                                 filing_date, accession_number, period_end, retrieved_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (asset_id, form, fiscal_period) DO UPDATE SET
+            filing_date      = excluded.filing_date,
+            accession_number = excluded.accession_number,
+            period_end       = excluded.period_end,
+            retrieved_at     = excluded.retrieved_at
+        """,
+        (
+            key.asset_id,
+            key.form,
+            key.fiscal_year,
+            key.fiscal_period,
+            meta.filing_date,
+            meta.accession_number,
+            meta.period_end,
+            _now(),
+        ),
+    )
+    row = conn.execute(
+        "SELECT id FROM sec_filings WHERE asset_id = ? AND form = ? AND fiscal_period = ?",
+        (key.asset_id, key.form, key.fiscal_period),
+    ).fetchone()
+    conn.commit()
+    return int(row["id"])
+
+
+def replace_financial_facts(
+    conn: sqlite3.Connection, filing_id: int, facts: Iterable[dict[str, Any]]
+) -> int:
+    """Replace all stored facts for *filing_id* with *facts*."""
+    conn.execute("DELETE FROM financial_facts WHERE filing_id = ?", (filing_id,))
+    rows = [
+        (
+            filing_id,
+            fact["statement"],
+            fact["concept"],
+            fact.get("standard_concept"),
+            fact.get("label"),
+            fact["period_key"],
+            fact.get("value"),
+        )
+        for fact in facts
+    ]
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO financial_facts
+            (filing_id, statement, concept, standard_concept, label, period_key, value)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def record_metrics(
+    conn: sqlite3.Connection, filing_id: int, results: Iterable[tuple[str, MetricResult]]
+) -> None:
+    now = _now()
+    conn.executemany(
+        """
+        INSERT INTO fundamental_metrics
+            (filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (filing_id, metric_group, metric_name) DO UPDATE SET
+            value       = excluded.value,
+            unit        = excluded.unit,
+            inputs_json = excluded.inputs_json,
+            computed_at = excluded.computed_at
+        """,
+        [
+            (
+                filing_id,
+                group,
+                result.name,
+                result.value,
+                result.unit,
+                json.dumps(result.inputs),
+                now,
+            )
+            for group, result in results
+        ],
+    )
+    conn.commit()
+
+
+# -- snapshots & resume -------------------------------------------------
+
+
+def completed_units(conn: sqlite3.Connection) -> set[tuple[str, str, str]]:
+    """``(ticker, form, fiscal_period)`` triples that already have a snapshot."""
+    rows = conn.execute(
+        """
+        SELECT a.ticker AS ticker, s.form AS form, s.fiscal_period AS fiscal_period
+        FROM fundamental_snapshot s
+        JOIN assets a ON a.id = s.asset_id
+        """
+    )
+    return {(r["ticker"], r["form"], r["fiscal_period"]) for r in rows}
+
+
+def insert_snapshot(conn: sqlite3.Connection, row: SnapshotRow) -> None:
+    conn.execute(
+        """
+        INSERT INTO fundamental_snapshot
+            (asset_id, filing_id, form, fiscal_period, score, rating, narrative,
+             strengths_json, risks_json, model, metrics_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (asset_id, form, fiscal_period) DO NOTHING
+        """,
+        (
+            row.asset_id,
+            row.filing_id,
+            row.form,
+            row.fiscal_period,
+            row.score,
+            row.rating,
+            row.narrative,
+            json.dumps(list(row.strengths)),
+            json.dumps(list(row.risks)),
+            row.model,
+            json.dumps(row.metrics),
+            _now(),
+        ),
+    )
+    conn.commit()
+
+
+# -- run log ------------------------------------------------------------
+
+
+def start_run(conn: sqlite3.Connection, *, params: dict[str, Any]) -> int:
+    cur = conn.execute(
+        "INSERT INTO analysis_run (started_at, params_json, status) VALUES (?, ?, 'running')",
+        (_now(), json.dumps(params)),
+    )
+    conn.commit()
+    return int(cur.lastrowid or 0)
+
+
+def update_run_plan(
+    conn: sqlite3.Connection, run_id: int, *, universe_size: int, planned_units: int
+) -> None:
+    conn.execute(
+        "UPDATE analysis_run SET universe_size = ?, planned_units = ? WHERE id = ?",
+        (universe_size, planned_units, run_id),
+    )
+    conn.commit()
+
+
+def bump_run_counter(conn: sqlite3.Connection, run_id: int, column: str) -> None:
+    if column not in {"completed_units", "skipped_units", "failed_units"}:
+        raise ValueError(f"not a counter column: {column}")
+    conn.execute(
+        f"UPDATE analysis_run SET {column} = {column} + 1 WHERE id = ?",  # noqa: S608
+        (run_id,),
+    )
+    conn.commit()
+
+
+_MAX_ERROR_CHARS = 2000
+
+
+def record_error(conn: sqlite3.Connection, run_id: int, error: RunError) -> None:
+    conn.execute(
+        """
+        INSERT INTO analysis_run_error
+            (run_id, ticker, form, fiscal_period, stage, message, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            error.ticker,
+            error.form,
+            error.fiscal_period,
+            error.stage,
+            error.message[:_MAX_ERROR_CHARS],
+            _now(),
+        ),
+    )
+    conn.commit()
+
+
+def finish_run(conn: sqlite3.Connection, run_id: int, *, status: str) -> None:
+    conn.execute(
+        "UPDATE analysis_run SET finished_at = ?, status = ? WHERE id = ?",
+        (_now(), status, run_id),
+    )
+    conn.commit()

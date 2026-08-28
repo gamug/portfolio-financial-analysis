@@ -4,7 +4,15 @@ version = "0.1.0"
 description = "Portfolio financial analysis."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "strands-agents[openai]>=0.1",
+    "httpx>=0.27",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+    "tqdm>=4.66",
+]
 
 [dependency-groups]
 dev = [
@@ -12,12 +20,18 @@ dev = [
     "mypy>=1.11",
     "pre-commit>=4.0",
     "commitizen>=4.17",
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
 ]
 
 [tool.uv]
 # This is an application/analysis workspace, not a distributable package:
 # uv manages the environment but never tries to build/install the project itself.
 package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
 
 [tool.commitizen]
 name = "cz_conventional_commits"
