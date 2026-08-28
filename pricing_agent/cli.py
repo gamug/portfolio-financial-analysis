@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from kg_schema.cli import run_migrate
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
 
@@ -44,6 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-pull the tracked universe before running",
     )
+
+    migrate_cmd = sub.add_parser(
+        "migrate", help="apply pending shared-schema migrations (advances schema_version)"
+    )
+    migrate_cmd.add_argument("--db", help="override KG_FINANTIAL_DB path")
     return parser
 
 
@@ -55,6 +61,8 @@ def _split(value: str | None) -> list[str] | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "migrate":
+        return run_migrate(args.db)
     settings = Settings.load()
     if args.db:
         settings = settings.model_copy(update={"db_path": Path(args.db)})

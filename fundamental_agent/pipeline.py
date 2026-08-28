@@ -258,7 +258,13 @@ def _analyze_one(
             period_end=target.period.date,
         ),
     )
-    db.replace_financial_facts(engine.conn, filing_id, iter_facts(stmts))
+    db.append_financial_facts(
+        engine.conn,
+        filing_id,
+        iter_facts(stmts),
+        filing_version=meta.accession_number or db.FACTS_ENGINE_VERSION,
+        event_time=target.period.date,
+    )
 
     ctx = FilingContext(
         ticker=task.ticker,
@@ -271,7 +277,7 @@ def _analyze_one(
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
     )
     result = engine.analyst.analyze(ctx)
-    db.record_metrics(engine.conn, filing_id, result.metrics)
+    db.record_metrics(engine.conn, filing_id, result.metrics, event_time=target.period.date)
 
     assessment = result.assessment
     db.insert_snapshot(
@@ -288,6 +294,7 @@ def _analyze_one(
             risks=assessment.risks,
             model=engine.analyst.model_name,
             metrics=result.flat_metrics,
+            event_time=target.period.date,
         ),
     )
 

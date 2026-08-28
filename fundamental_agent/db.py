@@ -16,8 +16,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import kg_schema
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.universe import Company
+from kg_schema import universe_membership as kg_universe_membership
+
+# Bump when the fact extraction or ratio engine changes in a way that should
+# produce a *new* immutable row rather than silently colliding with the old one.
+FACTS_ENGINE_VERSION = "facts-v1"
+METRICS_ENGINE_VERSION = "metrics-v1"
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,7 @@ class SnapshotRow:
     risks: Sequence[str]
     model: str
     metrics: dict[str, float | None]
+    event_time: str  # the filing's period-end -- what the score is *about*
 
 
 @dataclass(frozen=True)
@@ -195,13 +203,20 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "existing 'assets' table is missing columns required by this agent: "
             f"{', '.join(sorted(missing))}"
         )
+    # Shared cross-repo schema (score_snapshot, universe_membership, views, ...).
+    # Additive only -- non-additive rebuilds run via `python -m fundamental_agent migrate`.
+    kg_schema.ensure(conn)
 
 
 # -- universe ---------------------------------------------------------------
 
 
-def sync_universe(conn: sqlite3.Connection, companies: Iterable[Company]) -> int:
-    """Insert/update assets and sectors from *companies*. Returns the row count."""
+def sync_universe(
+    conn: sqlite3.Connection, companies: Iterable[Company], *, as_of: str | None = None
+) -> int:
+    """Insert/update assets and sectors from *companies*, then reconcile S&P 500
+    membership history. Returns the number of companies seen."""
+    seen_ids: set[int] = set()
     count = 0
     for company in companies:
         sector_id = _upsert_sector(conn, company.sector)
@@ -223,8 +238,19 @@ def sync_universe(conn: sqlite3.Connection, companies: Iterable[Company]) -> int
                 company.sub_industry,
             ),
         )
+        row = conn.execute("SELECT id FROM assets WHERE ticker = ?", (company.symbol,)).fetchone()
+        if row is not None:
+            seen_ids.add(int(row["id"]))
         count += 1
     conn.commit()
+    kg_universe_membership.reconcile(
+        conn,
+        "SP500",
+        seen_ids,
+        as_of=as_of or _now()[:10],
+        run_kind="analysis",
+        source="wikipedia",
+    )
     return count
 
 
@@ -290,11 +316,22 @@ def upsert_filing(conn: sqlite3.Connection, key: FilingKey, meta: FilingMeta) ->
     return int(row["id"])
 
 
-def replace_financial_facts(
-    conn: sqlite3.Connection, filing_id: int, facts: Iterable[dict[str, Any]]
+def append_financial_facts(
+    conn: sqlite3.Connection,
+    filing_id: int,
+    facts: Iterable[dict[str, Any]],
+    *,
+    filing_version: str = FACTS_ENGINE_VERSION,
+    event_time: str | None = None,
 ) -> int:
-    """Replace all stored facts for *filing_id* with *facts*."""
-    conn.execute("DELETE FROM financial_facts WHERE filing_id = ?", (filing_id,))
+    """Append facts for *filing_id* -- never delete. Re-runs of the same
+    *filing_version* collide on the unique key and are ignored; a restatement under
+    a new *filing_version* coexists (post-``migrate``; pre-``migrate`` the older
+    unique key still wins, which is the documented limitation)."""
+    has_versioned = "filing_version" in {
+        r[1] for r in conn.execute("PRAGMA table_info(financial_facts)")
+    }
+    now = _now()
     rows = [
         (
             filing_id,
@@ -304,49 +341,81 @@ def replace_financial_facts(
             fact.get("label"),
             fact["period_key"],
             fact.get("value"),
+            filing_version,
+            event_time or (fact["period_key"][:10] if fact.get("period_key") else now),
+            now,
         )
         for fact in facts
     ]
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO financial_facts
-            (filing_id, statement, concept, standard_concept, label, period_key, value)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    if has_versioned:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO financial_facts
+                (filing_id, statement, concept, standard_concept, label, period_key, value,
+                 filing_version, event_time, ingested_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    else:  # pragma: no cover - only before kg_schema.ensure has run
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO financial_facts
+                (filing_id, statement, concept, standard_concept, label, period_key, value)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [r[:7] for r in rows],
+        )
     conn.commit()
     return len(rows)
 
 
 def record_metrics(
-    conn: sqlite3.Connection, filing_id: int, results: Iterable[tuple[str, MetricResult]]
+    conn: sqlite3.Connection,
+    filing_id: int,
+    results: Iterable[tuple[str, MetricResult]],
+    *,
+    engine_version: str = METRICS_ENGINE_VERSION,
+    event_time: str | None = None,
 ) -> None:
+    """Append computed metrics -- one immutable row per
+    ``(filing_id, group, name, engine_version)``. Recomputing with the same
+    *engine_version* is a no-op; a new version writes a parallel row."""
     now = _now()
-    conn.executemany(
-        """
-        INSERT INTO fundamental_metrics
-            (filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (filing_id, metric_group, metric_name) DO UPDATE SET
-            value       = excluded.value,
-            unit        = excluded.unit,
-            inputs_json = excluded.inputs_json,
-            computed_at = excluded.computed_at
-        """,
-        [
-            (
-                filing_id,
-                group,
-                result.name,
-                result.value,
-                result.unit,
-                json.dumps(result.inputs),
-                now,
-            )
-            for group, result in results
-        ],
-    )
+    has_versioned = "engine_version" in {
+        r[1] for r in conn.execute("PRAGMA table_info(fundamental_metrics)")
+    }
+    base = [
+        (
+            filing_id,
+            group,
+            result.name,
+            result.value,
+            result.unit,
+            json.dumps(result.inputs),
+            now,
+        )
+        for group, result in results
+    ]
+    if has_versioned:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO fundamental_metrics
+                (filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at,
+                 engine_version, event_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [(*row, engine_version, event_time or now) for row in base],
+        )
+    else:  # pragma: no cover - only before kg_schema.ensure has run
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO fundamental_metrics
+                (filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            base,
+        )
     conn.commit()
 
 
@@ -354,39 +423,44 @@ def record_metrics(
 
 
 def completed_units(conn: sqlite3.Connection) -> set[tuple[str, str, str]]:
-    """``(ticker, form, fiscal_period)`` triples that already have a snapshot."""
+    """``(ticker, form, fiscal_period)`` triples that already have a FUNDAMENTAL score."""
     rows = conn.execute(
         """
-        SELECT a.ticker AS ticker, s.form AS form, s.fiscal_period AS fiscal_period
-        FROM fundamental_snapshot s
+        SELECT a.ticker AS ticker, f.form AS form, f.fiscal_period AS fiscal_period
+        FROM score_snapshot s
         JOIN assets a ON a.id = s.asset_id
+        JOIN sec_filings f ON f.id = s.filing_id
+        WHERE s.score_type = 'FUNDAMENTAL'
         """
     )
     return {(r["ticker"], r["form"], r["fiscal_period"]) for r in rows}
 
 
 def insert_snapshot(conn: sqlite3.Connection, row: SnapshotRow) -> None:
+    """Append one immutable FUNDAMENTAL ``score_snapshot`` row. Resume-safe:
+    a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored."""
     conn.execute(
         """
-        INSERT INTO fundamental_snapshot
-            (asset_id, filing_id, form, fiscal_period, score, rating, narrative,
-             strengths_json, risks_json, model, metrics_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (asset_id, form, fiscal_period) DO NOTHING
+        INSERT INTO score_snapshot
+            (asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
+             model, inputs_json, filing_id, rating, narrative, strengths_json, risks_json,
+             run_kind)
+        VALUES (?, 'FUNDAMENTAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'analysis')
+        ON CONFLICT (asset_id, score_type, event_time) DO NOTHING
         """,
         (
             row.asset_id,
-            row.filing_id,
-            row.form,
-            row.fiscal_period,
             row.score,
+            row.score,
+            row.event_time,
+            _now(),
+            row.model,
+            json.dumps(row.metrics),
+            row.filing_id,
             row.rating,
             row.narrative,
             json.dumps(list(row.strengths)),
             json.dumps(list(row.risks)),
-            row.model,
-            json.dumps(row.metrics),
-            _now(),
         ),
     )
     conn.commit()
