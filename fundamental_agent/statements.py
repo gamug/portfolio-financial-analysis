@@ -148,6 +148,37 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_PaymentsForCapitalImprovements",
         ),
     ),
+    "stock_based_compensation": LineItem(
+        "stock_based_compensation",
+        _CASHFLOW,
+        concepts=(
+            "us-gaap_ShareBasedCompensation",
+            "us-gaap_ShareBasedCompensationExpense",
+            "us-gaap_AllocatedShareBasedCompensationExpense",
+        ),
+        standard=("StockBasedCompensationExpense",),
+    ),
+    # Point-in-time common shares outstanding, for market cap (price x shares at the
+    # period-end date). Not always present -- callers fall back to `diluted_shares`.
+    "shares_outstanding": LineItem(
+        "shares_outstanding",
+        _BALANCE,
+        concepts=(
+            "us-gaap_CommonStockSharesOutstanding",
+            "us-gaap_CommonStockSharesIssued",
+        ),
+        standard=("SharesYearEnd",),
+    ),
+    # Weighted-average diluted share count from the income statement -- always
+    # reported; use for per-share metrics and as the shares_outstanding fallback.
+    # Diluted only: the basic line sits earlier in the statement and would win the
+    # first-match lookup, so it is intentionally not listed here.
+    "diluted_shares": LineItem(
+        "diluted_shares",
+        _INCOME,
+        concepts=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
+        standard=("SharesFullyDilutedAverage",),
+    ),
     "total_assets": LineItem("total_assets", _BALANCE, concepts=("us-gaap_Assets",)),
     "current_assets": LineItem("current_assets", _BALANCE, concepts=("us-gaap_AssetsCurrent",)),
     "total_liabilities": LineItem("total_liabilities", _BALANCE, concepts=("us-gaap_Liabilities",)),

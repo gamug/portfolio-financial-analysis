@@ -53,6 +53,21 @@ def test_balance_sheet_resolves_via_instant_translation(aapl_10k: Statements) ->
     assert aapl_10k.get("cash", key) == 29965000000.0
 
 
+def test_share_count_and_sbc_line_items(aapl_10k: Statements, jpm_10k: Statements) -> None:
+    key = "2023-09-30 (FY)"
+    # point-in-time common shares outstanding (balance sheet)
+    assert aapl_10k.get("shares_outstanding", key) == 15550061000.0
+    # diluted weighted-average, NOT the basic line that sits just above it
+    assert aapl_10k.get("diluted_shares", key) == 15812547000.0
+    assert aapl_10k.get("stock_based_compensation", key) == 10833000000.0
+
+    jpm_key = _need(jpm_10k.latest_fy()).key
+    # a bank's payload has no CommonStockSharesOutstanding / ShareBasedCompensation
+    assert jpm_10k.get("shares_outstanding", jpm_key) is None
+    assert jpm_10k.get("stock_based_compensation", jpm_key) is None
+    assert jpm_10k.get("diluted_shares", jpm_key) == 2970000000.0
+
+
 def test_balance_sheet_items_are_never_negative(nvda_10k: Statements) -> None:
     key = _need(nvda_10k.latest_fy()).key
     for item in ("inventory", "receivables", "short_term_investments", "long_term_debt"):
