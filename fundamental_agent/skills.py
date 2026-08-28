@@ -17,6 +17,7 @@ SPECIALIST_SKILL = {
     "leverage": "interest_coverage_ratio",
     "roic": "roic",
     "cagr": "cagr",
+    "valuation": "free_cash_flow_yield",
 }
 
 

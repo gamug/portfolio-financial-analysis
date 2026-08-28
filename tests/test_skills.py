@@ -21,6 +21,13 @@ def test_unmapped_groups_return_none() -> None:
     assert load_skill("does-not-exist") is None
 
 
+def test_valuation_maps_to_the_fcf_yield_sop() -> None:
+    assert SPECIALIST_SKILL["valuation"] == "free_cash_flow_yield"
+    text = load_skill("valuation")
+    assert text is not None
+    assert "FCF Yield" in text
+
+
 def test_missing_skills_dir_is_tolerated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     load_skill.cache_clear()
     monkeypatch.setenv("FUNDAMENTAL_SKILLS_DIR", str(tmp_path))

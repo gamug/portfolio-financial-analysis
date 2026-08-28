@@ -18,6 +18,8 @@ from strands.models.openai import OpenAIModel
 
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import CORE_GROUPS, OPTIONAL_GROUPS, MetricResult, compute_group
+from fundamental_agent.metrics import valuation as valuation_metrics
+from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.skills import load_skill
 from fundamental_agent.statements import Statements
 
@@ -28,13 +30,17 @@ _HIGH_LEVERAGE = 3.0
 _HIGH_LEVERAGE_PENALTY = 12.0
 
 _ALL_GROUPS = (*CORE_GROUPS, *OPTIONAL_GROUPS)
+# valuation needs a market price, so it is computed outside the uniform group loop;
+# it still gets a specialist tool whenever a period-end close was resolved.
+_SPECIALIST_GROUPS = (*_ALL_GROUPS, valuation_metrics.GROUP)
 
 MASTER_PROMPT = """You are the metrics master for a fundamental equity analysis.
 You are given the deterministically computed financial ratios for one SEC filing.
 Call the specialist tool for every metric group that carries signal for this company
 -- always consult profitability, liquidity, leverage and cash flow; add efficiency,
 growth, roic and cagr when their numbers are meaningful (skip inventory-style metrics
-for financial firms, skip growth/cagr when there is no multi-period comparison).
+for financial firms, skip growth/cagr when there is no multi-period comparison); add
+valuation whenever free-cash-flow-yield numbers are present.
 After gathering the readings, give a short synthesis in plain language."""
 
 # Short fallback briefs, used when a group has no skills/<name>/SKILL.md SOP mapped.
@@ -55,6 +61,9 @@ _INLINE_SPECIALIST_PROMPTS = {
     "State whether the company earns above its cost of capital.",
     "cagr": "You read multi-year compound annual growth rates (revenue, net income, "
     "operating cash flow). State whether long-run growth is strong, flat or declining.",
+    "valuation": "You read free-cash-flow yield (equity and enterprise), its "
+    "SBC-adjusted variant and market capitalisation. State whether the price paid for "
+    "the company's cash generation looks cheap, fair or rich, and flag SBC dilution.",
 }
 
 
@@ -94,6 +103,7 @@ _SCORE_RULES: tuple[tuple[str, float, float, float], ...] = (
     ("cashflow.free_cash_flow_margin", 0.0, 0.10, 12.0),
     ("growth.revenue_growth", 0.0, 0.10, 8.0),
     ("liquidity.current_ratio", 1.0, 1.5, 6.0),
+    ("valuation.free_cash_flow_yield", 0.0, 0.05, 8.0),
 )
 
 
@@ -118,6 +128,7 @@ class FilingContext:
     stmts: Statements
     period_key: str
     prior_key: str | None
+    price: ClosePrice | None = None  # period-end close, when the pricing table has one
 
 
 @dataclass(frozen=True)
@@ -151,7 +162,8 @@ class FundamentalAnalyst:
             system_prompt=MASTER_PROMPT,
             callback_handler=None,
             tools=[
-                self._make_specialist(name, by_group.get(name, []), ctx) for name in _ALL_GROUPS
+                self._make_specialist(name, by_group.get(name, []), ctx)
+                for name in _SPECIALIST_GROUPS
             ],
         )
         orchestrator(_brief(ctx, by_group))
@@ -164,6 +176,9 @@ class FundamentalAnalyst:
         for group in _ALL_GROUPS:
             for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key):
                 out.append((group, result))
+        if ctx.price is not None:
+            for result in valuation_metrics.compute(ctx.stmts, ctx.period_key, ctx.price):
+                out.append((valuation_metrics.GROUP, result))
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:
