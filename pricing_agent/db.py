@@ -16,9 +16,12 @@ from typing import Any
 
 import kg_schema
 from kg_schema import universe_membership as kg_universe_membership
+from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats
 from pricing_agent.universe import Company
+
+PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sectors (
@@ -277,6 +280,55 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
         ),
     )
     conn.commit()
+
+
+def upsert_price_observations(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    observations: Iterable[Observation],
+    *,
+    engine_version: str = PRICE_OBSERVATION_ENGINE_VERSION,
+    run_id: int | None = None,
+) -> int:
+    """Write the derived per-day price analytics. Immutable per
+    ``(asset_id, obs_date, engine_version)`` -- a re-run with the same version is a no-op."""
+    now = _now()
+    rows = [
+        (
+            asset_id,
+            o.obs_date,
+            o.close,
+            o.prev_close,
+            o.log_return,
+            o.true_range,
+            o.atr_14,
+            o.realized_vol_21d,
+            o.realized_vol_90d,
+            o.max_drawdown_90d,
+            o.momentum_21d,
+            o.momentum_63d,
+            o.momentum_252d,
+            o.dollar_volume,
+            o.obs_date,
+            now,
+            engine_version,
+            run_id,
+            "pricing",
+        )
+        for o in observations
+    ]
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO price_observation
+            (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
+             realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
+             momentum_252d, dollar_volume, event_time, computed_at, engine_version, run_id, run_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    return len(rows)
 
 
 def replace_daily_prices(conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle]) -> int:

@@ -11,6 +11,7 @@ import pytest
 
 from fundamental_agent import db
 from fundamental_agent.statements import Statements
+from pricing_agent import db as pricing_db
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -56,4 +57,13 @@ def memory_db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     db.ensure_schema(conn)
+    return conn
+
+
+@pytest.fixture
+def memory_pricing_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    pricing_db.ensure_schema(conn)
     return conn

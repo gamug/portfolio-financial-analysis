@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="also persist every daily OHLCV bar to price_daily",
     )
     run_cmd.add_argument(
+        "--observations",
+        action="store_true",
+        help="also derive per-day price analytics (ATR, rolling vol, drawdown) to price_observation",
+    )
+    run_cmd.add_argument(
         "--fresh", action="store_true", help="recompute windows even if already stored"
     )
     run_cmd.add_argument(
@@ -74,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         tickers=_split(args.tickers),
         by_year=args.by_year,
         store_daily=args.store_daily,
+        observations=args.observations,
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
     )
