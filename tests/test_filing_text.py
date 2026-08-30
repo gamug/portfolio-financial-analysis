@@ -43,8 +43,31 @@ def test_resolves_primary_htm_and_returns_source_url() -> None:
     assert url == (
         "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm"
     )
-    # picked the shortest non-index .htm
+    # picked the non-index, non-fragment .htm body
     assert seen[-1].endswith("/aapl-20230930.htm")
+
+
+def test_prefers_the_largest_non_exhibit_htm_over_directory_order() -> None:
+    # SEC lists the directory alphabetically, so the exhibit sorts first; the real
+    # 10-K body is larger and must win.
+    index = {
+        "directory": {
+            "item": [
+                {"name": "corp10k2023exhibit1019.htm", "size": "12000"},
+                {"name": "ex-32.htm", "size": "3000"},
+                {"name": "jpm-20231231.htm", "size": "1800000"},
+                {"name": "R7.htm", "size": "999999"},
+            ]
+        }
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("index.json"):
+            return httpx.Response(200, json=index)
+        return httpx.Response(200, text="<html>Item 1A. Risk Factors ... Item 7. MD&A</html>")
+
+    _, url = fetch_primary_document("19617", "0000019617-24-000123", client=_client(handler))
+    assert url.endswith("/jpm-20231231.htm")
 
 
 def test_retries_on_429_then_succeeds() -> None:

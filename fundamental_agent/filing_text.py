@@ -22,6 +22,10 @@ import httpx
 
 # XBRL viewer fragments SEC lists alongside the primary document.
 _FRAGMENT_RE = re.compile(r"^r\d+\.html?$", re.IGNORECASE)
+# Exhibits / certifications filed next to the primary document (ex-31.1, exhibit99,
+# corp10k2023exhibit1019, d123cert, ...). Matched on a word boundary so a filer whose
+# real document is e.g. "excelsior-20231231.htm" is not mistaken for an exhibit.
+_EXHIBIT_RE = re.compile(r"(?:\b|_)(?:ex|exh|exhibit|cert)[-_.]?\d", re.IGNORECASE)
 
 _SEC_BASE = "https://www.sec.gov"
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
@@ -62,10 +66,17 @@ def _get(client: httpx.Client, url: str, *, max_retries: int = 3) -> httpx.Respo
     raise FilingTextError(f"{url} failed after {max_retries} attempts") from last
 
 
+def _as_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _primary_document_name(index: dict[str, Any]) -> str:
     items = index.get("directory", {}).get("item", [])
     htmls = [
-        str(it["name"])
+        (str(it["name"]), _as_int(it.get("size")))
         for it in items
         if str(it.get("name", "")).lower().endswith((".htm", ".html"))
         and "index" not in str(it.get("name", "")).lower()
@@ -73,8 +84,11 @@ def _primary_document_name(index: dict[str, Any]) -> str:
     ]
     if not htmls:
         raise FilingTextError("no primary .htm in filing directory listing")
-    # SEC lists the primary document first in the directory.
-    return htmls[0]
+    # The directory is alphabetical, not primary-first, so an exhibit like
+    # "corp10k2023exhibit1019.htm" often sorts ahead of the real body. Drop the
+    # exhibits/certs, then take the largest .htm -- the 10-K/10-Q body dwarfs them.
+    non_exhibit = [h for h in htmls if not _EXHIBIT_RE.search(h[0])] or htmls
+    return max(non_exhibit, key=lambda h: h[1])[0]
 
 
 def fetch_primary_document(
