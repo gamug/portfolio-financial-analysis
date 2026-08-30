@@ -6,6 +6,7 @@ import pytest
 
 from fundamental_agent.metrics import compute_group
 from fundamental_agent.metrics.base import safe_div
+from fundamental_agent.metrics.cagr import _cagr
 from fundamental_agent.statements import Statements
 
 
@@ -89,3 +90,12 @@ def test_cagr_is_multi_year_from_the_fy_columns(aapl_10k: Statements) -> None:
 def test_cagr_is_empty_without_fiscal_year_columns(msft_10q: Statements) -> None:
     quarter = msft_10q.quarter_periods()[-1]
     assert compute_group("cagr", msft_10q, quarter.key) == []
+
+
+def test_cagr_none_when_an_endpoint_is_non_positive() -> None:
+    # swing to a loss: a negative `end` over a positive `begin` would make the
+    # fractional power complex and crash float() -- must yield None instead.
+    assert _cagr(100.0, -40.0, 2) is None
+    assert _cagr(-40.0, 100.0, 2) is None
+    assert _cagr(100.0, 0.0, 2) is None
+    assert _cagr(100.0, 121.0, 2) == pytest.approx(0.1, abs=1e-9)
