@@ -2,8 +2,10 @@
 
 The analysis gateway only serves structured financials, so narrative text is pulled
 from ``www.sec.gov`` using the ``accession_number`` + ``cik`` already stored on
-``sec_filings`` / ``assets``. SEC requires a descriptive ``User-Agent`` with a
-contact and rate-limits to ~10 req/s; override the UA via ``SEC_USER_AGENT``.
+``sec_filings`` / ``assets``. SEC **rejects with HTTP 403** any request whose
+``User-Agent`` has no contact address in it, and rate-limits to ~10 req/s. Set
+``SEC_USER_AGENT`` to ``"Your Name your@email"`` before any real run; the built-in
+default only carries a placeholder address and will be refused in production.
 
 A gateway text endpoint can replace :func:`fetch_primary_document` later without
 touching :mod:`fundamental_agent.sections`.
@@ -24,10 +26,10 @@ _FRAGMENT_RE = re.compile(r"^r\d+\.html?$", re.IGNORECASE)
 _SEC_BASE = "https://www.sec.gov"
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 _MAX_BACKOFF_SECONDS = 8.0
-_DEFAULT_USER_AGENT = (
-    "portfolio-finantial-analysis/0.1 "
-    "(+https://github.com/portfolio-finantial-analysis; research use) python-httpx"
-)
+# SEC 403s a User-Agent with no contact address. This default keeps the shape SEC
+# wants (name + address) but the address is a placeholder -- real runs MUST export
+# SEC_USER_AGENT with a reachable contact.
+_DEFAULT_USER_AGENT = "portfolio-finantial-analysis/0.1 sec-contact@example.com"
 
 
 class FilingTextError(RuntimeError):
