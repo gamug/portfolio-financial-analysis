@@ -1,8 +1,8 @@
 # Module documentation
 
-One document per top-level package. All packages are `[tool.uv] package = false`
-and run as `python -m <name>`; there is no `src/` layout (`pytest` sets
-`pythonpath = ["."]`).
+One document per package. Every package lives under `src/<name>/`, is installed
+editable into the uv env (hatchling build backend), and runs as `python -m <name>`
+from any directory; `pytest` adds `src` via `pythonpath`.
 
 | Package | Role | Doc |
 |---|---|---|
