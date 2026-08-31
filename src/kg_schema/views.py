@@ -13,6 +13,8 @@ Projection semantics
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
 ``v_price_observation``    latest ``engine_version`` per (asset, obs_date); derived
                           price analytics only (raw OHLCV stays in ``price_daily``).
+``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
+                          period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
 ``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
 ``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open.
@@ -51,6 +53,12 @@ VIEWS: dict[str, str] = {
             WHERE p2.asset_id = p.asset_id AND p2.obs_date = p.obs_date
             ORDER BY p2.computed_at DESC, p2.id DESC LIMIT 1
         )
+    """,
+    "v_sec_filing": """
+        CREATE VIEW v_sec_filing AS
+        SELECT f.id, a.ticker, f.asset_id, f.form, f.fiscal_year, f.fiscal_period,
+               f.filing_date, f.accession_number, f.period_end, f.retrieved_at
+        FROM sec_filings f JOIN assets a ON a.id = f.asset_id
     """,
     "v_sec_filing_section": """
         CREATE VIEW v_sec_filing_section AS
