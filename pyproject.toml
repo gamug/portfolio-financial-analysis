@@ -37,7 +37,6 @@ packages = [
     "src/kg_schema",
     "src/cycle",
     "src/entity_resolution",
-    "src/backtest",
 ]
 
 [tool.pytest.ini_options]
