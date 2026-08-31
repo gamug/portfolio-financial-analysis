@@ -1,4 +1,4 @@
-# portfolio-finantial-analysis
+# portfolio-financial-analysis
 
 ## Fundamental SEC-filings analysis agent
 
