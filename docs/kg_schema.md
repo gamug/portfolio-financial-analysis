@@ -59,8 +59,12 @@ a view whose base table is missing is silently skipped. The module docstring is 
 **projection contract** — column list + semantics per view. Views:
 `v_score_snapshot`, `v_universe_membership`, `v_price_observation` (newest
 `engine_version` per asset/day), `v_sec_filing` (one row per filing),
-`v_sec_filing_section`, `v_veto`, `v_portfolio_position`,
-`v_shared_executive_edge` (pair-level aggregate), `v_cycle_ranking`.
+`v_sec_filing_section`, `v_veto`, `v_rule_catalog` (veto rules as data —
+`params_json` verbatim plus unpacked `param_metric` / `param_operator` /
+`param_threshold`), `v_portfolio_position`, `v_shared_executive_edge` (pair-level
+aggregate), `v_cycle_ranking`, `v_weight_scheme` (one row per `cycle_run` that
+recorded a blend — scheme id + scalar knobs), `v_weight_component` (that blend
+exploded to one row per `(cycle_run, score_type)`).
 
 ### `universe_membership.py` — `reconcile(conn, universe, present_asset_ids, *, as_of, run_id=None, run_kind=None, source)`
 
