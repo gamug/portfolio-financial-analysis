@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS score_snapshot (
     id               INTEGER PRIMARY KEY,
     asset_id         INTEGER NOT NULL REFERENCES assets(id),
     score_type       TEXT NOT NULL CHECK (score_type IN
-                        ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC')),
+                        ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
     raw_value        REAL,
     normalized_score REAL,
     event_time       TEXT NOT NULL,            -- what the score is *about*
@@ -199,6 +199,22 @@ CREATE TABLE IF NOT EXISTS shared_executive_edge (
 );
 CREATE INDEX IF NOT EXISTS ix_shared_exec_a ON shared_executive_edge (asset_id_a);
 CREATE INDEX IF NOT EXISTS ix_shared_exec_b ON shared_executive_edge (asset_id_b);
+
+-- Per-cycle GICS-sector roll-up of members' TECHNICAL score. The per-asset
+-- deviation from this mean is written to `score_snapshot` as score_type 'SECTOR'.
+CREATE TABLE IF NOT EXISTS sector_aggregate_snapshot (
+    id              INTEGER PRIMARY KEY,
+    sector_id       INTEGER NOT NULL REFERENCES sectors(id),
+    cycle_date      TEXT NOT NULL,
+    metric_type     TEXT NOT NULL DEFAULT 'ScoreTecnico',
+    member_count    INTEGER NOT NULL,
+    mean_raw        REAL,
+    mean_normalized REAL,
+    computed_at     TEXT NOT NULL,
+    run_id          INTEGER,
+    UNIQUE (sector_id, cycle_date, metric_type)
+);
+CREATE INDEX IF NOT EXISTS ix_sector_agg_date ON sector_aggregate_snapshot (cycle_date);
 """
 
 

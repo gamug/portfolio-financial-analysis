@@ -20,7 +20,7 @@ from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.db import connect, ensure_schema
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
-from cycle.scores import quantitative, technical
+from cycle.scores import quantitative, sector, technical
 from cycle.scores.normalize import normalized_scores
 from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
 
@@ -33,6 +33,7 @@ _SELECTION_STEPS = (
     "quantitative",
     "semantic_read",
     "normalize",
+    "sector",
     "veto",
     "rank",
     "positions",
@@ -200,6 +201,39 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         return done
 
     _do("normalize", _normalize)
+
+    # -- sector roll-up (needs the normalized TECHNICAL scores from `normalize`)
+    def _sector() -> dict:
+        rows = conn.execute(
+            "SELECT asset_id, raw_value, normalized_score FROM score_snapshot "
+            "WHERE score_type = 'TECHNICAL' AND event_time = ? AND raw_value IS NOT NULL",
+            (cycle_date,),
+        ).fetchall()
+        if not rows:
+            return {"aggregates": 0, "momentum": 0}
+        traw = {int(r["asset_id"]): float(r["raw_value"]) for r in rows}
+        tnorm = {
+            int(r["asset_id"]): float(r["normalized_score"])
+            for r in rows
+            if r["normalized_score"] is not None
+        }
+        aggregates, momentum = sector.roll_up(sector_of, traw, tnorm)
+        writers.write_sector_aggregates(conn, cycle_date, aggregates, run_id=run_id)
+        if momentum:
+            aids = list(momentum)
+            norm = normalized_scores([momentum[a] for a in aids])
+            writers.write_scores(
+                conn,
+                sector.SCORE_TYPE,
+                cycle_date,
+                momentum,
+                {aids[i]: norm[i] for i in range(len(aids))},
+                {a: {"sector_id": sector_of[a]} for a in aids},
+                run_id=run_id,
+            )
+        return {"aggregates": len(aggregates), "momentum": len(momentum)}
+
+    _do("sector", _sector)
 
     # -- veto
     def _veto() -> dict:

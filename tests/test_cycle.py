@@ -13,7 +13,7 @@ from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
-from cycle.scores import quantitative, technical
+from cycle.scores import quantitative, sector, technical
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import _redact, checkpoint, open_cycle
 
@@ -79,6 +79,23 @@ def test_quantitative_prefers_cheap_and_profitable() -> None:
     }
     scores = {s.asset_id: s.raw_value for s in quantitative.compute(rows)}
     assert scores[1] > scores[2]
+
+
+def test_sector_roll_up_mean_and_deviation() -> None:
+    sector_of = {1: 10, 2: 10, 3: 20, 4: None, 5: 10}
+    technical_raw = {1: 60.0, 2: 40.0, 3: 90.0, 4: 30.0, 5: 50.0}  # asset 4 has no sector
+    technical_norm = {1: 55.0, 2: 45.0, 3: 88.0, 5: 51.0}
+    aggs, momentum = sector.roll_up(sector_of, technical_raw, technical_norm)
+
+    by_sector = {a.sector_id: a for a in aggs}
+    assert by_sector[10].member_count == 3
+    assert by_sector[10].mean_raw == pytest.approx(50.0)  # (60+40+50)/3
+    assert by_sector[20].mean_raw == pytest.approx(90.0)
+    # per-asset deviation from the sector mean; sums to ~0 within a sector
+    assert momentum[1] == pytest.approx(10.0)
+    assert momentum[2] == pytest.approx(-10.0)
+    assert momentum[3] == pytest.approx(0.0)
+    assert 4 not in momentum  # sector-less asset dropped
 
 
 # -- construction -----------------------------------------------
@@ -217,13 +234,20 @@ def test_selection_cycle_end_to_end(cycle_seed: sqlite3.Connection) -> None:
     run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run_row["status"] == "completed"
 
-    for stype in ("TECHNICAL", "QUANTITATIVE"):
+    for stype in ("TECHNICAL", "QUANTITATIVE", "SECTOR"):
         n = conn.execute(
             "SELECT COUNT(*) FROM score_snapshot WHERE score_type = ? AND event_time = '2026-06-30' "
             "AND normalized_score IS NOT NULL",
             (stype,),
         ).fetchone()[0]
         assert n == 5
+
+    # one sector_aggregate_snapshot row per sector present in the cohort
+    agg = conn.execute(
+        "SELECT sector_name, member_count FROM v_sector_aggregate_snapshot "
+        "WHERE cycle_date = '2026-06-30' ORDER BY sector_name"
+    ).fetchall()
+    assert [(r["sector_name"], r["member_count"]) for r in agg] == [("S1", 2), ("S2", 3)]
 
     ranked = conn.execute(
         "SELECT ticker, rank, selected FROM v_cycle_ranking ORDER BY rank"

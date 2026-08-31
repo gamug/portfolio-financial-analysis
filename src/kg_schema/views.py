@@ -11,6 +11,10 @@ Projection semantics
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / QUANTITATIVE, and the article-day for SEMANTIC.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
+``v_sector``              one row per GICS sector with its member-asset and sub-industry
+                          counts (the reference lane's rollup anchor).
+``v_industry``            one row per GICS sub-industry -> sector (the scrape has no
+                          middle industry-group tier; sub-industry stands in for it).
 ``v_price_observation``    latest ``engine_version`` per (asset, obs_date); derived
                           price analytics only (raw OHLCV stays in ``price_daily``).
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
@@ -29,6 +33,10 @@ Projection semantics
                           changed blend is a new row, no bespoke ``valid_from``/``valid_to``.
 ``v_weight_component``     one row per (``cycle_run``, ``score_type``): the blend weight that
                           score type carried in that run. Explodes ``score_weights``.
+``v_sector_aggregate_snapshot`` per-cycle mean of members' TECHNICAL score per sector.
+                          Its per-asset counterpart is ``score_snapshot`` rows of type
+                          ``SECTOR`` (own TECHNICAL raw minus this mean), reachable through
+                          ``v_score_snapshot``.
 """
 
 from __future__ import annotations
@@ -49,6 +57,22 @@ VIEWS: dict[str, str] = {
         SELECT m.id, a.ticker, m.asset_id, m.universe, m.valid_from, m.valid_to,
                m.detected_at, m.source, m.run_id, m.run_kind
         FROM universe_membership m JOIN assets a ON a.id = m.asset_id
+    """,
+    "v_sector": """
+        CREATE VIEW v_sector AS
+        SELECT s.id AS sector_id, s.name AS sector_name,
+               COUNT(a.id) AS asset_count,
+               COUNT(DISTINCT NULLIF(a.sub_industry, '')) AS sub_industry_count
+        FROM sectors s LEFT JOIN assets a ON a.sector_id = s.id
+        GROUP BY s.id, s.name
+    """,
+    "v_industry": """
+        CREATE VIEW v_industry AS
+        SELECT a.sub_industry AS industry_name, s.name AS sector_name, s.id AS sector_id,
+               COUNT(*) AS asset_count
+        FROM assets a JOIN sectors s ON s.id = a.sector_id
+        WHERE a.sub_industry IS NOT NULL AND a.sub_industry <> ''
+        GROUP BY a.sub_industry, s.name, s.id
     """,
     "v_price_observation": """
         CREATE VIEW v_price_observation AS
@@ -139,6 +163,12 @@ VIEWS: dict[str, str] = {
         FROM cycle_run cr,
              json_each(json_extract(cr.params_json, '$.score_weights')) je
         WHERE json_extract(cr.params_json, '$.score_weights') IS NOT NULL
+    """,
+    "v_sector_aggregate_snapshot": """
+        CREATE VIEW v_sector_aggregate_snapshot AS
+        SELECT sa.id, s.name AS sector_name, sa.sector_id, sa.cycle_date, sa.metric_type,
+               sa.member_count, sa.mean_raw, sa.mean_normalized, sa.computed_at, sa.run_id
+        FROM sector_aggregate_snapshot sa JOIN sectors s ON s.id = sa.sector_id
     """,
 }
 
