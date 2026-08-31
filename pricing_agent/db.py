@@ -14,9 +14,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import kg_schema
+from kg_schema import universe_membership as kg_universe_membership
+from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats
 from pricing_agent.universe import Company
+
+PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sectors (
@@ -136,12 +141,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             "existing 'assets' table is missing columns required by this collector: "
             f"{', '.join(sorted(missing))}"
         )
+    # Shared cross-repo schema (price_observation, universe_membership, views, ...).
+    kg_schema.ensure(conn)
 
 
 # -- universe -------------------------------------------------------------
 
 
-def sync_universe(conn: sqlite3.Connection, companies: Iterable[Company]) -> int:
+def sync_universe(
+    conn: sqlite3.Connection, companies: Iterable[Company], *, as_of: str | None = None
+) -> int:
+    seen_ids: set[int] = set()
     count = 0
     for company in companies:
         sector_id = _upsert_sector(conn, company.sector)
@@ -163,8 +173,19 @@ def sync_universe(conn: sqlite3.Connection, companies: Iterable[Company]) -> int
                 company.sub_industry,
             ),
         )
+        row = conn.execute("SELECT id FROM assets WHERE ticker = ?", (company.symbol,)).fetchone()
+        if row is not None:
+            seen_ids.add(int(row["id"]))
         count += 1
     conn.commit()
+    kg_universe_membership.reconcile(
+        conn,
+        "SP500",
+        seen_ids,
+        as_of=as_of or _now()[:10],
+        run_kind="pricing",
+        source="pricing-gateway",
+    )
     return count
 
 
@@ -217,8 +238,8 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             (asset_id, start_date, end_date, label, first_trading_date, last_trading_date,
              first_close, last_close, period_return, trading_days, daily_return_std,
              annualized_volatility, min_close, max_close, avg_volume, source, warning,
-             retrieved_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             retrieved_at, event_time)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, start_date, end_date, label) DO UPDATE SET
             first_trading_date    = excluded.first_trading_date,
             last_trading_date     = excluded.last_trading_date,
@@ -233,7 +254,8 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             avg_volume            = excluded.avg_volume,
             source                = excluded.source,
             warning               = excluded.warning,
-            retrieved_at          = excluded.retrieved_at
+            retrieved_at          = excluded.retrieved_at,
+            event_time            = excluded.event_time
         """,
         (
             row.asset_id,
@@ -254,20 +276,76 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             row.source,
             row.warning,
             _now(),
+            row.end_date,
         ),
     )
     conn.commit()
 
 
-def replace_daily_prices(conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle]) -> int:
-    rows = [(asset_id, c.date, c.open, c.high, c.low, c.close, c.volume, c.source) for c in candles]
+def upsert_price_observations(
+    conn: sqlite3.Connection,
+    asset_id: int,
+    observations: Iterable[Observation],
+    *,
+    engine_version: str = PRICE_OBSERVATION_ENGINE_VERSION,
+    run_id: int | None = None,
+) -> int:
+    """Write the derived per-day price analytics. Immutable per
+    ``(asset_id, obs_date, engine_version)`` -- a re-run with the same version is a no-op."""
+    now = _now()
+    rows = [
+        (
+            asset_id,
+            o.obs_date,
+            o.close,
+            o.prev_close,
+            o.log_return,
+            o.true_range,
+            o.atr_14,
+            o.realized_vol_21d,
+            o.realized_vol_90d,
+            o.max_drawdown_90d,
+            o.momentum_21d,
+            o.momentum_63d,
+            o.momentum_252d,
+            o.dollar_volume,
+            o.obs_date,
+            now,
+            engine_version,
+            run_id,
+            "pricing",
+        )
+        for o in observations
+    ]
     conn.executemany(
         """
-        INSERT INTO price_daily (asset_id, date, open, high, low, close, volume, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO price_observation
+            (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
+             realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
+             momentum_252d, dollar_volume, event_time, computed_at, engine_version, run_id, run_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    return len(rows)
+
+
+def replace_daily_prices(conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle]) -> int:
+    now = _now()
+    rows = [
+        (asset_id, c.date, c.open, c.high, c.low, c.close, c.volume, c.source, c.date, now)
+        for c in candles
+    ]
+    conn.executemany(
+        """
+        INSERT INTO price_daily
+            (asset_id, date, open, high, low, close, volume, source, event_time, ingested_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, date) DO UPDATE SET
             open = excluded.open, high = excluded.high, low = excluded.low,
-            close = excluded.close, volume = excluded.volume, source = excluded.source
+            close = excluded.close, volume = excluded.volume, source = excluded.source,
+            event_time = excluded.event_time, ingested_at = excluded.ingested_at
         """,
         rows,
     )

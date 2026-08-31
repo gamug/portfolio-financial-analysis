@@ -57,6 +57,25 @@ def test_sync_universe_upserts_without_duplicating(memory_db: sqlite3.Connection
     assert apple["company_name"] == "Apple Inc."
 
 
+def test_sync_universe_records_membership(memory_db: sqlite3.Connection) -> None:
+    db.sync_universe(
+        memory_db, [_company("AAPL", "Apple"), _company("MSFT", "Microsoft")], as_of="2026-01-01"
+    )
+    db.sync_universe(memory_db, [_company("AAPL", "Apple")], as_of="2026-04-01")  # MSFT drops out
+
+    rows = {
+        (r["ticker"], r["valid_from"], r["valid_to"])
+        for r in memory_db.execute(
+            "SELECT a.ticker, m.valid_from, m.valid_to FROM universe_membership m "
+            "JOIN assets a ON a.id = m.asset_id"
+        )
+    }
+    assert rows == {
+        ("AAPL", "2026-01-01", None),
+        ("MSFT", "2026-01-01", "2026-04-01"),
+    }
+
+
 def test_load_universe_limit_and_ticker_filter(memory_db: sqlite3.Connection) -> None:
     db.sync_universe(
         memory_db,
@@ -89,13 +108,16 @@ def test_snapshot_is_append_only_and_drives_resume(memory_db: sqlite3.Connection
             risks=["r"],
             model="deepseek-chat",
             metrics={"profitability.net_margin": 0.25},
+            event_time="2023-09-30",
         )
 
     db.insert_snapshot(memory_db, snap(80.0))
     db.insert_snapshot(memory_db, snap(10.0))  # conflict -> ignored
 
-    rows = list(memory_db.execute("SELECT score FROM fundamental_snapshot"))
-    assert [r["score"] for r in rows] == [80.0]
+    rows = list(
+        memory_db.execute("SELECT raw_value FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'")
+    )
+    assert [r["raw_value"] for r in rows] == [80.0]
     assert db.completed_units(memory_db) == {("AAPL", "10-K", "FY2023")}
 
 

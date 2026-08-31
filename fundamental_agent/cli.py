@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fundamental_agent.config import Settings
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
+from kg_schema.cli import run_migrate
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,6 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="re-scrape the S&P 500 list before running",
     )
+    run_cmd.add_argument(
+        "--sections",
+        action="store_true",
+        help="also fetch each filing's primary document and extract MD&A / risk-factor text",
+    )
+
+    migrate_cmd = sub.add_parser(
+        "migrate", help="apply pending shared-schema migrations (advances schema_version)"
+    )
+    migrate_cmd.add_argument("--db", help="override KG_FINANTIAL_DB path")
     return parser
 
 
@@ -59,6 +70,8 @@ def _split(value: str | None) -> list[str] | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "migrate":
+        return run_migrate(args.db)
     settings = Settings.load()
     if args.db:
         settings = settings.model_copy(update={"db_path": Path(args.db)})
@@ -71,6 +84,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         tickers=_split(args.tickers),
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
+        sections=args.sections,
     )
     report = run(settings, params)
 

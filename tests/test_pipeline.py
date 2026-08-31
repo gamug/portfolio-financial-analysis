@@ -138,8 +138,10 @@ def test_run_writes_snapshots_then_resumes(tmp_path: Path) -> None:
     conn = sqlite3.connect(settings.db_path)
     snaps = list(
         conn.execute(
-            "SELECT a.ticker, s.fiscal_period, s.score, s.rating "
-            "FROM fundamental_snapshot s JOIN assets a ON a.id = s.asset_id ORDER BY a.ticker"
+            "SELECT a.ticker, f.fiscal_period, s.raw_value, s.rating "
+            "FROM score_snapshot s JOIN assets a ON a.id = s.asset_id "
+            "JOIN sec_filings f ON f.id = s.filing_id "
+            "WHERE s.score_type = 'FUNDAMENTAL' ORDER BY a.ticker"
         )
     )
     assert [(r[0], r[1], r[2], r[3]) for r in snaps] == [
@@ -155,4 +157,9 @@ def test_run_writes_snapshots_then_resumes(tmp_path: Path) -> None:
     second = pipeline.run(settings, params)
     assert second.completed == 0
     assert second.skipped == 4
-    assert conn.execute("SELECT COUNT(*) FROM fundamental_snapshot").fetchone()[0] == 2
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        ).fetchone()[0]
+        == 2
+    )

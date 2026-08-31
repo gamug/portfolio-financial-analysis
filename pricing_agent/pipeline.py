@@ -20,6 +20,7 @@ from tqdm import tqdm
 from pricing_agent import db
 from pricing_agent.config import Settings
 from pricing_agent.db import PriceWindowRow, RunError
+from pricing_agent.observations import build_observations
 from pricing_agent.pricing_client import DailyPrices, PricingClient, today_iso
 from pricing_agent.stats import WindowStats, slice_year, summarize
 from pricing_agent.universe import parse_universe
@@ -38,6 +39,7 @@ class RunParams:
     tickers: Sequence[str] | None = None
     by_year: bool = False
     store_daily: bool = False
+    observations: bool = False
     fresh: bool = False
     refresh_universe: bool = False
 
@@ -122,7 +124,7 @@ def _run_task(engine: _Engine, task: _Task) -> None:
     start, end = params.start_date, params.resolved_end()
     wanted = _expected_labels(params)
     have = {label for label in wanted if (task.ticker, start, end, label) in engine.completed}
-    if not params.fresh and wanted <= have and not params.store_daily:
+    if not params.fresh and wanted <= have and not params.store_daily and not params.observations:
         report.skipped += 1
         db.bump_run_counter(conn, report.run_id, "skipped_units")
         return
@@ -179,6 +181,14 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
         )
     if params.store_daily:
         db.replace_daily_prices(conn, task.asset_id, prices.candles)
+    if params.observations:
+        db.upsert_price_observations(
+            conn,
+            task.asset_id,
+            build_observations(
+                list(prices.candles), engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION
+            ),
+        )
 
 
 def _params_json(params: RunParams) -> str:
@@ -190,6 +200,7 @@ def _params_json(params: RunParams) -> str:
             "tickers": list(params.tickers) if params.tickers else None,
             "by_year": params.by_year,
             "store_daily": params.store_daily,
+            "observations": params.observations,
             "fresh": params.fresh,
         }
     )
