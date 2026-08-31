@@ -46,7 +46,7 @@ _MAX_BACKOFF_SECONDS = 8.0
 # SEC 403s a User-Agent with no contact address. This default keeps the shape SEC
 # wants (name + address) but the address is a placeholder -- real runs MUST export
 # SEC_USER_AGENT with a reachable contact.
-_DEFAULT_USER_AGENT = "portfolio-finantial-analysis/0.1 sec-contact@example.com"
+_DEFAULT_USER_AGENT = "portfolio-financial-analysis/0.1 sec-contact@example.com"
 
 
 class FilingTextError(RuntimeError):

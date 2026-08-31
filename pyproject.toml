@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "portfolio-finantial-analysis"
+name = "portfolio-financial-analysis"
 version = "0.1.0"
 description = "Portfolio financial analysis."
 readme = "README.md"

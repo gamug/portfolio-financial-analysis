@@ -12,8 +12,8 @@ WIKIPEDIA_SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies
 # Wikipedia blocks browser-mimicking UAs from datacenters and requires a descriptive
 # one (project + contact URL). Override via WIKIPEDIA_USER_AGENT to add a real contact.
 _DEFAULT_USER_AGENT = (
-    "portfolio-finantial-analysis/0.1 "
-    "(+https://github.com/portfolio-finantial-analysis; research use) python-httpx"
+    "portfolio-financial-analysis/0.1 "
+    "(+https://github.com/gamug/portfolio-financial-analysis; research use) python-httpx"
 )
 _MIN_COLUMNS = 8
 
