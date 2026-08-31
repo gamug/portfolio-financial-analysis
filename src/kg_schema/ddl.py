@@ -2,7 +2,7 @@
 
 Everything here is ``CREATE TABLE IF NOT EXISTS`` / ``CREATE INDEX IF NOT EXISTS`` plus
 nullable ``ALTER TABLE ADD COLUMN`` -- safe to run against the shared
-``KG_FINANTIAL_DB`` at any time, concurrently with the other repos. Non-additive
+``KG_FINANCIAL_DB`` at any time, concurrently with the other repos. Non-additive
 changes (widening a UNIQUE key, renaming a table) live in :mod:`kg_schema.migrations`
 and only run via ``python -m <agent> migrate``.
 

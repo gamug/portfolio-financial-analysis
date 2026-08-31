@@ -7,17 +7,17 @@ Runs the additive schema *and* the non-additive rebuilds in
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
 import kg_schema
+from kg_schema.env import DB_ENV_VAR, database_path
 
 
 def resolve_db_path(explicit: str | None) -> Path:
-    path = explicit or os.environ.get("KG_FINANTIAL_DB")
+    path = database_path(explicit)
     if not path:
-        raise RuntimeError("no database: pass --db or set KG_FINANTIAL_DB")
+        raise RuntimeError(f"no database: pass --db or set {DB_ENV_VAR}")
     return Path(path).expanduser()
 
 

@@ -4,7 +4,7 @@
 
 `fundamental_agent/` runs a fundamental economic analysis over S&P 500 SEC filings
 (10-K annual, 10-Q quarterly, fiscal years >= 2022) and writes the results to the
-SQLite database named by `KG_FINANTIAL_DB`.
+SQLite database named by `KG_FINANCIAL_DB`.
 
 **Pipeline per filing:** pull statements from the EDGAR gateway → compute deterministic
 ratios (profitability, liquidity, leverage, efficiency, growth, cash flow, roic, cagr,
@@ -19,7 +19,7 @@ strengths, risks). Each `(asset, form, fiscal_period)` produces one immutable
 
 | Variable | Purpose |
 |---|---|
-| `KG_FINANTIAL_DB` | SQLite path. `assets` / `sectors` are created only if missing and never overwritten; all other tables are owned by this agent. |
+| `KG_FINANCIAL_DB` | SQLite path. `assets` / `sectors` are created only if missing and never overwritten; all other tables are owned by this agent. The old misspelled `KG_FINANTIAL_DB` is still read as a fallback. |
 | `LLM_API_KEY` / `LLM_MODEL` / `LLM_URL` | OpenAI-compatible LLM (DeepSeek). Used via Strands' `OpenAIModel`. |
 | `EDGAR_BASE_URL` | Optional; defaults to `http://host.docker.internal:8000/edgar/edgar`. |
 | `WIKIPEDIA_USER_AGENT` | Optional; set a descriptive UA with a real contact URL for the S&P 500 scrape. |
@@ -40,7 +40,7 @@ are recorded in `analysis_run_error` and do not stop the batch.
 ### Inspect results
 
 ```bash
-uv run python -c "import os,sqlite3; c=sqlite3.connect(os.environ['KG_FINANTIAL_DB']); \
+uv run python -c "import os,sqlite3; c=sqlite3.connect(os.environ['KG_FINANCIAL_DB']); \
   [print(r) for r in c.execute('SELECT a.ticker,s.form,s.fiscal_period,round(s.score,1),s.rating \
    FROM fundamental_snapshot s JOIN assets a ON a.id=s.asset_id ORDER BY 1,3')]"
 ```
@@ -61,7 +61,7 @@ and every other metric is unaffected.
 
 `pricing_agent/` is a **standalone** module (no `fundamental_agent` coupling; cross-module
 orchestration is a separate branch) that collects daily-pricing window summaries from the
-pricing gateway and writes them to the same `KG_FINANTIAL_DB` under its own tables.
+pricing gateway and writes them to the same `KG_FINANCIAL_DB` under its own tables.
 
 **Per ticker:** one `GET /pricing/{ticker}?start_date&end_date` call over the whole range,
 then a `price_window` row with the first/last trading day and close, period return, trading
@@ -77,7 +77,7 @@ uv run python -m pricing_agent run --limit 5 --by-year      # first 5 tickers, p
 uv run python -m pricing_agent run --tickers AAPL,NVDA --store-daily
 ```
 
-Config: `KG_FINANTIAL_DB` (required); `PRICING_BASE_URL` (optional, defaults to
+Config: `KG_FINANCIAL_DB` (required); `PRICING_BASE_URL` (optional, defaults to
 `http://host.docker.internal:8000/pricing`). Re-runs skip windows already stored; `--fresh`
 recomputes. Progress + ETA via `tqdm`; run stats land in `pricing_run` / `pricing_run_error`.
 

@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     run_cmd = sub.add_parser("run", help="fetch prices and write price_window rows")
-    run_cmd.add_argument("--db", help="override KG_FINANTIAL_DB path")
+    run_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
     run_cmd.add_argument(
         "--start", default=DEFAULT_START_DATE, help=f"start date (default {DEFAULT_START_DATE})"
     )
@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
-    migrate_cmd.add_argument("--db", help="override KG_FINANTIAL_DB path")
+    migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
     return parser
 
 

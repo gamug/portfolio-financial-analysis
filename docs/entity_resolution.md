@@ -2,7 +2,7 @@
 
 Roadmap step 7: candidate `sharedExecutiveWith` edges. A **read-only** consumer of
 the news repo's `urls.db` that writes one table (`shared_executive_edge`) into
-`KG_FINANTIAL_DB`. No SEC proxy scraping — the signal is people co-mentioned in the
+`KG_FINANCIAL_DB`. No SEC proxy scraping — the signal is people co-mentioned in the
 news of multiple issuers.
 
 ```bash
@@ -12,7 +12,7 @@ uv run python -m entity_resolution build [--min-weight 3] [--max-tickers 15] \
 
 ## Configuration (`config.py`)
 
-`KG_FINANTIAL_DB` (required) + `KG_NEWS_DB` (default
+`KG_FINANCIAL_DB` (required) + `KG_NEWS_DB` (default
 `/workspaces/thesis/data/urls.db`).
 
 ## Files

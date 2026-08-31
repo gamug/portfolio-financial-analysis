@@ -8,6 +8,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from kg_schema.env import DB_ENV_VAR, database_path
+
 _DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "QUANTITATIVE": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
 
 
@@ -30,9 +32,9 @@ class CycleSettings(BaseModel):
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:
         load_dotenv(env_file, override=False)
-        db_path = os.environ.get("KG_FINANTIAL_DB")
+        db_path = database_path()
         if not db_path:
-            raise RuntimeError("missing required environment variable: KG_FINANTIAL_DB")
+            raise RuntimeError(f"missing required environment variable: {DB_ENV_VAR}")
         return cls(
             db_path=Path(db_path).expanduser(),
             llm_api_key=os.environ.get("LLM_API_KEY"),

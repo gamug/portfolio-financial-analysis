@@ -15,7 +15,7 @@ from any directory; `pytest` adds `src` via `pythonpath`.
 ## How they fit together
 
 ```
-                    ┌─────────────────────────── KG_FINANTIAL_DB (SQLite) ───────────────────────────┐
+                    ┌─────────────────────────── KG_FINANCIAL_DB (SQLite) ───────────────────────────┐
                     │  assets / sectors        (identity, owned elsewhere)                           │
  EDGAR gateway ───▶ │  sec_filings, financial_facts, fundamental_metrics, score_snapshot[FUND]      │ ◀── fundamental_agent
  www.sec.gov   ───▶ │  sec_filing_section                                                            │ ◀── fundamental_agent --sections

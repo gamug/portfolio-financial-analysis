@@ -8,11 +8,13 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from kg_schema.env import DB_ENV_VAR, database_path
+
 # The EDGAR gateway mounts the SEC service under ``/edgar`` and the service itself
 # prefixes its routes with ``/edgar`` again, hence the doubled segment.
 DEFAULT_EDGAR_BASE_URL = "http://host.docker.internal:8000/edgar/edgar"
 
-_REQUIRED_VARS = ("KG_FINANTIAL_DB", "LLM_API_KEY", "LLM_MODEL", "LLM_URL")
+_REQUIRED_LLM_VARS = ("LLM_API_KEY", "LLM_MODEL", "LLM_URL")
 
 
 class Settings(BaseModel):
@@ -28,11 +30,14 @@ class Settings(BaseModel):
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:
         """Load settings from the environment, populating it from ``.env`` first."""
         load_dotenv(env_file, override=False)
-        missing = [name for name in _REQUIRED_VARS if not os.environ.get(name)]
-        if missing:
+        db_path = database_path()
+        missing = [name for name in _REQUIRED_LLM_VARS if not os.environ.get(name)]
+        if db_path is None:
+            missing.insert(0, DB_ENV_VAR)
+        if missing or db_path is None:
             raise RuntimeError(f"missing required environment variables: {', '.join(missing)}")
         return cls(
-            db_path=Path(os.environ["KG_FINANTIAL_DB"]).expanduser(),
+            db_path=Path(db_path).expanduser(),
             llm_api_key=os.environ["LLM_API_KEY"],
             llm_model=os.environ["LLM_MODEL"],
             llm_url=os.environ["LLM_URL"],

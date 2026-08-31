@@ -1,4 +1,4 @@
-"""Write ``shared_executive_edge`` into ``KG_FINANTIAL_DB``."""
+"""Write ``shared_executive_edge`` into ``KG_FINANCIAL_DB``."""
 
 from __future__ import annotations
 
