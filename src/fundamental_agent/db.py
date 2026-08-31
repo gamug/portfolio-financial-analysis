@@ -422,7 +422,9 @@ def record_metrics(
 # -- filing sections (narrative text) ---------------------------------
 
 
-SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v1"
+# v2: block-aware flattening (heals span-split "Item" markers), title-only heading
+# detection for cross-reference-style filers, filer-CIK archive paths, body clamp.
+SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"
 
 
 def insert_filing_sections(  # noqa: PLR0913 - keyword-only provenance fields

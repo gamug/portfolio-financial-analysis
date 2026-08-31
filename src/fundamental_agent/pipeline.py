@@ -256,7 +256,7 @@ def _extract_sections(
     if not cik:
         return
     try:
-        html, source_url = fetch_primary_document(cik, meta.accession_number)
+        html, source_url = fetch_primary_document(cik, meta.accession_number, form=task.form)
         sections = split_sections(html, task.form)
         if sections:
             db.insert_filing_sections(
