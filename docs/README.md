@@ -11,7 +11,6 @@ from any directory; `pytest` adds `src` via `pythonpath`.
 | `kg_schema/` | Passive shared schema, migrations, read-contract views | [kg_schema.md](kg_schema.md) |
 | `cycle/` | Strands selection / monitoring cycles → TECHNICAL/QUANTITATIVE scores, `veto`, `portfolio_position` | [cycle.md](cycle.md) |
 | `entity_resolution/` | `sharedExecutiveWith` edges from news co-occurrence | [entity_resolution.md](entity_resolution.md) |
-| `backtest/` | Roadmap step 9 — placeholder, not implemented | [backtest.md](backtest.md) |
 
 ## How they fit together
 
