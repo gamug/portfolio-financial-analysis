@@ -132,8 +132,24 @@ def test_migrations_are_a_noop_second_time(migrated_db: sqlite3.Connection) -> N
 
 
 def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
-    for name in ("v_score_snapshot", "v_universe_membership", "v_price_observation", "v_veto"):
+    for name in (
+        "v_score_snapshot",
+        "v_universe_membership",
+        "v_price_observation",
+        "v_sec_filing",
+        "v_sec_filing_section",
+        "v_veto",
+    ):
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
+
+
+def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> None:
+    rows = migrated_db.execute(
+        "SELECT ticker, form, fiscal_period, accession_number, period_end FROM v_sec_filing"
+    ).fetchall()
+    assert [tuple(r) for r in rows] == [
+        ("AAPL", "10-K", "FY2023", "0000320193-23-000106", "2023-09-30")
+    ]
 
 
 def test_universe_membership_lifecycle() -> None:
