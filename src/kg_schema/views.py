@@ -11,15 +11,36 @@ Projection semantics
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / QUANTITATIVE, and the article-day for SEMANTIC.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
+``v_sector``              one row per GICS sector with its member-asset and sub-industry
+                          counts (the reference lane's rollup anchor).
+``v_industry``            one row per GICS sub-industry -> sector (the scrape has no
+                          middle industry-group tier; sub-industry stands in for it).
 ``v_price_observation``    latest ``engine_version`` per (asset, obs_date); derived
                           price analytics only (raw OHLCV stays in ``price_daily``).
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
+                          ``item_label`` is the ontology ``itemLabel`` token
+                          (``ITEM_1A_RISK_FACTORS``, ``ITEM_7_MDA``, ...), derived in SQL
+                          from ``(item_number, section_type)`` -- kept identical to
+                          ``fundamental_agent.sections.canonical_item_label``.
 ``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
+``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
+                          is kept verbatim; ``param_metric`` / ``param_operator`` /
+                          ``param_threshold`` unpack the threshold-rule shape when present.
 ``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open.
 ``v_shared_executive_edge``pair-level aggregate of ``shared_executive_edge`` person rows.
 ``v_cycle_ranking``        the ranked cohort of the latest cycle per cycle_type.
+``v_weight_scheme``       one row per ``cycle_run`` that recorded a blend: the scheme id and
+                          the scalar knobs (``top_n``, name/sector caps, soft-veto penalty).
+                          ``cycle_date`` is the scheme's effective date -- a later run with a
+                          changed blend is a new row, no bespoke ``valid_from``/``valid_to``.
+``v_weight_component``     one row per (``cycle_run``, ``score_type``): the blend weight that
+                          score type carried in that run. Explodes ``score_weights``.
+``v_sector_aggregate_snapshot`` per-cycle mean of members' TECHNICAL score per sector.
+                          Its per-asset counterpart is ``score_snapshot`` rows of type
+                          ``SECTOR`` (own TECHNICAL raw minus this mean), reachable through
+                          ``v_score_snapshot``.
 """
 
 from __future__ import annotations
@@ -40,6 +61,22 @@ VIEWS: dict[str, str] = {
         SELECT m.id, a.ticker, m.asset_id, m.universe, m.valid_from, m.valid_to,
                m.detected_at, m.source, m.run_id, m.run_kind
         FROM universe_membership m JOIN assets a ON a.id = m.asset_id
+    """,
+    "v_sector": """
+        CREATE VIEW v_sector AS
+        SELECT s.id AS sector_id, s.name AS sector_name,
+               COUNT(a.id) AS asset_count,
+               COUNT(DISTINCT NULLIF(a.sub_industry, '')) AS sub_industry_count
+        FROM sectors s LEFT JOIN assets a ON a.sector_id = s.id
+        GROUP BY s.id, s.name
+    """,
+    "v_industry": """
+        CREATE VIEW v_industry AS
+        SELECT a.sub_industry AS industry_name, s.name AS sector_name, s.id AS sector_id,
+               COUNT(*) AS asset_count
+        FROM assets a JOIN sectors s ON s.id = a.sector_id
+        WHERE a.sub_industry IS NOT NULL AND a.sub_industry <> ''
+        GROUP BY a.sub_industry, s.name, s.id
     """,
     "v_price_observation": """
         CREATE VIEW v_price_observation AS
@@ -63,7 +100,16 @@ VIEWS: dict[str, str] = {
     "v_sec_filing_section": """
         CREATE VIEW v_sec_filing_section AS
         SELECT sec.id, a.ticker, f.asset_id, sec.filing_id, f.form, f.fiscal_period,
-               sec.section_type, sec.item_number, sec.heading, sec.ordinal,
+               sec.section_type, sec.item_number,
+               CASE
+                 WHEN sec.item_number IS NULL OR TRIM(sec.item_number) = ''
+                   THEN CASE sec.section_type WHEN 'MD&A' THEN 'MDA'
+                        ELSE REPLACE(REPLACE(UPPER(sec.section_type), ' ', '_'), '&', 'AND') END
+                 ELSE 'ITEM_' || UPPER(TRIM(sec.item_number)) || '_' ||
+                      CASE sec.section_type WHEN 'MD&A' THEN 'MDA'
+                        ELSE REPLACE(REPLACE(UPPER(sec.section_type), ' ', '_'), '&', 'AND') END
+               END AS item_label,
+               sec.heading, sec.ordinal,
                sec.text, sec.text_sha256, sec.word_count, sec.extraction_method,
                sec.source_url, sec.event_time, sec.retrieved_at, sec.engine_version
         FROM sec_filing_section sec
@@ -75,6 +121,15 @@ VIEWS: dict[str, str] = {
         SELECT v.id, a.ticker, v.asset_id, v.rule_id, v.severity, v.detected_at,
                v.cycle_date, v.cleared_at, v.evidence_json, v.run_id
         FROM veto v JOIN assets a ON a.id = v.asset_id
+    """,
+    "v_rule_catalog": """
+        CREATE VIEW v_rule_catalog AS
+        SELECT rc.rule_id, rc.description, rc.severity, rc.enabled, rc.params_json,
+               json_extract(rc.params_json, '$.metric')    AS param_metric,
+               json_extract(rc.params_json, '$.op')        AS param_operator,
+               json_extract(rc.params_json, '$.threshold') AS param_threshold,
+               rc.created_at
+        FROM rule_catalog rc
     """,
     "v_portfolio_position": """
         CREATE VIEW v_portfolio_position AS
@@ -101,6 +156,32 @@ VIEWS: dict[str, str] = {
         FROM cycle_ranking r
         JOIN cycle_run cr ON cr.id = r.cycle_run_id
         JOIN assets a ON a.id = r.asset_id
+    """,
+    "v_weight_scheme": """
+        CREATE VIEW v_weight_scheme AS
+        SELECT cr.id AS cycle_run_id, cr.cycle_type, cr.cycle_date,
+               json_extract(cr.params_json, '$.weight_scheme')          AS scheme_id,
+               json_extract(cr.params_json, '$.score_weights')          AS weights_json,
+               CAST(json_extract(cr.params_json, '$.top_n') AS INTEGER) AS top_n,
+               json_extract(cr.params_json, '$.max_name_weight')        AS max_name_weight,
+               json_extract(cr.params_json, '$.max_sector_weight')      AS max_sector_weight,
+               json_extract(cr.params_json, '$.soft_veto_penalty')      AS soft_veto_penalty
+        FROM cycle_run cr
+        WHERE json_extract(cr.params_json, '$.score_weights') IS NOT NULL
+    """,
+    "v_weight_component": """
+        CREATE VIEW v_weight_component AS
+        SELECT cr.id AS cycle_run_id, cr.cycle_type, cr.cycle_date,
+               je.key AS score_type, je.value AS weight
+        FROM cycle_run cr,
+             json_each(json_extract(cr.params_json, '$.score_weights')) je
+        WHERE json_extract(cr.params_json, '$.score_weights') IS NOT NULL
+    """,
+    "v_sector_aggregate_snapshot": """
+        CREATE VIEW v_sector_aggregate_snapshot AS
+        SELECT sa.id, s.name AS sector_name, sa.sector_id, sa.cycle_date, sa.metric_type,
+               sa.member_count, sa.mean_raw, sa.mean_normalized, sa.computed_at, sa.run_id
+        FROM sector_aggregate_snapshot sa JOIN sectors s ON s.id = sa.sector_id
     """,
 }
 

@@ -1,10 +1,11 @@
 # `cycle/`
 
 Strands-driven selection & monitoring cycles (roadmap steps 6 & 8). Produces
-TECHNICAL / QUANTITATIVE `score_snapshot` rows, normalizes all four score types
-cross-sectionally, evaluates the `rule_catalog` into `veto` rows with a **T-1
-contagion lag**, ranks the universe, and (for a selection cycle) writes
-`portfolio_position` targets and `cycle_ranking`.
+TECHNICAL / QUANTITATIVE / SECTOR `score_snapshot` rows (plus per-sector
+`sector_aggregate_snapshot`), normalizes the score types cross-sectionally,
+evaluates the `rule_catalog` into `veto` rows with a **T-1 contagion lag**, ranks
+the universe, and (for a selection cycle) writes `portfolio_position` targets and
+`cycle_ranking`.
 
 ```bash
 uv run python -m cycle select  --date 2026-06-30 [--top-n 30] [--dry-run]
@@ -69,6 +70,14 @@ Proposed. Factor blend: **value** .45 (`valuation.free_cash_flow_yield`,
 (synthetic `neg_log_market_cap`). Each factor = mean of its available sub-metric
 percentiles.
 
+### `scores/sector.py` — `SCORE_TYPE = "SECTOR"`, `roll_up(sector_of, technical_raw, technical_norm)`
+
+Returns `(list[SectorAggregate], momentum: dict[asset_id, float])`. Per GICS
+sector: `member_count`, `mean_raw`, `mean_normalized` of members' TECHNICAL score.
+`momentum[asset_id]` = own raw − sector mean raw (the `SectorRelativeMomentum`
+signal). Sector-less assets and assets with no TECHNICAL score this cycle are
+dropped. Pure derivation — nothing fetched.
+
 ### `rules/`
 
 - `base.py` — `VetoHit(asset_id, rule_id, severity, evidence)`, `RuleContext`
@@ -80,6 +89,9 @@ percentiles.
   `EARNINGS_MISSING` (no FUNDAMENTAL score within 400 days, SOFT).
 - `__init__.py` — `seed_catalog(conn)` (`INSERT OR IGNORE` into `rule_catalog`,
   never overwrites), `enabled_rules(conn)`.
+- The rule catalog and the per-run blend (`score_weights` + knobs in
+  `cycle_run.params_json`) are read-projected by `kg_schema` as `v_rule_catalog`,
+  `v_weight_scheme`, `v_weight_component` — no separate export step.
 
 ### `writers.py`
 
@@ -104,7 +116,7 @@ converges. Caps are approximate (converge to within rounding).
 
 ```
 universe → fundamental → technical → quantitative → semantic_read →
-normalize → veto → rank → [positions]   (positions is SELECTION only)
+normalize → sector → veto → rank → [positions]   (positions is SELECTION only)
 ```
 
 - **fundamental** — delegates to `fundamental_hook`; with no hook it just reports
@@ -114,6 +126,10 @@ normalize → veto → rank → [positions]   (positions is SELECTION only)
 - **normalize** — per score_type, z-score the cohort → `z_to_score` →
   `normalized_score`. FUNDAMENTAL is normalized against each asset's latest filing
   snapshot.
+- **sector** — `scores/sector.roll_up`: per GICS sector, mean of members'
+  TECHNICAL score → one `sector_aggregate_snapshot` row; each asset's own raw
+  minus that mean → a `score_snapshot` row of type `SECTOR` (`SectorRelativeMomentum`;
+  negative = lagging its sector). Not in the blend — a standalone observation.
 - **rank** — blended score = weighted mean of available `normalized_score`s
   (weights renormalized over present types), minus `soft_veto_penalty` per active
   SOFT veto. T-1 HARD-veto assets are marked `vetoed` (excluded from selection).

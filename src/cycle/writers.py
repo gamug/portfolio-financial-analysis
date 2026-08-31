@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 
 from cycle.rules.base import VetoHit
+from cycle.scores.sector import SectorAggregate
 
 
 def _now() -> str:
@@ -64,6 +65,34 @@ def apply_normalized(
         [(v, score_type, cycle_date, aid) for aid, v in normalized.items()],
     )
     conn.commit()
+
+
+def write_sector_aggregates(
+    conn: sqlite3.Connection,
+    cycle_date: str,
+    aggregates: list[SectorAggregate],
+    *,
+    run_id: int,
+) -> int:
+    """Upsert one ``sector_aggregate_snapshot`` row per sector for this cycle date."""
+    now = _now()
+    conn.executemany(
+        """
+        INSERT INTO sector_aggregate_snapshot
+            (sector_id, cycle_date, metric_type, member_count, mean_raw, mean_normalized,
+             computed_at, run_id)
+        VALUES (?, ?, 'ScoreTecnico', ?, ?, ?, ?, ?)
+        ON CONFLICT (sector_id, cycle_date, metric_type) DO UPDATE SET
+            member_count = excluded.member_count, mean_raw = excluded.mean_raw,
+            mean_normalized = excluded.mean_normalized, computed_at = excluded.computed_at
+        """,
+        [
+            (a.sector_id, cycle_date, a.member_count, a.mean_raw, a.mean_normalized, now, run_id)
+            for a in aggregates
+        ],
+    )
+    conn.commit()
+    return len(aggregates)
 
 
 def write_vetoes(
