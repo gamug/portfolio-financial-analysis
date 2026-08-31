@@ -99,7 +99,12 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: sqlite3.Connection) -> None:
     conn = migrated_db
-    assert version.current_version(conn) == 4
+    assert version.current_version(conn) == 5
+    # score_type CHECK admits 'SECTOR' after m005
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
+        "VALUES (1, 'SECTOR', -4.0, '2026-08-05', '2026-08-05T00:00:00Z')"
+    )
     # financial_facts rebuilt with filing_version in the unique key, backfilled
     ff = conn.execute("SELECT filing_version, event_time FROM financial_facts").fetchone()
     assert ff["filing_version"] == "0000320193-23-000106"
@@ -131,10 +136,77 @@ def test_migrations_are_a_noop_second_time(migrated_db: sqlite3.Connection) -> N
     assert migrations.apply_migrations(migrated_db) == []
 
 
+def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    # a database already at floor 4: score_snapshot with the pre-SECTOR CHECK + compat view
+    conn.executescript(
+        """
+        CREATE TABLE sectors (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE,
+                             sector_id INTEGER, sub_industry TEXT);
+        CREATE TABLE sec_filings (id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL,
+                                  form TEXT NOT NULL, fiscal_year INTEGER NOT NULL,
+                                  fiscal_period TEXT NOT NULL, filing_date TEXT,
+                                  accession_number TEXT, period_end TEXT,
+                                  retrieved_at TEXT NOT NULL);
+        INSERT INTO assets (id, ticker) VALUES (1, 'AAPL');
+        INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, retrieved_at)
+        VALUES (1, 1, '10-K', 2023, 'FY2023', '2024-01-01T00:00:00Z');
+        CREATE TABLE score_snapshot (
+            id INTEGER PRIMARY KEY,
+            asset_id INTEGER NOT NULL REFERENCES assets(id),
+            score_type TEXT NOT NULL CHECK (score_type IN
+                ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC')),
+            raw_value REAL, normalized_score REAL, event_time TEXT NOT NULL,
+            computed_at TEXT NOT NULL, model TEXT, inputs_json TEXT, run_id INTEGER,
+            run_kind TEXT, filing_id INTEGER REFERENCES sec_filings(id),
+            rating TEXT, narrative TEXT, strengths_json TEXT, risks_json TEXT,
+            UNIQUE (asset_id, score_type, event_time)
+        );
+        INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at,
+                                    filing_id, rating, narrative)
+        VALUES (1, 'FUNDAMENTAL', 72.0, '2023-09-30', '2024-01-02T00:00:00Z', 1, 'bullish', 'n');
+        CREATE VIEW fundamental_snapshot AS
+        SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period, s.raw_value AS score,
+               s.rating, s.narrative, s.strengths_json, s.risks_json, s.model,
+               s.inputs_json AS metrics_json, s.computed_at AS created_at
+        FROM score_snapshot s JOIN sec_filings f ON f.id = s.filing_id
+        WHERE s.score_type = 'FUNDAMENTAL';
+        """
+    )
+    version.ensure(conn)
+    version.record(conn, 4, "pretend floor")
+    conn.commit()
+
+    assert 5 in kg_schema.ensure(conn, run_migrations=True)
+
+    # SECTOR now accepted, the FUNDAMENTAL row survived the rebuild
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
+        "VALUES (1, 'SECTOR', -3.5, '2026-08-05', '2026-08-05T00:00:00Z')"
+    )
+    kept = conn.execute(
+        "SELECT score_type, raw_value FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+    ).fetchone()
+    assert (kept["score_type"], kept["raw_value"]) == ("FUNDAMENTAL", 72.0)
+    # the compat view is still a working view
+    assert (
+        conn.execute(
+            "SELECT type FROM sqlite_master WHERE name = 'fundamental_snapshot'"
+        ).fetchone()[0]
+        == "view"
+    )
+    assert conn.execute("SELECT score FROM fundamental_snapshot").fetchone()["score"] == 72.0
+
+
 def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
     for name in (
         "v_score_snapshot",
         "v_universe_membership",
+        "v_sector",
+        "v_industry",
         "v_price_observation",
         "v_sec_filing",
         "v_sec_filing_section",
@@ -142,6 +214,7 @@ def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
         "v_rule_catalog",
         "v_weight_scheme",
         "v_weight_component",
+        "v_sector_aggregate_snapshot",
     ):
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
 
@@ -153,6 +226,28 @@ def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> 
     assert [tuple(r) for r in rows] == [
         ("AAPL", "10-K", "FY2023", "0000320193-23-000106", "2023-09-30")
     ]
+
+
+def test_v_sector_and_v_industry_roll_up_assets(migrated_db: sqlite3.Connection) -> None:
+    conn = migrated_db
+    conn.execute("INSERT INTO sectors (id, name) VALUES (1, 'Information Technology')")
+    conn.executemany(
+        "UPDATE assets SET sector_id = 1, sub_industry = ? WHERE ticker = ?",
+        [("Technology Hardware", "AAPL"), ("Systems Software", "MSFT")],
+    )
+    conn.commit()
+    sec = conn.execute(
+        "SELECT sector_name, asset_count, sub_industry_count FROM v_sector WHERE sector_id = 1"
+    ).fetchone()
+    assert tuple(sec) == ("Information Technology", 2, 2)
+    inds = {
+        r["industry_name"]: (r["sector_name"], r["asset_count"])
+        for r in conn.execute("SELECT * FROM v_industry")
+    }
+    assert inds == {
+        "Technology Hardware": ("Information Technology", 1),
+        "Systems Software": ("Information Technology", 1),
+    }
 
 
 def test_v_rule_catalog_unpacks_threshold_params(migrated_db: sqlite3.Connection) -> None:

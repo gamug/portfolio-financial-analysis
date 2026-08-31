@@ -166,6 +166,74 @@ def _m004_score_snapshot(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+# -- m005: widen score_snapshot.score_type CHECK to admit 'SECTOR' -----------
+
+
+def _m005_score_type_sector(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "score_snapshot"):
+        return
+    sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'score_snapshot'"
+    ).fetchone()
+    if sql_row is None or "'SECTOR'" in (sql_row[0] or ""):
+        return  # fresh DB already has the widened CHECK
+    had_compat_view = _is_view(conn, "fundamental_snapshot")
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # Views that read score_snapshot must go before the table rebuild; ensure()'s
+    # post-migration ensure_views() call puts the read-contract one back.
+    conn.executescript(
+        """
+        DROP VIEW IF EXISTS v_score_snapshot;
+        DROP VIEW IF EXISTS fundamental_snapshot;
+        CREATE TABLE score_snapshot__new (
+            id               INTEGER PRIMARY KEY,
+            asset_id         INTEGER NOT NULL REFERENCES assets(id),
+            score_type       TEXT NOT NULL CHECK (score_type IN
+                                ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
+            raw_value        REAL,
+            normalized_score REAL,
+            event_time       TEXT NOT NULL,
+            computed_at      TEXT NOT NULL,
+            model            TEXT,
+            inputs_json      TEXT,
+            run_id           INTEGER,
+            run_kind         TEXT,
+            filing_id        INTEGER REFERENCES sec_filings(id),
+            rating           TEXT,
+            narrative        TEXT,
+            strengths_json   TEXT,
+            risks_json       TEXT,
+            UNIQUE (asset_id, score_type, event_time)
+        );
+        INSERT INTO score_snapshot__new
+            (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
+             model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
+             risks_json)
+        SELECT id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
+               model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
+               risks_json
+        FROM score_snapshot;
+        DROP TABLE score_snapshot;
+        ALTER TABLE score_snapshot__new RENAME TO score_snapshot;
+        CREATE INDEX IF NOT EXISTS ix_score_snapshot_type_time
+            ON score_snapshot (score_type, event_time);
+        """
+    )
+    if had_compat_view:
+        conn.executescript(
+            """
+            CREATE VIEW fundamental_snapshot AS
+            SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period,
+                   s.raw_value AS score, s.rating, s.narrative, s.strengths_json, s.risks_json,
+                   s.model, s.inputs_json AS metrics_json, s.computed_at AS created_at
+            FROM score_snapshot s
+            JOIN sec_filings f ON f.id = s.filing_id
+            WHERE s.score_type = 'FUNDAMENTAL';
+            """
+        )
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -175,6 +243,7 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         _m003_fundamental_metrics,
     ),
     (4, "fundamental_snapshot -> score_snapshot (+ compatibility view)", _m004_score_snapshot),
+    (5, "score_snapshot.score_type CHECK widened to admit 'SECTOR'", _m005_score_type_sector),
 ]
 
 

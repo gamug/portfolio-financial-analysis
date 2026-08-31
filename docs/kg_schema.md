@@ -51,20 +51,24 @@ are present / it hasn't already run).
 | m002 | rebuild `financial_facts` with `UNIQUE(filing_id, statement, concept, period_key, filing_version)` + `event_time NOT NULL`; backfill from `sec_filings` |
 | m003 | rebuild `fundamental_metrics` with `UNIQUE(…, engine_version)` + `event_time NOT NULL` |
 | m004 | `INSERT … SELECT` `fundamental_snapshot` rows into `score_snapshot` as `FUNDAMENTAL`; rename the table to `fundamental_snapshot_legacy`; recreate `fundamental_snapshot` **as a compatibility VIEW** (joins `score_snapshot` → `sec_filings` for `form` / `fiscal_period`) so the README query and external consumers keep working until they move to `v_score_snapshot` |
+| m005 | rebuild `score_snapshot` with its `score_type` CHECK widened to admit `'SECTOR'` (guard: skipped when the CHECK already lists it); drops + recreates `v_score_snapshot` and the `fundamental_snapshot` compat view around the swap |
 
 ### `views.py` — `VIEWS`, `ensure_views(conn)`
 
 `ensure_views` drops and recreates every view on each call (cheap, always current);
 a view whose base table is missing is silently skipped. The module docstring is the
 **projection contract** — column list + semantics per view. Views:
-`v_score_snapshot`, `v_universe_membership`, `v_price_observation` (newest
-`engine_version` per asset/day), `v_sec_filing` (one row per filing),
-`v_sec_filing_section`, `v_veto`, `v_rule_catalog` (veto rules as data —
-`params_json` verbatim plus unpacked `param_metric` / `param_operator` /
-`param_threshold`), `v_portfolio_position`, `v_shared_executive_edge` (pair-level
-aggregate), `v_cycle_ranking`, `v_weight_scheme` (one row per `cycle_run` that
-recorded a blend — scheme id + scalar knobs), `v_weight_component` (that blend
-exploded to one row per `(cycle_run, score_type)`).
+`v_score_snapshot`, `v_universe_membership`, `v_sector` (GICS sector rollup with
+member/sub-industry counts), `v_industry` (sub-industry → sector; the scrape has
+no middle industry-group tier), `v_price_observation` (newest `engine_version` per
+asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section`, `v_veto`,
+`v_rule_catalog` (veto rules as data — `params_json` verbatim plus unpacked
+`param_metric` / `param_operator` / `param_threshold`), `v_portfolio_position`,
+`v_shared_executive_edge` (pair-level aggregate), `v_cycle_ranking`,
+`v_weight_scheme` (one row per `cycle_run` that recorded a blend — scheme id +
+scalar knobs), `v_weight_component` (that blend exploded to one row per
+`(cycle_run, score_type)`), `v_sector_aggregate_snapshot` (per-cycle mean of
+members' TECHNICAL score per sector).
 
 ### `universe_membership.py` — `reconcile(conn, universe, present_asset_ids, *, as_of, run_id=None, run_kind=None, source)`
 
@@ -85,7 +89,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 | Table | Purpose | Immutability key |
 |---|---|---|
 | `universe_membership` | S&P 500 membership history | `UNIQUE(asset_id, universe, valid_from)` |
-| `score_snapshot` | all four `ScoreSnapshot` types | `UNIQUE(asset_id, score_type, event_time)` |
+| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / QUANTITATIVE / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
 | `portfolio_position` | position stints | `UNIQUE(asset_id, valid_from)` |
@@ -94,6 +98,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 | `price_observation` | derived per-day price analytics | `UNIQUE(asset_id, obs_date, engine_version)` |
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |
 | `shared_executive_edge` | `sharedExecutiveWith` candidates | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
+| `sector_aggregate_snapshot` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `UNIQUE(sector_id, cycle_date, metric_type)` |
 
 ## Gotchas
 
