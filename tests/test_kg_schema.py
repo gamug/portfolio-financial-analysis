@@ -139,6 +139,9 @@ def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
         "v_sec_filing",
         "v_sec_filing_section",
         "v_veto",
+        "v_rule_catalog",
+        "v_weight_scheme",
+        "v_weight_component",
     ):
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
 
@@ -150,6 +153,73 @@ def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> 
     assert [tuple(r) for r in rows] == [
         ("AAPL", "10-K", "FY2023", "0000320193-23-000106", "2023-09-30")
     ]
+
+
+def test_v_rule_catalog_unpacks_threshold_params(migrated_db: sqlite3.Connection) -> None:
+    conn = migrated_db
+    conn.executemany(
+        "INSERT INTO rule_catalog (rule_id, description, severity, params_json, enabled, "
+        "created_at) VALUES (?, ?, ?, ?, ?, '2026-01-01T00:00:00Z')",
+        [
+            (
+                "LEVERAGE_EXTREME",
+                "debt/equity too high",
+                "HARD",
+                '{"metric": "leverage.debt_to_equity", "op": ">", "threshold": 3.0}',
+                1,
+            ),
+            ("PRICE_CRASH", "deep drawdown", "SOFT", '{"threshold": -0.35}', 0),
+        ],
+    )
+    conn.commit()
+    rows = {
+        r["rule_id"]: (
+            r["severity"],
+            r["enabled"],
+            r["param_metric"],
+            r["param_operator"],
+            r["param_threshold"],
+        )
+        for r in conn.execute("SELECT * FROM v_rule_catalog")
+    }
+    assert rows["LEVERAGE_EXTREME"] == ("HARD", 1, "leverage.debt_to_equity", ">", 3.0)
+    assert rows["PRICE_CRASH"] == ("SOFT", 0, None, None, -0.35)
+
+
+def test_weight_scheme_views_explode_the_blend(migrated_db: sqlite3.Connection) -> None:
+    conn = migrated_db
+    conn.execute(
+        "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status, params_json) "
+        "VALUES ('SELECTION', '2026-08-05', '2026-08-05T00:00:00Z', 'done', ?)",
+        (
+            '{"weight_scheme": "score_proportional", "top_n": 30, "max_name_weight": 0.1, '
+            '"max_sector_weight": 0.3, "soft_veto_penalty": 15.0, '
+            '"score_weights": {"FUNDAMENTAL": 0.4, "QUANTITATIVE": 0.3, "TECHNICAL": 0.2, '
+            '"SEMANTIC": 0.1}}',
+        ),
+    )
+    # a run with no blend recorded must not appear in either view
+    conn.execute(
+        "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status, params_json) "
+        "VALUES ('ENTITY_RESOLUTION', '2026-08-06', '2026-08-06T00:00:00Z', 'done', '{}')"
+    )
+    conn.commit()
+
+    scheme = conn.execute(
+        "SELECT scheme_id, top_n, max_name_weight, soft_veto_penalty FROM v_weight_scheme"
+    ).fetchall()
+    assert [tuple(r) for r in scheme] == [("score_proportional", 30, 0.1, 15.0)]
+
+    comps = {
+        r["score_type"]: r["weight"]
+        for r in conn.execute("SELECT score_type, weight FROM v_weight_component")
+    }
+    assert comps == {
+        "FUNDAMENTAL": 0.4,
+        "QUANTITATIVE": 0.3,
+        "TECHNICAL": 0.2,
+        "SEMANTIC": 0.1,
+    }
 
 
 def test_universe_membership_lifecycle() -> None:

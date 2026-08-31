@@ -80,6 +80,9 @@ percentiles.
   `EARNINGS_MISSING` (no FUNDAMENTAL score within 400 days, SOFT).
 - `__init__.py` — `seed_catalog(conn)` (`INSERT OR IGNORE` into `rule_catalog`,
   never overwrites), `enabled_rules(conn)`.
+- The rule catalog and the per-run blend (`score_weights` + knobs in
+  `cycle_run.params_json`) are read-projected by `kg_schema` as `v_rule_catalog`,
+  `v_weight_scheme`, `v_weight_component` — no separate export step.
 
 ### `writers.py`
 

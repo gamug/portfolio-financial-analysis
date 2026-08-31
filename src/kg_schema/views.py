@@ -17,9 +17,18 @@ Projection semantics
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
 ``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
+``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
+                          is kept verbatim; ``param_metric`` / ``param_operator`` /
+                          ``param_threshold`` unpack the threshold-rule shape when present.
 ``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open.
 ``v_shared_executive_edge``pair-level aggregate of ``shared_executive_edge`` person rows.
 ``v_cycle_ranking``        the ranked cohort of the latest cycle per cycle_type.
+``v_weight_scheme``       one row per ``cycle_run`` that recorded a blend: the scheme id and
+                          the scalar knobs (``top_n``, name/sector caps, soft-veto penalty).
+                          ``cycle_date`` is the scheme's effective date -- a later run with a
+                          changed blend is a new row, no bespoke ``valid_from``/``valid_to``.
+``v_weight_component``     one row per (``cycle_run``, ``score_type``): the blend weight that
+                          score type carried in that run. Explodes ``score_weights``.
 """
 
 from __future__ import annotations
@@ -76,6 +85,15 @@ VIEWS: dict[str, str] = {
                v.cycle_date, v.cleared_at, v.evidence_json, v.run_id
         FROM veto v JOIN assets a ON a.id = v.asset_id
     """,
+    "v_rule_catalog": """
+        CREATE VIEW v_rule_catalog AS
+        SELECT rc.rule_id, rc.description, rc.severity, rc.enabled, rc.params_json,
+               json_extract(rc.params_json, '$.metric')    AS param_metric,
+               json_extract(rc.params_json, '$.op')        AS param_operator,
+               json_extract(rc.params_json, '$.threshold') AS param_threshold,
+               rc.created_at
+        FROM rule_catalog rc
+    """,
     "v_portfolio_position": """
         CREATE VIEW v_portfolio_position AS
         SELECT p.id, a.ticker, p.asset_id, p.valid_from, p.valid_to, p.weight,
@@ -101,6 +119,26 @@ VIEWS: dict[str, str] = {
         FROM cycle_ranking r
         JOIN cycle_run cr ON cr.id = r.cycle_run_id
         JOIN assets a ON a.id = r.asset_id
+    """,
+    "v_weight_scheme": """
+        CREATE VIEW v_weight_scheme AS
+        SELECT cr.id AS cycle_run_id, cr.cycle_type, cr.cycle_date,
+               json_extract(cr.params_json, '$.weight_scheme')          AS scheme_id,
+               json_extract(cr.params_json, '$.score_weights')          AS weights_json,
+               CAST(json_extract(cr.params_json, '$.top_n') AS INTEGER) AS top_n,
+               json_extract(cr.params_json, '$.max_name_weight')        AS max_name_weight,
+               json_extract(cr.params_json, '$.max_sector_weight')      AS max_sector_weight,
+               json_extract(cr.params_json, '$.soft_veto_penalty')      AS soft_veto_penalty
+        FROM cycle_run cr
+        WHERE json_extract(cr.params_json, '$.score_weights') IS NOT NULL
+    """,
+    "v_weight_component": """
+        CREATE VIEW v_weight_component AS
+        SELECT cr.id AS cycle_run_id, cr.cycle_type, cr.cycle_date,
+               je.key AS score_type, je.value AS weight
+        FROM cycle_run cr,
+             json_each(json_extract(cr.params_json, '$.score_weights')) je
+        WHERE json_extract(cr.params_json, '$.score_weights') IS NOT NULL
     """,
 }
 
