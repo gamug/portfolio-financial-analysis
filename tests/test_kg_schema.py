@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 import kg_schema
+from fundamental_agent.sections import _SPECS, canonical_item_label
 from kg_schema import migrations, universe_membership, version
 
 # Pre-kg_schema table shapes, as the two agents shipped them originally.
@@ -226,6 +227,36 @@ def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> 
     assert [tuple(r) for r in rows] == [
         ("AAPL", "10-K", "FY2023", "0000320193-23-000106", "2023-09-30")
     ]
+
+
+def test_v_sec_filing_section_item_label_matches_python_vocab(
+    migrated_db: sqlite3.Connection,
+) -> None:
+    conn = migrated_db
+    cases: list[tuple[str | None, str]] = [
+        (num, stype) for form in _SPECS.values() for num, (stype, _) in form.items()
+    ]
+    cases.append((None, "MD&A"))  # missing item number -> bare token
+    rows = [
+        (i, 1, stype, num, i, "t" * 500, "sha", 10, "regex", "2023-09-30", "2024-01-01", "v1")
+        for i, (num, stype) in enumerate(cases)
+    ]
+    conn.executemany(
+        "INSERT INTO sec_filing_section (id, filing_id, section_type, item_number, ordinal, "
+        "text, text_sha256, word_count, extraction_method, event_time, retrieved_at, "
+        "engine_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+
+    got = {
+        r["id"]: r["item_label"]
+        for r in conn.execute("SELECT id, item_label FROM v_sec_filing_section")
+    }
+    for i, (num, stype) in enumerate(cases):
+        assert got[i] == canonical_item_label(num, stype)
+    assert got[0] == "ITEM_1_BUSINESS"
+    assert got[len(cases) - 1] == "MDA"
 
 
 def test_v_sector_and_v_industry_roll_up_assets(migrated_db: sqlite3.Connection) -> None:

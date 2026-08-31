@@ -20,6 +20,10 @@ Projection semantics
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
+                          ``item_label`` is the ontology ``itemLabel`` token
+                          (``ITEM_1A_RISK_FACTORS``, ``ITEM_7_MDA``, ...), derived in SQL
+                          from ``(item_number, section_type)`` -- kept identical to
+                          ``fundamental_agent.sections.canonical_item_label``.
 ``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
 ``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
                           is kept verbatim; ``param_metric`` / ``param_operator`` /
@@ -96,7 +100,16 @@ VIEWS: dict[str, str] = {
     "v_sec_filing_section": """
         CREATE VIEW v_sec_filing_section AS
         SELECT sec.id, a.ticker, f.asset_id, sec.filing_id, f.form, f.fiscal_period,
-               sec.section_type, sec.item_number, sec.heading, sec.ordinal,
+               sec.section_type, sec.item_number,
+               CASE
+                 WHEN sec.item_number IS NULL OR TRIM(sec.item_number) = ''
+                   THEN CASE sec.section_type WHEN 'MD&A' THEN 'MDA'
+                        ELSE REPLACE(REPLACE(UPPER(sec.section_type), ' ', '_'), '&', 'AND') END
+                 ELSE 'ITEM_' || UPPER(TRIM(sec.item_number)) || '_' ||
+                      CASE sec.section_type WHEN 'MD&A' THEN 'MDA'
+                        ELSE REPLACE(REPLACE(UPPER(sec.section_type), ' ', '_'), '&', 'AND') END
+               END AS item_label,
+               sec.heading, sec.ordinal,
                sec.text, sec.text_sha256, sec.word_count, sec.extraction_method,
                sec.source_url, sec.event_time, sec.retrieved_at, sec.engine_version
         FROM sec_filing_section sec

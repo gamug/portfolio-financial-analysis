@@ -119,6 +119,13 @@ filer can't swallow the rest of the document. `Section` carries `text`, `sha256`
 `word_count`, char offsets. `_MIN_SECTION_CHARS = 400` and a TOC-slice guard filter
 the result.
 
+`canonical_item_label(item_number, section_type)` is the canonical KG `itemLabel`
+vocabulary (`ITEM_1A_RISK_FACTORS`, `ITEM_7_MDA`, …). It is not stored — the
+projection view `v_sec_filing_section` builds the identical string in SQL; a test
+pins the two together. DEF 14A director sections are **not** extracted here (they
+would need a third form + a new parser); the `Executive` / `sharedExecutiveWith`
+graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
+
 ### `db.py`
 
 `connect` / `ensure_schema` (runs `SCHEMA` then `kg_schema.ensure`). Key writers:

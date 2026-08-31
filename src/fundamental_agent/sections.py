@@ -40,6 +40,32 @@ _SPECS: dict[str, dict[str, tuple[str, str]]] = {
     },
 }
 
+# Canonical ``itemLabel`` vocabulary for the KG projection: section_type -> the
+# token that follows ``ITEM_<n>_`` in the label. ``v_sec_filing_section`` builds
+# the same string in SQL; keep the two in sync (a test pins them together).
+_ITEM_LABEL_TOKENS: dict[str, str] = {
+    "MD&A": "MDA",
+    "RISK_FACTORS": "RISK_FACTORS",
+    "BUSINESS": "BUSINESS",
+    "LEGAL_PROCEEDINGS": "LEGAL_PROCEEDINGS",
+}
+
+
+def canonical_item_label(item_number: str | None, section_type: str) -> str:
+    """Map a stored ``(item_number, section_type)`` to the ontology's ``itemLabel``.
+
+    ``("1A", "RISK_FACTORS") -> "ITEM_1A_RISK_FACTORS"``;
+    ``("7", "MD&A") -> "ITEM_7_MDA"``. With no item number the label is just the
+    section token. Deterministic and total -- an unknown ``section_type`` is
+    upper-cased with ``&`` -> ``AND`` and spaces -> ``_``.
+    """
+    token = _ITEM_LABEL_TOKENS.get(
+        section_type, section_type.upper().replace(" ", "_").replace("&", "AND")
+    )
+    number = (item_number or "").strip().upper()
+    return f"ITEM_{number}_{token}" if number else token
+
+
 _MIN_SECTION_CHARS = 400
 # A handful of large financial-sector filers carry no ``Item`` line markers at all,
 # and put the next section's title too deep to bound the current one -- clamp the

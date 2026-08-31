@@ -61,7 +61,10 @@ a view whose base table is missing is silently skipped. The module docstring is 
 `v_score_snapshot`, `v_universe_membership`, `v_sector` (GICS sector rollup with
 member/sub-industry counts), `v_industry` (sub-industry → sector; the scrape has
 no middle industry-group tier), `v_price_observation` (newest `engine_version` per
-asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section`, `v_veto`,
+asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section` (carries
+`item_label`, the ontology `itemLabel` token — `ITEM_1A_RISK_FACTORS`, `ITEM_7_MDA`,
+… — built in SQL, kept identical to
+`fundamental_agent.sections.canonical_item_label`), `v_veto`,
 `v_rule_catalog` (veto rules as data — `params_json` verbatim plus unpacked
 `param_metric` / `param_operator` / `param_threshold`), `v_portfolio_position`,
 `v_shared_executive_edge` (pair-level aggregate), `v_cycle_ranking`,

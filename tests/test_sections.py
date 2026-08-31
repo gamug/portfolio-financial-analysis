@@ -6,7 +6,7 @@ import sqlite3
 from pathlib import Path
 
 from fundamental_agent import db
-from fundamental_agent.sections import Section, split_sections
+from fundamental_agent.sections import Section, canonical_item_label, split_sections
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -39,6 +39,17 @@ def test_ordinals_are_sequential_and_hashes_stable() -> None:
 
 def test_unknown_form_yields_nothing() -> None:
     assert split_sections(_html(), "8-K") == []
+
+
+def test_canonical_item_label_vocabulary() -> None:
+    assert canonical_item_label("1A", "RISK_FACTORS") == "ITEM_1A_RISK_FACTORS"
+    assert canonical_item_label("3", "LEGAL_PROCEEDINGS") == "ITEM_3_LEGAL_PROCEEDINGS"
+    assert canonical_item_label("7", "MD&A") == "ITEM_7_MDA"
+    assert canonical_item_label("1", "BUSINESS") == "ITEM_1_BUSINESS"
+    assert canonical_item_label(" 2 ", "MD&A") == "ITEM_2_MDA"  # trimmed + upper
+    assert canonical_item_label(None, "MD&A") == "MDA"  # no item number
+    assert canonical_item_label("", "RISK_FACTORS") == "RISK_FACTORS"
+    assert canonical_item_label("9", "New Kind") == "ITEM_9_NEW_KIND"  # generic fallback
 
 
 def test_10q_uses_a_different_item_map() -> None:
