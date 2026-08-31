@@ -7,9 +7,28 @@ a step whose checkpoint is ``done`` for a given ``cycle_run`` is skipped on re-r
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+
+# Field names whose values must never reach params_json / detail_json. The cycle
+# settings carry LLM_API_KEY, and json.dumps would otherwise persist it in the
+# shared KG_FINANTIAL_DB that other repos read.
+_SECRET_KEY_RE = re.compile(r"api[_-]?key|secret|token|password|passwd|credential", re.IGNORECASE)
+_REDACTED = "***REDACTED***"
+
+
+def _redact(value: Any) -> Any:
+    """Deep-copy *value*, masking any dict entry whose key looks like a secret."""
+    if isinstance(value, dict):
+        return {
+            key: (_REDACTED if val is not None and _SECRET_KEY_RE.search(key) else _redact(val))
+            for key, val in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(item) for item in value]
+    return value
 
 
 def _now() -> str:
@@ -26,7 +45,7 @@ def open_cycle(
         VALUES (?, ?, ?, 'running', ?)
         ON CONFLICT (cycle_type, cycle_date) DO UPDATE SET status = 'running'
         """,
-        (cycle_type, cycle_date, _now(), json.dumps(params, default=str)),
+        (cycle_type, cycle_date, _now(), json.dumps(_redact(params), default=str)),
     )
     conn.commit()
     row = conn.execute(
@@ -51,7 +70,7 @@ def checkpoint(
             status = excluded.status, detail_json = excluded.detail_json,
             updated_at = excluded.updated_at
         """,
-        (cycle_run_id, step, status, json.dumps(detail or {}, default=str), _now()),
+        (cycle_run_id, step, status, json.dumps(_redact(detail or {}), default=str), _now()),
     )
     conn.commit()
 

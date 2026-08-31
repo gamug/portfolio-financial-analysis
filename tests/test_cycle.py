@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
+import kg_schema
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import quantitative, technical
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
+from cycle.state import _redact, checkpoint, open_cycle
 
 # -- normalize ----------------------------------------------------------
 
@@ -266,3 +269,54 @@ def test_monitoring_cycle_skips_positions(cycle_seed: sqlite3.Connection) -> Non
     r = run_monitoring(_settings(conn), "2026-07-31", conn=conn)
     assert "positions" not in r.steps_run and "positions" not in r.steps_skipped
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 0
+
+
+# -- provenance secret-redaction --------------------------------
+
+
+def test_redact_masks_secret_keys_recursively() -> None:
+    out = _redact(
+        {
+            "llm_api_key": "sk-abc123",
+            "llm_model": "deepseek-chat",
+            "nested": {"auth_token": "nested-secret-value", "top_n": 30},
+            "list": [{"client_credential": "list-secret-value"}, {"ok": 1}],
+            "empty_secret": None,
+        }
+    )
+    dumped = json.dumps(out)
+    assert "sk-abc123" not in dumped
+    assert "nested-secret-value" not in dumped
+    assert "list-secret-value" not in dumped
+    assert dumped.count("***REDACTED***") == 3
+    assert out["llm_model"] == "deepseek-chat"
+    assert out["nested"]["top_n"] == 30
+    assert out["list"][1]["ok"] == 1
+    assert out["empty_secret"] is None  # nothing to hide, leave the shape intact
+
+
+def test_open_cycle_never_persists_the_api_key() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    kg_schema.ensure(conn)
+
+    run_id = open_cycle(
+        conn,
+        "SELECTION",
+        "2026-08-27",
+        {"db_path": "/x", "llm_api_key": "sk-DEADBEEF", "llm_url": "https://api.deepseek.com"},
+    )
+    checkpoint(conn, run_id, "score", "done", {"llm_api_key": "sk-DEADBEEF", "n": 5})
+
+    params = conn.execute("SELECT params_json FROM cycle_run WHERE id = ?", (run_id,)).fetchone()[
+        "params_json"
+    ]
+    detail = conn.execute(
+        "SELECT detail_json FROM cycle_checkpoint WHERE cycle_run_id = ?", (run_id,)
+    ).fetchone()["detail_json"]
+
+    assert "sk-DEADBEEF" not in params
+    assert "sk-DEADBEEF" not in detail
+    assert json.loads(params)["llm_api_key"] == "***REDACTED***"
+    assert json.loads(params)["llm_url"] == "https://api.deepseek.com"
+    assert json.loads(detail)["n"] == 5
