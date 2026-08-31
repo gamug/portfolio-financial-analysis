@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "portfolio-finantial-analysis"
 version = "0.1.0"
@@ -24,13 +28,20 @@ dev = [
     "pytest-mock>=3.12",
 ]
 
-[tool.uv]
-# This is an application/analysis workspace, not a distributable package:
-# uv manages the environment but never tries to build/install the project itself.
-package = false
+# Not published anywhere -- but installed (editable) into the uv env so every
+# `src/<pkg>` imports and runs as `python -m <pkg>` from any directory.
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/fundamental_agent",
+    "src/pricing_agent",
+    "src/kg_schema",
+    "src/cycle",
+    "src/entity_resolution",
+    "src/backtest",
+]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 testpaths = ["tests"]
 
 [tool.commitizen]
