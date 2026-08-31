@@ -20,8 +20,10 @@ _SERIES = (
 
 
 def _cagr(begin: float | None, end: float | None, years: int) -> float | None:
-    # undefined / uninformative from a non-positive base (SKILL.md "Zero/Negative Boundary")
-    if begin is None or end is None or begin <= 0.0 or years < 1:
+    # Undefined / uninformative unless BOTH endpoints are positive (SKILL.md
+    # "Zero/Negative Boundary"). A negative `end` over a positive `begin` also makes
+    # the fractional power complex, which float() then rejects.
+    if begin is None or end is None or begin <= 0.0 or end <= 0.0 or years < 1:
         return None
     return float((end / begin) ** (1.0 / years) - 1.0)
 
