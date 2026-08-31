@@ -1,6 +1,6 @@
 """SQLite persistence for the pricing collector.
 
-Writes into the same ``KG_FINANTIAL_DB`` as the fundamental agent but owns a disjoint
+Writes into the same ``KG_FINANCIAL_DB`` as the fundamental agent but owns a disjoint
 set of tables. ``assets`` / ``sectors`` are created only when missing and never
 altered, so either module can populate the universe first.
 """
@@ -125,7 +125,7 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
-    # NOTE: no WAL. KG_FINANTIAL_DB can live on a bind mount whose shared-memory
+    # NOTE: no WAL. KG_FINANCIAL_DB can live on a bind mount whose shared-memory
     # (-shm) support is unreliable, where WAL raises "disk I/O error"; the default
     # rollback journal works there. This collector is single-writer anyway.
     return conn

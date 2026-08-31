@@ -9,6 +9,7 @@ import pytest
 import kg_schema
 from fundamental_agent.sections import _SPECS, canonical_item_label
 from kg_schema import migrations, universe_membership, version
+from kg_schema.env import database_path
 
 # Pre-kg_schema table shapes, as the two agents shipped them originally.
 _LEGACY_SQL = """
@@ -135,6 +136,20 @@ def test_migrations_rebuild_and_preserve_rows(migrated_db: sqlite3.Connection) -
 
 def test_migrations_are_a_noop_second_time(migrated_db: sqlite3.Connection) -> None:
     assert migrations.apply_migrations(migrated_db) == []
+
+
+def test_database_path_prefers_canonical_then_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("KG_FINANCIAL_DB", raising=False)
+    monkeypatch.delenv("KG_FINANTIAL_DB", raising=False)
+    assert database_path() is None
+    assert database_path("/explicit.db") == "/explicit.db"
+
+    monkeypatch.setenv("KG_FINANTIAL_DB", "/legacy.db")
+    assert database_path() == "/legacy.db"  # misspelled fallback still works
+
+    monkeypatch.setenv("KG_FINANCIAL_DB", "/canonical.db")
+    assert database_path() == "/canonical.db"  # canonical wins when both are set
+    assert database_path("/explicit.db") == "/explicit.db"  # explicit beats both
 
 
 def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:

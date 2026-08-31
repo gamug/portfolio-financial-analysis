@@ -3,7 +3,7 @@
 Reads the news repo's ``urls.db`` strictly read-only (only two indexed query
 shapes, never a scan of ``articles`` / ``body_text``), pairs up assets whose
 articles mention the same person, filters out pundits / politicians / NER noise,
-and writes ``shared_executive_edge`` into ``KG_FINANTIAL_DB``.
+and writes ``shared_executive_edge`` into ``KG_FINANCIAL_DB``.
 """
 
 from __future__ import annotations

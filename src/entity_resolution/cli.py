@@ -17,7 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     b = sub.add_parser("build", help="recompute shared_executive_edge")
-    b.add_argument("--db", help="override KG_FINANTIAL_DB path")
+    b.add_argument("--db", help="override KG_FINANCIAL_DB path")
     b.add_argument("--news-db", help="override KG_NEWS_DB (urls.db) path")
     b.add_argument("--min-weight", type=float, default=3.0)
     b.add_argument("--max-tickers", type=int, default=15)

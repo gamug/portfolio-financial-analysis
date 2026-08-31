@@ -108,7 +108,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 - **`ensure` is a hard dependency of both agents.** Keep it idempotent and
   additive-only; `ensure_views` swallows `OperationalError` so a view bug can't
   brick a batch run.
-- **Shared-DB migration runbook:** quiesce all writers → `cp finantial.db{,.bak}` →
+- **Shared-DB migration runbook:** quiesce all writers → `cp financial.db{,.bak}` →
   `python -m fundamental_agent migrate` once → check `SELECT * FROM schema_version`
   → resume. `-wal` / `-shm` files may exist even though this code forces rollback
   journal; standardise journal mode across writers before running m002–m004.

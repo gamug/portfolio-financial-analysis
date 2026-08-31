@@ -1,7 +1,7 @@
 """Read the closing price near a filing's period-end from the shared database.
 
 The pricing collector (:mod:`pricing_agent`) owns the ``price_daily`` table in the
-same ``KG_FINANTIAL_DB``. This module only *reads* it -- there is no import of
+same ``KG_FINANCIAL_DB``. This module only *reads* it -- there is no import of
 ``pricing_agent`` -- so the fundamental agent stays runnable whether or not the
 pricing collector has ever populated that table.
 """

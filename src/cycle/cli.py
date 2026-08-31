@@ -22,7 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("--date", required=True, help="cycle date, YYYY-MM-DD")
-        p.add_argument("--db", help="override KG_FINANTIAL_DB path")
+        p.add_argument("--db", help="override KG_FINANCIAL_DB path")
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
 

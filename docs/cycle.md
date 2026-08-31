@@ -20,7 +20,7 @@ contract.
 
 ## Configuration (`config.py`)
 
-`CycleSettings.load()` needs `KG_FINANTIAL_DB`; LLM creds optional. Knobs:
+`CycleSettings.load()` needs `KG_FINANCIAL_DB`; LLM creds optional. Knobs:
 `universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / QUANT .3 / TECH
 .2 / SEM .1), `weight_scheme` (`equal` | `score_proportional` | `inverse_vol`),
 `max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts).

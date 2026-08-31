@@ -1,4 +1,4 @@
-"""Connection + schema for the cycle package (shares KG_FINANTIAL_DB)."""
+"""Connection + schema for the cycle package (shares KG_FINANCIAL_DB)."""
 
 from __future__ import annotations
 

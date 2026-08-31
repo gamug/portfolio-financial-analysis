@@ -2,7 +2,7 @@
 
 These NEVER run from :func:`kg_schema.ensure`'s automatic path. They run only via
 ``python -m fundamental_agent migrate`` / ``python -m pricing_agent migrate`` so the
-shared ``KG_FINANTIAL_DB`` is only reshaped deliberately, with the other repos quiesced.
+shared ``KG_FINANCIAL_DB`` is only reshaped deliberately, with the other repos quiesced.
 
 Each migration runs inside one transaction; on success its version is recorded in
 ``schema_version``. Re-running is a no-op once the version is recorded.

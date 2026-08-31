@@ -14,7 +14,7 @@ from typing import Any
 
 # Field names whose values must never reach params_json / detail_json. The cycle
 # settings carry LLM_API_KEY, and json.dumps would otherwise persist it in the
-# shared KG_FINANTIAL_DB that other repos read.
+# shared KG_FINANCIAL_DB that other repos read.
 _SECRET_KEY_RE = re.compile(r"api[_-]?key|secret|token|password|passwd|credential", re.IGNORECASE)
 _REDACTED = "***REDACTED***"
 

@@ -12,6 +12,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
+from kg_schema.env import DB_ENV_VAR, database_path
+
 # The gateway mounts the pricing service at /pricing; its own price route is
 # /pricing/{ticker}, hence the doubled segment for candle requests. The /universe
 # route sits at the mount root (single segment).
@@ -27,9 +29,9 @@ class Settings(BaseModel):
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:
         load_dotenv(env_file, override=False)
-        db_path = os.environ.get("KG_FINANTIAL_DB")
+        db_path = database_path()
         if not db_path:
-            raise RuntimeError("missing required environment variable: KG_FINANTIAL_DB")
+            raise RuntimeError(f"missing required environment variable: {DB_ENV_VAR}")
         return cls(
             db_path=Path(db_path).expanduser(),
             pricing_base_url=os.environ.get("PRICING_BASE_URL", DEFAULT_PRICING_BASE_URL),

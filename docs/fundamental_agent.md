@@ -15,8 +15,9 @@ uv run python -m fundamental_agent migrate        # shared-schema migrations
 
 ## Configuration (`config.py`)
 
-`Settings.load()` requires `KG_FINANTIAL_DB`, `LLM_API_KEY`, `LLM_MODEL`,
-`LLM_URL`. Optional: `EDGAR_BASE_URL` (default
+`Settings.load()` requires `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`,
+which also still honours the old misspelled `KG_FINANTIAL_DB`), `LLM_API_KEY`,
+`LLM_MODEL`, `LLM_URL`. Optional: `EDGAR_BASE_URL` (default
 `http://host.docker.internal:8000/edgar/edgar` — the doubled `/edgar` is
 intentional), `WIKIPEDIA_USER_AGENT`, `SEC_USER_AGENT`.
 

@@ -13,7 +13,7 @@ uv run python -m pricing_agent migrate
 
 ## Configuration (`config.py`)
 
-Only `KG_FINANTIAL_DB` is required. Optional `PRICING_BASE_URL` (default
+Only `KG_FINANCIAL_DB` is required. Optional `PRICING_BASE_URL` (default
 `http://host.docker.internal:8000/pricing`).
 
 ## Files
