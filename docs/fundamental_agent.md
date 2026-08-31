@@ -88,21 +88,36 @@ rule-based fallback score. Module constants `FACTS_ENGINE_VERSION`,
 2022). **No `import pricing_agent`** — `sqlite3.OperationalError` (table absent) →
 `None`. This is the reference pattern for all cross-cutting read code.
 
-### `filing_text.py` — `fetch_primary_document(cik, accession_number, *, client=None) -> (html, source_url)`
+### `filing_text.py` — `fetch_primary_document(cik, accession_number, *, form=None, client=None) -> (html, source_url)`
 
 Fetches a filing's primary document directly from `www.sec.gov` (the gateway is
-financials-only). Resolves `…/Archives/edgar/data/{cik}/{accession_nodash}/index.json`
-→ picks the first non-`index`, non-`R\d+` `.htm`. Descriptive UA (`SEC_USER_AGENT`),
-retries 429/5xx. Swappable for a gateway text endpoint later without touching
-`sections.py`.
+financials-only). The archive folder hangs off the **filer** CIK (the accession-number
+prefix), not the asset's current CIK — this is why re-registered filers like XOM
+resolved to 404s before. When `form` is given, the primary document is taken from the
+filing's `…-index.html` **Document Format Files** table (the row whose `Type` is the
+form, or its `/A` amendment, at the lowest sequence number) using that row's own
+`href`; that is authoritative and survives filers whose `index.json` is incomplete.
+Without `form`, or when the table has no body row, it falls back to `index.json` →
+first non-`index`, non-`R\d+` `.htm` by size. A `200` with an empty body (SEC serves
+these for a few genuinely-missing archived docs) is retried then raised. Descriptive
+UA (`SEC_USER_AGENT`), retries 429/5xx. Swappable for a gateway text endpoint later
+without touching `sections.py`.
 
 ### `sections.py` — `split_sections(html, form) -> list[Section]`
 
 Deterministic Item splitter (`_SPECS` per form: 10-K → Business/Risk
-Factors/Legal/MD&A = Items 1/1A/3/7; 10-Q → 1A/2). Flattens HTML to text, finds
-every `Item N.` line, and for each wanted Item picks **the occurrence with the most
-following text** (rejects the short table-of-contents line). `Section` carries
-`text`, `sha256`, `word_count`, char offsets. `_MIN_SECTION_CHARS = 400` filter.
+Factors/Legal/MD&A = Items 1/1A/3/7; 10-Q → 1A/2). Flattens HTML to text **one line
+per block element** — inline runs are joined tight, so a heading chopped mid-word
+across `<span>`s (`Ite`+`m 2.`) is healed. Candidate headings are `Item N` lines
+**and** descriptive-title lines (`MANAGEMENT'S DISCUSSION AND ANALYSIS OF …`), the
+latter for the many financial-sector filers that keep Item numbers only in a front
+cross-reference table. For each wanted section, picks **the occurrence with the most
+following text** before the next *different* section heading — which rejects
+table-of-contents rows and page running-headers (`(continued)`) alike. A body is
+clamped at `_MAX_SECTION_CHARS = 400_000` so a mis-bounded section on a marker-less
+filer can't swallow the rest of the document. `Section` carries `text`, `sha256`,
+`word_count`, char offsets. `_MIN_SECTION_CHARS = 400` and a TOC-slice guard filter
+the result.
 
 ### `db.py`
 
@@ -116,7 +131,7 @@ following text** (rejects the short table-of-contents line). `Section` carries
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end |
 | `completed_units(conn)` | `(ticker, form, fiscal_period)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume |
-| `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v1"` |
+| `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"` (v2 = block-aware flatten + title-only headings + filer-CIK paths) |
 | `filings_with_sections(conn)` | resume set for `--sections` |
 
 ### `pipeline.py`

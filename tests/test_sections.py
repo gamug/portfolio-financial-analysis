@@ -81,3 +81,70 @@ def test_section_helpers() -> None:
     s = Section("MD&A", "7", "Item 7.", 0, 10, 400, "one two three four five")
     assert s.word_count == 5
     assert len(s.sha256) == 64
+
+
+def test_heals_item_marker_split_across_inline_tags() -> None:
+    # Some filers chop the heading mid-word across <span>s ("Ite" + "m 2.") to
+    # defeat naive scrapers; block-aware flattening must glue it back.
+    md = "Cloud revenue rose and operating margin expanded again this quarter. "
+    risk = "There have been no material changes to our previously disclosed risks. "
+    html = (
+        "<html><body>"
+        "<p><span>Ite</span><span>m 2. Management's Discussion and Analysis</span></p>"
+        f"<p>{md * 15}</p>"
+        "<p><span>Item</span><span> 1A. Risk Factors</span></p>"
+        f"<p>{risk * 15}</p>"
+        "<p>Item 6. Exhibits</p><p>none</p>"
+        "</body></html>"
+    )
+    by_type = {s.section_type: s for s in split_sections(html, "10-Q")}
+    assert set(by_type) == {"MD&A", "RISK_FACTORS"}
+    assert "Cloud revenue rose" in by_type["MD&A"].text
+    assert "material changes" in by_type["RISK_FACTORS"].text
+
+
+def test_extracts_bank_style_title_only_headings() -> None:
+    # Large financial filers carry no "Item N" line markers -- the Item numbers live
+    # only in a front cross-reference table; the body sections are descriptive
+    # ALL-CAPS titles.
+    mdna = "Net revenues increased across all reportable segments during the year. "
+    risk = "Our results are sensitive to interest-rate and credit-spread movements. "
+    legal = "We are party to various routine legal matters incidental to our business. "
+    html = (
+        "<html><body>"
+        "<p>Table of Contents</p>"
+        "<p>Management's Discussion and Analysis of Financial Condition and Results of Operations 25</p>"
+        "<p>Risk Factors 40</p>"
+        "<div>MANAGEMENT'S DISCUSSION AND ANALYSIS OF FINANCIAL CONDITION AND RESULTS OF OPERATIONS</div>"
+        f"<p>{mdna * 20}</p>"
+        "<div>RISK FACTORS</div>"
+        f"<p>{risk * 20}</p>"
+        "<div>LEGAL PROCEEDINGS</div>"
+        f"<p>{legal * 12}</p>"
+        "</body></html>"
+    )
+    by_type = {s.section_type: s for s in split_sections(html, "10-K")}
+    assert {"MD&A", "RISK_FACTORS", "LEGAL_PROCEEDINGS"} <= set(by_type)
+    assert by_type["MD&A"].item_number == "7"
+    assert "reportable segments" in by_type["MD&A"].text
+    assert "credit-spread" not in by_type["MD&A"].text  # stopped at RISK FACTORS
+    assert "interest-rate" in by_type["RISK_FACTORS"].text
+
+
+def test_running_header_repeats_do_not_truncate_body() -> None:
+    head = "Management's Discussion and Analysis of Financial Condition and Results of Operations"
+    para = "Operating cash flow improved on stronger collections and lower capex. "
+    repeated = "".join(f"<p>{head} (continued)</p><p>{para * 8}</p>" for _ in range(6))
+    html = (
+        "<html><body>"
+        f"<h2>Item 2. {head}</h2><p>{para * 8}</p>"
+        f"{repeated}"
+        "<h2>Item 1A. Risk Factors</h2>"
+        f"<p>{'No material changes to previously disclosed risk factors. ' * 10}</p>"
+        "<h2>Item 6. Exhibits</h2><p>none</p>"
+        "</body></html>"
+    )
+    by_type = {s.section_type: s for s in split_sections(html, "10-Q")}
+    # the "(continued)" page headers are same-section, so the body runs through all
+    # six of them, not just to the first one.
+    assert by_type["MD&A"].text.count("Operating cash flow improved") >= 6
