@@ -7,7 +7,7 @@
       "shellAutocompletion": true
     }
   },
-  "postCreateCommand": "uv sync --frozen --group dev && uv run pre-commit install --install-hooks",
+  "postCreateCommand": "bash scripts/init.sh",
   "remoteEnv": {
     "UV_LINK_MODE": "copy"
   },
