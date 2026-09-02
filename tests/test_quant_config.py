@@ -24,7 +24,8 @@ def test_load_reads_db_and_pricing_url(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.pricing_base_url == "http://gw:9/pricing"
     # defaults land as documented
     assert s.headline_objective == "min_var"
-    assert s.objectives == ["min_var", "tangency", "target_vol"]
+    assert s.objectives == ["min_var", "tangency", "target_vol", "risk_parity"]
+    assert s.ret_estimator == "equilibrium"
     assert s.max_name_weight == 0.05
     assert s.solver == "CLARABEL"
 

@@ -20,6 +20,7 @@ from quant.optimize import (
     OptResult,
     max_sharpe,
     min_variance,
+    risk_parity,
     target_volatility_portfolio,
 )
 
@@ -62,10 +63,17 @@ def _target_vol(ctx: ObjectiveContext) -> OptResult:
     )
 
 
+def _risk_parity(ctx: ObjectiveContext) -> OptResult:
+    return risk_parity(
+        ctx.sigma, constraints=ctx.constraints, mu=ctx.mu, rf=ctx.rf, solver=ctx.solver
+    )
+
+
 OBJECTIVES: dict[str, ObjectiveBuilder] = {
     "min_var": _min_var,
     "tangency": _tangency,
     "target_vol": _target_vol,
+    "risk_parity": _risk_parity,
 }
 
 
