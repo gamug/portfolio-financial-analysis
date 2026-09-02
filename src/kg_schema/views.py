@@ -41,6 +41,14 @@ Projection semantics
                           Its per-asset counterpart is ``score_snapshot`` rows of type
                           ``SECTOR`` (own TECHNICAL raw minus this mean), reachable through
                           ``v_score_snapshot``.
+``v_corporate_action``    one row per (asset, action_type, ex_date) at the latest
+                          ``engine_version``. Dividends (cash/share) and splits (ratio).
+``v_quant_return_daily``  the quant/ total-return daily series; latest ``engine_version``
+                          per (asset, obs_date). ``tr_log_return`` is the optimizer input.
+                          Empty until ``quant build-returns`` has run.
+``v_risk_free_rate``      risk-free curve points; latest ``engine_version`` per (curve, date).
+``v_benchmark_series``    benchmark index levels / returns; latest ``engine_version`` per
+                          (benchmark, obs_date).
 """
 
 from __future__ import annotations
@@ -182,6 +190,53 @@ VIEWS: dict[str, str] = {
         SELECT sa.id, s.name AS sector_name, sa.sector_id, sa.cycle_date, sa.metric_type,
                sa.member_count, sa.mean_raw, sa.mean_normalized, sa.computed_at, sa.run_id
         FROM sector_aggregate_snapshot sa JOIN sectors s ON s.id = sa.sector_id
+    """,
+    "v_corporate_action": """
+        CREATE VIEW v_corporate_action AS
+        SELECT c.id, a.ticker, c.asset_id, c.action_type, c.ex_date, c.value, c.currency,
+               c.declared_date, c.record_date, c.pay_date, c.frequency,
+               c.source, c.engine_version, c.ingested_at
+        FROM corporate_action c JOIN assets a ON a.id = c.asset_id
+        WHERE c.engine_version = (
+            SELECT c2.engine_version FROM corporate_action c2
+            WHERE c2.asset_id = c.asset_id AND c2.action_type = c.action_type
+              AND c2.ex_date = c.ex_date
+            ORDER BY c2.ingested_at DESC, c2.id DESC LIMIT 1
+        )
+    """,
+    "v_quant_return_daily": """
+        CREATE VIEW v_quant_return_daily AS
+        SELECT q.id, a.ticker, q.asset_id, q.obs_date, q.close_split_adj, q.adj_close,
+               q.tr_index, q.cash_dividend, q.split_factor, q.price_log_return,
+               q.tr_log_return, q.source, q.engine_version, q.computed_at
+        FROM quant_return_daily q JOIN assets a ON a.id = q.asset_id
+        WHERE q.engine_version = (
+            SELECT q2.engine_version FROM quant_return_daily q2
+            WHERE q2.asset_id = q.asset_id AND q2.obs_date = q.obs_date
+            ORDER BY q2.computed_at DESC, q2.id DESC LIMIT 1
+        )
+    """,
+    "v_risk_free_rate": """
+        CREATE VIEW v_risk_free_rate AS
+        SELECT r.id, r.curve, r.rate_date, r.annualized_rate, r.source,
+               r.engine_version, r.ingested_at
+        FROM risk_free_rate r
+        WHERE r.engine_version = (
+            SELECT r2.engine_version FROM risk_free_rate r2
+            WHERE r2.curve = r.curve AND r2.rate_date = r.rate_date
+            ORDER BY r2.ingested_at DESC, r2.id DESC LIMIT 1
+        )
+    """,
+    "v_benchmark_series": """
+        CREATE VIEW v_benchmark_series AS
+        SELECT b.id, b.benchmark, b.obs_date, b.level, b.total_return_level, b.log_return,
+               b.source, b.engine_version, b.ingested_at
+        FROM benchmark_series b
+        WHERE b.engine_version = (
+            SELECT b2.engine_version FROM benchmark_series b2
+            WHERE b2.benchmark = b.benchmark AND b2.obs_date = b.obs_date
+            ORDER BY b2.ingested_at DESC, b2.id DESC LIMIT 1
+        )
     """,
 }
 

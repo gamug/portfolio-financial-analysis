@@ -215,6 +215,78 @@ CREATE TABLE IF NOT EXISTS sector_aggregate_snapshot (
     UNIQUE (sector_id, cycle_date, metric_type)
 );
 CREATE INDEX IF NOT EXISTS ix_sector_agg_date ON sector_aggregate_snapshot (cycle_date);
+
+-- Corporate actions (dividends / splits). Feeds the quant/ total-return series and
+-- fundamental_agent's valuation lane. `price_daily.close` is already split-adjusted,
+-- so SPLIT rows are provenance only and are never re-applied.
+CREATE TABLE IF NOT EXISTS corporate_action (
+    id             INTEGER PRIMARY KEY,
+    asset_id       INTEGER NOT NULL REFERENCES assets(id),
+    action_type    TEXT NOT NULL CHECK (action_type IN ('DIVIDEND', 'SPLIT')),
+    ex_date        TEXT NOT NULL,                 -- what the row is about (event_time)
+    value          REAL NOT NULL,                 -- DIVIDEND: cash/share USD; SPLIT: ratio (2-for-1 -> 2.0)
+    currency       TEXT NOT NULL DEFAULT 'USD',
+    declared_date  TEXT,
+    record_date    TEXT,
+    pay_date       TEXT,
+    frequency      TEXT,                          -- 'quarterly'|'annual'|'special'|NULL
+    source         TEXT NOT NULL,                 -- 'pricing-gateway' | 'financial-facts-derived'
+    engine_version TEXT NOT NULL,                 -- 'corpact-v1' (gateway) | 'corpact-v0-approx' (derived)
+    ingested_at    TEXT NOT NULL,
+    UNIQUE (asset_id, action_type, ex_date, engine_version)
+);
+CREATE INDEX IF NOT EXISTS ix_corpact_asset_date ON corporate_action (asset_id, ex_date);
+
+-- quant/ total-return daily series: split-adjusted close + cash dividends folded in.
+-- A dedicated table, NOT `price_observation` rows under a new engine_version --
+-- `v_price_observation` resolves the latest engine per (asset, day), so writing there
+-- would silently move cycle's technical/veto path onto quant's rows.
+CREATE TABLE IF NOT EXISTS quant_return_daily (
+    id               INTEGER PRIMARY KEY,
+    asset_id         INTEGER NOT NULL REFERENCES assets(id),
+    obs_date         TEXT NOT NULL,               -- event_time
+    close_split_adj  REAL NOT NULL,               -- copied from price_daily.close
+    adj_close        REAL NOT NULL,               -- dividend-back-adjusted (total-return price)
+    tr_index         REAL NOT NULL,               -- forward TR index, tr_index[0] = close_split_adj[0]
+    cash_dividend    REAL NOT NULL DEFAULT 0.0,   -- per-share dividend with ex_date == obs_date
+    split_factor     REAL NOT NULL DEFAULT 1.0,   -- provenance only; close is already split-adjusted
+    price_log_return REAL,                        -- ln(C_t / C_{t-1})  (== price_observation.log_return)
+    tr_log_return    REAL,                        -- ln((C_t + D_t) / C_{t-1})  <- the optimizer input
+    source           TEXT NOT NULL,               -- 'quant-tr-v1'
+    engine_version   TEXT NOT NULL,               -- 'qret-v1'
+    computed_at      TEXT NOT NULL,
+    UNIQUE (asset_id, obs_date, engine_version)
+);
+CREATE INDEX IF NOT EXISTS ix_qret_asset_date ON quant_return_daily (asset_id, obs_date);
+
+-- Risk-free rate series for Sharpe / tangency. A single 'CONST' curve row per as-of
+-- is acceptable for v1; a real T-bill curve loads via a CSV later.
+CREATE TABLE IF NOT EXISTS risk_free_rate (
+    id              INTEGER PRIMARY KEY,
+    curve           TEXT NOT NULL,                -- 'CONST' | 'US3M' | 'US1Y'
+    rate_date       TEXT NOT NULL,                -- event_time
+    annualized_rate REAL NOT NULL,                -- decimal, e.g. 0.045
+    source          TEXT NOT NULL,               -- 'constant-v1' | 'fred-DGS3MO' | 'manual-csv'
+    engine_version  TEXT NOT NULL,               -- 'rf-v1'
+    ingested_at     TEXT NOT NULL,
+    UNIQUE (curve, rate_date, engine_version)
+);
+
+-- Benchmark index series to evaluate the optimized books against. quant/ synthesizes
+-- an internal equal-/cap-weight one over the same gated universe; a real SPX/SPY_TR
+-- series loads via a CSV later.
+CREATE TABLE IF NOT EXISTS benchmark_series (
+    id                 INTEGER PRIMARY KEY,
+    benchmark          TEXT NOT NULL,             -- 'SP500_EW_INTERNAL' | 'SP500_CAPW_INTERNAL' | 'SPX' | 'SPY_TR'
+    obs_date           TEXT NOT NULL,             -- event_time
+    level              REAL,                      -- index / price level
+    total_return_level REAL,                      -- TR index if known
+    log_return         REAL,
+    source             TEXT NOT NULL,             -- 'quant-internal-ew' | 'vendor-csv' | ...
+    engine_version     TEXT NOT NULL,             -- 'bench-v1'
+    ingested_at        TEXT NOT NULL,
+    UNIQUE (benchmark, obs_date, engine_version)
+);
 """
 
 
