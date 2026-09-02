@@ -11,6 +11,7 @@ from any directory; `pytest` adds `src` via `pythonpath`.
 | `kg_schema/` | Passive shared schema, migrations, read-contract views | [kg_schema.md](kg_schema.md) |
 | `cycle/` | Strands selection / monitoring cycles → TECHNICAL/VALORIZATION scores, `veto`, `portfolio_position` | [cycle.md](cycle.md) |
 | `entity_resolution/` | `sharedExecutiveWith` edges from news co-occurrence | [entity_resolution.md](entity_resolution.md) |
+| `quant/` | Markowitz mean-variance benchmark portfolio → `corporate_action`, `quant_return_daily`, `quant_*` | [quant.md](quant.md) |
 
 ## How they fit together
 
@@ -24,6 +25,7 @@ from any directory; `pytest` adds `src` via `pythonpath`.
  urls.db (ro)  ───▶ │  shared_executive_edge                                                         │ ◀── entity_resolution
                     │  score_snapshot[TECH/VALOR], veto, rule_catalog, cycle_*, portfolio_position   │ ◀── cycle
                     │  score_snapshot[SEMANTIC]                                                       │ ◀── integration repo
+                    │  corporate_action, quant_return_daily, quant_* (Markowitz benchmark book)       │ ◀── quant
                     │  v_* read-contract views  ──────────────────────────────────────────────────▶  │ ──▶ integration repo → RDF graph
                     └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -35,6 +37,9 @@ from any directory; `pytest` adds `src` via `pythonpath`.
 - `pricing_agent` has **zero imports** to/from `fundamental_agent`. `cycle/` and
   `entity_resolution/` sit above both and read shared tables via plain SQL, mirroring
   the `fundamental_agent/pricing.py` accessor pattern.
+- `quant/` is a leaf: no other package imports it, so its numeric dependencies
+  (numpy, scipy, cvxpy) never load on their import path. It reads shared tables via
+  plain SQL and imports only `kg_schema`.
 
 ## Shared conventions
 
