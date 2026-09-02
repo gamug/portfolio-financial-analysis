@@ -16,6 +16,13 @@ dependencies = [
     "pydantic>=2.6",
     "python-dotenv>=1.0",
     "tqdm>=4.66",
+    # quant/: Markowitz mean-variance optimizer. First numeric deps in the repo;
+    # kept off every other package's import path (see tests/test_quant_import_isolation.py).
+    # All pinned to releases that still support requires-python >=3.10 even though CI runs 3.12.
+    "numpy>=2.0,<3",
+    "scipy>=1.13",
+    "cvxpy>=1.6",
+    "clarabel>=0.9",
 ]
 
 [dependency-groups]
@@ -37,6 +44,7 @@ packages = [
     "src/kg_schema",
     "src/cycle",
     "src/entity_resolution",
+    "src/quant",
 ]
 
 [tool.pytest.ini_options]
