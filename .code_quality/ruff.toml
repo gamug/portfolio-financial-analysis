@@ -96,5 +96,7 @@ known-third-party = ["fastapi", "pydantic"]
 
 [lint.per-file-ignores]
 # Literal expected values (row counts, thresholds, fixture numbers) are the point of an
-# assertion, not a magic number smell.
-"tests/**" = ["PLR2004"]
+# assertion, not a magic number smell. S311: fixtures seed deterministic RNGs, not
+# crypto. S105/S106: redaction tests compare against the "***REDACTED***" sentinel.
+# S108: in-memory / throwaway "/tmp" paths in config tests.
+"tests/**" = ["PLR2004", "S311", "S105", "S106", "S108"]

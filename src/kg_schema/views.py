@@ -41,6 +41,27 @@ Projection semantics
                           Its per-asset counterpart is ``score_snapshot`` rows of type
                           ``SECTOR`` (own TECHNICAL raw minus this mean), reachable through
                           ``v_score_snapshot``.
+``v_corporate_action``    one row per (asset, action_type, ex_date) at the latest
+                          ``engine_version``. Dividends (cash/share) and splits (ratio).
+``v_quant_return_daily``  the quant/ total-return daily series; latest ``engine_version``
+                          per (asset, obs_date). ``tr_log_return`` is the optimizer input.
+                          Empty until ``quant build-returns`` has run.
+``v_risk_free_rate``      risk-free curve points; latest ``engine_version`` per (curve, date).
+``v_benchmark_series``    benchmark index levels / returns; latest ``engine_version`` per
+                          (benchmark, obs_date).
+``v_quant_risk_model``    one row per (as_of, model_version): the Markowitz risk model's
+                          metadata (estimators, shrinkage, panel spec, rf). The mu vector
+                          and covariance matrix stay in ``quant_expected_return`` /
+                          ``quant_covariance`` and are not projected.
+``v_quant_portfolio``     one row per optimized benchmark book (as_of, kind); portfolio-level
+                          expected/realized risk-return, not per asset.
+``v_quant_position``      the weights of each book; ``valid_to IS NULL`` = current (mirrors
+                          ``v_portfolio_position``).
+``v_quant_frontier_point`` the efficient-frontier sweep per risk model.
+``v_quant_benchmark_performance`` forward realized daily / cumulative return of a frozen
+                          book, and its active return vs the internal benchmark.
+``v_quant_vs_live``       per-name weight of every optimized book beside the live
+                          ``portfolio_position`` book as of the same date (active weight).
 """
 
 from __future__ import annotations
@@ -182,6 +203,104 @@ VIEWS: dict[str, str] = {
         SELECT sa.id, s.name AS sector_name, sa.sector_id, sa.cycle_date, sa.metric_type,
                sa.member_count, sa.mean_raw, sa.mean_normalized, sa.computed_at, sa.run_id
         FROM sector_aggregate_snapshot sa JOIN sectors s ON s.id = sa.sector_id
+    """,
+    "v_corporate_action": """
+        CREATE VIEW v_corporate_action AS
+        SELECT c.id, a.ticker, c.asset_id, c.action_type, c.ex_date, c.value, c.currency,
+               c.declared_date, c.record_date, c.pay_date, c.frequency,
+               c.source, c.engine_version, c.ingested_at
+        FROM corporate_action c JOIN assets a ON a.id = c.asset_id
+        WHERE c.engine_version = (
+            SELECT c2.engine_version FROM corporate_action c2
+            WHERE c2.asset_id = c.asset_id AND c2.action_type = c.action_type
+              AND c2.ex_date = c.ex_date
+            ORDER BY c2.ingested_at DESC, c2.id DESC LIMIT 1
+        )
+    """,
+    "v_quant_return_daily": """
+        CREATE VIEW v_quant_return_daily AS
+        SELECT q.id, a.ticker, q.asset_id, q.obs_date, q.close_split_adj, q.adj_close,
+               q.tr_index, q.cash_dividend, q.split_factor, q.price_log_return,
+               q.tr_log_return, q.source, q.engine_version, q.computed_at
+        FROM quant_return_daily q JOIN assets a ON a.id = q.asset_id
+        WHERE q.engine_version = (
+            SELECT q2.engine_version FROM quant_return_daily q2
+            WHERE q2.asset_id = q.asset_id AND q2.obs_date = q.obs_date
+            ORDER BY q2.computed_at DESC, q2.id DESC LIMIT 1
+        )
+    """,
+    "v_risk_free_rate": """
+        CREATE VIEW v_risk_free_rate AS
+        SELECT r.id, r.curve, r.rate_date, r.annualized_rate, r.source,
+               r.engine_version, r.ingested_at
+        FROM risk_free_rate r
+        WHERE r.engine_version = (
+            SELECT r2.engine_version FROM risk_free_rate r2
+            WHERE r2.curve = r.curve AND r2.rate_date = r.rate_date
+            ORDER BY r2.ingested_at DESC, r2.id DESC LIMIT 1
+        )
+    """,
+    "v_benchmark_series": """
+        CREATE VIEW v_benchmark_series AS
+        SELECT b.id, b.benchmark, b.obs_date, b.level, b.total_return_level, b.log_return,
+               b.source, b.engine_version, b.ingested_at
+        FROM benchmark_series b
+        WHERE b.engine_version = (
+            SELECT b2.engine_version FROM benchmark_series b2
+            WHERE b2.benchmark = b.benchmark AND b2.obs_date = b.obs_date
+            ORDER BY b2.ingested_at DESC, b2.id DESC LIMIT 1
+        )
+    """,
+    "v_quant_risk_model": """
+        CREATE VIEW v_quant_risk_model AS
+        SELECT rm.id, rm.as_of, rm.model_version, rm.lookback_days, rm.min_history_days,
+               rm.n_assets, rm.cov_estimator, rm.cov_shrinkage, rm.ret_estimator,
+               rm.periods_per_year, rm.panel_engine_version, rm.panel_spec_json,
+               rm.rf_annual, rm.computed_at, rm.quant_run_id
+        FROM quant_risk_model rm
+    """,
+    "v_quant_portfolio": """
+        CREATE VIEW v_quant_portfolio AS
+        SELECT qp.id, qp.as_of, qp.kind, qp.frontier_k, qp.objective, qp.solver, qp.status,
+               qp.expected_return, qp.expected_vol, qp.sharpe, qp.rf_annual, qp.n_positions,
+               qp.turnover, qp.target_param, qp.model_id, qp.engine_version, qp.computed_at
+        FROM quant_portfolio qp
+    """,
+    "v_quant_position": """
+        CREATE VIEW v_quant_position AS
+        SELECT p.id, p.portfolio_id, qp.as_of, qp.kind, a.ticker, p.asset_id,
+               p.weight, p.valid_from, p.valid_to
+        FROM quant_position p
+        JOIN quant_portfolio qp ON qp.id = p.portfolio_id
+        JOIN assets a ON a.id = p.asset_id
+    """,
+    "v_quant_frontier_point": """
+        CREATE VIEW v_quant_frontier_point AS
+        SELECT fp.id, fp.model_id, rm.as_of, fp.k, fp.target_return, fp.expected_return,
+               fp.expected_vol, fp.sharpe, fp.status, fp.weights_json, fp.portfolio_id
+        FROM quant_frontier_point fp
+        JOIN quant_risk_model rm ON rm.id = fp.model_id
+    """,
+    "v_quant_benchmark_performance": """
+        CREATE VIEW v_quant_benchmark_performance AS
+        SELECT bp.id, bp.portfolio_id, qp.as_of, qp.kind, bp.date, bp.realized_return,
+               bp.cumulative_return, bp.benchmark, bp.benchmark_return, bp.active_return,
+               bp.engine_version, bp.computed_at
+        FROM quant_benchmark_performance bp
+        JOIN quant_portfolio qp ON qp.id = bp.portfolio_id
+    """,
+    "v_quant_vs_live": """
+        CREATE VIEW v_quant_vs_live AS
+        SELECT qp.as_of, qp.kind, a.ticker, qpos.asset_id,
+               qpos.weight AS benchmark_weight, pp.weight AS live_weight,
+               COALESCE(qpos.weight, 0) - COALESCE(pp.weight, 0) AS active_weight
+        FROM quant_portfolio qp
+        JOIN quant_position qpos ON qpos.portfolio_id = qp.id AND qpos.valid_to IS NULL
+        JOIN assets a ON a.id = qpos.asset_id
+        LEFT JOIN portfolio_position pp ON pp.asset_id = qpos.asset_id
+             AND pp.valid_from <= qp.as_of
+             AND (pp.valid_to IS NULL OR pp.valid_to > qp.as_of)
+        WHERE qp.kind NOT IN ('live_book', 'equal_weight', 'cap_weight')
     """,
 }
 

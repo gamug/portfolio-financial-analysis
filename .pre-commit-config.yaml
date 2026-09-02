@@ -34,6 +34,9 @@ repos:
       - id: mypy
         args:
           - --config-file=.code_quality/mypy.ini
+        # quant/ is typed against numpy's shipped stubs; the hook runs in its own
+        # venv, so it needs numpy present to resolve npt.NDArray annotations.
+        additional_dependencies: ["numpy>=2.0"]
 
   - repo: https://github.com/commitizen-tools/commitizen
     rev: v4.17.0

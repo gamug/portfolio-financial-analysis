@@ -73,6 +73,13 @@ scalar knobs), `v_weight_component` (that blend exploded to one row per
 `(cycle_run, score_type)`), `v_sector_aggregate_snapshot` (per-cycle mean of
 members' TECHNICAL score per sector).
 
+`quant/` (Markowitz benchmark) adds: `v_corporate_action`, `v_quant_return_daily`,
+`v_risk_free_rate`, `v_benchmark_series` (each newest `engine_version` per key),
+`v_quant_risk_model` (model metadata; μ / Σ stay internal), `v_quant_portfolio`,
+`v_quant_position` (book weight stints), `v_quant_frontier_point`,
+`v_quant_benchmark_performance`, and `v_quant_vs_live` (each optimized book beside
+the live `portfolio_position` weights, per name).
+
 ### `universe_membership.py` — `reconcile(conn, universe, present_asset_ids, *, as_of, run_id=None, run_kind=None, source)`
 
 Turns a mutable `assets` universe into append-only membership stints. Diffs
@@ -102,6 +109,12 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |
 | `shared_executive_edge` | `sharedExecutiveWith` candidates | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
 | `sector_aggregate_snapshot` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `UNIQUE(sector_id, cycle_date, metric_type)` |
+| `corporate_action` | dividends / splits (gateway or XBRL-derived) | `UNIQUE(asset_id, action_type, ex_date, engine_version)` |
+| `quant_return_daily` | total-return daily series (dividends folded in) | `UNIQUE(asset_id, obs_date, engine_version)` |
+| `risk_free_rate` / `benchmark_series` | rf curve + benchmark index for `quant/` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` |
+| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
+| `quant_portfolio` / `quant_position` / `quant_frontier_point` | optimized benchmark books + frontier | `UNIQUE(as_of, kind, frontier_k, engine_version)` / `…(portfolio_id, asset_id, valid_from)` / `…(model_id, k)` |
+| `quant_benchmark_performance` | forward realized / active return of a frozen book | `UNIQUE(portfolio_id, date, engine_version)` |
 
 ## Gotchas
 

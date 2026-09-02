@@ -102,6 +102,9 @@ minting.
 | `portfolio_position` / `cycle_ranking` | `PortfolioPosition` | `cycle select` |
 | `shared_executive_edge` | `sharedExecutiveWith` | `entity_resolution build` |
 | `cycle_run` / `cycle_checkpoint` | orchestrator provenance / resume | `cycle` |
+| `corporate_action` / `quant_return_daily` | dividends + total-return series | `quant backfill-actions` / `build-returns` |
+| `quant_risk_model` / `quant_portfolio` / `quant_position` | Markowitz benchmark book (μ, Σ, frontier, weights) | `quant build-risk-model` / `optimize` |
+| `benchmark_series` / `quant_benchmark_performance` | benchmark index + forward realized returns | `quant benchmark` / `evaluate` |
 
 Read-contract `v_*` VIEWs (documented in `kg_schema/views.py`) are what the
 integration repo consumes; the physical schema can evolve underneath them.
@@ -123,6 +126,22 @@ uv run python -m fundamental_agent run --sections          # + narrative filing 
 uv run python -m entity_resolution build --min-weight 3    # sharedExecutiveWith from urls.db news co-occurrence
 uv run python -m cycle select --date 2026-06-30 --top-n 30 # score, veto, rank, open positions
 uv run python -m cycle monitor --date 2026-07-31           # refresh vetoes / ranking only
+```
+
+### Markowitz benchmark portfolio (`quant/`)
+
+The base case the blended-score `portfolio_position` book is evaluated against —
+a mean-variance optimizer over a score-independent liquidity/data universe. First
+numeric dependency in the repo (numpy / scipy / cvxpy); confined to `quant/`,
+which no other package imports. See [docs/quant.md](docs/quant.md).
+
+```bash
+uv run python -m quant backfill-actions --source derive          # dividends -> corporate_action
+uv run python -m quant build-returns                             # total-return series -> quant_return_daily
+uv run python -m quant build-risk-model --as-of 2026-08-27       # Ledoit-Wolf Sigma + shrunk mu
+uv run python -m quant optimize --as-of 2026-08-27 \
+    --objectives min_var,tangency,target_vol,frontier            # persist the benchmark books
+uv run python -m quant evaluate --from 2026-08-27 --to TODAY     # forward returns vs the live book
 ```
 
 `entity_resolution` reads the news repo's `urls.db` strictly read-only (via
