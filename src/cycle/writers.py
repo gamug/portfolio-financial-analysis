@@ -1,4 +1,4 @@
-"""Persist cycle outputs: score_snapshot (TECH/QUANT), veto, cycle_ranking, positions."""
+"""Persist cycle outputs: score_snapshot (TECH/VALOR), veto, cycle_ranking, positions."""
 
 from __future__ import annotations
 

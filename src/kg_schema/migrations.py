@@ -234,6 +234,91 @@ def _m005_score_type_sector(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
 
 
+# -- m006: rename score_type 'QUANTITATIVE' -> 'VALORIZATION' -----------------
+
+
+def _m006_quantitative_to_valorization(conn: sqlite3.Connection) -> None:
+    """The cycle's value/quality/size factor blend was mislabelled 'QUANTITATIVE'.
+    Rename it to 'VALORIZATION' everywhere it is persisted: the score_type CHECK,
+    the stored rows, and the score-type keys inside the recorded blend JSON.
+    """
+    if not _table_exists(conn, "score_snapshot"):
+        return
+    sql_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'score_snapshot'"
+    ).fetchone()
+    if sql_row is None or "'VALORIZATION'" in (sql_row[0] or ""):
+        return  # fresh DB already has the renamed CHECK
+    had_compat_view = _is_view(conn, "fundamental_snapshot")
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.executescript(
+        """
+        DROP VIEW IF EXISTS v_score_snapshot;
+        DROP VIEW IF EXISTS fundamental_snapshot;
+        CREATE TABLE score_snapshot__new (
+            id               INTEGER PRIMARY KEY,
+            asset_id         INTEGER NOT NULL REFERENCES assets(id),
+            score_type       TEXT NOT NULL CHECK (score_type IN
+                                ('FUNDAMENTAL', 'VALORIZATION', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
+            raw_value        REAL,
+            normalized_score REAL,
+            event_time       TEXT NOT NULL,
+            computed_at      TEXT NOT NULL,
+            model            TEXT,
+            inputs_json      TEXT,
+            run_id           INTEGER,
+            run_kind         TEXT,
+            filing_id        INTEGER REFERENCES sec_filings(id),
+            rating           TEXT,
+            narrative        TEXT,
+            strengths_json   TEXT,
+            risks_json       TEXT,
+            UNIQUE (asset_id, score_type, event_time)
+        );
+        INSERT INTO score_snapshot__new
+            (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
+             model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
+             risks_json)
+        SELECT id, asset_id,
+               CASE score_type WHEN 'QUANTITATIVE' THEN 'VALORIZATION' ELSE score_type END,
+               raw_value, normalized_score, event_time, computed_at,
+               model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
+               risks_json
+        FROM score_snapshot;
+        DROP TABLE score_snapshot;
+        ALTER TABLE score_snapshot__new RENAME TO score_snapshot;
+        CREATE INDEX IF NOT EXISTS ix_score_snapshot_type_time
+            ON score_snapshot (score_type, event_time);
+        """
+    )
+    # The recorded blend carries score_type as JSON object keys / component labels.
+    if _table_exists(conn, "cycle_run"):
+        conn.execute(
+            "UPDATE cycle_run SET params_json = "
+            "REPLACE(params_json, '\"QUANTITATIVE\"', '\"VALORIZATION\"') "
+            "WHERE params_json LIKE '%\"QUANTITATIVE\"%'"
+        )
+    if _table_exists(conn, "cycle_ranking"):
+        conn.execute(
+            "UPDATE cycle_ranking SET components_json = "
+            "REPLACE(components_json, '\"QUANTITATIVE\"', '\"VALORIZATION\"') "
+            "WHERE components_json LIKE '%\"QUANTITATIVE\"%'"
+        )
+    if had_compat_view:
+        conn.executescript(
+            """
+            CREATE VIEW fundamental_snapshot AS
+            SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period,
+                   s.raw_value AS score, s.rating, s.narrative, s.strengths_json, s.risks_json,
+                   s.model, s.inputs_json AS metrics_json, s.computed_at AS created_at
+            FROM score_snapshot s
+            JOIN sec_filings f ON f.id = s.filing_id
+            WHERE s.score_type = 'FUNDAMENTAL';
+            """
+        )
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -244,6 +329,11 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
     ),
     (4, "fundamental_snapshot -> score_snapshot (+ compatibility view)", _m004_score_snapshot),
     (5, "score_snapshot.score_type CHECK widened to admit 'SECTOR'", _m005_score_type_sector),
+    (
+        6,
+        "score_snapshot.score_type 'QUANTITATIVE' renamed to 'VALORIZATION' (rows + CHECK + blend JSON)",
+        _m006_quantitative_to_valorization,
+    ),
 ]
 
 

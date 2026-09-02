@@ -9,7 +9,7 @@ Projection semantics
 --------------------
 ``v_score_snapshot``      one row per (asset, score_type, event_time). ``event_time`` is
                           the filing period-end for FUNDAMENTAL, the cycle date for
-                          TECHNICAL / QUANTITATIVE, and the article-day for SEMANTIC.
+                          TECHNICAL / VALORIZATION, and the article-day for SEMANTIC.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
 ``v_sector``              one row per GICS sector with its member-asset and sub-industry
                           counts (the reference lane's rollup anchor).

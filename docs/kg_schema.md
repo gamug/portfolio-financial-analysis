@@ -92,7 +92,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 | Table | Purpose | Immutability key |
 |---|---|---|
 | `universe_membership` | S&P 500 membership history | `UNIQUE(asset_id, universe, valid_from)` |
-| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / QUANTITATIVE / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
+| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
 | `portfolio_position` | position stints | `UNIQUE(asset_id, valid_from)` |

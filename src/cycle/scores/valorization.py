@@ -1,4 +1,4 @@
-"""QUANTITATIVE score: a cross-sectional value / quality / size factor blend.
+"""VALORIZATION score: a cross-sectional value / quality / size factor blend.
 
 Proposed definition (roadmap step 6, user to refine). Consumes the latest
 ``fundamental_metrics`` per asset plus a market-cap estimate.
@@ -9,7 +9,7 @@ from __future__ import annotations
 from cycle.scores.normalize import rank_pct
 from cycle.scores.technical import RawScore
 
-SCORE_TYPE = "QUANTITATIVE"
+SCORE_TYPE = "VALORIZATION"
 
 # factor -> [(metric_key, higher_is_better), ...]  (metric_key = "group.name" or a synthetic)
 _FACTORS: dict[str, tuple[float, list[tuple[str, bool]]]] = {

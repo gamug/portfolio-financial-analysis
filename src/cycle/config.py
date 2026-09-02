@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path
 
-_DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "QUANTITATIVE": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
+_DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "VALORIZATION": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
 
 
 class CycleSettings(BaseModel):

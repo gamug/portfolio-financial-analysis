@@ -94,7 +94,7 @@ minting.
 
 | Table | Roadmap concept | Written by |
 |---|---|---|
-| `score_snapshot` | `ScoreSnapshot` (`FUNDAMENTAL` / `QUANTITATIVE` / `TECHNICAL` / `SEMANTIC`) | fundamental agent, `cycle`, integration repo |
+| `score_snapshot` | `ScoreSnapshot` (`FUNDAMENTAL` / `VALORIZATION` / `TECHNICAL` / `SEMANTIC`) | fundamental agent, `cycle`, integration repo |
 | `universe_membership` | `UniverseMembership` (`valid_from` / `valid_to`) | both agents' `sync_universe` |
 | `price_observation` | `PriceObservation` (close/return/ATR/vol/drawdown/momentum) | `pricing_agent run --observations` |
 | `sec_filing_section` | `SECFilingSection` (MD&A, risk factors) | `fundamental_agent run --sections` |

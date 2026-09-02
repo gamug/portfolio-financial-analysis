@@ -7,6 +7,9 @@
       "shellAutocompletion": true
     }
   },
+  "mounts": [
+    "source=D:\\thesis,target=/workspaces/thesis,type=bind,consistency=cached"
+  ],
   "postCreateCommand": "bash scripts/init.sh",
   "remoteEnv": {
     "UV_LINK_MODE": "copy"

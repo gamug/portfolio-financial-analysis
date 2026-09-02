@@ -101,7 +101,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: sqlite3.Connection) -> None:
     conn = migrated_db
-    assert version.current_version(conn) == 5
+    assert version.current_version(conn) == 6
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
@@ -215,6 +215,85 @@ def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
         == "view"
     )
     assert conn.execute("SELECT score FROM fundamental_snapshot").fetchone()["score"] == 72.0
+
+
+def test_m006_renames_quantitative_score_type_to_valorization() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    # a database already at floor 5: SECTOR admitted, but the blend factor is still
+    # called 'QUANTITATIVE' -- in the score_type CHECK, the rows, and the blend JSON.
+    conn.executescript(
+        """
+        CREATE TABLE sectors (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE,
+                             sector_id INTEGER, sub_industry TEXT);
+        CREATE TABLE sec_filings (id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL,
+                                  form TEXT NOT NULL, fiscal_year INTEGER NOT NULL,
+                                  fiscal_period TEXT NOT NULL, filing_date TEXT,
+                                  accession_number TEXT, period_end TEXT,
+                                  retrieved_at TEXT NOT NULL);
+        INSERT INTO assets (id, ticker) VALUES (1, 'AAPL');
+        CREATE TABLE score_snapshot (
+            id INTEGER PRIMARY KEY,
+            asset_id INTEGER NOT NULL REFERENCES assets(id),
+            score_type TEXT NOT NULL CHECK (score_type IN
+                ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
+            raw_value REAL, normalized_score REAL, event_time TEXT NOT NULL,
+            computed_at TEXT NOT NULL, model TEXT, inputs_json TEXT, run_id INTEGER,
+            run_kind TEXT, filing_id INTEGER REFERENCES sec_filings(id),
+            rating TEXT, narrative TEXT, strengths_json TEXT, risks_json TEXT,
+            UNIQUE (asset_id, score_type, event_time)
+        );
+        INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at)
+        VALUES (1, 'QUANTITATIVE', 63.0, '2026-06-30', '2026-07-01T00:00:00Z'),
+               (1, 'TECHNICAL',    55.0, '2026-06-30', '2026-07-01T00:00:00Z');
+        CREATE TABLE cycle_run (
+            id INTEGER PRIMARY KEY, cycle_type TEXT NOT NULL, cycle_date TEXT NOT NULL,
+            started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL,
+            params_json TEXT, UNIQUE (cycle_type, cycle_date)
+        );
+        CREATE TABLE cycle_ranking (
+            id INTEGER PRIMARY KEY, cycle_run_id INTEGER NOT NULL REFERENCES cycle_run(id),
+            asset_id INTEGER NOT NULL, rank INTEGER NOT NULL, blended_score REAL NOT NULL,
+            components_json TEXT, vetoed INTEGER NOT NULL DEFAULT 0, veto_rules_json TEXT,
+            selected INTEGER NOT NULL DEFAULT 0, target_weight REAL,
+            UNIQUE (cycle_run_id, asset_id)
+        );
+        INSERT INTO cycle_run (id, cycle_type, cycle_date, started_at, status, params_json)
+        VALUES (1, 'SELECTION', '2026-06-30', '2026-07-01T00:00:00Z', 'completed',
+                '{"score_weights": {"FUNDAMENTAL": 0.4, "QUANTITATIVE": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}}');
+        INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json)
+        VALUES (1, 1, 1, 61.0, '{"FUNDAMENTAL": 70.0, "QUANTITATIVE": 63.0}');
+        """
+    )
+    version.ensure(conn)
+    version.record(conn, 5, "pretend floor")
+    conn.commit()
+
+    assert 6 in kg_schema.ensure(conn, run_migrations=True)
+
+    # the row was renamed, and the new CHECK now admits VALORIZATION (not QUANTITATIVE)
+    types = {r[0] for r in conn.execute("SELECT DISTINCT score_type FROM score_snapshot")}
+    assert types == {"VALORIZATION", "TECHNICAL"}
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
+        "VALUES (1, 'VALORIZATION', 40.0, '2026-07-31', '2026-08-01T00:00:00Z')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
+            "VALUES (1, 'QUANTITATIVE', 1.0, '2026-08-31', '2026-09-01T00:00:00Z')"
+        )
+    # the recorded blend JSON was rekeyed too
+    params = conn.execute("SELECT params_json FROM cycle_run WHERE id = 1").fetchone()[0]
+    assert "QUANTITATIVE" not in params and '"VALORIZATION": 0.3' in params
+    comps = conn.execute("SELECT components_json FROM cycle_ranking WHERE rank = 1").fetchone()[0]
+    assert "QUANTITATIVE" not in comps and '"VALORIZATION": 63.0' in comps
+    comp_types = {
+        r["score_type"] for r in conn.execute("SELECT score_type FROM v_weight_component")
+    }
+    assert "VALORIZATION" in comp_types and "QUANTITATIVE" not in comp_types
 
 
 def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
@@ -335,7 +414,7 @@ def test_weight_scheme_views_explode_the_blend(migrated_db: sqlite3.Connection) 
         (
             '{"weight_scheme": "score_proportional", "top_n": 30, "max_name_weight": 0.1, '
             '"max_sector_weight": 0.3, "soft_veto_penalty": 15.0, '
-            '"score_weights": {"FUNDAMENTAL": 0.4, "QUANTITATIVE": 0.3, "TECHNICAL": 0.2, '
+            '"score_weights": {"FUNDAMENTAL": 0.4, "VALORIZATION": 0.3, "TECHNICAL": 0.2, '
             '"SEMANTIC": 0.1}}',
         ),
     )
@@ -357,7 +436,7 @@ def test_weight_scheme_views_explode_the_blend(migrated_db: sqlite3.Connection) 
     }
     assert comps == {
         "FUNDAMENTAL": 0.4,
-        "QUANTITATIVE": 0.3,
+        "VALORIZATION": 0.3,
         "TECHNICAL": 0.2,
         "SEMANTIC": 0.1,
     }

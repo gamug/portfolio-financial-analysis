@@ -13,7 +13,7 @@ from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
-from cycle.scores import quantitative, sector, technical
+from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import _redact, checkpoint, open_cycle
 
@@ -62,7 +62,7 @@ def test_technical_prefers_momentum_and_low_vol() -> None:
     assert scores[1] > scores[2]
 
 
-def test_quantitative_prefers_cheap_and_profitable() -> None:
+def test_valorization_prefers_cheap_and_profitable() -> None:
     rows: dict[int, dict[str, float | None]] = {
         1: {
             "valuation.free_cash_flow_yield": 0.08,
@@ -77,7 +77,7 @@ def test_quantitative_prefers_cheap_and_profitable() -> None:
             "earnings_yield": 0.01,
         },
     }
-    scores = {s.asset_id: s.raw_value for s in quantitative.compute(rows)}
+    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
     assert scores[1] > scores[2]
 
 
@@ -234,7 +234,7 @@ def test_selection_cycle_end_to_end(cycle_seed: sqlite3.Connection) -> None:
     run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run_row["status"] == "completed"
 
-    for stype in ("TECHNICAL", "QUANTITATIVE", "SECTOR"):
+    for stype in ("TECHNICAL", "VALORIZATION", "SECTOR"):
         n = conn.execute(
             "SELECT COUNT(*) FROM score_snapshot WHERE score_type = ? AND event_time = '2026-06-30' "
             "AND normalized_score IS NOT NULL",
@@ -266,7 +266,7 @@ def test_cycle_resumes_without_duplicating(cycle_seed: sqlite3.Connection) -> No
     before = conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0]
 
     again = run_selection(_settings(conn), "2026-06-30", conn=conn)
-    assert set(again.steps_skipped) >= {"technical", "quantitative", "rank", "positions"}
+    assert set(again.steps_skipped) >= {"technical", "valorization", "rank", "positions"}
     assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
 
