@@ -13,6 +13,7 @@ from pathlib import Path
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
+from quant.returns import run_build_returns
 
 _TODAY_HELP = "date, YYYY-MM-DD"
 
@@ -27,8 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     ba.add_argument("--to", dest="date_to", help=f"{_TODAY_HELP} (default: today)")
     ba.add_argument("--source", choices=("gateway", "derive"), default="derive")
 
+    br = sub.add_parser("build-returns", help="derive the total-return daily series")
+    br.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    br.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    br.add_argument("--to", dest="date_to", help=f"{_TODAY_HELP} (default: today)")
+
     for name, helptext in (
-        ("build-returns", "derive the total-return daily series (quant_return_daily)"),
         ("build-risk-model", "estimate mu / covariance for an as-of date"),
         ("optimize", "run the objective family and persist the benchmark books"),
         ("benchmark", "build the internal equal-/cap-weight benchmark series"),
@@ -70,6 +75,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if report.errors:
             print(f"  {len(report.errors)} asset(s) errored; first: {report.errors[0]}")
+        return 0
+
+    if args.command == "build-returns":
+        rep = run_build_returns(
+            settings, date_from=args.date_from, date_to=args.date_to or _today()
+        )
+        print(
+            f"build-returns [{rep.engine_version}]: {rep.assets} assets, "
+            f"{rep.rows_written} new rows, {rep.assets_with_dividends} with dividends"
+        )
         return 0
 
     print(f"quant {args.command}: not yet implemented")

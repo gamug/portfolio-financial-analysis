@@ -167,3 +167,68 @@ def load_daily_closes(
             (asset_id, start, end),
         )
     ]
+
+
+def load_actions(
+    conn: sqlite3.Connection, asset_id: int, action_type: str, *, start: str, end: str
+) -> dict[str, float]:
+    """``ex_date -> value`` from ``v_corporate_action`` (latest engine per ex-date)."""
+    return {
+        str(r["ex_date"]): float(r["value"])
+        for r in conn.execute(
+            "SELECT ex_date, value FROM v_corporate_action "
+            "WHERE asset_id = ? AND action_type = ? AND ex_date >= ? AND ex_date <= ?",
+            (asset_id, action_type, start, end),
+        )
+    }
+
+
+# -- total-return daily series ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReturnRow:
+    """One day of the total-return series. ``price_log_return`` / ``tr_log_return``
+    are ``None`` on an asset's first row."""
+
+    obs_date: str
+    close_split_adj: float
+    adj_close: float
+    tr_index: float
+    cash_dividend: float
+    split_factor: float
+    price_log_return: float | None
+    tr_log_return: float | None
+
+
+def upsert_return_daily(
+    conn: sqlite3.Connection, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
+) -> int:
+    """``INSERT OR IGNORE`` on ``(asset_id, obs_date, engine_version)``."""
+    now = _now()
+    inserted = 0
+    for r in rows:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO quant_return_daily
+                (asset_id, obs_date, close_split_adj, adj_close, tr_index, cash_dividend,
+                 split_factor, price_log_return, tr_log_return, source, engine_version, computed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?)
+            """,
+            (
+                asset_id,
+                r.obs_date,
+                r.close_split_adj,
+                r.adj_close,
+                r.tr_index,
+                r.cash_dividend,
+                r.split_factor,
+                r.price_log_return,
+                r.tr_log_return,
+                engine_version,
+                now,
+            ),
+        )
+        inserted += cur.rowcount
+    conn.commit()
+    return inserted
