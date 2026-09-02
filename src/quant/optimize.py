@@ -72,6 +72,25 @@ def _sym_psd(sigma: Mat) -> Mat:
     return nearest_psd(np.asarray(sigma, dtype=np.float64))
 
 
+def _waterfill_cap(w: Vec, cap: float) -> Vec:
+    """Pin over-cap weights at *cap*, redistribute the excess proportionally to the
+    rest, repeat until stable. Feasible iff ``cap * len(w) >= 1``."""
+    w = np.maximum(w, 0.0)
+    w = w / w.sum() if w.sum() > 0 else np.full_like(w, 1.0 / len(w))
+    if cap * len(w) < 1.0 - 1e-12:
+        return w  # cap too tight to sum to 1; best effort
+    for _ in range(len(w)):
+        over = w > cap + 1e-12
+        if not over.any():
+            break
+        free = ~over
+        w[over] = cap
+        deficit = 1.0 - w[over].sum()
+        pool = w[free].sum()
+        w[free] = w[free] * (deficit / pool) if pool > 0 else deficit / free.sum()
+    return w
+
+
 def _sector_groups(c: Constraints, n: int) -> list[list[int]]:
     if c.max_sector_weight is None or c.sector_of is None or c.asset_ids is None:
         return []
@@ -191,6 +210,33 @@ def min_variance(
         prob.status,
         time.perf_counter() - t0,
     )
+
+
+def risk_parity(
+    sigma: Mat,
+    *,
+    constraints: Constraints,
+    mu: Vec | None = None,
+    rf: float = 0.0,
+    solver: str = "CLARABEL",
+) -> OptResult:
+    """Equal-risk-contribution portfolio (Spinu 2013 convex form): minimize
+    ``0.5 w'Sigma w - sum(log(w_i))`` over ``w > 0``, then normalize. mu-free. The
+    per-name / sector caps do not bind on a ~500-name ERC book (weights are
+    inverse-vol scale, well under 5%), so they are not imposed here; a plain clip
+    keeps a small book inside the box cap."""
+    sig = _sym_psd(sigma)
+    n = sig.shape[0]
+    t0 = time.perf_counter()
+    w = cp.Variable(n, pos=True)
+    prob = cp.Problem(cp.Minimize(0.5 * cp.quad_form(w, cp.psd_wrap(sig)) - cp.sum(cp.log(w))))
+    used = _solve(prob, solver)
+    wv = np.maximum(np.asarray(w.value), 1e-12)
+    wv = wv / wv.sum()
+    if constraints.max_name_weight is not None:
+        wv = _waterfill_cap(wv, constraints.max_name_weight)
+    ids = constraints.asset_ids or list(range(n))
+    return _result("risk_parity", wv, ids, sig, mu, rf, used, prob.status, time.perf_counter() - t0)
 
 
 def target_return_portfolio(  # noqa: PLR0913 - keyword-only optimizer knobs

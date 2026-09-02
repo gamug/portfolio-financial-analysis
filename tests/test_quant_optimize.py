@@ -13,8 +13,10 @@ from quant.optimize import (
     efficient_frontier,
     max_sharpe,
     min_variance,
+    risk_parity,
     target_volatility_portfolio,
 )
+from quant.risk import equilibrium_returns
 
 _TOL = 2e-4
 _UNCAPPED = Constraints(max_name_weight=None, max_sector_weight=None)
@@ -61,6 +63,24 @@ def test_efficient_frontier_is_monotone() -> None:
     tang = max_sharpe(mu, sig, rf=rf, constraints=_UNCAPPED)
     assert tang.sharpe is not None
     assert tang.sharpe >= max(p.sharpe or -1e9 for p in pts) - 1e-3
+
+
+def test_frontier_collapses_on_flat_mu_but_spans_on_dispersed_mu() -> None:
+    sig = _spd(8, seed=4)
+    # flat mu -> every point is the min-variance portfolio
+    flat = np.full(8, 0.08)
+    flat_pts = efficient_frontier(flat, sig, k=6, constraints=_UNCAPPED)
+    flat_vols = [p.expected_vol for p in flat_pts]
+    assert max(flat_vols) - min(flat_vols) < 1e-6
+
+    # equilibrium mu has cross-sectional dispersion -> the frontier fans out
+    eq = equilibrium_returns(sig, np.arange(1, 9, dtype=float), risk_aversion=3.0)
+    assert eq.std() > 1e-3
+    eq_pts = [p for p in efficient_frontier(eq, sig, k=6, constraints=_UNCAPPED) if p.status in _OK]
+    eq_vols = [p.expected_vol for p in eq_pts]
+    eq_rets = [p.expected_return for p in eq_pts]
+    assert max(eq_vols) > min(eq_vols) * 1.1  # a real spread of risk
+    assert max(eq_rets) > min(eq_rets) + 1e-4  # ... and of return
 
 
 def test_target_volatility_hits_target_when_feasible() -> None:
@@ -111,3 +131,26 @@ def test_infeasible_box_raises() -> None:
     sig = _spd(3, seed=3)
     with pytest.raises(OptimizeError):
         min_variance(sig, constraints=Constraints(max_name_weight=0.2, max_sector_weight=None))
+
+
+def test_risk_parity_equalizes_risk_contributions() -> None:
+    sig = _spd(8, seed=9)
+    res = risk_parity(sig, constraints=_UNCAPPED)
+    w = res.weights
+    assert w.sum() == pytest.approx(1.0, abs=1e-6)
+    assert w.min() > 0
+    rc = w * (sig @ w)  # per-asset risk contribution
+    assert np.std(rc) / np.mean(rc) < 1e-3  # all contributions equal
+
+    # a diagonal Sigma -> equal risk contribution is inverse-volatility weighting
+    diag = np.diag([0.04, 0.09, 0.16, 0.25])
+    wd = risk_parity(diag, constraints=_UNCAPPED).weights
+    inv_vol = 1.0 / np.sqrt(np.diag(diag))
+    assert np.allclose(wd, inv_vol / inv_vol.sum(), atol=1e-4)
+
+
+def test_risk_parity_clips_to_the_box_cap() -> None:
+    sig = np.diag([0.0004, 0.09, 0.09, 0.09])  # asset 0 tiny vol -> huge RP weight
+    res = risk_parity(sig, constraints=Constraints(max_name_weight=0.4, max_sector_weight=None))
+    assert res.weights.max() <= 0.4 + 1e-9
+    assert res.weights.sum() == pytest.approx(1.0, abs=1e-6)

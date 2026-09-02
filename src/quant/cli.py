@@ -57,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     op.add_argument("--max-name-weight", dest="max_name_weight", type=float)
     op.add_argument("--max-sector-weight", dest="max_sector_weight", type=float)
     op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
+    op.add_argument(
+        "--mu", dest="ret_estimator", choices=("equilibrium", "james_stein", "hist_mean")
+    )
     op.add_argument("--solver")
     op.add_argument("--model-version", dest="model_version")
 
@@ -78,6 +81,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "lookback": ("lookback_days", int),
     "min_history": ("min_history_days", int),
     "cov_estimator": ("cov_estimator", str),
+    "ret_estimator": ("ret_estimator", str),
     "model_version": ("risk_model_version", str),
     "frontier_k": ("frontier_k", int),
     "target_vol": ("target_volatility", float),

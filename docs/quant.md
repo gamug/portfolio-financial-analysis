@@ -17,8 +17,9 @@ uv run python -m quant backfill-actions [--source derive|gateway] [--from 2022-0
 uv run python -m quant build-returns    [--from 2022-01-01] [--to TODAY]
 uv run python -m quant build-risk-model --as-of 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
-uv run python -m quant optimize --as-of 2026-08-27 [--objectives min_var,tangency,target_vol,frontier]
-                                [--frontier-k 15] [--target-vol 0.15]
+uv run python -m quant optimize --as-of 2026-08-27
+                                [--objectives min_var,risk_parity,tangency,target_vol,frontier]
+                                [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
                                 [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
 uv run python -m quant benchmark --from 2026-08-27 --to TODAY
 uv run python -m quant evaluate  --from 2026-08-27 --to TODAY [--benchmark SP500_EW_INTERNAL]
@@ -83,10 +84,14 @@ model built from it is reproducible. No pandas.
   constant-correlation target (`ledoit_wolf_cc`, the default; `ledoit_wolf_diag`
   and `sample` also available). Always symmetrized and eigenvalue-floored
   (`nearest_psd`) before cvxpy sees it. No scikit-learn.
-- **Expected returns**: `hist_mean` (raw), `james_stein` (shrink toward the grand
-  mean — the default; raw-mean tangency is unstable), and `equilibrium`
-  (reverse-optimized from cap weights). All three are computed and stored per
-  model; `ret_estimator` picks which the optimizer uses.
+- **Expected returns**: `equilibrium` (reverse-optimized from cap weights,
+  `Π = δ·Σ·w_market` — **the default**), `james_stein` (shrink the sample mean
+  toward the grand mean), `hist_mean` (raw). All three are computed and stored per
+  model; `ret_estimator` / `optimize --mu` picks which the return-aware objectives
+  and the reported expected-return/Sharpe use. `equilibrium` is the default because
+  it carries real cross-sectional dispersion with near-zero estimation noise;
+  `james_stein` over ~5 y of daily data shrinks μ almost flat, which collapses the
+  frontier onto `min_var` (see the note below).
 
 Persisted as `quant_risk_model` metadata + `quant_expected_return` (μ per model)
 + `quant_covariance` (the annualized lower triangle, `N(N+1)/2` rows;
@@ -95,16 +100,27 @@ Persisted as `quant_risk_model` metadata + `quant_expected_return` (μ per model
 ### `optimize.py` / `objective.py` — the metric family
 
 `OBJECTIVES` is a registry: a new metric is one builder function plus one dict
-entry. v1 ships three mean-variance objectives plus the full frontier —
-`--objectives` picks which run, `headline_objective` (default `min_var`) names the
-primary comparator for reports.
+entry. v1 ships four objectives plus the full frontier — `--objectives` picks
+which run, `headline_objective` (default `min_var`) names the primary comparator
+for reports.
 
 | objective | formulation |
 |---|---|
 | `min_var` | `minimize wᵀΣw` — μ-free, the robust headline base case |
+| `risk_parity` | equal risk contribution (Spinu 2013: `minimize 0.5 wᵀΣw − Σ log wᵢ`, then normalize); μ-free, more diversified than `min_var`. A water-fill cap keeps it inside `max_name_weight` if that binds (it does not on a ~500-name book). |
 | `tangency` | y-space transform `minimize yᵀΣy s.t. (μ−rf)ᵀy = 1, y ≥ 0`, `w = y/Σy`; falls back to a frontier scan when there is no long-only tangency or a turnover cap is set |
 | `target_vol` | SOCP `maximize μᵀw s.t. wᵀΣw ≤ target_vol²`; falls back to `min_var` (`status = vol_infeasible`) when the target is below the min-var vol. `target_vol` defaults to 1.25× the min-var vol when unset |
-| `frontier` | k-point sweep from the min-var return to max feasible return; infeasible points are recorded, not raised |
+| `frontier` | k-point sweep from the min-var return to the max feasible return; if μ has no cross-sectional signal the frontier collapses to the min-var point and k copies of it are returned |
+
+**Why the frontier can collapse.** `μ` estimated from ~5 y of daily returns has a
+standard error (~`σ/√T` ≈ 11 pp/name) far larger than the true spread in expected
+returns, so `james_stein` shrinks it nearly flat. A near-constant `μ` makes every
+portfolio's expected return ≈ the same, so `tangency` and every frontier point
+reduce to the global minimum-variance portfolio. This is the estimator refusing
+to bet on noise, not a bug — and it is why `min_var` (which never touches `μ`) is
+the headline. The `equilibrium` default sidesteps it: equilibrium `μ` has real
+dispersion by construction, so the frontier fans out and `tangency` becomes a
+capped cap-weight tilt. `risk_parity` and `min_var` are unaffected either way.
 
 Shared hard constraints: fully invested (`Σw = 1`), long only (`w ≥ 0`), per-name
 box (`w ≤ max_name_weight`), per-GICS-sector caps (`Σ_{i∈s} wᵢ ≤ max_sector_weight`

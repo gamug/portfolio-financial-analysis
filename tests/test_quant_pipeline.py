@@ -26,7 +26,7 @@ def _settings(**over: object) -> QuantSettings:
         "liquidity_min_dollar_volume": 0.0,
         "max_name_weight": None,
         "max_sector_weight": None,
-        "objectives": ["min_var", "tangency", "target_vol", "frontier"],
+        "objectives": ["min_var", "tangency", "target_vol", "risk_parity", "frontier"],
         "frontier_k": 5,
     }
     base.update(over)
@@ -51,11 +51,11 @@ def test_optimize_persists_one_book_per_objective(seeded: sqlite3.Connection) ->
     run_build_risk_model(_settings(), as_of=as_of, conn=seeded)
     res = run_optimize(_settings(), as_of=as_of, conn=seeded)
 
-    assert set(res.books) == {"min_var", "tangency", "target_vol"}
+    assert set(res.books) == {"min_var", "tangency", "target_vol", "risk_parity"}
     assert res.frontier_points == 5
 
     kinds = {r[0] for r in seeded.execute("SELECT kind FROM quant_portfolio")}
-    assert {"min_var", "tangency", "target_vol"} <= kinds
+    assert {"min_var", "tangency", "target_vol", "risk_parity"} <= kinds
 
     for pid in res.books.values():
         w = [

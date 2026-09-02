@@ -15,7 +15,7 @@ from quant.optimize import Constraints
 
 
 def test_standing_family() -> None:
-    assert set(OBJECTIVES) == {"min_var", "tangency", "target_vol"}
+    assert set(OBJECTIVES) == {"min_var", "tangency", "target_vol", "risk_parity"}
 
 
 def test_resolve_keeps_order_and_drops_frontier() -> None:
@@ -41,9 +41,10 @@ def test_builders_run_and_param_reported() -> None:
         target_volatility=0.25,
         solver="CLARABEL",
     )
-    for _name, build in resolve_objectives(["min_var", "tangency", "target_vol"]):
+    for _name, build in resolve_objectives(["min_var", "tangency", "target_vol", "risk_parity"]):
         res = build(ctx)
         assert res.weights.shape == (5,)
         assert res.weights.sum() == pytest.approx(1.0, abs=1e-5)
+        assert res.weights.min() >= -1e-8
     assert objective_param("target_vol", ctx) == 0.25
     assert objective_param("min_var", ctx) is None

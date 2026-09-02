@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path
 
-_DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol"]
+_DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol", "risk_parity"]
 DEFAULT_PRICING_BASE_URL = "http://host.docker.internal:8000/pricing"
 
 
@@ -35,7 +35,11 @@ class QuantSettings(BaseModel):
     lookback_days: int = 756
     periods_per_year: int = 252
     cov_estimator: str = "ledoit_wolf_cc"  # ledoit_wolf_cc | ledoit_wolf_diag | sample
-    ret_estimator: str = "james_stein"  # james_stein | hist_mean | equilibrium
+    # mu for the return-aware objectives (tangency / target_vol / frontier) and for the
+    # expected-return / Sharpe reported on every book. `equilibrium` (Pi = delta*Sigma*w_mkt)
+    # carries real cross-sectional dispersion with near-zero estimation noise; `james_stein`
+    # over ~5y of daily data shrinks mu almost flat, which collapses the frontier onto min_var.
+    ret_estimator: str = "equilibrium"  # equilibrium | james_stein | hist_mean
     equilibrium_risk_aversion: float = 2.5
     risk_free_rate: float = 0.045
     rf_source: str = "constant"  # constant | csv | fred
