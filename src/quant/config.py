@@ -45,9 +45,9 @@ class QuantSettings(BaseModel):
     objectives: list[str] = Field(default_factory=lambda: list(_DEFAULT_OBJECTIVES))
     headline_objective: str = "min_var"
     target_volatility: float | None = None  # None => match the live book's trailing realized vol
-    max_name_weight: float = 0.05
+    max_name_weight: float | None = 0.05  # None => no per-name box cap
     min_name_weight: float = 0.0
-    max_sector_weight: float = 0.30
+    max_sector_weight: float | None = 0.30  # None => no per-sector cap
     frontier_k: int = 15
     turnover_cap: float | None = None
     solver: str = "CLARABEL"

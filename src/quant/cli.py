@@ -13,7 +13,7 @@ from pathlib import Path
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
-from quant.persist import run_build_risk_model
+from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
 
 _TODAY_HELP = "date, YYYY-MM-DD"
@@ -45,8 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("--model-version", dest="model_version")
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
 
+    op = sub.add_parser("optimize", help="run the objective family and persist the benchmark books")
+    op.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    op.add_argument("--as-of", dest="as_of", required=True, help=_TODAY_HELP)
+    op.add_argument("--objectives", help="comma-separated: min_var,tangency,target_vol,frontier")
+    op.add_argument("--frontier-k", dest="frontier_k", type=int)
+    op.add_argument("--target-vol", dest="target_vol", type=float)
+    op.add_argument("--max-name-weight", dest="max_name_weight", type=float)
+    op.add_argument("--max-sector-weight", dest="max_sector_weight", type=float)
+    op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
+    op.add_argument("--solver")
+    op.add_argument("--model-version", dest="model_version")
+
     for name, helptext in (
-        ("optimize", "run the objective family and persist the benchmark books"),
         ("benchmark", "build the internal equal-/cap-weight benchmark series"),
         ("evaluate", "forward realized returns: each book vs the live portfolio_position"),
     ):
@@ -55,12 +66,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-_FLAG_TO_FIELD = {
+_FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "db": ("db_path", Path),
     "lookback": ("lookback_days", int),
     "min_history": ("min_history_days", int),
     "cov_estimator": ("cov_estimator", str),
     "model_version": ("risk_model_version", str),
+    "frontier_k": ("frontier_k", int),
+    "target_vol": ("target_volatility", float),
+    "max_name_weight": ("max_name_weight", float),
+    "max_sector_weight": ("max_sector_weight", float),
+    "turnover_cap": ("turnover_cap", float),
+    "solver": ("solver", str),
 }
 
 
@@ -70,7 +87,10 @@ def _settings(args: argparse.Namespace) -> QuantSettings:
     for flag, (field, cast) in _FLAG_TO_FIELD.items():
         val = getattr(args, flag, None)
         if val is not None:
-            updates[field] = cast(val)
+            updates[field] = cast(val)  # type: ignore[operator]
+    objectives = getattr(args, "objectives", None)
+    if objectives:
+        updates["objectives"] = [o.strip() for o in objectives.split(",") if o.strip()]
     return s.model_copy(update=updates) if updates else s
 
 
@@ -115,6 +135,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"build-risk-model {res.model_id} @ {res.as_of}: {res.n_assets} assets, "
             f"cov={res.cov_estimator} (shrink {shr}), {res.cov_rows} cov rows"
+        )
+        return 0
+
+    if args.command == "optimize":
+        opt = run_optimize(settings, as_of=args.as_of)
+        books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())
+        print(
+            f"optimize @ {opt.as_of} (model {opt.model_id}): books [{books}], "
+            f"{opt.frontier_points} frontier points"
         )
         return 0
 

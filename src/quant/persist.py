@@ -10,14 +10,24 @@ import numpy as np
 
 from quant.config import QuantSettings
 from quant.db import (
+    PortfolioRow,
     RiskModelMeta,
     connect,
     ensure_schema,
     insert_covariance,
     insert_expected_returns,
+    insert_frontier_points,
+    insert_portfolio,
     insert_risk_model,
+    load_covariance,
+    load_expected_returns,
     load_market_caps,
+    load_risk_model,
+    load_sector_of,
+    sync_positions,
 )
+from quant.objective import ObjectiveContext, objective_param, resolve_objectives
+from quant.optimize import Constraints, efficient_frontier, min_variance
 from quant.panel import ReturnPanel, build_return_panel
 from quant.rates import load_risk_free
 from quant.risk import (
@@ -30,6 +40,8 @@ from quant.risk import (
 )
 from quant.state import fail_run, finish_run, open_run
 from quant.universe import liquidity_data_gate
+
+_W_EPS = 1e-6  # sparsify: drop near-zero weights from the stored book
 
 
 @dataclass
@@ -153,6 +165,160 @@ def run_build_risk_model(
             cov_shrinkage=delta,
             cov_rows=cov_rows,
             stored_cov=store_cov,
+        )
+    finally:
+        if owns:
+            conn.close()
+
+
+# -- optimize ---------------------------------------------------------------
+
+
+@dataclass
+class OptimizeRunResult:
+    model_id: int
+    as_of: str
+    books: dict[str, int]  # kind -> quant_portfolio.id
+    frontier_points: int
+
+
+def _weights_json(ids: list[int], w: np.ndarray) -> str:
+    return json.dumps(
+        {str(ids[i]): round(float(v), 8) for i, v in enumerate(w) if abs(float(v)) > _W_EPS},
+        separators=(",", ":"),
+    )
+
+
+def _resolve_model_id(
+    settings: QuantSettings, as_of: str, conn: sqlite3.Connection, run_id: int
+) -> int:
+    row = load_risk_model(conn, as_of=as_of, model_version=settings.risk_model_version)
+    if row is not None:
+        return int(row["id"])
+    build = run_build_risk_model(settings, as_of=as_of, conn=conn)
+    conn.execute("UPDATE quant_run SET status = 'running' WHERE id = ?", (run_id,))
+    return build.model_id
+
+
+def _target_vol(
+    settings: QuantSettings,
+    sigma: np.ndarray,
+    mu: np.ndarray,
+    cons: Constraints,
+) -> float:
+    if settings.target_volatility is not None:
+        return settings.target_volatility
+    mv = min_variance(sigma, constraints=cons, mu=mu, solver=settings.solver)
+    return mv.expected_vol * 1.25
+
+
+def run_optimize(
+    settings: QuantSettings,
+    *,
+    as_of: str,
+    conn: sqlite3.Connection | None = None,
+) -> OptimizeRunResult:
+    owns = conn is None
+    conn = conn or connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        run_id = open_run(conn, "optimize", as_of=as_of, params=settings.model_dump(mode="json"))
+        try:
+            model_id = _resolve_model_id(settings, as_of, conn, run_id)
+            ids, sigma = load_covariance(conn, model_id)
+            if not ids:
+                raise RuntimeError(  # noqa: TRY301
+                    "no stored covariance for this risk model; "
+                    "re-run build-risk-model without --no-store-cov"
+                )
+            mu_map = load_expected_returns(conn, model_id, settings.ret_estimator)
+            mu = np.array([mu_map[a] for a in ids], dtype=np.float64)
+            rm = load_risk_model(conn, as_of=as_of, model_version=settings.risk_model_version)
+            rf = (
+                float(rm["rf_annual"])
+                if rm and rm["rf_annual"] is not None
+                else (settings.risk_free_rate)
+            )
+            cons = Constraints(
+                max_name_weight=settings.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=settings.max_sector_weight,
+                sector_of=load_sector_of(conn, ids),
+                turnover_cap=settings.turnover_cap,
+                asset_ids=ids,
+            )
+            tv = _target_vol(settings, sigma, mu, cons)
+            ctx = ObjectiveContext(
+                sigma=sigma,
+                mu=mu,
+                rf=rf,
+                constraints=cons,
+                target_volatility=tv,
+                solver=settings.solver,
+            )
+
+            books: dict[str, int] = {}
+            for name, build in resolve_objectives(settings.objectives):
+                res = build(ctx)
+                pid = insert_portfolio(
+                    conn,
+                    PortfolioRow(
+                        as_of=as_of,
+                        kind=name,
+                        objective=res.objective,
+                        solver=res.solver,
+                        status=res.status,
+                        expected_return=res.expected_return,
+                        expected_vol=res.expected_vol,
+                        sharpe=res.sharpe,
+                        rf_annual=rf,
+                        n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
+                        engine_version=settings.optimizer_engine_version,
+                        target_param=objective_param(name, ctx),
+                        model_id=model_id,
+                        quant_run_id=run_id,
+                    ),
+                )
+                sync_positions(
+                    conn,
+                    pid,
+                    as_of,
+                    {ids[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS},
+                )
+                books[name] = pid
+
+            frontier_points = 0
+            if "frontier" in settings.objectives:
+                pts = efficient_frontier(
+                    mu,
+                    sigma,
+                    k=settings.frontier_k,
+                    constraints=cons,
+                    rf=rf,
+                    solver=settings.solver,
+                )
+                frontier_points = insert_frontier_points(
+                    conn,
+                    model_id,
+                    [
+                        (
+                            p.k,
+                            p.target_return,
+                            p.expected_return,
+                            p.expected_vol,
+                            p.sharpe,
+                            p.status,
+                            _weights_json(ids, p.weights),
+                        )
+                        for p in pts
+                    ],
+                )
+            finish_run(conn, run_id)
+        except Exception as exc:
+            fail_run(conn, run_id, str(exc))
+            raise
+        return OptimizeRunResult(
+            model_id=model_id, as_of=as_of, books=books, frontier_points=frontier_points
         )
     finally:
         if owns:

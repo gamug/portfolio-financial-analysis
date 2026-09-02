@@ -53,6 +53,15 @@ Projection semantics
                           metadata (estimators, shrinkage, panel spec, rf). The mu vector
                           and covariance matrix stay in ``quant_expected_return`` /
                           ``quant_covariance`` and are not projected.
+``v_quant_portfolio``     one row per optimized benchmark book (as_of, kind); portfolio-level
+                          expected/realized risk-return, not per asset.
+``v_quant_position``      the weights of each book; ``valid_to IS NULL`` = current (mirrors
+                          ``v_portfolio_position``).
+``v_quant_frontier_point`` the efficient-frontier sweep per risk model.
+``v_quant_benchmark_performance`` forward realized daily / cumulative return of a frozen
+                          book, and its active return vs the internal benchmark.
+``v_quant_vs_live``       per-name weight of every optimized book beside the live
+                          ``portfolio_position`` book as of the same date (active weight).
 """
 
 from __future__ import annotations
@@ -249,6 +258,49 @@ VIEWS: dict[str, str] = {
                rm.periods_per_year, rm.panel_engine_version, rm.panel_spec_json,
                rm.rf_annual, rm.computed_at, rm.quant_run_id
         FROM quant_risk_model rm
+    """,
+    "v_quant_portfolio": """
+        CREATE VIEW v_quant_portfolio AS
+        SELECT qp.id, qp.as_of, qp.kind, qp.frontier_k, qp.objective, qp.solver, qp.status,
+               qp.expected_return, qp.expected_vol, qp.sharpe, qp.rf_annual, qp.n_positions,
+               qp.turnover, qp.target_param, qp.model_id, qp.engine_version, qp.computed_at
+        FROM quant_portfolio qp
+    """,
+    "v_quant_position": """
+        CREATE VIEW v_quant_position AS
+        SELECT p.id, p.portfolio_id, qp.as_of, qp.kind, a.ticker, p.asset_id,
+               p.weight, p.valid_from, p.valid_to
+        FROM quant_position p
+        JOIN quant_portfolio qp ON qp.id = p.portfolio_id
+        JOIN assets a ON a.id = p.asset_id
+    """,
+    "v_quant_frontier_point": """
+        CREATE VIEW v_quant_frontier_point AS
+        SELECT fp.id, fp.model_id, rm.as_of, fp.k, fp.target_return, fp.expected_return,
+               fp.expected_vol, fp.sharpe, fp.status, fp.weights_json, fp.portfolio_id
+        FROM quant_frontier_point fp
+        JOIN quant_risk_model rm ON rm.id = fp.model_id
+    """,
+    "v_quant_benchmark_performance": """
+        CREATE VIEW v_quant_benchmark_performance AS
+        SELECT bp.id, bp.portfolio_id, qp.as_of, qp.kind, bp.date, bp.realized_return,
+               bp.cumulative_return, bp.benchmark, bp.benchmark_return, bp.active_return,
+               bp.engine_version, bp.computed_at
+        FROM quant_benchmark_performance bp
+        JOIN quant_portfolio qp ON qp.id = bp.portfolio_id
+    """,
+    "v_quant_vs_live": """
+        CREATE VIEW v_quant_vs_live AS
+        SELECT qp.as_of, qp.kind, a.ticker, qpos.asset_id,
+               qpos.weight AS benchmark_weight, pp.weight AS live_weight,
+               COALESCE(qpos.weight, 0) - COALESCE(pp.weight, 0) AS active_weight
+        FROM quant_portfolio qp
+        JOIN quant_position qpos ON qpos.portfolio_id = qp.id AND qpos.valid_to IS NULL
+        JOIN assets a ON a.id = qpos.asset_id
+        LEFT JOIN portfolio_position pp ON pp.asset_id = qpos.asset_id
+             AND pp.valid_from <= qp.as_of
+             AND (pp.valid_to IS NULL OR pp.valid_to > qp.as_of)
+        WHERE qp.kind NOT IN ('live_book', 'equal_weight', 'cap_weight')
     """,
 }
 

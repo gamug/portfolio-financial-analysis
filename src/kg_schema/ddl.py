@@ -328,6 +328,74 @@ CREATE TABLE IF NOT EXISTS quant_covariance (
     UNIQUE (model_id, asset_id_i, asset_id_j)
 );
 CREATE INDEX IF NOT EXISTS ix_quant_cov_model ON quant_covariance (model_id);
+
+-- One optimized book per (as_of, objective). kind: min_var | tangency | target_vol
+-- | frontier_k | equal_weight | cap_weight | live_book. target_param carries the
+-- objective's scalar input (target_vol's vol target, ...) when it has one.
+CREATE TABLE IF NOT EXISTS quant_portfolio (
+    id              INTEGER PRIMARY KEY,
+    quant_run_id    INTEGER,
+    model_id        INTEGER REFERENCES quant_risk_model(id),
+    as_of           TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    frontier_k      INTEGER,                      -- non-null only for kind='frontier_k'
+    objective       TEXT NOT NULL,
+    solver          TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    expected_return REAL,
+    expected_vol    REAL,
+    sharpe          REAL,
+    rf_annual       REAL,
+    n_positions     INTEGER NOT NULL,
+    turnover        REAL,                         -- vs the prior open book of the same kind
+    target_param    REAL,
+    engine_version  TEXT NOT NULL,                -- 'opt-v1'
+    computed_at     TEXT NOT NULL,
+    params_json     TEXT,
+    UNIQUE (as_of, kind, frontier_k, engine_version)
+);
+
+-- Stint history mirroring portfolio_position, but keyed per book (many concurrent
+-- books at one as_of), not per asset.
+CREATE TABLE IF NOT EXISTS quant_position (
+    id           INTEGER PRIMARY KEY,
+    portfolio_id INTEGER NOT NULL REFERENCES quant_portfolio(id) ON DELETE CASCADE,
+    asset_id     INTEGER NOT NULL REFERENCES assets(id),
+    weight       REAL NOT NULL,
+    valid_from   TEXT NOT NULL,
+    valid_to     TEXT,
+    UNIQUE (portfolio_id, asset_id, valid_from)
+);
+CREATE INDEX IF NOT EXISTS ix_quant_position_open
+    ON quant_position (asset_id) WHERE valid_to IS NULL;
+
+CREATE TABLE IF NOT EXISTS quant_frontier_point (
+    id              INTEGER PRIMARY KEY,
+    model_id        INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    k               INTEGER NOT NULL,
+    target_return   REAL NOT NULL,
+    expected_return REAL NOT NULL,
+    expected_vol    REAL NOT NULL,
+    sharpe          REAL,
+    status          TEXT NOT NULL,
+    weights_json    TEXT NOT NULL,                -- {asset_id: weight} sparse (> 1e-6)
+    portfolio_id    INTEGER REFERENCES quant_portfolio(id),
+    UNIQUE (model_id, k)
+);
+
+CREATE TABLE IF NOT EXISTS quant_benchmark_performance (
+    id                INTEGER PRIMARY KEY,
+    portfolio_id      INTEGER NOT NULL REFERENCES quant_portfolio(id) ON DELETE CASCADE,
+    date              TEXT NOT NULL,              -- forward trading day
+    realized_return   REAL NOT NULL,             -- daily simple TR of the frozen weights
+    cumulative_return REAL NOT NULL,             -- since as_of
+    benchmark         TEXT,
+    benchmark_return  REAL,
+    active_return     REAL,                      -- realized - benchmark
+    engine_version    TEXT NOT NULL,             -- 'perf-v1'
+    computed_at       TEXT NOT NULL,
+    UNIQUE (portfolio_id, date, engine_version)
+);
 """
 
 

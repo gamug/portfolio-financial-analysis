@@ -20,6 +20,9 @@ import numpy.typing as npt
 
 import kg_schema
 
+_ZERO_W = 1e-9  # weights this small are treated as "no position"
+_WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
+
 # quant_run is quant-private (no read-contract view). The quant_* tables that DO
 # get a v_quant_* projection live in kg_schema.ADDITIVE_DDL, so kg_schema.ensure
 # creates them before it (re)builds the views.
@@ -396,3 +399,166 @@ def load_covariance(
         i, j = ix[int(r["asset_id_i"])], ix[int(r["asset_id_j"])]
         m[i, j] = m[j, i] = float(r["value"])
     return ids, m
+
+
+def load_risk_model(
+    conn: sqlite3.Connection, *, as_of: str, model_version: str
+) -> sqlite3.Row | None:
+    row: sqlite3.Row | None = conn.execute(
+        "SELECT * FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
+        (as_of, model_version),
+    ).fetchone()
+    return row
+
+
+def load_expected_returns(
+    conn: sqlite3.Connection, model_id: int, mu_model: str
+) -> dict[int, float]:
+    return {
+        int(r["asset_id"]): float(r["mu"])
+        for r in conn.execute(
+            "SELECT asset_id, mu FROM quant_expected_return WHERE model_id = ? AND mu_model = ?",
+            (model_id, mu_model),
+        )
+    }
+
+
+def load_sector_of(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, int | None]:
+    marks = ",".join("?" * len(asset_ids))
+    q = f"SELECT id, sector_id FROM assets WHERE id IN ({marks})"  # noqa: S608
+    return {
+        int(r["id"]): (int(r["sector_id"]) if r["sector_id"] is not None else None)
+        for r in conn.execute(q, asset_ids)
+    }
+
+
+# -- optimized books --------------------------------------------------------
+
+
+@dataclass
+class PortfolioRow:
+    as_of: str
+    kind: str
+    objective: str
+    solver: str
+    status: str
+    expected_return: float | None
+    expected_vol: float | None
+    sharpe: float | None
+    rf_annual: float | None
+    n_positions: int
+    engine_version: str
+    frontier_k: int | None = None
+    turnover: float | None = None
+    target_param: float | None = None
+    model_id: int | None = None
+    quant_run_id: int | None = None
+    params_json: str | None = None
+
+
+def insert_portfolio(conn: sqlite3.Connection, row: PortfolioRow) -> int:
+    conn.execute(
+        """
+        INSERT INTO quant_portfolio
+            (quant_run_id, model_id, as_of, kind, frontier_k, objective, solver, status,
+             expected_return, expected_vol, sharpe, rf_annual, n_positions, turnover,
+             target_param, engine_version, computed_at, params_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (as_of, kind, frontier_k, engine_version) DO UPDATE SET
+            quant_run_id = excluded.quant_run_id, model_id = excluded.model_id,
+            objective = excluded.objective, solver = excluded.solver, status = excluded.status,
+            expected_return = excluded.expected_return, expected_vol = excluded.expected_vol,
+            sharpe = excluded.sharpe, rf_annual = excluded.rf_annual,
+            n_positions = excluded.n_positions, turnover = excluded.turnover,
+            target_param = excluded.target_param, computed_at = excluded.computed_at,
+            params_json = excluded.params_json
+        """,
+        (
+            row.quant_run_id,
+            row.model_id,
+            row.as_of,
+            row.kind,
+            row.frontier_k,
+            row.objective,
+            row.solver,
+            row.status,
+            row.expected_return,
+            row.expected_vol,
+            row.sharpe,
+            row.rf_annual,
+            row.n_positions,
+            row.turnover,
+            row.target_param,
+            row.engine_version,
+            _now(),
+            row.params_json,
+        ),
+    )
+    conn.commit()
+    fk = row.frontier_k
+    got = conn.execute(
+        "SELECT id FROM quant_portfolio WHERE as_of = ? AND kind = ? AND engine_version = ? "
+        "AND frontier_k IS ?",
+        (row.as_of, row.kind, row.engine_version, fk),
+    ).fetchone()
+    return int(got["id"])
+
+
+def sync_positions(
+    conn: sqlite3.Connection, portfolio_id: int, as_of: str, weights: dict[int, float]
+) -> tuple[int, int]:
+    """Open new stints, close vanished ones, update changed weights -- history is
+    immutable, mirroring ``cycle.writers.sync_positions``."""
+    open_rows = {
+        int(r["asset_id"]): (r["id"], float(r["weight"]))
+        for r in conn.execute(
+            "SELECT id, asset_id, weight FROM quant_position "
+            "WHERE portfolio_id = ? AND valid_to IS NULL",
+            (portfolio_id,),
+        )
+    }
+    target = {a: w for a, w in weights.items() if abs(w) > _ZERO_W}
+    opened = closed = 0
+    for aid in set(open_rows) - set(target):
+        conn.execute(
+            "UPDATE quant_position SET valid_to = ? WHERE id = ?", (as_of, open_rows[aid][0])
+        )
+        closed += 1
+    for aid, w in target.items():
+        if aid in open_rows:
+            if abs(open_rows[aid][1] - w) > _WEIGHT_CHANGE:
+                conn.execute(
+                    "UPDATE quant_position SET weight = ? WHERE id = ?", (w, open_rows[aid][0])
+                )
+        else:
+            conn.execute(
+                "INSERT INTO quant_position (portfolio_id, asset_id, weight, valid_from) "
+                "VALUES (?, ?, ?, ?)",
+                (portfolio_id, aid, w, as_of),
+            )
+            opened += 1
+    conn.commit()
+    return opened, closed
+
+
+def insert_frontier_points(
+    conn: sqlite3.Connection,
+    model_id: int,
+    points: list[tuple[int, float, float, float, float | None, str, str]],
+) -> int:
+    """*points* rows: (k, target_return, expected_return, expected_vol, sharpe, status,
+    weights_json)."""
+    n = 0
+    for k, tgt, ret, vol, sharpe, status, wjson in points:
+        conn.execute(
+            "INSERT INTO quant_frontier_point "
+            "(model_id, k, target_return, expected_return, expected_vol, sharpe, status, "
+            " weights_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (model_id, k) DO UPDATE SET target_return = excluded.target_return, "
+            "expected_return = excluded.expected_return, expected_vol = excluded.expected_vol, "
+            "sharpe = excluded.sharpe, status = excluded.status, weights_json = excluded.weights_json",
+            (model_id, k, tgt, ret, vol, sharpe, status, wjson),
+        )
+        n += 1
+    conn.commit()
+    return n
