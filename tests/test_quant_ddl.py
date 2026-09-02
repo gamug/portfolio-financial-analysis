@@ -19,6 +19,9 @@ def test_ensure_schema_idempotent_and_creates_tables(memory_quant_db: sqlite3.Co
         "quant_return_daily",
         "risk_free_rate",
         "benchmark_series",
+        "quant_risk_model",
+        "quant_expected_return",
+        "quant_covariance",
     } <= tables
 
     views = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'view'")}

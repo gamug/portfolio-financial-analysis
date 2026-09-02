@@ -8,16 +8,21 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+import numpy.typing as npt
+
 import kg_schema
 
-# quant-owned tables. Additive; grown milestone by milestone. ``kg_schema.ensure``
-# creates the shared tables and the read-contract views.
+# quant_run is quant-private (no read-contract view). The quant_* tables that DO
+# get a v_quant_* projection live in kg_schema.ADDITIVE_DDL, so kg_schema.ensure
+# creates them before it (re)builds the views.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quant_run (
     id             INTEGER PRIMARY KEY,
@@ -246,3 +251,148 @@ def upsert_return_daily(
         inserted += cur.rowcount
     conn.commit()
     return inserted
+
+
+def load_market_caps(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, float]:
+    """``asset_id -> market cap`` parsed from ``fundamental_metrics.inputs_json``
+    (latest per asset); mirrors ``cycle.data.market_cap_estimates``. Missing -> absent."""
+    out: dict[int, float] = {}
+    try:
+        rows = conn.execute(
+            "SELECT sf.asset_id, fm.value, fm.inputs_json "
+            "FROM fundamental_metrics fm JOIN sec_filings sf ON sf.id = fm.filing_id "
+            "WHERE fm.metric_group = 'valuation' AND fm.metric_name = 'market_capitalization' "
+            "ORDER BY sf.period_end"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return out
+    wanted = set(asset_ids)
+    for r in rows:
+        aid = int(r["asset_id"])
+        cap = r["value"]
+        if cap is None and r["inputs_json"]:
+            try:
+                cap = json.loads(r["inputs_json"]).get("market_capitalization")
+            except (ValueError, TypeError):
+                cap = None
+        if cap is not None and aid in wanted:
+            out[aid] = float(cap)  # ORDER BY period_end => last wins = most recent
+    return out
+
+
+# -- risk model -------------------------------------------------------------
+
+
+@dataclass
+class RiskModelMeta:
+    as_of: str
+    model_version: str
+    lookback_days: int
+    min_history_days: int
+    n_assets: int
+    cov_estimator: str
+    cov_shrinkage: float | None
+    ret_estimator: str
+    periods_per_year: int
+    panel_engine_version: str
+    panel_spec_json: str
+    rf_annual: float | None
+    params_json: str
+    quant_run_id: int | None = None
+
+
+def insert_risk_model(conn: sqlite3.Connection, meta: RiskModelMeta) -> int:
+    conn.execute(
+        """
+        INSERT INTO quant_risk_model
+            (quant_run_id, as_of, model_version, lookback_days, min_history_days, n_assets,
+             cov_estimator, cov_shrinkage, ret_estimator, periods_per_year, panel_engine_version,
+             panel_spec_json, rf_annual, computed_at, params_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (as_of, model_version) DO UPDATE SET
+            quant_run_id = excluded.quant_run_id, lookback_days = excluded.lookback_days,
+            min_history_days = excluded.min_history_days, n_assets = excluded.n_assets,
+            cov_estimator = excluded.cov_estimator, cov_shrinkage = excluded.cov_shrinkage,
+            ret_estimator = excluded.ret_estimator, periods_per_year = excluded.periods_per_year,
+            panel_engine_version = excluded.panel_engine_version,
+            panel_spec_json = excluded.panel_spec_json, rf_annual = excluded.rf_annual,
+            computed_at = excluded.computed_at, params_json = excluded.params_json
+        """,
+        (
+            meta.quant_run_id,
+            meta.as_of,
+            meta.model_version,
+            meta.lookback_days,
+            meta.min_history_days,
+            meta.n_assets,
+            meta.cov_estimator,
+            meta.cov_shrinkage,
+            meta.ret_estimator,
+            meta.periods_per_year,
+            meta.panel_engine_version,
+            meta.panel_spec_json,
+            meta.rf_annual,
+            _now(),
+            meta.params_json,
+        ),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT id FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
+        (meta.as_of, meta.model_version),
+    ).fetchone()
+    return int(row["id"])
+
+
+def insert_expected_returns(
+    conn: sqlite3.Connection, model_id: int, mu_by_model: dict[str, dict[int, float]]
+) -> int:
+    n = 0
+    for mu_model, by_asset in mu_by_model.items():
+        for asset_id, mu in by_asset.items():
+            conn.execute(
+                "INSERT INTO quant_expected_return (model_id, asset_id, mu_model, mu) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (model_id, asset_id, mu_model) "
+                "DO UPDATE SET mu = excluded.mu",
+                (model_id, asset_id, mu_model, mu),
+            )
+            n += 1
+    conn.commit()
+    return n
+
+
+def insert_covariance(
+    conn: sqlite3.Connection,
+    model_id: int,
+    asset_ids: list[int],
+    sigma: npt.NDArray[np.float64],
+) -> int:
+    """Store the lower triangle (``i <= j``) of the annualized covariance."""
+    n = 0
+    for i, ai in enumerate(asset_ids):
+        for j in range(i, len(asset_ids)):
+            conn.execute(
+                "INSERT INTO quant_covariance (model_id, asset_id_i, asset_id_j, value) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (model_id, asset_id_i, asset_id_j) "
+                "DO UPDATE SET value = excluded.value",
+                (model_id, ai, asset_ids[j], float(sigma[i, j])),
+            )
+            n += 1
+    conn.commit()
+    return n
+
+
+def load_covariance(
+    conn: sqlite3.Connection, model_id: int
+) -> tuple[list[int], npt.NDArray[np.float64]]:
+    rows = conn.execute(
+        "SELECT asset_id_i, asset_id_j, value FROM quant_covariance WHERE model_id = ?",
+        (model_id,),
+    ).fetchall()
+    ids = sorted({int(r["asset_id_i"]) for r in rows} | {int(r["asset_id_j"]) for r in rows})
+    ix = {a: k for k, a in enumerate(ids)}
+    m = np.zeros((len(ids), len(ids)), dtype=np.float64)
+    for r in rows:
+        i, j = ix[int(r["asset_id_i"])], ix[int(r["asset_id_j"])]
+        m[i, j] = m[j, i] = float(r["value"])
+    return ids, m

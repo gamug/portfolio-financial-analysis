@@ -320,6 +320,7 @@ def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
         "v_quant_return_daily",
         "v_risk_free_rate",
         "v_benchmark_series",
+        "v_quant_risk_model",
     ):
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
 

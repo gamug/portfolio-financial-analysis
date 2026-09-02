@@ -287,6 +287,47 @@ CREATE TABLE IF NOT EXISTS benchmark_series (
     ingested_at        TEXT NOT NULL,
     UNIQUE (benchmark, obs_date, engine_version)
 );
+
+-- quant/ Markowitz risk model. quant_run itself is quant-private; these three are
+-- here (not in quant/db.py) because they carry read-contract views -- a view over a
+-- table kg_schema does not create is invalid until quant runs, and a later
+-- migration then trips on it.
+CREATE TABLE IF NOT EXISTS quant_risk_model (
+    id                   INTEGER PRIMARY KEY,
+    quant_run_id         INTEGER,
+    as_of                TEXT NOT NULL,
+    model_version        TEXT NOT NULL,
+    lookback_days        INTEGER NOT NULL,
+    min_history_days     INTEGER NOT NULL,
+    n_assets             INTEGER NOT NULL,
+    cov_estimator        TEXT NOT NULL,
+    cov_shrinkage        REAL,
+    ret_estimator        TEXT NOT NULL,
+    periods_per_year     INTEGER NOT NULL DEFAULT 252,
+    panel_engine_version TEXT NOT NULL,
+    panel_spec_json      TEXT NOT NULL,           -- {asset_ids, date_start, date_end, n_dates, sha256}
+    rf_annual            REAL,
+    computed_at          TEXT NOT NULL,
+    params_json          TEXT,
+    UNIQUE (as_of, model_version)
+);
+
+CREATE TABLE IF NOT EXISTS quant_expected_return (
+    model_id  INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    asset_id  INTEGER NOT NULL REFERENCES assets(id),
+    mu_model  TEXT NOT NULL,                      -- 'hist_mean' | 'james_stein' | 'equilibrium'
+    mu        REAL NOT NULL,                      -- annualized
+    UNIQUE (model_id, asset_id, mu_model)
+);
+
+CREATE TABLE IF NOT EXISTS quant_covariance (
+    model_id   INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    asset_id_i INTEGER NOT NULL,                  -- lower triangle only (i <= j)
+    asset_id_j INTEGER NOT NULL,
+    value      REAL NOT NULL,                     -- annualized covariance
+    UNIQUE (model_id, asset_id_i, asset_id_j)
+);
+CREATE INDEX IF NOT EXISTS ix_quant_cov_model ON quant_covariance (model_id);
 """
 
 

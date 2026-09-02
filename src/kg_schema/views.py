@@ -49,6 +49,10 @@ Projection semantics
 ``v_risk_free_rate``      risk-free curve points; latest ``engine_version`` per (curve, date).
 ``v_benchmark_series``    benchmark index levels / returns; latest ``engine_version`` per
                           (benchmark, obs_date).
+``v_quant_risk_model``    one row per (as_of, model_version): the Markowitz risk model's
+                          metadata (estimators, shrinkage, panel spec, rf). The mu vector
+                          and covariance matrix stay in ``quant_expected_return`` /
+                          ``quant_covariance`` and are not projected.
 """
 
 from __future__ import annotations
@@ -237,6 +241,14 @@ VIEWS: dict[str, str] = {
             WHERE b2.benchmark = b.benchmark AND b2.obs_date = b.obs_date
             ORDER BY b2.ingested_at DESC, b2.id DESC LIMIT 1
         )
+    """,
+    "v_quant_risk_model": """
+        CREATE VIEW v_quant_risk_model AS
+        SELECT rm.id, rm.as_of, rm.model_version, rm.lookback_days, rm.min_history_days,
+               rm.n_assets, rm.cov_estimator, rm.cov_shrinkage, rm.ret_estimator,
+               rm.periods_per_year, rm.panel_engine_version, rm.panel_spec_json,
+               rm.rf_annual, rm.computed_at, rm.quant_run_id
+        FROM quant_risk_model rm
     """,
 }
 
