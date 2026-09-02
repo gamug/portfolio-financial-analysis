@@ -144,6 +144,20 @@ def load_universe_asset_ids(conn: sqlite3.Connection, *, universe: str, as_of: s
     return [int(r["id"]) for r in conn.execute("SELECT id FROM assets ORDER BY id")]
 
 
+def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
+    """Assets with an uncleared HARD ``veto`` row dated on/before *cutoff_date*
+    (copied from ``cycle.writers`` to avoid importing ``cycle``)."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT asset_id FROM veto "
+            "WHERE severity = 'HARD' AND cleared_at IS NULL AND cycle_date <= ?",
+            (cutoff_date,),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return set()  # no veto table in this DB
+    return {int(r["asset_id"]) for r in rows}
+
+
 def load_assets(conn: sqlite3.Connection, *, universe: str, as_of: str) -> list[tuple[int, str]]:
     """``(asset_id, ticker)`` for the gated universe as of *as_of*."""
     ids = set(load_universe_asset_ids(conn, universe=universe, as_of=as_of))
