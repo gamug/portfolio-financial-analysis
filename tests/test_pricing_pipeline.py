@@ -6,28 +6,14 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import write_universe_db
 
 from pricing_agent import pipeline
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import RunParams
 from pricing_agent.pricing_client import Candle, DailyPrices
 
-_UNIVERSE = [
-    {
-        "Symbol": "AAPL",
-        "Security": "Apple",
-        "GICS Sector": "Tech",
-        "GICS Sub-Industry": "HW",
-        "CIK": "320193",
-    },
-    {
-        "Symbol": "MSFT",
-        "Security": "Microsoft",
-        "GICS Sector": "Tech",
-        "GICS Sub-Industry": "SW",
-        "CIK": "789019",
-    },
-]
+_UNIVERSE_SYMS = ["AAPL", "MSFT"]
 
 
 def _series() -> list[Candle]:
@@ -58,9 +44,6 @@ class _FakePricingClient:
     def __exit__(self, *_exc: object) -> None:
         return None
 
-    def universe(self) -> list[dict]:
-        return _UNIVERSE
-
     def daily_any_spelling(self, ticker: str, start: str, end: str) -> DailyPrices:
         return DailyPrices(
             ticker=ticker,
@@ -78,7 +61,14 @@ def _stubbed(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _settings(tmp_path: Path) -> Settings:
-    return Settings(db_path=tmp_path / "kg.db", pricing_base_url="http://pricing.test")
+    udb = write_universe_db(
+        tmp_path / "universe.db", [(s, "2020-01-01", None) for s in _UNIVERSE_SYMS]
+    )
+    return Settings(
+        db_path=tmp_path / "kg.db",
+        universe_db_path=udb,
+        pricing_base_url="http://pricing.test",
+    )
 
 
 @pytest.mark.usefixtures("_stubbed")

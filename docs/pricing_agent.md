@@ -6,14 +6,22 @@ then a `price_window` summary (+ optional per-year windows, raw OHLCV, and deriv
 per-day `price_observation` analytics).
 
 ```bash
-uv run python -m pricing_agent run [--tickers AAPL,NVDA] [--start 2022-01-01] \
-    [--by-year] [--store-daily] [--observations] [--fresh] [--refresh-universe]
+uv run python -m pricing_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
+    [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh]
 uv run python -m pricing_agent migrate
 ```
 
+`--analysis-date` (optional, default: today) drives the universe (from
+`universe.db`) and the fetch upper bound: `resolved_end()` is `--end` clamped to
+it, and any candle dated after it is dropped in `_store` before summarising. It is
+stamped on `pricing_run.as_of` with `pricing_run.code_version`; `price_window` /
+`price_daily` / `price_observation` rows carry the `run_id`. `--refresh-universe`
+is a deprecated no-op.
+
 ## Configuration (`config.py`)
 
-Only `KG_FINANCIAL_DB` is required. Optional `PRICING_BASE_URL` (default
+Only `KG_FINANCIAL_DB` is required. Optional `KG_UNIVERSE_DB` (default
+`/workspaces/thesis/data/universe.db`), `PRICING_BASE_URL` (default
 `http://host.docker.internal:8000/pricing`).
 
 ## Files
@@ -29,11 +37,12 @@ Only `KG_FINANCIAL_DB` is required. Optional `PRICING_BASE_URL` (default
 - Retries 500/502/503/504 + transport errors (3×, backoff ≤ 8 s), 60 s timeout.
 - `today_iso()` helper.
 
-### `universe.py`
+### universe source
 
-`parse_universe(rows)` renames the gateway `/universe` Wikipedia-shaped columns
-(`Symbol`, `Security`, `GICS Sector`, `GICS Sub-Industry`, `CIK`) into `Company`
-models; CIK zero-padded to 10.
+`pipeline._load_members` reads `kg_schema.universe_source.members_asof` over
+`universe.db` as of `--analysis-date`; `db.sync_universe` upserts those into
+`assets` / `sectors`. The gateway `/universe` endpoint and the `parse_universe`
+scraper are no longer used.
 
 ### `stats.py` — `summarize(candles) -> WindowStats`
 
@@ -66,7 +75,7 @@ Per-`(asset, day)` analytics (roadmap `PriceObservation`). Pure functions over a
 
 | Function | Notes |
 |---|---|
-| `sync_universe(conn, companies, *, as_of=None)` | upsert `assets` (COALESCE — never wipes an existing non-empty `company_name`/`cik`/`sector_id`), then `universe_membership.reconcile` (`source='pricing-gateway'`) |
+| `sync_universe(conn, members)` | upsert `assets` from `UniverseMember`s (COALESCE — never wipes an existing non-empty `company_name`/`cik`/`sector_id`); identity write path only, no `universe_membership` write |
 | `completed_windows(conn)` | `(ticker, start, end, label)` resume set |
 | `upsert_price_window(row)` | upsert on `(asset_id, start_date, end_date, label)`; sets `event_time = end_date` |
 | `replace_daily_prices(conn, asset_id, candles)` | raw OHLCV; sets `event_time = date`, `ingested_at` |

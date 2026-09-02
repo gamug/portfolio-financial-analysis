@@ -13,19 +13,30 @@ clarabel — the first in the repo) stay off their import path. This is pinned b
 `tests/test_quant_import_isolation.py`.
 
 ```bash
-uv run python -m quant backfill-actions [--source derive|gateway] [--from 2022-01-01] [--to TODAY]
-uv run python -m quant build-returns    [--from 2022-01-01] [--to TODAY]
-uv run python -m quant build-risk-model --as-of 2026-08-27 [--lookback 756] [--min-history 504]
+uv run python -m quant backfill-actions [--source derive|gateway] [--from 2022-01-01] [--analysis-date TODAY]
+uv run python -m quant build-returns    [--from 2022-01-01] [--analysis-date TODAY]
+uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
-uv run python -m quant optimize --as-of 2026-08-27
+uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
                                 [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
-uv run python -m quant benchmark --from 2026-08-27 --to TODAY
-uv run python -m quant evaluate  --from 2026-08-27 --to TODAY [--benchmark SP500_EW_INTERNAL]
+uv run python -m quant benchmark --from 2026-08-27 --analysis-date TODAY
+uv run python -m quant evaluate  --from 2026-08-27 --analysis-date TODAY [--benchmark SP500_EW_INTERNAL]
 ```
 
-`QuantSettings.load()` needs `KG_FINANCIAL_DB`; every knob is a CLI flag.
+Every subcommand takes `--analysis-date YYYY-MM-DD` (default: today). For
+`build-risk-model` / `optimize` it is the as-of date (`--as-of` is kept as an
+alias; disagreeing values error). For the `--from`/`--to` subcommands it is the
+range upper bound — `--to` is clamped to it, `quant_run.as_of` is stamped with it,
+and `backfill-actions --source derive` only reads filings with
+`period_end <= analysis-date`. Every `quant_run` records `code_version`.
+
+`QuantSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` is optional (the
+point-in-time universe reads — `load_universe_asset_ids` / `load_assets` /
+`liquidity_data_gate` — hit `universe.db`, no longer `financial.db`
+`universe_membership`, and now fail loudly on an empty as-of universe). Every other
+knob is a CLI flag.
 
 ## The pipeline
 
@@ -181,13 +192,14 @@ creates them before it builds the views.
 - **Total-return quality** hinges on the dividend source. The `derive` fallback is
   FY-granular with synthetic ex-dates and no special dividends; a proper daily TR
   series needs the gateway to expose actions.
-- **Survivorship bias.** `universe_membership` has only today's constituents and no
-  closed stints, and `price_daily` holds no delisted names. Any pre-today
-  evaluation of the Markowitz book over this universe is **biased upward**. This
-  cannot be fixed from stored data. Mitigations: `quant_risk_model.panel_spec_json`
-  freezes each run's exact universe + dates + sha256; from today forward, running a
-  point-in-time `universe_membership` snapshot accrues honest stints; never delete
-  `price_daily` rows for a name that later leaves the index.
+- **Survivorship bias (partly addressed).** The universe is now read point-in-time
+  from `universe.db`, which carries real `valid_from` / `valid_to` stints, so
+  `build-risk-model --analysis-date D` gates to the constituents that were in the
+  index on `D`. `price_daily` still holds no delisted names, so a name that left
+  the index before `D` but was a member then still contributes no returns — a
+  residual upward bias. Mitigations: `quant_risk_model.panel_spec_json` freezes
+  each run's exact universe + dates + sha256; never delete `price_daily` rows for a
+  name that later leaves the index; backfill delisted-name prices.
 - **No vendor risk-free / benchmark series** yet — a constant rf and an internal
   equal-weight benchmark are the v1 defaults; the tables + CSV loaders are in place.
 - `price_daily.event_time` / `ingested_at` are NULL for every row — a

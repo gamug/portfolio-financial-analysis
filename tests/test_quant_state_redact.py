@@ -30,7 +30,7 @@ def test_open_finish_fail_run_roundtrip() -> None:
     conn.executescript(
         "CREATE TABLE quant_run (id INTEGER PRIMARY KEY, command TEXT NOT NULL, as_of TEXT, "
         "started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, "
-        "engine_version TEXT NOT NULL, params_json TEXT, error TEXT)"
+        "engine_version TEXT NOT NULL, params_json TEXT, error TEXT, code_version TEXT)"
     )
     rid = open_run(conn, "optimize", as_of="2026-08-27", params={"token": "t", "k": 3})
     row = conn.execute("SELECT * FROM quant_run WHERE id = ?", (rid,)).fetchone()

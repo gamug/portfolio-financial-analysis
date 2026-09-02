@@ -68,17 +68,19 @@ def _m002_financial_facts(conn: sqlite3.Connection) -> None:
             filing_version   TEXT NOT NULL DEFAULT 'pre-v1',
             event_time       TEXT NOT NULL DEFAULT '',
             ingested_at      TEXT,
+            run_id           INTEGER,
             UNIQUE (filing_id, statement, concept, period_key, filing_version)
         );
         INSERT INTO financial_facts__new
             (id, filing_id, statement, concept, standard_concept, label, period_key, value,
-             filing_version, event_time, ingested_at)
+             filing_version, event_time, ingested_at, run_id)
         SELECT ff.id, ff.filing_id, ff.statement, ff.concept, ff.standard_concept, ff.label,
                ff.period_key, ff.value,
                COALESCE(NULLIF(ff.filing_version, ''), f.accession_number, 'pre-v1'),
                COALESCE(NULLIF(ff.event_time, ''), f.period_end, substr(ff.period_key, 1, 10),
                         f.retrieved_at),
-               COALESCE(ff.ingested_at, f.retrieved_at)
+               COALESCE(ff.ingested_at, f.retrieved_at),
+               ff.run_id
         FROM financial_facts ff
         LEFT JOIN sec_filings f ON f.id = ff.filing_id;
         DROP TABLE financial_facts;
@@ -111,15 +113,17 @@ def _m003_fundamental_metrics(conn: sqlite3.Connection) -> None:
             computed_at  TEXT NOT NULL,
             engine_version TEXT NOT NULL DEFAULT 'pre-v1',
             event_time   TEXT NOT NULL DEFAULT '',
+            run_id       INTEGER,
             UNIQUE (filing_id, metric_group, metric_name, engine_version)
         );
         INSERT INTO fundamental_metrics__new
             (id, filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at,
-             engine_version, event_time)
+             engine_version, event_time, run_id)
         SELECT m.id, m.filing_id, m.metric_group, m.metric_name, m.value, m.unit, m.inputs_json,
                m.computed_at,
                COALESCE(NULLIF(m.engine_version, ''), 'pre-v1'),
-               COALESCE(NULLIF(m.event_time, ''), f.period_end, m.computed_at)
+               COALESCE(NULLIF(m.event_time, ''), f.period_end, m.computed_at),
+               m.run_id
         FROM fundamental_metrics m
         LEFT JOIN sec_filings f ON f.id = m.filing_id;
         DROP TABLE fundamental_metrics;

@@ -19,16 +19,26 @@ import sqlite3
 
 from kg_schema import version as _version
 from kg_schema.ddl import ADDITIVE_DDL, REQUIRED_COLUMNS
-from kg_schema.env import DB_ENV_VAR, LEGACY_DB_ENV_VAR, database_path
+from kg_schema.env import (
+    DB_ENV_VAR,
+    LEGACY_DB_ENV_VAR,
+    UNIVERSE_DB_ENV_VAR,
+    database_path,
+    universe_database_path,
+)
 from kg_schema.migrations import apply_migrations
+from kg_schema.provenance import code_version
 from kg_schema.views import ensure_views
 
 __all__ = [
     "DB_ENV_VAR",
     "LEGACY_DB_ENV_VAR",
+    "UNIVERSE_DB_ENV_VAR",
     "apply_migrations",
+    "code_version",
     "database_path",
     "ensure",
+    "universe_database_path",
 ]
 
 

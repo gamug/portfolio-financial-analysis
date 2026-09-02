@@ -17,13 +17,15 @@ from dataclasses import dataclass, field
 
 from tqdm import tqdm
 
+from kg_schema import rundate
+from kg_schema.provenance import code_version
+from kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 from pricing_agent import db
 from pricing_agent.config import Settings
 from pricing_agent.db import PriceWindowRow, RunError
 from pricing_agent.observations import build_observations
-from pricing_agent.pricing_client import DailyPrices, PricingClient, today_iso
+from pricing_agent.pricing_client import DailyPrices, PricingClient
 from pricing_agent.stats import WindowStats, slice_year, summarize
-from pricing_agent.universe import parse_universe
 
 DEFAULT_START_DATE = "2022-01-01"
 FULL_LABEL = "full"
@@ -34,17 +36,19 @@ _Window = tuple[str, str, str, str]  # (ticker, start, end, label)
 @dataclass
 class RunParams:
     start_date: str = DEFAULT_START_DATE
-    end_date: str | None = None  # defaults to today
+    end_date: str | None = None  # clamped to analysis_date; defaults to analysis_date
     limit: int | None = None
     tickers: Sequence[str] | None = None
     by_year: bool = False
     store_daily: bool = False
     observations: bool = False
     fresh: bool = False
-    refresh_universe: bool = False
+    refresh_universe: bool = False  # accepted for back-compat; no longer meaningful
+    analysis_date: str = field(default_factory=rundate.today)
 
     def resolved_end(self) -> str:
-        return self.end_date or today_iso()
+        """The fetch/no-lookahead upper bound: ``--end`` clamped to ``analysis_date``."""
+        return min(self.end_date, self.analysis_date) if self.end_date else self.analysis_date
 
     def years(self) -> list[int]:
         if not self.by_year:
@@ -81,17 +85,26 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     conn = db.connect(settings.db_path)
     try:
         db.ensure_schema(conn)
+        members = _load_members(settings, params.analysis_date)
+        db.sync_universe(conn, members)
+        symbols = [m.symbol for m in members]
         with PricingClient(settings.pricing_base_url) as client:
-            _prepare_universe(conn, client, refresh=params.refresh_universe)
-            assets = db.load_universe(conn, tickers=params.tickers, limit=params.limit)
+            assets = db.load_universe(
+                conn, tickers=params.tickers, symbols=symbols, limit=params.limit
+            )
             if not assets:
                 raise RuntimeError(
-                    "universe is empty -- run once with refresh_universe=True (--refresh-universe)"
+                    f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
                 )
             tasks = [_Task(int(a["id"]), str(a["ticker"])) for a in assets]
             completed: set[_Window] = set() if params.fresh else db.completed_windows(conn)
 
-            run_id = db.start_run(conn, params_json=_params_json(params))
+            run_id = db.start_run(
+                conn,
+                params_json=_params_json(params),
+                as_of=params.analysis_date,
+                code_version=code_version(),
+            )
             db.update_run_plan(conn, run_id, universe_size=len(assets), planned_units=len(tasks))
             report = RunReport(run_id=run_id, planned=len(tasks))
             engine = _Engine(conn, client, params, report, completed)
@@ -107,12 +120,16 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         conn.close()
 
 
-def _prepare_universe(conn: sqlite3.Connection, client: PricingClient, *, refresh: bool) -> None:
-    has_rows = conn.execute("SELECT 1 FROM assets LIMIT 1").fetchone() is not None
-    if has_rows and not refresh:
-        return
-    inserted = db.sync_universe(conn, parse_universe(client.universe()))
-    tqdm.write(f"universe: synced {inserted} constituents from pricing /universe")
+def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
+    """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
+    with connect_ro(settings.universe_db_path) as uconn:
+        members = members_asof(uconn, analysis_date)
+    if not members:
+        raise RuntimeError(
+            f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"
+        )
+    tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
+    return members
 
 
 def _expected_labels(params: RunParams) -> set[str]:
@@ -156,13 +173,17 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     params, conn = engine.params, engine.conn
     start, end = params.start_date, params.resolved_end()
+    run_id = engine.report.run_id
+
+    # No lookahead: drop any candle dated after the analysis date.
+    candles = [c for c in prices.candles if c.date <= end]
 
     windows: list[tuple[str, WindowStats]] = []
-    full = summarize(prices.candles)
+    full = summarize(candles)
     if full is not None:
         windows.append((FULL_LABEL, full))
     for year in params.years():
-        year_stats = summarize(slice_year(prices.candles, year))
+        year_stats = summarize(slice_year(candles, year))
         if year_stats is not None:
             windows.append((str(year), year_stats))
 
@@ -178,22 +199,23 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
                 source=prices.source,
                 warning=prices.warning,
             ),
+            run_id=run_id,
         )
     if params.store_daily:
-        db.replace_daily_prices(conn, task.asset_id, prices.candles)
+        db.replace_daily_prices(conn, task.asset_id, candles, run_id=run_id)
     if params.observations:
         db.upsert_price_observations(
             conn,
             task.asset_id,
-            build_observations(
-                list(prices.candles), engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION
-            ),
+            build_observations(candles, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
+            run_id=run_id,
         )
 
 
 def _params_json(params: RunParams) -> str:
     return json.dumps(
         {
+            "analysis_date": params.analysis_date,
             "start_date": params.start_date,
             "end_date": params.resolved_end(),
             "limit": params.limit,

@@ -10,7 +10,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from tqdm import tqdm
@@ -19,12 +18,18 @@ from fundamental_agent import db
 from fundamental_agent.agents import FilingContext, FundamentalAnalyst, build_model
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
-from fundamental_agent.edgar_client import EdgarClient, EdgarNotFoundError, normalize_ticker
+from fundamental_agent.edgar_client import (
+    EdgarClient,
+    EdgarNotFoundError,
+    normalize_ticker,
+)
 from fundamental_agent.filing_text import fetch_primary_document
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
-from fundamental_agent.universe import fetch_sp500
+from kg_schema import rundate
+from kg_schema.provenance import code_version
+from kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 
 DEFAULT_FORMS = ("10-K", "10-Q")
 DEFAULT_SINCE_YEAR = 2022
@@ -39,15 +44,17 @@ class RunParams:
 
     forms: Sequence[str] = DEFAULT_FORMS
     since_year: int = DEFAULT_SINCE_YEAR
-    until_year: int | None = None  # defaults to the current calendar year
+    until_year: int | None = None  # capped at the analysis_date's year
     limit: int | None = None
     tickers: Sequence[str] | None = None
     fresh: bool = False  # re-analyze even if a snapshot exists
-    refresh_universe: bool = False
+    refresh_universe: bool = False  # accepted for back-compat; no longer meaningful
     sections: bool = False  # also extract narrative filing text (MD&A, risk factors)
+    analysis_date: str = field(default_factory=rundate.today)
 
     def resolved_until(self) -> int:
-        return self.until_year or datetime.now(tz=UTC).year
+        cap = int(self.analysis_date[:4])
+        return min(self.until_year, cap) if self.until_year else cap
 
 
 @dataclass
@@ -96,16 +103,23 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     conn = db.connect(settings.db_path)
     try:
         db.ensure_schema(conn)
-        _prepare_universe(conn, refresh=params.refresh_universe)
-        assets = db.load_universe(conn, tickers=params.tickers, limit=params.limit)
+        members = _load_members(settings, params.analysis_date)
+        db.sync_universe(conn, members)
+        symbols = [m.symbol for m in members]
+        assets = db.load_universe(conn, tickers=params.tickers, symbols=symbols, limit=params.limit)
         if not assets:
             raise RuntimeError(
-                "universe is empty -- run once with refresh_universe=True (--refresh-universe)"
+                f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
             )
         tasks = _plan(assets, params)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
 
-        run_id = db.start_run(conn, params=_params_dict(params))
+        run_id = db.start_run(
+            conn,
+            params=_params_dict(params),
+            as_of=params.analysis_date,
+            code_version=code_version(),
+        )
         db.update_run_plan(conn, run_id, universe_size=len(assets), planned_units=len(tasks))
         report = RunReport(run_id=run_id, planned=len(tasks))
 
@@ -120,12 +134,16 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         conn.close()
 
 
-def _prepare_universe(conn: sqlite3.Connection, *, refresh: bool) -> None:
-    has_rows = conn.execute("SELECT 1 FROM assets LIMIT 1").fetchone() is not None
-    if has_rows and not refresh:
-        return
-    inserted = db.sync_universe(conn, fetch_sp500())
-    tqdm.write(f"universe: synced {inserted} S&P 500 constituents")
+def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
+    """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
+    with connect_ro(settings.universe_db_path) as uconn:
+        members = members_asof(uconn, analysis_date)
+    if not members:
+        raise RuntimeError(
+            f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"
+        )
+    tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
+    return members
 
 
 def _plan(assets: Sequence[sqlite3.Row], params: RunParams) -> list[_YearTask]:
@@ -190,8 +208,15 @@ def _process(engine: _Engine, task: _YearTask) -> tuple[int, int]:
     stmts = Statements.from_payload(payload)
     meta = _fetch_meta(engine, ticker_api, task)
 
+    as_of = engine.params.analysis_date
+    if meta.filing_date and meta.filing_date > as_of:
+        return 0, 1  # no lookahead: this filing was filed after the analysis date
+
     done = skipped = 0
     for target in _targets(stmts, task):
+        if target.period.date > as_of:
+            skipped += 1
+            continue
         unit = (task.ticker, task.form, target.fiscal_period)
         if not engine.params.fresh and unit in engine.completed:
             skipped += 1
@@ -265,6 +290,7 @@ def _extract_sections(
                 sections,
                 event_time=meta.filing_date or target.period.date,
                 source_url=source_url,
+                run_id=engine.report.run_id,
             )
     except Exception as exc:  # non-fatal: section text is best-effort, recorded for triage
         db.record_error(
@@ -281,6 +307,7 @@ def _analyze_one(
     target: _Target,
     meta: FilingMeta,
 ) -> None:
+    run_id = engine.report.run_id
     filing_id = db.upsert_filing(
         engine.conn,
         FilingKey(task.asset_id, task.form, target.period.year, target.fiscal_period),
@@ -289,6 +316,7 @@ def _analyze_one(
             accession_number=meta.accession_number,
             period_end=target.period.date,
         ),
+        run_id=run_id,
     )
     db.append_financial_facts(
         engine.conn,
@@ -296,6 +324,7 @@ def _analyze_one(
         iter_facts(stmts),
         filing_version=meta.accession_number or db.FACTS_ENGINE_VERSION,
         event_time=target.period.date,
+        run_id=run_id,
     )
     if engine.params.sections:
         _extract_sections(engine, task, filing_id, target, meta)
@@ -311,7 +340,9 @@ def _analyze_one(
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
     )
     result = engine.analyst.analyze(ctx)
-    db.record_metrics(engine.conn, filing_id, result.metrics, event_time=target.period.date)
+    db.record_metrics(
+        engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
+    )
 
     assessment = result.assessment
     db.insert_snapshot(
@@ -330,11 +361,13 @@ def _analyze_one(
             metrics=result.flat_metrics,
             event_time=target.period.date,
         ),
+        run_id=run_id,
     )
 
 
 def _params_dict(params: RunParams) -> _Payload:
     return {
+        "analysis_date": params.analysis_date,
         "forms": list(params.forms),
         "since_year": params.since_year,
         "until_year": params.resolved_until(),

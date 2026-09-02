@@ -94,13 +94,14 @@ CREATE TABLE IF NOT EXISTS portfolio_position (
 CREATE INDEX IF NOT EXISTS ix_pp_open ON portfolio_position (asset_id) WHERE valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS cycle_run (
-    id          INTEGER PRIMARY KEY,
-    cycle_type  TEXT NOT NULL,                 -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'
-    cycle_date  TEXT NOT NULL,
-    started_at  TEXT NOT NULL,
-    finished_at TEXT,
-    status      TEXT NOT NULL,
-    params_json TEXT,
+    id           INTEGER PRIMARY KEY,
+    cycle_type   TEXT NOT NULL,                -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'
+    cycle_date   TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    status       TEXT NOT NULL,
+    params_json  TEXT,
+    code_version TEXT,                         -- code tag that produced the run
     UNIQUE (cycle_type, cycle_date)
 );
 
@@ -409,16 +410,40 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "event_time": "TEXT",
         "ingested_at": "TEXT",
         "filing_version": "TEXT",
+        "run_id": "INTEGER",  # the analysis_run that wrote this row
     },
     "fundamental_metrics": {
         "event_time": "TEXT",
         "engine_version": "TEXT",
+        "run_id": "INTEGER",
+    },
+    "sec_filings": {
+        "run_id": "INTEGER",
     },
     "price_window": {
         "event_time": "TEXT",
+        "run_id": "INTEGER",
     },
     "price_daily": {
         "event_time": "TEXT",
         "ingested_at": "TEXT",
+        "run_id": "INTEGER",
+    },
+    # Run-log tables (agent-owned; entries are skipped where the table is absent).
+    # `analysis_date` provenance + the code tag that produced the run, so
+    # portfolio-reports can trace an old run back to its inputs and its code.
+    "analysis_run": {
+        "as_of": "TEXT",
+        "code_version": "TEXT",
+    },
+    "pricing_run": {
+        "as_of": "TEXT",
+        "code_version": "TEXT",
+    },
+    "quant_run": {
+        "code_version": "TEXT",  # `as_of` already exists on this table
+    },
+    "cycle_run": {
+        "code_version": "TEXT",  # `cycle_date` is this table's as-of
     },
 }

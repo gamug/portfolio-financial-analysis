@@ -44,12 +44,14 @@ def open_run(
     *,
     as_of: str | None = None,
     params: dict[str, Any] | None = None,
+    code_version: str | None = None,
 ) -> int:
     """Insert a ``running`` ``quant_run`` row and return its id."""
     cur = conn.execute(
         """
-        INSERT INTO quant_run (command, as_of, started_at, status, engine_version, params_json)
-        VALUES (?, ?, ?, 'running', ?, ?)
+        INSERT INTO quant_run
+            (command, as_of, started_at, status, engine_version, params_json, code_version)
+        VALUES (?, ?, ?, 'running', ?, ?, ?)
         """,
         (
             command,
@@ -57,6 +59,7 @@ def open_run(
             _now(),
             QUANT_ENGINE_VERSION,
             json.dumps(_redact(params or {}), default=str),
+            code_version,
         ),
     )
     conn.commit()

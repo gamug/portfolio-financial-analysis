@@ -13,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from pathlib import Path
 
 from quant.db import hard_vetoed_as_of, load_universe_asset_ids
 
@@ -76,8 +77,11 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
     min_dollar_volume: float = 5_000_000.0,
     liquidity_lookback_days: int = 21,
     exclude_hard_vetoed: bool = True,
+    universe_db_path: str | Path | None = None,
 ) -> GateResult:
-    members = load_universe_asset_ids(conn, universe=universe, as_of=as_of)
+    members = load_universe_asset_ids(
+        conn, universe=universe, as_of=as_of, universe_db_path=universe_db_path
+    )
     history = _history_counts(conn, as_of)
     vetoed = hard_vetoed_as_of(conn, _t_minus_1(as_of)) if exclude_hard_vetoed else set()
 

@@ -19,6 +19,8 @@ import numpy as np
 import numpy.typing as npt
 
 import kg_schema
+from kg_schema.env import universe_database_path
+from kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
 
 _ZERO_W = 1e-9  # weights this small are treated as "no position"
 _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS quant_run (
     status         TEXT NOT NULL,                -- 'running' | 'completed' | 'failed'
     engine_version TEXT NOT NULL,
     params_json    TEXT,
-    error          TEXT
+    error          TEXT,
+    code_version   TEXT                          -- code tag that produced the run
 );
 """
 
@@ -135,21 +138,32 @@ def upsert_corporate_actions(
 # -- reads (plain SQL; no cycle import) --------------------------------------
 
 
-def load_universe_asset_ids(conn: sqlite3.Connection, *, universe: str, as_of: str) -> list[int]:
-    """Open ``universe_membership`` as of *as_of*; fall back to every ``assets`` row
-    when the membership table is empty (mirrors ``cycle.data.active_universe``)."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT asset_id FROM universe_membership
-        WHERE universe = ? AND valid_from <= ?
-          AND (valid_to IS NULL OR valid_to > ?)
-        ORDER BY asset_id
-        """,
-        (universe, as_of, as_of),
-    ).fetchall()
-    if rows:
-        return [int(r["asset_id"]) for r in rows]
-    return [int(r["id"]) for r in conn.execute("SELECT id FROM assets ORDER BY id")]
+def load_universe_asset_ids(
+    conn: sqlite3.Connection,
+    *,
+    universe: str,
+    as_of: str,
+    universe_db_path: str | Path | None = None,
+) -> list[int]:
+    """``assets.id`` for the *universe* members as of *as_of*, read point-in-time
+    from ``universe.db`` and mapped by ticker.
+
+    Raises ``RuntimeError`` if ``universe.db`` has no members as of *as_of*, or if
+    none of them have an ``assets`` row yet (run ``fundamental_agent`` /
+    ``pricing_agent`` first). *universe_db_path* overrides the resolved path -- the
+    test seam."""
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    with connect_ro(upath) as uconn:
+        syms = symbols_asof(uconn, as_of, universe=universe)
+    if not syms:
+        raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {as_of}")
+    mapping, _missing = resolve_asset_ids(conn, syms)
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(syms)} {universe} members as of {as_of} exist in assets yet "
+            f"-- run fundamental_agent / pricing_agent for this date first"
+        )
+    return sorted(mapping.values())
 
 
 def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
@@ -166,9 +180,19 @@ def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
     return {int(r["asset_id"]) for r in rows}
 
 
-def load_assets(conn: sqlite3.Connection, *, universe: str, as_of: str) -> list[tuple[int, str]]:
+def load_assets(
+    conn: sqlite3.Connection,
+    *,
+    universe: str,
+    as_of: str,
+    universe_db_path: str | Path | None = None,
+) -> list[tuple[int, str]]:
     """``(asset_id, ticker)`` for the gated universe as of *as_of*."""
-    ids = set(load_universe_asset_ids(conn, universe=universe, as_of=as_of))
+    ids = set(
+        load_universe_asset_ids(
+            conn, universe=universe, as_of=as_of, universe_db_path=universe_db_path
+        )
+    )
     return [
         (int(r["id"]), str(r["ticker"]))
         for r in conn.execute("SELECT id, ticker FROM assets ORDER BY ticker")

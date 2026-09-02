@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from kg_schema.env import DB_ENV_VAR, database_path
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 DEFAULT_NEWS_DB = "/workspaces/thesis/data/urls.db"
 
@@ -16,6 +16,9 @@ DEFAULT_NEWS_DB = "/workspaces/thesis/data/urls.db"
 class Settings(BaseModel):
     db_path: Path
     news_db_path: Path
+    universe_db_path: Path = Field(
+        default_factory=lambda: Path(universe_database_path()).expanduser()
+    )
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:
@@ -26,4 +29,5 @@ class Settings(BaseModel):
         return cls(
             db_path=Path(db_path).expanduser(),
             news_db_path=Path(os.environ.get("KG_NEWS_DB", DEFAULT_NEWS_DB)).expanduser(),
+            universe_db_path=Path(universe_database_path()).expanduser(),
         )
