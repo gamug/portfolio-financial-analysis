@@ -20,7 +20,7 @@ from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.db import connect, ensure_schema
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
-from cycle.scores import quantitative, sector, technical
+from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
 
@@ -30,7 +30,7 @@ _SELECTION_STEPS = (
     "universe",
     "fundamental",
     "technical",
-    "quantitative",
+    "valorization",
     "semantic_read",
     "normalize",
     "sector",
@@ -132,8 +132,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
     _do("technical", _technical)
 
-    # -- quantitative
-    def _quantitative() -> dict:
+    # -- valorization
+    def _valorization() -> dict:
         mcap = data.market_cap_estimates(conn, metrics)
         rows = {}
         for a in asset_ids:
@@ -145,10 +145,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             if mc:
                 m["neg_log_market_cap"] = -math.log(mc)
             rows[a] = m
-        scores = quantitative.compute(rows)
+        scores = valorization.compute(rows)
         writers.write_scores(
             conn,
-            "QUANTITATIVE",
+            "VALORIZATION",
             cycle_date,
             {s.asset_id: s.raw_value for s in scores},
             {},
@@ -157,7 +157,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         )
         return {"scored": len(scores)}
 
-    _do("quantitative", _quantitative)
+    _do("valorization", _valorization)
 
     _do(
         "semantic_read",
@@ -170,7 +170,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # -- normalize each score_type across the cohort
     def _normalize() -> dict:
         done: dict[str, int] = {}
-        for stype in ("TECHNICAL", "QUANTITATIVE", "SEMANTIC"):
+        for stype in ("TECHNICAL", "VALORIZATION", "SEMANTIC"):
             rows = conn.execute(
                 "SELECT asset_id, raw_value FROM score_snapshot "
                 "WHERE score_type = ? AND event_time = ? AND raw_value IS NOT NULL",
@@ -261,7 +261,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         per_type = {
             "FUNDAMENTAL": _norm_map(conn, "FUNDAMENTAL", cycle_date, latest=True),
             "TECHNICAL": _norm_map(conn, "TECHNICAL", cycle_date),
-            "QUANTITATIVE": _norm_map(conn, "QUANTITATIVE", cycle_date),
+            "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
             "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),
         }
         scored = []

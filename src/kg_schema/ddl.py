@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS score_snapshot (
     id               INTEGER PRIMARY KEY,
     asset_id         INTEGER NOT NULL REFERENCES assets(id),
     score_type       TEXT NOT NULL CHECK (score_type IN
-                        ('FUNDAMENTAL', 'QUANTITATIVE', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
+                        ('FUNDAMENTAL', 'VALORIZATION', 'TECHNICAL', 'SEMANTIC', 'SECTOR')),
     raw_value        REAL,
     normalized_score REAL,
     event_time       TEXT NOT NULL,            -- what the score is *about*

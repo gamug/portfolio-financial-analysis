@@ -1,7 +1,7 @@
 # `cycle/`
 
 Strands-driven selection & monitoring cycles (roadmap steps 6 & 8). Produces
-TECHNICAL / QUANTITATIVE / SECTOR `score_snapshot` rows (plus per-sector
+TECHNICAL / VALORIZATION / SECTOR `score_snapshot` rows (plus per-sector
 `sector_aggregate_snapshot`), normalizes the score types cross-sectionally,
 evaluates the `rule_catalog` into `veto` rows with a **T-1 contagion lag**, ranks
 the universe, and (for a selection cycle) writes `portfolio_position` targets and
@@ -21,7 +21,7 @@ contract.
 ## Configuration (`config.py`)
 
 `CycleSettings.load()` needs `KG_FINANCIAL_DB`; LLM creds optional. Knobs:
-`universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / QUANT .3 / TECH
+`universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / VALOR .3 / TECH
 .2 / SEM .1), `weight_scheme` (`equal` | `score_proportional` | `inverse_vol`),
 `max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts).
 
@@ -61,7 +61,7 @@ blends by weight: 12-1-ish `momentum_63d` (.35, ↑), `momentum_21d` (.15, ↑),
 less-negative-is-better). `raw_value` = 100 × weighted mean of available
 percentiles.
 
-### `scores/quantitative.py` — `SCORE_TYPE = "QUANTITATIVE"`, `compute(metrics) -> list[RawScore]`
+### `scores/valorization.py` — `SCORE_TYPE = "VALORIZATION"`, `compute(metrics) -> list[RawScore]`
 
 Proposed. Factor blend: **value** .45 (`valuation.free_cash_flow_yield`,
 `valuation.enterprise_fcf_yield`, synthetic `earnings_yield`), **quality** .40
@@ -95,7 +95,7 @@ dropped. Pure derivation — nothing fetched.
 
 ### `writers.py`
 
-`write_scores` (TECH/QUANT → `score_snapshot`, upsert on the natural key),
+`write_scores` (TECH/VALOR → `score_snapshot`, upsert on the natural key),
 `apply_normalized`, `write_vetoes` (insert new hits, `UPDATE … cleared_at` for
 lapsed ones — never delete), `hard_vetoed_as_of(conn, cutoff)` / `active_soft_vetoes`
 (the T-1 filter: `cycle_date ≤ cutoff`, `cleared_at IS NULL`), `write_ranking`
@@ -115,7 +115,7 @@ converges. Caps are approximate (converge to within rounding).
 `done`:
 
 ```
-universe → fundamental → technical → quantitative → semantic_read →
+universe → fundamental → technical → valorization → semantic_read →
 normalize → sector → veto → rank → [positions]   (positions is SELECTION only)
 ```
 
@@ -155,7 +155,7 @@ whatever FUNDAMENTAL `score_snapshot` rows `fundamental_agent run` already wrote
 - `cycle/` may import both agents; only `cli.py` should call their `pipeline.run`
   directly. The score/step modules read shared tables via SQL, never by importing
   `pricing_agent`.
-- TECH / QUANT use `cycle_date` as `event_time` → exactly one row per
+- TECH / VALOR use `cycle_date` as `event_time` → exactly one row per
   `(asset, score_type, day)`, so same-day re-runs upsert rather than duplicate.
 - The `_run` function is deliberately one long linear sequence (`# noqa: C901`);
   its structure is the step list, and `cycle_checkpoint` makes it restartable.
