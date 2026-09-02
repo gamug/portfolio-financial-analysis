@@ -10,6 +10,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from kg_schema.cli import add_coverage_parser, coverage_from_args
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from quant.actions import backfill_corporate_actions
@@ -86,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--from", dest="date_from", required=True, help=_TODAY_HELP)
     ev.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     ev.add_argument("--benchmark", default="SP500_EW_INTERNAL")
+
+    add_coverage_parser(sub)
     return parser
 
 
@@ -138,6 +141,10 @@ def _date_to(analysis_date: str, args: argparse.Namespace) -> str:
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.command == "coverage":
+        return coverage_from_args(args)
+
     settings = _settings(args)
     analysis_date = _analysis_date(parser, args)
 

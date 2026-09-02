@@ -143,6 +143,22 @@ nothing dated after it is written, and is recorded on the run-log row alongside 
 `code_version` git tag so `portfolio-reports` can trace an old run. `cycle` still accepts
 `--date` and `quant build-risk-model` / `optimize` still accept `--as-of` as aliases.
 
+**Universe-coverage check.** Because the universe is now a mutable dated list, a member as
+of a past date may have no EDGAR / pricing / observation rows yet (it left the index, or
+was never ingested that far back) — `cycle` and `quant` would then silently run on the
+covered subset. `coverage` (on `fundamental_agent` / `pricing_agent` / `quant`) reports
+per-member coverage and records it in `universe_coverage` / `v_universe_coverage`:
+
+```bash
+uv run python -m quant coverage --analysis-date 2024-06-30            # report + persist
+uv run python -m quant coverage --analysis-date 2024-06-30 --strict   # exit 1 if < --min-fraction
+uv run python -m fundamental_agent coverage --analysis-date 2024-06-30 --print-fill-commands
+```
+
+Default is **warn** (report + exit 0); `--strict` fails when the covered fraction is below
+`--min-fraction` (default 1.0). `--print-fill-commands` emits the `... run --tickers <missing>
+--analysis-date D` lines to close the gaps (delisted names may still fail — see `*_run_error`).
+
 ### Markowitz benchmark portfolio (`quant/`)
 
 The base case the blended-score `portfolio_position` book is evaluated against —

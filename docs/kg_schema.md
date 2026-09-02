@@ -103,6 +103,24 @@ the live `portfolio_position` weights, per name).
 this view is stale unless something else populates the table. Downstream readers
 (the KG projection) should move to `universe.db` / `kg_schema.universe_source`.
 
+### `coverage.py` + `coverage` command — core-data coverage for a dated universe
+
+`check_coverage(fin_conn, universe_conn, as_of, *, universe="SP500",
+min_observation_days=504) -> CoverageReport`: for each member as of `as_of`, does it
+have an `assets` identity row, a FUNDAMENTAL `score_snapshot` (`event_time <= D`),
+`fundamental_metrics` via a filing (`period_end <= D`), `price_daily` (`date <= D`),
+`>= min_observation_days` `price_observation` rows (`obs_date <= D`), and a
+`quant_return_daily` series. `covered` = every *required* check
+(`assets`, `fundamental`, `pricing`, `observations`) passed. `persist_coverage`
+upserts one `universe_coverage` row per `(as_of, universe, symbol)`.
+
+Exposed as `python -m {fundamental_agent,pricing_agent,quant} coverage
+--analysis-date D [--strict] [--min-fraction F] [--print-fill-commands]` (shared
+impl `kg_schema.cli.run_coverage`). Read-only; default **warn** (report + exit 0),
+`--strict` exits 1 when the covered fraction is below `F`. This is the guard for the
+gap that reading agents (`cycle`, `quant`) otherwise hit silently — a member of the
+as-of universe with no data to analyse.
+
 ### `universe_source.py` — point-in-time reads over `universe.db`
 
 `connect_ro(path)` (read-only URI), `members_asof(conn, analysis_date, *,
@@ -124,6 +142,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 | Table | Purpose | Immutability key |
 |---|---|---|
 | `universe_membership` | S&P 500 membership history (**frozen** — superseded by `universe.db`) | `UNIQUE(asset_id, universe, valid_from)` |
+| `universe_coverage` | per-member core-data coverage for a dated universe (from `coverage`) | `UNIQUE(as_of, universe, symbol)` |
 | `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
