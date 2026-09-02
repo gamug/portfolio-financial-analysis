@@ -71,6 +71,30 @@ def test_panel_respects_as_of_cutoff_and_fills_a_one_day_hole(
     assert panel.returns[i, j] == 0.0
 
 
+def test_panel_drops_partial_coverage_column(
+    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=5, n_days=300, with_dividends=False)
+    _build_returns(conn)
+    all_dates = [
+        r[0]
+        for r in conn.execute("SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date")
+    ]
+    # asset 3: blank ~15% of the 200-day window (above the count floor, below min_coverage)
+    holes = all_dates[-140:-110]
+    conn.executemany(
+        "UPDATE quant_return_daily SET tr_log_return = NULL WHERE asset_id = 3 AND obs_date = ?",
+        [(d,) for d in holes],
+    )
+    conn.commit()
+
+    panel = build_return_panel(
+        conn, as_of=all_dates[-1], lookback_days=200, min_history_days=150, min_coverage=0.98
+    )
+    assert 3 not in panel.asset_ids
+    assert not np.isnan(panel.returns).any()
+
+
 def test_panel_raises_when_window_too_short(
     memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
 ) -> None:

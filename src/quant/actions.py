@@ -33,7 +33,20 @@ _DPS_CONCEPTS = (
     "us-gaap_CommonStockDividendsPerShareDeclared",
     "us-gaap_CommonStockDividendsPerShareCashPaid",
 )
+# Aggregate cash dividends paid, divided by a share count -> a per-share fallback
+# for the many filers that tag only the total.
+_DIV_PAID_CONCEPTS = (
+    "us-gaap_PaymentsOfDividendsCommonStock",
+    "us-gaap_PaymentsOfDividends",
+    "us-gaap_PaymentsOfOrdinaryDividends",
+)
+_SHARES_CONCEPTS = (
+    "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",
+    "us-gaap_WeightedAverageNumberOfSharesOutstandingBasic",
+    "us-gaap_CommonStockSharesOutstanding",
+)
 _PERIOD_KEY_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+_MAX_PERIOD_GAP_DAYS = 45  # a period_key within ~a fiscal quarter of the stated period_end
 
 
 def _minus_months(d: date, months: int) -> date:
@@ -45,16 +58,44 @@ def _minus_months(d: date, months: int) -> date:
     return date(year, month, day)
 
 
+def _fy_fact(
+    conn: sqlite3.Connection, filing_id: int, concepts: tuple[str, ...], pe: date
+) -> float | None:
+    """The ``(FY)`` fact for the first matching concept whose period_key date is
+    within ~a fiscal quarter of the filing's stated period_end."""
+    for concept in concepts:
+        best: tuple[int, float] | None = None
+        for r in conn.execute(
+            "SELECT period_key, value FROM financial_facts "
+            "WHERE filing_id = ? AND concept = ? AND period_key LIKE '%(FY)%' "
+            "AND value IS NOT NULL AND value <> 0",
+            (filing_id, concept),
+        ):
+            m = _PERIOD_KEY_DATE.match(str(r["period_key"]))
+            if not m:
+                continue
+            gap = abs((date.fromisoformat(m.group(1)) - pe).days)
+            if best is None or gap < best[0]:
+                best = (gap, abs(float(r["value"])))  # cash-flow lines are negative outflows
+        if best is not None and best[0] <= _MAX_PERIOD_GAP_DAYS:
+            return best[1]
+    return None
+
+
 def _fy_dps(conn: sqlite3.Connection, filing_id: int, period_end: str) -> float | None:
-    for concept in _DPS_CONCEPTS:
-        row = conn.execute(
-            "SELECT value FROM financial_facts "
-            "WHERE filing_id = ? AND concept = ? AND period_key LIKE ? AND value IS NOT NULL "
-            "ORDER BY period_key DESC LIMIT 1",
-            (filing_id, concept, f"{period_end}%(FY)%"),
-        ).fetchone()
-        if row and row["value"] and float(row["value"]) > 0:
-            return float(row["value"])
+    """Cash dividend per share for the filing's fiscal year: a tagged per-share
+    fact if present, else aggregate dividends paid / a fiscal-year share count."""
+    pe_match = _PERIOD_KEY_DATE.match(period_end)
+    if not pe_match:
+        return None
+    pe = date.fromisoformat(pe_match.group(1))
+    dps = _fy_fact(conn, filing_id, _DPS_CONCEPTS, pe)
+    if dps is not None:
+        return dps
+    paid = _fy_fact(conn, filing_id, _DIV_PAID_CONCEPTS, pe)
+    shares = _fy_fact(conn, filing_id, _SHARES_CONCEPTS, pe)
+    if paid and shares:
+        return paid / shares
     return None
 
 

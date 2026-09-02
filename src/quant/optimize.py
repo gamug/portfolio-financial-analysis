@@ -299,6 +299,21 @@ def max_sharpe(
     return _result("tangency", w, ids, sig, mu, rf, used, prob.status, time.perf_counter() - t0)
 
 
+def _max_feasible_return(
+    mu: Vec, sigma: Mat, constraints: Constraints, solver: str
+) -> float | None:
+    """The highest ``muᵀw`` attainable under the constraints (a box cap makes
+    ``mu.max()`` unreachable)."""
+    n = sigma.shape[0]
+    w = cp.Variable(n)
+    prob = cp.Problem(cp.Maximize(mu @ w), _w_constraints(w, constraints, n))
+    try:
+        _solve(prob, solver)
+    except OptimizeError:
+        return None
+    return float(mu @ np.asarray(w.value))
+
+
 def efficient_frontier(  # noqa: PLR0913 - keyword-only optimizer knobs
     mu: Vec,
     sigma: Mat,
@@ -312,9 +327,14 @@ def efficient_frontier(  # noqa: PLR0913 - keyword-only optimizer knobs
     mu = np.asarray(mu, dtype=np.float64)
     lo = min_variance(sig, constraints=constraints, mu=mu, rf=rf, solver=solver)
     r_min = lo.expected_return if lo.expected_return is not None else float(mu.min())
-    r_max = float(mu.max())
-    if r_max <= r_min:
-        r_max = r_min + abs(r_min) * 0.5 + 1e-4
+    r_max = _max_feasible_return(mu, sig, constraints, solver)
+    if r_max is None or r_max <= r_min + 1e-9:
+        # mu carries no cross-sectional signal under the constraints -- the frontier
+        # collapses to the min-variance point. Return k copies of it, all 'optimal'.
+        return [
+            FrontierPoint(i, r_min, r_min, lo.expected_vol, lo.sharpe, "optimal", lo.weights)
+            for i in range(k)
+        ]
     targets = np.linspace(r_min, r_max, k)
 
     points: list[FrontierPoint] = []

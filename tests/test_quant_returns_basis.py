@@ -11,7 +11,16 @@ import pytest
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
-from quant.returns import build_total_return_series, run_build_returns
+from quant.returns import _snap_to_calendar, build_total_return_series, run_build_returns
+
+
+def test_snap_to_calendar_moves_events_forward_to_a_trading_day() -> None:
+    cal = ["2024-01-02", "2024-01-03", "2024-01-08", "2024-01-09"]
+    # 2024-01-06 is a Saturday -> snaps to 2024-01-08; two events on one snap accumulate
+    snapped = _snap_to_calendar(cal, {"2024-01-06": 0.3, "2024-01-07": 0.2, "2024-01-03": 0.5})
+    assert snapped == {"2024-01-08": pytest.approx(0.5), "2024-01-03": pytest.approx(0.5)}
+    # an event after the last trading day is dropped
+    assert _snap_to_calendar(cal, {"2024-02-01": 1.0}) == {}
 
 
 def test_build_total_return_series_folds_in_a_dividend() -> None:

@@ -30,15 +30,34 @@ from quant.db import (
 from quant.state import fail_run, finish_run, open_run
 
 
+def _snap_to_calendar(dates: list[str], events: dict[str, float]) -> dict[str, float]:
+    """Move each event to the first trading day on or after its date (needed for
+    the derive path's synthetic ex-dates, which rarely land on a trading day);
+    accumulate when several snap to the same day."""
+    if not events:
+        return {}
+    out: dict[str, float] = {}
+    for raw, val in sorted(events.items()):
+        snapped = next((d for d in dates if d >= raw), None)
+        if snapped is not None:
+            out[snapped] = out.get(snapped, 0.0) + val
+    return out
+
+
 def build_total_return_series(
     closes: list[tuple[str, float]],
     dividends: dict[str, float],
     splits: dict[str, float],
 ) -> list[ReturnRow]:
     """*closes* is ``(date, split-adjusted close)`` ascending. Returns one
-    :class:`ReturnRow` per input day."""
+    :class:`ReturnRow` per input day. Dividend / split dates that miss the trading
+    calendar are snapped forward to the next trading day."""
     if not closes:
         return []
+
+    cal = [d for d, _ in closes]
+    dividends = _snap_to_calendar(cal, dividends)
+    splits = _snap_to_calendar(cal, splits)
 
     # back-adjustment factors: walk from the end accumulating (1 - D_s / C_s)
     factors: list[float] = [1.0] * len(closes)

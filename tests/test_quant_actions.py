@@ -20,6 +20,37 @@ def _settings() -> QuantSettings:
     return QuantSettings(db_path=Path(":memory:"))
 
 
+def test_derive_uses_aggregate_payments_when_no_per_share_fact(
+    memory_quant_db: sqlite3.Connection,
+) -> None:
+    conn = memory_quant_db
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'XYZ')")
+    fid = conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+        "retrieved_at) VALUES (1, '10-K', 2024, 'FY', '2024-10-31', '2024-11-01T00:00:00Z') "
+        "RETURNING id"
+    ).fetchone()["id"]
+    # cash-flow line is a negative outflow; shares is a weighted-average duration fact
+    conn.execute(
+        "INSERT INTO financial_facts (filing_id, statement, concept, period_key, value, event_time) "
+        "VALUES (?, 'cash_flow', 'us-gaap_PaymentsOfDividendsCommonStock', '2024-10-31 (FY)', "
+        "-250000000.0, '2024-10-31')",
+        (fid,),
+    )
+    conn.execute(
+        "INSERT INTO financial_facts (filing_id, statement, concept, period_key, value, event_time) "
+        "VALUES (?, 'income_statement', "
+        "'us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding', '2024-10-31 (FY)', "
+        "500000000.0, '2024-10-31')",
+        (fid,),
+    )
+    conn.commit()
+
+    rows = derive_corporate_actions_from_facts(conn, 1)
+    assert len(rows) == 4
+    assert sum(r.value for r in rows) == pytest.approx(0.50, abs=1e-6)  # 250M / 500M
+
+
 def test_derive_spreads_fy_dps_into_four_quarters(
     memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
 ) -> None:

@@ -130,6 +130,7 @@ def build_return_panel(  # noqa: PLR0913 - all keyword-only knobs with defaults
     return_engine_version: str = "qret-v1",
     on_short_history: Literal["exclude", "shrink_window"] = "exclude",
     max_gap_ffill: int = 1,
+    min_coverage: float = 0.98,
 ) -> ReturnPanel:
     dates = _load_calendar(
         conn, as_of=as_of, engine_version=return_engine_version, lookback_days=lookback_days
@@ -161,19 +162,24 @@ def build_return_panel(  # noqa: PLR0913 - all keyword-only knobs with defaults
         keep_ix = list(range(len(candidates)))
     else:
         counts = (~np.isnan(raw)).sum(axis=0)
-        keep_ix = [j for j in range(len(candidates)) if counts[j] >= min_history_days]
+        floor = max(min_history_days, int(min_coverage * len(dates)))
+        keep_ix = [j for j in range(len(candidates)) if counts[j] >= floor]
     if not keep_ix:
         raise PanelError(f"no asset has >= {min_history_days} obs in the window ending {as_of}")
 
     asset_ids = [candidates[j] for j in keep_ix]
     returns = np.column_stack([_forward_fill_small_gaps(raw[:, j], max_gap_ffill) for j in keep_ix])
-    if np.isnan(returns).any():
-        offenders = {
-            asset_ids[j]: float(1.0 - np.isnan(returns[:, j]).mean())
-            for j in range(len(asset_ids))
-            if np.isnan(returns[:, j]).any()
-        }
-        raise PanelError(f"NaNs remain after gating; coverage of offenders: {offenders}")
+    # kept columns cleared the coverage bar; zero-fill their few residual interior
+    # holes (a flat day), but bail if any column is still materially incomplete.
+    residual = np.isnan(returns).mean(axis=0)
+    bad = {
+        asset_ids[j]: float(residual[j])
+        for j in range(len(asset_ids))
+        if residual[j] > (1.0 - min_coverage)
+    }
+    if bad:
+        raise PanelError(f"columns still materially incomplete after gating: {bad}")
+    returns = np.nan_to_num(returns, nan=0.0)
 
     spec = json.dumps({"asset_ids": asset_ids, "dates": dates}, separators=(",", ":"))
     return ReturnPanel(

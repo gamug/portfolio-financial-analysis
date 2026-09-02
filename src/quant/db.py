@@ -660,7 +660,11 @@ def insert_frontier_points(
     points: list[tuple[int, float, float, float, float | None, str, str]],
 ) -> int:
     """*points* rows: (k, target_return, expected_return, expected_vol, sharpe, status,
-    weights_json)."""
+    weights_json). Rows with a higher ``k`` from a previous, larger sweep are dropped."""
+    conn.execute(
+        "DELETE FROM quant_frontier_point WHERE model_id = ? AND k >= ?",
+        (model_id, len(points)),
+    )
     n = 0
     for k, tgt, ret, vol, sharpe, status, wjson in points:
         conn.execute(
