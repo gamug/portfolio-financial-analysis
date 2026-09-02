@@ -6,14 +6,20 @@ the news repo's `urls.db` that writes one table (`shared_executive_edge`) into
 news of multiple issuers.
 
 ```bash
-uv run python -m entity_resolution build [--min-weight 3] [--max-tickers 15] \
-    [--min-articles 3] [--news-db /path/to/urls.db]
+uv run python -m entity_resolution build [--analysis-date 2021-06-30] [--min-weight 3] \
+    [--max-tickers 15] [--min-articles 3] [--news-db /path/to/urls.db] [--universe-db PATH]
 ```
+
+`--analysis-date` (optional, default: today) is the `cycle_run.cycle_date`
+(with `cycle_run.code_version`), selects the universe from `universe.db` as of that
+date, and drops any news whose `discovered_urls.pub_date` is after it **or NULL**
+(strict no-lookahead — undated news cannot be date-verified).
 
 ## Configuration (`config.py`)
 
 `KG_FINANCIAL_DB` (required) + `KG_NEWS_DB` (default
-`/workspaces/thesis/data/urls.db`).
+`/workspaces/thesis/data/urls.db`) + `KG_UNIVERSE_DB` (default
+`/workspaces/thesis/data/universe.db`).
 
 ## Files
 
@@ -24,7 +30,7 @@ uv run python -m entity_resolution build [--min-weight 3] [--max-tickers 15] \
 | Function | Query | Index |
 |---|---|---|
 | `connect_ro(path)` | `file:…?mode=ro` (never touches the WAL) | — |
-| `article_ids_for_ticker(news, ticker)` | `SELECT id FROM discovered_urls WHERE ticker = ?` | `idx_ticker` |
+| `article_ids_for_ticker(news, ticker, *, until=None)` | `SELECT id FROM discovered_urls WHERE ticker = ?` (+ `AND pub_date IS NOT NULL AND pub_date <= ?` when `until` set) | `idx_ticker` |
 | `per_entities_for_articles(news, ids)` | chunked (`≤ 900`) `SELECT article_id, text, score FROM article_entities WHERE entity_type='PER' AND article_id IN (…)` | `idx_article_entities_article_id` |
 
 The module **never names `articles` or `body_text`** (a 4.5 GB unindexed table); a

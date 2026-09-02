@@ -8,10 +8,16 @@ the universe, and (for a selection cycle) writes `portfolio_position` targets an
 `cycle_ranking`.
 
 ```bash
-uv run python -m cycle select  --date 2026-06-30 [--top-n 30] [--dry-run]
-uv run python -m cycle monitor --date 2026-07-31
+uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run]
+uv run python -m cycle monitor --analysis-date 2026-07-31
 uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --step-days 7
 ```
+
+`--analysis-date` is the canonical name for the cycle date; `--date` is kept as an
+alias (passing both with different values is a CLI error), and both default to
+today. It is the `cycle_run.cycle_date`; `cycle_run.code_version` records the git
+tag. `backfill` uses `--from`/`--to` (each stepped date is its own as-of) and
+rejects `--analysis-date`.
 
 Runs as a **checkpointed topological runner** — `cycle_checkpoint` (relational),
 not the framework, is the source of truth for resume. A Strands
@@ -20,7 +26,8 @@ contract.
 
 ## Configuration (`config.py`)
 
-`CycleSettings.load()` needs `KG_FINANCIAL_DB`; LLM creds optional. Knobs:
+`CycleSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` and LLM creds
+optional. Knobs:
 `universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / VALOR .3 / TECH
 .2 / SEM .1), `weight_scheme` (`equal` | `score_proportional` | `inverse_vol`),
 `max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts).
@@ -33,15 +40,17 @@ contract.
 
 ### `state.py` — resume bookkeeping
 
-`open_cycle(conn, cycle_type, cycle_date, params) -> id` (upsert on
-`(cycle_type, cycle_date)` → resume). `checkpoint(conn, id, step, status,
-detail)`. `done_steps(conn, id) -> set[str]` — steps with status `done` are
-skipped on re-run. `finish_cycle(conn, id, status)`.
+`open_cycle(conn, cycle_type, cycle_date, params, *, code_version=None) -> id`
+(upsert on `(cycle_type, cycle_date)` → resume). `checkpoint(conn, id, step,
+status, detail)`. `done_steps(conn, id) -> set[str]` — steps with status `done`
+are skipped on re-run. `finish_cycle(conn, id, status)`.
 
 ### `data.py` — read helpers (plain SQL, no agent imports)
 
-`active_universe` (open `universe_membership` as of the date; falls back to all
-`assets`), `latest_metrics` (newest filing with `period_end ≤ date`, keyed
+`active_universe(conn, universe, cycle_date, universe_db_path=None)` — reads
+`universe.db` point-in-time (`members_asof` → `resolve_asset_ids`) and returns the
+matching `assets` rows; raises loudly if `universe.db` yields nothing or nothing
+resolves. `latest_metrics` (newest filing with `period_end ≤ date`, keyed
 `"group.name"`), `latest_price_observation`, `last_fundamental_dates`,
 `latest_fundamental_score`, `latest_semantic_score`, `market_cap_estimates` (reads
 the stored `valuation.market_capitalization` metric inputs).

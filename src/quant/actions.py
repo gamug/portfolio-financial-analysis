@@ -14,6 +14,7 @@ import re
 import sqlite3
 from datetime import date
 
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     ActionsReport,
@@ -100,14 +101,24 @@ def _fy_dps(conn: sqlite3.Connection, filing_id: int, period_end: str) -> float 
 
 
 def derive_corporate_actions_from_facts(
-    conn: sqlite3.Connection, asset_id: int
+    conn: sqlite3.Connection, asset_id: int, *, as_of: str | None = None
 ) -> list[CorporateAction]:
-    """Four synthetic quarterly dividends per fiscal year with a recorded DPS."""
-    filings = conn.execute(
-        "SELECT id, period_end FROM sec_filings "
-        "WHERE asset_id = ? AND form = '10-K' AND period_end IS NOT NULL ORDER BY period_end",
-        (asset_id,),
-    ).fetchall()
+    """Four synthetic quarterly dividends per fiscal year with a recorded DPS.
+
+    *as_of* caps the source filings to ``period_end <= as_of`` (no lookahead)."""
+    if as_of:
+        filings = conn.execute(
+            "SELECT id, period_end FROM sec_filings "
+            "WHERE asset_id = ? AND form = '10-K' AND period_end IS NOT NULL "
+            "AND period_end <= ? ORDER BY period_end",
+            (asset_id, as_of),
+        ).fetchall()
+    else:
+        filings = conn.execute(
+            "SELECT id, period_end FROM sec_filings "
+            "WHERE asset_id = ? AND form = '10-K' AND period_end IS NOT NULL ORDER BY period_end",
+            (asset_id,),
+        ).fetchall()
     by_ex_date: dict[str, CorporateAction] = {}
     for f in filings:
         period_end = str(f["period_end"])
@@ -159,7 +170,12 @@ def backfill_corporate_actions(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
-        assets = load_assets(conn, universe=settings.universe, as_of=date_to)
+        assets = load_assets(
+            conn,
+            universe=settings.universe,
+            as_of=date_to,
+            universe_db_path=settings.universe_db_path,
+        )
         use_gateway = source == "gateway"
         client: QuantPricingClient | None = None
         report = ActionsReport(source=source, engine_version=DERIVED_ENGINE_VERSION)
@@ -179,12 +195,15 @@ def backfill_corporate_actions(
         run_id = open_run(
             conn,
             "backfill-actions",
+            as_of=date_to,
             params={
+                "analysis_date": date_to,
                 "date_from": date_from,
                 "date_to": date_to,
                 "source": report.source,
                 "gateway_probe_failed": report.gateway_probe_failed,
             },
+            code_version=code_version(),
         )
         try:
             for asset_id, ticker in assets:
@@ -195,7 +214,7 @@ def backfill_corporate_actions(
                             client, asset_id, ticker, date_from, date_to
                         )
                         if use_gateway and client is not None
-                        else derive_corporate_actions_from_facts(conn, asset_id)
+                        else derive_corporate_actions_from_facts(conn, asset_id, as_of=date_to)
                     )
                 except (ActionsNotSupported, sqlite3.Error) as exc:
                     report.errors.append(f"{ticker}: {exc}")

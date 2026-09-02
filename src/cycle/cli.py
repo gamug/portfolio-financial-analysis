@@ -10,6 +10,8 @@ from pathlib import Path
 from cycle.config import CycleSettings
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import run_monitoring, run_selection
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,8 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("monitor", "run a monitoring cycle (refreshes vetoes / ranking only)"),
     ):
         p = sub.add_parser(name, help=helptext)
-        p.add_argument("--date", required=True, help="cycle date, YYYY-MM-DD")
+        p.add_argument(
+            "--date", help="cycle date, YYYY-MM-DD (alias of --analysis-date; default: today)"
+        )
+        add_analysis_date_argument(p)
         p.add_argument("--db", help="override KG_FINANCIAL_DB path")
+        p.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
 
@@ -39,24 +45,37 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
     updates: dict[str, object] = {}
     if getattr(args, "db", None):
         updates["db_path"] = Path(args.db)
+    if getattr(args, "universe_db", None):
+        updates["universe_db_path"] = Path(args.universe_db)
     if getattr(args, "top_n", None):
         updates["top_n"] = args.top_n
     return s.model_copy(update=updates) if updates else s
 
 
+def _resolve_cycle_date(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str:
+    """``--analysis-date`` (canonical) or its ``--date`` alias, defaulting to today.
+    Passing both with different values is an error."""
+    if args.analysis_date and args.date and args.analysis_date != args.date:
+        parser.error(f"--date ({args.date}) and --analysis-date ({args.analysis_date}) disagree")
+    return resolve_analysis_date(args.analysis_date or args.date)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     settings = _settings(args)
     hook = make_hook(settings)
 
     if args.command == "monitor":
-        r = run_monitoring(settings, args.date, fundamental_hook=hook)
+        cycle_date = _resolve_cycle_date(parser, args)
+        r = run_monitoring(settings, cycle_date, fundamental_hook=hook)
         print(f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed")
         return 0
     if args.command == "select":
+        cycle_date = _resolve_cycle_date(parser, args)
         if args.dry_run:
             settings = settings.model_copy(update={"top_n": 0})
-        r = run_selection(settings, args.date, fundamental_hook=hook)
+        r = run_selection(settings, cycle_date, fundamental_hook=hook)
         print(
             f"select {r.cycle_run_id} {r.cycle_date}: {r.selected} selected, "
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'})"

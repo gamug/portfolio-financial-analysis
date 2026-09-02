@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import sqlite3
 
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     ReturnRow,
@@ -110,10 +111,17 @@ def run_build_returns(
         run_id = open_run(
             conn,
             "build-returns",
-            params={"date_from": date_from, "date_to": date_to},
+            as_of=date_to,
+            params={"analysis_date": date_to, "date_from": date_from, "date_to": date_to},
+            code_version=code_version(),
         )
         try:
-            for asset_id, _ticker in load_assets(conn, universe=settings.universe, as_of=date_to):
+            for asset_id, _ticker in load_assets(
+                conn,
+                universe=settings.universe,
+                as_of=date_to,
+                universe_db_path=settings.universe_db_path,
+            ):
                 closes = load_daily_closes(conn, asset_id, start=date_from, end=date_to)
                 if not closes:
                     continue

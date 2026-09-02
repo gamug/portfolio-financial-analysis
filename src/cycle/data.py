@@ -4,24 +4,42 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
+
+from kg_schema.env import universe_database_path
+from kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
 
 
-def active_universe(conn: sqlite3.Connection, universe: str, cycle_date: str) -> list[sqlite3.Row]:
-    """Assets with an open ``universe_membership`` as of *cycle_date*
-    (falls back to all ``assets`` when membership history is empty)."""
-    rows = conn.execute(
-        """
-        SELECT a.id, a.ticker, a.sector_id
-        FROM universe_membership m JOIN assets a ON a.id = m.asset_id
-        WHERE m.universe = ? AND m.valid_from <= ?
-          AND (m.valid_to IS NULL OR m.valid_to > ?)
-        ORDER BY a.ticker
-        """,
-        (universe, cycle_date, cycle_date),
-    ).fetchall()
-    if rows:
-        return list(rows)
-    return list(conn.execute("SELECT id, ticker, sector_id FROM assets ORDER BY ticker"))
+def active_universe(
+    conn: sqlite3.Connection,
+    universe: str,
+    cycle_date: str,
+    universe_db_path: str | Path | None = None,
+) -> list[sqlite3.Row]:
+    """``(id, ticker, sector_id)`` for the *universe* members as of *cycle_date*,
+    read point-in-time from ``universe.db`` and mapped by ticker.
+
+    Raises ``RuntimeError`` when ``universe.db`` has no members as of *cycle_date*
+    or none of them exist in ``assets`` yet (run the agents for this date first)."""
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    with connect_ro(upath) as uconn:
+        syms = symbols_asof(uconn, cycle_date, universe=universe)
+    if not syms:
+        raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {cycle_date}")
+    mapping, _missing = resolve_asset_ids(conn, syms)
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(syms)} {universe} members as of {cycle_date} exist in assets yet "
+            f"-- run fundamental_agent / pricing_agent for this date first"
+        )
+    placeholders = ",".join("?" * len(mapping))
+    return list(
+        conn.execute(
+            f"SELECT id, ticker, sector_id FROM assets WHERE id IN ({placeholders}) "  # noqa: S608
+            "ORDER BY ticker",
+            sorted(mapping.values()),
+        )
+    )
 
 
 def latest_metrics(conn: sqlite3.Connection, cycle_date: str) -> dict[int, dict[str, float | None]]:

@@ -6,7 +6,7 @@ import json
 import math
 import random
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +19,36 @@ from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+_UNIVERSE_DDL = """
+CREATE TABLE universe_membership (
+    symbol TEXT NOT NULL, security TEXT NOT NULL,
+    gics_sector TEXT, gics_sub_industry TEXT, hq_location TEXT,
+    date_added TEXT, cik TEXT, founded TEXT,
+    valid_from TEXT NOT NULL, valid_to TEXT, source TEXT NOT NULL
+);
+CREATE INDEX idx_membership_symbol ON universe_membership (symbol);
+CREATE INDEX idx_membership_valid ON universe_membership (valid_from, valid_to);
+"""
+
+
+def write_universe_db(
+    path: Path, members: Iterable[tuple[str, str, str | None]], *, source: str = "test"
+) -> Path:
+    """Build a minimal ``universe.db`` at *path*. Each member is
+    ``(symbol, valid_from, valid_to)``; extra columns are left NULL/derived."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_UNIVERSE_DDL)
+    conn.executemany(
+        "INSERT INTO universe_membership "
+        "(symbol, security, gics_sector, gics_sub_industry, valid_from, valid_to, source) "
+        "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?)",
+        [(sym, f"{sym} Inc.", vf, vt, source) for sym, vf, vt in members],
+    )
+    conn.commit()
+    conn.close()
+    return path
+
 
 # Tables the fundamental agent owns that quant reads but pricing_agent doesn't create.
 _QUANT_EXTRA_DDL = """
@@ -68,8 +98,16 @@ def raw_aapl_payload() -> dict[str, Any]:
 
 
 @pytest.fixture
-def constituents_html() -> str:
-    return (FIXTURES / "sp500_constituents.html").read_text()
+def universe_db(tmp_path: Path) -> Callable[..., Path]:
+    """Factory: write a temp ``universe.db`` and return its path.
+
+    ``universe_db([("AAPL", "2020-01-01", None), ...])`` -- ``(symbol, valid_from,
+    valid_to)`` per row."""
+
+    def _make(members: Iterable[tuple[str, str, str | None]], name: str = "universe.db") -> Path:
+        return write_universe_db(tmp_path / name, members)
+
+    return _make
 
 
 @pytest.fixture
@@ -102,10 +140,15 @@ def memory_quant_db() -> sqlite3.Connection:
 
 
 @pytest.fixture
-def quant_seed() -> Callable[..., sqlite3.Connection]:
+def quant_seed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Callable[..., sqlite3.Connection]:
     """Return a seeder: fixed-seed geometric random walk into price_daily /
     price_observation for *n_assets* names across 2 sectors, open SP500 membership,
-    and (optionally) a couple of quarterly dividends per asset."""
+    and (optionally) a couple of quarterly dividends per asset.
+
+    Also writes a companion ``universe.db`` (open stint per seeded name) and points
+    ``KG_UNIVERSE_DB`` at it, so the point-in-time universe reads resolve locally."""
 
     def _seed(  # noqa: PLR0913 - fixture knobs, all keyword-only with defaults
         conn: sqlite3.Connection,
@@ -185,6 +228,11 @@ def quant_seed() -> Callable[..., sqlite3.Connection]:
                     (fid, f"{days[-1]} (FY)", 1.20 + 0.1 * a, days[-1]),
                 )
         conn.commit()
+
+        udb = tmp_path / "quant_seed_universe.db"
+        if not udb.exists():
+            write_universe_db(udb, [(f"AS{a:02d}", days[0], None) for a in range(1, n_assets + 1)])
+        monkeypatch.setenv("KG_UNIVERSE_DB", str(udb))
         return conn
 
     return _seed

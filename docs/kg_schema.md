@@ -7,6 +7,13 @@ read-contract views the integration repo consumes. It never touches `assets` /
 
 Both agents call `kg_schema.ensure(conn)` at the end of their own `ensure_schema`.
 
+It also holds the shared run seams every agent uses: `env.universe_database_path`
+(`KG_UNIVERSE_DB`, default `/workspaces/thesis/data/universe.db`),
+`universe_source` (point-in-time reads over `universe.db` — `members_asof`,
+`symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
+`--analysis-date` argparse type + default-to-today), and `provenance.code_version`
+(git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
+
 ## Files
 
 ### `__init__.py` — `ensure(conn, *, run_migrations=False) -> list[int]`
@@ -28,9 +35,12 @@ migrate`.
 
 New tables (see the table below) plus `REQUIRED_COLUMNS`, a
 `{table: {column: "TYPE"}}` map of nullable columns to graft onto the pre-existing
-agent tables (`financial_facts.event_time/ingested_at/filing_version`,
-`fundamental_metrics.event_time/engine_version`, `price_window.event_time`,
-`price_daily.event_time/ingested_at`).
+agent tables — `event_time` / `ingested_at` / `filing_version` on the fact tables,
+plus **run provenance**: `run_id` on `sec_filings` / `financial_facts` /
+`fundamental_metrics` / `price_window` / `price_daily`, `as_of` + `code_version` on
+`analysis_run` / `pricing_run`, and `code_version` on `quant_run` / `cycle_run`.
+`m002` / `m003` carry `run_id` forward in their rebuilds so a not-yet-migrated dev
+DB does not drop it (no new migration, no `schema_version` bump).
 
 ### `version.py`
 
@@ -55,10 +65,14 @@ are present / it hasn't already run).
 
 ### `views.py` — `VIEWS`, `ensure_views(conn)`
 
-`ensure_views` drops and recreates every view on each call (cheap, always current);
-a view whose base table is missing is silently skipped. The module docstring is the
-**projection contract** — column list + semantics per view. Views:
-`v_score_snapshot`, `v_universe_membership`, `v_sector` (GICS sector rollup with
+`ensure_views` drops and recreates every view on each call (cheap, always current).
+Because SQLite's `CREATE VIEW` does not validate its base tables, each view is
+probed with a zero-row `SELECT` right after creation and **dropped** if a base
+table is absent in this (partial / single-agent) DB — a dangling view would
+otherwise break the view re-parse a later `ALTER TABLE … RENAME` in a migration
+performs. The module docstring is the **projection contract** — column list +
+semantics per view. Views:
+`v_score_snapshot`, `v_sector` (GICS sector rollup with
 member/sub-industry counts), `v_industry` (sub-industry → sector; the scrape has
 no middle industry-group tier), `v_price_observation` (newest `engine_version` per
 asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section` (carries
@@ -80,14 +94,25 @@ members' TECHNICAL score per sector).
 `v_quant_benchmark_performance`, and `v_quant_vs_live` (each optimized book beside
 the live `portfolio_position` weights, per name).
 
-### `universe_membership.py` — `reconcile(conn, universe, present_asset_ids, *, as_of, run_id=None, run_kind=None, source)`
+**Run-log views** for `portfolio-reports`: `v_analysis_run`, `v_pricing_run`,
+`v_quant_run`, `v_cycle_run` — one row per agent run with `run_id`, `as_of`
+(`cycle_date` for cycle), `code_version`, status, timings and `params_json`.
 
-Turns a mutable `assets` universe into append-only membership stints. Diffs
-`present_asset_ids` against the currently-open rows: newcomers get
-`INSERT … valid_to=NULL`, the departed get `UPDATE … SET valid_to = as_of`. Rows are
-never deleted; a ticker that rejoins gets a fresh stint. Returns `(opened, closed)`.
-Called by both agents' `sync_universe` (`source='wikipedia'` /
-`'pricing-gateway'`).
+**`v_universe_membership` is frozen.** The agents no longer write
+`universe_membership` (the universe is read point-in-time from `universe.db`), so
+this view is stale unless something else populates the table. Downstream readers
+(the KG projection) should move to `universe.db` / `kg_schema.universe_source`.
+
+### `universe_source.py` — point-in-time reads over `universe.db`
+
+`connect_ro(path)` (read-only URI), `members_asof(conn, analysis_date, *,
+universe="SP500") -> list[UniverseMember]` (predicate `valid_from <= D AND
+(valid_to IS NULL OR valid_to > D)`, deduped by symbol keeping the latest stint;
+rejects any universe other than `SP500`), `symbols_asof(...)`, and
+`resolve_asset_ids(financial_conn, symbols) -> (mapping, missing)` (pure read,
+case-insensitive `assets.ticker` match — creating a brand-new `assets` row stays
+with the two agents' `sync_universe`). The legacy `universe_membership.reconcile`
+is retained in the tree but is no longer on any write path.
 
 ### `cli.py` — `run_migrate(db_path) -> int`
 
@@ -98,7 +123,7 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 
 | Table | Purpose | Immutability key |
 |---|---|---|
-| `universe_membership` | S&P 500 membership history | `UNIQUE(asset_id, universe, valid_from)` |
+| `universe_membership` | S&P 500 membership history (**frozen** — superseded by `universe.db`) | `UNIQUE(asset_id, universe, valid_from)` |
 | `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |

@@ -31,12 +31,12 @@ class _PerTicker:
 
 
 def _collect_person_map(
-    news: sqlite3.Connection, tickers: list[str]
+    news: sqlite3.Connection, tickers: list[str], *, until: str | None = None
 ) -> dict[str, dict[str, _PerTicker]]:
     """``{canonical_name: {ticker: _PerTicker}}`` from PER spans."""
     person_map: dict[str, dict[str, _PerTicker]] = defaultdict(dict)
     for ticker in tickers:
-        ids = article_ids_for_ticker(news, ticker)
+        ids = article_ids_for_ticker(news, ticker, until=until)
         if not ids:
             continue
         for span in per_entities_for_articles(news, ids):
@@ -50,16 +50,18 @@ def _collect_person_map(
     return person_map
 
 
-def build_edges(
+def build_edges(  # noqa: PLR0913 - keyword-only filter knobs with defaults
     news: sqlite3.Connection,
     tickers: list[str],
     *,
     min_weight: float = MIN_WEIGHT_DEFAULT,
     max_tickers: int = denylist.MAX_TICKERS_DEFAULT,
     min_articles: int = denylist.MIN_ARTICLES_DEFAULT,
+    until: str | None = None,
 ) -> list[Edge]:
-    """Build filtered shared-person edges. *tickers* is the analysis universe."""
-    person_map = _collect_person_map(news, tickers)
+    """Build filtered shared-person edges. *tickers* is the analysis universe;
+    *until* caps the news to articles published on or before that date."""
+    person_map = _collect_person_map(news, tickers, until=until)
     edges: list[Edge] = []
     for name, per_ticker in person_map.items():
         distinct = len(per_ticker)

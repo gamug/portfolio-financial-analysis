@@ -6,10 +6,27 @@ import sqlite3
 
 import pytest
 
+from kg_schema.universe_source import UniverseMember
 from pricing_agent import db
 from pricing_agent.db import PriceWindowRow
 from pricing_agent.stats import WindowStats
-from pricing_agent.universe import Company
+
+
+def _member(
+    symbol: str, *, name: str | None = None, cik: str | None = "0000000001"
+) -> UniverseMember:
+    return UniverseMember(
+        symbol=symbol,
+        security=name or f"{symbol} Inc.",
+        cik=cik,
+        gics_sector="Technology",
+        gics_sub_industry="Sub",
+        hq_location=None,
+        date_added=None,
+        founded=None,
+        valid_from="2020-01-01",
+        valid_to=None,
+    )
 
 
 @pytest.fixture
@@ -21,14 +38,8 @@ def memory_db() -> sqlite3.Connection:
     return conn
 
 
-def _company(symbol: str) -> Company:
-    return Company(
-        symbol=symbol,
-        name=f"{symbol} Inc.",
-        cik="0000000001",
-        sector="Technology",
-        sub_industry="Sub",
-    )
+def _company(symbol: str) -> UniverseMember:
+    return _member(symbol)
 
 
 def _stats() -> WindowStats:
@@ -66,7 +77,7 @@ def test_ensure_schema_rejects_incompatible_assets() -> None:
 def test_sync_universe_does_not_wipe_existing_cik(memory_db: sqlite3.Connection) -> None:
     memory_db.execute("INSERT INTO assets (ticker, cik) VALUES ('AAPL', '0000320193')")
     memory_db.commit()
-    blank = Company(symbol="AAPL", name="Apple", cik="", sector="Tech", sub_industry="x")
+    blank = _member("AAPL", name="Apple", cik="")
     db.sync_universe(memory_db, [blank])
     row = memory_db.execute("SELECT cik, company_name FROM assets WHERE ticker='AAPL'").fetchone()
     assert row["cik"] == "0000320193"  # COALESCE kept the real value

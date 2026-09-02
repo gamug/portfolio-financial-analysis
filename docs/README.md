@@ -21,7 +21,7 @@ from any directory; `pytest` adds `src` via `pythonpath`.
  EDGAR gateway ───▶ │  sec_filings, financial_facts, fundamental_metrics, score_snapshot[FUND]      │ ◀── fundamental_agent
  www.sec.gov   ───▶ │  sec_filing_section                                                            │ ◀── fundamental_agent --sections
  pricing gw    ───▶ │  price_window, price_daily, price_observation                                  │ ◀── pricing_agent (--observations)
- (both agents) ───▶ │  universe_membership                                                           │ ◀── */sync_universe
+ universe.db   ───▶ │  assets / sectors  (identity upsert; membership read point-in-time as-of date) │ ◀── */sync_universe
  urls.db (ro)  ───▶ │  shared_executive_edge                                                         │ ◀── entity_resolution
                     │  score_snapshot[TECH/VALOR], veto, rule_catalog, cycle_*, portfolio_position   │ ◀── cycle
                     │  score_snapshot[SEMANTIC]                                                       │ ◀── integration repo
@@ -50,3 +50,7 @@ from any directory; `pytest` adds `src` via `pythonpath`.
 - Measurement tables are append-only; a re-run with the same `*_version` collides on
   the unique key and is ignored, a new version writes a parallel row.
 - `run_id` + `run_kind` (`'analysis'` / `'pricing'` / `'cycle'`) identify the writer.
+- Every agent takes `--analysis-date YYYY-MM-DD` (default: today): the as-of date
+  that picks the universe (from `universe.db` / `KG_UNIVERSE_DB`), bounds ingestion
+  (no lookahead), and is recorded on the run-log row with a `code_version` git tag.
+  `cycle --date` and `quant --as-of` are aliases. See the run-log `v_*` views.

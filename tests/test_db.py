@@ -8,11 +8,22 @@ import pytest
 
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
-from fundamental_agent.universe import Company
+from kg_schema.universe_source import UniverseMember
 
 
-def _company(symbol: str, name: str, sector: str = "Technology") -> Company:
-    return Company(symbol=symbol, name=name, cik="0000000001", sector=sector, sub_industry="Sub")
+def _company(symbol: str, name: str, sector: str = "Technology") -> UniverseMember:
+    return UniverseMember(
+        symbol=symbol,
+        security=name,
+        cik="0000000001",
+        gics_sector=sector,
+        gics_sub_industry="Sub",
+        hq_location=None,
+        date_added=None,
+        founded=None,
+        valid_from="2020-01-01",
+        valid_to=None,
+    )
 
 
 def test_ensure_schema_is_idempotent(memory_db: sqlite3.Connection) -> None:
@@ -57,23 +68,12 @@ def test_sync_universe_upserts_without_duplicating(memory_db: sqlite3.Connection
     assert apple["company_name"] == "Apple Inc."
 
 
-def test_sync_universe_records_membership(memory_db: sqlite3.Connection) -> None:
-    db.sync_universe(
-        memory_db, [_company("AAPL", "Apple"), _company("MSFT", "Microsoft")], as_of="2026-01-01"
-    )
-    db.sync_universe(memory_db, [_company("AAPL", "Apple")], as_of="2026-04-01")  # MSFT drops out
-
-    rows = {
-        (r["ticker"], r["valid_from"], r["valid_to"])
-        for r in memory_db.execute(
-            "SELECT a.ticker, m.valid_from, m.valid_to FROM universe_membership m "
-            "JOIN assets a ON a.id = m.asset_id"
-        )
-    }
-    assert rows == {
-        ("AAPL", "2026-01-01", None),
-        ("MSFT", "2026-01-01", "2026-04-01"),
-    }
+def test_sync_universe_only_touches_assets_not_membership(memory_db: sqlite3.Connection) -> None:
+    """Point-in-time membership now lives in universe.db; sync_universe is the
+    identity write path only and never writes financial.db universe_membership."""
+    db.sync_universe(memory_db, [_company("AAPL", "Apple"), _company("MSFT", "Microsoft")])
+    assert memory_db.execute("SELECT COUNT(*) FROM universe_membership").fetchone()[0] == 0
+    assert {r["ticker"] for r in db.load_universe(memory_db)} == {"AAPL", "MSFT"}
 
 
 def test_load_universe_limit_and_ticker_filter(memory_db: sqlite3.Connection) -> None:

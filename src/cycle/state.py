@@ -36,16 +36,28 @@ def _now() -> str:
 
 
 def open_cycle(
-    conn: sqlite3.Connection, cycle_type: str, cycle_date: str, params: dict[str, Any]
+    conn: sqlite3.Connection,
+    cycle_type: str,
+    cycle_date: str,
+    params: dict[str, Any],
+    *,
+    code_version: str | None = None,
 ) -> int:
     """Create or resume the ``cycle_run`` row for ``(cycle_type, cycle_date)``."""
     conn.execute(
         """
-        INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status, params_json)
-        VALUES (?, ?, ?, 'running', ?)
-        ON CONFLICT (cycle_type, cycle_date) DO UPDATE SET status = 'running'
+        INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status, params_json, code_version)
+        VALUES (?, ?, ?, 'running', ?, ?)
+        ON CONFLICT (cycle_type, cycle_date) DO UPDATE SET
+            status = 'running', code_version = excluded.code_version
         """,
-        (cycle_type, cycle_date, _now(), json.dumps(_redact(params), default=str)),
+        (
+            cycle_type,
+            cycle_date,
+            _now(),
+            json.dumps(_redact(params), default=str),
+            code_version,
+        ),
     )
     conn.commit()
     row = conn.execute(

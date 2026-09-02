@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from kg_schema.env import DB_ENV_VAR, database_path
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 _DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol", "risk_parity"]
 DEFAULT_PRICING_BASE_URL = "http://host.docker.internal:8000/pricing"
@@ -22,6 +22,9 @@ class QuantSettings(BaseModel):
     """
 
     db_path: Path
+    universe_db_path: Path = Field(
+        default_factory=lambda: Path(universe_database_path()).expanduser()
+    )
     pricing_base_url: str = DEFAULT_PRICING_BASE_URL
 
     # --- score-independent universe gate ---
@@ -71,5 +74,6 @@ class QuantSettings(BaseModel):
             raise RuntimeError(f"missing required environment variable: {DB_ENV_VAR}")
         return cls(
             db_path=Path(db_path).expanduser(),
+            universe_db_path=Path(universe_database_path()).expanduser(),
             pricing_base_url=os.environ.get("PRICING_BASE_URL", DEFAULT_PRICING_BASE_URL),
         )

@@ -30,9 +30,22 @@ def connect_ro(path: str | Path) -> sqlite3.Connection:
     return conn
 
 
-def article_ids_for_ticker(news: sqlite3.Connection, ticker: str) -> list[int]:
-    """Every article id discovered for *ticker* (uses ``idx_ticker``)."""
-    rows = news.execute("SELECT id FROM discovered_urls WHERE ticker = ?", (ticker,)).fetchall()
+def article_ids_for_ticker(
+    news: sqlite3.Connection, ticker: str, *, until: str | None = None
+) -> list[int]:
+    """Article ids discovered for *ticker* (uses ``idx_ticker``).
+
+    When *until* (an ISO date) is given, only rows with a known ``pub_date`` on or
+    before it are returned -- the no-lookahead filter. Rows with a NULL
+    ``pub_date`` are excluded because they cannot be date-verified."""
+    if until is None:
+        rows = news.execute("SELECT id FROM discovered_urls WHERE ticker = ?", (ticker,)).fetchall()
+    else:
+        rows = news.execute(
+            "SELECT id FROM discovered_urls "
+            "WHERE ticker = ? AND pub_date IS NOT NULL AND pub_date <= ?",
+            (ticker, until),
+        ).fetchall()
     return [int(r[0]) for r in rows]
 
 

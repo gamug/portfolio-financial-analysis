@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from kg_schema.provenance import code_version
 from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
@@ -111,7 +112,13 @@ def run_evaluate(
             conn,
             "evaluate",
             as_of=date_to,
-            params={"date_from": date_from, "date_to": date_to, "benchmark": benchmark},
+            params={
+                "analysis_date": date_to,
+                "date_from": date_from,
+                "date_to": date_to,
+                "benchmark": benchmark,
+            },
+            code_version=code_version(),
         )
         try:
             bench_rows = build_internal_benchmark(

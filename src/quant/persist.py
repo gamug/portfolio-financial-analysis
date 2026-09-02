@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
@@ -99,7 +100,11 @@ def run_build_risk_model(
     try:
         ensure_schema(conn)
         run_id = open_run(
-            conn, "build-risk-model", as_of=as_of, params=settings.model_dump(mode="json")
+            conn,
+            "build-risk-model",
+            as_of=as_of,
+            params=settings.model_dump(mode="json"),
+            code_version=code_version(),
         )
         try:
             gate = liquidity_data_gate(
@@ -110,6 +115,7 @@ def run_build_risk_model(
                 min_dollar_volume=settings.liquidity_min_dollar_volume,
                 liquidity_lookback_days=settings.liquidity_lookback_days,
                 exclude_hard_vetoed=settings.exclude_hard_vetoed,
+                universe_db_path=settings.universe_db_path,
             )
             if not gate.asset_ids:
                 raise RuntimeError(f"universe gate is empty as of {as_of}")  # noqa: TRY301
@@ -222,7 +228,13 @@ def run_optimize(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
-        run_id = open_run(conn, "optimize", as_of=as_of, params=settings.model_dump(mode="json"))
+        run_id = open_run(
+            conn,
+            "optimize",
+            as_of=as_of,
+            params=settings.model_dump(mode="json"),
+            code_version=code_version(),
+        )
         try:
             model_id = _resolve_model_id(settings, as_of, conn, run_id)
             ids, sigma = load_covariance(conn, model_id)

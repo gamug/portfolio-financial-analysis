@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import write_universe_db
 
 import kg_schema
 from cycle.config import CycleSettings
@@ -162,17 +163,19 @@ def test_threshold_and_drawdown_rules(memory_db: sqlite3.Connection) -> None:
 
 
 @pytest.fixture
-def cycle_seed(memory_db: sqlite3.Connection) -> sqlite3.Connection:
+def cycle_seed(
+    memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> sqlite3.Connection:
     conn = memory_db
     conn.execute("INSERT INTO sectors (id, name) VALUES (1, 'S1'), (2, 'S2')")
-    for i, tk in enumerate(["AAA", "BBB", "CCC", "DDD", "EEE"], start=1):
+    tickers = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    udb = write_universe_db(
+        tmp_path / "cycle_universe.db", [(tk, "2026-01-01", None) for tk in tickers]
+    )
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(udb))
+    for i, tk in enumerate(tickers, start=1):
         conn.execute(
             "INSERT INTO assets (id, ticker, sector_id) VALUES (?, ?, ?)", (i, tk, 1 + i % 2)
-        )
-        conn.execute(
-            "INSERT INTO universe_membership (asset_id, universe, valid_from, detected_at, source) "
-            "VALUES (?, 'SP500', '2026-01-01', '2026-01-01T00:00:00Z', 'test')",
-            (i,),
         )
         fid = conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "

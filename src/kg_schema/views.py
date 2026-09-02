@@ -11,6 +11,15 @@ Projection semantics
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / VALORIZATION, and the article-day for SEMANTIC.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
+                          FROZEN: the agents no longer write ``universe_membership``
+                          (the universe is read point-in-time from ``universe.db``).
+                          Kept for back-compat; new readers should use ``universe.db``.
+``v_analysis_run`` / ``v_pricing_run`` / ``v_quant_run`` / ``v_cycle_run``
+                          the run log per agent: ``run_id``, the ``as_of``
+                          (``analysis_date``; ``cycle_date`` for cycle),
+                          ``code_version`` (the code tag that produced the run),
+                          status, timings and ``params_json``. ``portfolio-reports``
+                          enumerates and traces past runs through these.
 ``v_sector``              one row per GICS sector with its member-asset and sub-industry
                           counts (the reference lane's rollup anchor).
 ``v_industry``            one row per GICS sub-industry -> sector (the scrape has no
@@ -82,6 +91,32 @@ VIEWS: dict[str, str] = {
         SELECT m.id, a.ticker, m.asset_id, m.universe, m.valid_from, m.valid_to,
                m.detected_at, m.source, m.run_id, m.run_kind
         FROM universe_membership m JOIN assets a ON a.id = m.asset_id
+    """,
+    "v_analysis_run": """
+        CREATE VIEW v_analysis_run AS
+        SELECT id AS run_id, as_of, code_version, status, started_at, finished_at,
+               universe_size, planned_units, completed_units, skipped_units, failed_units,
+               params_json
+        FROM analysis_run
+    """,
+    "v_pricing_run": """
+        CREATE VIEW v_pricing_run AS
+        SELECT id AS run_id, as_of, code_version, status, started_at, finished_at,
+               universe_size, planned_units, completed_units, skipped_units, failed_units,
+               params_json
+        FROM pricing_run
+    """,
+    "v_quant_run": """
+        CREATE VIEW v_quant_run AS
+        SELECT id AS run_id, command, as_of, code_version, engine_version, status,
+               started_at, finished_at, error, params_json
+        FROM quant_run
+    """,
+    "v_cycle_run": """
+        CREATE VIEW v_cycle_run AS
+        SELECT id AS run_id, cycle_type, cycle_date AS as_of, code_version, status,
+               started_at, finished_at, params_json
+        FROM cycle_run
     """,
     "v_sector": """
         CREATE VIEW v_sector AS
@@ -306,12 +341,19 @@ VIEWS: dict[str, str] = {
 
 
 def ensure_views(conn: sqlite3.Connection) -> None:
-    """Drop and recreate every read-contract view. Tolerates missing base tables."""
+    """Drop and recreate every read-contract view. Tolerates missing base tables.
+
+    ``CREATE VIEW`` does not validate its base tables, so after creating each view
+    we probe it with a zero-row ``SELECT``; a view whose base table is absent in
+    this (partial / single-agent) DB is dropped rather than left dangling -- a
+    dangling view would otherwise break the view re-parse that a later
+    ``ALTER TABLE ... RENAME`` in :mod:`kg_schema.migrations` performs.
+    """
     for name, ddl in VIEWS.items():
+        conn.execute(f"DROP VIEW IF EXISTS {name}")
         try:
-            conn.execute(f"DROP VIEW IF EXISTS {name}")
             conn.execute(ddl)
+            conn.execute(f"SELECT 1 FROM {name} LIMIT 0")  # noqa: S608 - name is our own key
         except sqlite3.OperationalError:
-            # A base table this view needs does not exist yet in this DB; skip it.
             conn.execute(f"DROP VIEW IF EXISTS {name}")
     conn.commit()

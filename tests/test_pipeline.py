@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from conftest import write_universe_db
 
 from fundamental_agent import pipeline
 from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
@@ -15,7 +16,6 @@ from fundamental_agent.config import Settings
 from fundamental_agent.metrics import compute_group
 from fundamental_agent.pipeline import RunParams, _plan, _targets, _YearTask
 from fundamental_agent.statements import Statements
-from fundamental_agent.universe import Company
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -103,22 +103,19 @@ class _StubAnalyst:
 
 @pytest.fixture
 def _stubbed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        pipeline,
-        "fetch_sp500",
-        lambda: [
-            Company(symbol="AAPL", name="Apple", cik="1", sector="Tech", sub_industry="x"),
-            Company(symbol="MSFT", name="Microsoft", cik="2", sector="Tech", sub_industry="x"),
-        ],
-    )
     monkeypatch.setattr(pipeline, "EdgarClient", _FakeEdgar)
     monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
     monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
 
 
 def _settings(tmp_path: Path) -> Settings:
+    udb = write_universe_db(
+        tmp_path / "universe.db",
+        [("AAPL", "2020-01-01", None), ("MSFT", "2020-01-01", None)],
+    )
     return Settings(
         db_path=tmp_path / "kg.db",
+        universe_db_path=udb,
         llm_api_key="k",
         llm_model="deepseek-chat",
         llm_url="http://llm.test",
