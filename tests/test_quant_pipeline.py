@@ -13,6 +13,7 @@ import pytest
 from kg_schema import version
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
+from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
 
@@ -112,3 +113,59 @@ def test_optimize_auto_builds_risk_model_when_missing(seeded: sqlite3.Connection
     res = run_optimize(_settings(objectives=["min_var"]), as_of=as_of, conn=seeded)
     assert res.model_id > 0
     assert seeded.execute("SELECT COUNT(*) FROM quant_risk_model").fetchone()[0] == 1
+
+
+def test_evaluate_scores_books_forward_vs_benchmark_and_live(
+    seeded: sqlite3.Connection,
+) -> None:
+    dates = [
+        r[0]
+        for r in seeded.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    s = _settings(objectives=["min_var", "tangency"])
+    run_optimize(s, as_of=as_of, conn=seeded)
+
+    # a live cycle book to compare against
+    seeded.execute(
+        "INSERT INTO portfolio_position (asset_id, valid_from, weight) VALUES (1, ?, 0.5), (2, ?, 0.5)",
+        (as_of, as_of),
+    )
+    seeded.commit()
+
+    ev = run_evaluate(s, date_from=as_of, date_to=end, conn=seeded)
+    assert ev.benchmark_rows > 0
+    assert ev.books_evaluated >= 2
+    assert ev.perf_rows > 0
+    assert ev.live_book_id is not None
+
+    # benchmark series populated
+    assert (
+        seeded.execute(
+            "SELECT COUNT(*) FROM v_benchmark_series WHERE benchmark = 'SP500_EW_INTERNAL'"
+        ).fetchone()[0]
+        == ev.benchmark_rows
+    )
+
+    # cumulative return is consistent with compounded daily realized returns
+    rows = seeded.execute(
+        "SELECT realized_return, cumulative_return FROM v_quant_benchmark_performance p "
+        "JOIN quant_portfolio qp ON qp.id = p.portfolio_id "
+        "WHERE qp.kind = 'min_var' ORDER BY p.date"
+    ).fetchall()
+    assert rows
+    compounded = 1.0
+    for r in rows:
+        compounded *= 1.0 + r["realized_return"]
+    assert compounded - 1.0 == pytest.approx(rows[-1]["cumulative_return"], abs=1e-9)
+
+    # live-vs-benchmark join returns the optimized books beside the live weights
+    vs = seeded.execute("SELECT DISTINCT kind FROM v_quant_vs_live").fetchall()
+    assert {r["kind"] for r in vs} == {"min_var", "tangency"}
+    active = seeded.execute(
+        "SELECT active_weight FROM v_quant_vs_live WHERE kind = 'min_var' AND asset_id = 1"
+    ).fetchone()
+    assert active is not None

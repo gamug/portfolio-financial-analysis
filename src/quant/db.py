@@ -541,6 +541,119 @@ def sync_positions(
     return opened, closed
 
 
+def load_book_weights(conn: sqlite3.Connection, portfolio_id: int) -> dict[int, float]:
+    return {
+        int(r["asset_id"]): float(r["weight"])
+        for r in conn.execute(
+            "SELECT asset_id, weight FROM quant_position "
+            "WHERE portfolio_id = ? AND valid_to IS NULL",
+            (portfolio_id,),
+        )
+    }
+
+
+def load_live_book(conn: sqlite3.Connection, as_of: str) -> dict[int, float]:
+    """The open ``portfolio_position`` book as of *as_of* (the cycle's live book)."""
+    try:
+        rows = conn.execute(
+            "SELECT asset_id, weight FROM portfolio_position "
+            "WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?) AND weight IS NOT NULL",
+            (as_of, as_of),
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {int(r["asset_id"]): float(r["weight"]) for r in rows}
+
+
+def load_forward_simple_returns(
+    conn: sqlite3.Connection, asset_ids: list[int], *, after: str, until: str, engine_version: str
+) -> dict[str, dict[int, float]]:
+    """``date -> {asset_id: simple return}`` for trading days in ``(after, until]``."""
+    if not asset_ids:
+        return {}
+    in_clause = "asset_id IN (" + ",".join("?" * len(asset_ids)) + ")"
+    base = (
+        "SELECT asset_id, obs_date, tr_log_return FROM quant_return_daily "
+        "WHERE engine_version = ? AND obs_date > ? AND obs_date <= ? "
+        "AND tr_log_return IS NOT NULL AND "
+    )
+    q = base + in_clause  # only "?" placeholders in in_clause
+    out: dict[str, dict[int, float]] = {}
+    for r in conn.execute(q, [engine_version, after, until, *asset_ids]):
+        out.setdefault(str(r["obs_date"]), {})[int(r["asset_id"])] = float(
+            np.expm1(float(r["tr_log_return"]))
+        )
+    return out
+
+
+def upsert_benchmark_series(
+    conn: sqlite3.Connection,
+    benchmark: str,
+    rows: list[tuple[str, float, float]],
+    *,
+    engine_version: str,
+    source: str,
+) -> int:
+    """*rows*: (obs_date, log_return, total_return_level)."""
+    now = _now()
+    n = 0
+    for obs_date, lr, trl in rows:
+        conn.execute(
+            "INSERT INTO benchmark_series "
+            "(benchmark, obs_date, level, total_return_level, log_return, source, "
+            " engine_version, ingested_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (benchmark, obs_date, engine_version) DO UPDATE SET "
+            "total_return_level = excluded.total_return_level, log_return = excluded.log_return, "
+            "ingested_at = excluded.ingested_at",
+            (benchmark, obs_date, trl, trl, lr, source, engine_version, now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
+def load_benchmark_returns(
+    conn: sqlite3.Connection, benchmark: str, *, after: str, until: str
+) -> dict[str, float]:
+    return {
+        str(r["obs_date"]): float(np.expm1(float(r["log_return"])))
+        for r in conn.execute(
+            "SELECT obs_date, log_return FROM v_benchmark_series "
+            "WHERE benchmark = ? AND obs_date > ? AND obs_date <= ? AND log_return IS NOT NULL",
+            (benchmark, after, until),
+        )
+    }
+
+
+def upsert_benchmark_performance(
+    conn: sqlite3.Connection,
+    portfolio_id: int,
+    rows: list[tuple[str, float, float, str | None, float | None, float | None]],
+    *,
+    engine_version: str,
+) -> int:
+    """*rows*: (date, realized_return, cumulative_return, benchmark, benchmark_return,
+    active_return)."""
+    now = _now()
+    n = 0
+    for d, rr, cr, bench, br, ar in rows:
+        conn.execute(
+            "INSERT INTO quant_benchmark_performance "
+            "(portfolio_id, date, realized_return, cumulative_return, benchmark, "
+            " benchmark_return, active_return, engine_version, computed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (portfolio_id, date, engine_version) DO UPDATE SET "
+            "realized_return = excluded.realized_return, "
+            "cumulative_return = excluded.cumulative_return, "
+            "benchmark_return = excluded.benchmark_return, active_return = excluded.active_return, "
+            "computed_at = excluded.computed_at",
+            (portfolio_id, d, rr, cr, bench, br, ar, engine_version, now),
+        )
+        n += 1
+    conn.commit()
+    return n
+
+
 def insert_frontier_points(
     conn: sqlite3.Connection,
     model_id: int,

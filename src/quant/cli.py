@@ -12,7 +12,10 @@ from datetime import date
 from pathlib import Path
 
 from quant.actions import backfill_corporate_actions
+from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
+from quant.db import connect, ensure_schema
+from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
 
@@ -57,12 +60,16 @@ def build_parser() -> argparse.ArgumentParser:
     op.add_argument("--solver")
     op.add_argument("--model-version", dest="model_version")
 
-    for name, helptext in (
-        ("benchmark", "build the internal equal-/cap-weight benchmark series"),
-        ("evaluate", "forward realized returns: each book vs the live portfolio_position"),
-    ):
-        p = sub.add_parser(name, help=helptext)
-        p.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    bm = sub.add_parser("benchmark", help="build the internal equal-weight benchmark series")
+    bm.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    bm.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    bm.add_argument("--to", dest="date_to", help=f"{_TODAY_HELP} (default: today)")
+
+    ev = sub.add_parser("evaluate", help="forward realized returns: each book vs the live book")
+    ev.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    ev.add_argument("--from", dest="date_from", required=True, help=_TODAY_HELP)
+    ev.add_argument("--to", dest="date_to", help=f"{_TODAY_HELP} (default: today)")
+    ev.add_argument("--benchmark", default="SP500_EW_INTERNAL")
     return parser
 
 
@@ -98,7 +105,7 @@ def _today() -> str:
     return date.today().isoformat()
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
     args = build_parser().parse_args(argv)
     settings = _settings(args)
 
@@ -144,6 +151,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"optimize @ {opt.as_of} (model {opt.model_id}): books [{books}], "
             f"{opt.frontier_points} frontier points"
+        )
+        return 0
+
+    if args.command == "benchmark":
+        conn = connect(settings.db_path)
+        try:
+            ensure_schema(conn)
+            n = build_internal_benchmark(
+                conn,
+                date_from=args.date_from,
+                date_to=args.date_to or _today(),
+                return_engine_version=settings.return_engine_version,
+                engine_version=settings.benchmark_engine_version,
+            )
+        finally:
+            conn.close()
+        print(f"benchmark SP500_EW_INTERNAL: {n} rows")
+        return 0
+
+    if args.command == "evaluate":
+        ev = run_evaluate(
+            settings,
+            date_from=args.date_from,
+            date_to=args.date_to or _today(),
+            benchmark=args.benchmark,
+        )
+        print(
+            f"evaluate {args.date_from}..{args.date_to or _today()}: {ev.benchmark_rows} "
+            f"benchmark rows, {ev.books_evaluated} books, {ev.perf_rows} perf rows"
+            + (f", live_book #{ev.live_book_id}" if ev.live_book_id else "")
         )
         return 0
 
