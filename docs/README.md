@@ -41,6 +41,14 @@ from any directory; `pytest` adds `src` via `pythonpath`.
   (numpy, scipy, cvxpy) never load on their import path. It reads shared tables via
   plain SQL and imports only `kg_schema`.
 
+## Cross-repo boundaries
+
+- **SEMANTIC score** — the `score_snapshot[SEMANTIC]` row above is fed from
+  outside this repo. Its computation is being moved from the integration repo
+  into `portfolio-nlp` (which owns the sentiment method), consumed here read-only
+  and folded into the `cycle` blend. Open worries and the repo-by-repo placement
+  map: [semantic-score-boundary.md](semantic-score-boundary.md).
+
 ## Shared conventions
 
 - `connect()` in every package: `foreign_keys=ON`, `busy_timeout=30000`, **no WAL**
