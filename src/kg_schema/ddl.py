@@ -32,6 +32,31 @@ CREATE TABLE IF NOT EXISTS universe_membership (
 CREATE INDEX IF NOT EXISTS ix_um_open
     ON universe_membership (universe, asset_id) WHERE valid_to IS NULL;
 
+-- Point-in-time core-data coverage for a dated universe (written by the
+-- `coverage` command). One row per (as_of, universe, symbol): does that member
+-- have an identity row / FUNDAMENTAL score / metrics / prices / observations /
+-- returns as of `as_of`. `covered` = every required check passed.
+CREATE TABLE IF NOT EXISTS universe_coverage (
+    id               INTEGER PRIMARY KEY,
+    as_of            TEXT NOT NULL,
+    universe         TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    asset_id         INTEGER,
+    in_assets        INTEGER NOT NULL,
+    has_fundamental  INTEGER NOT NULL,
+    has_metrics      INTEGER NOT NULL,
+    has_pricing      INTEGER NOT NULL,
+    has_observations INTEGER NOT NULL,
+    has_returns      INTEGER NOT NULL,
+    covered          INTEGER NOT NULL,
+    missing_json     TEXT,
+    checked_at       TEXT NOT NULL,
+    run_id           INTEGER,
+    UNIQUE (as_of, universe, symbol)
+);
+CREATE INDEX IF NOT EXISTS ix_uc_asof
+    ON universe_coverage (as_of, universe) WHERE covered = 0;
+
 -- Unified, multi-dimensional score store. `fundamental_snapshot` migrates in here
 -- (see migrations.m004) and afterwards survives as a compatibility VIEW.
 CREATE TABLE IF NOT EXISTS score_snapshot (

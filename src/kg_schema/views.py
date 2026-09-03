@@ -14,6 +14,10 @@ Projection semantics
                           FROZEN: the agents no longer write ``universe_membership``
                           (the universe is read point-in-time from ``universe.db``).
                           Kept for back-compat; new readers should use ``universe.db``.
+``v_universe_coverage``   per (as_of, universe, symbol): whether that member had an
+                          identity row / FUNDAMENTAL score / metrics / prices /
+                          observations / returns as of the date. ``covered`` = every
+                          required check passed. Written by the ``coverage`` command.
 ``v_analysis_run`` / ``v_pricing_run`` / ``v_quant_run`` / ``v_cycle_run``
                           the run log per agent: ``run_id``, the ``as_of``
                           (``analysis_date``; ``cycle_date`` for cycle),
@@ -117,6 +121,13 @@ VIEWS: dict[str, str] = {
         SELECT id AS run_id, cycle_type, cycle_date AS as_of, code_version, status,
                started_at, finished_at, params_json
         FROM cycle_run
+    """,
+    "v_universe_coverage": """
+        CREATE VIEW v_universe_coverage AS
+        SELECT id, as_of, universe, symbol, asset_id, in_assets, has_fundamental, has_metrics,
+               has_pricing, has_observations, has_returns, covered, missing_json,
+               checked_at, run_id
+        FROM universe_coverage
     """,
     "v_sector": """
         CREATE VIEW v_sector AS

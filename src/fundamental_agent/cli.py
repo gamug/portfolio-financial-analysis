@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fundamental_agent.config import Settings
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
-from kg_schema.cli import run_migrate
+from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 
@@ -63,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
     migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
+    add_coverage_parser(sub)
     return parser
 
 
@@ -76,6 +78,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
+    if args.command == "coverage":
+        return coverage_from_args(args)
     settings = Settings.load()
     updates: dict[str, Path] = {}
     if args.db:
