@@ -185,6 +185,23 @@ stamp, reads the universe from `universe.db` as of that date, and drops news who
 `discovered_urls.pub_date` is after it or NULL. It reads the news repo's `urls.db` strictly
 read-only (via `KG_NEWS_DB`, default `/workspaces/thesis/data/urls.db`).
 
+## Read-only HTTP API (`api/`)
+
+A thin FastAPI surface over the `v_*` read-contract views and `universe.db` — a stable
+network boundary for `portfolio-reports` / `portfolio-app` instead of opening the SQLite
+files. It **only reads** (`mode=ro`); the agents stay CLI-driven and own every write.
+
+```bash
+uv run python -m api                                   # serve on API_HOST:API_PORT (default 0.0.0.0:8010)
+uv run uvicorn --factory api.app:create_app --reload   # dev; docs at /docs
+```
+
+Endpoints under `/api/v1`: `GET /health` · `GET /health/db` · `GET /runs` (run log,
+`?kind=`) · `GET /universe?as_of=D` · `GET /universe/coverage?as_of=D` · `GET /scores`
+(`?ticker=`/`?score_type=`/`?as_of=`) · `GET /portfolio/positions` · `GET /portfolio/ranking`.
+Config: `KG_FINANCIAL_DB` (required), `KG_UNIVERSE_DB` / `API_HOST` / `API_PORT` /
+`API_ROOT_PATH` (optional). See [docs/api.md](docs/api.md).
+
 ## Development
 
 This project uses [uv](https://docs.astral.sh/uv/) for environment management and
