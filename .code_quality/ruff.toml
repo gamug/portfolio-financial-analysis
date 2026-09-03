@@ -100,3 +100,6 @@ known-third-party = ["fastapi", "pydantic"]
 # crypto. S105/S106: redaction tests compare against the "***REDACTED***" sentinel.
 # S108: in-memory / throwaway "/tmp" paths in config tests.
 "tests/**" = ["PLR2004", "S311", "S105", "S106", "S108"]
+# B008: FastAPI's whole DI model is `param = Depends(...)` / `Query(...)` in the
+# signature default -- the function call there is the intended API, not a bug.
+"src/api/**" = ["B008"]
