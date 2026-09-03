@@ -15,11 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import kg_schema
-from kg_schema import universe_membership as kg_universe_membership
+from kg_schema.universe_source import UniverseMember
 from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats
-from pricing_agent.universe import Company
 
 PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"
 
@@ -148,13 +147,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # -- universe -------------------------------------------------------------
 
 
-def sync_universe(
-    conn: sqlite3.Connection, companies: Iterable[Company], *, as_of: str | None = None
-) -> int:
-    seen_ids: set[int] = set()
+def sync_universe(conn: sqlite3.Connection, members: Iterable[UniverseMember]) -> int:
+    """Insert/update ``assets`` / ``sectors`` from *members* (the identity path
+    where a new S&P 500 symbol first gets its ``assets.id``). Point-in-time
+    membership is read directly from ``universe.db``, not kept here."""
     count = 0
-    for company in companies:
-        sector_id = _upsert_sector(conn, company.sector)
+    for m in members:
+        sector_id = _upsert_sector(conn, m.gics_sector or "")
         conn.execute(
             """
             INSERT INTO assets (ticker, company_name, cik, sector_id, sub_industry)
@@ -165,27 +164,10 @@ def sync_universe(
                 sector_id    = COALESCE(excluded.sector_id, assets.sector_id),
                 sub_industry = COALESCE(NULLIF(excluded.sub_industry, ''), assets.sub_industry)
             """,
-            (
-                company.symbol,
-                company.name,
-                company.cik,
-                sector_id,
-                company.sub_industry,
-            ),
+            (m.symbol, m.security, m.cik, sector_id, m.gics_sub_industry),
         )
-        row = conn.execute("SELECT id FROM assets WHERE ticker = ?", (company.symbol,)).fetchone()
-        if row is not None:
-            seen_ids.add(int(row["id"]))
         count += 1
     conn.commit()
-    kg_universe_membership.reconcile(
-        conn,
-        "SP500",
-        seen_ids,
-        as_of=as_of or _now()[:10],
-        run_kind="pricing",
-        source="pricing-gateway",
-    )
     return count
 
 
@@ -201,14 +183,22 @@ def load_universe(
     conn: sqlite3.Connection,
     *,
     tickers: Sequence[str] | None = None,
+    symbols: Sequence[str] | None = None,
     limit: int | None = None,
 ) -> list[sqlite3.Row]:
     query = "SELECT id, ticker, company_name FROM assets"
     params: list[Any] = []
+    clauses: list[str] = []
+    if symbols is not None:
+        placeholders = ", ".join("?" * len(symbols))
+        clauses.append(f"UPPER(ticker) IN ({placeholders})")
+        params.extend(s.upper() for s in symbols)
     if tickers:
         placeholders = ", ".join("?" * len(tickers))
-        query += f" WHERE ticker IN ({placeholders})"
+        clauses.append(f"ticker IN ({placeholders})")
         params.extend(t.upper() for t in tickers)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY ticker"
     if limit is not None:
         query += " LIMIT ?"
@@ -230,7 +220,9 @@ def completed_windows(conn: sqlite3.Connection) -> set[tuple[str, str, str, str]
     return {(r["ticker"], r["s"], r["e"], r["l"]) for r in rows}
 
 
-def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
+def upsert_price_window(
+    conn: sqlite3.Connection, row: PriceWindowRow, *, run_id: int | None = None
+) -> None:
     s = row.stats
     conn.execute(
         """
@@ -238,8 +230,8 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             (asset_id, start_date, end_date, label, first_trading_date, last_trading_date,
              first_close, last_close, period_return, trading_days, daily_return_std,
              annualized_volatility, min_close, max_close, avg_volume, source, warning,
-             retrieved_at, event_time)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             retrieved_at, event_time, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, start_date, end_date, label) DO UPDATE SET
             first_trading_date    = excluded.first_trading_date,
             last_trading_date     = excluded.last_trading_date,
@@ -255,7 +247,8 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             source                = excluded.source,
             warning               = excluded.warning,
             retrieved_at          = excluded.retrieved_at,
-            event_time            = excluded.event_time
+            event_time            = excluded.event_time,
+            run_id                = excluded.run_id
         """,
         (
             row.asset_id,
@@ -277,6 +270,7 @@ def upsert_price_window(conn: sqlite3.Connection, row: PriceWindowRow) -> None:
             row.warning,
             _now(),
             row.end_date,
+            run_id,
         ),
     )
     conn.commit()
@@ -331,21 +325,25 @@ def upsert_price_observations(
     return len(rows)
 
 
-def replace_daily_prices(conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle]) -> int:
+def replace_daily_prices(
+    conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle], *, run_id: int | None = None
+) -> int:
     now = _now()
     rows = [
-        (asset_id, c.date, c.open, c.high, c.low, c.close, c.volume, c.source, c.date, now)
+        (asset_id, c.date, c.open, c.high, c.low, c.close, c.volume, c.source, c.date, now, run_id)
         for c in candles
     ]
     conn.executemany(
         """
         INSERT INTO price_daily
-            (asset_id, date, open, high, low, close, volume, source, event_time, ingested_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (asset_id, date, open, high, low, close, volume, source, event_time, ingested_at,
+             run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, date) DO UPDATE SET
             open = excluded.open, high = excluded.high, low = excluded.low,
             close = excluded.close, volume = excluded.volume, source = excluded.source,
-            event_time = excluded.event_time, ingested_at = excluded.ingested_at
+            event_time = excluded.event_time, ingested_at = excluded.ingested_at,
+            run_id = excluded.run_id
         """,
         rows,
     )
@@ -367,10 +365,17 @@ class RunError:
 _MAX_ERROR_CHARS = 2000
 
 
-def start_run(conn: sqlite3.Connection, *, params_json: str) -> int:
+def start_run(
+    conn: sqlite3.Connection,
+    *,
+    params_json: str,
+    as_of: str | None = None,
+    code_version: str | None = None,
+) -> int:
     cur = conn.execute(
-        "INSERT INTO pricing_run (started_at, params_json, status) VALUES (?, ?, 'running')",
-        (_now(), params_json),
+        "INSERT INTO pricing_run (started_at, params_json, status, as_of, code_version) "
+        "VALUES (?, ?, 'running', ?, ?)",
+        (_now(), params_json, as_of, code_version),
     )
     conn.commit()
     return int(cur.lastrowid or 0)

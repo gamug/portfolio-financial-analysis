@@ -23,6 +23,7 @@ from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
+from kg_schema.provenance import code_version
 
 FundamentalHook = Callable[[sqlite3.Connection, list[int], str], None]
 
@@ -80,11 +81,15 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
     ensure_schema(conn)
-    run_id = open_cycle(conn, cycle_type, cycle_date, settings.model_dump())
+    run_id = open_cycle(
+        conn, cycle_type, cycle_date, settings.model_dump(), code_version=code_version()
+    )
     already = done_steps(conn, run_id)
     report = CycleReport(run_id, cycle_type, cycle_date)
 
-    universe_rows = data.active_universe(conn, settings.universe, cycle_date)
+    universe_rows = data.active_universe(
+        conn, settings.universe, cycle_date, settings.universe_db_path
+    )
     asset_ids = [int(r["id"]) for r in universe_rows]
     sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
     metrics = data.latest_metrics(conn, cycle_date)

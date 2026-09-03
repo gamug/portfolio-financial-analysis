@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from kg_schema.env import DB_ENV_VAR, database_path
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 # The EDGAR gateway mounts the SEC service under ``/edgar`` and the service itself
 # prefixes its routes with ``/edgar`` again, hence the doubled segment.
@@ -21,6 +21,9 @@ class Settings(BaseModel):
     """Everything the agent needs to reach its data stores and the LLM."""
 
     db_path: Path
+    universe_db_path: Path = Field(
+        default_factory=lambda: Path(universe_database_path()).expanduser()
+    )
     llm_api_key: str
     llm_model: str
     llm_url: str
@@ -38,6 +41,7 @@ class Settings(BaseModel):
             raise RuntimeError(f"missing required environment variables: {', '.join(missing)}")
         return cls(
             db_path=Path(db_path).expanduser(),
+            universe_db_path=Path(universe_database_path()).expanduser(),
             llm_api_key=os.environ["LLM_API_KEY"],
             llm_model=os.environ["LLM_MODEL"],
             llm_url=os.environ["LLM_URL"],

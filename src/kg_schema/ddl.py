@@ -32,6 +32,31 @@ CREATE TABLE IF NOT EXISTS universe_membership (
 CREATE INDEX IF NOT EXISTS ix_um_open
     ON universe_membership (universe, asset_id) WHERE valid_to IS NULL;
 
+-- Point-in-time core-data coverage for a dated universe (written by the
+-- `coverage` command). One row per (as_of, universe, symbol): does that member
+-- have an identity row / FUNDAMENTAL score / metrics / prices / observations /
+-- returns as of `as_of`. `covered` = every required check passed.
+CREATE TABLE IF NOT EXISTS universe_coverage (
+    id               INTEGER PRIMARY KEY,
+    as_of            TEXT NOT NULL,
+    universe         TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    asset_id         INTEGER,
+    in_assets        INTEGER NOT NULL,
+    has_fundamental  INTEGER NOT NULL,
+    has_metrics      INTEGER NOT NULL,
+    has_pricing      INTEGER NOT NULL,
+    has_observations INTEGER NOT NULL,
+    has_returns      INTEGER NOT NULL,
+    covered          INTEGER NOT NULL,
+    missing_json     TEXT,
+    checked_at       TEXT NOT NULL,
+    run_id           INTEGER,
+    UNIQUE (as_of, universe, symbol)
+);
+CREATE INDEX IF NOT EXISTS ix_uc_asof
+    ON universe_coverage (as_of, universe) WHERE covered = 0;
+
 -- Unified, multi-dimensional score store. `fundamental_snapshot` migrates in here
 -- (see migrations.m004) and afterwards survives as a compatibility VIEW.
 CREATE TABLE IF NOT EXISTS score_snapshot (
@@ -94,13 +119,14 @@ CREATE TABLE IF NOT EXISTS portfolio_position (
 CREATE INDEX IF NOT EXISTS ix_pp_open ON portfolio_position (asset_id) WHERE valid_to IS NULL;
 
 CREATE TABLE IF NOT EXISTS cycle_run (
-    id          INTEGER PRIMARY KEY,
-    cycle_type  TEXT NOT NULL,                 -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'
-    cycle_date  TEXT NOT NULL,
-    started_at  TEXT NOT NULL,
-    finished_at TEXT,
-    status      TEXT NOT NULL,
-    params_json TEXT,
+    id           INTEGER PRIMARY KEY,
+    cycle_type   TEXT NOT NULL,                -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'
+    cycle_date   TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    status       TEXT NOT NULL,
+    params_json  TEXT,
+    code_version TEXT,                         -- code tag that produced the run
     UNIQUE (cycle_type, cycle_date)
 );
 
@@ -215,6 +241,187 @@ CREATE TABLE IF NOT EXISTS sector_aggregate_snapshot (
     UNIQUE (sector_id, cycle_date, metric_type)
 );
 CREATE INDEX IF NOT EXISTS ix_sector_agg_date ON sector_aggregate_snapshot (cycle_date);
+
+-- Corporate actions (dividends / splits). Feeds the quant/ total-return series and
+-- fundamental_agent's valuation lane. `price_daily.close` is already split-adjusted,
+-- so SPLIT rows are provenance only and are never re-applied.
+CREATE TABLE IF NOT EXISTS corporate_action (
+    id             INTEGER PRIMARY KEY,
+    asset_id       INTEGER NOT NULL REFERENCES assets(id),
+    action_type    TEXT NOT NULL CHECK (action_type IN ('DIVIDEND', 'SPLIT')),
+    ex_date        TEXT NOT NULL,                 -- what the row is about (event_time)
+    value          REAL NOT NULL,                 -- DIVIDEND: cash/share USD; SPLIT: ratio (2-for-1 -> 2.0)
+    currency       TEXT NOT NULL DEFAULT 'USD',
+    declared_date  TEXT,
+    record_date    TEXT,
+    pay_date       TEXT,
+    frequency      TEXT,                          -- 'quarterly'|'annual'|'special'|NULL
+    source         TEXT NOT NULL,                 -- 'pricing-gateway' | 'financial-facts-derived'
+    engine_version TEXT NOT NULL,                 -- 'corpact-v1' (gateway) | 'corpact-v0-approx' (derived)
+    ingested_at    TEXT NOT NULL,
+    UNIQUE (asset_id, action_type, ex_date, engine_version)
+);
+CREATE INDEX IF NOT EXISTS ix_corpact_asset_date ON corporate_action (asset_id, ex_date);
+
+-- quant/ total-return daily series: split-adjusted close + cash dividends folded in.
+-- A dedicated table, NOT `price_observation` rows under a new engine_version --
+-- `v_price_observation` resolves the latest engine per (asset, day), so writing there
+-- would silently move cycle's technical/veto path onto quant's rows.
+CREATE TABLE IF NOT EXISTS quant_return_daily (
+    id               INTEGER PRIMARY KEY,
+    asset_id         INTEGER NOT NULL REFERENCES assets(id),
+    obs_date         TEXT NOT NULL,               -- event_time
+    close_split_adj  REAL NOT NULL,               -- copied from price_daily.close
+    adj_close        REAL NOT NULL,               -- dividend-back-adjusted (total-return price)
+    tr_index         REAL NOT NULL,               -- forward TR index, tr_index[0] = close_split_adj[0]
+    cash_dividend    REAL NOT NULL DEFAULT 0.0,   -- per-share dividend with ex_date == obs_date
+    split_factor     REAL NOT NULL DEFAULT 1.0,   -- provenance only; close is already split-adjusted
+    price_log_return REAL,                        -- ln(C_t / C_{t-1})  (== price_observation.log_return)
+    tr_log_return    REAL,                        -- ln((C_t + D_t) / C_{t-1})  <- the optimizer input
+    source           TEXT NOT NULL,               -- 'quant-tr-v1'
+    engine_version   TEXT NOT NULL,               -- 'qret-v1'
+    computed_at      TEXT NOT NULL,
+    UNIQUE (asset_id, obs_date, engine_version)
+);
+CREATE INDEX IF NOT EXISTS ix_qret_asset_date ON quant_return_daily (asset_id, obs_date);
+
+-- Risk-free rate series for Sharpe / tangency. A single 'CONST' curve row per as-of
+-- is acceptable for v1; a real T-bill curve loads via a CSV later.
+CREATE TABLE IF NOT EXISTS risk_free_rate (
+    id              INTEGER PRIMARY KEY,
+    curve           TEXT NOT NULL,                -- 'CONST' | 'US3M' | 'US1Y'
+    rate_date       TEXT NOT NULL,                -- event_time
+    annualized_rate REAL NOT NULL,                -- decimal, e.g. 0.045
+    source          TEXT NOT NULL,               -- 'constant-v1' | 'fred-DGS3MO' | 'manual-csv'
+    engine_version  TEXT NOT NULL,               -- 'rf-v1'
+    ingested_at     TEXT NOT NULL,
+    UNIQUE (curve, rate_date, engine_version)
+);
+
+-- Benchmark index series to evaluate the optimized books against. quant/ synthesizes
+-- an internal equal-/cap-weight one over the same gated universe; a real SPX/SPY_TR
+-- series loads via a CSV later.
+CREATE TABLE IF NOT EXISTS benchmark_series (
+    id                 INTEGER PRIMARY KEY,
+    benchmark          TEXT NOT NULL,             -- 'SP500_EW_INTERNAL' | 'SP500_CAPW_INTERNAL' | 'SPX' | 'SPY_TR'
+    obs_date           TEXT NOT NULL,             -- event_time
+    level              REAL,                      -- index / price level
+    total_return_level REAL,                      -- TR index if known
+    log_return         REAL,
+    source             TEXT NOT NULL,             -- 'quant-internal-ew' | 'vendor-csv' | ...
+    engine_version     TEXT NOT NULL,             -- 'bench-v1'
+    ingested_at        TEXT NOT NULL,
+    UNIQUE (benchmark, obs_date, engine_version)
+);
+
+-- quant/ Markowitz risk model. quant_run itself is quant-private; these three are
+-- here (not in quant/db.py) because they carry read-contract views -- a view over a
+-- table kg_schema does not create is invalid until quant runs, and a later
+-- migration then trips on it.
+CREATE TABLE IF NOT EXISTS quant_risk_model (
+    id                   INTEGER PRIMARY KEY,
+    quant_run_id         INTEGER,
+    as_of                TEXT NOT NULL,
+    model_version        TEXT NOT NULL,
+    lookback_days        INTEGER NOT NULL,
+    min_history_days     INTEGER NOT NULL,
+    n_assets             INTEGER NOT NULL,
+    cov_estimator        TEXT NOT NULL,
+    cov_shrinkage        REAL,
+    ret_estimator        TEXT NOT NULL,
+    periods_per_year     INTEGER NOT NULL DEFAULT 252,
+    panel_engine_version TEXT NOT NULL,
+    panel_spec_json      TEXT NOT NULL,           -- {asset_ids, date_start, date_end, n_dates, sha256}
+    rf_annual            REAL,
+    computed_at          TEXT NOT NULL,
+    params_json          TEXT,
+    UNIQUE (as_of, model_version)
+);
+
+CREATE TABLE IF NOT EXISTS quant_expected_return (
+    model_id  INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    asset_id  INTEGER NOT NULL REFERENCES assets(id),
+    mu_model  TEXT NOT NULL,                      -- 'hist_mean' | 'james_stein' | 'equilibrium'
+    mu        REAL NOT NULL,                      -- annualized
+    UNIQUE (model_id, asset_id, mu_model)
+);
+
+CREATE TABLE IF NOT EXISTS quant_covariance (
+    model_id   INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    asset_id_i INTEGER NOT NULL,                  -- lower triangle only (i <= j)
+    asset_id_j INTEGER NOT NULL,
+    value      REAL NOT NULL,                     -- annualized covariance
+    UNIQUE (model_id, asset_id_i, asset_id_j)
+);
+CREATE INDEX IF NOT EXISTS ix_quant_cov_model ON quant_covariance (model_id);
+
+-- One optimized book per (as_of, objective). kind: min_var | tangency | target_vol
+-- | frontier_k | equal_weight | cap_weight | live_book. target_param carries the
+-- objective's scalar input (target_vol's vol target, ...) when it has one.
+CREATE TABLE IF NOT EXISTS quant_portfolio (
+    id              INTEGER PRIMARY KEY,
+    quant_run_id    INTEGER,
+    model_id        INTEGER REFERENCES quant_risk_model(id),
+    as_of           TEXT NOT NULL,
+    kind            TEXT NOT NULL,
+    frontier_k      INTEGER,                      -- non-null only for kind='frontier_k'
+    objective       TEXT NOT NULL,
+    solver          TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    expected_return REAL,
+    expected_vol    REAL,
+    sharpe          REAL,
+    rf_annual       REAL,
+    n_positions     INTEGER NOT NULL,
+    turnover        REAL,                         -- vs the prior open book of the same kind
+    target_param    REAL,
+    engine_version  TEXT NOT NULL,                -- 'opt-v1'
+    computed_at     TEXT NOT NULL,
+    params_json     TEXT,
+    UNIQUE (as_of, kind, frontier_k, engine_version)
+);
+
+-- Stint history mirroring portfolio_position, but keyed per book (many concurrent
+-- books at one as_of), not per asset.
+CREATE TABLE IF NOT EXISTS quant_position (
+    id           INTEGER PRIMARY KEY,
+    portfolio_id INTEGER NOT NULL REFERENCES quant_portfolio(id) ON DELETE CASCADE,
+    asset_id     INTEGER NOT NULL REFERENCES assets(id),
+    weight       REAL NOT NULL,
+    valid_from   TEXT NOT NULL,
+    valid_to     TEXT,
+    UNIQUE (portfolio_id, asset_id, valid_from)
+);
+CREATE INDEX IF NOT EXISTS ix_quant_position_open
+    ON quant_position (asset_id) WHERE valid_to IS NULL;
+
+CREATE TABLE IF NOT EXISTS quant_frontier_point (
+    id              INTEGER PRIMARY KEY,
+    model_id        INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
+    k               INTEGER NOT NULL,
+    target_return   REAL NOT NULL,
+    expected_return REAL NOT NULL,
+    expected_vol    REAL NOT NULL,
+    sharpe          REAL,
+    status          TEXT NOT NULL,
+    weights_json    TEXT NOT NULL,                -- {asset_id: weight} sparse (> 1e-6)
+    portfolio_id    INTEGER REFERENCES quant_portfolio(id),
+    UNIQUE (model_id, k)
+);
+
+CREATE TABLE IF NOT EXISTS quant_benchmark_performance (
+    id                INTEGER PRIMARY KEY,
+    portfolio_id      INTEGER NOT NULL REFERENCES quant_portfolio(id) ON DELETE CASCADE,
+    date              TEXT NOT NULL,              -- forward trading day
+    realized_return   REAL NOT NULL,             -- daily simple TR of the frozen weights
+    cumulative_return REAL NOT NULL,             -- since as_of
+    benchmark         TEXT,
+    benchmark_return  REAL,
+    active_return     REAL,                      -- realized - benchmark
+    engine_version    TEXT NOT NULL,             -- 'perf-v1'
+    computed_at       TEXT NOT NULL,
+    UNIQUE (portfolio_id, date, engine_version)
+);
 """
 
 
@@ -228,16 +435,40 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "event_time": "TEXT",
         "ingested_at": "TEXT",
         "filing_version": "TEXT",
+        "run_id": "INTEGER",  # the analysis_run that wrote this row
     },
     "fundamental_metrics": {
         "event_time": "TEXT",
         "engine_version": "TEXT",
+        "run_id": "INTEGER",
+    },
+    "sec_filings": {
+        "run_id": "INTEGER",
     },
     "price_window": {
         "event_time": "TEXT",
+        "run_id": "INTEGER",
     },
     "price_daily": {
         "event_time": "TEXT",
         "ingested_at": "TEXT",
+        "run_id": "INTEGER",
+    },
+    # Run-log tables (agent-owned; entries are skipped where the table is absent).
+    # `analysis_date` provenance + the code tag that produced the run, so
+    # portfolio-reports can trace an old run back to its inputs and its code.
+    "analysis_run": {
+        "as_of": "TEXT",
+        "code_version": "TEXT",
+    },
+    "pricing_run": {
+        "as_of": "TEXT",
+        "code_version": "TEXT",
+    },
+    "quant_run": {
+        "code_version": "TEXT",  # `as_of` already exists on this table
+    },
+    "cycle_run": {
+        "code_version": "TEXT",  # `cycle_date` is this table's as-of
     },
 }

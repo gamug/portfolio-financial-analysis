@@ -8,7 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-from kg_schema.env import DB_ENV_VAR, database_path
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 _DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "VALORIZATION": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
 
@@ -17,6 +17,9 @@ class CycleSettings(BaseModel):
     """Everything a cycle needs: the shared DB, optional LLM creds, and the knobs."""
 
     db_path: Path
+    universe_db_path: Path = Field(
+        default_factory=lambda: Path(universe_database_path()).expanduser()
+    )
     llm_api_key: str | None = None
     llm_model: str | None = None
     llm_url: str | None = None
@@ -37,6 +40,7 @@ class CycleSettings(BaseModel):
             raise RuntimeError(f"missing required environment variable: {DB_ENV_VAR}")
         return cls(
             db_path=Path(db_path).expanduser(),
+            universe_db_path=Path(universe_database_path()).expanduser(),
             llm_api_key=os.environ.get("LLM_API_KEY"),
             llm_model=os.environ.get("LLM_MODEL"),
             llm_url=os.environ.get("LLM_URL"),

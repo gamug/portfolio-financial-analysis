@@ -9,7 +9,9 @@ from pathlib import Path
 
 from fundamental_agent.config import Settings
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
-from kg_schema.cli import run_migrate
+from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -21,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_cmd = sub.add_parser("run", help="analyze filings and write snapshots")
     run_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    run_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(run_cmd)
     run_cmd.add_argument(
         "--limit", type=int, help="cap the universe to the first N tickers (dev aid)"
     )
@@ -47,7 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--refresh-universe",
         action="store_true",
-        help="re-scrape the S&P 500 list before running",
+        help="deprecated no-op (the universe is always read fresh from universe.db)",
     )
     run_cmd.add_argument(
         "--sections",
@@ -59,6 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
     migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
+    add_coverage_parser(sub)
     return parser
 
 
@@ -72,9 +78,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
+    if args.command == "coverage":
+        return coverage_from_args(args)
     settings = Settings.load()
+    updates: dict[str, Path] = {}
     if args.db:
-        settings = settings.model_copy(update={"db_path": Path(args.db)})
+        updates["db_path"] = Path(args.db)
+    if args.universe_db:
+        updates["universe_db_path"] = Path(args.universe_db)
+    if updates:
+        settings = settings.model_copy(update=updates)
 
     params = RunParams(
         forms=_split(args.forms) or list(DEFAULT_FORMS),
@@ -85,6 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
         sections=args.sections,
+        analysis_date=resolve_analysis_date(args.analysis_date),
     )
     report = run(settings, params)
 

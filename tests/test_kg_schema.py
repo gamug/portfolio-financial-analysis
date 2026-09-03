@@ -92,6 +92,12 @@ def test_ensure_is_idempotent_and_additive() -> None:
     kg_schema.ensure(conn)  # second call must not raise
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"score_snapshot", "universe_membership", "veto", "price_observation"} <= tables
+    assert {
+        "corporate_action",
+        "quant_return_daily",
+        "risk_free_rate",
+        "benchmark_series",
+    } <= tables
     # additive columns present
     ff_cols = {r[1] for r in conn.execute("PRAGMA table_info(financial_facts)")}
     assert {"event_time", "filing_version"} <= ff_cols
@@ -310,6 +316,16 @@ def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
         "v_weight_scheme",
         "v_weight_component",
         "v_sector_aggregate_snapshot",
+        "v_corporate_action",
+        "v_quant_return_daily",
+        "v_risk_free_rate",
+        "v_benchmark_series",
+        "v_quant_risk_model",
+        "v_quant_portfolio",
+        "v_quant_position",
+        "v_quant_frontier_point",
+        "v_quant_benchmark_performance",
+        "v_quant_vs_live",
     ):
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
 

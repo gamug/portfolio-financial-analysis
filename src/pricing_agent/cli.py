@@ -7,7 +7,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from kg_schema.cli import run_migrate
+from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
 
@@ -21,10 +23,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_cmd = sub.add_parser("run", help="fetch prices and write price_window rows")
     run_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    run_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(run_cmd)
     run_cmd.add_argument(
         "--start", default=DEFAULT_START_DATE, help=f"start date (default {DEFAULT_START_DATE})"
     )
-    run_cmd.add_argument("--end", help="end date, YYYY-MM-DD (default: today)")
+    run_cmd.add_argument(
+        "--end", help="end date, YYYY-MM-DD (clamped to --analysis-date; default: --analysis-date)"
+    )
     run_cmd.add_argument("--limit", type=int, help="cap the universe to the first N tickers")
     run_cmd.add_argument("--tickers", help="comma-separated tickers to restrict to")
     run_cmd.add_argument(
@@ -48,13 +54,15 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--refresh-universe",
         action="store_true",
-        help="re-pull the tracked universe before running",
+        help="deprecated no-op (the universe is always read fresh from universe.db)",
     )
 
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
     migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
+    add_coverage_parser(sub)
     return parser
 
 
@@ -68,9 +76,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
+    if args.command == "coverage":
+        return coverage_from_args(args)
     settings = Settings.load()
+    updates: dict[str, Path] = {}
     if args.db:
-        settings = settings.model_copy(update={"db_path": Path(args.db)})
+        updates["db_path"] = Path(args.db)
+    if args.universe_db:
+        updates["universe_db_path"] = Path(args.universe_db)
+    if updates:
+        settings = settings.model_copy(update=updates)
 
     params = RunParams(
         start_date=args.start,
@@ -82,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         observations=args.observations,
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
+        analysis_date=resolve_analysis_date(args.analysis_date),
     )
     report = run(settings, params)
 

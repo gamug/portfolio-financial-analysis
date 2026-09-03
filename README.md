@@ -20,22 +20,27 @@ strengths, risks). Each `(asset, form, fiscal_period)` produces one immutable
 | Variable | Purpose |
 |---|---|
 | `KG_FINANCIAL_DB` | SQLite path. `assets` / `sectors` are created only if missing and never overwritten; all other tables are owned by this agent. The old misspelled `KG_FINANTIAL_DB` is still read as a fallback. |
+| `KG_UNIVERSE_DB` | Optional; point-in-time S&P 500 membership DB. Defaults to `/workspaces/thesis/data/universe.db`. Every agent reads the universe from here as of its `--analysis-date`. |
 | `LLM_API_KEY` / `LLM_MODEL` / `LLM_URL` | OpenAI-compatible LLM (DeepSeek). Used via Strands' `OpenAIModel`. |
 | `EDGAR_BASE_URL` | Optional; defaults to `http://host.docker.internal:8000/edgar/edgar`. |
-| `WIKIPEDIA_USER_AGENT` | Optional; set a descriptive UA with a real contact URL for the S&P 500 scrape. |
 
 ### Run
 
 ```bash
 uv run python -m fundamental_agent run                       # full universe, 10-K + 10-Q, since 2022
+uv run python -m fundamental_agent run --analysis-date 2021-06-30   # as-of a past date (no lookahead)
 uv run python -m fundamental_agent run --limit 5             # first 5 tickers (dev)
 uv run python -m fundamental_agent run --tickers AAPL,NVDA --forms 10-K --since-year 2023
 uv run python -m fundamental_agent run --fresh               # re-analyze instead of resuming
 ```
 
-The universe is scraped once from Wikipedia's S&P 500 list into `assets`/`sectors`
-(re-scrape with `--refresh-universe`). A `tqdm` bar shows progress and ETA; failures
-are recorded in `analysis_run_error` and do not stop the batch.
+`--analysis-date` (optional, default: today) is the run's as-of date: the universe
+is read from `universe.db` as of that date, filings filed after it are skipped, and
+the year range is capped at its year. The membership is projected into
+`assets`/`sectors` each run (`--refresh-universe` is a deprecated no-op). The run is
+archived in `analysis_run` with its `as_of` and `code_version` (git SHA), and every
+row it writes carries its `run_id`. A `tqdm` bar shows progress; failures are
+recorded in `analysis_run_error` and do not stop the batch.
 
 ### Inspect results
 
@@ -67,19 +72,22 @@ pricing gateway and writes them to the same `KG_FINANCIAL_DB` under its own tabl
 then a `price_window` row with the first/last trading day and close, period return, trading
 days, **daily log-return std-dev**, **annualized volatility** (`std · √252`), min/max close and
 average volume. `--by-year` adds one window per calendar year; `--store-daily` also keeps every
-OHLCV bar in `price_daily`. The tracked universe comes from the gateway's `/universe` endpoint
-(`assets`/`sectors` created only if missing, never clobbered). Share-class tickers are retried
-across spellings (`BRK.B` → `BRK-B`); tickers the gateway returns empty are logged, not fatal.
+OHLCV bar in `price_daily`. The tracked universe is read from `universe.db` as of the run's
+`--analysis-date` (`assets`/`sectors` created only if missing, never clobbered). Share-class
+tickers are retried across spellings (`BRK.B` → `BRK-B`); tickers the gateway returns empty
+are logged, not fatal.
 
 ```bash
 uv run python -m pricing_agent run                          # full universe, 2022-01-01 → today
+uv run python -m pricing_agent run --analysis-date 2021-06-30   # as-of universe + candle cutoff
 uv run python -m pricing_agent run --limit 5 --by-year      # first 5 tickers, per-year windows
 uv run python -m pricing_agent run --tickers AAPL,NVDA --store-daily
 ```
 
-Config: `KG_FINANCIAL_DB` (required); `PRICING_BASE_URL` (optional, defaults to
-`http://host.docker.internal:8000/pricing`). Re-runs skip windows already stored; `--fresh`
-recomputes. Progress + ETA via `tqdm`; run stats land in `pricing_run` / `pricing_run_error`.
+Config: `KG_FINANCIAL_DB` (required); `KG_UNIVERSE_DB` / `PRICING_BASE_URL` (optional).
+`--analysis-date` (default: today) drives the universe and the fetch end date (candles after
+it are dropped); `--end` is clamped to it. Re-runs skip windows already stored; `--fresh`
+recomputes. Run stats land in `pricing_run` (with `as_of` + `code_version`) / `pricing_run_error`.
 
 ## Knowledge-graph projection layer
 
@@ -95,13 +103,17 @@ minting.
 | Table | Roadmap concept | Written by |
 |---|---|---|
 | `score_snapshot` | `ScoreSnapshot` (`FUNDAMENTAL` / `VALORIZATION` / `TECHNICAL` / `SEMANTIC`) | fundamental agent, `cycle`, integration repo |
-| `universe_membership` | `UniverseMembership` (`valid_from` / `valid_to`) | both agents' `sync_universe` |
+| `universe_membership` | `UniverseMembership` (`valid_from` / `valid_to`) | **frozen** — the universe is now read point-in-time from `universe.db` (`KG_UNIVERSE_DB`); agents no longer write this table |
+| `v_analysis_run` / `v_pricing_run` / `v_quant_run` / `v_cycle_run` | per-agent run log: `run_id`, `as_of`, `code_version`, params | every agent run |
 | `price_observation` | `PriceObservation` (close/return/ATR/vol/drawdown/momentum) | `pricing_agent run --observations` |
 | `sec_filing_section` | `SECFilingSection` (MD&A, risk factors) | `fundamental_agent run --sections` |
 | `veto` / `rule_catalog` | `Veto` / `RuleClause` | `cycle` |
 | `portfolio_position` / `cycle_ranking` | `PortfolioPosition` | `cycle select` |
 | `shared_executive_edge` | `sharedExecutiveWith` | `entity_resolution build` |
 | `cycle_run` / `cycle_checkpoint` | orchestrator provenance / resume | `cycle` |
+| `corporate_action` / `quant_return_daily` | dividends + total-return series | `quant backfill-actions` / `build-returns` |
+| `quant_risk_model` / `quant_portfolio` / `quant_position` | Markowitz benchmark book (μ, Σ, frontier, weights) | `quant build-risk-model` / `optimize` |
+| `benchmark_series` / `quant_benchmark_performance` | benchmark index + forward realized returns | `quant benchmark` / `evaluate` |
 
 Read-contract `v_*` VIEWs (documented in `kg_schema/views.py`) are what the
 integration repo consumes; the physical schema can evolve underneath them.
@@ -121,13 +133,57 @@ uv run python -m pricing_agent migrate         # (idempotent -- a no-op after th
 uv run python -m pricing_agent run --observations          # + PriceObservation analytics
 uv run python -m fundamental_agent run --sections          # + narrative filing text (fetches www.sec.gov)
 uv run python -m entity_resolution build --min-weight 3    # sharedExecutiveWith from urls.db news co-occurrence
-uv run python -m cycle select --date 2026-06-30 --top-n 30 # score, veto, rank, open positions
-uv run python -m cycle monitor --date 2026-07-31           # refresh vetoes / ranking only
+uv run python -m cycle select --analysis-date 2026-06-30 --top-n 30  # score, veto, rank, open positions
+uv run python -m cycle monitor --analysis-date 2026-07-31  # refresh vetoes / ranking only
 ```
 
-`entity_resolution` reads the news repo's `urls.db` strictly read-only (via
-`KG_NEWS_DB`, default `/workspaces/thesis/data/urls.db`). The SEMANTIC score
-aggregation itself lives in the integration repo, not here.
+Every agent takes an optional `--analysis-date YYYY-MM-DD` (default: today) — the single
+as-of date for the run. It selects the universe (from `universe.db`), bounds ingestion so
+nothing dated after it is written, and is recorded on the run-log row alongside a
+`code_version` git tag so `portfolio-reports` can trace an old run. `cycle` still accepts
+`--date` and `quant build-risk-model` / `optimize` still accept `--as-of` as aliases.
+
+**Universe-coverage check.** Because the universe is now a mutable dated list, a member as
+of a past date may have no EDGAR / pricing / observation rows yet (it left the index, or
+was never ingested that far back) — `cycle` and `quant` would then silently run on the
+covered subset. `coverage` (on `fundamental_agent` / `pricing_agent` / `quant`) reports
+per-member coverage and records it in `universe_coverage` / `v_universe_coverage`:
+
+```bash
+uv run python -m quant coverage --analysis-date 2024-06-30            # report + persist
+uv run python -m quant coverage --analysis-date 2024-06-30 --strict   # exit 1 if < --min-fraction
+uv run python -m fundamental_agent coverage --analysis-date 2024-06-30 --print-fill-commands
+```
+
+Default is **warn** (report + exit 0); `--strict` fails when the covered fraction is below
+`--min-fraction` (default 1.0). `--print-fill-commands` emits the `... run --tickers <missing>
+--analysis-date D` lines to close the gaps (delisted names may still fail — see `*_run_error`).
+
+### Markowitz benchmark portfolio (`quant/`)
+
+The base case the blended-score `portfolio_position` book is evaluated against —
+a mean-variance optimizer over a score-independent liquidity/data universe. First
+numeric dependency in the repo (numpy / scipy / cvxpy); confined to `quant/`,
+which no other package imports. See [docs/quant.md](docs/quant.md).
+
+```bash
+uv run python -m quant backfill-actions --source derive          # dividends -> corporate_action
+uv run python -m quant build-returns                             # total-return series -> quant_return_daily
+uv run python -m quant build-risk-model --analysis-date 2026-08-27   # Ledoit-Wolf Sigma + shrunk mu
+uv run python -m quant optimize --analysis-date 2026-08-27 \
+    --objectives min_var,tangency,target_vol,frontier            # persist the benchmark books
+uv run python -m quant evaluate --from 2026-08-27               # forward returns vs the live book
+```
+
+For the `--from`/`--to` subcommands (`backfill-actions`, `build-returns`, `benchmark`,
+`evaluate`), `--analysis-date` (default: today) is the upper bound: `--to` is clamped to it,
+`quant_run.as_of` is stamped with it, and `backfill-actions --source derive` only reads
+filings with `period_end <= analysis-date`.
+
+`entity_resolution build` also takes `--analysis-date`: it drives the `cycle_run.cycle_date`
+stamp, reads the universe from `universe.db` as of that date, and drops news whose
+`discovered_urls.pub_date` is after it or NULL. It reads the news repo's `urls.db` strictly
+read-only (via `KG_NEWS_DB`, default `/workspaces/thesis/data/urls.db`).
 
 ## Development
 

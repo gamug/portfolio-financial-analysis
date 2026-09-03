@@ -8,18 +8,28 @@ immutable `score_snapshot` row (`score_type='FUNDAMENTAL'`) per
 `(asset, form, fiscal_period)`. Optionally also extracts narrative filing text.
 
 ```bash
-uv run python -m fundamental_agent run [--tickers AAPL,NVDA] [--forms 10-K] \
-    [--since-year 2023] [--fresh] [--refresh-universe] [--sections]
+uv run python -m fundamental_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
+    [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections]
 uv run python -m fundamental_agent migrate        # shared-schema migrations
 ```
+
+`--analysis-date YYYY-MM-DD` (optional, default: today) is the run's as-of date:
+the universe is read from `universe.db` as of that date, filings with
+`filing_date` (or `period_end`) after it are skipped, and `resolved_until()` is
+capped at its year. It is written to `analysis_run.as_of` alongside
+`analysis_run.code_version` (git short SHA via `kg_schema.provenance`), and every
+`sec_filings` / `financial_facts` / `fundamental_metrics` / `score_snapshot` /
+`sec_filing_section` row the run writes carries its `run_id`. `--refresh-universe`
+is a deprecated no-op (membership is synced from `universe.db` every run).
 
 ## Configuration (`config.py`)
 
 `Settings.load()` requires `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`,
 which also still honours the old misspelled `KG_FINANTIAL_DB`), `LLM_API_KEY`,
-`LLM_MODEL`, `LLM_URL`. Optional: `EDGAR_BASE_URL` (default
-`http://host.docker.internal:8000/edgar/edgar` — the doubled `/edgar` is
-intentional), `WIKIPEDIA_USER_AGENT`, `SEC_USER_AGENT`.
+`LLM_MODEL`, `LLM_URL`. Optional: `KG_UNIVERSE_DB` (via
+`kg_schema.env.universe_database_path`; default `/workspaces/thesis/data/universe.db`),
+`EDGAR_BASE_URL` (default `http://host.docker.internal:8000/edgar/edgar` — the
+doubled `/edgar` is intentional), `SEC_USER_AGENT`.
 
 ## Files
 
@@ -32,12 +42,14 @@ unwrapped by `_unwrap`. Retries 500/502/503/504 + transport errors (3 attempts,
 exp backoff ≤ 8 s); 404 → `EdgarNotFoundError`. `normalize_ticker` yields spelling
 candidates (`BRK.B` → `BRK-B` → `BRKB`).
 
-### `universe.py`
+### universe source
 
-Scrapes the Wikipedia S&P 500 constituents table (`#constituents`) with
-BeautifulSoup + lxml into `Company` models. Needs a descriptive UA
-(`WIKIPEDIA_USER_AGENT`); datacenter browser-mimic UAs get 403. `fetch_sp500()` is
-the entry the pipeline calls.
+The Wikipedia scraper is gone. `pipeline._load_members` reads
+`kg_schema.universe_source.members_asof(universe_conn, analysis_date)` — a
+point-in-time query over `universe.db` — and `db.sync_universe` upserts those
+`UniverseMember`s into `assets` / `sectors` (the identity-write path where a new
+S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
+`reconcile` write anymore.
 
 ### `statements.py` — `Statements`, `iter_facts`
 
@@ -133,8 +145,10 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 
 | Function | Notes |
 |---|---|
-| `sync_universe(conn, companies, *, as_of=None)` | upserts `assets`, then `universe_membership.reconcile` |
-| `upsert_filing` | `sec_filings` upsert on `(asset_id, form, fiscal_period)` |
+| `sync_universe(conn, members)` | upserts `assets` / `sectors` from `UniverseMember`s (identity write path only; no `universe_membership` write) |
+| `load_universe(conn, *, tickers=None, symbols=None, limit=None)` | asset rows restricted to the point-in-time `symbols` (and optional `tickers`) |
+| `start_run(conn, *, params, as_of=None, code_version=None)` | `analysis_run` row with the run's as-of + code tag |
+| `upsert_filing(…, *, run_id=None)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)` |
 | `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end |
