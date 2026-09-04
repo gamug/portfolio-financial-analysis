@@ -14,13 +14,13 @@ import re
 import sqlite3
 from datetime import date
 
+from portfolio_common.kg_schema import connect
 from portfolio_common.kg_schema.provenance import code_version
 
 from quant.config import QuantSettings
 from quant.db import (
     ActionsReport,
     CorporateAction,
-    connect,
     ensure_schema,
     load_assets,
     upsert_corporate_actions,

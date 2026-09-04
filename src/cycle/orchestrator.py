@@ -15,12 +15,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from portfolio_common.kg_schema import connect
 from portfolio_common.kg_schema.provenance import code_version
 
 from cycle import data, writers
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
-from cycle.db import connect, ensure_schema
+from cycle.db import ensure_schema
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores

@@ -7,9 +7,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 from fastapi import Depends, Query, Request
+from portfolio_common.kg_schema import connect_ro
 
 from api.config import ApiSettings
-from api.db import connect_ro
 
 
 def get_settings(request: Request) -> ApiSettings:

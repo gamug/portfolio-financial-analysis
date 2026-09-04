@@ -13,7 +13,6 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from portfolio_common import kg_schema
@@ -174,12 +173,6 @@ _REQUIRED_ASSET_COLUMNS = {"id", "ticker", "company_name", "cik", "sector_id", "
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
-
-
-def connect(path: str | Path) -> sqlite3.Connection:
-    """The shared connection factory (:func:`kg_schema.connect`), re-exposed here
-    so ``fundamental_agent`` code keeps importing it from ``fundamental_agent.db``."""
-    return kg_schema.connect(path)
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

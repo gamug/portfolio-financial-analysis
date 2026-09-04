@@ -12,13 +12,13 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from portfolio_common.kg_schema import connect
 from portfolio_common.kg_schema.provenance import code_version
 
 from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
-    connect,
     ensure_schema,
     insert_portfolio,
     load_benchmark_returns,

@@ -6,11 +6,11 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from portfolio_common.kg_schema import connect_ro
 
 from entity_resolution import db as er_db
 from entity_resolution.cooccurrence import build_edges
 from entity_resolution.denylist import is_denied
-from entity_resolution.news_db import connect_ro
 from entity_resolution.normalize import canonical
 
 # urls.db subset: only the tables/indexes the accessor is allowed to touch.

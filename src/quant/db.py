@@ -47,12 +47,6 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    """The shared connection factory (:func:`kg_schema.connect`), re-exposed here
-    so ``quant`` code keeps importing it from ``quant.db``."""
-    return kg_schema.connect(path)
-
-
 def ensure_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     conn.commit()

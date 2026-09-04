@@ -4,6 +4,9 @@ Hard rule: only two query shapes are allowed, both hitting an index --
 ``discovered_urls.ticker`` and ``article_entities.article_id``. This module must
 never name ``articles`` or ``body_text``; ``test_entity_news_db`` enforces it by
 tracing executed SQL.
+
+Open it with :func:`portfolio_common.kg_schema.connect_ro` -- import that
+directly rather than through this module.
 """
 
 from __future__ import annotations
@@ -11,9 +14,6 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
-
-from portfolio_common import kg_schema
 
 _ID_CHUNK = 900  # keep under SQLite's parameter limit
 
@@ -23,14 +23,6 @@ class PerSpan:
     article_id: int
     text: str
     score: float | None
-
-
-def connect_ro(path: str | Path) -> sqlite3.Connection:
-    """Open *path* strictly read-only so the news pipeline's WAL is untouched.
-
-    The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
-    so ``entity_resolution`` code keeps importing it from this module."""
-    return kg_schema.connect_ro(path)
 
 
 def article_ids_for_ticker(

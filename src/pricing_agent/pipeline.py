@@ -15,7 +15,7 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from portfolio_common.kg_schema import rundate
+from portfolio_common.kg_schema import connect, rundate
 from portfolio_common.kg_schema.provenance import code_version
 from portfolio_common.kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 from tqdm import tqdm
@@ -82,7 +82,7 @@ class _Engine:
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
-    conn = db.connect(settings.db_path)
+    conn = connect(settings.db_path)
     try:
         db.ensure_schema(conn)
         members = _load_members(settings, params.analysis_date)
