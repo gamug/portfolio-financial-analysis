@@ -8,11 +8,11 @@ import sqlite3
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
+from portfolio_common.kg_schema.coverage import check_coverage
+from portfolio_common.kg_schema.universe_source import members_asof
 
 from api.dependencies import get_db, get_universe_db
 from api.models import CoverageRow, CoverageSummary, UniverseMemberOut
-from kg_schema.coverage import check_coverage
-from kg_schema.universe_source import members_asof
 
 router = APIRouter(prefix="/universe", tags=["universe"])
 

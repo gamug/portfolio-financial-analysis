@@ -15,11 +15,11 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from portfolio_common.kg_schema import rundate
+from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 from tqdm import tqdm
 
-from kg_schema import rundate
-from kg_schema.provenance import code_version
-from kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 from pricing_agent import db
 from pricing_agent.config import Settings
 from pricing_agent.db import PriceWindowRow, RunError

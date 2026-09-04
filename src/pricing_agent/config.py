@@ -10,9 +10,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from portfolio_common.kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from pydantic import BaseModel, Field
-
-from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 # The gateway mounts the pricing service at /pricing; its own price route is
 # /pricing/{ticker}, hence the doubled segment for candle requests. The /universe

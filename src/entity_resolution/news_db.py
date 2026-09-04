@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-import kg_schema
+from portfolio_common import kg_schema
 
 _ID_CHUNK = 900  # keep under SQLite's parameter limit
 

@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import kg_schema
+from portfolio_common import kg_schema
 
 
 def connect_ro(path: str | Path) -> sqlite3.Connection:

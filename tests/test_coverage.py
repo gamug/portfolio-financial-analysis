@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 from conftest import _QUANT_EXTRA_DDL
+from portfolio_common.kg_schema.cli import run_coverage
+from portfolio_common.kg_schema.coverage import check_coverage, persist_coverage
+from portfolio_common.kg_schema.universe_source import connect_ro
 
-from kg_schema.cli import run_coverage
-from kg_schema.coverage import check_coverage, persist_coverage
-from kg_schema.universe_source import connect_ro
 from pricing_agent import db as pdb
 from quant import db as qdb
 

@@ -6,10 +6,11 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from portfolio_common.kg_schema.rundate import add_analysis_date_argument
+from portfolio_common.kg_schema.rundate import resolve as resolve_analysis_date
+
 from entity_resolution.config import Settings
 from entity_resolution.pipeline import RunParams, run
-from kg_schema.rundate import add_analysis_date_argument
-from kg_schema.rundate import resolve as resolve_analysis_date
 
 
 def build_parser() -> argparse.ArgumentParser:

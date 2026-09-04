@@ -7,8 +7,13 @@ name = "portfolio-financial-analysis"
 version = "0.1.0"
 description = "Portfolio financial analysis."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.13"
 dependencies = [
+    # Shared DB layer: the SQLite connect() factory + the kg_schema analysis-DB
+    # contract (DDL / migrations / v_* views / env / universe.db reads /
+    # coverage / provenance), imported as `portfolio_common.kg_schema`. Pinned
+    # by tag in [tool.uv.sources]; bump the tag to adopt a new schema contract.
+    "portfolio-common",
     "strands-agents[openai]>=0.1",
     "httpx>=0.27",
     "beautifulsoup4>=4.12",
@@ -21,7 +26,6 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     # quant/: Markowitz mean-variance optimizer. First numeric deps in the repo;
     # kept off every other package's import path (see tests/test_quant_import_isolation.py).
-    # All pinned to releases that still support requires-python >=3.10 even though CI runs 3.12.
     "numpy>=2.0,<3",
     "scipy>=1.13",
     "cvxpy>=1.6",
@@ -44,12 +48,19 @@ dev = [
 packages = [
     "src/fundamental_agent",
     "src/pricing_agent",
-    "src/kg_schema",
     "src/cycle",
     "src/entity_resolution",
     "src/quant",
     "src/api",
 ]
+
+[tool.uv.sources]
+# The shared DB layer lives in its own repo (github.com/gamug/portfolio-common)
+# as `portfolio_common.kg_schema`, pinned by tag -- bump the tag here to adopt a
+# new schema/universe contract. For local work against a checkout next to this
+# repo, override with an editable path source:
+#   portfolio-common = { path = "../portfolio-common", editable = true }
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.2.0" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

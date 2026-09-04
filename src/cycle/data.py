@@ -6,8 +6,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from kg_schema.env import universe_database_path
-from kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
+from portfolio_common.kg_schema.env import universe_database_path
+from portfolio_common.kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
 
 
 def active_universe(
