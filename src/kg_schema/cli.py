@@ -9,7 +9,6 @@ of the dated universe have core data and records it in ``universe_coverage``.
 from __future__ import annotations
 
 import argparse
-import sqlite3
 from pathlib import Path
 
 import kg_schema
@@ -36,10 +35,7 @@ def resolve_db_path(explicit: str | None) -> Path:
 def run_migrate(db_path: str | None) -> int:
     """Apply pending migrations to *db_path*; print the resulting version table."""
     path = resolve_db_path(db_path)
-    conn = sqlite3.connect(path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn = kg_schema.connect(path)
     try:
         applied = kg_schema.ensure(conn, run_migrations=True)
         rows = conn.execute(
@@ -76,10 +72,7 @@ def run_coverage(  # noqa: PLR0913 - flat CLI knobs, all keyword-only
     fin_path = resolve_db_path(db_path)
     uni_path = universe_database_path(universe_db_path)
 
-    conn = sqlite3.connect(fin_path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn = kg_schema.connect(fin_path)
     try:
         kg_schema.ensure(conn)  # additive only -- makes `universe_coverage` exist
         with connect_ro(uni_path) as uconn:

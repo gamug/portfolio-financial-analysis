@@ -176,17 +176,9 @@ def _now() -> str:
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
-    """Open *path*, creating parent directories, with sane pragmas."""
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    # NOTE: no WAL. KG_FINANCIAL_DB can live on a bind mount whose shared-memory
-    # (-shm) support is unreliable, where WAL raises "disk I/O error"; the default
-    # rollback journal works there. This agent is single-writer anyway.
-    return conn
+    """The shared connection factory (:func:`kg_schema.connect`), re-exposed here
+    so ``fundamental_agent`` code keeps importing it from ``fundamental_agent.db``."""
+    return kg_schema.connect(path)
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
