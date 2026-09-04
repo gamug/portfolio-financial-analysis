@@ -7,12 +7,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import kg_schema
+
 
 def connect_ro(path: str | Path) -> sqlite3.Connection:
-    """Open *path* strictly read-only (``file:...?mode=ro``)."""
-    conn = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open *path* strictly read-only (``file:...?mode=ro``).
+
+    The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
+    so the API's dependencies keep importing it from ``api.db``."""
+    return kg_schema.connect_ro(path)
 
 
 def rows(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:

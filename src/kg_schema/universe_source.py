@@ -19,6 +19,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+import kg_schema
+
 SUPPORTED_UNIVERSE = "SP500"
 _ID_CHUNK = 900  # keep under SQLite's bound-parameter limit
 
@@ -40,10 +42,11 @@ class UniverseMember:
 
 
 def connect_ro(path: str | Path) -> sqlite3.Connection:
-    """Open *path* strictly read-only so the universe writer is untouched."""
-    conn = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open *path* strictly read-only so the universe writer is untouched.
+
+    The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
+    so callers keep importing ``connect_ro`` from ``kg_schema.universe_source``."""
+    return kg_schema.connect_ro(path)
 
 
 def _check_universe(universe: str) -> None:

@@ -13,6 +13,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+import kg_schema
+
 _ID_CHUNK = 900  # keep under SQLite's parameter limit
 
 
@@ -24,10 +26,11 @@ class PerSpan:
 
 
 def connect_ro(path: str | Path) -> sqlite3.Connection:
-    """Open *path* strictly read-only so the news pipeline's WAL is untouched."""
-    conn = sqlite3.connect(f"file:{Path(path)}?mode=ro", uri=True, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Open *path* strictly read-only so the news pipeline's WAL is untouched.
+
+    The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
+    so ``entity_resolution`` code keeps importing it from this module."""
+    return kg_schema.connect_ro(path)
 
 
 def article_ids_for_ticker(
