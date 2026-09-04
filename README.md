@@ -96,9 +96,13 @@ RDF knowledge graph. This repo owns making that output rich and lossless enough 
 project; the integration repo owns triple emission + SHACL validation + named-graph
 minting.
 
-`kg_schema/` is a passive, behaviour-free package both agents call from
-`ensure_schema`. It adds (all `CREATE TABLE IF NOT EXISTS` / nullable
-`ADD COLUMN` — safe to ship against the shared DB anytime):
+`kg_schema` is a passive, behaviour-free package both agents call from
+`ensure_schema`. It lives in the shared [`portfolio-common`](https://github.com/gamug/portfolio-common)
+repo (imported as `portfolio_common.kg_schema`, git-tag-pinned in
+`pyproject.toml`'s `[tool.uv.sources]`; override with an editable path for local
+work), so every Portfolio Thesis repo that touches `KG_FINANCIAL_DB` shares one
+copy. It adds (all `CREATE TABLE IF NOT EXISTS` / nullable `ADD COLUMN` — safe to
+ship against the shared DB anytime):
 
 | Table | Roadmap concept | Written by |
 |---|---|---|
@@ -115,8 +119,9 @@ minting.
 | `quant_risk_model` / `quant_portfolio` / `quant_position` | Markowitz benchmark book (μ, Σ, frontier, weights) | `quant build-risk-model` / `optimize` |
 | `benchmark_series` / `quant_benchmark_performance` | benchmark index + forward realized returns | `quant benchmark` / `evaluate` |
 
-Read-contract `v_*` VIEWs (documented in `kg_schema/views.py`) are what the
-integration repo consumes; the physical schema can evolve underneath them.
+Read-contract `v_*` VIEWs (documented in `portfolio_common/kg_schema/views.py`)
+are what the integration repo consumes; the physical schema can evolve underneath
+them.
 
 **Non-additive migrations** (widening unique keys, `fundamental_snapshot` →
 `score_snapshot` + a compatibility view) are gated behind an explicit command and

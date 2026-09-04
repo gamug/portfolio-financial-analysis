@@ -14,8 +14,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import kg_schema
-from kg_schema.universe_source import UniverseMember
+from portfolio_common import kg_schema
+from portfolio_common.kg_schema.universe_source import UniverseMember
+
 from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats

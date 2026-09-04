@@ -9,8 +9,8 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
+from portfolio_common.kg_schema import version
 
-from kg_schema import version
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
 from quant.evaluate import run_evaluate

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import sqlite3
 
-from kg_schema import version
+from portfolio_common.kg_schema import version
+
 from quant import db as quant_db
 
 

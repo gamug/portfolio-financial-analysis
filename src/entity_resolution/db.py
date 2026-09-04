@@ -8,7 +8,8 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
-import kg_schema
+from portfolio_common import kg_schema
+
 from entity_resolution.cooccurrence import Edge
 
 METHOD = "news-per-cooccurrence-v1"

@@ -7,7 +7,7 @@ import ast
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parent.parent / "src"
-_OTHER_PACKAGES = ("cycle", "pricing_agent", "fundamental_agent", "entity_resolution", "kg_schema")
+_OTHER_PACKAGES = ("cycle", "pricing_agent", "fundamental_agent", "entity_resolution", "api")
 
 
 def _imports_quant(path: Path) -> bool:

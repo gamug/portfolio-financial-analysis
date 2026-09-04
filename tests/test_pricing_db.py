@@ -5,8 +5,8 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from portfolio_common.kg_schema.universe_source import UniverseMember
 
-from kg_schema.universe_source import UniverseMember
 from pricing_agent import db
 from pricing_agent.db import PriceWindowRow
 from pricing_agent.stats import WindowStats
