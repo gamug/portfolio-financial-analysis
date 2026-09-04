@@ -12,7 +12,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from kg_schema.provenance import code_version
+from portfolio_common.kg_schema.provenance import code_version
+
 from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (

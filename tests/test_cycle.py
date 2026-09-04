@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 from conftest import write_universe_db
+from portfolio_common import kg_schema
 
-import kg_schema
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection

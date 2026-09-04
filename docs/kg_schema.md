@@ -1,9 +1,16 @@
-# `kg_schema/`
+# `kg_schema`
 
-Passive, behaviour-free schema shared by every other package. Owns the additive
-DDL, the non-additive migrations, the `schema_version` floor, and the `v_*`
-read-contract views the integration repo consumes. It never touches `assets` /
-`sectors` (owned elsewhere).
+> Lives in the external [`portfolio-common`](https://github.com/gamug/portfolio-common)
+> repo, imported as **`portfolio_common.kg_schema`** and pinned by git tag in
+> `pyproject.toml`'s `[tool.uv.sources]` (editable-path override for local work).
+> Module paths below are written unqualified (`env`, `views`, `cli`, …); the real
+> dotted path is `portfolio_common.kg_schema.<module>`. Bump the tag to adopt a
+> new schema/universe contract.
+
+Passive, behaviour-free schema shared by every repo that touches
+`KG_FINANCIAL_DB`. Owns the additive DDL, the non-additive migrations, the
+`schema_version` floor, and the `v_*` read-contract views the integration repo
+consumes. It never touches `assets` / `sectors` (owned elsewhere).
 
 Both agents call `kg_schema.ensure(conn)` at the end of their own `ensure_schema`.
 

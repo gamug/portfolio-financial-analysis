@@ -12,6 +12,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from portfolio_common.kg_schema import rundate
+from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 from tqdm import tqdm
 
 from fundamental_agent import db
@@ -27,9 +30,6 @@ from fundamental_agent.filing_text import fetch_primary_document
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
-from kg_schema import rundate
-from kg_schema.provenance import code_version
-from kg_schema.universe_source import UniverseMember, connect_ro, members_asof
 
 DEFAULT_FORMS = ("10-K", "10-Q")
 DEFAULT_SINCE_YEAR = 2022

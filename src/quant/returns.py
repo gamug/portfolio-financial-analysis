@@ -17,7 +17,8 @@ from __future__ import annotations
 import math
 import sqlite3
 
-from kg_schema.provenance import code_version
+from portfolio_common.kg_schema.provenance import code_version
+
 from quant.config import QuantSettings
 from quant.db import (
     ReturnRow,

@@ -17,10 +17,9 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-
-import kg_schema
-from kg_schema.env import universe_database_path
-from kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
+from portfolio_common import kg_schema
+from portfolio_common.kg_schema.env import universe_database_path
+from portfolio_common.kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
 
 _ZERO_W = 1e-9  # weights this small are treated as "no position"
 _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op

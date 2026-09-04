@@ -6,9 +6,8 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from portfolio_common.kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from pydantic import BaseModel, Field
-
-from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 # The EDGAR gateway mounts the SEC service under ``/edgar`` and the service itself
 # prefixes its routes with ``/edgar`` again, hence the doubled segment.

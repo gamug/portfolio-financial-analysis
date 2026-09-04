@@ -5,10 +5,10 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from portfolio_common.kg_schema.universe_source import UniverseMember
 
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
-from kg_schema.universe_source import UniverseMember
 
 
 def _company(symbol: str, name: str, sector: str = "Technology") -> UniverseMember:

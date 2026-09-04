@@ -16,9 +16,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import kg_schema
+from portfolio_common import kg_schema
+from portfolio_common.kg_schema.universe_source import UniverseMember
+
 from fundamental_agent.metrics.base import MetricResult
-from kg_schema.universe_source import UniverseMember
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.

@@ -7,8 +7,8 @@ import sqlite3
 from dataclasses import dataclass
 
 import numpy as np
+from portfolio_common.kg_schema.provenance import code_version
 
-from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,

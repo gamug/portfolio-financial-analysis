@@ -5,11 +5,11 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from portfolio_common import kg_schema
+from portfolio_common.kg_schema import migrations, universe_membership, version
+from portfolio_common.kg_schema.env import database_path
 
-import kg_schema
 from fundamental_agent.sections import _SPECS, canonical_item_label
-from kg_schema import migrations, universe_membership, version
-from kg_schema.env import database_path
 
 # Pre-kg_schema table shapes, as the two agents shipped them originally.
 _LEGACY_SQL = """

@@ -15,6 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from portfolio_common.kg_schema.provenance import code_version
+
 from cycle import data, writers
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
@@ -23,7 +25,6 @@ from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
-from kg_schema.provenance import code_version
 
 FundamentalHook = Callable[[sqlite3.Connection, list[int], str], None]
 
