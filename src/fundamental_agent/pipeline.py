@@ -7,12 +7,11 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
 from fundamental_agent import db
@@ -150,7 +149,7 @@ def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember
     return members
 
 
-def _plan(assets: Sequence[sqlite3.Row], params: RunParams) -> list[_YearTask]:
+def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
     years = range(params.since_year, params.resolved_until() + 1)
     return [
         _YearTask(

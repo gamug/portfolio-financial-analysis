@@ -40,13 +40,12 @@ Business logic that consumes these queries' results
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from portfolio_common.db import Database, in_clause
+from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 from .coverage import DEFAULT_MIN_OBSERVATION_DAYS, CoverageReport, SymbolCoverage
 from .db import connect_ro as _kg_connect_ro
@@ -188,7 +187,7 @@ def resolve_asset_ids(
 def _distinct_ids(db: Database, sql: str, params: tuple[object, ...]) -> set[int]:
     try:
         return {int(r[0]) for r in db.execute(sql, params)}
-    except sqlite3.OperationalError:  # table not created in this DB yet
+    except DatabaseError:  # table not created in this DB yet
         return set()
 
 
@@ -230,7 +229,7 @@ def check_coverage(
             (as_of,),
         ):
             obs_counts[int(r[0])] = int(r[1])
-    except sqlite3.OperationalError:
+    except DatabaseError:
         pass
 
     rows: list[SymbolCoverage] = []
@@ -302,7 +301,7 @@ def persist_coverage(fin_db: Database, report: CoverageReport, *, run_id: int | 
 
 def ensure(db: Database) -> None:
     """Create the ``schema_version`` table if it is missing."""
-    db.executescript(VERSION_DDL)
+    db.create_schema(VERSION_DDL)
     db.commit()
 
 
@@ -310,7 +309,7 @@ def current_version(db: Database) -> int:
     """Highest recorded schema version, or ``0`` when nothing has been applied."""
     ensure(db)
     row = db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    value = row["v"] if isinstance(row, sqlite3.Row) else (row[0] if row else None)
+    value = row["v"] if isinstance(row, Row) else (row[0] if row else None)
     return int(value) if value is not None else 0
 
 

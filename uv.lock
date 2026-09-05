@@ -928,8 +928,8 @@ wheels = [
 
 [[package]]
 name = "portfolio-common"
-version = "1.0.0"
-source = { git = "https://github.com/gamug/portfolio-common?tag=v1.0.0#13bbd0d46039da00e013f0c4cd7d07e81c128a6b" }
+version = "1.2.1"
+source = { git = "https://github.com/gamug/portfolio-common?tag=v1.2.1#644bb07075dbeec504cb08f3faafc303ad2e0d17" }
 
 [[package]]
 name = "portfolio-financial-analysis"
@@ -971,7 +971,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "lxml", specifier = ">=5.0" },
     { name = "numpy", specifier = ">=2.0,<3" },
-    { name = "portfolio-common", git = "https://github.com/gamug/portfolio-common?tag=v1.0.0" },
+    { name = "portfolio-common", git = "https://github.com/gamug/portfolio-common?tag=v1.2.1" },
     { name = "pydantic", specifier = ">=2.6" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "scipy", specifier = ">=1.13" },

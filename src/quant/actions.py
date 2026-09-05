@@ -11,10 +11,9 @@ so a better source can supersede them later.
 from __future__ import annotations
 
 import re
-import sqlite3
 from datetime import date
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 from kg_schema import connect
 from kg_schema.provenance import code_version
@@ -216,7 +215,7 @@ def backfill_corporate_actions(
                         if use_gateway and client is not None
                         else derive_corporate_actions_from_facts(conn, asset_id, as_of=date_to)
                     )
-                except (ActionsNotSupported, sqlite3.Error) as exc:
+                except (ActionsNotSupported, DatabaseError) as exc:
                     report.errors.append(f"{ticker}: {exc}")
                     continue
                 report.dividends += sum(1 for r in rows if r.action_type == "DIVIDEND")

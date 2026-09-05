@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
-from portfolio_common.db import Database, in_clause
+from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
@@ -17,7 +16,7 @@ def active_universe(
     universe: str,
     cycle_date: str,
     universe_db_path: str | Path | None = None,
-) -> list[sqlite3.Row]:
+) -> list[Row]:
     """``(id, ticker, sector_id)`` for the *universe* members as of *cycle_date*,
     read point-in-time from ``universe.db`` and mapped by ticker.
 

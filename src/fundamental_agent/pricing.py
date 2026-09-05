@@ -8,11 +8,10 @@ pricing collector has ever populated that table.
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 # A period-end date can fall on a weekend or holiday; look back a few sessions for
 # the last actual close, but not so far that a gap in coverage returns a stale price.
@@ -51,7 +50,7 @@ def close_on_or_before(
             """,
             (asset_id, period_end, floor),
         ).fetchone()
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return None  # price_daily not created -- pricing collector never ran
     if row is None:
         return None

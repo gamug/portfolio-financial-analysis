@@ -1,4 +1,4 @@
-"""Non-additive schema changes -- table rebuilds SQLite cannot do with ``ALTER``.
+"""Non-additive schema changes -- table rebuilds ``ALTER`` cannot express.
 
 These NEVER run from :func:`kg_schema.ensure`'s automatic path. They run only via
 ``python -m fundamental_agent migrate`` / ``python -m pricing_agent migrate`` so the
@@ -6,6 +6,14 @@ shared ``KG_FINANCIAL_DB`` is only reshaped deliberately, with the other repos q
 
 Each migration runs inside one transaction; on success its version is recorded in
 ``schema_version``. Re-running is a no-op once the version is recorded.
+
+Catalog lookups and multi-statement DDL go through
+``portfolio_common.db.Database`` (``relation_exists`` / ``relation_kind`` /
+``relation_ddl`` / ``create_schema``). The rebuild *bodies* below -- the
+``CREATE <t>__new`` / copy / drop / rename dance and the ``PRAGMA
+foreign_keys`` toggles that bracket them -- are SQLite's own workaround for
+its limited ``ALTER``; a different engine's migration path would be written
+fresh rather than translated, so those stay as-is.
 """
 
 from __future__ import annotations
@@ -20,25 +28,15 @@ Migration = Callable[[Database], None]
 
 
 def _table_exists(db: Database, name: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ?", (name,)
-    ).fetchone()
-    return row is not None
+    return db.relation_exists(name)
 
 
 def _is_view(db: Database, name: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = ?", (name,)
-    ).fetchone()
-    return row is not None
+    return db.relation_kind(name) == "view"
 
 
 def _columns(db: Database, table: str) -> set[str]:
-    # `table` cannot be bound as a `?` parameter (SQLite only parameterizes
-    # values, never identifiers). Every caller here passes a literal table
-    # name from the fixed MIGRATIONS list below, never caller-supplied input,
-    # so this is not an injection surface -- no Allowlist needed.
-    return {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+    return set(db.table_columns(table))
 
 
 # -- m001 --------------------------------------------------------------------
@@ -59,7 +57,7 @@ def _m002_financial_facts(db: Database) -> None:
     if "filing_version" not in cols or "event_time" not in cols:
         return  # additive columns not present yet; run kg_schema.ensure first
     db.execute("PRAGMA foreign_keys = OFF")
-    db.executescript(
+    db.create_schema(
         """
         CREATE TABLE financial_facts__new (
             id               INTEGER PRIMARY KEY,
@@ -105,7 +103,7 @@ def _m003_fundamental_metrics(db: Database) -> None:
     if "engine_version" not in cols or "event_time" not in cols:
         return
     db.execute("PRAGMA foreign_keys = OFF")
-    db.executescript(
+    db.create_schema(
         """
         CREATE TABLE fundamental_metrics__new (
             id           INTEGER PRIMARY KEY,
@@ -160,7 +158,7 @@ def _m004_score_snapshot(db: Database) -> None:
         FROM fundamental_snapshot s
         """
     )
-    db.executescript(
+    db.create_schema(
         """
         ALTER TABLE fundamental_snapshot RENAME TO fundamental_snapshot_legacy;
         CREATE VIEW fundamental_snapshot AS
@@ -181,16 +179,14 @@ def _m004_score_snapshot(db: Database) -> None:
 def _m005_score_type_sector(db: Database) -> None:
     if not _table_exists(db, "score_snapshot"):
         return
-    sql_row = db.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'score_snapshot'"
-    ).fetchone()
-    if sql_row is None or "'SECTOR'" in (sql_row[0] or ""):
+    ddl = db.relation_ddl("score_snapshot")
+    if ddl is None or "'SECTOR'" in ddl:
         return  # fresh DB already has the widened CHECK
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
     # Views that read score_snapshot must go before the table rebuild; ensure()'s
     # post-migration ensure_views() call puts the read-contract one back.
-    db.executescript(
+    db.create_schema(
         """
         DROP VIEW IF EXISTS v_score_snapshot;
         DROP VIEW IF EXISTS fundamental_snapshot;
@@ -229,7 +225,7 @@ def _m005_score_type_sector(db: Database) -> None:
         """
     )
     if had_compat_view:
-        db.executescript(
+        db.create_schema(
             """
             CREATE VIEW fundamental_snapshot AS
             SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period,
@@ -253,14 +249,12 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
     """
     if not _table_exists(db, "score_snapshot"):
         return
-    sql_row = db.execute(
-        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'score_snapshot'"
-    ).fetchone()
-    if sql_row is None or "'VALORIZATION'" in (sql_row[0] or ""):
+    ddl = db.relation_ddl("score_snapshot")
+    if ddl is None or "'VALORIZATION'" in ddl:
         return  # fresh DB already has the renamed CHECK
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
-    db.executescript(
+    db.create_schema(
         """
         DROP VIEW IF EXISTS v_score_snapshot;
         DROP VIEW IF EXISTS fundamental_snapshot;
@@ -314,7 +308,7 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
             "WHERE components_json LIKE '%\"QUANTITATIVE\"%'"
         )
     if had_compat_view:
-        db.executescript(
+        db.create_schema(
             """
             CREATE VIEW fundamental_snapshot AS
             SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period,

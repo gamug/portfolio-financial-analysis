@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import json
 import math
-import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -343,7 +342,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 # -- small query helpers ------------------------------------------------
 
 
-def _latest_fundamental_rows(conn: Database, cycle_date: str) -> list[sqlite3.Row]:
+def _latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
     return conn.execute(
         """
         SELECT s.asset_id, s.raw_value

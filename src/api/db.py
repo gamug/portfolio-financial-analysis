@@ -5,11 +5,10 @@ rather than through this module."""
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Sequence
 from typing import Any
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 
 def rows(conn: Database, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
@@ -17,5 +16,5 @@ def rows(conn: Database, sql: str, params: Sequence[Any] = ()) -> list[dict[str,
     (partial DB) returns ``[]`` rather than raising."""
     try:
         return [dict(r) for r in conn.execute(sql, tuple(params))]
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return []
