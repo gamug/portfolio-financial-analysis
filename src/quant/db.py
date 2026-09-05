@@ -17,9 +17,11 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from portfolio_common import kg_schema
-from portfolio_common.kg_schema.env import universe_database_path
-from portfolio_common.kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
+from portfolio_common.db import Database, in_clause
+
+import kg_schema
+from kg_schema.env import universe_database_path
+from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
 
 _ZERO_W = 1e-9  # weights this small are treated as "no position"
 _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
@@ -47,7 +49,7 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
     conn.commit()
     kg_schema.ensure(conn)
@@ -86,7 +88,7 @@ class ActionsReport:
 
 
 def upsert_corporate_actions(
-    conn: sqlite3.Connection, rows: Iterable[CorporateAction], *, engine_version: str
+    conn: Database, rows: Iterable[CorporateAction], *, engine_version: str
 ) -> int:
     """``INSERT OR IGNORE`` on ``(asset_id, action_type, ex_date, engine_version)``.
 
@@ -127,7 +129,7 @@ def upsert_corporate_actions(
 
 
 def load_universe_asset_ids(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     universe: str,
     as_of: str,
@@ -141,8 +143,11 @@ def load_universe_asset_ids(
     ``pricing_agent`` first). *universe_db_path* overrides the resolved path -- the
     test seam."""
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
-    with connect_ro(upath) as uconn:
+    uconn = connect_ro(upath)
+    try:
         syms = symbols_asof(uconn, as_of, universe=universe)
+    finally:
+        uconn.close()
     if not syms:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {as_of}")
     mapping, _missing = resolve_asset_ids(conn, syms)
@@ -154,7 +159,7 @@ def load_universe_asset_ids(
     return sorted(mapping.values())
 
 
-def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
+def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
     """Assets with an uncleared HARD ``veto`` row dated on/before *cutoff_date*
     (copied from ``cycle.writers`` to avoid importing ``cycle``)."""
     try:
@@ -169,7 +174,7 @@ def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
 
 
 def load_assets(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     universe: str,
     as_of: str,
@@ -189,7 +194,7 @@ def load_assets(
 
 
 def load_daily_closes(
-    conn: sqlite3.Connection, asset_id: int, *, start: str, end: str
+    conn: Database, asset_id: int, *, start: str, end: str
 ) -> list[tuple[str, float]]:
     """``(date, close)`` from ``price_daily`` in ``[start, end]``, ascending."""
     return [
@@ -204,7 +209,7 @@ def load_daily_closes(
 
 
 def load_actions(
-    conn: sqlite3.Connection, asset_id: int, action_type: str, *, start: str, end: str
+    conn: Database, asset_id: int, action_type: str, *, start: str, end: str
 ) -> dict[str, float]:
     """``ex_date -> value`` from ``v_corporate_action`` (latest engine per ex-date)."""
     return {
@@ -236,7 +241,7 @@ class ReturnRow:
 
 
 def upsert_return_daily(
-    conn: sqlite3.Connection, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
+    conn: Database, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
 ) -> int:
     """``INSERT OR IGNORE`` on ``(asset_id, obs_date, engine_version)``."""
     now = _now()
@@ -268,7 +273,7 @@ def upsert_return_daily(
     return inserted
 
 
-def load_market_caps(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, float]:
+def load_market_caps(conn: Database, asset_ids: list[int]) -> dict[int, float]:
     """``asset_id -> market cap`` parsed from ``fundamental_metrics.inputs_json``
     (latest per asset); mirrors ``cycle.data.market_cap_estimates``. Missing -> absent."""
     out: dict[int, float] = {}
@@ -316,7 +321,7 @@ class RiskModelMeta:
     quant_run_id: int | None = None
 
 
-def insert_risk_model(conn: sqlite3.Connection, meta: RiskModelMeta) -> int:
+def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
     conn.execute(
         """
         INSERT INTO quant_risk_model
@@ -360,7 +365,7 @@ def insert_risk_model(conn: sqlite3.Connection, meta: RiskModelMeta) -> int:
 
 
 def insert_expected_returns(
-    conn: sqlite3.Connection, model_id: int, mu_by_model: dict[str, dict[int, float]]
+    conn: Database, model_id: int, mu_by_model: dict[str, dict[int, float]]
 ) -> int:
     n = 0
     for mu_model, by_asset in mu_by_model.items():
@@ -377,7 +382,7 @@ def insert_expected_returns(
 
 
 def insert_covariance(
-    conn: sqlite3.Connection,
+    conn: Database,
     model_id: int,
     asset_ids: list[int],
     sigma: npt.NDArray[np.float64],
@@ -397,9 +402,7 @@ def insert_covariance(
     return n
 
 
-def load_covariance(
-    conn: sqlite3.Connection, model_id: int
-) -> tuple[list[int], npt.NDArray[np.float64]]:
+def load_covariance(conn: Database, model_id: int) -> tuple[list[int], npt.NDArray[np.float64]]:
     rows = conn.execute(
         "SELECT asset_id_i, asset_id_j, value FROM quant_covariance WHERE model_id = ?",
         (model_id,),
@@ -413,9 +416,7 @@ def load_covariance(
     return ids, m
 
 
-def load_risk_model(
-    conn: sqlite3.Connection, *, as_of: str, model_version: str
-) -> sqlite3.Row | None:
+def load_risk_model(conn: Database, *, as_of: str, model_version: str) -> sqlite3.Row | None:
     row: sqlite3.Row | None = conn.execute(
         "SELECT * FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
         (as_of, model_version),
@@ -423,9 +424,7 @@ def load_risk_model(
     return row
 
 
-def load_expected_returns(
-    conn: sqlite3.Connection, model_id: int, mu_model: str
-) -> dict[int, float]:
+def load_expected_returns(conn: Database, model_id: int, mu_model: str) -> dict[int, float]:
     return {
         int(r["asset_id"]): float(r["mu"])
         for r in conn.execute(
@@ -435,9 +434,8 @@ def load_expected_returns(
     }
 
 
-def load_sector_of(conn: sqlite3.Connection, asset_ids: list[int]) -> dict[int, int | None]:
-    marks = ",".join("?" * len(asset_ids))
-    q = f"SELECT id, sector_id FROM assets WHERE id IN ({marks})"  # noqa: S608
+def load_sector_of(conn: Database, asset_ids: list[int]) -> dict[int, int | None]:
+    q = f"SELECT id, sector_id FROM assets WHERE id IN {in_clause(asset_ids)}"  # noqa: S608
     return {
         int(r["id"]): (int(r["sector_id"]) if r["sector_id"] is not None else None)
         for r in conn.execute(q, asset_ids)
@@ -468,7 +466,7 @@ class PortfolioRow:
     params_json: str | None = None
 
 
-def insert_portfolio(conn: sqlite3.Connection, row: PortfolioRow) -> int:
+def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
     conn.execute(
         """
         INSERT INTO quant_portfolio
@@ -517,7 +515,7 @@ def insert_portfolio(conn: sqlite3.Connection, row: PortfolioRow) -> int:
 
 
 def sync_positions(
-    conn: sqlite3.Connection, portfolio_id: int, as_of: str, weights: dict[int, float]
+    conn: Database, portfolio_id: int, as_of: str, weights: dict[int, float]
 ) -> tuple[int, int]:
     """Open new stints, close vanished ones, update changed weights -- history is
     immutable, mirroring ``cycle.writers.sync_positions``."""
@@ -553,7 +551,7 @@ def sync_positions(
     return opened, closed
 
 
-def load_book_weights(conn: sqlite3.Connection, portfolio_id: int) -> dict[int, float]:
+def load_book_weights(conn: Database, portfolio_id: int) -> dict[int, float]:
     return {
         int(r["asset_id"]): float(r["weight"])
         for r in conn.execute(
@@ -564,7 +562,7 @@ def load_book_weights(conn: sqlite3.Connection, portfolio_id: int) -> dict[int, 
     }
 
 
-def load_live_book(conn: sqlite3.Connection, as_of: str) -> dict[int, float]:
+def load_live_book(conn: Database, as_of: str) -> dict[int, float]:
     """The open ``portfolio_position`` book as of *as_of* (the cycle's live book)."""
     try:
         rows = conn.execute(
@@ -578,18 +576,17 @@ def load_live_book(conn: sqlite3.Connection, as_of: str) -> dict[int, float]:
 
 
 def load_forward_simple_returns(
-    conn: sqlite3.Connection, asset_ids: list[int], *, after: str, until: str, engine_version: str
+    conn: Database, asset_ids: list[int], *, after: str, until: str, engine_version: str
 ) -> dict[str, dict[int, float]]:
     """``date -> {asset_id: simple return}`` for trading days in ``(after, until]``."""
     if not asset_ids:
         return {}
-    in_clause = "asset_id IN (" + ",".join("?" * len(asset_ids)) + ")"
     base = (
         "SELECT asset_id, obs_date, tr_log_return FROM quant_return_daily "
         "WHERE engine_version = ? AND obs_date > ? AND obs_date <= ? "
-        "AND tr_log_return IS NOT NULL AND "
+        "AND tr_log_return IS NOT NULL AND asset_id IN "
     )
-    q = base + in_clause  # only "?" placeholders in in_clause
+    q = base + in_clause(asset_ids)
     out: dict[str, dict[int, float]] = {}
     for r in conn.execute(q, [engine_version, after, until, *asset_ids]):
         out.setdefault(str(r["obs_date"]), {})[int(r["asset_id"])] = float(
@@ -599,7 +596,7 @@ def load_forward_simple_returns(
 
 
 def upsert_benchmark_series(
-    conn: sqlite3.Connection,
+    conn: Database,
     benchmark: str,
     rows: list[tuple[str, float, float]],
     *,
@@ -625,7 +622,7 @@ def upsert_benchmark_series(
 
 
 def load_benchmark_returns(
-    conn: sqlite3.Connection, benchmark: str, *, after: str, until: str
+    conn: Database, benchmark: str, *, after: str, until: str
 ) -> dict[str, float]:
     return {
         str(r["obs_date"]): float(np.expm1(float(r["log_return"])))
@@ -638,7 +635,7 @@ def load_benchmark_returns(
 
 
 def upsert_benchmark_performance(
-    conn: sqlite3.Connection,
+    conn: Database,
     portfolio_id: int,
     rows: list[tuple[str, float, float, str | None, float | None, float | None]],
     *,
@@ -667,7 +664,7 @@ def upsert_benchmark_performance(
 
 
 def insert_frontier_points(
-    conn: sqlite3.Connection,
+    conn: Database,
     model_id: int,
     points: list[tuple[int, float, float, float, float | None, str, str]],
 ) -> int:

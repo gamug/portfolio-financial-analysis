@@ -7,10 +7,9 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from portfolio_common.kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
-from portfolio_common.kg_schema.rundate import add_analysis_date_argument
-from portfolio_common.kg_schema.rundate import resolve as resolve_analysis_date
-
+from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
 

@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+
+from portfolio_common.db import Database
 
 # Field names whose values must never reach quant_run.params_json in the shared
 # KG_FINANCIAL_DB that other repos read.
@@ -39,7 +40,7 @@ QUANT_ENGINE_VERSION = "quant-v1"
 
 
 def open_run(
-    conn: sqlite3.Connection,
+    conn: Database,
     command: str,
     *,
     as_of: str | None = None,
@@ -66,7 +67,7 @@ def open_run(
     return int(cur.lastrowid or 0)
 
 
-def finish_run(conn: sqlite3.Connection, run_id: int, status: str = "completed") -> None:
+def finish_run(conn: Database, run_id: int, status: str = "completed") -> None:
     conn.execute(
         "UPDATE quant_run SET status = ?, finished_at = ? WHERE id = ?",
         (status, _now(), run_id),
@@ -74,7 +75,7 @@ def finish_run(conn: sqlite3.Connection, run_id: int, status: str = "completed")
     conn.commit()
 
 
-def fail_run(conn: sqlite3.Connection, run_id: int, error: str) -> None:
+def fail_run(conn: Database, run_id: int, error: str) -> None:
     conn.execute(
         "UPDATE quant_run SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",
         (_now(), error[:2000], run_id),

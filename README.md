@@ -96,13 +96,16 @@ RDF knowledge graph. This repo owns making that output rich and lossless enough 
 project; the integration repo owns triple emission + SHACL validation + named-graph
 minting.
 
-`kg_schema` is a passive, behaviour-free package both agents call from
-`ensure_schema`. It lives in the shared [`portfolio-common`](https://github.com/gamug/portfolio-common)
-repo (imported as `portfolio_common.kg_schema`, git-tag-pinned in
-`pyproject.toml`'s `[tool.uv.sources]`; override with an editable path for local
-work), so every Portfolio Thesis repo that touches `KG_FINANCIAL_DB` shares one
-copy. It adds (all `CREATE TABLE IF NOT EXISTS` / nullable `ADD COLUMN` — safe to
-ship against the shared DB anytime):
+`kg_schema` is a passive, behaviour-free package every agent calls from
+`ensure_schema`. It's vendored at `src/kg_schema/` (see
+`docs/kg_schema.md` and `docs/portfolio-common-v1-migration-plan.md`) —
+[`portfolio-common`](https://github.com/gamug/portfolio-common) itself is
+DB-engine-only as of its v1.0.0 release; this repo still depends on it for
+`portfolio_common.db.Database` (the connection class `kg_schema.db.connect`
+wraps) and the `in_clause` / `Allowlist` injection-safety helpers, git-tag-pinned
+in `pyproject.toml`'s `[tool.uv.sources]` (override with an editable path for
+local work). It adds (all `CREATE TABLE IF NOT EXISTS` / nullable `ADD COLUMN` —
+safe to ship against the shared DB anytime):
 
 | Table | Roadmap concept | Written by |
 |---|---|---|
@@ -119,7 +122,7 @@ ship against the shared DB anytime):
 | `quant_risk_model` / `quant_portfolio` / `quant_position` | Markowitz benchmark book (μ, Σ, frontier, weights) | `quant build-risk-model` / `optimize` |
 | `benchmark_series` / `quant_benchmark_performance` | benchmark index + forward realized returns | `quant benchmark` / `evaluate` |
 
-Read-contract `v_*` VIEWs (documented in `portfolio_common/kg_schema/views.py`)
+Read-contract `v_*` VIEWs (documented in `src/kg_schema/views.py`)
 are what the integration repo consumes; the physical schema can evolve underneath
 them.
 

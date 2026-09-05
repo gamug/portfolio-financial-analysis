@@ -9,7 +9,8 @@ return basis, no vendor dependency). A real SPX / SPY_TR series can be loaded in
 from __future__ import annotations
 
 import math
-import sqlite3
+
+from portfolio_common.db import Database
 
 from quant.db import upsert_benchmark_series
 
@@ -17,7 +18,7 @@ INTERNAL_EW = "SP500_EW_INTERNAL"
 
 
 def build_internal_benchmark(  # noqa: PLR0913 - keyword-only knobs with defaults
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     date_from: str,
     date_to: str,

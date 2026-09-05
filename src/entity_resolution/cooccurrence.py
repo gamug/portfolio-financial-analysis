@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections import defaultdict
 from dataclasses import dataclass
+
+from portfolio_common.db import Database
 
 from entity_resolution import denylist
 from entity_resolution.news_db import article_ids_for_ticker, per_entities_for_articles
@@ -31,7 +32,7 @@ class _PerTicker:
 
 
 def _collect_person_map(
-    news: sqlite3.Connection, tickers: list[str], *, until: str | None = None
+    news: Database, tickers: list[str], *, until: str | None = None
 ) -> dict[str, dict[str, _PerTicker]]:
     """``{canonical_name: {ticker: _PerTicker}}`` from PER spans."""
     person_map: dict[str, dict[str, _PerTicker]] = defaultdict(dict)
@@ -51,7 +52,7 @@ def _collect_person_map(
 
 
 def build_edges(  # noqa: PLR0913 - keyword-only filter knobs with defaults
-    news: sqlite3.Connection,
+    news: Database,
     tickers: list[str],
     *,
     min_weight: float = MIN_WEIGHT_DEFAULT,

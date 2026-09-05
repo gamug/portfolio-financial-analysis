@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from portfolio_common.db import Database
+
 from quant.state import _redact, fail_run, finish_run, open_run
 
 
@@ -25,8 +27,9 @@ def test_redact_masks_nested_secret_keys() -> None:
 
 
 def test_open_finish_fail_run_roundtrip() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.executescript(
         "CREATE TABLE quant_run (id INTEGER PRIMARY KEY, command TEXT NOT NULL, as_of TEXT, "
         "started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL, "

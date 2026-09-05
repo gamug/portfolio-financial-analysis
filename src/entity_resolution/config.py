@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from portfolio_common.kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from pydantic import BaseModel, Field
+
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 DEFAULT_NEWS_DB = "/workspaces/thesis/data/urls.db"
 

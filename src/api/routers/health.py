@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from fastapi import APIRouter, Depends
+from portfolio_common.db import Database
 
 from api import __version__
 from api.config import ApiSettings
@@ -22,8 +23,8 @@ def health() -> Health:
 @router.get("/health/db", response_model=DbHealth)
 def health_db(
     settings: ApiSettings = Depends(get_settings),
-    db: sqlite3.Connection = Depends(get_db),
-    udb: sqlite3.Connection = Depends(get_universe_db),
+    db: Database = Depends(get_db),
+    udb: Database = Depends(get_universe_db),
 ) -> DbHealth:
     schema_version: int | None = None
     ok = False

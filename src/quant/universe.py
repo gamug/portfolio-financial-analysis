@@ -10,10 +10,11 @@ score, so the benchmark stays an independent control -- a property pinned by
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
+
+from portfolio_common.db import Database
 
 from quant.db import hard_vetoed_as_of, load_universe_asset_ids
 
@@ -36,7 +37,7 @@ def _median(values: list[float]) -> float:
     return s[mid] if len(s) % 2 else 0.5 * (s[mid - 1] + s[mid])
 
 
-def _history_counts(conn: sqlite3.Connection, as_of: str) -> dict[int, int]:
+def _history_counts(conn: Database, as_of: str) -> dict[int, int]:
     have_tr = conn.execute("SELECT 1 FROM quant_return_daily LIMIT 1").fetchone() is not None
     if have_tr:
         rows = conn.execute(
@@ -53,9 +54,7 @@ def _history_counts(conn: sqlite3.Connection, as_of: str) -> dict[int, int]:
     return {int(r["asset_id"]): int(r["n"]) for r in rows}
 
 
-def _median_dollar_volume(
-    conn: sqlite3.Connection, asset_id: int, *, as_of: str, lookback: int
-) -> float:
+def _median_dollar_volume(conn: Database, asset_id: int, *, as_of: str, lookback: int) -> float:
     vals = [
         float(r["dollar_volume"])
         for r in conn.execute(
@@ -69,7 +68,7 @@ def _median_dollar_volume(
 
 
 def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     as_of: str,
     universe: str = "SP500",

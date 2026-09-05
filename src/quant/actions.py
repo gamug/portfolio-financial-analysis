@@ -14,9 +14,10 @@ import re
 import sqlite3
 from datetime import date
 
-from portfolio_common.kg_schema import connect
-from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.db import Database
 
+from kg_schema import connect
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     ActionsReport,
@@ -60,9 +61,7 @@ def _minus_months(d: date, months: int) -> date:
     return date(year, month, day)
 
 
-def _fy_fact(
-    conn: sqlite3.Connection, filing_id: int, concepts: tuple[str, ...], pe: date
-) -> float | None:
+def _fy_fact(conn: Database, filing_id: int, concepts: tuple[str, ...], pe: date) -> float | None:
     """The ``(FY)`` fact for the first matching concept whose period_key date is
     within ~a fiscal quarter of the filing's stated period_end."""
     for concept in concepts:
@@ -84,7 +83,7 @@ def _fy_fact(
     return None
 
 
-def _fy_dps(conn: sqlite3.Connection, filing_id: int, period_end: str) -> float | None:
+def _fy_dps(conn: Database, filing_id: int, period_end: str) -> float | None:
     """Cash dividend per share for the filing's fiscal year: a tagged per-share
     fact if present, else aggregate dividends paid / a fiscal-year share count."""
     pe_match = _PERIOD_KEY_DATE.match(period_end)
@@ -102,7 +101,7 @@ def _fy_dps(conn: sqlite3.Connection, filing_id: int, period_end: str) -> float 
 
 
 def derive_corporate_actions_from_facts(
-    conn: sqlite3.Connection, asset_id: int, *, as_of: str | None = None
+    conn: Database, asset_id: int, *, as_of: str | None = None
 ) -> list[CorporateAction]:
     """Four synthetic quarterly dividends per fiscal year with a recorded DPS.
 
@@ -165,7 +164,7 @@ def backfill_corporate_actions(
     date_from: str,
     date_to: str,
     source: str = "derive",
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
 ) -> ActionsReport:
     owns = conn is None
     conn = conn or connect(settings.db_path)

@@ -13,9 +13,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from portfolio_common import kg_schema
-from portfolio_common.kg_schema.universe_source import UniverseMember
+from portfolio_common.db import Allowlist, Database
 
+import kg_schema
+from kg_schema.queries import UniverseMember
 from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats
@@ -117,7 +118,7 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: Database) -> None:
     conn.executescript(SCHEMA)
     conn.commit()
     columns = {row[1] for row in conn.execute("PRAGMA table_info(assets)")}
@@ -134,7 +135,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # -- universe -------------------------------------------------------------
 
 
-def sync_universe(conn: sqlite3.Connection, members: Iterable[UniverseMember]) -> int:
+def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     """Insert/update ``assets`` / ``sectors`` from *members* (the identity path
     where a new S&P 500 symbol first gets its ``assets.id``). Point-in-time
     membership is read directly from ``universe.db``, not kept here."""
@@ -158,7 +159,7 @@ def sync_universe(conn: sqlite3.Connection, members: Iterable[UniverseMember]) -
     return count
 
 
-def _upsert_sector(conn: sqlite3.Connection, name: str) -> int | None:
+def _upsert_sector(conn: Database, name: str) -> int | None:
     if not name:
         return None
     conn.execute("INSERT OR IGNORE INTO sectors (name) VALUES (?)", (name,))
@@ -167,7 +168,7 @@ def _upsert_sector(conn: sqlite3.Connection, name: str) -> int | None:
 
 
 def load_universe(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     tickers: Sequence[str] | None = None,
     symbols: Sequence[str] | None = None,
@@ -196,7 +197,7 @@ def load_universe(
 # -- price windows & daily bars -----------------------------------------
 
 
-def completed_windows(conn: sqlite3.Connection) -> set[tuple[str, str, str, str]]:
+def completed_windows(conn: Database) -> set[tuple[str, str, str, str]]:
     """``(ticker, start_date, end_date, label)`` windows already stored."""
     rows = conn.execute(
         """
@@ -207,9 +208,7 @@ def completed_windows(conn: sqlite3.Connection) -> set[tuple[str, str, str, str]
     return {(r["ticker"], r["s"], r["e"], r["l"]) for r in rows}
 
 
-def upsert_price_window(
-    conn: sqlite3.Connection, row: PriceWindowRow, *, run_id: int | None = None
-) -> None:
+def upsert_price_window(conn: Database, row: PriceWindowRow, *, run_id: int | None = None) -> None:
     s = row.stats
     conn.execute(
         """
@@ -264,7 +263,7 @@ def upsert_price_window(
 
 
 def upsert_price_observations(
-    conn: sqlite3.Connection,
+    conn: Database,
     asset_id: int,
     observations: Iterable[Observation],
     *,
@@ -313,7 +312,7 @@ def upsert_price_observations(
 
 
 def replace_daily_prices(
-    conn: sqlite3.Connection, asset_id: int, candles: Iterable[Candle], *, run_id: int | None = None
+    conn: Database, asset_id: int, candles: Iterable[Candle], *, run_id: int | None = None
 ) -> int:
     now = _now()
     rows = [
@@ -353,7 +352,7 @@ _MAX_ERROR_CHARS = 2000
 
 
 def start_run(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     params_json: str,
     as_of: str | None = None,
@@ -368,9 +367,7 @@ def start_run(
     return int(cur.lastrowid or 0)
 
 
-def update_run_plan(
-    conn: sqlite3.Connection, run_id: int, *, universe_size: int, planned_units: int
-) -> None:
+def update_run_plan(conn: Database, run_id: int, *, universe_size: int, planned_units: int) -> None:
     conn.execute(
         "UPDATE pricing_run SET universe_size = ?, planned_units = ? WHERE id = ?",
         (universe_size, planned_units, run_id),
@@ -378,8 +375,11 @@ def update_run_plan(
     conn.commit()
 
 
-def bump_run_counter(conn: sqlite3.Connection, run_id: int, column: str) -> None:
-    if column not in {"completed_units", "skipped_units", "failed_units"}:
+_COUNTER_COLUMNS = Allowlist("completed_units", "skipped_units", "failed_units")
+
+
+def bump_run_counter(conn: Database, run_id: int, column: str) -> None:
+    if column not in _COUNTER_COLUMNS:
         raise ValueError(f"not a counter column: {column}")
     conn.execute(
         f"UPDATE pricing_run SET {column} = {column} + 1 WHERE id = ?",  # noqa: S608
@@ -388,7 +388,7 @@ def bump_run_counter(conn: sqlite3.Connection, run_id: int, column: str) -> None
     conn.commit()
 
 
-def record_error(conn: sqlite3.Connection, run_id: int, error: RunError) -> None:
+def record_error(conn: Database, run_id: int, error: RunError) -> None:
     conn.execute(
         """
         INSERT INTO pricing_run_error (run_id, ticker, label, stage, message, created_at)
@@ -406,7 +406,7 @@ def record_error(conn: sqlite3.Connection, run_id: int, error: RunError) -> None
     conn.commit()
 
 
-def finish_run(conn: sqlite3.Connection, run_id: int, *, status: str) -> None:
+def finish_run(conn: Database, run_id: int, *, status: str) -> None:
     conn.execute(
         "UPDATE pricing_run SET finished_at = ?, status = ? WHERE id = ?",
         (_now(), status, run_id),

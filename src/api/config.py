@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from portfolio_common.kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from pydantic import BaseModel
+
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 DEFAULT_HOST = "0.0.0.0"  # noqa: S104 - dev container binds all interfaces
 DEFAULT_PORT = 8010  # the data-mining gateway owns :8000-:8005; keep clear

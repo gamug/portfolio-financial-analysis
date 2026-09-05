@@ -4,10 +4,11 @@ One document per package. Every package lives under `src/<name>/`, is installed
 editable into the uv env (hatchling build backend), and runs as `python -m <name>`
 from any directory; `pytest` adds `src` via `pythonpath`.
 
-The shared schema (`kg_schema`) is the exception: it lives in the external
-[`portfolio-common`](https://github.com/gamug/portfolio-common) repo, imported as
-`portfolio_common.kg_schema` (git-tag-pinned in `pyproject.toml`), so every
-Portfolio Thesis repo that touches `KG_FINANCIAL_DB` shares one copy.
+`kg_schema/` is vendored, not external: `portfolio-common`'s v1.0.0 release
+split out a DB-engine-only package (`portfolio_common.db.Database` /
+`in_clause` / `Allowlist`, still a dependency here) and pushed the domain
+schema itself back into each owning repo — see
+`docs/portfolio-common-v1-migration-plan.md`.
 
 | Package | Role | Doc |
 |---|---|---|
@@ -17,7 +18,7 @@ Portfolio Thesis repo that touches `KG_FINANCIAL_DB` shares one copy.
 | `entity_resolution/` | `sharedExecutiveWith` edges from news co-occurrence | [entity_resolution.md](entity_resolution.md) |
 | `quant/` | Markowitz mean-variance benchmark portfolio → `corporate_action`, `quant_return_daily`, `quant_*` | [quant.md](quant.md) |
 | `api/` | Read-only FastAPI over the `v_*` views + `universe.db` | [api.md](api.md) |
-| `portfolio_common.kg_schema` *(external)* | Passive shared schema, migrations, read-contract views | [kg_schema.md](kg_schema.md) |
+| `kg_schema/` | Passive shared schema, migrations, read-contract views | [kg_schema.md](kg_schema.md) |
 
 ## How they fit together
 
@@ -45,7 +46,7 @@ Portfolio Thesis repo that touches `KG_FINANCIAL_DB` shares one copy.
   the `fundamental_agent/pricing.py` accessor pattern.
 - `quant/` is a leaf: no other package imports it, so its numeric dependencies
   (numpy, scipy, cvxpy) never load on their import path. It reads shared tables via
-  plain SQL and imports only `portfolio_common.kg_schema`.
+  plain SQL and imports only `kg_schema`.
 
 ## Cross-repo boundaries
 

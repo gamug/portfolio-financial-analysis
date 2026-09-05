@@ -10,32 +10,33 @@ from pathlib import Path
 
 import pytest
 from conftest import _QUANT_EXTRA_DDL
-from portfolio_common.kg_schema.cli import run_coverage
-from portfolio_common.kg_schema.coverage import check_coverage, persist_coverage
-from portfolio_common.kg_schema.universe_source import connect_ro
+from portfolio_common.db import Database
 
+from kg_schema.cli import run_coverage
+from kg_schema.queries import check_coverage, connect_ro, persist_coverage
 from pricing_agent import db as pdb
 from quant import db as qdb
 
 _UDB = Callable[..., Path]
 
 
-def _ensure_fin(conn: sqlite3.Connection) -> None:
-    conn.row_factory = sqlite3.Row
+def _ensure_fin(conn: Database) -> None:
     conn.execute("PRAGMA foreign_keys = ON")
     pdb.ensure_schema(conn)  # assets, sectors, price_daily, price_window + kg_schema
     conn.executescript(_QUANT_EXTRA_DDL)  # sec_filings, financial_facts
     qdb.ensure_schema(conn)  # quant_run, quant_return_daily + re-runs kg_schema.ensure
 
 
-def _fin_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
+def _fin_db() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     _ensure_fin(conn)
     return conn
 
 
 def _seed_member(
-    conn: sqlite3.Connection,
+    conn: Database,
     ticker: str,
     *,
     fundamental: bool = False,
@@ -78,8 +79,11 @@ def test_check_coverage_flags_missing_core_data(universe_db: _UDB) -> None:
     # "GHOST" is in the universe as of the date but never got an assets row.
     udb = universe_db([(s, "2020-01-01", None) for s in ("FULL", "NOPRICE", "GHOST")])
 
-    with connect_ro(udb) as u:
+    u = connect_ro(udb)
+    try:
         report = check_coverage(conn, u, "2024-06-30", min_observation_days=3)
+    finally:
+        u.close()
 
     by_sym = {r.symbol: r for r in report.rows}
     assert by_sym["FULL"].covered
@@ -95,8 +99,11 @@ def test_persist_coverage_upserts(universe_db: _UDB) -> None:
     conn = _fin_db()
     _seed_member(conn, "A", fundamental=True, price=True, obs=5)
     udb = universe_db([("A", "2020-01-01", None), ("B", "2020-01-01", None)])
-    with connect_ro(udb) as u:
+    u = connect_ro(udb)
+    try:
         report = check_coverage(conn, u, "2024-06-30", min_observation_days=3)
+    finally:
+        u.close()
 
     assert persist_coverage(conn, report) == 2
     assert persist_coverage(conn, report) == 2  # idempotent upsert
@@ -113,7 +120,9 @@ def test_run_coverage_command_warn_vs_strict(
     universe_db: _UDB, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fin = tmp_path / "fin.db"
-    conn = sqlite3.connect(fin)
+    raw = sqlite3.connect(fin)
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     _ensure_fin(conn)
     _seed_member(conn, "A", fundamental=True, price=True, obs=600)
     conn.close()

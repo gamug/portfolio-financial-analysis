@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from portfolio_common.db import Database
 
 from fundamental_agent import db
 from fundamental_agent.statements import Statements
@@ -110,29 +111,31 @@ def universe_db(tmp_path: Path) -> Callable[..., Path]:
     return _make
 
 
-@pytest.fixture
-def memory_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _memory_database() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+@pytest.fixture
+def memory_db() -> Database:
+    conn = _memory_database()
     db.ensure_schema(conn)
     return conn
 
 
 @pytest.fixture
-def memory_pricing_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+def memory_pricing_db() -> Database:
+    conn = _memory_database()
     pricing_db.ensure_schema(conn)
     return conn
 
 
 @pytest.fixture
-def memory_quant_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+def memory_quant_db() -> Database:
+    conn = _memory_database()
     pricing_db.ensure_schema(conn)  # assets, sectors, price_daily, price_window + kg_schema
     conn.executescript(_QUANT_EXTRA_DDL)
     quant_db.ensure_schema(conn)  # quant_run + (re-)runs kg_schema.ensure
@@ -140,9 +143,7 @@ def memory_quant_db() -> sqlite3.Connection:
 
 
 @pytest.fixture
-def quant_seed(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> Callable[..., sqlite3.Connection]:
+def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., Database]:
     """Return a seeder: fixed-seed geometric random walk into price_daily /
     price_observation for *n_assets* names across 2 sectors, open SP500 membership,
     and (optionally) a couple of quarterly dividends per asset.
@@ -151,14 +152,14 @@ def quant_seed(
     ``KG_UNIVERSE_DB`` at it, so the point-in-time universe reads resolve locally."""
 
     def _seed(  # noqa: PLR0913 - fixture knobs, all keyword-only with defaults
-        conn: sqlite3.Connection,
+        conn: Database,
         *,
         n_assets: int = 6,
         n_days: int = 300,
         start: str = "2024-01-01",
         with_dividends: bool = True,
         seed: int = 7,
-    ) -> sqlite3.Connection:
+    ) -> Database:
         rng = random.Random(seed)
         conn.execute("INSERT OR IGNORE INTO sectors (id, name) VALUES (1, 'S1'), (2, 'S2')")
         d0 = date.fromisoformat(start)

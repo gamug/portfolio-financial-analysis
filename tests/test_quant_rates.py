@@ -5,13 +5,16 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from portfolio_common.db import Database
+
 from quant.config import QuantSettings
 from quant.rates import load_risk_free
 
 
-def _conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _conn() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.executescript(
         "CREATE TABLE risk_free_rate (id INTEGER PRIMARY KEY, curve TEXT NOT NULL, "
         "rate_date TEXT NOT NULL, annualized_rate REAL NOT NULL, source TEXT NOT NULL, "

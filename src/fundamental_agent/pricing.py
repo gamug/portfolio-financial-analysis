@@ -12,6 +12,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date
 
+from portfolio_common.db import Database
+
 # A period-end date can fall on a weekend or holiday; look back a few sessions for
 # the last actual close, but not so far that a gap in coverage returns a stale price.
 _MAX_LOOKBACK_DAYS = 7
@@ -26,7 +28,7 @@ class ClosePrice:
 
 
 def close_on_or_before(
-    conn: sqlite3.Connection,
+    conn: Database,
     asset_id: int,
     period_end: str,
     *,

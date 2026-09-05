@@ -15,11 +15,11 @@ with cash dividend ``D_t`` on its ex-date:
 from __future__ import annotations
 
 import math
-import sqlite3
 
-from portfolio_common.kg_schema import connect
-from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.db import Database
 
+from kg_schema import connect
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     ReturnRow,
@@ -102,7 +102,7 @@ def run_build_returns(
     *,
     date_from: str,
     date_to: str,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
 ) -> ReturnsReport:
     owns = conn is None
     conn = conn or connect(settings.db_path)

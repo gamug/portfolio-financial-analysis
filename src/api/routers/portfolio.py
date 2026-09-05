@@ -3,10 +3,10 @@ cohort (``v_cycle_ranking``). Views passed through verbatim."""
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from portfolio_common.db import Database
 
 from api.db import rows
 from api.dependencies import get_db
@@ -18,7 +18,7 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 def positions(
     as_of: str | None = Query(None, description="position stints open as of this date"),
     open_only: bool = Query(True, description="only currently-open stints (valid_to IS NULL)"),
-    db: sqlite3.Connection = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
     sql = "SELECT * FROM v_portfolio_position"
     params: list[object] = []
@@ -34,7 +34,7 @@ def positions(
 @router.get("/ranking")
 def cycle_ranking(
     cycle_type: str = Query("SELECTION", description="SELECTION or MONITORING"),
-    db: sqlite3.Connection = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """The ranked cohort of the most recent cycle of *cycle_type*."""
     sql = (

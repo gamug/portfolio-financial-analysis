@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import sqlite3
+from portfolio_common.db import Database
 
-from portfolio_common.kg_schema import version
-
+from kg_schema import queries
 from quant import db as quant_db
 
 
-def test_ensure_schema_idempotent_and_creates_tables(memory_quant_db: sqlite3.Connection) -> None:
+def test_ensure_schema_idempotent_and_creates_tables(memory_quant_db: Database) -> None:
     conn = memory_quant_db
     quant_db.ensure_schema(conn)  # second call must not raise
 
@@ -34,4 +33,4 @@ def test_ensure_schema_idempotent_and_creates_tables(memory_quant_db: sqlite3.Co
     } <= views
 
     # quant introduces no migration -- the shared schema_version floor is untouched.
-    assert version.current_version(conn) == 0
+    assert queries.current_version(conn) == 0

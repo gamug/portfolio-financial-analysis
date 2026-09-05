@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass
 
 import numpy as np
-from portfolio_common.kg_schema import connect
-from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.db import Database
 
+from kg_schema import connect
+from kg_schema.provenance import code_version
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
@@ -71,7 +71,7 @@ def _expected_returns(
     settings: QuantSettings,
     panel: ReturnPanel,
     sigma: np.ndarray,
-    conn: sqlite3.Connection,
+    conn: Database,
 ) -> dict[str, dict[int, float]]:
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
@@ -92,7 +92,7 @@ def run_build_risk_model(
     settings: QuantSettings,
     *,
     as_of: str,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
     store_cov: bool = True,
 ) -> RiskModelResult:
     owns = conn is None
@@ -195,9 +195,7 @@ def _weights_json(ids: list[int], w: np.ndarray) -> str:
     )
 
 
-def _resolve_model_id(
-    settings: QuantSettings, as_of: str, conn: sqlite3.Connection, run_id: int
-) -> int:
+def _resolve_model_id(settings: QuantSettings, as_of: str, conn: Database, run_id: int) -> int:
     row = load_risk_model(conn, as_of=as_of, model_version=settings.risk_model_version)
     if row is not None:
         return int(row["id"])
@@ -222,7 +220,7 @@ def run_optimize(
     settings: QuantSettings,
     *,
     as_of: str,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
 ) -> OptimizeRunResult:
     owns = conn is None
     conn = conn or connect(settings.db_path)

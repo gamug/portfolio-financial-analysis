@@ -7,12 +7,11 @@ from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
 
-from portfolio_common.kg_schema.rundate import add_analysis_date_argument
-from portfolio_common.kg_schema.rundate import resolve as resolve_analysis_date
-
 from cycle.config import CycleSettings
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import run_monitoring, run_selection
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 
 
 def build_parser() -> argparse.ArgumentParser:
