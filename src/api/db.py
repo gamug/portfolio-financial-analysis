@@ -7,10 +7,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from portfolio_common import kg_schema
+from portfolio_common.db import Database
+
+import kg_schema
 
 
-def connect_ro(path: str | Path) -> sqlite3.Connection:
+def connect_ro(path: str | Path) -> Database:
     """Open *path* strictly read-only (``file:...?mode=ro``).
 
     The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
@@ -18,7 +20,7 @@ def connect_ro(path: str | Path) -> sqlite3.Connection:
     return kg_schema.connect_ro(path)
 
 
-def rows(conn: sqlite3.Connection, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
+def rows(conn: Database, sql: str, params: Sequence[Any] = ()) -> list[dict[str, Any]]:
     """Run *sql* and return a list of plain dicts. On a missing view/table
     (partial DB) returns ``[]`` rather than raising."""
     try:

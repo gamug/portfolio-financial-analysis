@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from fastapi import Depends, Query, Request
+from portfolio_common.db import Database
 
 from api.config import ApiSettings
 from api.db import connect_ro
@@ -16,7 +16,7 @@ def get_settings(request: Request) -> ApiSettings:
     return request.app.state.settings  # type: ignore[no-any-return]
 
 
-def get_db(settings: ApiSettings = Depends(get_settings)) -> Iterator[sqlite3.Connection]:
+def get_db(settings: ApiSettings = Depends(get_settings)) -> Iterator[Database]:
     """A read-only connection to ``KG_FINANCIAL_DB`` for one request."""
     conn = connect_ro(settings.db_path)
     try:
@@ -27,7 +27,7 @@ def get_db(settings: ApiSettings = Depends(get_settings)) -> Iterator[sqlite3.Co
 
 def get_universe_db(
     settings: ApiSettings = Depends(get_settings),
-) -> Iterator[sqlite3.Connection]:
+) -> Iterator[Database]:
     """A read-only connection to ``universe.db`` for one request."""
     conn = connect_ro(settings.universe_db_path)
     try:

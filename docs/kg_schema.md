@@ -1,42 +1,59 @@
 # `kg_schema`
 
-> Lives in the external [`portfolio-common`](https://github.com/gamug/portfolio-common)
-> repo, imported as **`portfolio_common.kg_schema`** and pinned by git tag in
-> `pyproject.toml`'s `[tool.uv.sources]` (editable-path override for local work).
-> Module paths below are written unqualified (`env`, `views`, `cli`, …); the real
-> dotted path is `portfolio_common.kg_schema.<module>`. Bump the tag to adopt a
-> new schema/universe contract.
+> Vendored at `src/kg_schema/` (a top-level package alongside `api`, `cycle`,
+> `entity_resolution`, `fundamental_agent`, `pricing_agent`, `quant`). It used
+> to live in the external
+> [`portfolio-common`](https://github.com/gamug/portfolio-common) repo as
+> `portfolio_common.kg_schema`, but as of that repo's **v1.0.0** release
+> (a DB-engine/business-logic split — see its `CHANGELOG.md`), the domain
+> logic was extracted back into each owning repo; `portfolio-common` is now
+> DB-engine-only. `portfolio-common` stays a dependency here for exactly two
+> primitives `kg_schema` (and this repo's own `db.py`-style modules) build on:
+> `portfolio_common.db.Database` (the connection class `kg_schema.db.connect`
+> wraps) and the injection-safety helpers `in_clause` / `Allowlist`. See
+> `docs/portfolio-common-v1-migration-plan.md` for the migration itself.
 
-Passive, behaviour-free schema shared by every repo that touches
+Passive, behaviour-free schema shared by every package that touches
 `KG_FINANCIAL_DB`. Owns the additive DDL, the non-additive migrations, the
 `schema_version` floor, and the `v_*` read-contract views the integration repo
 consumes. It never touches `assets` / `sectors` (owned elsewhere).
 
-Both agents call `kg_schema.ensure(conn)` at the end of their own `ensure_schema`.
+Every package calls `kg_schema.ensure(conn)` at the end of its own
+`ensure_schema`.
 
 It also holds the shared run seams every agent uses: `env.universe_database_path`
 (`KG_UNIVERSE_DB`, default `/workspaces/thesis/data/universe.db`),
-`universe_source` (point-in-time reads over `universe.db` — `members_asof`,
+`queries` (point-in-time reads over `universe.db` — `members_asof`,
 `symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
 `--analysis-date` argparse type + default-to-today), and `provenance.code_version`
 (git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
 
 ## Files
 
-### `__init__.py` — `ensure(conn, *, run_migrations=False) -> list[int]`
+### `db.py` — `connect(path, *, read_only=False, create_parents=True)`, `connect_ro(path)`
+
+The one connection factory for the analysis-workstream databases. A thin
+wrapper over `portfolio_common.db.Database.connect`: rows come back as
+`sqlite3.Row`; read/write opens with `foreign_keys=ON` + a busy_timeout
+(reapplied every connection); `wal=False` always — `KG_FINANCIAL_DB` may sit
+on a bind mount whose `-shm` support is unreliable, so this domain never
+turns on WAL. `connect_ro` opens `file:{path}?mode=ro` (no pragmas, no
+directory creation).
+
+### `__init__.py` — `ensure(db, *, run_migrations=False) -> list[int]`
 
 The single entrypoint. Sequence:
 
-1. `version.ensure(conn)` — create `schema_version`.
-2. `conn.executescript(ADDITIVE_DDL)` — all `CREATE TABLE/INDEX IF NOT EXISTS`.
-3. `_add_missing_columns(conn)` — for each `REQUIRED_COLUMNS` entry, `ALTER TABLE …
+1. `queries.ensure(db)` — create `schema_version`.
+2. `db.executescript(ADDITIVE_DDL)` — all `CREATE TABLE/INDEX IF NOT EXISTS`.
+3. `_add_missing_columns(db)` — for each `REQUIRED_COLUMNS` entry, `ALTER TABLE …
    ADD COLUMN` if absent (nullable only). **No `schema_version` bump.**
-4. `views.ensure_views(conn)` — drop + recreate every `v_*` view.
-5. If `run_migrations`: `migrations.apply_migrations(conn)`, then rebuild views.
+4. `views.ensure_views(db)` — drop + recreate every `v_*` view.
+5. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
 
 Steps 1–4 are safe to run against the shared production DB at any time,
-concurrently with the other repos. Step 5 runs **only** via `python -m <agent>
-migrate`.
+concurrently with the other packages. Step 5 runs **only** via `python -m
+<agent> migrate`.
 
 ### `ddl.py` — `ADDITIVE_DDL`, `REQUIRED_COLUMNS`
 
@@ -49,13 +66,40 @@ plus **run provenance**: `run_id` on `sec_filings` / `financial_facts` /
 `m002` / `m003` carry `run_id` forward in their rebuilds so a not-yet-migrated dev
 DB does not drop it (no new migration, no `schema_version` bump).
 
-### `version.py`
+### `queries.py` — every SQL query in the domain, in one place
 
-`schema_version(version PK, applied_at, description)`. `current_version(conn)`
-returns the max recorded version (0 if none). `record(conn, v, desc)` is
-`INSERT OR IGNORE`, so re-recording is a no-op.
+Consolidates what used to be split across `version.py` / `universe_source.py` /
+`universe_membership.py`:
 
-### `migrations.py` — `apply_migrations(conn) -> list[int]`
+- **`universe.db` reads (read-only, never written here):** `connect_ro`
+  (re-exports `kg_schema.db.connect_ro`), `members_asof(universe_db,
+  analysis_date, *, universe="SP500") -> list[UniverseMember]` (predicate
+  `valid_from <= D AND (valid_to IS NULL OR valid_to > D)`, deduped by symbol
+  keeping the latest stint; rejects any universe other than `SP500`),
+  `symbols_asof(...)`, and `resolve_asset_ids(financial_db, symbols) ->
+  (mapping, missing)` (pure read, case-insensitive `assets.ticker` match,
+  chunked `in_clause` — creating a brand-new `assets` row stays with the
+  agents' `sync_universe`).
+- **Data-coverage report:** `check_coverage(fin_db, universe_db, as_of, *,
+  universe="SP500", min_observation_days=504) -> CoverageReport` and
+  `persist_coverage(fin_db, report) -> int` (upserts one `universe_coverage`
+  row per member). The report *shape* (`SymbolCoverage` / `CoverageReport`
+  dataclasses, no SQL) lives in `coverage.py`.
+- **`schema_version`:** `ensure(db)`, `current_version(db) -> int`,
+  `record(db, version, description)` — the monotonic floor other repos assert
+  against.
+- **`universe_membership`:** `reconcile(db, universe, present_asset_ids, *,
+  as_of, run_id=None, run_kind=None, source) -> (opened, closed)` — opens
+  memberships for newcomers, closes them for the departed. No longer on any
+  write path (see `v_universe_membership` below), kept for compatibility.
+
+### `coverage.py` — pure business logic, no SQL
+
+`SymbolCoverage` / `CoverageReport` dataclasses and their roll-up properties
+(`covered`, `missing`, `missing_required`, `fraction`, `uncovered`,
+`missing_for`). The query layer that fills these in lives in `queries.py`.
+
+### `migrations.py` — `apply_migrations(db) -> list[int]`
 
 Numbered, non-additive rebuilds SQLite cannot do with `ALTER`. Each runs in one
 transaction; on success its version is recorded. Re-running is a no-op once
@@ -69,8 +113,9 @@ are present / it hasn't already run).
 | m003 | rebuild `fundamental_metrics` with `UNIQUE(…, engine_version)` + `event_time NOT NULL` |
 | m004 | `INSERT … SELECT` `fundamental_snapshot` rows into `score_snapshot` as `FUNDAMENTAL`; rename the table to `fundamental_snapshot_legacy`; recreate `fundamental_snapshot` **as a compatibility VIEW** (joins `score_snapshot` → `sec_filings` for `form` / `fiscal_period`) so the README query and external consumers keep working until they move to `v_score_snapshot` |
 | m005 | rebuild `score_snapshot` with its `score_type` CHECK widened to admit `'SECTOR'` (guard: skipped when the CHECK already lists it); drops + recreates `v_score_snapshot` and the `fundamental_snapshot` compat view around the swap |
+| m006 | rename `score_snapshot.score_type` `'QUANTITATIVE'` → `'VALORIZATION'` everywhere it is persisted: the CHECK, the stored rows, and the score-type keys inside `cycle_run.params_json` / `cycle_ranking.components_json` |
 
-### `views.py` — `VIEWS`, `ensure_views(conn)`
+### `views.py` — `VIEWS`, `ensure_views(db)`
 
 `ensure_views` drops and recreates every view on each call (cheap, always current).
 Because SQLite's `CREATE VIEW` does not validate its base tables, each view is
@@ -108,41 +153,23 @@ the live `portfolio_position` weights, per name).
 **`v_universe_membership` is frozen.** The agents no longer write
 `universe_membership` (the universe is read point-in-time from `universe.db`), so
 this view is stale unless something else populates the table. Downstream readers
-(the KG projection) should move to `universe.db` / `kg_schema.universe_source`.
+(the KG projection) should move to `universe.db` / `kg_schema.queries`.
 
-### `coverage.py` + `coverage` command — core-data coverage for a dated universe
-
-`check_coverage(fin_conn, universe_conn, as_of, *, universe="SP500",
-min_observation_days=504) -> CoverageReport`: for each member as of `as_of`, does it
-have an `assets` identity row, a FUNDAMENTAL `score_snapshot` (`event_time <= D`),
-`fundamental_metrics` via a filing (`period_end <= D`), `price_daily` (`date <= D`),
-`>= min_observation_days` `price_observation` rows (`obs_date <= D`), and a
-`quant_return_daily` series. `covered` = every *required* check
-(`assets`, `fundamental`, `pricing`, `observations`) passed. `persist_coverage`
-upserts one `universe_coverage` row per `(as_of, universe, symbol)`.
+### `coverage` command
 
 Exposed as `python -m {fundamental_agent,pricing_agent,quant} coverage
 --analysis-date D [--strict] [--min-fraction F] [--print-fill-commands]` (shared
-impl `kg_schema.cli.run_coverage`). Read-only; default **warn** (report + exit 0),
-`--strict` exits 1 when the covered fraction is below `F`. This is the guard for the
-gap that reading agents (`cycle`, `quant`) otherwise hit silently — a member of the
-as-of universe with no data to analyse.
+impl `kg_schema.cli.run_coverage`, registered via `kg_schema.cli.add_coverage_parser`).
+Read-only; default **warn** (report + exit 0), `--strict` exits 1 when the
+covered fraction is below `F`. This is the guard for the gap that reading
+agents (`cycle`, `quant`) otherwise hit silently — a member of the as-of
+universe with no data to analyse.
 
-### `universe_source.py` — point-in-time reads over `universe.db`
+### `cli.py` — `run_migrate(db_path) -> int`, `run_coverage(...) -> int`
 
-`connect_ro(path)` (read-only URI), `members_asof(conn, analysis_date, *,
-universe="SP500") -> list[UniverseMember]` (predicate `valid_from <= D AND
-(valid_to IS NULL OR valid_to > D)`, deduped by symbol keeping the latest stint;
-rejects any universe other than `SP500`), `symbols_asof(...)`, and
-`resolve_asset_ids(financial_conn, symbols) -> (mapping, missing)` (pure read,
-case-insensitive `assets.ticker` match — creating a brand-new `assets` row stays
-with the two agents' `sync_universe`). The legacy `universe_membership.reconcile`
-is retained in the tree but is no longer on any write path.
-
-### `cli.py` — `run_migrate(db_path) -> int`
-
-Shared implementation of the `migrate` subcommand. Opens a connection, calls
-`ensure(conn, run_migrations=True)`, prints the `schema_version` table.
+Shared `migrate` / `coverage` implementations. `run_migrate` opens a
+connection, calls `ensure(db, run_migrations=True)`, prints the
+`schema_version` table.
 
 ## Tables added
 
@@ -169,12 +196,15 @@ Shared implementation of the `migrate` subcommand. Opens a connection, calls
 
 ## Gotchas
 
-- **`ensure` is a hard dependency of both agents.** Keep it idempotent and
+- **`ensure` is a hard dependency of every package.** Keep it idempotent and
   additive-only; `ensure_views` swallows `OperationalError` so a view bug can't
   brick a batch run.
 - **Shared-DB migration runbook:** quiesce all writers → `cp financial.db{,.bak}` →
   `python -m fundamental_agent migrate` once → check `SELECT * FROM schema_version`
   → resume. `-wal` / `-shm` files may exist even though this code forces rollback
-  journal; standardise journal mode across writers before running m002–m004.
+  journal; standardise journal mode across writers before running m002–m006.
 - **Never drop the `fundamental_snapshot` compat view** until every external
   consumer has moved to `v_score_snapshot`.
+- **`Database` is not a `sqlite3.Connection` subclass** (composition, not
+  inheritance) — a connection-specific escape hatch (`set_trace_callback`,
+  etc.) goes through `db.raw`, not `db` directly.

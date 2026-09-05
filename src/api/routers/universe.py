@@ -8,11 +8,11 @@ import sqlite3
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
-from portfolio_common.kg_schema.coverage import check_coverage
-from portfolio_common.kg_schema.universe_source import members_asof
+from portfolio_common.db import Database
 
 from api.dependencies import get_db, get_universe_db
 from api.models import CoverageRow, CoverageSummary, UniverseMemberOut
+from kg_schema.queries import check_coverage, members_asof
 
 router = APIRouter(prefix="/universe", tags=["universe"])
 
@@ -23,7 +23,7 @@ _AS_OF = Query(..., description="as-of date, YYYY-MM-DD", examples=["2024-06-30"
 def universe_as_of(
     as_of: date = _AS_OF,
     universe: str = Query("SP500"),
-    udb: sqlite3.Connection = Depends(get_universe_db),
+    udb: Database = Depends(get_universe_db),
 ) -> list[UniverseMemberOut]:
     members = members_asof(udb, as_of.isoformat(), universe=universe)
     return [
@@ -44,8 +44,8 @@ def universe_as_of(
 def universe_coverage(
     as_of: date = _AS_OF,
     universe: str = Query("SP500"),
-    db: sqlite3.Connection = Depends(get_db),
-    udb: sqlite3.Connection = Depends(get_universe_db),
+    db: Database = Depends(get_db),
+    udb: Database = Depends(get_universe_db),
 ) -> CoverageSummary:
     """Persisted ``universe_coverage`` rows for this ``as_of`` if the ``coverage``
     command has been run; otherwise computed live (nothing is written)."""
@@ -68,9 +68,7 @@ def universe_coverage(
     )
 
 
-def _persisted_coverage(
-    db: sqlite3.Connection, as_of: str, universe: str
-) -> CoverageSummary | None:
+def _persisted_coverage(db: Database, as_of: str, universe: str) -> CoverageSummary | None:
     try:
         cur = db.execute(
             "SELECT symbol, covered, missing_json FROM v_universe_coverage "

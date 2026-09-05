@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from portfolio_common.db import Database
 
 from api.app import create_app
 from api.config import ApiSettings
@@ -19,8 +20,9 @@ _UDB = Callable[..., Path]
 
 
 def _seed_fin(path: Path) -> None:
-    conn = sqlite3.connect(path)
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(path)
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     fdb.ensure_schema(conn)  # assets, sectors, sec_filings, analysis_run + kg_schema
     pdb.ensure_schema(conn)  # price_* + pricing_run

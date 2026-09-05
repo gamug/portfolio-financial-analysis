@@ -6,12 +6,14 @@ import json
 import sqlite3
 from pathlib import Path
 
-from portfolio_common.kg_schema.env import universe_database_path
-from portfolio_common.kg_schema.universe_source import connect_ro, resolve_asset_ids, symbols_asof
+from portfolio_common.db import Database, in_clause
+
+from kg_schema.env import universe_database_path
+from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
 
 
 def active_universe(
-    conn: sqlite3.Connection,
+    conn: Database,
     universe: str,
     cycle_date: str,
     universe_db_path: str | Path | None = None,
@@ -22,8 +24,11 @@ def active_universe(
     Raises ``RuntimeError`` when ``universe.db`` has no members as of *cycle_date*
     or none of them exist in ``assets`` yet (run the agents for this date first)."""
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
-    with connect_ro(upath) as uconn:
+    uconn = connect_ro(upath)
+    try:
         syms = symbols_asof(uconn, cycle_date, universe=universe)
+    finally:
+        uconn.close()
     if not syms:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {cycle_date}")
     mapping, _missing = resolve_asset_ids(conn, syms)
@@ -32,17 +37,17 @@ def active_universe(
             f"none of the {len(syms)} {universe} members as of {cycle_date} exist in assets yet "
             f"-- run fundamental_agent / pricing_agent for this date first"
         )
-    placeholders = ",".join("?" * len(mapping))
+    ids = sorted(mapping.values())
     return list(
         conn.execute(
-            f"SELECT id, ticker, sector_id FROM assets WHERE id IN ({placeholders}) "  # noqa: S608
+            f"SELECT id, ticker, sector_id FROM assets WHERE id IN {in_clause(ids)} "  # noqa: S608
             "ORDER BY ticker",
-            sorted(mapping.values()),
+            ids,
         )
     )
 
 
-def latest_metrics(conn: sqlite3.Connection, cycle_date: str) -> dict[int, dict[str, float | None]]:
+def latest_metrics(conn: Database, cycle_date: str) -> dict[int, dict[str, float | None]]:
     """asset_id -> {"group.name": value} from the newest filing with period_end <= cycle_date."""
     rows = conn.execute(
         """
@@ -67,9 +72,7 @@ def latest_metrics(conn: sqlite3.Connection, cycle_date: str) -> dict[int, dict[
     return out
 
 
-def latest_price_observation(
-    conn: sqlite3.Connection, cycle_date: str
-) -> dict[int, dict[str, float | None]]:
+def latest_price_observation(conn: Database, cycle_date: str) -> dict[int, dict[str, float | None]]:
     rows = conn.execute(
         """
         SELECT p.*
@@ -84,7 +87,7 @@ def latest_price_observation(
     return {int(r["asset_id"]): dict(r) for r in rows}
 
 
-def last_fundamental_dates(conn: sqlite3.Connection, cycle_date: str) -> dict[int, str | None]:
+def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
     rows = conn.execute(
         """
         SELECT asset_id, MAX(event_time) AS et FROM score_snapshot
@@ -96,7 +99,7 @@ def last_fundamental_dates(conn: sqlite3.Connection, cycle_date: str) -> dict[in
     return {int(r["asset_id"]): r["et"] for r in rows}
 
 
-def latest_fundamental_score(conn: sqlite3.Connection, cycle_date: str) -> dict[int, float | None]:
+def latest_fundamental_score(conn: Database, cycle_date: str) -> dict[int, float | None]:
     rows = conn.execute(
         """
         SELECT s.asset_id, s.raw_value
@@ -112,7 +115,7 @@ def latest_fundamental_score(conn: sqlite3.Connection, cycle_date: str) -> dict[
     return {int(r["asset_id"]): r["raw_value"] for r in rows}
 
 
-def latest_semantic_score(conn: sqlite3.Connection, cycle_date: str) -> dict[int, float | None]:
+def latest_semantic_score(conn: Database, cycle_date: str) -> dict[int, float | None]:
     """Pre-existing SEMANTIC scores (written by the integration repo), if any."""
     rows = conn.execute(
         """
@@ -130,7 +133,7 @@ def latest_semantic_score(conn: sqlite3.Connection, cycle_date: str) -> dict[int
 
 
 def market_cap_estimates(
-    conn: sqlite3.Connection, metrics: dict[int, dict[str, float | None]]
+    conn: Database, metrics: dict[int, dict[str, float | None]]
 ) -> dict[int, float | None]:
     """Read market cap straight off the stored valuation metric inputs, when present."""
     rows = conn.execute(

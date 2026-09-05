@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from portfolio_common.db import Database
 
 from quant.actions import (
     DERIVED_ENGINE_VERSION,
@@ -21,7 +21,7 @@ def _settings() -> QuantSettings:
 
 
 def test_derive_uses_aggregate_payments_when_no_per_share_fact(
-    memory_quant_db: sqlite3.Connection,
+    memory_quant_db: Database,
 ) -> None:
     conn = memory_quant_db
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'XYZ')")
@@ -52,7 +52,7 @@ def test_derive_uses_aggregate_payments_when_no_per_share_fact(
 
 
 def test_derive_spreads_fy_dps_into_four_quarters(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=True)
     # asset 1 seeded with DPS = 1.20 + 0.1*1 = 1.30
@@ -64,7 +64,7 @@ def test_derive_spreads_fy_dps_into_four_quarters(
 
 
 def test_backfill_derive_writes_rows_and_completes_run(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=3, n_days=260)
     report = backfill_corporate_actions(
@@ -89,8 +89,8 @@ def test_backfill_derive_writes_rows_and_completes_run(
 
 
 def test_gateway_probe_failure_falls_back_to_derive(
-    memory_quant_db: sqlite3.Connection,
-    quant_seed: Callable[..., sqlite3.Connection],
+    memory_quant_db: Database,
+    quant_seed: Callable[..., Database],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=2, n_days=260)

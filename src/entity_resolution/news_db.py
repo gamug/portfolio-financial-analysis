@@ -8,12 +8,13 @@ tracing executed SQL.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from portfolio_common import kg_schema
+from portfolio_common.db import Database
+
+import kg_schema
 
 _ID_CHUNK = 900  # keep under SQLite's parameter limit
 
@@ -25,7 +26,7 @@ class PerSpan:
     score: float | None
 
 
-def connect_ro(path: str | Path) -> sqlite3.Connection:
+def connect_ro(path: str | Path) -> Database:
     """Open *path* strictly read-only so the news pipeline's WAL is untouched.
 
     The shared read-only factory (:func:`kg_schema.connect_ro`), re-exposed here
@@ -33,9 +34,7 @@ def connect_ro(path: str | Path) -> sqlite3.Connection:
     return kg_schema.connect_ro(path)
 
 
-def article_ids_for_ticker(
-    news: sqlite3.Connection, ticker: str, *, until: str | None = None
-) -> list[int]:
+def article_ids_for_ticker(news: Database, ticker: str, *, until: str | None = None) -> list[int]:
     """Article ids discovered for *ticker* (uses ``idx_ticker``).
 
     When *until* (an ISO date) is given, only rows with a known ``pub_date`` on or
@@ -52,9 +51,7 @@ def article_ids_for_ticker(
     return [int(r[0]) for r in rows]
 
 
-def per_entities_for_articles(
-    news: sqlite3.Connection, article_ids: list[int]
-) -> Iterator[PerSpan]:
+def per_entities_for_articles(news: Database, article_ids: list[int]) -> Iterator[PerSpan]:
     """Stream PER spans for *article_ids* in id-index chunks (uses
     ``idx_article_entities_article_id``)."""
     for start in range(0, len(article_ids), _ID_CHUNK):

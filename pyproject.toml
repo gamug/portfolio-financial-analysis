@@ -9,10 +9,14 @@ description = "Portfolio financial analysis."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    # Shared DB layer: the SQLite connect() factory + the kg_schema analysis-DB
-    # contract (DDL / migrations / v_* views / env / universe.db reads /
-    # coverage / provenance), imported as `portfolio_common.kg_schema`. Pinned
-    # by tag in [tool.uv.sources]; bump the tag to adopt a new schema contract.
+    # The DB engine (`portfolio_common.db.Database`) + injection-safe
+    # query-building primitives (`in_clause`, `Allowlist`) shared across the
+    # Portfolio Thesis repos. As of v1.0.0 this is DB-engine-only -- the
+    # `kg_schema` analysis-DB contract (DDL / migrations / v_* views / env /
+    # universe.db reads / coverage / provenance) is vendored locally at
+    # `src/kg_schema/` (see docs/kg_schema.md), not part of this dependency.
+    # Pinned by tag in [tool.uv.sources]; bump the tag to adopt a new engine
+    # contract.
     "portfolio-common",
     "strands-agents[openai]>=0.1",
     "httpx>=0.27",
@@ -46,6 +50,7 @@ dev = [
 # `src/<pkg>` imports and runs as `python -m <pkg>` from any directory.
 [tool.hatch.build.targets.wheel]
 packages = [
+    "src/kg_schema",
     "src/fundamental_agent",
     "src/pricing_agent",
     "src/cycle",
@@ -55,12 +60,12 @@ packages = [
 ]
 
 [tool.uv.sources]
-# The shared DB layer lives in its own repo (github.com/gamug/portfolio-common)
-# as `portfolio_common.kg_schema`, pinned by tag -- bump the tag here to adopt a
-# new schema/universe contract. For local work against a checkout next to this
-# repo, override with an editable path source:
+# portfolio-common v1.0.0+ is DB-engine-only (`portfolio_common.db.Database` /
+# `in_clause` / `Allowlist`); pinned by tag -- bump the tag here to adopt a new
+# engine contract. For local work against a checkout next to this repo,
+# override with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v0.2.0" }
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.0.0" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

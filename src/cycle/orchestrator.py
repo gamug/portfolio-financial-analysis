@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.db import Database
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -25,8 +25,9 @@ from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
+from kg_schema.provenance import code_version
 
-FundamentalHook = Callable[[sqlite3.Connection, list[int], str], None]
+FundamentalHook = Callable[[Database, list[int], str], None]
 
 _SELECTION_STEPS = (
     "universe",
@@ -78,7 +79,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     cycle_date: str,
     steps: tuple[str, ...],
     *,
-    conn: sqlite3.Connection,
+    conn: Database,
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
     ensure_schema(conn)
@@ -341,7 +342,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 # -- small query helpers ------------------------------------------------
 
 
-def _latest_fundamental_rows(conn: sqlite3.Connection, cycle_date: str) -> list[sqlite3.Row]:
+def _latest_fundamental_rows(conn: Database, cycle_date: str) -> list[sqlite3.Row]:
     return conn.execute(
         """
         SELECT s.asset_id, s.raw_value
@@ -356,7 +357,7 @@ def _latest_fundamental_rows(conn: sqlite3.Connection, cycle_date: str) -> list[
 
 
 def _norm_map(
-    conn: sqlite3.Connection, stype: str, cycle_date: str, *, latest: bool = False
+    conn: Database, stype: str, cycle_date: str, *, latest: bool = False
 ) -> dict[int, float | None]:
     if latest:
         rows = conn.execute(
@@ -379,7 +380,7 @@ def _norm_map(
     return {int(r["asset_id"]): r["normalized_score"] for r in rows}
 
 
-def _load_ranking(conn: sqlite3.Connection, run_id: int) -> list[dict]:
+def _load_ranking(conn: Database, run_id: int) -> list[dict]:
     rows = conn.execute(
         "SELECT * FROM cycle_ranking WHERE cycle_run_id = ? ORDER BY rank", (run_id,)
     ).fetchall()
@@ -405,7 +406,7 @@ def run_selection(
     settings: CycleSettings,
     cycle_date: str,
     *,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
     fundamental_hook: FundamentalHook | None = None,
 ) -> CycleReport:
     owned = conn is None
@@ -429,7 +430,7 @@ def run_monitoring(
     settings: CycleSettings,
     cycle_date: str,
     *,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
     fundamental_hook: FundamentalHook | None = None,
 ) -> CycleReport:
     owned = conn is None

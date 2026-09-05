@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-import sqlite3
+
+from portfolio_common.db import Database
 
 from pricing_agent import db
 from pricing_agent.observations import ATR_PERIOD, build_observations, true_range
@@ -73,7 +74,7 @@ def test_max_drawdown_is_non_positive_and_windowed() -> None:
     assert obs[90].max_drawdown_90d == 0.0  # first full window, still flat
 
 
-def test_writer_is_immutable_per_engine_version(memory_pricing_db: sqlite3.Connection) -> None:
+def test_writer_is_immutable_per_engine_version(memory_pricing_db: Database) -> None:
     conn = memory_pricing_db
     conn.execute("INSERT INTO assets (ticker) VALUES ('AAPL')")
     conn.commit()

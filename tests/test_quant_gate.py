@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
+
+from portfolio_common.db import Database
 
 from quant.universe import liquidity_data_gate
 
 
 def test_gate_drops_illiquid_short_and_vetoed(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=5, n_days=260, with_dividends=False)
     as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]
@@ -44,7 +45,7 @@ def test_gate_drops_illiquid_short_and_vetoed(
 
 
 def test_gate_is_independent_of_score_snapshot(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=4, n_days=260, with_dividends=False)
     as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]

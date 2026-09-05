@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from portfolio_common.db import Database
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
@@ -53,7 +53,7 @@ def test_build_total_return_series_folds_in_a_dividend() -> None:
 
 
 def test_run_build_returns_end_to_end(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=3, n_days=260)
     settings = QuantSettings(db_path=Path(":memory:"))

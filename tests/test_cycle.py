@@ -8,8 +8,9 @@ from pathlib import Path
 
 import pytest
 from conftest import write_universe_db
-from portfolio_common import kg_schema
+from portfolio_common.db import Database
 
+import kg_schema
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection
@@ -128,7 +129,7 @@ def test_target_weights_respects_name_and_sector_caps() -> None:
 # -- rules ------------------------------------------------------
 
 
-def test_threshold_and_drawdown_rules(memory_db: sqlite3.Connection) -> None:
+def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
@@ -163,9 +164,7 @@ def test_threshold_and_drawdown_rules(memory_db: sqlite3.Connection) -> None:
 
 
 @pytest.fixture
-def cycle_seed(
-    memory_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> sqlite3.Connection:
+def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Database:
     conn = memory_db
     conn.execute("INSERT INTO sectors (id, name) VALUES (1, 'S1'), (2, 'S2')")
     tickers = ["AAA", "BBB", "CCC", "DDD", "EEE"]
@@ -224,11 +223,11 @@ def cycle_seed(
     return conn
 
 
-def _settings(conn: sqlite3.Connection) -> CycleSettings:
+def _settings(conn: Database) -> CycleSettings:
     return CycleSettings(db_path=Path(":memory:"), top_n=3)
 
 
-def test_selection_cycle_end_to_end(cycle_seed: sqlite3.Connection) -> None:
+def test_selection_cycle_end_to_end(cycle_seed: Database) -> None:
     conn = cycle_seed
     report = run_selection(_settings(conn), "2026-06-30", conn=conn)
 
@@ -263,7 +262,7 @@ def test_selection_cycle_end_to_end(cycle_seed: sqlite3.Connection) -> None:
     )
 
 
-def test_cycle_resumes_without_duplicating(cycle_seed: sqlite3.Connection) -> None:
+def test_cycle_resumes_without_duplicating(cycle_seed: Database) -> None:
     conn = cycle_seed
     run_selection(_settings(conn), "2026-06-30", conn=conn)
     before = conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0]
@@ -274,7 +273,7 @@ def test_cycle_resumes_without_duplicating(cycle_seed: sqlite3.Connection) -> No
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
 
 
-def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: sqlite3.Connection) -> None:
+def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: Database) -> None:
     conn = cycle_seed
     seed_catalog(conn)
     # AAA (asset 1) carries a HARD veto dated the day before the cycle
@@ -291,7 +290,7 @@ def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: sqlite3.Connection) -> N
     assert row["selected"] == 0
 
 
-def test_monitoring_cycle_skips_positions(cycle_seed: sqlite3.Connection) -> None:
+def test_monitoring_cycle_skips_positions(cycle_seed: Database) -> None:
     conn = cycle_seed
     r = run_monitoring(_settings(conn), "2026-07-31", conn=conn)
     assert "positions" not in r.steps_run and "positions" not in r.steps_skipped
@@ -323,8 +322,9 @@ def test_redact_masks_secret_keys_recursively() -> None:
 
 
 def test_open_cycle_never_persists_the_api_key() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     kg_schema.ensure(conn)
 
     run_id = open_cycle(

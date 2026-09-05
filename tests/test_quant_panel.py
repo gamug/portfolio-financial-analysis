@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 import pytest
+from portfolio_common.db import Database
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
@@ -15,7 +15,7 @@ from quant.panel import PanelError, build_return_panel
 from quant.returns import run_build_returns
 
 
-def _build_returns(conn: sqlite3.Connection) -> None:
+def _build_returns(conn: Database) -> None:
     s = QuantSettings(db_path=Path(":memory:"))
     backfill_corporate_actions(
         s, date_from="2000-01-01", date_to="2100-01-01", source="derive", conn=conn
@@ -24,7 +24,7 @@ def _build_returns(conn: sqlite3.Connection) -> None:
 
 
 def test_panel_excludes_short_history_and_has_no_nan(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
     # asset 6: only ~50 obs
@@ -46,7 +46,7 @@ def test_panel_excludes_short_history_and_has_no_nan(
 
 
 def test_panel_respects_as_of_cutoff_and_fills_a_one_day_hole(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=3, n_days=280, with_dividends=False)
     _build_returns(conn)
@@ -72,7 +72,7 @@ def test_panel_respects_as_of_cutoff_and_fills_a_one_day_hole(
 
 
 def test_panel_drops_partial_coverage_column(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=5, n_days=300, with_dividends=False)
     _build_returns(conn)
@@ -96,7 +96,7 @@ def test_panel_drops_partial_coverage_column(
 
 
 def test_panel_raises_when_window_too_short(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=2, n_days=120, with_dividends=False)
     _build_returns(conn)

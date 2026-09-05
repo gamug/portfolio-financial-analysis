@@ -11,15 +11,15 @@ range, then derives the ``full`` window summary (and per-calendar-year summaries
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from portfolio_common.kg_schema import rundate
-from portfolio_common.kg_schema.provenance import code_version
-from portfolio_common.kg_schema.universe_source import UniverseMember, connect_ro, members_asof
+from portfolio_common.db import Database
 from tqdm import tqdm
 
+from kg_schema import rundate
+from kg_schema.provenance import code_version
+from kg_schema.queries import UniverseMember, connect_ro, members_asof
 from pricing_agent import db
 from pricing_agent.config import Settings
 from pricing_agent.db import PriceWindowRow, RunError
@@ -74,7 +74,7 @@ class _Task:
 
 @dataclass
 class _Engine:
-    conn: sqlite3.Connection
+    conn: Database
     client: PricingClient
     params: RunParams
     report: RunReport
@@ -122,8 +122,11 @@ def run(settings: Settings, params: RunParams) -> RunReport:
 
 def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
     """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
-    with connect_ro(settings.universe_db_path) as uconn:
+    uconn = connect_ro(settings.universe_db_path)
+    try:
         members = members_asof(uconn, analysis_date)
+    finally:
+        uconn.close()
     if not members:
         raise RuntimeError(
             f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"

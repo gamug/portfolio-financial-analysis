@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from datetime import UTC, datetime
 from typing import Any
+
+from portfolio_common.db import Database
 
 # Field names whose values must never reach params_json / detail_json. The cycle
 # settings carry LLM_API_KEY, and json.dumps would otherwise persist it in the
@@ -36,7 +37,7 @@ def _now() -> str:
 
 
 def open_cycle(
-    conn: sqlite3.Connection,
+    conn: Database,
     cycle_type: str,
     cycle_date: str,
     params: dict[str, Any],
@@ -68,7 +69,7 @@ def open_cycle(
 
 
 def checkpoint(
-    conn: sqlite3.Connection,
+    conn: Database,
     cycle_run_id: int,
     step: str,
     status: str,
@@ -87,7 +88,7 @@ def checkpoint(
     conn.commit()
 
 
-def done_steps(conn: sqlite3.Connection, cycle_run_id: int) -> set[str]:
+def done_steps(conn: Database, cycle_run_id: int) -> set[str]:
     return {
         str(r["step"])
         for r in conn.execute(
@@ -97,7 +98,7 @@ def done_steps(conn: sqlite3.Connection, cycle_run_id: int) -> set[str]:
     }
 
 
-def finish_cycle(conn: sqlite3.Connection, cycle_run_id: int, status: str) -> None:
+def finish_cycle(conn: Database, cycle_run_id: int, status: str) -> None:
     conn.execute(
         "UPDATE cycle_run SET status = ?, finished_at = ? WHERE id = ?",
         (status, _now(), cycle_run_id),

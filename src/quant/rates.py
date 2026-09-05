@@ -10,10 +10,11 @@ convention ``(1 + annual) ** (1 / periods_per_year) - 1``.
 from __future__ import annotations
 
 import csv
-import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from portfolio_common.db import Database
 
 from quant.config import QuantSettings
 
@@ -38,7 +39,7 @@ def _daily(annual: float, periods_per_year: int) -> float:
     return float((1.0 + annual) ** (1.0 / periods_per_year)) - 1.0
 
 
-def _upsert(conn: sqlite3.Connection, curve: str, rate_date: str, rate: float, source: str) -> None:
+def _upsert(conn: Database, curve: str, rate_date: str, rate: float, source: str) -> None:
     conn.execute(
         """
         INSERT OR IGNORE INTO risk_free_rate
@@ -60,7 +61,7 @@ def _load_csv(path: Path) -> list[tuple[str, float]]:
     return sorted(rows)
 
 
-def load_risk_free(settings: QuantSettings, *, as_of: str, conn: sqlite3.Connection) -> RiskFree:
+def load_risk_free(settings: QuantSettings, *, as_of: str, conn: Database) -> RiskFree:
     """Resolve (and persist) the risk-free rate for *as_of*."""
     if settings.rf_source == "csv":
         if settings.rf_csv_path is None:

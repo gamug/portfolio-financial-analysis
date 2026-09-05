@@ -16,10 +16,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from portfolio_common import kg_schema
-from portfolio_common.kg_schema.universe_source import UniverseMember
+from portfolio_common.db import Allowlist, Database
 
+import kg_schema
 from fundamental_agent.metrics.base import MetricResult
+from kg_schema.queries import UniverseMember
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.
@@ -170,19 +171,21 @@ CREATE TABLE IF NOT EXISTS analysis_run_error (
 """
 
 _REQUIRED_ASSET_COLUMNS = {"id", "ticker", "company_name", "cik", "sector_id", "sub_industry"}
+# The only columns `bump_run_counter` may interpolate into an UPDATE ... SET.
+_COUNTER_COLUMNS = Allowlist("completed_units", "skipped_units", "failed_units")
 
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+def connect(path: str | Path) -> Database:
     """The shared connection factory (:func:`kg_schema.connect`), re-exposed here
     so ``fundamental_agent`` code keeps importing it from ``fundamental_agent.db``."""
     return kg_schema.connect(path)
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: Database) -> None:
     """Create any missing tables and verify a pre-existing ``assets`` is usable."""
     conn.executescript(SCHEMA)
     conn.commit()
@@ -203,7 +206,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 # -- universe ---------------------------------------------------------------
 
 
-def sync_universe(conn: sqlite3.Connection, members: Iterable[UniverseMember]) -> int:
+def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     """Insert/update ``assets`` and ``sectors`` from *members* -- the write-once
     identity path where a brand-new S&P 500 symbol first gets its ``assets.id``.
 
@@ -229,7 +232,7 @@ def sync_universe(conn: sqlite3.Connection, members: Iterable[UniverseMember]) -
     return count
 
 
-def _upsert_sector(conn: sqlite3.Connection, name: str) -> int | None:
+def _upsert_sector(conn: Database, name: str) -> int | None:
     if not name:
         return None
     conn.execute("INSERT OR IGNORE INTO sectors (name) VALUES (?)", (name,))
@@ -238,7 +241,7 @@ def _upsert_sector(conn: sqlite3.Connection, name: str) -> int | None:
 
 
 def load_universe(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     tickers: Sequence[str] | None = None,
     symbols: Sequence[str] | None = None,
@@ -270,7 +273,7 @@ def load_universe(
 
 
 def upsert_filing(
-    conn: sqlite3.Connection, key: FilingKey, meta: FilingMeta, *, run_id: int | None = None
+    conn: Database, key: FilingKey, meta: FilingMeta, *, run_id: int | None = None
 ) -> int:
     conn.execute(
         """
@@ -305,7 +308,7 @@ def upsert_filing(
 
 
 def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
-    conn: sqlite3.Connection,
+    conn: Database,
     filing_id: int,
     facts: Iterable[dict[str, Any]],
     *,
@@ -361,7 +364,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
 
 
 def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
-    conn: sqlite3.Connection,
+    conn: Database,
     filing_id: int,
     results: Iterable[tuple[str, MetricResult]],
     *,
@@ -419,7 +422,7 @@ SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"
 
 
 def insert_filing_sections(  # noqa: PLR0913 - keyword-only provenance fields
-    conn: sqlite3.Connection,
+    conn: Database,
     filing_id: int,
     sections: Iterable[Any],
     *,
@@ -467,7 +470,7 @@ def insert_filing_sections(  # noqa: PLR0913 - keyword-only provenance fields
     return len(rows)
 
 
-def filings_with_sections(conn: sqlite3.Connection) -> set[int]:
+def filings_with_sections(conn: Database) -> set[int]:
     """``filing_id`` values that already have at least one extracted section."""
     return {int(r[0]) for r in conn.execute("SELECT DISTINCT filing_id FROM sec_filing_section")}
 
@@ -475,7 +478,7 @@ def filings_with_sections(conn: sqlite3.Connection) -> set[int]:
 # -- snapshots & resume -------------------------------------------------
 
 
-def completed_units(conn: sqlite3.Connection) -> set[tuple[str, str, str]]:
+def completed_units(conn: Database) -> set[tuple[str, str, str]]:
     """``(ticker, form, fiscal_period)`` triples that already have a FUNDAMENTAL score."""
     rows = conn.execute(
         """
@@ -489,9 +492,7 @@ def completed_units(conn: sqlite3.Connection) -> set[tuple[str, str, str]]:
     return {(r["ticker"], r["form"], r["fiscal_period"]) for r in rows}
 
 
-def insert_snapshot(
-    conn: sqlite3.Connection, row: SnapshotRow, *, run_id: int | None = None
-) -> None:
+def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = None) -> None:
     """Append one immutable FUNDAMENTAL ``score_snapshot`` row. Resume-safe:
     a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored."""
     conn.execute(
@@ -526,7 +527,7 @@ def insert_snapshot(
 
 
 def start_run(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     params: dict[str, Any],
     as_of: str | None = None,
@@ -541,9 +542,7 @@ def start_run(
     return int(cur.lastrowid or 0)
 
 
-def update_run_plan(
-    conn: sqlite3.Connection, run_id: int, *, universe_size: int, planned_units: int
-) -> None:
+def update_run_plan(conn: Database, run_id: int, *, universe_size: int, planned_units: int) -> None:
     conn.execute(
         "UPDATE analysis_run SET universe_size = ?, planned_units = ? WHERE id = ?",
         (universe_size, planned_units, run_id),
@@ -551,8 +550,8 @@ def update_run_plan(
     conn.commit()
 
 
-def bump_run_counter(conn: sqlite3.Connection, run_id: int, column: str) -> None:
-    if column not in {"completed_units", "skipped_units", "failed_units"}:
+def bump_run_counter(conn: Database, run_id: int, column: str) -> None:
+    if column not in _COUNTER_COLUMNS:
         raise ValueError(f"not a counter column: {column}")
     conn.execute(
         f"UPDATE analysis_run SET {column} = {column} + 1 WHERE id = ?",  # noqa: S608
@@ -564,7 +563,7 @@ def bump_run_counter(conn: sqlite3.Connection, run_id: int, column: str) -> None
 _MAX_ERROR_CHARS = 2000
 
 
-def record_error(conn: sqlite3.Connection, run_id: int, error: RunError) -> None:
+def record_error(conn: Database, run_id: int, error: RunError) -> None:
     conn.execute(
         """
         INSERT INTO analysis_run_error
@@ -584,7 +583,7 @@ def record_error(conn: sqlite3.Connection, run_id: int, error: RunError) -> None
     conn.commit()
 
 
-def finish_run(conn: sqlite3.Connection, run_id: int, *, status: str) -> None:
+def finish_run(conn: Database, run_id: int, *, status: str) -> None:
     conn.execute(
         "UPDATE analysis_run SET finished_at = ?, status = ? WHERE id = ?",
         (_now(), status, run_id),
