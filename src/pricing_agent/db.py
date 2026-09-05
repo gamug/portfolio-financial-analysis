@@ -7,13 +7,12 @@ altered, so either module can populate the universe first.
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from portfolio_common.db import Allowlist, Database
+from portfolio_common.db import Allowlist, Database, Row
 
 import kg_schema
 from kg_schema.queries import UniverseMember
@@ -119,9 +118,9 @@ def _now() -> str:
 
 
 def ensure_schema(conn: Database) -> None:
-    conn.executescript(SCHEMA)
+    conn.create_schema(SCHEMA)
     conn.commit()
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(assets)")}
+    columns = set(conn.table_columns("assets"))
     missing = _REQUIRED_ASSET_COLUMNS - columns
     if missing:
         raise RuntimeError(
@@ -173,7 +172,7 @@ def load_universe(
     tickers: Sequence[str] | None = None,
     symbols: Sequence[str] | None = None,
     limit: int | None = None,
-) -> list[sqlite3.Row]:
+) -> list[Row]:
     query = "SELECT id, ticker, company_name FROM assets"
     params: list[Any] = []
     clauses: list[str] = []

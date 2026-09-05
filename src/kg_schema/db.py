@@ -28,16 +28,16 @@ def connect(
 ) -> Database:
     """Open *path* with the shared pragma policy.
 
-    Always: rows come back as :class:`sqlite3.Row`; ``journal_mode`` is left at
-    SQLite's default rollback journal (see module docstring -- never WAL for
-    this domain).
+    Always: rows come back as :data:`portfolio_common.db.Row`;
+    ``journal_mode`` is left at the engine's default rollback journal (see
+    module docstring -- never WAL for this domain).
 
     Read/write (default): ``PRAGMA foreign_keys = ON`` and a busy_timeout are
     applied -- neither is persistent, so both are reapplied on every
     connection; a connection that finds the file write-locked then retries
-    internally instead of raising ``sqlite3.OperationalError: database is
-    locked`` immediately. Parent directories of *path* are created unless
-    *create_parents* is False.
+    internally instead of raising ``portfolio_common.db.DatabaseError:
+    database is locked`` immediately. Parent directories of *path* are created
+    unless *create_parents* is False.
 
     ``read_only=True``: opens ``file:{path}?mode=ro`` -- URI read-only, no
     pragmas beyond the row factory, no directory creation (``Database.connect``

@@ -9,7 +9,6 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -17,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-from portfolio_common.db import Database, in_clause
+from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 import kg_schema
 from kg_schema.env import universe_database_path
@@ -50,7 +49,7 @@ def _now() -> str:
 
 
 def ensure_schema(conn: Database) -> None:
-    conn.executescript(SCHEMA)
+    conn.create_schema(SCHEMA)
     conn.commit()
     kg_schema.ensure(conn)
 
@@ -168,7 +167,7 @@ def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
             "WHERE severity = 'HARD' AND cleared_at IS NULL AND cycle_date <= ?",
             (cutoff_date,),
         ).fetchall()
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return set()  # no veto table in this DB
     return {int(r["asset_id"]) for r in rows}
 
@@ -284,7 +283,7 @@ def load_market_caps(conn: Database, asset_ids: list[int]) -> dict[int, float]:
             "WHERE fm.metric_group = 'valuation' AND fm.metric_name = 'market_capitalization' "
             "ORDER BY sf.period_end"
         ).fetchall()
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return out
     wanted = set(asset_ids)
     for r in rows:
@@ -416,8 +415,8 @@ def load_covariance(conn: Database, model_id: int) -> tuple[list[int], npt.NDArr
     return ids, m
 
 
-def load_risk_model(conn: Database, *, as_of: str, model_version: str) -> sqlite3.Row | None:
-    row: sqlite3.Row | None = conn.execute(
+def load_risk_model(conn: Database, *, as_of: str, model_version: str) -> Row | None:
+    row: Row | None = conn.execute(
         "SELECT * FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
         (as_of, model_version),
     ).fetchone()
@@ -570,7 +569,7 @@ def load_live_book(conn: Database, as_of: str) -> dict[int, float]:
             "WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?) AND weight IS NOT NULL",
             (as_of, as_of),
         ).fetchall()
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return {}
     return {int(r["asset_id"]): float(r["weight"]) for r in rows}
 

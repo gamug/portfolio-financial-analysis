@@ -4,11 +4,10 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import date
 
 from fastapi import APIRouter, Depends, Query
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 from api.dependencies import get_db, get_universe_db
 from api.models import CoverageRow, CoverageSummary, UniverseMemberOut
@@ -75,7 +74,7 @@ def _persisted_coverage(db: Database, as_of: str, universe: str) -> CoverageSumm
             "WHERE as_of = ? AND universe = ? ORDER BY symbol",
             (as_of, universe),
         )
-    except sqlite3.OperationalError:
+    except DatabaseError:
         return None
     rows = [
         CoverageRow(

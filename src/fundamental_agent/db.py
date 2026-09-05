@@ -9,13 +9,12 @@ is owned by this agent. ``fundamental_snapshot`` is append-only: one immutable r
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from portfolio_common.db import Allowlist, Database
+from portfolio_common.db import Allowlist, Database, Row
 
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult
@@ -180,11 +179,9 @@ def _now() -> str:
 
 def ensure_schema(conn: Database) -> None:
     """Create any missing tables and verify a pre-existing ``assets`` is usable."""
-    conn.executescript(SCHEMA)
+    conn.create_schema(SCHEMA)
     conn.commit()
-    # PRAGMA table_info columns: (cid, name, type, notnull, dflt_value, pk); index by
-    # position so this works regardless of the connection's row_factory.
-    columns = {row[1] for row in conn.execute("PRAGMA table_info(assets)")}
+    columns = set(conn.table_columns("assets"))
     missing = _REQUIRED_ASSET_COLUMNS - columns
     if missing:
         raise RuntimeError(
@@ -239,7 +236,7 @@ def load_universe(
     tickers: Sequence[str] | None = None,
     symbols: Sequence[str] | None = None,
     limit: int | None = None,
-) -> list[sqlite3.Row]:
+) -> list[Row]:
     """Return asset rows, restricted to the point-in-time universe *symbols* (and,
     if given, further to *tickers*), capped at *limit*."""
     query = "SELECT id, ticker, company_name, cik FROM assets"
@@ -313,9 +310,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
     *filing_version* collide on the unique key and are ignored; a restatement under
     a new *filing_version* coexists (post-``migrate``; pre-``migrate`` the older
     unique key still wins, which is the documented limitation)."""
-    has_versioned = "filing_version" in {
-        r[1] for r in conn.execute("PRAGMA table_info(financial_facts)")
-    }
+    has_versioned = "filing_version" in conn.table_columns("financial_facts")
     now = _now()
     rows = [
         (
@@ -369,9 +364,7 @@ def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
     ``(filing_id, group, name, engine_version)``. Recomputing with the same
     *engine_version* is a no-op; a new version writes a parallel row."""
     now = _now()
-    has_versioned = "engine_version" in {
-        r[1] for r in conn.execute("PRAGMA table_info(fundamental_metrics)")
-    }
+    has_versioned = "engine_version" in conn.table_columns("fundamental_metrics")
     base = [
         (
             filing_id,

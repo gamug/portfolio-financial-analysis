@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 from fastapi import APIRouter, Depends
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 from api import __version__
 from api.config import ApiSettings
@@ -32,12 +30,12 @@ def health_db(
         row = db.execute("SELECT MAX(version) FROM schema_version").fetchone()
         schema_version = int(row[0]) if row and row[0] is not None else None
         ok = True
-    except sqlite3.OperationalError:
+    except DatabaseError:
         ok = False
     try:
         udb.execute("SELECT 1 FROM universe_membership LIMIT 1")
         universe_ok = True
-    except sqlite3.OperationalError:
+    except DatabaseError:
         universe_ok = False
     return DbHealth(
         ok=ok,

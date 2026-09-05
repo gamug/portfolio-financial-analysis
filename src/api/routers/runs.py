@@ -4,10 +4,8 @@
 
 from __future__ import annotations
 
-import sqlite3
-
 from fastapi import APIRouter, Depends, Query
-from portfolio_common.db import Allowlist, Database
+from portfolio_common.db import Allowlist, Database, DatabaseError
 
 from api.dependencies import Page, get_db, page_params
 from api.models import RunKind, RunRow
@@ -43,7 +41,7 @@ def list_runs(
             params.append(status)
         try:
             cur = db.execute(sql, params)
-        except sqlite3.OperationalError:
+        except DatabaseError:
             continue  # view absent in this DB
         for r in cur:
             out.append(

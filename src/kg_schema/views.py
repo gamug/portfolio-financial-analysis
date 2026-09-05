@@ -92,9 +92,7 @@ Projection semantics
 
 from __future__ import annotations
 
-import sqlite3
-
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 VIEWS: dict[str, str] = {
     "v_score_snapshot": """
@@ -380,6 +378,6 @@ def ensure_views(db: Database) -> None:
         try:
             db.execute(ddl)
             db.execute(f"SELECT 1 FROM {name} LIMIT 0")  # noqa: S608 - name is our own key
-        except sqlite3.OperationalError:
+        except DatabaseError:
             db.execute(f"DROP VIEW IF EXISTS {name}")
     db.commit()

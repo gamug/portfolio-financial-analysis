@@ -65,7 +65,7 @@ packages = [
 # engine contract. For local work against a checkout next to this repo,
 # override with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.0.0" }
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.1" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
