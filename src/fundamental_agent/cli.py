@@ -7,12 +7,11 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from portfolio_common.kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
-from portfolio_common.kg_schema.rundate import add_analysis_date_argument
-from portfolio_common.kg_schema.rundate import resolve as resolve_analysis_date
-
 from fundamental_agent.config import Settings
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
+from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 
 
 def build_parser() -> argparse.ArgumentParser:

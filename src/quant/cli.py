@@ -10,14 +10,14 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from portfolio_common.kg_schema.cli import add_coverage_parser, coverage_from_args
-from portfolio_common.kg_schema.rundate import add_analysis_date_argument
-from portfolio_common.kg_schema.rundate import resolve as resolve_analysis_date
-
+from kg_schema import connect
+from kg_schema.cli import add_coverage_parser, coverage_from_args
+from kg_schema.rundate import add_analysis_date_argument
+from kg_schema.rundate import resolve as resolve_analysis_date
 from quant.actions import backfill_corporate_actions
 from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
-from quant.db import connect, ensure_schema
+from quant.db import ensure_schema
 from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import UTC, datetime
+
+from portfolio_common.db import Database
 
 from cycle.rules.base import VetoHit
 from cycle.scores.sector import SectorAggregate
@@ -15,7 +16,7 @@ def _now() -> str:
 
 
 def write_scores(  # noqa: PLR0913, PLR0917 - a wide row writer; splitting hurts clarity
-    conn: sqlite3.Connection,
+    conn: Database,
     score_type: str,
     cycle_date: str,
     raw: dict[int, float],
@@ -57,7 +58,7 @@ def write_scores(  # noqa: PLR0913, PLR0917 - a wide row writer; splitting hurts
 
 
 def apply_normalized(
-    conn: sqlite3.Connection, score_type: str, cycle_date: str, normalized: dict[int, float]
+    conn: Database, score_type: str, cycle_date: str, normalized: dict[int, float]
 ) -> None:
     conn.executemany(
         "UPDATE score_snapshot SET normalized_score = ? "
@@ -68,7 +69,7 @@ def apply_normalized(
 
 
 def write_sector_aggregates(
-    conn: sqlite3.Connection,
+    conn: Database,
     cycle_date: str,
     aggregates: list[SectorAggregate],
     *,
@@ -96,7 +97,7 @@ def write_sector_aggregates(
 
 
 def write_vetoes(
-    conn: sqlite3.Connection, cycle_date: str, hits: list[VetoHit], *, run_id: int
+    conn: Database, cycle_date: str, hits: list[VetoHit], *, run_id: int
 ) -> tuple[int, int]:
     """Insert new hits, clear ones whose condition no longer holds. Returns (opened, cleared)."""
     now = _now()
@@ -130,7 +131,7 @@ def write_vetoes(
     return len(hits), cleared
 
 
-def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
+def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
     """asset_ids carrying an uncleared HARD veto detected on or before *cutoff_date*
     -- the T-1 contagion filter (cycle on N reads cycle_date <= N-1)."""
     rows = conn.execute(
@@ -143,7 +144,7 @@ def hard_vetoed_as_of(conn: sqlite3.Connection, cutoff_date: str) -> set[int]:
     return {int(r["asset_id"]) for r in rows}
 
 
-def active_soft_vetoes(conn: sqlite3.Connection, cutoff_date: str) -> dict[int, list[str]]:
+def active_soft_vetoes(conn: Database, cutoff_date: str) -> dict[int, list[str]]:
     rows = conn.execute(
         """
         SELECT asset_id, rule_id FROM veto
@@ -157,9 +158,7 @@ def active_soft_vetoes(conn: sqlite3.Connection, cutoff_date: str) -> dict[int, 
     return out
 
 
-def write_ranking(
-    conn: sqlite3.Connection, cycle_run_id: int, ranked: list[dict[str, object]]
-) -> None:
+def write_ranking(conn: Database, cycle_run_id: int, ranked: list[dict[str, object]]) -> None:
     conn.execute("DELETE FROM cycle_ranking WHERE cycle_run_id = ?", (cycle_run_id,))
     conn.executemany(
         """
@@ -186,7 +185,7 @@ def write_ranking(
 
 
 def sync_positions(
-    conn: sqlite3.Connection,
+    conn: Database,
     cycle_date: str,
     targets: dict[int, float],
     closes: dict[int, float | None],

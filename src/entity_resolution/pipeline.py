@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from portfolio_common.kg_schema import rundate
-from portfolio_common.kg_schema.provenance import code_version
-from portfolio_common.kg_schema.universe_source import connect_ro as connect_universe_ro
-from portfolio_common.kg_schema.universe_source import symbols_asof
+from portfolio_common.db import Database
 
 from entity_resolution import db as er_db
 from entity_resolution.config import Settings
 from entity_resolution.cooccurrence import MIN_WEIGHT_DEFAULT, build_edges
 from entity_resolution.denylist import MAX_TICKERS_DEFAULT, MIN_ARTICLES_DEFAULT
-from entity_resolution.news_db import connect_ro
+from kg_schema import connect, connect_ro, rundate
+from kg_schema.provenance import code_version
+from kg_schema.queries import symbols_asof
 
 
 @dataclass
@@ -34,7 +32,7 @@ class RunReport:
     edges: int
 
 
-def _open_cycle(conn: sqlite3.Connection, params: RunParams) -> int:
+def _open_cycle(conn: Database, params: RunParams) -> int:
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     cycle_date = params.analysis_date
     cur = conn.execute(
@@ -59,11 +57,14 @@ def _open_cycle(conn: sqlite3.Connection, params: RunParams) -> int:
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
-    conn = er_db.connect(settings.db_path)
+    conn = connect(settings.db_path)
     try:
         er_db.ensure_schema(conn)
-        with connect_universe_ro(settings.universe_db_path) as uconn:
+        uconn = connect_ro(settings.universe_db_path)
+        try:
             tickers = symbols_asof(uconn, params.analysis_date)
+        finally:
+            uconn.close()
         run_id = _open_cycle(conn, params)
         news = connect_ro(settings.news_db_path)
         try:

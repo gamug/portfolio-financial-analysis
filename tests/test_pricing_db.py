@@ -5,8 +5,9 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from portfolio_common.kg_schema.universe_source import UniverseMember
+from portfolio_common.db import Database
 
+from kg_schema.queries import UniverseMember
 from pricing_agent import db
 from pricing_agent.db import PriceWindowRow
 from pricing_agent.stats import WindowStats
@@ -30,9 +31,10 @@ def _member(
 
 
 @pytest.fixture
-def memory_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def memory_db() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     db.ensure_schema(conn)
     return conn
@@ -58,7 +60,7 @@ def _stats() -> WindowStats:
     )
 
 
-def test_ensure_schema_idempotent_and_owns_price_tables(memory_db: sqlite3.Connection) -> None:
+def test_ensure_schema_idempotent_and_owns_price_tables(memory_db: Database) -> None:
     db.ensure_schema(memory_db)
     tables = {
         r["name"] for r in memory_db.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -67,14 +69,14 @@ def test_ensure_schema_idempotent_and_owns_price_tables(memory_db: sqlite3.Conne
 
 
 def test_ensure_schema_rejects_incompatible_assets() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = Database(sqlite3.connect(":memory:"))
     conn.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT)")
     conn.commit()
     with pytest.raises(RuntimeError, match="missing columns"):
         db.ensure_schema(conn)
 
 
-def test_sync_universe_does_not_wipe_existing_cik(memory_db: sqlite3.Connection) -> None:
+def test_sync_universe_does_not_wipe_existing_cik(memory_db: Database) -> None:
     memory_db.execute("INSERT INTO assets (ticker, cik) VALUES ('AAPL', '0000320193')")
     memory_db.commit()
     blank = _member("AAPL", name="Apple", cik="")
@@ -84,7 +86,7 @@ def test_sync_universe_does_not_wipe_existing_cik(memory_db: sqlite3.Connection)
     assert row["company_name"] == "Apple"
 
 
-def test_price_window_upsert_and_resume(memory_db: sqlite3.Connection) -> None:
+def test_price_window_upsert_and_resume(memory_db: Database) -> None:
     db.sync_universe(memory_db, [_company("AAPL")])
     asset_id = db.load_universe(memory_db)[0]["id"]
     row = PriceWindowRow(
@@ -104,7 +106,7 @@ def test_price_window_upsert_and_resume(memory_db: sqlite3.Connection) -> None:
     assert db.completed_windows(memory_db) == {("AAPL", "2022-01-01", "2026-08-28", "full")}
 
 
-def test_bump_run_counter_rejects_injection(memory_db: sqlite3.Connection) -> None:
+def test_bump_run_counter_rejects_injection(memory_db: Database) -> None:
     run_id = db.start_run(memory_db, params_json="{}")
     with pytest.raises(ValueError, match="counter column"):
         db.bump_run_counter(memory_db, run_id, "completed_units; DROP TABLE assets")

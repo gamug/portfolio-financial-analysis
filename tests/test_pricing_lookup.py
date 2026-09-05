@@ -5,14 +5,16 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from portfolio_common.db import Database
 
 from fundamental_agent.pricing import ClosePrice, close_on_or_before
 
 
 @pytest.fixture
-def priced_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def priced_db() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute(
         """
         CREATE TABLE price_daily (
@@ -35,32 +37,32 @@ def priced_db() -> sqlite3.Connection:
     return conn
 
 
-def test_exact_date_hit(priced_db: sqlite3.Connection) -> None:
+def test_exact_date_hit(priced_db: Database) -> None:
     assert close_on_or_before(priced_db, 1, "2023-09-29") == ClosePrice("2023-09-29", 171.21)
 
 
 def test_falls_back_to_the_last_close_before_a_weekend_period_end(
-    priced_db: sqlite3.Connection,
+    priced_db: Database,
 ) -> None:
     got = close_on_or_before(priced_db, 1, "2023-09-30")
     assert got == ClosePrice("2023-09-29", 171.21)
 
 
-def test_never_looks_forward(priced_db: sqlite3.Connection) -> None:
+def test_never_looks_forward(priced_db: Database) -> None:
     # 2023-10-02 exists but is after the period-end -- must not be picked.
     got = close_on_or_before(priced_db, 1, "2023-09-30")
     assert got is not None
     assert got.date == "2023-09-29"
 
 
-def test_returns_none_beyond_the_lookback_window(priced_db: sqlite3.Connection) -> None:
+def test_returns_none_beyond_the_lookback_window(priced_db: Database) -> None:
     assert close_on_or_before(priced_db, 1, "2023-10-20", max_lookback_days=7) is None
 
 
-def test_returns_none_for_an_asset_with_no_rows(priced_db: sqlite3.Connection) -> None:
+def test_returns_none_for_an_asset_with_no_rows(priced_db: Database) -> None:
     assert close_on_or_before(priced_db, 999, "2023-09-29") is None
 
 
 def test_missing_price_table_is_tolerated() -> None:
-    bare = sqlite3.connect(":memory:")
+    bare = Database(sqlite3.connect(":memory:"))
     assert close_on_or_before(bare, 1, "2023-09-29") is None

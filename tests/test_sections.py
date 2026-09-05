@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
+
+from portfolio_common.db import Database
 
 from fundamental_agent import db
 from fundamental_agent.sections import Section, canonical_item_label, split_sections
@@ -66,7 +67,7 @@ def test_10q_uses_a_different_item_map() -> None:
     assert types == {"MD&A", "RISK_FACTORS"}
 
 
-def test_insert_filing_sections_is_immutable(memory_db: sqlite3.Connection) -> None:
+def test_insert_filing_sections_is_immutable(memory_db: Database) -> None:
     memory_db.execute("INSERT INTO assets (ticker) VALUES ('AAPL')")
     memory_db.execute(
         "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, retrieved_at) "

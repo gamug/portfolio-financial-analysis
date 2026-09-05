@@ -45,7 +45,7 @@ candidates (`BRK.B` → `BRK-B` → `BRKB`).
 ### universe source
 
 The Wikipedia scraper is gone. `pipeline._load_members` reads
-`kg_schema.universe_source.members_asof(universe_conn, analysis_date)` — a
+`kg_schema.queries.members_asof(universe_conn, analysis_date)` — a
 point-in-time query over `universe.db` — and `db.sync_universe` upserts those
 `UniverseMember`s into `assets` / `sectors` (the identity-write path where a new
 S&P 500 symbol first gets its `assets.id`). No `universe_membership` /

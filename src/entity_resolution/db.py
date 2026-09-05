@@ -1,15 +1,17 @@
-"""Write ``shared_executive_edge`` into ``KG_FINANCIAL_DB``."""
+"""Write ``shared_executive_edge`` into ``KG_FINANCIAL_DB``.
+
+The connection factory lives at :func:`kg_schema.connect` -- import it from
+there directly rather than through this module."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from pathlib import Path
 
-from portfolio_common import kg_schema
+from portfolio_common.db import Database
 
+import kg_schema
 from entity_resolution.cooccurrence import Edge
 
 METHOD = "news-per-cooccurrence-v1"
@@ -19,22 +21,16 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
-    """The shared connection factory (:func:`kg_schema.connect`), re-exposed here
-    so ``entity_resolution`` code keeps importing it from ``entity_resolution.db``."""
-    return kg_schema.connect(path)
-
-
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: Database) -> None:
     kg_schema.ensure(conn)
 
 
-def _asset_ids(conn: sqlite3.Connection) -> dict[str, int]:
+def _asset_ids(conn: Database) -> dict[str, int]:
     return {str(r["ticker"]): int(r["id"]) for r in conn.execute("SELECT id, ticker FROM assets")}
 
 
 def replace_edges(
-    conn: sqlite3.Connection,
+    conn: Database,
     edges: Iterable[Edge],
     *,
     method: str = METHOD,

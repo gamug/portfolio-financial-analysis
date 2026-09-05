@@ -5,11 +5,12 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from portfolio_common import kg_schema
-from portfolio_common.kg_schema import migrations, universe_membership, version
-from portfolio_common.kg_schema.env import database_path
+from portfolio_common.db import Database
 
+import kg_schema
 from fundamental_agent.sections import _SPECS, canonical_item_label
+from kg_schema import migrations, queries
+from kg_schema.env import database_path
 
 # Pre-kg_schema table shapes, as the two agents shipped them originally.
 _LEGACY_SQL = """
@@ -49,9 +50,10 @@ CREATE TABLE fundamental_snapshot (
 """
 
 
-def _legacy_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+def _legacy_conn() -> Database:
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_LEGACY_SQL)
     conn.execute("INSERT INTO assets (ticker, company_name) VALUES ('AAPL', 'Apple')")
@@ -80,7 +82,7 @@ def _legacy_conn() -> sqlite3.Connection:
 
 
 @pytest.fixture
-def migrated_db() -> sqlite3.Connection:
+def migrated_db() -> Database:
     conn = _legacy_conn()
     kg_schema.ensure(conn, run_migrations=True)
     return conn
@@ -102,12 +104,12 @@ def test_ensure_is_idempotent_and_additive() -> None:
     ff_cols = {r[1] for r in conn.execute("PRAGMA table_info(financial_facts)")}
     assert {"event_time", "filing_version"} <= ff_cols
     # additive-only path never advances the version
-    assert version.current_version(conn) == 0
+    assert queries.current_version(conn) == 0
 
 
-def test_migrations_rebuild_and_preserve_rows(migrated_db: sqlite3.Connection) -> None:
+def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert version.current_version(conn) == 6
+    assert queries.current_version(conn) == 6
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
@@ -140,7 +142,7 @@ def test_migrations_rebuild_and_preserve_rows(migrated_db: sqlite3.Connection) -
     assert tuple(compat) == ("AAPL", "10-K", "FY2023", 72.0, "bullish")
 
 
-def test_migrations_are_a_noop_second_time(migrated_db: sqlite3.Connection) -> None:
+def test_migrations_are_a_noop_second_time(migrated_db: Database) -> None:
     assert migrations.apply_migrations(migrated_db) == []
 
 
@@ -159,8 +161,9 @@ def test_database_path_prefers_canonical_then_legacy(monkeypatch: pytest.MonkeyP
 
 
 def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     # a database already at floor 4: score_snapshot with the pre-SECTOR CHECK + compat view
     conn.executescript(
@@ -198,8 +201,8 @@ def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
         WHERE s.score_type = 'FUNDAMENTAL';
         """
     )
-    version.ensure(conn)
-    version.record(conn, 4, "pretend floor")
+    queries.ensure(conn)
+    queries.record(conn, 4, "pretend floor")
     conn.commit()
 
     assert 5 in kg_schema.ensure(conn, run_migrations=True)
@@ -224,8 +227,9 @@ def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
 
 
 def test_m006_renames_quantitative_score_type_to_valorization() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     # a database already at floor 5: SECTOR admitted, but the blend factor is still
     # called 'QUANTITATIVE' -- in the score_type CHECK, the rows, and the blend JSON.
@@ -273,8 +277,8 @@ def test_m006_renames_quantitative_score_type_to_valorization() -> None:
         VALUES (1, 1, 1, 61.0, '{"FUNDAMENTAL": 70.0, "QUANTITATIVE": 63.0}');
         """
     )
-    version.ensure(conn)
-    version.record(conn, 5, "pretend floor")
+    queries.ensure(conn)
+    queries.record(conn, 5, "pretend floor")
     conn.commit()
 
     assert 6 in kg_schema.ensure(conn, run_migrations=True)
@@ -302,7 +306,7 @@ def test_m006_renames_quantitative_score_type_to_valorization() -> None:
     assert "VALORIZATION" in comp_types and "QUANTITATIVE" not in comp_types
 
 
-def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
+def test_views_select_cleanly(migrated_db: Database) -> None:
     for name in (
         "v_score_snapshot",
         "v_universe_membership",
@@ -330,7 +334,7 @@ def test_views_select_cleanly(migrated_db: sqlite3.Connection) -> None:
         migrated_db.execute(f"SELECT * FROM {name} LIMIT 1").fetchall()  # noqa: S608 - fixed view names
 
 
-def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> None:
+def test_v_sec_filing_is_one_row_per_filing(migrated_db: Database) -> None:
     rows = migrated_db.execute(
         "SELECT ticker, form, fiscal_period, accession_number, period_end FROM v_sec_filing"
     ).fetchall()
@@ -340,7 +344,7 @@ def test_v_sec_filing_is_one_row_per_filing(migrated_db: sqlite3.Connection) -> 
 
 
 def test_v_sec_filing_section_item_label_matches_python_vocab(
-    migrated_db: sqlite3.Connection,
+    migrated_db: Database,
 ) -> None:
     conn = migrated_db
     cases: list[tuple[str | None, str]] = [
@@ -369,7 +373,7 @@ def test_v_sec_filing_section_item_label_matches_python_vocab(
     assert got[len(cases) - 1] == "MDA"
 
 
-def test_v_sector_and_v_industry_roll_up_assets(migrated_db: sqlite3.Connection) -> None:
+def test_v_sector_and_v_industry_roll_up_assets(migrated_db: Database) -> None:
     conn = migrated_db
     conn.execute("INSERT INTO sectors (id, name) VALUES (1, 'Information Technology')")
     conn.executemany(
@@ -391,7 +395,7 @@ def test_v_sector_and_v_industry_roll_up_assets(migrated_db: sqlite3.Connection)
     }
 
 
-def test_v_rule_catalog_unpacks_threshold_params(migrated_db: sqlite3.Connection) -> None:
+def test_v_rule_catalog_unpacks_threshold_params(migrated_db: Database) -> None:
     conn = migrated_db
     conn.executemany(
         "INSERT INTO rule_catalog (rule_id, description, severity, params_json, enabled, "
@@ -422,7 +426,7 @@ def test_v_rule_catalog_unpacks_threshold_params(migrated_db: sqlite3.Connection
     assert rows["PRICE_CRASH"] == ("SOFT", 0, None, None, -0.35)
 
 
-def test_weight_scheme_views_explode_the_blend(migrated_db: sqlite3.Connection) -> None:
+def test_weight_scheme_views_explode_the_blend(migrated_db: Database) -> None:
     conn = migrated_db
     conn.execute(
         "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status, params_json) "
@@ -462,14 +466,14 @@ def test_universe_membership_lifecycle() -> None:
     conn = _legacy_conn()
     kg_schema.ensure(conn)
     # AAPL(1), MSFT(2) present
-    opened, closed = universe_membership.reconcile(
+    opened, closed = queries.reconcile(
         conn, "SP500", {1, 2}, as_of="2026-01-01", source="wikipedia"
     )
     assert (opened, closed) == (2, 0)
     # MSFT leaves, NVDA(3) joins
     conn.execute("INSERT INTO assets (ticker) VALUES ('NVDA')")
     conn.commit()
-    opened, closed = universe_membership.reconcile(
+    opened, closed = queries.reconcile(
         conn, "SP500", {1, 3}, as_of="2026-04-01", source="wikipedia"
     )
     assert (opened, closed) == (1, 1)
@@ -483,7 +487,7 @@ def test_universe_membership_lifecycle() -> None:
         (3, "2026-04-01", None),
     }
     # MSFT rejoins -> a fresh open stint, old one stays closed
-    universe_membership.reconcile(conn, "SP500", {1, 2, 3}, as_of="2026-07-01", source="wikipedia")
+    queries.reconcile(conn, "SP500", {1, 2, 3}, as_of="2026-07-01", source="wikipedia")
     msft = conn.execute(
         "SELECT valid_from, valid_to FROM universe_membership WHERE asset_id = 2 "
         "ORDER BY valid_from"

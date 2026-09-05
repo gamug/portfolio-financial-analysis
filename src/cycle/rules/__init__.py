@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import UTC, datetime
+
+from portfolio_common.db import Database
 
 from cycle.rules.base import Rule, RuleContext, VetoHit
 from cycle.rules.builtin import RULES
@@ -12,7 +13,7 @@ from cycle.rules.builtin import RULES
 __all__ = ["RULES", "Rule", "RuleContext", "VetoHit", "enabled_rules", "seed_catalog"]
 
 
-def seed_catalog(conn: sqlite3.Connection) -> None:
+def seed_catalog(conn: Database) -> None:
     """Insert any missing rules into ``rule_catalog`` (never overwrites)."""
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     conn.executemany(
@@ -26,7 +27,7 @@ def seed_catalog(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def enabled_rules(conn: sqlite3.Connection) -> list[Rule]:
+def enabled_rules(conn: Database) -> list[Rule]:
     rows = {
         str(r["rule_id"])
         for r in conn.execute("SELECT rule_id FROM rule_catalog WHERE enabled = 1")

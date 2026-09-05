@@ -4,10 +4,10 @@ the view is the contract."""
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from portfolio_common.db import Database
 
 from api.db import rows
 from api.dependencies import Page, get_db, page_params
@@ -23,7 +23,7 @@ def list_scores(
     ),
     as_of: str | None = Query(None, description="only rows with event_time <= this date"),
     page: Page = Depends(page_params),
-    db: sqlite3.Connection = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
     sql = "SELECT * FROM v_score_snapshot"
     clauses: list[str] = []

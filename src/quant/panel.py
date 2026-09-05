@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
+from portfolio_common.db import Database
 
 Vec = npt.NDArray[np.float64]
 
@@ -76,7 +76,7 @@ def align_matrix(
 
 
 def _load_calendar(
-    conn: sqlite3.Connection, *, as_of: str, engine_version: str, lookback_days: int
+    conn: Database, *, as_of: str, engine_version: str, lookback_days: int
 ) -> list[str]:
     return [
         str(r["obs_date"])
@@ -89,7 +89,7 @@ def _load_calendar(
 
 
 def _load_series(
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     engine_version: str,
     start: str,
@@ -121,7 +121,7 @@ def _load_series(
 
 
 def build_return_panel(  # noqa: PLR0913 - all keyword-only knobs with defaults
-    conn: sqlite3.Connection,
+    conn: Database,
     *,
     as_of: str,
     lookback_days: int = 756,

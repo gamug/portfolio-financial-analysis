@@ -39,7 +39,7 @@ Only `KG_FINANCIAL_DB` is required. Optional `KG_UNIVERSE_DB` (default
 
 ### universe source
 
-`pipeline._load_members` reads `kg_schema.universe_source.members_asof` over
+`pipeline._load_members` reads `kg_schema.queries.members_asof` over
 `universe.db` as of `--analysis-date`; `db.sync_universe` upserts those into
 `assets` / `sectors`. The gateway `/universe` endpoint and the `parse_universe`
 scraper are no longer used.

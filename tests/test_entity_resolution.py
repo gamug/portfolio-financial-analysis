@@ -6,12 +6,13 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from portfolio_common.db import Database
 
 from entity_resolution import db as er_db
 from entity_resolution.cooccurrence import build_edges
 from entity_resolution.denylist import is_denied
-from entity_resolution.news_db import connect_ro
 from entity_resolution.normalize import canonical
+from kg_schema import connect_ro
 
 # urls.db subset: only the tables/indexes the accessor is allowed to touch.
 _NEWS_SCHEMA = """
@@ -81,7 +82,7 @@ def _build_news_db(path: Path) -> None:
 
 
 @pytest.fixture
-def news_db(tmp_path: Path) -> sqlite3.Connection:
+def news_db(tmp_path: Path) -> Database:
     path = tmp_path / "urls_sample.db"
     _build_news_db(path)
     return connect_ro(path)
@@ -120,7 +121,7 @@ def test_is_denied() -> None:
 
 
 def test_build_edges_keeps_only_the_genuine_shared_executive(
-    news_db: sqlite3.Connection,
+    news_db: Database,
 ) -> None:
     universe = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
     edges = build_edges(news_db, universe, min_weight=3.0, max_tickers=5, min_articles=3)
@@ -131,11 +132,11 @@ def test_build_edges_keeps_only_the_genuine_shared_executive(
     assert {e.article_count_a, e.article_count_b} == {4, 3}
 
 
-def test_accessor_never_touches_articles_or_body_text(news_db: sqlite3.Connection) -> None:
+def test_accessor_never_touches_articles_or_body_text(news_db: Database) -> None:
     seen: list[str] = []
-    news_db.set_trace_callback(seen.append)
+    news_db.raw.set_trace_callback(seen.append)
     build_edges(news_db, ["AAA", "BBB"], min_weight=1.0, max_tickers=99, min_articles=1)
-    news_db.set_trace_callback(None)
+    news_db.raw.set_trace_callback(None)
     joined = " ".join(seen).lower()
     assert "articles" not in joined
     assert "body_text" not in joined
@@ -145,9 +146,7 @@ def test_accessor_never_touches_articles_or_body_text(news_db: sqlite3.Connectio
 # -- writer ---------------------------------------------------------
 
 
-def test_replace_edges_is_method_versioned(
-    memory_db: sqlite3.Connection, news_db: sqlite3.Connection
-) -> None:
+def test_replace_edges_is_method_versioned(memory_db: Database, news_db: Database) -> None:
     for t in ("AAA", "BBB"):
         memory_db.execute("INSERT INTO assets (ticker) VALUES (?)", (t,))
     memory_db.commit()

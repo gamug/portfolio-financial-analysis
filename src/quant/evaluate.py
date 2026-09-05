@@ -9,16 +9,16 @@ single join (``v_quant_vs_live`` / ``v_quant_benchmark_performance``).
 
 from __future__ import annotations
 
-import sqlite3
 from dataclasses import dataclass
 
-from portfolio_common.kg_schema.provenance import code_version
+from portfolio_common.db import Database
 
+from kg_schema import connect
+from kg_schema.provenance import code_version
 from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
-    connect,
     ensure_schema,
     insert_portfolio,
     load_benchmark_returns,
@@ -42,7 +42,7 @@ class EvaluateResult:
 
 
 def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
-    conn: sqlite3.Connection,
+    conn: Database,
     portfolio_id: int,
     as_of: str,
     *,
@@ -71,7 +71,7 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
 
 
 def _snapshot_live_book(
-    conn: sqlite3.Connection, settings: QuantSettings, date_from: str, run_id: int
+    conn: Database, settings: QuantSettings, date_from: str, run_id: int
 ) -> int | None:
     live = load_live_book(conn, date_from)
     if not live:
@@ -102,7 +102,7 @@ def run_evaluate(
     *,
     date_from: str,
     date_to: str,
-    conn: sqlite3.Connection | None = None,
+    conn: Database | None = None,
     benchmark: str = INTERNAL_EW,
 ) -> EvaluateResult:
     owns = conn is None

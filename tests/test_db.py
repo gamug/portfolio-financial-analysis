@@ -5,10 +5,11 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from portfolio_common.kg_schema.universe_source import UniverseMember
+from portfolio_common.db import Database
 
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
+from kg_schema.queries import UniverseMember
 
 
 def _company(symbol: str, name: str, sector: str = "Technology") -> UniverseMember:
@@ -26,7 +27,7 @@ def _company(symbol: str, name: str, sector: str = "Technology") -> UniverseMemb
     )
 
 
-def test_ensure_schema_is_idempotent(memory_db: sqlite3.Connection) -> None:
+def test_ensure_schema_is_idempotent(memory_db: Database) -> None:
     db.ensure_schema(memory_db)  # second call must be a no-op
     tables = {
         r["name"] for r in memory_db.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -35,8 +36,9 @@ def test_ensure_schema_is_idempotent(memory_db: sqlite3.Connection) -> None:
 
 
 def test_ensure_schema_preserves_existing_assets() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
     conn.execute(
         "CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE, "
         "company_name TEXT, cik TEXT, sector_id INTEGER, sub_industry TEXT)"
@@ -51,14 +53,14 @@ def test_ensure_schema_preserves_existing_assets() -> None:
 
 
 def test_ensure_schema_rejects_incompatible_assets() -> None:
-    conn = sqlite3.connect(":memory:")
+    conn = Database(sqlite3.connect(":memory:"))
     conn.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT)")
     conn.commit()
     with pytest.raises(RuntimeError, match="missing columns"):
         db.ensure_schema(conn)
 
 
-def test_sync_universe_upserts_without_duplicating(memory_db: sqlite3.Connection) -> None:
+def test_sync_universe_upserts_without_duplicating(memory_db: Database) -> None:
     db.sync_universe(memory_db, [_company("AAPL", "Apple"), _company("MSFT", "Microsoft")])
     db.sync_universe(memory_db, [_company("AAPL", "Apple Inc.")])  # name change
 
@@ -68,7 +70,7 @@ def test_sync_universe_upserts_without_duplicating(memory_db: sqlite3.Connection
     assert apple["company_name"] == "Apple Inc."
 
 
-def test_sync_universe_only_touches_assets_not_membership(memory_db: sqlite3.Connection) -> None:
+def test_sync_universe_only_touches_assets_not_membership(memory_db: Database) -> None:
     """Point-in-time membership now lives in universe.db; sync_universe is the
     identity write path only and never writes financial.db universe_membership."""
     db.sync_universe(memory_db, [_company("AAPL", "Apple"), _company("MSFT", "Microsoft")])
@@ -76,7 +78,7 @@ def test_sync_universe_only_touches_assets_not_membership(memory_db: sqlite3.Con
     assert {r["ticker"] for r in db.load_universe(memory_db)} == {"AAPL", "MSFT"}
 
 
-def test_load_universe_limit_and_ticker_filter(memory_db: sqlite3.Connection) -> None:
+def test_load_universe_limit_and_ticker_filter(memory_db: Database) -> None:
     db.sync_universe(
         memory_db,
         [_company("AAPL", "Apple"), _company("MSFT", "Microsoft"), _company("NVDA", "Nvidia")],
@@ -86,7 +88,7 @@ def test_load_universe_limit_and_ticker_filter(memory_db: sqlite3.Connection) ->
     assert [r["ticker"] for r in only] == ["NVDA"]
 
 
-def test_snapshot_is_append_only_and_drives_resume(memory_db: sqlite3.Connection) -> None:
+def test_snapshot_is_append_only_and_drives_resume(memory_db: Database) -> None:
     db.sync_universe(memory_db, [_company("AAPL", "Apple")])
     asset_id = db.load_universe(memory_db)[0]["id"]
     filing_id = db.upsert_filing(
@@ -121,7 +123,7 @@ def test_snapshot_is_append_only_and_drives_resume(memory_db: sqlite3.Connection
     assert db.completed_units(memory_db) == {("AAPL", "10-K", "FY2023")}
 
 
-def test_bump_run_counter_rejects_unknown_column(memory_db: sqlite3.Connection) -> None:
+def test_bump_run_counter_rejects_unknown_column(memory_db: Database) -> None:
     run_id = db.start_run(memory_db, params={})
     with pytest.raises(ValueError, match="counter column"):
         db.bump_run_counter(memory_db, run_id, "score; DROP TABLE assets")

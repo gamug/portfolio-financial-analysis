@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
+from portfolio_common.db import Database
 
 from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
@@ -15,7 +15,7 @@ from quant.persist import run_build_risk_model
 from quant.returns import run_build_returns
 
 
-def _prep(conn: sqlite3.Connection) -> QuantSettings:
+def _prep(conn: Database) -> QuantSettings:
     s = QuantSettings(
         db_path=Path(":memory:"),
         lookback_days=220,
@@ -30,7 +30,7 @@ def _prep(conn: sqlite3.Connection) -> QuantSettings:
 
 
 def test_risk_model_round_trip(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
     settings = _prep(conn)
@@ -68,7 +68,7 @@ def test_risk_model_round_trip(
 
 
 def test_no_store_cov_skips_the_matrix(
-    memory_quant_db: sqlite3.Connection, quant_seed: Callable[..., sqlite3.Connection]
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=4, n_days=260, with_dividends=False)
     settings = _prep(conn)

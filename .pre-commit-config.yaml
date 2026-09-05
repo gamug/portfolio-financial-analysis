@@ -29,10 +29,13 @@ repos:
           - .code_quality/ruff.toml
 
   # Run mypy in the project venv (via uv) rather than mirrors-mypy's isolated
-  # env: type-checking now needs the installed `portfolio_common` package (with
-  # its py.typed marker) to resolve `portfolio_common.kg_schema.*` imports, plus
-  # numpy for quant/'s npt.NDArray annotations -- an isolated env has neither.
-  # pass_filenames is off because mypy needs the whole import graph.
+  # env: type-checking needs the installed `portfolio_common` package to
+  # resolve `portfolio_common.db.Database` / `in_clause` / `Allowlist` (the
+  # DB-engine-only dependency as of portfolio-common v1.0.0 -- `kg_schema`
+  # itself is vendored locally at src/kg_schema/, not part of that package
+  # anymore), plus numpy for quant/'s npt.NDArray annotations -- an isolated
+  # env has neither. pass_filenames is off because mypy needs the whole
+  # import graph.
   - repo: local
     hooks:
       - id: mypy

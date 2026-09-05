@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from portfolio_common.kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from pydantic import BaseModel, Field
+
+from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
 _DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "VALORIZATION": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
 
