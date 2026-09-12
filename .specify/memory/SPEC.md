@@ -351,7 +351,7 @@ job.
   filing's period-end with a plain `SELECT` (no import of `pricing_agent`);
   without price rows the group is silently skipped and every other metric is
   unaffected. Individual ratio specifications are documented per-skill under
-  `skills/skills/<ratio>/SKILL.md` (`roic`, `cagr`, `fcf_margin`,
+  `skills/<ratio>/SKILL.md` (`roic`, `cagr`, `fcf_margin`,
   `free_cash_flow_yield`, `interest_coverage_ratio`).
 - **LLM synthesis** (`fundamental_agent`'s Strands metrics-master) consumes
   only the already-computed ratios, never raw filing text, to produce the
@@ -467,7 +467,7 @@ production system this project isn't. What is enforced by design:
   `quant` (FR-009/010, NR-002); `test_coverage.py`/`test_rundate.py` cover
   the point-in-time universe + `--analysis-date` contract (FR-012/013,
   NR-001); `test_api.py` covers `api/` (FR-014, NR-005); `test_skills.py`
-  covers the `skills/skills/*/SKILL.md` ratio specifications.
+  covers the `skills/*/SKILL.md` ratio specifications.
 - **New requirement → new test first** (constitution: Code & Git #1's
   enforced-not-advisory spirit) — a change implementing or altering an
   FR/NR above should land with a test that references the requirement ID in
