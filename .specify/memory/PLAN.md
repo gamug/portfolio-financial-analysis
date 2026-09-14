@@ -426,7 +426,8 @@ deleted per instruction) — these are live bugs corrupting the fundamental
 scores, the veto lane, and the quant benchmark today, not open design
 questions.
 
-**F1 — Share-count/market-cap scaling bug (Critical).**
+**F1 — Share-count/market-cap scaling bug (Critical). RESOLVED 2026-09-14,
+`T-060` — full record in `docs/model_fixes.md`'s F1 entry.**
 `src/fundamental_agent/metrics/valuation.py::_share_count` multiplies raw
 XBRL share counts by price with no unit-scale check. Verified: MCD market
 cap stored as **$209,271** (should be ≈$209B) with
@@ -434,11 +435,27 @@ cap stored as **$209,271** (should be ≈$209B) with
 trillion** (should be ≈$22B). The LLM's own narrative caught it verbatim:
 *"a nonsensical market-cap FCF yield driven by a data error"* (MCD FY2025).
 21 filings total have `|free_cash_flow_yield| > 50%` (18 positive, 3
-negative). **Fix**: add a unit-scale sanity check in `_share_count` (e.g.
+negative). ~~**Fix**: add a unit-scale sanity check in `_share_count` (e.g.
 cross-check against a plausible price × shares magnitude, or a declared
-XBRL scale factor) before computing market cap. **Acceptance**: MCD market
-cap ≈ $209B (not $209k), WAT ≈ $22B (not $37.2T); 0 filings remain with
-`|FCF yield| > 50%` after recompute.
+XBRL scale factor) before computing market cap.~~ **Correction (coherence
+fix, 2026-09-14)**: this original framing assumed an XBRL `decimals`/`scale`
+attribute existed to "apply" — it doesn't, anywhere in this repo's data
+model (verified against real gateway payloads). The actual, shipped fix
+instead cross-checks a filing's own reported share count against (1)
+already-ingested history for an overlapping period, and (2) the same
+filing's own `net_income ÷ as-filed diluted EPS` (no history needed) — full
+root-cause correction and design rationale in `docs/model_fixes.md`.
+**Acceptance** (re-verified against live data post-fix, see
+`docs/model_fixes.md`): MCD's FY2025 10-K corrects to ≈$219B (was
+$218,953.34); WAT's most recent 10-Q corrects to ≈$37.2B (was ≈$37.2T) —
+note this is WAT's *current* filing, genuinely higher than the ≈$22B this
+item's original estimate cited (that figure matches WAT's separate,
+never-corrupted FY2025 10-K; WAT's real share count grew between the two
+filings via the concurrent BD-Biosciences merger). The repo-wide "0 filings
+with `|FCF yield| > 50%`" count was not re-verified in full (would need a
+`--fresh` re-run across the universe, out of scope for a code-review pass —
+see `docs/model_fixes.md`'s Verification section) and likely needs other
+findings (F2, F4) too, not F1 alone.
 
 **F2 — REIT revenue-concept scaling bug (Critical).**
 `src/fundamental_agent/statements.py` picks a non-operating line item as

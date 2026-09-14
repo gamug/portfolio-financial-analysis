@@ -190,11 +190,18 @@ instead.
 
 ## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
 
-- [ ] **T-060** Fix **F1** — add a unit-scale sanity check in
-      `src/fundamental_agent/metrics/valuation.py::_share_count` before
-      computing market cap. Verify: MCD market cap ≈ $209B (not $209k), WAT
-      ≈ $22B (not $37.2T); 0 filings with `|FCF yield| > 50%` (was 21). →
-      `PLAN.md` Work item 7, F1.
+- [x] **T-060** Fix **F1** — cross-check a filing's reported share count
+      against already-ingested history and, for `diluted_shares`, its own
+      `net_income ÷ EPS_diluted` (`fundamental_agent.db.
+      detect_share_scale_factors`), correcting `_share_count` before market
+      cap is computed. Verified 2026-09-14: MCD's FY2025 10-K corrects to
+      ≈$219B (was $218,953.34); WAT's most recent 10-Q corrects to ≈$37.2B
+      (was ≈$37.2T) — full record, including why the original "unit-scale
+      sanity check"/"≈$22B" framing needed correcting, in
+      `docs/model_fixes.md`'s F1 entry. Repo-wide "0 filings with `|FCF
+      yield| > 50%`" not re-verified (needs a `--fresh` universe re-run,
+      out of scope here, and likely needs F2/F4 too). → `PLAN.md` Work item
+      7, F1.
 - [ ] **T-061** Fix **F2** — correct the `revenue` XBRL-concept selection
       for REIT-classified filers in `src/fundamental_agent/statements.py`.
       Verify: `net_margin` outside `[-1,1]` and `operating_cash_flow_margin`
@@ -311,7 +318,8 @@ instead.
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-Nothing in `T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
+`T-060` (F1) is **done**, 2026-09-14 — see `docs/model_fixes.md`. Nothing
+else in `T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/
 `T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs

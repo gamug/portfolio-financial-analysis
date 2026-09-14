@@ -218,6 +218,24 @@ assumes the stack actually pinned in `pyproject.toml`.
     forever, independent of content changes. (See `Artifact` tool
     guidance: title changes are an explicit, separate, user-directed
     action, never a side effect of a content update.)
+12. **A fix that changes a deterministic computation's methodology** — a
+    ratio formula, a data-quality gate, a veto-rule threshold, a scoring
+    weight, an estimator — **is verified against real data and documented in
+    `docs/model_fixes.md`, not just described in the commit message**,
+    before/with the PR that ships it. The entry records: the symptom (with
+    concrete before-numbers, checked against live data where practical, not
+    just assumed from a report); the root cause as independently verified
+    against the actual code and data (an external report's stated mechanism
+    must be re-derived, not trusted verbatim — see `docs/model_fixes.md`'s
+    F1 entry, where the original audit's stated cause turned out to be
+    wrong even though the symptom was real); a citation to the theoretical/
+    technical reference that justifies the chosen fix (an accounting/GAAP
+    standard, an XBRL/SEC filing-quality reference, a cited academic or
+    industry methodology — not an unsupported assertion); and the
+    after/verification numbers. This applies regardless of where the fix
+    originates — this repo's own testing, a `SPEC.md`/`PLAN.md` item, or an
+    external review — a fix landed without this record is incomplete, the
+    same way a fix landed without a test is incomplete (Code & Git #1).
 
 ## Executable cmds
 
@@ -343,4 +361,10 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.0.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.1.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-14
+
+**Amendment log**: 1.1.0 (2026-09-14) — MINOR: new principle, AI behavior
+#12, requiring every methodology fix to be verified against real data and
+documented in `docs/model_fixes.md` with a cited theoretical/technical
+reference — introduced alongside `docs/model_fixes.md`'s first entry (F1,
+the share-count scale-tagging defect).
