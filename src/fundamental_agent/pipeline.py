@@ -332,6 +332,14 @@ def _analyze_one(
     if engine.params.sections:
         _extract_sections(engine, task, filing_id, target, meta)
 
+    # This filing's own share-count facts are already in `financial_facts` (just
+    # appended above) -- cross-check them against this asset's prior filings for a
+    # known SEC XBRL scale/tagging defect (docs/model_fixes.md, F1) before valuation
+    # multiplies a possibly-mis-scaled share count by price.
+    share_scale_factors = db.detect_share_scale_factors(
+        engine.conn, task.asset_id, stmts, exclude_filing_id=filing_id
+    )
+
     ctx = FilingContext(
         ticker=task.ticker,
         company_name=task.company_name,
@@ -341,6 +349,7 @@ def _analyze_one(
         period_key=target.period.key,
         prior_key=target.prior.key if target.prior else None,
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
+        share_scale_factors=share_scale_factors,
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(

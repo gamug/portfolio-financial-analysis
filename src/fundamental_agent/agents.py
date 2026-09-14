@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -129,6 +129,10 @@ class FilingContext:
     period_key: str
     prior_key: str | None
     price: ClosePrice | None = None  # period-end close, when the pricing table has one
+    # {"shares_outstanding" | "diluted_shares": factor} -- multiply the reported
+    # value by this to correct a detected XBRL scale/tagging defect (see
+    # docs/model_fixes.md, F1; fundamental_agent.db.detect_share_scale_factors).
+    share_scale_factors: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -177,7 +181,9 @@ class FundamentalAnalyst:
             for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key):
                 out.append((group, result))
         if ctx.price is not None:
-            for result in valuation_metrics.compute(ctx.stmts, ctx.period_key, ctx.price):
+            for result in valuation_metrics.compute(
+                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors
+            ):
                 out.append((valuation_metrics.GROUP, result))
         return out
 
