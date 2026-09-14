@@ -18,7 +18,18 @@ from portfolio_common.db import Allowlist, Database, Row
 
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.statements import REGISTRY, Statements
 from kg_schema.queries import UniverseMember
+
+# Candidate XBRL scale/decimals-tagging defects: a filer (or, per SEC OSD staff
+# guidance, the tagging tool it used) reports a share count off by an exact
+# power of ten from its own prior filings -- see docs/model_fixes.md, F1.
+_SHARE_SCALE_FACTORS: tuple[float, ...] = (1e-9, 1e-6, 1e-3, 1e3, 1e6, 1e9)
+# Generous on purpose: powers of ten are 1000x apart, so precision buys nothing,
+# but a loose band keeps the check robust when a real scale defect coincides
+# with a few percent of ordinary organic share-count drift (buybacks/issuance)
+# landing on a different overlapping period than the one being corrected.
+_SHARE_SCALE_TOLERANCE = 0.10
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.
@@ -349,6 +360,133 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
         )
     conn.commit()
     return len(rows)
+
+
+def overlapping_history(
+    conn: Database,
+    asset_id: int,
+    concepts: Sequence[str],
+    period_keys: Iterable[str],
+    *,
+    exclude_filing_id: int,
+) -> dict[str, float]:
+    """Already-ingested ``financial_facts`` values for *asset_id* on any of
+    *concepts*, restricted to whichever *period_keys* this filing's own payload
+    also reports, excluding *exclude_filing_id* -- the filing currently being
+    analyzed, whose own (possibly defective) facts are already appended by the
+    time this runs (see :func:`detect_share_scale_factors`). One value per
+    period_key: the most recently *filed* row wins when more than one earlier
+    filing restated the same period."""
+    keys = list(dict.fromkeys(period_keys))  # de-dup, keep order
+    if not keys or not concepts:
+        return {}
+    # Only "?" placeholder characters are interpolated below (never a value), one
+    # per item in *concepts*/*keys* -- every actual value is bound through the
+    # params list, matching load_universe()'s established IN-clause pattern.
+    concept_placeholders = ", ".join("?" * len(concepts))
+    key_placeholders = ", ".join("?" * len(keys))
+    rows = conn.execute(
+        f"""
+        SELECT ff.period_key, ff.value
+        FROM financial_facts ff
+        JOIN sec_filings sf ON sf.id = ff.filing_id
+        WHERE sf.asset_id = ?
+          AND ff.filing_id != ?
+          AND ff.concept IN ({concept_placeholders})
+          AND ff.period_key IN ({key_placeholders})
+          AND ff.value IS NOT NULL
+        ORDER BY sf.filing_date ASC, ff.id ASC
+        """,  # noqa: S608 -- interpolated segments are only "?" placeholders, see above
+        [asset_id, exclude_filing_id, *concepts, *keys],
+    ).fetchall()
+    out: dict[str, float] = {}
+    for row in rows:
+        out[str(row["period_key"])] = float(row["value"])  # last (most recent) wins
+    return out
+
+
+def _matching_scale_factors(reported: dict[str, float], anchors: dict[str, float]) -> set[float]:
+    """Candidate power-of-ten factors under which ``reported[key] * factor``
+    matches ``anchors[key]``, for every period_key present in both (within
+    ``_SHARE_SCALE_TOLERANCE``)."""
+    matched: set[float] = set()
+    for period_key, anchor_value in anchors.items():
+        new_value = reported.get(period_key)
+        if new_value is None or new_value <= 0 or anchor_value <= 0:
+            continue
+        ratio = anchor_value / new_value  # factor to multiply new_value by
+        for factor in _SHARE_SCALE_FACTORS:
+            if abs(ratio - factor) <= factor * _SHARE_SCALE_TOLERANCE:
+                matched.add(factor)
+                break
+    return matched
+
+
+def _eps_implied_diluted_shares(stmts: Statements) -> dict[str, float]:
+    """``net_income / as-filed diluted EPS``, per period -- an independent,
+    same-filing anchor needing no filing history at all: net income and
+    diluted EPS are both GAAP-required disclosures already ingested from this
+    filing's own payload (``us-gaap_EarningsPerShareDiluted`` -- see
+    ``fundamental_agent.statements.REGISTRY["eps_diluted"]``), and their ratio
+    is the filer's own weighted-average diluted share count, independent of
+    whatever ``diluted_shares`` itself reports. This is what catches a defect
+    that has already persisted long enough (or a filing cadence sparse enough)
+    that no clean prior filing remains to compare against -- see
+    ``docs/model_fixes.md``, F1."""
+    net_income = stmts.get_all("net_income")
+    eps = stmts.get_all("eps_diluted")
+    out: dict[str, float] = {}
+    for period_key, ni in net_income.items():
+        e = eps.get(period_key)
+        if not e:
+            continue
+        implied = ni / e
+        if implied > 0:  # a share count is never negative or zero
+            out[period_key] = implied
+    return out
+
+
+def detect_share_scale_factors(
+    conn: Database, asset_id: int, stmts: Statements, *, exclude_filing_id: int
+) -> dict[str, float]:
+    """For ``shares_outstanding`` and ``diluted_shares`` independently: the
+    power-of-ten factor this filing's own reported values need to be
+    *multiplied by* to correct a known SEC XBRL share-count scale/tagging
+    defect (see ``docs/model_fixes.md``, F1) -- never a real capital-structure
+    event, which never lands within a wide 10% tolerance of an exact power of
+    ten. Two independent signals are checked, either one sufficient: (1)
+    already-ingested history for an overlapping period from a prior filing,
+    and, for ``diluted_shares`` only, (2) this same filing's own
+    EPS-implied share count (:func:`_eps_implied_diluted_shares`), which needs
+    no history and so also catches a defect that has already aged out of
+    every filing's reporting window, or a sparse filing cadence with no
+    genuinely overlapping period at all. Returns ``{}`` for an item with no
+    evidence from either signal, or where the two signals -- or two
+    overlapping periods within one signal -- disagree on the factor
+    (ambiguous; the caller leaves that item's value untouched rather than
+    guessing)."""
+    result: dict[str, float] = {}
+    eps_implied = _eps_implied_diluted_shares(stmts)
+    for item in ("shares_outstanding", "diluted_shares"):
+        reported = stmts.get_all(item)
+        if not reported:
+            continue
+        history = overlapping_history(
+            conn,
+            asset_id,
+            REGISTRY[item].concepts,
+            reported,
+            exclude_filing_id=exclude_filing_id,
+        )
+        matched = _matching_scale_factors(reported, history)
+        if item == "diluted_shares":
+            # EPS is a weighted-average, duration-based measure -- it only
+            # corroborates diluted_shares (also duration-based), never the
+            # point-in-time shares_outstanding balance-sheet figure.
+            matched |= _matching_scale_factors(reported, eps_implied)
+        if len(matched) == 1:
+            result[item] = matched.pop()
+    return result
 
 
 def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields

@@ -179,6 +179,12 @@ REGISTRY: dict[str, LineItem] = {
         concepts=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
         standard=("SharesFullyDilutedAverage",),
     ),
+    # As-filed diluted EPS -- a GAAP-required disclosure, independent of
+    # `diluted_shares` (net income divided by it, as reported by the filer
+    # itself). Cross-checking `net_income / diluted_shares` against this value
+    # is a same-filing, no-history-needed scale/tagging-defect signal (see
+    # fundamental_agent.db.detect_share_scale_factors, docs/model_fixes.md F1).
+    "eps_diluted": LineItem("eps_diluted", _INCOME, concepts=("us-gaap_EarningsPerShareDiluted",)),
     "total_assets": LineItem("total_assets", _BALANCE, concepts=("us-gaap_Assets",)),
     "current_assets": LineItem("current_assets", _BALANCE, concepts=("us-gaap_AssetsCurrent",)),
     "total_liabilities": LineItem("total_liabilities", _BALANCE, concepts=("us-gaap_Liabilities",)),
@@ -301,6 +307,32 @@ class Statements:
                     if value is not None:
                         return value
         return None
+
+    def get_all(self, item: str) -> dict[str, float]:
+        """Every period-column value on registry *item*'s first-matching row --
+        not just one period, the full reported series for that concept in this
+        payload, keyed by its raw period_key exactly as ``iter_facts``/
+        ``financial_facts`` store it. Unlike :meth:`get`, this does not resolve
+        a balance-sheet item through :meth:`_instant_for` -- it returns the row's
+        own columns as reported, which is what a cross-filing scale/tagging-defect
+        check (:func:`fundamental_agent.db.detect_share_scale_factors`) needs: the
+        same overlapping historical periods this filing itself restates.
+        """
+        spec = REGISTRY[item]
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if row.get("abstract") or row.get("dimension"):
+                    continue
+                if _matches(row, spec):
+                    out: dict[str, float] = {}
+                    for column, value in row.items():
+                        if _parse_period(str(column)) is None:
+                            continue
+                        number = _numeric(value)
+                        if number is not None:
+                            out[column] = number
+                    return out
+        return {}
 
     def _instant_for(self, period_key: str) -> str | None:
         target = period_key[:10]

@@ -68,6 +68,22 @@ def test_share_count_and_sbc_line_items(aapl_10k: Statements, jpm_10k: Statement
     assert jpm_10k.get("diluted_shares", jpm_key) == 2970000000.0
 
 
+def test_get_all_returns_every_period_column_for_a_concept(
+    aapl_10k: Statements, jpm_10k: Statements
+) -> None:
+    # .get() stops at one period; .get_all() is for a cross-filing scale-defect
+    # check (fundamental_agent.db.detect_share_scale_factors) that needs every
+    # period column this filing's own payload reports for the concept.
+    assert aapl_10k.get_all("diluted_shares") == {
+        "2023-09-30 (FY)": 15812547000.0,
+        "2022-09-24 (FY)": 16325819000.0,
+        "2021-09-25 (FY)": 16864919000.0,
+    }
+    # a registry item with no matching row anywhere in this payload returns {},
+    # not an error (a bank's payload has no CommonStockSharesOutstanding).
+    assert jpm_10k.get_all("shares_outstanding") == {}
+
+
 def test_balance_sheet_items_are_never_negative(nvda_10k: Statements) -> None:
     key = _need(nvda_10k.latest_fy()).key
     for item in ("inventory", "receivables", "short_term_investments", "long_term_debt"):
