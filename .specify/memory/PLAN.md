@@ -672,7 +672,7 @@ as task `T-077`.
    decomposition, annualization rule, ROE→ROIC fallback under
    `equity <= 0`) — currently profitability relies on 2 inline prompt
    lines while 5 other groups (cashflow, leverage, roic, cagr, valuation)
-   already have a dedicated `skills/skills/<name>/SKILL.md`; streamline
+   already have a dedicated `skills/<name>/SKILL.md`; streamline
    each `SKILL.md`'s manual-extraction boilerplate (unused once ratios
    arrive precomputed in the automated pipeline) to cut per-filing token
    cost.
