@@ -103,7 +103,7 @@ assumes the stack actually pinned in `pyproject.toml`.
    A
    new cross-cutting doc goes in `docs/`; a spec-kit artifact (this
    constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`) goes under `.specify/`.
-   `skills/skills/<ratio-name>/SKILL.md` documents one deterministic ratio
+   `skills/<ratio-name>/SKILL.md` documents one deterministic ratio
    calculation each (`roic`, `cagr`, `fcf_margin`, `free_cash_flow_yield`,
    `interest_coverage_ratio`) — a new ratio worth a specialist skill gets the
    same treatment, not an inline docstring only.
@@ -343,4 +343,11 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.0.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.0.2 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+
+**Amendment log**: 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc
+path from `skills/skills/<ratio-name>/SKILL.md` to the actual, working
+`skills/<ratio-name>/SKILL.md` (verified against
+`src/fundamental_agent/skills.py::skills_dir`) — a copy-paste artifact
+from adapting this constitution from a sibling repo's, not an intentional
+convention; no code changed, only this document's own factual claim.
