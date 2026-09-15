@@ -83,6 +83,29 @@ def test_valorization_prefers_cheap_and_profitable() -> None:
     assert scores[1] > scores[2]
 
 
+def test_valorization_negative_equity_leverage_ranks_worst_not_best() -> None:
+    """C2 (docs/model_fixes.md): a negative debt_to_equity (negative book
+    equity) must not be inverted into the BEST leverage percentile by
+    higher_is_better=False -- it should rank worst, same as very high
+    positive leverage would."""
+    rows: dict[int, dict[str, float | None]] = {
+        1: {  # negative equity, extreme leverage
+            "profitability.return_on_equity": 0.15,
+            "roic.return_on_invested_capital": 0.10,
+            "cashflow.free_cash_flow_margin": 0.10,
+            "leverage.debt_to_equity": -38.96,
+        },
+        2: {  # moderate positive leverage, otherwise identical quality inputs
+            "profitability.return_on_equity": 0.15,
+            "roic.return_on_invested_capital": 0.10,
+            "cashflow.free_cash_flow_margin": 0.10,
+            "leverage.debt_to_equity": 1.0,
+        },
+    }
+    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
+    assert scores[1] < scores[2]
+
+
 def test_sector_roll_up_mean_and_deviation() -> None:
     sector_of = {1: 10, 2: 10, 3: 20, 4: None, 5: 10}
     technical_raw = {1: 60.0, 2: 40.0, 3: 90.0, 4: 30.0, 5: 50.0}  # asset 4 has no sector
@@ -158,6 +181,127 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     assert (2, "LIQUIDITY_DISTRESS", "SOFT") in hits
     assert (2, "PRICE_CRASH", "SOFT") in hits
     assert (2, "EARNINGS_MISSING", "SOFT") in hits
+
+
+def test_leverage_rule_hard_vetoes_negative_equity_with_high_debt_to_assets(
+    memory_db: Database,
+) -> None:
+    """C2 (docs/model_fixes.md): MCD-shaped negative book equity -- a
+    negative debt_to_equity would trivially evade a plain `> 3.0` check, but
+    a high debt_to_assets still triggers the veto."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={
+            1: {
+                "leverage.debt_to_equity": -38.96,
+                "leverage.debt_to_assets": 0.95,
+                "leverage.interest_coverage": 8.0,
+            },
+        },
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+
+
+def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
+    memory_db: Database,
+) -> None:
+    """Proves debt_to_assets and interest_coverage are each independently
+    sufficient (an OR, not an AND)."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={
+            1: {
+                "leverage.debt_to_equity": -10.0,
+                "leverage.debt_to_assets": 0.3,  # healthy
+                "leverage.interest_coverage": 1.0,  # < 1.5
+            },
+        },
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+
+
+def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
+    memory_db: Database,
+) -> None:
+    """Not "any negative equity = HARD": healthy debt_to_assets/
+    interest_coverage, including exactly at the calibrated thresholds
+    (strict inequalities, not >=/<=), doesn't veto."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={
+            1: {
+                "leverage.debt_to_equity": -5.0,
+                "leverage.debt_to_assets": 0.8,  # exactly at threshold, not >
+                "leverage.interest_coverage": 1.5,  # exactly at threshold, not <
+            },
+        },
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+
+
+def test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_not_veto(
+    memory_db: Database,
+) -> None:
+    """Accepted limitation: if both debt_to_assets and interest_coverage are
+    missing, a negative debt_to_equity alone doesn't trigger the veto --
+    same missing-data handling as every other rule in this catalog."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.debt_to_equity": -38.96}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+
+
+def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Database) -> None:
+    """Confirms the pre-existing positive-value threshold behavior survives
+    the _ThresholdRule -> _LeverageRule swap (same values as
+    test_threshold_and_drawdown_rules's LEVERAGE_EXTREME case)."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.debt_to_equity": 5.0}, 2: {"leverage.debt_to_equity": 1.0}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31", 2: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert not any(h[0] == 2 and h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
 # -- full cycle smoke -----------------------------------------

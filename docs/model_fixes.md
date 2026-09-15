@@ -737,3 +737,136 @@ was ignored by a bug.
   multi-day production cadence this investigation had no live data to
   exercise), it should be re-opened as a new, separately-verified finding —
   not assumed to be within this entry's scope.
+
+---
+
+## C2 — Leverage-veto evasion via negative book equity
+
+**Status**: Fixed 2026-09-15 (branch `fix/c2-leverage-veto-negative-equity`,
+`T-064`).
+
+### Symptom
+
+`src/cycle/rules/builtin.py`'s `LEVERAGE_EXTREME` rule was a plain
+`_ThresholdRule("leverage.debt_to_equity", ">", 3.0)`. A company with large
+buyback-driven **negative book equity** produces a *negative*
+`debt_to_equity` ratio — verified against production data: MCD's real
+`debt_to_equity = -38.96` (debt $39.8B, equity **-$1.02B**). A negative
+number is never `> 3.0`, so the sign flip trivially evaded the HARD veto
+even though the firm is actually maximally leveraged. Independently,
+`src/cycle/scores/valorization.py`'s "quality" factor includes
+`("leverage.debt_to_equity", False)` — `normalize.rank_pct()`'s
+`higher_is_better=False` inversion (`1.0 - pct`) means the *most negative*
+value in a cohort, being the lowest raw number, was inverted to the
+**highest** quality percentile, actively rewarding the same name: MCD's
+`VALORIZATION` score inflated to 82.14 (partly compounded by the
+still-uncorrected F1 market-cap bug at the time of that reading).
+
+### Root cause
+
+Two independent mechanisms, both stemming from the same underlying fact —
+`debt_to_equity`'s *sign* carries information (whether equity is
+positive) that a plain magnitude threshold discards:
+
+1. `_ThresholdRule.evaluate()`'s `value > self.threshold` comparison is
+   satisfied by no negative value when `threshold = 3.0`, regardless of
+   how large `|value|` is.
+2. `valorization._factor_score()`'s use of `rank_pct(..., higher_is_better=
+   False)` assumes "lower debt_to_equity is always better" — true only
+   when equity is positive; once it flips negative, "lower" (more
+   negative) is actually *worse*, not better, but the ranking has no way
+   to know that without a sign check.
+
+### Fix
+
+`src/cycle/rules/builtin.py`: replaced the `_ThresholdRule` entry with a
+dedicated `_LeverageRule` dataclass. `leverage.py::_total_debt()` sums only
+non-negative balance-sheet items (`long_term_debt`/`short_term_debt`), so
+`debt_to_equity < 0` is *itself* reliable, already-available evidence that
+equity is non-positive — no new persisted `equity` metric was needed. When
+`debt_to_equity < 0`, the rule instead gates on `leverage.debt_to_assets`
+(`> 0.8`) or `leverage.interest_coverage` (`< 1.5`) — either sufficient —
+reusing PLAN.md's own Ring-1 `DQ_NEG_EQUITY` calibration verbatim (342
+filings verified) rather than inventing new, unverified thresholds. Both
+metrics are already computed in the same `leverage.py::compute()` call and
+reach `RuleContext.metrics` the same way `debt_to_equity` does, so no
+upstream change was needed. Positive `debt_to_equity` keeps the original
+plain `> 3.0` check, byte-for-byte unchanged.
+
+`src/cycle/scores/valorization.py`: added a `_VALUE_TRANSFORMS` map
+applied in `_factor_score()` before `rank_pct()` — for
+`"leverage.debt_to_equity"`, a negative value is replaced with
+`float("inf")` before ranking, so it sorts as the cohort's *worst* (not
+best) leverage; `rank_pct`'s bisection sorts `float("inf")` correctly as
+the maximum, and the subsequent `1.0 - pct` inversion then correctly lands
+it at `pct ≈ 0`.
+
+### Design decisions
+
+**No new persisted `equity` metric.** `RuleContext.metrics` has no raw
+`equity` key today — it only lives inside `debt_to_equity`'s
+`MetricResult.inputs` audit blob (`fundamental_agent/metrics/leverage.py`),
+which `cycle/data.py::latest_metrics()` never reads. Adding one would mean
+touching `fundamental_agent` as well as `cycle` for a signal the sign of
+`debt_to_equity` already gives for free (debt is never negative), so this
+fix stays entirely within `cycle`.
+
+**Thresholds reused verbatim, not recalibrated.** PLAN.md's own Ring-1
+`DQ_NEG_EQUITY` gate (Work item 7, blocked on `T-040`/Work item 5's
+`data_quality_issue` table landing) already specifies and verifies
+`debt_to_assets > 0.8` / `interest_coverage < 1.5` against 342 production
+filings. This fix reuses those exact numbers — not `DQ_NEG_EQUITY`'s
+quarantine mechanism itself, which stays blocked on `T-040` — so C2 has no
+external dependency, matching its "no external dependency" status in
+TASKS.md.
+
+**Deliberately minimal `valorization.py` change.** This is a targeted
+sign-fix, not the full valorization redesign (EV-based multiples, ROIC
+replacing ROE, robust median/MAD intra-sector standardization) that Work
+item 8/`T-071` already owns — PLAN.md explicitly ties that redesign to
+this same finding ("this also motivates Work item 8's ROE→ROIC
+substitution"), so this pass does not attempt it.
+
+**Missing-data handling matches every other rule.** If `debt_to_equity <
+0` but both `debt_to_assets` and `interest_coverage` are unavailable, no
+veto fires — the same "quarantine/skip, don't guess" behavior every other
+rule in the catalog already has for a missing metric.
+
+### Verification
+
+- New tests in `tests/test_cycle.py`: `test_leverage_rule_hard_vetoes_
+  negative_equity_with_high_debt_to_assets`, `test_leverage_rule_hard_
+  vetoes_negative_equity_with_low_interest_coverage` (proves the OR is a
+  genuine OR — each signal independently sufficient),
+  `test_leverage_rule_spares_negative_equity_with_healthy_debt_load`
+  (including exactly-at-threshold values, locking in strict inequalities),
+  `test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_
+  not_veto`, `test_leverage_rule_positive_debt_to_equity_path_unchanged`
+  (same values as the pre-existing `test_threshold_and_drawdown_rules`),
+  and `test_valorization_negative_equity_leverage_ranks_worst_not_best`.
+- `uv run pytest -q` — 238 passed (was 232).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green.
+
+### Residual scope, deliberately deferred
+
+- **`rule_catalog` staleness in production.** `cycle/rules/__init__.py`'s
+  `seed_catalog()` uses `INSERT OR IGNORE` and explicitly never overwrites
+  an existing row. Production's DB almost certainly already has a
+  `LEVERAGE_EXTREME` row seeded under the *old* description/`params_json`.
+  Live veto **behavior** is unaffected — `evaluate()` runs the live Python
+  `RULES` object directly, never reconstructing the rule from its DB row —
+  but `v_rule_catalog`'s audit-facing `description`/`params_json`/
+  `param_threshold` columns will keep showing the pre-fix values until a
+  one-time `UPDATE rule_catalog SET description = ?, params_json = ?
+  WHERE rule_id = 'LEVERAGE_EXTREME'` is run against production — an
+  operational follow-up outside a code-only pass's authority to run
+  unprompted (same category as F1/F2's "not done as part of this change"
+  notes).
+- **`DQ_NEG_EQUITY` itself remains blocked on `T-040`.** This fix reuses
+  its thresholds, not its `data_quality_issue`-quarantine mechanism —
+  implementing that gate is still Work item 7's `T-065`, unblocked only
+  once Work item 5 lands.
+- **`roic.py`'s NOPAT/invested-capital ratio and `leverage.py`'s
+  `net_debt_to_ebitda`** (flagged in F4's own residual-scope note) are
+  *also* flow-over-stock ratios that could show a related sign/magnitude
+  distortion under negative equity — not examined as part of this pass.
