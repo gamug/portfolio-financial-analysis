@@ -42,6 +42,85 @@ class _ThresholdRule:
 
 
 @dataclass
+class _LeverageRule:
+    """LEVERAGE_EXTREME, with a negative-book-equity guard (C2,
+    docs/model_fixes.md): a plain ``debt_to_equity > threshold`` check lets a
+    negative-equity firm's *negative* ratio (large buyback-driven negative
+    equity -- MCD, SBUX, PM, ...) trivially evade the veto, even though it's
+    actually maximally leveraged. ``leverage.py::_total_debt`` sums only
+    non-negative balance-sheet items, so a negative ratio here is itself
+    reliable evidence of non-positive book equity -- no separate ``equity``
+    metric is needed. When that happens, gate on ``debt_to_assets``/
+    ``interest_coverage`` instead; thresholds reuse PLAN.md's Ring-1
+    ``DQ_NEG_EQUITY`` calibration (342 filings verified) rather than
+    inventing new, unverified numbers.
+    """
+
+    RULE_ID = "LEVERAGE_EXTREME"
+    SEVERITY = "HARD"
+    DESCRIPTION = "debt/equity above the threshold, or negative book equity with a high debt burden"
+    debt_to_equity_threshold: float = 3.0
+    neg_equity_debt_to_assets_threshold: float = 0.8
+    neg_equity_interest_coverage_threshold: float = 1.5
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "leverage.debt_to_equity",
+            "op": ">",
+            "threshold": self.debt_to_equity_threshold,
+            "neg_equity_debt_to_assets_threshold": self.neg_equity_debt_to_assets_threshold,
+            "neg_equity_interest_coverage_threshold": self.neg_equity_interest_coverage_threshold,
+        }
+
+    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+        hits = []
+        for aid, metrics in ctx.metrics.items():
+            dte = metrics.get("leverage.debt_to_equity")
+            if dte is None:
+                continue
+            if dte < 0:
+                # Non-negative debt means a negative ratio implies non-positive
+                # book equity -- the plain threshold comparison below is
+                # meaningless here, so gate on debt_to_assets/interest_coverage
+                # instead (accepted limitation: no hit if both are missing).
+                dta = metrics.get("leverage.debt_to_assets")
+                cov = metrics.get("leverage.interest_coverage")
+                breached = (dta is not None and dta > self.neg_equity_debt_to_assets_threshold) or (
+                    cov is not None and cov < self.neg_equity_interest_coverage_threshold
+                )
+                if breached:
+                    hits.append(
+                        VetoHit(
+                            aid,
+                            self.RULE_ID,
+                            self.SEVERITY,
+                            {
+                                "metric": "leverage.debt_to_equity",
+                                "value": dte,
+                                "debt_to_assets": dta,
+                                "interest_coverage": cov,
+                            },
+                        )
+                    )
+                continue
+            if dte > self.debt_to_equity_threshold:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "metric": "leverage.debt_to_equity",
+                            "value": dte,
+                            "threshold": self.debt_to_equity_threshold,
+                        },
+                    )
+                )
+        return hits
+
+
+@dataclass
 class _DrawdownRule:
     RULE_ID = "PRICE_CRASH"
     SEVERITY = "SOFT"
@@ -82,14 +161,7 @@ class _StaleFundamentalRule:
 
 
 RULES: list[Rule] = [
-    _ThresholdRule(
-        "LEVERAGE_EXTREME",
-        "HARD",
-        "debt/equity above the threshold",
-        "leverage.debt_to_equity",
-        ">",
-        3.0,
-    ),
+    _LeverageRule(),
     _ThresholdRule(
         "NEGATIVE_FCF",
         "HARD",

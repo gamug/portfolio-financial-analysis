@@ -261,12 +261,28 @@ instead.
       original "off-by-one/direction bug" framing needed correcting (same
       pattern as F2), in `docs/model_fixes.md`'s C1 entry. → `PLAN.md` Work
       item 7, C1.
-- [ ] **T-064** Fix **C2** — special-case `equity <= 0` in
+- [x] **T-064** Fix **C2** — special-case `equity <= 0` in
       `src/cycle/rules/builtin.py`'s `LEVERAGE_EXTREME` rule (or gate on
       `debt_to_assets`/`interest_coverage` instead of `debt_to_equity` when
       equity is non-positive); stop `valorization.py`'s quality percentile
       from masking the leverage risk. Verify: a negative-book-equity,
       high-absolute-debt fixture triggers the veto, not a pass. → C2.
+      **Fixed 2026-09-15**: `builtin.py`'s `LEVERAGE_EXTREME` is now a
+      dedicated `_LeverageRule` — a negative `debt_to_equity` (debt is
+      never negative, so this reliably signals non-positive equity, no new
+      persisted metric needed) gates on `debt_to_assets > 0.8` or
+      `interest_coverage < 1.5` instead, reusing PLAN.md's own Ring-1
+      `DQ_NEG_EQUITY` calibration (342 filings) rather than inventing new
+      thresholds; positive `debt_to_equity` keeps the original `> 3.0`
+      check unchanged. `valorization.py`'s quality factor now maps a
+      negative `debt_to_equity` to `float("inf")` before ranking so it
+      sorts as worst-, not best-in-cohort leverage. 6 new tests
+      (`tests/test_cycle.py`); full suite (238, was 232), ruff, mypy all
+      green. Residual: production's `rule_catalog` row is stale until a
+      one-time `UPDATE` (an operational follow-up, `seed_catalog` never
+      overwrites); `DQ_NEG_EQUITY` itself stays blocked on `T-040`. Full
+      record in `docs/model_fixes.md`'s C2 entry. → `PLAN.md` Work item 7,
+      C2.
 - [ ] **T-065** Implement the 7 Ring-1 `DQ_*` deterministic gates
       (`DQ_FCF_YIELD`/`DQ_MARGIN`/`DQ_MARGIN_REVIEW`/`DQ_OCF_MARGIN`/
       `DQ_MCAP_SCALE`/`DQ_NEG_EQUITY`/`DQ_REVENUE_POS`, thresholds in
@@ -363,9 +379,9 @@ instead.
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4) and
-`T-063` (C1) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis,
-no code change) — see `docs/model_fixes.md`. Nothing else in
+`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
+(C1) and `T-064` (C2) are **done**, 2026-09-15 (`T-063` via a corrected
+diagnosis, no code change) — see `docs/model_fixes.md`. Nothing else in
 `T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/

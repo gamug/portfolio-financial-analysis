@@ -6,6 +6,8 @@ Proposed definition (roadmap step 6, user to refine). Consumes the latest
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from cycle.scores.normalize import rank_pct
 from cycle.scores.technical import RawScore
 
@@ -34,14 +36,36 @@ _FACTORS: dict[str, tuple[float, list[tuple[str, bool]]]] = {
 }
 
 
+def _leverage_for_ranking(value: float | None) -> float | None:
+    """A negative debt/equity means negative book equity, not low leverage
+    (C2, docs/model_fixes.md) -- without this, ``rank_pct``'s
+    ``higher_is_better=False`` inversion would reward it as the BEST
+    leverage in the cohort instead of the worst."""
+    if value is not None and value < 0:
+        return float("inf")
+    return value
+
+
+# metric_key -> a transform applied to each row's raw value before ranking,
+# for a metric whose sign can flip in a way that would otherwise invert its
+# percentile the wrong way (see _leverage_for_ranking).
+_VALUE_TRANSFORMS: dict[str, Callable[[float | None], float | None]] = {
+    "leverage.debt_to_equity": _leverage_for_ranking,
+}
+
+
 def _factor_score(
     rows: list[dict[str, float | None]], keys: list[tuple[str, bool]]
 ) -> list[float | None]:
     """Average of the available sub-metric percentiles for each row."""
     n = len(rows)
-    pct_lists = [
-        rank_pct([r.get(key) for r in rows], higher_is_better=higher) for key, higher in keys
-    ]
+    pct_lists = []
+    for key, higher in keys:
+        transform = _VALUE_TRANSFORMS.get(key)
+        values = [r.get(key) for r in rows]
+        if transform is not None:
+            values = [transform(v) for v in values]
+        pct_lists.append(rank_pct(values, higher_is_better=higher))
     out: list[float | None] = []
     for i in range(n):
         vals = [v for v in (pl[i] for pl in pct_lists) if v is not None]

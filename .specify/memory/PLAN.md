@@ -534,7 +534,9 @@ ranking on N+1, not from no date at all. **Acceptance**:
 real cycle run following an active HARD veto; the vetoed name is excluded
 from `portfolio_position`.
 
-**C2 — Leverage-veto evasion via negative book equity (Conceptual).**
+**C2 — Leverage-veto evasion via negative book equity (Conceptual).
+RESOLVED 2026-09-15, `T-064` — full record in `docs/model_fixes.md`'s C2
+entry.**
 `src/cycle/rules/builtin.py:85-92`'s `LEVERAGE_EXTREME` rule tests
 `debt_to_equity > 3.0`; firms with large buyback-driven negative book
 equity (MCD, SBUX, PM, …) produce a *negative* ratio that trivially passes
