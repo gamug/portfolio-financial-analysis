@@ -184,6 +184,57 @@ def test_revenue_sums_distinct_components_when_no_total_is_tagged() -> None:
     assert stmts.get("revenue", key) == 1_583_000_000.0
 
 
+def test_revenue_prefers_excluding_assessed_tax_over_the_synonym_variant() -> None:
+    """F2 Sourcery follow-up (docs/model_fixes.md): ExcludingAssessedTax and
+    IncludingAssessedTax are the SAME line reported two ways (net of vs.
+    gross of pass-through sales/excise tax), never two additive amounts --
+    verified live for BF.B/STZ/TAP/PM, all of whom tag both for every
+    period with no separate total. Must resolve to the (correct,
+    income-statement) excluding-tax figure alone, not their sum."""
+    key = "2022-04-30 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+                "Sales",
+                **{key: 5_081_000_000.0},
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Net sales",
+                **{key: 3_933_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 3_933_000_000.0  # NOT 9_014_000_000.0
+
+
+def test_revenue_sum_ignores_a_label_only_match_from_a_custom_total_concept() -> None:
+    """F2 Sourcery follow-up: a filer's own custom-taxonomy "Total ..."
+    extension concept (PSX's `psx_RevenuesAndOtherIncome`, real shape) is
+    not in `total_concepts` and must NOT be pulled into the component sum
+    just because its label contains "total revenue" -- that would double
+    the real component instead of summing genuinely distinct streams."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "psx_RevenuesAndOtherIncome",
+                "Total Revenues and Other Income",
+                **{key: 114_852_000_000.0},
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Sales and other operating revenues",
+                **{key: 111_476_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 111_476_000_000.0  # NOT the sum
+
+
 def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     """`cogs` has the same two-distinct-concepts shape `revenue` had pre-F2
     but has NOT opted into `sum_components` -- must still return exactly the
