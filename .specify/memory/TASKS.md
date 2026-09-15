@@ -337,8 +337,33 @@ instead.
       (T-066) → re-run `cycle` (exercising T-063/T-064) → re-run the full
       `quant` pipeline + `evaluate` (exercising T-067). → `PLAN.md` Work
       item 7 Sequencing note.
-- [ ] **T-069** Add regression tests for F1/F2/F4/C1/C2 under `tests/`;
+- [x] **T-069** Add regression tests for F1/F2/F4/C1/C2 under `tests/`;
       full suite (`pytest`/`ruff`/`mypy`) green. → `PLAN.md` Work item 7
+      acceptance criteria. **Audited 2026-09-15**: each fix already landed
+      with its own regression coverage at fix time (this repo's standing
+      convention, not deferred to a separate task), so no new tests were
+      needed — confirmed by re-reading every test against its finding's
+      mechanism: **F1** `tests/test_share_scale.py` (9 tests — divide/
+      multiply-by-power-of-ten detection, EPS-corroboration-only rule,
+      overlapping-history exclusion) + `tests/test_metrics_valuation.py`
+      (`test_diluted_shares_scale_defect_is_corrected_before_market_cap`,
+      `test_shares_outstanding_scale_defect_also_corrected`,
+      `test_no_scale_factor_leaves_share_count_untouched`); **F2**
+      `tests/test_statements.py` (5 tests — total-over-components
+      precedence, component-summing fallback, tax-synonym disambiguation,
+      label-only-match exclusion, non-revenue items unaffected); **F4**
+      `tests/test_ttm.py` (7 tests) + `tests/test_pipeline.py` (2 tests —
+      10-K unaffected, fresh-10-Q ×4 fallback); **C1**
+      `tests/test_cycle.py::test_t_minus_1_hard_veto_excludes_asset`
+      (pre-existing) plus
+      `test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle`
+      (added during `T-063`'s investigation, exercising the real
+      rule-detection path the diagnosis-correction was about); **C2**
+      `tests/test_cycle.py` (6 tests — both negative-equity HARD-veto
+      branches, the healthy/no-corroboration/positive-D/E non-veto paths,
+      and the valorization ranking-inversion fix). `uv run pytest -q`:
+      245 passed; `ruff check`/`ruff format --check`/`mypy`/`pre-commit`
+      all clean (no source changed by this task). → `PLAN.md` Work item 7
       acceptance criteria.
 
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
@@ -411,14 +436,17 @@ instead.
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
 `T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
-(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only) and `T-067` (Q2,
-`evaluate` half only) are **done**, 2026-09-15 (`T-063` via a corrected
-diagnosis, no code change) — see `docs/model_fixes.md`. Nothing else in
-`T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
-independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
-repo's highest priority — no external dependency for `T-060`–`T-064`/
-`T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs
-`T-050`–`T-052`)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
+(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only), `T-067` (Q2,
+`evaluate` half only) and `T-069` (regression-coverage audit, no new tests
+needed) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis, no
+code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
+`T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
+production-data-mutating run, not a code change) remain in Work item 7.
+Nothing else in `T-040`–`T-084` has started. Execute Work item 5 ∥ 6
+(external, independent prerequisites) → **Work item 7, `T-060`–`T-069`
+(P0, this repo's highest priority — no external dependency for
+`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final
+target needs `T-050`–`T-052`)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
