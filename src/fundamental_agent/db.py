@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from portfolio_common.db import Allowlist, Database, Row
+from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult
@@ -184,8 +184,14 @@ CREATE TABLE IF NOT EXISTS analysis_run_error (
 """
 
 _REQUIRED_ASSET_COLUMNS = {"id", "ticker", "company_name", "cik", "sector_id", "sub_industry"}
-# The only columns `bump_run_counter` may interpolate into an UPDATE ... SET.
-_COUNTER_COLUMNS = Allowlist("completed_units", "skipped_units", "failed_units")
+# Every literal, pre-written UPDATE `bump_run_counter` may run -- the column
+# name is never interpolated into SQL at runtime, only used as a dict key, so
+# there is no dynamic SQL construction from caller input to review at all.
+_COUNTER_UPDATE_SQL = {
+    "completed_units": "UPDATE analysis_run SET completed_units = completed_units + 1 WHERE id = ?",
+    "skipped_units": "UPDATE analysis_run SET skipped_units = skipped_units + 1 WHERE id = ?",
+    "failed_units": "UPDATE analysis_run SET failed_units = failed_units + 1 WHERE id = ?",
+}
 
 
 def _now() -> str:
@@ -734,12 +740,11 @@ def update_run_plan(conn: Database, run_id: int, *, universe_size: int, planned_
 
 
 def bump_run_counter(conn: Database, run_id: int, column: str) -> None:
-    if column not in _COUNTER_COLUMNS:
-        raise ValueError(f"not a counter column: {column}")
-    conn.execute(
-        f"UPDATE analysis_run SET {column} = {column} + 1 WHERE id = ?",  # noqa: S608
-        (run_id,),
-    )
+    try:
+        sql = _COUNTER_UPDATE_SQL[column]
+    except KeyError:
+        raise ValueError(f"not a counter column: {column}") from None
+    conn.execute(sql, (run_id,))
     conn.commit()
 
 
