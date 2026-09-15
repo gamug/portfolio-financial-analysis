@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fundamental_agent.statements import INSTANT, Period, Statements, _parse_period, iter_facts
@@ -116,3 +118,139 @@ def test_iter_facts_yields_only_numeric_period_cells(aapl_10k: Statements) -> No
     assert all(isinstance(f["value"], float) for f in facts)
     assert all(f["statement"] in aapl_10k.raw for f in facts)
     assert {f["statement"] for f in facts} == set(aapl_10k.raw)
+
+
+def _income_row(concept: str, label: str, **periods: float) -> dict[str, Any]:
+    """A minimal non-dimensional income-statement row -- mirrors the real
+    EDGAR-gateway shape captured in tests/fixtures/financials_*.json."""
+    row: dict[str, Any] = {
+        "concept": concept,
+        "label": label,
+        "standard_concept": None,
+        "abstract": False,
+        "dimension": False,
+    }
+    row.update(periods)
+    return row
+
+
+def _revenue_payload(*rows: dict[str, Any]) -> dict[str, Any]:
+    return {"income_statement": list(rows), "balance_sheet": [], "cash_flow": []}
+
+
+@pytest.mark.parametrize("total_first", [False, True])
+def test_revenue_prefers_total_over_components_regardless_of_document_order(
+    total_first: bool,
+) -> None:
+    """F2 (docs/model_fixes.md): a filer reporting a lease-income stream, a
+    fee-income stream, and an explicit "Total revenues" (UDR's real shape)
+    must resolve to the total, whichever order the rows appear in -- not
+    whichever qualifying row the filer happened to list first."""
+    key = "2023-12-31 (FY)"
+    total_row = _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_712_317_000.0})
+    component_rows = [
+        _income_row("us-gaap_OperatingLeaseLeaseIncome", "Rental income", **{key: 1_700_956_000.0}),
+        _income_row(
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Joint venture management and other fees",
+            **{key: 11_361_000.0},
+        ),
+    ]
+    rows = [total_row, *component_rows] if total_first else [*component_rows, total_row]
+    stmts = Statements.from_payload(_revenue_payload(*rows))
+
+    assert stmts.get("revenue", key) == 1_712_317_000.0
+
+
+def test_revenue_sums_distinct_components_when_no_total_is_tagged() -> None:
+    """F2: CPT's real shape -- a lease-income stream and a fee-income stream,
+    but no separately tagged "Total revenues" row at all. The theoretically
+    correct reconstruction is their sum (GAAP total revenue = sum of revenue
+    streams), not just the first component encountered."""
+    key = "2022-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_OperatingLeaseLeaseIncome", "Property revenues", **{key: 1_570_000_000.0}
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Fee and asset management",
+                **{key: 13_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 1_583_000_000.0
+
+
+def test_revenue_prefers_excluding_assessed_tax_over_the_synonym_variant() -> None:
+    """F2 Sourcery follow-up (docs/model_fixes.md): ExcludingAssessedTax and
+    IncludingAssessedTax are the SAME line reported two ways (net of vs.
+    gross of pass-through sales/excise tax), never two additive amounts --
+    verified live for BF.B/STZ/TAP/PM, all of whom tag both for every
+    period with no separate total. Must resolve to the (correct,
+    income-statement) excluding-tax figure alone, not their sum."""
+    key = "2022-04-30 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+                "Sales",
+                **{key: 5_081_000_000.0},
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Net sales",
+                **{key: 3_933_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 3_933_000_000.0  # NOT 9_014_000_000.0
+
+
+def test_revenue_sum_ignores_a_label_only_match_from_a_custom_total_concept() -> None:
+    """F2 Sourcery follow-up: a filer's own custom-taxonomy "Total ..."
+    extension concept (PSX's `psx_RevenuesAndOtherIncome`, real shape) is
+    not in `total_concepts` and must NOT be pulled into the component sum
+    just because its label contains "total revenue" -- that would double
+    the real component instead of summing genuinely distinct streams."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "psx_RevenuesAndOtherIncome",
+                "Total Revenues and Other Income",
+                **{key: 114_852_000_000.0},
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Sales and other operating revenues",
+                **{key: 111_476_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 111_476_000_000.0  # NOT the sum
+
+
+def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
+    """`cogs` has the same two-distinct-concepts shape `revenue` had pre-F2
+    but has NOT opted into `sum_components` -- must still return exactly the
+    first document-order match, not their sum. Guards against a future
+    change that flips the default, or copies revenue's registry shape onto
+    another item without the same total/component analysis."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _income_row("us-gaap_CostOfGoodsSold", "Cost of goods sold", **{key: 100.0}),
+                _income_row("us-gaap_CostOfServices", "Cost of services", **{key: 50.0}),
+            ],
+            "balance_sheet": [],
+            "cash_flow": [],
+        }
+    )
+
+    assert stmts.get("cogs", key) == 100.0  # first match only, NOT summed to 150.0

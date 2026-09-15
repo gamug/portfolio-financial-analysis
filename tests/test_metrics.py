@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fundamental_agent.metrics import compute_group
@@ -99,3 +101,54 @@ def test_cagr_none_when_an_endpoint_is_non_positive() -> None:
     assert _cagr(-40.0, 100.0, 2) is None
     assert _cagr(100.0, 0.0, 2) is None
     assert _cagr(100.0, 121.0, 2) == pytest.approx(0.1, abs=1e-9)
+
+
+def _income_row(concept: str, label: str, **periods: float) -> dict[str, Any]:
+    return {
+        "concept": concept,
+        "label": label,
+        "standard_concept": None,
+        "abstract": False,
+        "dimension": False,
+        **periods,
+    }
+
+
+def test_net_margin_and_ocf_margin_are_sane_for_a_reit_shape_multi_revenue_payload() -> None:
+    """F2 (docs/model_fixes.md) regression at the metric layer, not just
+    Statements.get: a filer with a lease-income stream, a fee-income stream,
+    and an explicit total (UDR's real shape) must land net_margin /
+    operating_cash_flow_margin inside PLAN.md's own outlier thresholds
+    ([-1,1] / [-1.5,1.5]), not the ~30-69x values a first-matching-row
+    resolution against the smaller component produced pre-fix."""
+    key = "2023-12-31 (FY)"
+    payload = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_OperatingLeaseLeaseIncome", "Rental income", **{key: 1_700_956_000.0}
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Joint venture management and other fees",
+                **{key: 11_361_000.0},
+            ),
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_712_317_000.0}),
+            _income_row("us-gaap_NetIncomeLoss", "Net income", **{key: 245_000_000.0}),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [
+            _income_row(
+                "us-gaap_NetCashProvidedByUsedInOperatingActivities",
+                "Cash from operations",
+                **{key: 900_000_000.0},
+            ),
+        ],
+    }
+    stmts = Statements.from_payload(payload)
+
+    net_margin = _flat(compute_group("profitability", stmts, key))["net_margin"]
+    ocf_margin = _flat(compute_group("cashflow", stmts, key))["operating_cash_flow_margin"]
+
+    assert net_margin == pytest.approx(245_000_000.0 / 1_712_317_000.0, abs=1e-6)
+    assert -1.0 < net_margin < 1.0
+    assert -1.5 < ocf_margin < 1.5

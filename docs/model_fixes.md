@@ -301,3 +301,241 @@ original fix).
   `data_quality_issue` audit trail — that table doesn't exist yet (Work item
   5). Once it does, wiring this fix's ambiguous-case branch to it is a
   natural, small follow-up, not a redesign.
+
+---
+
+## F2 — Revenue-concept resolution (wrong row wins when a filer reports multiple revenue-tagged lines)
+
+**Status**: Fixed 2026-09-15 (branch `fix/f2-revenue-concept-resolution`,
+`T-061`).
+
+### Symptom
+
+Verified directly against the live production database
+(`data/financial.db`), 2026-09-15: `fundamental_metrics.net_margin` and
+`operating_cash_flow_margin` (both raw ratios, `net_income ÷ revenue` and
+`operating_cash_flow ÷ revenue`) are wildly distorted for a real cohort of
+filings — e.g. CPT (a REIT) `net_margin = 30.45` (3045%), UDR
+`net_margin = 35.535` (3553.5%) — because `revenue` resolved to a small,
+non-operating component line instead of the filer's actual total revenue.
+
+### Root cause — corrected from PLAN.md's own stated framing
+
+`PLAN.md`'s original entry for this finding described it as *"a REIT
+revenue-concept scaling bug... `statements.py` picks a non-operating line
+item as `revenue` for REITs (CPT, UDR, ESS, SBAC, …)"* and its proposed fix
+as *"correct the `revenue` XBRL-concept selection **for REIT-classified
+filers**."* **This framing is too narrow, and would have left most of the
+real cohort unfixed.** `Statements`/`compute_group` carry no sector
+information at all (confirmed: `assets.sector_id` never reaches
+`FilingContext` or any metrics call site) — there is no way to special-case
+"REITs" even if that were the right scope. Live-DB verification found the
+identical mechanism in **`APO`** (an alternative asset manager),
+**`WFC`** (a bank), **`HUM`** (a health insurer), **`HOOD`** (a fintech),
+and **`APA`** (an E&P company) — none of them REITs.
+
+The actual mechanism: `Statements.get()` iterates a statement's rows in
+**raw document order** and returns the **first row** whose concept matches
+`REGISTRY[item].concepts` — with no priority among the tuple's entries
+(tuple order was not actually authoritative anywhere, despite a comment
+implying otherwise). When a filer reports **multiple distinct,
+non-dimensional revenue-tagged rows** — a component stream (e.g. ASC-842
+lease income, or ASC-606 contract revenue) plus, usually, a separately
+tagged aggregate "Total revenues" line — whichever appears first in the
+filer's own document order wins, regardless of which is the real total.
+Verified against real `financial_facts` rows for 6+ filings:
+
+- **CPT**: only `us-gaap_OperatingLeaseLeaseIncome` ("Property revenues",
+  $1.57B) + `us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax`
+  ("Fee and asset management", $13M) are tagged — **no `us-gaap_Revenues`
+  total row exists at all**, and `OperatingLeaseLeaseIncome` wasn't even
+  whitelisted. `get()` picked the $13M fee line.
+- **UDR, ESS, SBAC, BXP, APO**: the same lease/component-income-first
+  shape, but these filings *do* separately tag `us-gaap_Revenues` — it
+  just appears *after* the smaller component row in document order, so
+  `get()` never reached it.
+
+### Theoretical/technical reference
+
+- **FASB ASC 606** (*Revenue from Contracts with Customers*) governs
+  performance-obligation-based revenue (fee/service income;
+  `us-gaap_RevenueFromContractWithCustomer{Excluding,Including}AssessedTax`).
+- **FASB ASC 842** (*Leases*) governs lessor lease income *separately* from
+  ASC 606 — a REIT's or tower company's rental/site-leasing revenue is not
+  ASC-606 revenue at all, which is exactly why it needs its own XBRL concept
+  (`us-gaap_OperatingLeaseLeaseIncome`) distinct from the contract-revenue
+  tags above; a filer with both lease and fee income legitimately reports
+  *two* separate, additive revenue-stream facts.
+- **SEC Regulation S-X, Article 5** requires an aggregate revenue line in
+  the income statement presentation — this is *why* a `us-gaap_Revenues`
+  (or, for banks, `us-gaap_RevenuesNetOfInterestExpense`) subtotal reliably
+  exists once a filer has more than one revenue stream, and why preferring
+  it over any component tag is the theoretically correct resolution, not a
+  guess. When no such aggregate is separately tagged (CPT's case), GAAP's
+  own additive construction of "total revenue" means the components' sum is
+  the correct reconstruction.
+
+### Fix
+
+`src/fundamental_agent/statements.py`:
+- `LineItem` gains two optional fields, defaulting to no-ops so every other
+  registry entry (~24 items) is byte-for-byte unaffected: `total_concepts`
+  (an aggregate that, if present, wins outright) and `sum_components` (sum
+  the first row per distinct matching concept instead of returning just the
+  first, when no total is tagged).
+- `Statements.get()` rewritten as a two-tier resolution (extracted into
+  `_rows_for`/`_first_total_match`/`_first_component_match`/
+  `_sum_matching_components` helpers to keep cyclomatic complexity low):
+  **Tier 1** — any row tagged with a `total_concepts` entry wins,
+  order-independent. **Tier 2** — the original first-match loop (default,
+  unchanged for every item that doesn't set `sum_components`), or, for
+  revenue, the sum of every distinct matching component.
+- `REGISTRY["revenue"]`: added `us-gaap_OperatingLeaseLeaseIncome` to
+  `concepts`; added `total_concepts=("us-gaap_Revenues",
+  "us-gaap_RevenuesNetOfInterestExpense")`; set `sum_components=True`.
+- `Statements.get_all()` is **not** touched — it shares the identical
+  first-match defect but is only ever called for `shares_outstanding`/
+  `diluted_shares`/`net_income`/`eps_diluted` (F1's
+  `detect_share_scale_factors`), never `revenue`.
+
+### Design decisions
+
+**Opt-in fields, not a global algorithm change.** Every other multi-concept
+registry item (`cogs`, `interest_expense`, `depreciation_amortization`,
+`operating_cash_flow`, `capital_expenditure`, `stock_based_compensation`,
+`shares_outstanding`, `cash`, `long_term_debt`, `short_term_debt`, …) keeps
+`total_concepts=()`/`sum_components=False`, so Tier 1 no-ops and Tier 2 is
+the exact original loop for all of them — verified by construction and by
+every one of the four existing fixtures (AAPL, JPM, MSFT, NVDA) resolving to
+the identical value as before. A global "prefer tuple order" or "always sum
+multiple matches" change was considered and rejected: several other items'
+concept tuples are genuine filer-convention *synonyms* (pick one, not
+components to sum), and summing them would have introduced new bugs to fix
+this one.
+
+**Flagged, not fixed, for a future pass** — some other registry items share
+F2's exact risk shape and may need the same treatment eventually, but each
+needs its own verification pass first, the same discipline applied here:
+
+| item | risk |
+|---|---|
+| `cogs`, `interest_expense`, `depreciation_amortization`, `long_term_debt` | same total/component shape as revenue — plausible, not verified live |
+| `short_term_debt` | would need `sum_components` with **no** `total_concepts` (CPT's shape) — these are typically simultaneous distinct lines with no GAAP "total short-term debt" tag |
+| `cash` | the **opposite** risk — `CashCashEquivalentsAndShortTermInvestments` is itself an aggregate that already includes what the separate `short_term_investments` registry item also captures; a careless `sum_components=True` here would double-count |
+
+### Verification
+
+Live re-verification against the production database, 2026-09-15, using
+the **actual shipped code** (not the pre-fix estimate) — reconstructed each
+outlier filing's `Statements` from its own `financial_facts` rows and
+re-ran the real `net_margin`/`operating_cash_flow_margin` formulas through
+the fixed `Statements.get("revenue", ...)`:
+
+| metric | pre-fix outliers (matches PLAN.md exactly) | resolved post-fix |
+|---|---|---|
+| `net_margin` outside `[-1,1]` | 124 filings / 34 tickers | ~~**98 (79.0%)**~~ **93 (75.0%)** — see Post-merge correction below |
+| `operating_cash_flow_margin` outside `[-1.5,1.5]` | 54 filings / 17 tickers | **46 (85.2%)** (unaffected by the correction) |
+
+Code-level verification:
+- `uv run pytest -q` — 222 passed (was 217; +5 new: `tests/test_statements.py`
+  ×4 — total-wins-regardless-of-order [parametrized both orderings],
+  sum-when-no-total, and a defensive test proving a *different* item
+  [`cogs`] with 2 matching concepts still returns only the first match, not
+  a sum — plus `tests/test_metrics.py` ×1, an end-to-end
+  `net_margin`/`operating_cash_flow_margin` sanity check for a synthetic
+  UDR-shape payload).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green.
+- `git diff` review: confirmed every other `REGISTRY` entry unchanged, and
+  `test_income_line_items_resolve`/`test_bank_has_no_operating_income_or_current_split`
+  needed zero changes (traced by hand and confirmed by the passing suite).
+
+**Not done as part of this change** (same as F1, explicitly not an
+oversight): re-persisting corrected `fundamental_metrics`/`score_snapshot`
+rows for the affected universe requires a `--fresh` re-run against
+production (paid LLM calls, mutates shared data) — outside a code-review
+pass's authority to run unprompted.
+
+### Post-merge correction: a code-review bot caught two real gaps
+
+An automated PR review ([Sourcery](https://sourcery.ai)) flagged two
+`statements.py` issues before merge. Both were verified against live
+`financial_facts` (not just accepted on the bot's say-so) and turned out to
+be real, *currently-occurring* double-counting bugs in the just-shipped
+`sum_components` path — fixed the same day (2026-09-15):
+
+1. **`ExcludingAssessedTax`/`IncludingAssessedTax` are alternate encodings
+   of one line, not two additive amounts** — summing them roughly triples
+   revenue. Live-verified across **37 real filings** (`BF.B`, `PM`, `STZ`,
+   `TAP`, `EXC`): every one tags *both* concepts for *every* period, and
+   they are never independent amounts — e.g. STZ FY2019 tags
+   `...ExcludingAssessedTax` = "Net revenues" **$29.8B** and
+   `...IncludingAssessedTax` = "Revenues including excise taxes" **$77.9B**
+   for the identical period; the smaller, excluding-tax figure is the real
+   income-statement "Net sales"/"Net revenues" line (ASC 606-10-32-2 scopes
+   amounts collected on behalf of a third party, e.g. excise tax, out of the
+   transaction price), the larger one a supplemental gross disclosure.
+   **Fix**: a new `LineItem.synonym_groups` field — concepts sharing a group
+   are mutually exclusive; `_sum_matching_components` now counts at most one
+   value per group, preferring the group member listed earliest in
+   `concepts` (excluding-tax, deterministically, regardless of document
+   order). New test: `test_revenue_prefers_excluding_assessed_tax_over_the_
+   synonym_variant`.
+2. **The `sum_components` path matched via `_matches()`, which includes the
+   fuzzy `label_contains` fallback** — a filer's own unrecognized
+   custom-taxonomy "Total ..." extension concept (not in `total_concepts`,
+   which only lists the two standard `us-gaap_Revenues*` tags) could match
+   by label text alone and get summed alongside the real components,
+   double-counting. Live-verified across **42 real filings** (`PSX`, `LOW`,
+   `ICE`, `SHW`, and others using issuer-specific total concepts like
+   `psx_RevenuesAndOtherIncome`, `axp_TotalRevenuesNetOfInterestExpense
+   AfterProvisionsForLosses`, `bk_TotalRevenuesIncludingRevenueGeneratedBy
+   VariableInterestEntities`) — e.g. PSX FY2021 would have summed
+   `psx_RevenuesAndOtherIncome` ("Total Revenues and Other Income", $114.9B,
+   matched only by its label containing "total revenue") with
+   `us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax` ("Sales and
+   other operating revenues", $111.5B) to $226.3B — nearly double the real
+   figure. One case (LOW) also surfaced a sharper version of the same risk:
+   `low_RevenueFromContractWithCustomerExcludingAssessedTaxPercentage`, a
+   *disclosure percentage* (value `1.0`), matches the label hint "net
+   sales" too. **Fix**: `_sum_matching_components` now matches only
+   `spec.concepts` (exact XBRL concept tag) — never `label_contains`, which
+   stays reserved for the (unchanged) single-match `Tier 2` fallback other
+   registry items use. Revenue's own now-unreachable `label_contains` entry
+   was removed rather than left as dead/misleading config. New test:
+   `test_revenue_sum_ignores_a_label_only_match_from_a_custom_total_concept`.
+
+Neither gap was hypothetical: both were confirmed live, and re-running the
+exact F2 verification query afterward changed the headline number — **98/124
+→ 93/124 for `net_margin`** (five filings that the original, buggy summing
+had coincidentally pushed back inside `[-1,1]` are, correctly, still
+outliers post-fix; none of the 37+42 double-counting-risk filings above were
+themselves in the outlier cohort, so the five are a separate, smaller
+overlap not yet individually characterized). `operating_cash_flow_margin`
+(46/54) was unaffected — no `ocf_margin`-outlier filing in the cohort
+exercised either gap. Full suite: 224 passed (was 222 before this
+correction; +2 new regression tests, on top of the +5 from the original
+fix). `uv run ruff check` / `ruff format --check` / `uv run mypy` — all
+green.
+
+### Residual scope, deliberately deferred
+
+- **31 of 124 net_margin-outlier filings (25.0%) and 8 of 54
+  operating_cash_flow_margin-outlier filings (14.8%) are NOT resolved by
+  this fix** (updated post-merge-correction count for `net_margin`, see
+  above) — most have only a single matching revenue concept, so F2's
+  multiple-rows mechanism doesn't apply; their distortion (if the underlying
+  number is even wrong at all, rather than a genuinely unusual quarter, e.g.
+  MRNA's pandemic-era revenue collapse) has some other, unexamined cause.
+  Several of the residual (`FITB`, `HBAN`, `IBKR`, `MTB`) are banks/brokers
+  whose revenue is tagged via issuer-specific custom XBRL extension concepts
+  (e.g. `fitb_CommercialBankingRevenue`) entirely outside the standard
+  `us-gaap` taxonomy this repo's `REGISTRY` whitelists — a distinct, larger
+  investigation (a bank/broker revenue-taxonomy pass), not part of F2.
+- `Statements.get_all()` carries the identical first-match defect and does
+  not consult `total_concepts`/`sum_components` — if a future caller ever
+  needs `revenue`'s full period series, it needs the same two-tier
+  treatment ported over.
+- The `cogs`/`interest_expense`/`depreciation_amortization`/
+  `long_term_debt`/`short_term_debt`/`cash` risk table above is flagged,
+  not fixed — each needs its own live-data verification pass before
+  changing, the same discipline F1 and F2 both applied.

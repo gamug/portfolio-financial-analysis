@@ -53,6 +53,24 @@ class LineItem:
 
     ``statements`` scopes the search: a balance-sheet item must never match a
     similarly named cash-flow "increase/decrease in ..." row.
+
+    ``total_concepts`` and ``sum_components`` exist for the case where a
+    filer reports *multiple, distinct* non-dimensional rows for one line item
+    -- e.g. a lessor's ASC-842 lease income alongside its ASC-606 contract
+    revenue, with (or without) a separately tagged aggregate. Both default to
+    a no-op, so every item that doesn't set them keeps today's exact
+    first-document-order-match behavior (see :func:`Statements.get`, F2 --
+    ``docs/model_fixes.md``).
+
+    ``synonym_groups`` handles a third case the sum needs to guard against:
+    some ``concepts`` entries are not separate, additive streams but
+    *alternate encodings of the same one* -- e.g. an ASC-606 filer tags its
+    revenue line as EITHER ``...ExcludingAssessedTax`` OR
+    ``...IncludingAssessedTax``, never both as genuinely different amounts.
+    Each group lists such mutually-exclusive concepts together; when summing
+    components, at most one value per group counts, preferring whichever
+    group member appears earliest in ``concepts`` -- see the F2 Sourcery
+    follow-up in ``docs/model_fixes.md``.
     """
 
     name: str
@@ -60,6 +78,20 @@ class LineItem:
     concepts: tuple[str, ...] = ()
     standard: tuple[str, ...] = ()
     label_contains: tuple[str, ...] = ()
+    # An already-aggregated total: if any row matches one of these, it wins
+    # outright over every `concepts` match, regardless of document order.
+    total_concepts: tuple[str, ...] = ()
+    # When no `total_concepts` row matches: sum one value per distinct
+    # additive component (instead of just returning the first match) --
+    # these represent genuinely separate streams when no total is tagged.
+    # Matches only `concepts` -- never the `label_contains` fuzzy fallback,
+    # which can hit an unrecognized aggregate/custom-extension "Total ..."
+    # row and double-count it against the real components.
+    sum_components: bool = False
+    # Concepts that are alternate *encodings* of one stream, not separate
+    # amounts -- see the class docstring. Only consulted by the
+    # `sum_components` path.
+    synonym_groups: tuple[tuple[str, ...], ...] = ()
 
 
 _INCOME = ("income_statement",)
@@ -74,11 +106,33 @@ REGISTRY: dict[str, LineItem] = {
         _INCOME,
         concepts=(
             "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
-            "us-gaap_RevenuesNetOfInterestExpense",
-            "us-gaap_Revenues",
             "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+            # ASC-842 lease income -- a lessor's (e.g. a REIT/tower company)
+            # dominant revenue stream, distinct from ASC-606 contract revenue
+            # above; see docs/model_fixes.md, F2.
+            "us-gaap_OperatingLeaseLeaseIncome",
         ),
-        label_contains=("net sales", "total net revenue", "total revenue"),
+        # Aggregate/"Total revenue(s)" concepts: if present, used alone, never
+        # summed with the component concepts above (F2).
+        total_concepts=("us-gaap_Revenues", "us-gaap_RevenuesNetOfInterestExpense"),
+        sum_components=True,
+        # ExcludingAssessedTax / IncludingAssessedTax are the SAME line
+        # reported two ways (net of vs. gross of pass-through sales/excise
+        # tax an agent collects on a principal's behalf, out of scope of the
+        # ASC 606-10-32-2 transaction price) -- verified against live filings
+        # (BF.B, STZ, TAP, PM: both concepts present for every period, same
+        # value pair every time, e.g. STZ FY2019 "Net revenues" $29.8B vs.
+        # "Revenues including excise taxes" $77.9B). Summing them as if
+        # additive would nearly triple revenue. Excluding-tax is preferred:
+        # it is the actual income-statement "Net sales"/"Net revenues" line;
+        # Including-tax is the supplemental gross disclosure. See the F2
+        # Sourcery follow-up in docs/model_fixes.md.
+        synonym_groups=(
+            (
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+            ),
+        ),
     ),
     "cogs": LineItem(
         "cogs",
@@ -289,8 +343,28 @@ class Statements:
         earlier = [p for p in self.periods if p.tag == period.tag and p.date < period.date]
         return earlier[-1] if earlier else None
 
+    def _rows_for(self, spec: LineItem) -> Iterator[dict[str, Any]]:
+        """Every non-abstract, non-dimensional row across *spec*'s statements,
+        in raw document order."""
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if row.get("abstract") or row.get("dimension"):
+                    continue
+                yield row
+
     def get(self, item: str, period_key: str) -> float | None:
-        """Return the value of registry *item* for *period_key*, or ``None``."""
+        """Return the value of registry *item* for *period_key*, or ``None``.
+
+        Two-tier resolution (F2, ``docs/model_fixes.md``): **Tier 1** -- if
+        ``spec.total_concepts`` is set, any row tagged with one of them wins
+        outright over every ``concepts`` match, regardless of document
+        order. Absent a match there, **Tier 2** falls back to the original
+        single-row lookup: the first ``concepts``-matching row in document
+        order (unchanged default for every item that doesn't set
+        ``sum_components``), or, when ``spec.sum_components`` is set, the sum
+        of the first row per distinct matching concept -- multiple
+        co-reported streams with no separately tagged total.
+        """
         spec = REGISTRY[item]
         column = period_key
         if spec.statements == _BALANCE:
@@ -298,15 +372,67 @@ class Statements:
             if instant is None:
                 return None
             column = instant
-        for statement in spec.statements:
-            for row in self.raw.get(statement, []):
-                if row.get("abstract") or row.get("dimension"):
-                    continue
-                if _matches(row, spec):
-                    value = _numeric(row.get(column))
-                    if value is not None:
-                        return value
+
+        if spec.total_concepts:
+            total_value = self._first_total_match(spec, column)
+            if total_value is not None:
+                return total_value
+
+        if spec.sum_components:
+            return self._sum_matching_components(spec, column)
+        return self._first_component_match(spec, column)
+
+    def _first_total_match(self, spec: LineItem, column: str) -> float | None:
+        """Tier 1: the first row tagged with one of ``spec.total_concepts``."""
+        for row in self._rows_for(spec):
+            if row.get("concept") in spec.total_concepts:
+                value = _numeric(row.get(column))
+                if value is not None:
+                    return value
         return None
+
+    def _first_component_match(self, spec: LineItem, column: str) -> float | None:
+        """Tier 2 (default): the original single-row, first-document-order
+        lookup, unchanged for every item that doesn't set ``sum_components``."""
+        for row in self._rows_for(spec):
+            if _matches(row, spec):
+                value = _numeric(row.get(column))
+                if value is not None:
+                    return value
+        return None
+
+    def _sum_matching_components(self, spec: LineItem, column: str) -> float | None:
+        """Sum one value per distinct additive component -- the
+        ``sum_components`` branch of :meth:`get`.
+
+        Matches only ``spec.concepts`` (never the fuzzy ``label_contains``
+        fallback :func:`_matches` also checks -- an unrecognized custom
+        "Total ..." extension concept can match by label text alone and
+        would double-count against the real components). Concepts sharing a
+        ``spec.synonym_groups`` entry are alternate encodings of ONE stream,
+        not separate amounts: at most one value per group counts, preferring
+        whichever member is listed earliest in ``spec.concepts``.
+        """
+        values: dict[str, float] = {}
+        for row in self._rows_for(spec):
+            concept = row.get("concept")
+            if concept is None or concept not in spec.concepts or concept in values:
+                continue
+            value = _numeric(row.get(column))
+            if value is not None:
+                values[concept] = value
+        if not values:
+            return None
+
+        total = 0.0
+        counted: set[str] = set()
+        for concept in spec.concepts:
+            if concept not in values or concept in counted:
+                continue
+            group = next((g for g in spec.synonym_groups if concept in g), (concept,))
+            total += values[concept]
+            counted.update(group)
+        return total
 
     def get_all(self, item: str) -> dict[str, float]:
         """Every period-column value on registry *item*'s first-matching row --
