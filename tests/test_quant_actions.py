@@ -6,6 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import write_universe_db
 from portfolio_common.db import Database
 
 from quant.actions import (
@@ -230,16 +231,16 @@ def test_load_actions_prefers_a_single_engine_never_blends_two(
 
 def test_backfill_derive_writes_both_engines_for_a_10q_only_asset(
     memory_quant_db: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Q3 acceptance criterion: an asset with only 10-Q dividend facts (no
     10-K DPS at all -- the XOM/PG/T/NEE shape) gets usable, non-zero
     dividends from the derive path via load_actions."""
     conn = memory_quant_db
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'NEE')")
-    conn.execute(
-        "INSERT INTO universe_membership (asset_id, universe, valid_from, detected_at, "
-        "source) VALUES (1, 'SP500', '2024-01-01', '2024-01-01T00:00:00Z', 'test')"
-    )
+    udb = write_universe_db(tmp_path / "universe.db", [("NEE", "2024-01-01", None)])
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(udb))
     concept = "us-gaap_CommonStockDividendsPerShareDeclared"
     _seed_10q(conn, 1, "2024Q1", "2024-03-31", concept, tag="Q1", value=0.40)
 
