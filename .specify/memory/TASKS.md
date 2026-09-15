@@ -202,11 +202,18 @@ instead.
       yield| > 50%`" not re-verified (needs a `--fresh` universe re-run,
       out of scope here, and likely needs F2/F4 too). → `PLAN.md` Work item
       7, F1.
-- [ ] **T-061** Fix **F2** — correct the `revenue` XBRL-concept selection
-      for REIT-classified filers in `src/fundamental_agent/statements.py`.
-      Verify: `net_margin` outside `[-1,1]` and `operating_cash_flow_margin`
-      outside `[-1.5,1.5]` outlier counts (124 / 54 filings) go to
-      (near-)zero for the affected cohort. → F2.
+- [x] **T-061** Fix **F2** — make `Statements.get()` prefer an explicit
+      aggregate revenue concept over a component stream, order-independent,
+      and sum distinct components when no aggregate is tagged
+      (`src/fundamental_agent/statements.py`, `LineItem.total_concepts`/
+      `sum_components`). Verified 2026-09-15: 98/124 (79.0%) net_margin and
+      46/54 (85.2%) operating_cash_flow_margin outlier filings resolve — not
+      REIT-specific (also fixes `APO`/`WFC`/`HUM`/`HOOD`/`APA`); full
+      record, including why the original "REIT-classified filers" framing
+      needed correcting, in `docs/model_fixes.md`'s F2 entry. Residual
+      (single-concept filings, several bank/broker custom-tag cases) is a
+      separate, larger investigation, explicitly deferred. → `PLAN.md` Work
+      item 7, F2.
 - [ ] **T-062** Fix **F4** — TTM-annualize 10-Q flow numerators (trailing 4
       quarters, fallback ×4) in `metrics/profitability.py`/`efficiency.py`.
       Verify: 10-Q vs. 10-K medians for ROA/ROE/asset_turnover converge
@@ -318,8 +325,9 @@ instead.
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-`T-060` (F1) is **done**, 2026-09-14 — see `docs/model_fixes.md`. Nothing
-else in `T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
+`T-060` (F1) is **done**, 2026-09-14, and `T-061` (F2) is **done**,
+2026-09-15 — see `docs/model_fixes.md`. Nothing else in `T-040`–`T-084` has
+started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/
 `T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs

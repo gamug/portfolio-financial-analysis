@@ -457,7 +457,8 @@ with `|FCF yield| > 50%`" count was not re-verified in full (would need a
 see `docs/model_fixes.md`'s Verification section) and likely needs other
 findings (F2, F4) too, not F1 alone.
 
-**F2 — REIT revenue-concept scaling bug (Critical).**
+**F2 — Revenue-concept resolution bug. RESOLVED 2026-09-15, `T-061` — full
+record in `docs/model_fixes.md`'s F2 entry.**
 `src/fundamental_agent/statements.py` picks a non-operating line item as
 `revenue` for REITs (CPT, UDR, ESS, SBAC, …), dividing hundreds of millions
 of net income by a recorded revenue of $3–5M. Verified: 124 filings with
@@ -465,11 +466,28 @@ of net income by a recorded revenue of $3–5M. Verified: 124 filings with
 `operating_cash_flow_margin` outside `[-1.5, 1.5]` (UDR = 163.3). LLM
 narrative on CPT: *"the negative gross margin (-42.7%) is a REIT accounting
 artifact from heavy depreciation rather than a true operational loss."*
-**Fix**: correct the `revenue` XBRL-concept selection for REIT-classified
-filers in `statements.py` to the actual top-line operating revenue concept.
-**Acceptance**: the `net_margin`/`operating_cash_flow_margin` outlier
-counts above both go to (near-)zero for the affected REIT cohort after
-recompute.
+~~**Fix**: correct the `revenue` XBRL-concept selection for REIT-classified
+filers in `statements.py` to the actual top-line operating revenue
+concept.~~ **Correction (coherence fix, 2026-09-15)**: this original
+"REIT-classified filers" framing was too narrow — `Statements`/
+`compute_group` carry no sector information at all, so a REIT-specific
+special case was never actually possible, and live-DB verification found
+the identical mechanism in non-REITs (`APO`, `WFC`, `HUM`, `HOOD`, `APA`).
+The real, general mechanism: `Statements.get()` returns the first
+document-order row matching any whitelisted revenue concept, with no
+preference for an aggregate "Total revenues" tag over a smaller component
+stream (ASC-606 contract revenue vs. ASC-842 lease income) when a filer
+reports both. The shipped fix makes an explicit aggregate concept win
+outright when tagged, and sums distinct component streams when no
+aggregate exists — full root-cause correction and design rationale in
+`docs/model_fixes.md`. **Acceptance** (re-verified against live data
+post-fix, using the actual shipped code — see `docs/model_fixes.md`): 98
+of 124 net_margin-outlier filings (79.0%) and 46 of 54
+operating_cash_flow_margin-outlier filings (85.2%) now resolve — a large
+majority, not "near-zero" as originally claimed. The residual (single-
+matching-concept filings, several of them banks/brokers with revenue
+tagged via issuer-specific custom XBRL extension concepts) is a distinct,
+larger investigation, explicitly deferred, not silently dropped.
 
 **F4 — 10-Q flow/stock mismatch, never annualized (Accounting-critical).**
 `metrics/profitability.py` (lines ~34-35) and `efficiency.py` (~26-29)
