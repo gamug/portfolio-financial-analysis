@@ -433,8 +433,8 @@ the fixed `Statements.get("revenue", ...)`:
 
 | metric | pre-fix outliers (matches PLAN.md exactly) | resolved post-fix |
 |---|---|---|
-| `net_margin` outside `[-1,1]` | 124 filings / 34 tickers | **98 (79.0%)** |
-| `operating_cash_flow_margin` outside `[-1.5,1.5]` | 54 filings / 17 tickers | **46 (85.2%)** |
+| `net_margin` outside `[-1,1]` | 124 filings / 34 tickers | ~~**98 (79.0%)**~~ **93 (75.0%)** — see Post-merge correction below |
+| `operating_cash_flow_margin` outside `[-1.5,1.5]` | 54 filings / 17 tickers | **46 (85.2%)** (unaffected by the correction) |
 
 Code-level verification:
 - `uv run pytest -q` — 222 passed (was 217; +5 new: `tests/test_statements.py`
@@ -455,18 +455,81 @@ rows for the affected universe requires a `--fresh` re-run against
 production (paid LLM calls, mutates shared data) — outside a code-review
 pass's authority to run unprompted.
 
+### Post-merge correction: a code-review bot caught two real gaps
+
+An automated PR review ([Sourcery](https://sourcery.ai)) flagged two
+`statements.py` issues before merge. Both were verified against live
+`financial_facts` (not just accepted on the bot's say-so) and turned out to
+be real, *currently-occurring* double-counting bugs in the just-shipped
+`sum_components` path — fixed the same day (2026-09-15):
+
+1. **`ExcludingAssessedTax`/`IncludingAssessedTax` are alternate encodings
+   of one line, not two additive amounts** — summing them roughly triples
+   revenue. Live-verified across **37 real filings** (`BF.B`, `PM`, `STZ`,
+   `TAP`, `EXC`): every one tags *both* concepts for *every* period, and
+   they are never independent amounts — e.g. STZ FY2019 tags
+   `...ExcludingAssessedTax` = "Net revenues" **$29.8B** and
+   `...IncludingAssessedTax` = "Revenues including excise taxes" **$77.9B**
+   for the identical period; the smaller, excluding-tax figure is the real
+   income-statement "Net sales"/"Net revenues" line (ASC 606-10-32-2 scopes
+   amounts collected on behalf of a third party, e.g. excise tax, out of the
+   transaction price), the larger one a supplemental gross disclosure.
+   **Fix**: a new `LineItem.synonym_groups` field — concepts sharing a group
+   are mutually exclusive; `_sum_matching_components` now counts at most one
+   value per group, preferring the group member listed earliest in
+   `concepts` (excluding-tax, deterministically, regardless of document
+   order). New test: `test_revenue_prefers_excluding_assessed_tax_over_the_
+   synonym_variant`.
+2. **The `sum_components` path matched via `_matches()`, which includes the
+   fuzzy `label_contains` fallback** — a filer's own unrecognized
+   custom-taxonomy "Total ..." extension concept (not in `total_concepts`,
+   which only lists the two standard `us-gaap_Revenues*` tags) could match
+   by label text alone and get summed alongside the real components,
+   double-counting. Live-verified across **42 real filings** (`PSX`, `LOW`,
+   `ICE`, `SHW`, and others using issuer-specific total concepts like
+   `psx_RevenuesAndOtherIncome`, `axp_TotalRevenuesNetOfInterestExpense
+   AfterProvisionsForLosses`, `bk_TotalRevenuesIncludingRevenueGeneratedBy
+   VariableInterestEntities`) — e.g. PSX FY2021 would have summed
+   `psx_RevenuesAndOtherIncome` ("Total Revenues and Other Income", $114.9B,
+   matched only by its label containing "total revenue") with
+   `us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax` ("Sales and
+   other operating revenues", $111.5B) to $226.3B — nearly double the real
+   figure. One case (LOW) also surfaced a sharper version of the same risk:
+   `low_RevenueFromContractWithCustomerExcludingAssessedTaxPercentage`, a
+   *disclosure percentage* (value `1.0`), matches the label hint "net
+   sales" too. **Fix**: `_sum_matching_components` now matches only
+   `spec.concepts` (exact XBRL concept tag) — never `label_contains`, which
+   stays reserved for the (unchanged) single-match `Tier 2` fallback other
+   registry items use. Revenue's own now-unreachable `label_contains` entry
+   was removed rather than left as dead/misleading config. New test:
+   `test_revenue_sum_ignores_a_label_only_match_from_a_custom_total_concept`.
+
+Neither gap was hypothetical: both were confirmed live, and re-running the
+exact F2 verification query afterward changed the headline number — **98/124
+→ 93/124 for `net_margin`** (five filings that the original, buggy summing
+had coincidentally pushed back inside `[-1,1]` are, correctly, still
+outliers post-fix; none of the 37+42 double-counting-risk filings above were
+themselves in the outlier cohort, so the five are a separate, smaller
+overlap not yet individually characterized). `operating_cash_flow_margin`
+(46/54) was unaffected — no `ocf_margin`-outlier filing in the cohort
+exercised either gap. Full suite: 224 passed (was 222 before this
+correction; +2 new regression tests, on top of the +5 from the original
+fix). `uv run ruff check` / `ruff format --check` / `uv run mypy` — all
+green.
+
 ### Residual scope, deliberately deferred
 
-- **26 of 124 net_margin-outlier filings (21.0%) and 8 of 54
+- **31 of 124 net_margin-outlier filings (25.0%) and 8 of 54
   operating_cash_flow_margin-outlier filings (14.8%) are NOT resolved by
-  this fix** — they have only a single matching revenue concept, so F2's
+  this fix** (updated post-merge-correction count for `net_margin`, see
+  above) — most have only a single matching revenue concept, so F2's
   multiple-rows mechanism doesn't apply; their distortion (if the underlying
-  number is even wrong at all, rather than a genuinely unusual quarter) has
-  some other, unexamined cause. Several of the ocf_margin residual (`FITB`,
-  `HBAN`, `IBKR`, `MTB`) are banks/brokers whose revenue is tagged via
-  issuer-specific custom XBRL extension concepts (e.g.
-  `fitb_CommercialBankingRevenue`) entirely outside the standard `us-gaap`
-  taxonomy this repo's `REGISTRY` whitelists — a distinct, larger
+  number is even wrong at all, rather than a genuinely unusual quarter, e.g.
+  MRNA's pandemic-era revenue collapse) has some other, unexamined cause.
+  Several of the residual (`FITB`, `HBAN`, `IBKR`, `MTB`) are banks/brokers
+  whose revenue is tagged via issuer-specific custom XBRL extension concepts
+  (e.g. `fitb_CommercialBankingRevenue`) entirely outside the standard
+  `us-gaap` taxonomy this repo's `REGISTRY` whitelists — a distinct, larger
   investigation (a bank/broker revenue-taxonomy pass), not part of F2.
 - `Statements.get_all()` carries the identical first-match defect and does
   not consult `total_concepts`/`sum_components` — if a future caller ever

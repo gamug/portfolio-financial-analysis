@@ -206,14 +206,17 @@ instead.
       aggregate revenue concept over a component stream, order-independent,
       and sum distinct components when no aggregate is tagged
       (`src/fundamental_agent/statements.py`, `LineItem.total_concepts`/
-      `sum_components`). Verified 2026-09-15: 98/124 (79.0%) net_margin and
-      46/54 (85.2%) operating_cash_flow_margin outlier filings resolve — not
-      REIT-specific (also fixes `APO`/`WFC`/`HUM`/`HOOD`/`APA`); full
-      record, including why the original "REIT-classified filers" framing
-      needed correcting, in `docs/model_fixes.md`'s F2 entry. Residual
-      (single-concept filings, several bank/broker custom-tag cases) is a
-      separate, larger investigation, explicitly deferred. → `PLAN.md` Work
-      item 7, F2.
+      `sum_components`/`synonym_groups`). Verified 2026-09-15: ~~98/124
+      (79.0%)~~ **93/124 (75.0%)** net_margin (corrected post-merge — a
+      code-review bot caught two live double-counting gaps in the summing
+      path, both fixed same-day) and 46/54 (85.2%, unaffected) operating_
+      cash_flow_margin outlier filings resolve — not REIT-specific (also
+      fixes `APO`/`WFC`/`HUM`/`HOOD`/`APA`); full record, including why the
+      original "REIT-classified filers" framing needed correcting and the
+      post-merge correction detail, in `docs/model_fixes.md`'s F2 entry.
+      Residual (mostly single-concept filings, several bank/broker
+      custom-tag cases) is a separate, larger investigation, explicitly
+      deferred. → `PLAN.md` Work item 7, F2.
 - [ ] **T-062** Fix **F4** — TTM-annualize 10-Q flow numerators (trailing 4
       quarters, fallback ×4) in `metrics/profitability.py`/`efficiency.py`.
       Verify: 10-Q vs. 10-K medians for ROA/ROE/asset_turnover converge

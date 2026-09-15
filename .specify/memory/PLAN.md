@@ -481,13 +481,21 @@ reports both. The shipped fix makes an explicit aggregate concept win
 outright when tagged, and sums distinct component streams when no
 aggregate exists — full root-cause correction and design rationale in
 `docs/model_fixes.md`. **Acceptance** (re-verified against live data
-post-fix, using the actual shipped code — see `docs/model_fixes.md`): 98
-of 124 net_margin-outlier filings (79.0%) and 46 of 54
-operating_cash_flow_margin-outlier filings (85.2%) now resolve — a large
-majority, not "near-zero" as originally claimed. The residual (single-
-matching-concept filings, several of them banks/brokers with revenue
-tagged via issuer-specific custom XBRL extension concepts) is a distinct,
-larger investigation, explicitly deferred, not silently dropped.
+post-fix, using the actual shipped code — see `docs/model_fixes.md`):
+~~98 of 124 net_margin-outlier filings (79.0%)~~ **Correction (post-merge,
+2026-09-15)**: a code-review bot caught two real double-counting gaps in the
+`sum_components` path (mutually-exclusive ASC-606 tax-basis concept variants
+being summed instead of treated as synonyms; a label-matched custom
+"Total ..." extension concept being summed alongside real components) —
+both confirmed live and fixed same-day. Re-verified count: **93 of 124
+net_margin-outlier filings (75.0%)** and 46 of 54
+operating_cash_flow_margin-outlier filings (85.2%, unaffected by the
+correction) now resolve — a large majority, not "near-zero" as originally
+claimed. The residual (mostly single-matching-concept filings, several of
+them banks/brokers with revenue tagged via issuer-specific custom XBRL
+extension concepts) is a distinct, larger investigation, explicitly
+deferred, not silently dropped. Full record and the corrected verification
+methodology: `docs/model_fixes.md`'s F2 entry.
 
 **F4 — 10-Q flow/stock mismatch, never annualized (Accounting-critical).**
 `metrics/profitability.py` (lines ~34-35) and `efficiency.py` (~26-29)
