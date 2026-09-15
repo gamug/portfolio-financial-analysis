@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from fundamental_agent.statements import INSTANT, Period, Statements, _parse_period, iter_facts
@@ -116,3 +118,88 @@ def test_iter_facts_yields_only_numeric_period_cells(aapl_10k: Statements) -> No
     assert all(isinstance(f["value"], float) for f in facts)
     assert all(f["statement"] in aapl_10k.raw for f in facts)
     assert {f["statement"] for f in facts} == set(aapl_10k.raw)
+
+
+def _income_row(concept: str, label: str, **periods: float) -> dict[str, Any]:
+    """A minimal non-dimensional income-statement row -- mirrors the real
+    EDGAR-gateway shape captured in tests/fixtures/financials_*.json."""
+    row: dict[str, Any] = {
+        "concept": concept,
+        "label": label,
+        "standard_concept": None,
+        "abstract": False,
+        "dimension": False,
+    }
+    row.update(periods)
+    return row
+
+
+def _revenue_payload(*rows: dict[str, Any]) -> dict[str, Any]:
+    return {"income_statement": list(rows), "balance_sheet": [], "cash_flow": []}
+
+
+@pytest.mark.parametrize("total_first", [False, True])
+def test_revenue_prefers_total_over_components_regardless_of_document_order(
+    total_first: bool,
+) -> None:
+    """F2 (docs/model_fixes.md): a filer reporting a lease-income stream, a
+    fee-income stream, and an explicit "Total revenues" (UDR's real shape)
+    must resolve to the total, whichever order the rows appear in -- not
+    whichever qualifying row the filer happened to list first."""
+    key = "2023-12-31 (FY)"
+    total_row = _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_712_317_000.0})
+    component_rows = [
+        _income_row("us-gaap_OperatingLeaseLeaseIncome", "Rental income", **{key: 1_700_956_000.0}),
+        _income_row(
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Joint venture management and other fees",
+            **{key: 11_361_000.0},
+        ),
+    ]
+    rows = [total_row, *component_rows] if total_first else [*component_rows, total_row]
+    stmts = Statements.from_payload(_revenue_payload(*rows))
+
+    assert stmts.get("revenue", key) == 1_712_317_000.0
+
+
+def test_revenue_sums_distinct_components_when_no_total_is_tagged() -> None:
+    """F2: CPT's real shape -- a lease-income stream and a fee-income stream,
+    but no separately tagged "Total revenues" row at all. The theoretically
+    correct reconstruction is their sum (GAAP total revenue = sum of revenue
+    streams), not just the first component encountered."""
+    key = "2022-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_OperatingLeaseLeaseIncome", "Property revenues", **{key: 1_570_000_000.0}
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Fee and asset management",
+                **{key: 13_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 1_583_000_000.0
+
+
+def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
+    """`cogs` has the same two-distinct-concepts shape `revenue` had pre-F2
+    but has NOT opted into `sum_components` -- must still return exactly the
+    first document-order match, not their sum. Guards against a future
+    change that flips the default, or copies revenue's registry shape onto
+    another item without the same total/component analysis."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _income_row("us-gaap_CostOfGoodsSold", "Cost of goods sold", **{key: 100.0}),
+                _income_row("us-gaap_CostOfServices", "Cost of services", **{key: 50.0}),
+            ],
+            "balance_sheet": [],
+            "cash_flow": [],
+        }
+    )
+
+    assert stmts.get("cogs", key) == 100.0  # first match only, NOT summed to 150.0

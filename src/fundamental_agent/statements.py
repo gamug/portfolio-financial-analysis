@@ -53,6 +53,14 @@ class LineItem:
 
     ``statements`` scopes the search: a balance-sheet item must never match a
     similarly named cash-flow "increase/decrease in ..." row.
+
+    ``total_concepts`` and ``sum_components`` exist for the case where a
+    filer reports *multiple, distinct* non-dimensional rows for one line item
+    -- e.g. a lessor's ASC-842 lease income alongside its ASC-606 contract
+    revenue, with (or without) a separately tagged aggregate. Both default to
+    a no-op, so every item that doesn't set them keeps today's exact
+    first-document-order-match behavior (see :func:`Statements.get`, F2 --
+    ``docs/model_fixes.md``).
     """
 
     name: str
@@ -60,6 +68,13 @@ class LineItem:
     concepts: tuple[str, ...] = ()
     standard: tuple[str, ...] = ()
     label_contains: tuple[str, ...] = ()
+    # An already-aggregated total: if any row matches one of these, it wins
+    # outright over every `concepts` match, regardless of document order.
+    total_concepts: tuple[str, ...] = ()
+    # When no `total_concepts` row matches: sum the first row per distinct
+    # matching concept (instead of just returning the first match) -- these
+    # represent genuinely separate, additive streams when no total is tagged.
+    sum_components: bool = False
 
 
 _INCOME = ("income_statement",)
@@ -74,10 +89,16 @@ REGISTRY: dict[str, LineItem] = {
         _INCOME,
         concepts=(
             "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
-            "us-gaap_RevenuesNetOfInterestExpense",
-            "us-gaap_Revenues",
             "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+            # ASC-842 lease income -- a lessor's (e.g. a REIT/tower company)
+            # dominant revenue stream, distinct from ASC-606 contract revenue
+            # above; see docs/model_fixes.md, F2.
+            "us-gaap_OperatingLeaseLeaseIncome",
         ),
+        # Aggregate/"Total revenue(s)" concepts: if present, used alone, never
+        # summed with the component concepts above (F2).
+        total_concepts=("us-gaap_Revenues", "us-gaap_RevenuesNetOfInterestExpense"),
+        sum_components=True,
         label_contains=("net sales", "total net revenue", "total revenue"),
     ),
     "cogs": LineItem(
@@ -289,8 +310,28 @@ class Statements:
         earlier = [p for p in self.periods if p.tag == period.tag and p.date < period.date]
         return earlier[-1] if earlier else None
 
+    def _rows_for(self, spec: LineItem) -> Iterator[dict[str, Any]]:
+        """Every non-abstract, non-dimensional row across *spec*'s statements,
+        in raw document order."""
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if row.get("abstract") or row.get("dimension"):
+                    continue
+                yield row
+
     def get(self, item: str, period_key: str) -> float | None:
-        """Return the value of registry *item* for *period_key*, or ``None``."""
+        """Return the value of registry *item* for *period_key*, or ``None``.
+
+        Two-tier resolution (F2, ``docs/model_fixes.md``): **Tier 1** -- if
+        ``spec.total_concepts`` is set, any row tagged with one of them wins
+        outright over every ``concepts`` match, regardless of document
+        order. Absent a match there, **Tier 2** falls back to the original
+        single-row lookup: the first ``concepts``-matching row in document
+        order (unchanged default for every item that doesn't set
+        ``sum_components``), or, when ``spec.sum_components`` is set, the sum
+        of the first row per distinct matching concept -- multiple
+        co-reported streams with no separately tagged total.
+        """
         spec = REGISTRY[item]
         column = period_key
         if spec.statements == _BALANCE:
@@ -298,15 +339,54 @@ class Statements:
             if instant is None:
                 return None
             column = instant
-        for statement in spec.statements:
-            for row in self.raw.get(statement, []):
-                if row.get("abstract") or row.get("dimension"):
-                    continue
-                if _matches(row, spec):
-                    value = _numeric(row.get(column))
-                    if value is not None:
-                        return value
+
+        if spec.total_concepts:
+            total_value = self._first_total_match(spec, column)
+            if total_value is not None:
+                return total_value
+
+        if spec.sum_components:
+            return self._sum_matching_components(spec, column)
+        return self._first_component_match(spec, column)
+
+    def _first_total_match(self, spec: LineItem, column: str) -> float | None:
+        """Tier 1: the first row tagged with one of ``spec.total_concepts``."""
+        for row in self._rows_for(spec):
+            if row.get("concept") in spec.total_concepts:
+                value = _numeric(row.get(column))
+                if value is not None:
+                    return value
         return None
+
+    def _first_component_match(self, spec: LineItem, column: str) -> float | None:
+        """Tier 2 (default): the original single-row, first-document-order
+        lookup, unchanged for every item that doesn't set ``sum_components``."""
+        for row in self._rows_for(spec):
+            if _matches(row, spec):
+                value = _numeric(row.get(column))
+                if value is not None:
+                    return value
+        return None
+
+    def _sum_matching_components(self, spec: LineItem, column: str) -> float | None:
+        """Sum the first row per distinct matching concept -- the
+        ``sum_components`` branch of :meth:`get`."""
+        total = 0.0
+        seen_concepts: set[str | None] = set()
+        found = False
+        for row in self._rows_for(spec):
+            if not _matches(row, spec):
+                continue
+            concept = row.get("concept")
+            if concept in seen_concepts:
+                continue
+            value = _numeric(row.get(column))
+            if value is None:
+                continue
+            seen_concepts.add(concept)
+            total += value
+            found = True
+        return total if found else None
 
     def get_all(self, item: str) -> dict[str, float]:
         """Every period-column value on registry *item*'s first-matching row --
