@@ -22,8 +22,16 @@ uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
                                 [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
 uv run python -m quant benchmark --from 2026-08-27 --analysis-date TODAY
-uv run python -m quant evaluate  --from 2026-08-27 --analysis-date TODAY [--benchmark SP500_EW_INTERNAL]
+uv run python -m quant evaluate  [--from 2026-06-01] --analysis-date TODAY [--benchmark SP500_EW_INTERNAL]
 ```
+
+`evaluate`'s `--from` defaults to the earliest persisted `quant_portfolio.as_of`
+when omitted (Q2, docs/model_fixes.md) — deliberately **not** the same date
+used for `optimize --analysis-date`/`build-risk-model --analysis-date` above:
+that date is, by construction, the *most recent* date with any price data at
+all, so evaluating from it leaves no forward window to realize a return
+over. Pass `--from` explicitly only to narrow the evaluated range to books
+optimized on or after that date.
 
 Every subcommand takes `--analysis-date YYYY-MM-DD` (default: today). For
 `build-risk-model` / `optimize` it is the as-of date (`--as-of` is kept as an

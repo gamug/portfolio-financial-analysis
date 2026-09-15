@@ -599,6 +599,16 @@ def load_live_book(conn: Database, as_of: str) -> dict[int, float]:
     return {int(r["asset_id"]): float(r["weight"]) for r in rows}
 
 
+def earliest_portfolio_as_of(conn: Database) -> str | None:
+    """The earliest ``as_of`` across every persisted ``quant_portfolio`` book, or
+    ``None`` if none exist yet -- ``evaluate``'s default ``--from`` when omitted
+    (Q2, docs/model_fixes.md): starting from the earliest book maximizes the
+    forward window actually available, rather than a caller guessing a date
+    that happens to coincide with the last date ``price_daily`` has data for."""
+    row = conn.execute("SELECT MIN(as_of) AS as_of FROM quant_portfolio").fetchone()
+    return str(row["as_of"]) if row and row["as_of"] is not None else None
+
+
 def load_forward_simple_returns(
     conn: Database, asset_ids: list[int], *, after: str, until: str, engine_version: str
 ) -> dict[str, dict[int, float]]:

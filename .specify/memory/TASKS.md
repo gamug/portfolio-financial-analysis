@@ -312,11 +312,26 @@ instead.
       local-only half of Q3 — Work item 6's gateway `corpact-v1` target
       remains unimplemented, unaffected by this fix. Full record in
       `docs/model_fixes.md`'s Q3 entry. → `PLAN.md` Work item 7, Q3.
-- [ ] **T-067** Fix **Q2** — align `quant evaluate`'s default `--from` to a
+- [x] **T-067** Fix **Q2** — align `quant evaluate`'s default `--from` to a
       date with real forward price coverage; ensure the `frontier`
       objective is exercised end-to-end. Verify:
       `quant_benchmark_performance` and `quant_frontier_point` both `> 0`
-      rows (both were 0). → Q2.
+      rows (both were 0). → Q2. **Fixed 2026-09-15**: `evaluate --from` is
+      now optional, defaulting to `quant.db.earliest_portfolio_as_of`
+      (the earliest persisted `quant_portfolio.as_of`) instead of the
+      previously-documented anti-pattern of reusing `optimize`'s own
+      `--analysis-date` — which, by construction, is the newest date with
+      any price data, leaving no forward window at all; raises a clear
+      `ValueError` if no book exists yet and `--from` is also omitted.
+      `docs/quant.md`'s misleading example corrected. The `frontier`
+      component needed **no code fix**: already correct and already
+      covered end-to-end by the pre-existing
+      `test_optimize_persists_one_book_per_objective`; its 0-rows
+      observation is explained by the historical run simply never having
+      requested it via `--objectives`, deferred as an operational step to
+      `T-068`. 2 new tests (`tests/test_quant_pipeline.py`); full suite
+      (245, was 243), ruff, mypy all green. Full record in
+      `docs/model_fixes.md`'s Q2 entry. → `PLAN.md` Work item 7, Q2.
 - [ ] **T-068** Run the audit's **Phase A** re-sequence: recompute metrics
       (F1/F2/F4) → backfill `data_quality_issue` (T-065) + Q3 dividends
       (T-066) → re-run `cycle` (exercising T-063/T-064) → re-run the full
@@ -396,10 +411,10 @@ instead.
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
 `T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
-(C1), `T-064` (C2) and `T-066` (Q3, Level-1 local half only) are **done**,
-2026-09-15 (`T-063` via a corrected diagnosis, no code change) — see
-`docs/model_fixes.md`. Nothing else in `T-040`–`T-084` has started.
-Execute Work item 5 ∥ 6 (external,
+(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only) and `T-067` (Q2,
+`evaluate` half only) are **done**, 2026-09-15 (`T-063` via a corrected
+diagnosis, no code change) — see `docs/model_fixes.md`. Nothing else in
+`T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/
 `T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs

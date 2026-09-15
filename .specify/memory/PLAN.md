@@ -604,7 +604,9 @@ Level-1 derivation (before the gateway endpoint even lands); `load_actions`
 prefers `corpact-v1` over `corpact-v1-derived` over `corpact-v0-approx`
 when more than one exists for the same asset.
 
-**Q2 — Empty forward evaluation / date misalignment.**
+**Q2 — Empty forward evaluation / date misalignment. RESOLVED 2026-09-15,
+`T-067` (the `evaluate` half; the `frontier` half needed no code change) —
+full record in `docs/model_fixes.md`'s Q2 entry.**
 `quant_benchmark_performance` has **0 rows** and `quant_frontier_point` has
 **0 rows** — verified `quant evaluate`'s `date_from`/`date_to` window
 (`'2026-08-27'` → `'2026-09-03'`) starts exactly where `price_daily` ends
