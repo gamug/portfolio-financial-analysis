@@ -84,3 +84,88 @@ def test_missing_cash_flow_leaves_yield_none_but_still_prices_the_equity(
     # a bank payload carries no capex line -> FCFE cannot be formed
     assert m["free_cash_flow_yield"] is None
     assert m["market_capitalization"] is not None
+
+
+def _diluted_payload(period_key: str, value: float) -> dict:
+    """A minimal income_statement-only payload, matching a real EDGAR-gateway
+    diluted-shares row (see tests/fixtures/financials_*.json)."""
+    return {
+        "income_statement": [
+            {
+                "concept": "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",
+                "label": "Diluted (in shares)",
+                "standard_concept": "SharesFullyDilutedAverage",
+                "abstract": False,
+                "dimension": False,
+                period_key: value,
+            }
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+
+
+def _shares_outstanding_payload(instant_date: str, value: float) -> dict:
+    """A minimal balance_sheet-only payload for the primary share-count concept."""
+    return {
+        "income_statement": [],
+        "balance_sheet": [
+            {
+                "concept": "us-gaap_CommonStockSharesOutstanding",
+                "label": "Common stock, shares outstanding",
+                "standard_concept": "SharesYearEnd",
+                "abstract": False,
+                "dimension": False,
+                instant_date: value,
+            }
+        ],
+        "cash_flow": [],
+    }
+
+
+def test_diluted_shares_scale_defect_is_corrected_before_market_cap() -> None:
+    """F1 (docs/model_fixes.md): a share count found to be off by an exact
+    power of ten against this company's own filing history (see
+    fundamental_agent.db.detect_share_scale_factors) is corrected -- not
+    quarantined -- before it is multiplied by price. MCD's real live-DB shape:
+    diluted shares reported as 751.8 instead of 751,800,000."""
+    key = "2025-12-31 (FY)"
+    stmts = Statements.from_payload(_diluted_payload(key, 751.8))
+    price = ClosePrice("2025-12-30", 300.0)
+
+    results = valuation.compute(stmts, key, price, {"diluted_shares": 1_000_000.0})
+    m = {r.name: r for r in results}
+
+    assert m["market_capitalization"].value == pytest.approx(751_800_000.0 * 300.0, rel=1e-9)
+    assert m["market_capitalization"].inputs["shares_scale_correction_factor"] == 1_000_000.0
+
+
+def test_no_scale_factor_leaves_share_count_untouched() -> None:
+    """Regression pin: omitting share_scale_factors (the default, `None`)
+    reproduces today's behavior exactly -- protects the other tests in this
+    file (built against real, correctly-scaled AAPL/JPM filings) from silently
+    changing meaning."""
+    key = "2025-12-31 (FY)"
+    stmts = Statements.from_payload(_diluted_payload(key, 751_800_000.0))
+    price = ClosePrice("2025-12-30", 300.0)
+
+    results = valuation.compute(stmts, key, price)  # share_scale_factors omitted
+    m = {r.name: r for r in results}
+
+    assert m["market_capitalization"].value == pytest.approx(751_800_000.0 * 300.0, rel=1e-9)
+    assert "shares_scale_correction_factor" not in m["market_capitalization"].inputs
+
+
+def test_shares_outstanding_scale_defect_also_corrected() -> None:
+    """The primary (point-in-time) branch is guarded the same way as the
+    diluted-shares fallback, not just the fallback path."""
+    key = "2025-12-31 (FY)"
+    stmts = Statements.from_payload(_shares_outstanding_payload("2025-12-31", 209.271))
+    price = ClosePrice("2025-12-30", 1000.0)
+
+    results = valuation.compute(stmts, key, price, {"shares_outstanding": 1_000_000.0})
+    m = {r.name: r for r in results}
+
+    assert m["market_capitalization"].value == pytest.approx(209_271_000.0 * 1000.0, rel=1e-9)
+    assert m["market_capitalization"].inputs["shares_are_diluted_average"] == 0.0
+    assert m["market_capitalization"].inputs["shares_scale_correction_factor"] == 1_000_000.0

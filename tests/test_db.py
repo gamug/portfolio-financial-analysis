@@ -127,3 +127,17 @@ def test_bump_run_counter_rejects_unknown_column(memory_db: Database) -> None:
     run_id = db.start_run(memory_db, params={})
     with pytest.raises(ValueError, match="counter column"):
         db.bump_run_counter(memory_db, run_id, "score; DROP TABLE assets")
+
+
+def test_bump_run_counter_increments_each_allowed_column(memory_db: Database) -> None:
+    run_id = db.start_run(memory_db, params={})
+    db.bump_run_counter(memory_db, run_id, "completed_units")
+    db.bump_run_counter(memory_db, run_id, "completed_units")
+    db.bump_run_counter(memory_db, run_id, "skipped_units")
+    db.bump_run_counter(memory_db, run_id, "failed_units")
+
+    row = memory_db.execute(
+        "SELECT completed_units, skipped_units, failed_units FROM analysis_run WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    assert (row["completed_units"], row["skipped_units"], row["failed_units"]) == (2, 1, 1)

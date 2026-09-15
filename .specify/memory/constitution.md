@@ -218,6 +218,24 @@ assumes the stack actually pinned in `pyproject.toml`.
     forever, independent of content changes. (See `Artifact` tool
     guidance: title changes are an explicit, separate, user-directed
     action, never a side effect of a content update.)
+12. **A fix that changes a deterministic computation's methodology** — a
+    ratio formula, a data-quality gate, a veto-rule threshold, a scoring
+    weight, an estimator — **is verified against real data and documented in
+    `docs/model_fixes.md`, not just described in the commit message**,
+    before/with the PR that ships it. The entry records: the symptom (with
+    concrete before-numbers, checked against live data where practical, not
+    just assumed from a report); the root cause as independently verified
+    against the actual code and data (an external report's stated mechanism
+    must be re-derived, not trusted verbatim — see `docs/model_fixes.md`'s
+    F1 entry, where the original audit's stated cause turned out to be
+    wrong even though the symptom was real); a citation to the theoretical/
+    technical reference that justifies the chosen fix (an accounting/GAAP
+    standard, an XBRL/SEC filing-quality reference, a cited academic or
+    industry methodology — not an unsupported assertion); and the
+    after/verification numbers. This applies regardless of where the fix
+    originates — this repo's own testing, a `SPEC.md`/`PLAN.md` item, or an
+    external review — a fix landed without this record is incomplete, the
+    same way a fix landed without a test is incomplete (Code & Git #1).
 
 ## Executable cmds
 
@@ -324,6 +342,24 @@ uv run pre-commit run --all-files            # all of the above hooks, plus hygi
    `PLAN.md`/`TASKS.md`, the project's own versioned source of truth, not a
    tool scratch dir — it stays tracked. Don't move spec-kit content into
    `.claude/` or vice versa.
+10. **Never interpolate a caller-controlled or dynamically-selected
+    identifier (a column/table name — something `?` parameter binding
+    can't cover, since it binds *values*, not identifiers) into a raw SQL
+    string via an f-string or concatenation, even when a validation/
+    allowlist check elsewhere in the function makes it provably safe.** An
+    automated SAST scanner (this repo's PR checks include one) cannot see
+    through that guard and will still flag — and can block merge on — the
+    pattern itself, independent of whether it's actually exploitable.
+    Route a dynamic identifier through a static mapping of fully literal,
+    pre-written SQL strings keyed by the validated identifier instead, so
+    no SQL text is ever built from caller input at runtime (e.g.
+    `fundamental_agent.db.bump_run_counter`'s `_COUNTER_UPDATE_SQL` dict,
+    landed in PR #36 after exactly this finding blocked merge) — every
+    actual *value* still goes through `?` placeholders as always (NR-004,
+    `portfolio_common.db`); this rule is specifically about identifiers a
+    placeholder can't bind. `pricing_agent.db.bump_run_counter` has the
+    same pre-existing pattern, not yet hardened — treat it as a known,
+    tracked gap, not a precedent to copy into new code.
 
 ## Governance
 
@@ -343,11 +379,23 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.0.2 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-12
+**Version**: 1.2.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-15
 
-**Amendment log**: 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc
-path from `skills/skills/<ratio-name>/SKILL.md` to the actual, working
-`skills/<ratio-name>/SKILL.md` (verified against
-`src/fundamental_agent/skills.py::skills_dir`) — a copy-paste artifact
-from adapting this constitution from a sibling repo's, not an intentional
-convention; no code changed, only this document's own factual claim.
+**Amendment log**:
+- 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc path from
+  `skills/skills/<ratio-name>/SKILL.md` to the actual, working
+  `skills/<ratio-name>/SKILL.md` (verified against
+  `src/fundamental_agent/skills.py::skills_dir`) — a copy-paste artifact
+  from adapting this constitution from a sibling repo's, not an intentional
+  convention; no code changed, only this document's own factual claim.
+- 1.1.0 (2026-09-14) — MINOR: new principle, AI behavior #12, requiring
+  every methodology fix to be verified against real data and documented in
+  `docs/model_fixes.md` with a cited theoretical/technical reference —
+  introduced alongside `docs/model_fixes.md`'s first entry (F1, the
+  share-count scale-tagging defect).
+- 1.2.0 (2026-09-15) — MINOR: new principle, Code & Git #10, prohibiting
+  dynamic-identifier interpolation into raw SQL even when allowlist-guarded
+  — introduced after an automated SAST scanner blocked PR #36's merge on
+  exactly this pattern in pre-existing code
+  (`fundamental_agent.db.bump_run_counter`), fixed by routing the
+  identifier through a static literal-SQL-string map instead.

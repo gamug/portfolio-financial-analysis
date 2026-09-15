@@ -14,11 +14,26 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from portfolio_common.db import Allowlist, Database, Row
+from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.statements import REGISTRY, Statements
 from kg_schema.queries import UniverseMember
+
+# Candidate XBRL scale/decimals-tagging defects: a filer (or, per SEC OSD staff
+# guidance, the tagging tool it used) reports a share count off by an exact
+# power of ten from its own prior filings -- see docs/model_fixes.md, F1.
+# Every power of ten from 1e-9 to 1e9 (excluding 1e0, which would mean "no
+# defect") -- not just the thousands-grouped ones (1e3/1e6/1e9) MCD/WAT
+# happened to show; nothing rules out a filer being off by 10x or 100x.
+_SHARE_SCALE_FACTORS: tuple[float, ...] = tuple(10.0**i for i in range(-9, 10) if i != 0)
+# Generous on purpose: adjacent candidates are at least 10x apart, so precision
+# buys nothing, but a loose band keeps the check robust when a real scale
+# defect coincides with a few percent of ordinary organic share-count drift
+# (buybacks/issuance) landing on a different overlapping period than the one
+# being corrected.
+_SHARE_SCALE_TOLERANCE = 0.10
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.
@@ -169,8 +184,14 @@ CREATE TABLE IF NOT EXISTS analysis_run_error (
 """
 
 _REQUIRED_ASSET_COLUMNS = {"id", "ticker", "company_name", "cik", "sector_id", "sub_industry"}
-# The only columns `bump_run_counter` may interpolate into an UPDATE ... SET.
-_COUNTER_COLUMNS = Allowlist("completed_units", "skipped_units", "failed_units")
+# Every literal, pre-written UPDATE `bump_run_counter` may run -- the column
+# name is never interpolated into SQL at runtime, only used as a dict key, so
+# there is no dynamic SQL construction from caller input to review at all.
+_COUNTER_UPDATE_SQL = {
+    "completed_units": "UPDATE analysis_run SET completed_units = completed_units + 1 WHERE id = ?",
+    "skipped_units": "UPDATE analysis_run SET skipped_units = skipped_units + 1 WHERE id = ?",
+    "failed_units": "UPDATE analysis_run SET failed_units = failed_units + 1 WHERE id = ?",
+}
 
 
 def _now() -> str:
@@ -349,6 +370,188 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
         )
     conn.commit()
     return len(rows)
+
+
+def overlapping_history(
+    conn: Database,
+    asset_id: int,
+    concepts: Sequence[str],
+    period_keys: Iterable[str],
+    *,
+    exclude_filing_id: int,
+) -> dict[str, float]:
+    """Already-ingested ``financial_facts`` values for *asset_id* on any of
+    *concepts*, restricted to whichever *period_keys* this filing's own payload
+    also reports, excluding *exclude_filing_id* -- the filing currently being
+    analyzed, whose own (possibly defective) facts are already appended by the
+    time this runs (see :func:`detect_share_scale_factors`). One value per
+    period_key: the most recently *filed* row wins when more than one earlier
+    filing restated the same period."""
+    keys = list(dict.fromkeys(period_keys))  # de-dup, keep order
+    if not keys or not concepts:
+        return {}
+    # Only "?" placeholder characters are interpolated below (never a value), one
+    # per item in *concepts*/*keys* -- every actual value is bound through the
+    # params list, matching load_universe()'s established IN-clause pattern.
+    concept_placeholders = ", ".join("?" * len(concepts))
+    key_placeholders = ", ".join("?" * len(keys))
+    rows = conn.execute(
+        f"""
+        SELECT ff.period_key, ff.value
+        FROM financial_facts ff
+        JOIN sec_filings sf ON sf.id = ff.filing_id
+        WHERE sf.asset_id = ?
+          AND ff.filing_id != ?
+          AND ff.concept IN ({concept_placeholders})
+          AND ff.period_key IN ({key_placeholders})
+          AND ff.value IS NOT NULL
+        ORDER BY sf.filing_date ASC, ff.id ASC
+        """,  # noqa: S608 -- interpolated segments are only "?" placeholders, see above
+        [asset_id, exclude_filing_id, *concepts, *keys],
+    ).fetchall()
+    out: dict[str, float] = {}
+    for row in rows:
+        out[str(row["period_key"])] = float(row["value"])  # last (most recent) wins
+    return out
+
+
+def _scale_factor_between(new_value: float | None, anchor_value: float | None) -> float | None:
+    """The candidate power-of-ten factor under which ``new_value * factor``
+    matches ``anchor_value`` (within ``_SHARE_SCALE_TOLERANCE``), or ``None``
+    if no candidate fits -- including the "clean miss" case where the two
+    values already agree (no scale defect between this particular pair)."""
+    if new_value is None or anchor_value is None or new_value <= 0 or anchor_value <= 0:
+        return None
+    ratio = anchor_value / new_value  # factor to multiply new_value by
+    for factor in _SHARE_SCALE_FACTORS:
+        if abs(ratio - factor) <= factor * _SHARE_SCALE_TOLERANCE:
+            return factor
+    return None
+
+
+def _unanimous_factor(reported: dict[str, float], anchors: dict[str, float]) -> float | None:
+    """The single power-of-ten factor *every* period_key present in both
+    ``reported`` and ``anchors`` agrees on -- ``None`` if there's no overlap,
+    if the agreeing periods don't all pick the same factor, or if even one
+    compared period doesn't fit *any* candidate factor (it may look
+    correctly scaled already, which is exactly the case that must block
+    borrowing a factor found from a *different* period, not be silently
+    skipped -- see docs/model_fixes.md, F1)."""
+    matched: set[float] = set()
+    for period_key, anchor_value in anchors.items():
+        new_value = reported.get(period_key)
+        if new_value is None:
+            continue
+        factor = _scale_factor_between(new_value, anchor_value)
+        if factor is None:
+            return None  # this period doesn't fit any known defect shape -- disqualify
+        matched.add(factor)
+    return matched.pop() if len(matched) == 1 else None
+
+
+def _signal_factor(
+    reported: dict[str, float], anchors: dict[str, float], target_key: str
+) -> tuple[bool, float | None]:
+    """One anchor source's read on ``reported[target_key]``: ``(target_is_clean,
+    factor)``. Direct evidence *at the target period itself* is decisive --
+    ``factor`` is set only if it fits a known defect shape, and
+    ``target_is_clean`` is ``True`` exactly when it doesn't, meaning this
+    source has first-hand proof the target period needs no correction (which
+    must not be overridden by a factor inferred from some *other* period --
+    see docs/model_fixes.md, F1). With no direct anchor at the target, a
+    factor may still be inferred from this filing's *other* reported periods,
+    requiring unanimous agreement (:func:`_unanimous_factor`); in that case
+    there is no first-hand opinion on the target, so ``target_is_clean`` is
+    always ``False``."""
+    target_value = reported.get(target_key)
+    if target_value is None:
+        return False, None
+    target_anchor = anchors.get(target_key)
+    if target_anchor is not None:
+        factor = _scale_factor_between(target_value, target_anchor)
+        return factor is None, factor
+    others = {k: v for k, v in reported.items() if k != target_key}
+    return False, _unanimous_factor(others, anchors)
+
+
+def _eps_implied_diluted_shares(stmts: Statements) -> dict[str, float]:
+    """``net_income / as-filed diluted EPS``, per period -- an independent,
+    same-filing anchor needing no filing history at all: net income and
+    diluted EPS are both GAAP-required disclosures already ingested from this
+    filing's own payload (``us-gaap_EarningsPerShareDiluted`` -- see
+    ``fundamental_agent.statements.REGISTRY["eps_diluted"]``), and their ratio
+    is the filer's own weighted-average diluted share count, independent of
+    whatever ``diluted_shares`` itself reports. This is what catches a defect
+    that has already persisted long enough (or a filing cadence sparse enough)
+    that no clean prior filing remains to compare against -- see
+    ``docs/model_fixes.md``, F1."""
+    net_income = stmts.get_all("net_income")
+    eps = stmts.get_all("eps_diluted")
+    out: dict[str, float] = {}
+    for period_key, ni in net_income.items():
+        e = eps.get(period_key)
+        if not e:
+            continue
+        implied = ni / e
+        if implied > 0:  # a share count is never negative or zero
+            out[period_key] = implied
+    return out
+
+
+def detect_share_scale_factors(
+    conn: Database, asset_id: int, stmts: Statements, period_key: str, *, exclude_filing_id: int
+) -> dict[str, float]:
+    """For ``shares_outstanding`` and ``diluted_shares`` independently: the
+    power-of-ten factor *this filing's own* ``period_key`` value needs to be
+    *multiplied by* to correct a known SEC XBRL share-count scale/tagging
+    defect (see ``docs/model_fixes.md``, F1) -- never a real capital-structure
+    event, which never lands within a wide 10% tolerance of an exact power of
+    ten. Two independent signals are checked, either one sufficient: (1)
+    already-ingested history for an overlapping period from a prior filing,
+    and, for ``diluted_shares`` only, (2) this same filing's own
+    EPS-implied share count (:func:`_eps_implied_diluted_shares`), which needs
+    no history and so also catches a defect that has already aged out of
+    every filing's reporting window, or a sparse filing cadence with no
+    genuinely overlapping period at all.
+
+    Direct evidence *at* ``period_key`` from either signal is decisive and
+    wins outright -- including when it shows the target period needs no
+    correction, which overrides a factor a signal might otherwise infer from
+    a *different*, genuinely defective period in the same filing (a filing
+    can restate an old period incorrectly while its own current period is
+    fine, or vice versa; borrowing a factor across periods without checking
+    this would risk a false correction -- see docs/model_fixes.md, F1).
+    Returns ``{}`` for an item with no evidence from either signal, or where
+    the two signals disagree on the factor (ambiguous; the caller leaves that
+    item's value untouched rather than guessing)."""
+    result: dict[str, float] = {}
+    eps_implied = _eps_implied_diluted_shares(stmts)
+    for item in ("shares_outstanding", "diluted_shares"):
+        reported = stmts.get_all(item)
+        target_key = stmts.resolve_column(item, period_key)
+        if target_key is None or target_key not in reported:
+            continue
+        history = overlapping_history(
+            conn,
+            asset_id,
+            REGISTRY[item].concepts,
+            reported,
+            exclude_filing_id=exclude_filing_id,
+        )
+        history_clean, history_factor = _signal_factor(reported, history, target_key)
+        if item == "diluted_shares":
+            # EPS is a weighted-average, duration-based measure -- it only
+            # corroborates diluted_shares (also duration-based), never the
+            # point-in-time shares_outstanding balance-sheet figure.
+            eps_clean, eps_factor = _signal_factor(reported, eps_implied, target_key)
+        else:
+            eps_clean, eps_factor = False, None
+        if history_clean or eps_clean:
+            continue  # direct evidence says the target period itself is fine
+        candidates = {f for f in (history_factor, eps_factor) if f is not None}
+        if len(candidates) == 1:
+            result[item] = candidates.pop()
+    return result
 
 
 def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
@@ -537,12 +740,11 @@ def update_run_plan(conn: Database, run_id: int, *, universe_size: int, planned_
 
 
 def bump_run_counter(conn: Database, run_id: int, column: str) -> None:
-    if column not in _COUNTER_COLUMNS:
-        raise ValueError(f"not a counter column: {column}")
-    conn.execute(
-        f"UPDATE analysis_run SET {column} = {column} + 1 WHERE id = ?",  # noqa: S608
-        (run_id,),
-    )
+    try:
+        sql = _COUNTER_UPDATE_SQL[column]
+    except KeyError:
+        raise ValueError(f"not a counter column: {column}") from None
+    conn.execute(sql, (run_id,))
     conn.commit()
 
 
