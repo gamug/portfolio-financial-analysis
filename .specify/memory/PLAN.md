@@ -497,7 +497,9 @@ extension concepts) is a distinct, larger investigation, explicitly
 deferred, not silently dropped. Full record and the corrected verification
 methodology: `docs/model_fixes.md`'s F2 entry.
 
-**F4 — 10-Q flow/stock mismatch, never annualized (Accounting-critical).**
+**F4 — 10-Q flow/stock mismatch, never annualized (Accounting-critical).
+RESOLVED 2026-09-15, `T-062` — full record in `docs/model_fixes.md`'s F4
+entry.**
 `metrics/profitability.py` (lines ~34-35) and `efficiency.py` (~26-29)
 divide a 3-month quarterly flow (net income, revenue) by an instantaneous
 balance-sheet stock (total assets, equity) with no annualization. Verified

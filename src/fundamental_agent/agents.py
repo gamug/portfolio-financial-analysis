@@ -133,6 +133,11 @@ class FilingContext:
     # value by this to correct a detected XBRL scale/tagging defect (see
     # docs/model_fixes.md, F1; fundamental_agent.db.detect_share_scale_factors).
     share_scale_factors: dict[str, float] = field(default_factory=dict)
+    # {"net_income" | "revenue" | "cogs": TTM value} on a 10-Q filing -- the
+    # trailing-twelve-month flow ROA/ROE/turnover ratios need instead of the raw
+    # 3-month value (F4, docs/model_fixes.md; fundamental_agent.db.ttm_flows).
+    # Empty for a 10-K, which already reports an annual flow.
+    ttm: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -178,7 +183,7 @@ class FundamentalAnalyst:
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
         out: list[tuple[str, MetricResult]] = []
         for group in _ALL_GROUPS:
-            for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key):
+            for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key, ctx.ttm):
                 out.append((group, result))
         if ctx.price is not None:
             for result in valuation_metrics.compute(

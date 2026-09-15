@@ -217,10 +217,27 @@ instead.
       Residual (mostly single-concept filings, several bank/broker
       custom-tag cases) is a separate, larger investigation, explicitly
       deferred. → `PLAN.md` Work item 7, F2.
-- [ ] **T-062** Fix **F4** — TTM-annualize 10-Q flow numerators (trailing 4
+- [x] **T-062** Fix **F4** — TTM-annualize 10-Q flow numerators (trailing 4
       quarters, fallback ×4) in `metrics/profitability.py`/`efficiency.py`.
       Verify: 10-Q vs. 10-K medians for ROA/ROE/asset_turnover converge
-      (were 3.79–3.86× apart). → F4.
+      (were 3.79–3.86× apart). → F4. **Fixed 2026-09-15**: `db.ttm_flows`
+      sums the filing's own quarter plus its three predecessors (deriving a
+      10-K-only Q4 as `FY − Q1 − Q2 − Q3`), read back from each earlier
+      filing's own already-recorded `fundamental_metrics.inputs_json` (never
+      re-deriving concept resolution), falling back to `current × 4` per
+      item when trailing history is incomplete; wired through
+      `FilingContext.ttm` into `profitability.py`'s `return_on_assets`/
+      `return_on_equity` and `efficiency.py`'s `asset_turnover`/
+      `inventory_turnover`/`receivables_turnover` only (margins are
+      flow-over-flow and need no adjustment). 7 new tests
+      (`tests/test_ttm.py`, `tests/test_pipeline.py`); full suite (231,
+      was 224), ruff, mypy all green. The stated acceptance criterion
+      (10-Q vs. 10-K medians actually converging in the live DB) needs a
+      `--fresh` re-run against production — same as F1/F2, deferred to
+      `T-068`'s Phase A re-sequence, not part of this code-only fix. Full
+      record in `docs/model_fixes.md`'s F4 entry, including the
+      deliberately-deferred `roic.py`/`leverage.py` analogous cases. →
+      `PLAN.md` Work item 7, F4.
 - [ ] **T-063** Fix **C1** — correct the T-1 veto cutoff bug in
       `src/cycle/orchestrator.py:264`'s `_rank()`. Verify:
       `SELECT COUNT(*) FROM cycle_ranking WHERE vetoed != 0` is `> 0` on
@@ -328,9 +345,9 @@ instead.
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-`T-060` (F1) is **done**, 2026-09-14, and `T-061` (F2) is **done**,
-2026-09-15 — see `docs/model_fixes.md`. Nothing else in `T-040`–`T-084` has
-started. Execute Work item 5 ∥ 6 (external,
+`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2) and `T-062` (F4) are
+**done**, 2026-09-15 — see `docs/model_fixes.md`. Nothing else in
+`T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/
 `T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs

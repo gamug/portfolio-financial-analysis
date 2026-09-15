@@ -9,13 +9,15 @@ from typing import Any, cast
 
 import pytest
 from conftest import write_universe_db
+from portfolio_common.db import Database
 
-from fundamental_agent import pipeline
+from fundamental_agent import db, pipeline
 from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import compute_group
-from fundamental_agent.pipeline import RunParams, _plan, _targets, _YearTask
+from fundamental_agent.pipeline import RunParams, _Engine, _plan, _targets, _ttm_flows, _YearTask
 from fundamental_agent.statements import Statements
+from kg_schema.queries import UniverseMember
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -51,6 +53,63 @@ def test_targets_10q_expands_matching_year_quarters() -> None:
     targets = _targets(stmts, _task("MSFT", "10-Q", 2024))
     assert [t.fiscal_period for t in targets] == ["2024Q1"]
     assert _targets(stmts, _task("MSFT", "10-Q", 2019)) == []
+
+
+def _member(symbol: str) -> UniverseMember:
+    return UniverseMember(
+        symbol=symbol,
+        security=symbol,
+        cik="0000000001",
+        gics_sector="Technology",
+        gics_sub_industry="Sub",
+        hq_location=None,
+        date_added=None,
+        founded=None,
+        valid_from="2020-01-01",
+        valid_to=None,
+    )
+
+
+def _engine(conn: Database) -> _Engine:
+    """A minimal `_Engine` for `_ttm_flows`, which only touches `.conn`."""
+    return _Engine(
+        conn=conn,
+        edgar=cast("Any", None),
+        analyst=cast("Any", None),
+        params=RunParams(),
+        report=cast("Any", None),
+        completed=set(),
+    )
+
+
+def test_ttm_flows_empty_for_10k(memory_db: Database) -> None:
+    """A 10-K already reports an annual flow -- no TTM adjustment applies."""
+    db.sync_universe(memory_db, [_member("AAPL")])
+    stmts = Statements.from_payload(_payload("financials_AAPL_10-K_2023.json"))
+    task = _task("AAPL", "10-K", 2023)
+    targets = _targets(stmts, task)
+
+    assert _ttm_flows(_engine(memory_db), task, stmts, targets[0]) == {}
+
+
+def test_ttm_flows_falls_back_to_times_four_for_a_fresh_10q(memory_db: Database) -> None:
+    """No prior filings ingested yet -- every flow item in the payload falls
+    back to `current * 4` (F4, docs/model_fixes.md)."""
+    db.sync_universe(memory_db, [_member("MSFT")])
+    asset_id = db.load_universe(memory_db)[0]["id"]
+    stmts = Statements.from_payload(_payload("financials_MSFT_10-Q_2024.json"))
+    task = _YearTask(asset_id=asset_id, ticker="MSFT", company_name="MSFT", form="10-Q", year=2024)
+    targets = _targets(stmts, task)
+
+    result = _ttm_flows(_engine(memory_db), task, stmts, targets[0])
+
+    expected = {
+        item: value * 4
+        for item in ("net_income", "revenue", "cogs")
+        if (value := stmts.get(item, targets[0].period.key)) is not None
+    }
+    assert expected  # the fixture does carry at least one of these
+    assert result == expected
 
 
 def _fake_rows() -> list[dict[str, Any]]:

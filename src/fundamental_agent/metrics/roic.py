@@ -24,7 +24,12 @@ def effective_tax_rate(tax: float | None, pretax: float | None) -> float:
     return min(max(tax / pretax, 0.0), _MAX_TAX_RATE)
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     operating = stmts.get("operating_income", period_key)
     tax = stmts.get("income_tax", period_key)
     pretax = stmts.get("pretax_income", period_key)

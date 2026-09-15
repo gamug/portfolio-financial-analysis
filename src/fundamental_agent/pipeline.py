@@ -303,6 +303,33 @@ def _extract_sections(
         )
 
 
+_TTM_ITEMS = ("net_income", "revenue", "cogs")
+
+
+def _ttm_flows(
+    engine: _Engine, task: _YearTask, stmts: Statements, target: _Target
+) -> dict[str, float]:
+    """This filing's flow inputs, annualized to trailing-twelve-months on a 10-Q
+    (F4, docs/model_fixes.md) -- empty for a 10-K, which already reports an
+    annual flow and needs no adjustment."""
+    if task.form != "10-Q":
+        return {}
+    current = {
+        item: value
+        for item in _TTM_ITEMS
+        if (value := stmts.get(item, target.period.key)) is not None
+    }
+    if not current:
+        return {}
+    return db.ttm_flows(
+        engine.conn,
+        task.asset_id,
+        fiscal_year=target.period.year,
+        quarter=int(target.period.tag[1]),
+        current=current,
+    )
+
+
 def _analyze_one(
     engine: _Engine,
     task: _YearTask,
@@ -350,6 +377,7 @@ def _analyze_one(
         prior_key=target.prior.key if target.prior else None,
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
         share_scale_factors=share_scale_factors,
+        ttm=_ttm_flows(engine, task, stmts, target),
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(

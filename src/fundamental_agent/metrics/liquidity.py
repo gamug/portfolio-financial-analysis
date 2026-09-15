@@ -8,7 +8,12 @@ from fundamental_agent.statements import Statements
 GROUP = "liquidity"
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     current_assets = stmts.get("current_assets", period_key)
     current_liabilities = stmts.get("current_liabilities", period_key)
     cash = stmts.get("cash", period_key)
