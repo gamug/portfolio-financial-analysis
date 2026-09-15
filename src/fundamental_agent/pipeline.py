@@ -337,7 +337,7 @@ def _analyze_one(
     # known SEC XBRL scale/tagging defect (docs/model_fixes.md, F1) before valuation
     # multiplies a possibly-mis-scaled share count by price.
     share_scale_factors = db.detect_share_scale_factors(
-        engine.conn, task.asset_id, stmts, exclude_filing_id=filing_id
+        engine.conn, task.asset_id, stmts, target.period.key, exclude_filing_id=filing_id
     )
 
     ctx = FilingContext(

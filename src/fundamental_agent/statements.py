@@ -334,6 +334,20 @@ class Statements:
                     return out
         return {}
 
+    def resolve_column(self, item: str, period_key: str) -> str | None:
+        """The raw column key :meth:`get_all` uses for *period_key* on
+        registry *item* -- a balance-sheet item resolves through the same
+        instant-date translation :meth:`get` uses internally (``None`` if no
+        instant column exists); any other item uses *period_key* as-is. Lets
+        a caller holding :meth:`get_all`'s result (keyed by raw column, not by
+        the duration key balance-sheet items are normally asked for) look up
+        "this filing's own target period" consistently across item kinds --
+        see :func:`fundamental_agent.db.detect_share_scale_factors`.
+        """
+        if REGISTRY[item].statements == _BALANCE:
+            return self._instant_for(period_key)
+        return period_key
+
     def _instant_for(self, period_key: str) -> str | None:
         target = period_key[:10]
         instants = self.instant_periods()

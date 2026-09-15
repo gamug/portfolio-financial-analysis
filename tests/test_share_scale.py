@@ -147,7 +147,7 @@ def test_detect_share_scale_factors_finds_divide_by_1e6_defect(memory_db: Databa
     )
 
     factors = db.detect_share_scale_factors(
-        memory_db, asset_id, bad_stmts, exclude_filing_id=bad_filing_id
+        memory_db, asset_id, bad_stmts, "2023-12-31 (FY)", exclude_filing_id=bad_filing_id
     )
 
     assert factors == {"diluted_shares": 1_000_000.0}
@@ -167,7 +167,7 @@ def test_detect_share_scale_factors_finds_multiply_by_1e3_defect(memory_db: Data
     )
 
     factors = db.detect_share_scale_factors(
-        memory_db, asset_id, bad_stmts, exclude_filing_id=bad_filing_id
+        memory_db, asset_id, bad_stmts, "2025-12-31 (FY)", exclude_filing_id=bad_filing_id
     )
 
     # the stored (corrupted) value needs to be *multiplied* by 1e-3 to correct it
@@ -188,7 +188,7 @@ def test_detect_share_scale_factors_ignores_normal_yoy_drift(memory_db: Database
     )
 
     factors = db.detect_share_scale_factors(
-        memory_db, asset_id, new_stmts, exclude_filing_id=new_filing_id
+        memory_db, asset_id, new_stmts, "2023-12-31 (FY)", exclude_filing_id=new_filing_id
     )
 
     assert factors == {}
@@ -205,7 +205,9 @@ def test_detect_share_scale_factors_empty_when_no_evidence_from_either_signal(
     asset_id = db.load_universe(memory_db)[0]["id"]
     filing_id, stmts = _seed_filing(memory_db, asset_id, "FY2023", {"2023-12-31 (FY)": 50_000.0})
 
-    factors = db.detect_share_scale_factors(memory_db, asset_id, stmts, exclude_filing_id=filing_id)
+    factors = db.detect_share_scale_factors(
+        memory_db, asset_id, stmts, "2023-12-31 (FY)", exclude_filing_id=filing_id
+    )
 
     assert factors == {}
 
@@ -229,7 +231,9 @@ def test_detect_share_scale_factors_via_eps_with_no_history_overlap(memory_db: D
         eps_diluted={"2025-12-31 (FY)": 11.95},
     )
 
-    factors = db.detect_share_scale_factors(memory_db, asset_id, stmts, exclude_filing_id=filing_id)
+    factors = db.detect_share_scale_factors(
+        memory_db, asset_id, stmts, "2025-12-31 (FY)", exclude_filing_id=filing_id
+    )
 
     assert factors == {"diluted_shares": 1_000_000.0}
 
@@ -264,12 +268,75 @@ def test_eps_signal_never_corroborates_shares_outstanding(memory_db: Database) -
     stmts = Statements.from_payload(payload)
     db.append_financial_facts(memory_db, filing_id, iter_facts(stmts))
 
-    factors = db.detect_share_scale_factors(memory_db, asset_id, stmts, exclude_filing_id=filing_id)
+    factors = db.detect_share_scale_factors(
+        memory_db, asset_id, stmts, "2023-12-31 (FY)", exclude_filing_id=filing_id
+    )
 
     # diluted_shares is corrected via EPS; shares_outstanding is left untouched
     # (it wins the primary branch in _share_count, so this filing's market cap
     # would still need the temporal signal or a separate backstop to catch it)
     assert factors == {"diluted_shares": 1_000_000.0}
+
+
+def test_direct_target_evidence_overrides_a_different_defective_period(
+    memory_db: Database,
+) -> None:
+    """A filing can restate one historical period incorrectly while its own
+    target period is fine (or vice versa) -- direct evidence *at the target
+    period itself* must decide, never a factor borrowed from a different
+    period in the same filing (the bug a code-review bot caught: the original
+    implementation would have blanket-applied 2020's 1e6 defect to a
+    perfectly clean 2021 value just because they shared a filing)."""
+    db.sync_universe(memory_db, [_company("FFF")])
+    asset_id = db.load_universe(memory_db)[0]["id"]
+    _seed_filing(
+        memory_db,
+        asset_id,
+        "FY2021",
+        {"2020-12-31 (FY)": 400_000_000.0, "2021-12-31 (FY)": 410_000_000.0},
+    )
+    bad_filing_id, bad_stmts = _seed_filing(
+        memory_db,
+        asset_id,
+        "FY2022",
+        {"2020-12-31 (FY)": 400.0, "2021-12-31 (FY)": 410_000_000.0},  # 2020 defective, 2021 fine
+    )
+
+    # Asking about the genuinely defective period still corrects it...
+    defective = db.detect_share_scale_factors(
+        memory_db, asset_id, bad_stmts, "2020-12-31 (FY)", exclude_filing_id=bad_filing_id
+    )
+    assert defective == {"diluted_shares": 1_000_000.0}
+
+    # ...but asking about the clean period in the SAME filing must not borrow
+    # that factor just because another period in the filing needed it.
+    clean = db.detect_share_scale_factors(
+        memory_db, asset_id, bad_stmts, "2021-12-31 (FY)", exclude_filing_id=bad_filing_id
+    )
+    assert clean == {}
+
+
+def test_detect_share_scale_factors_catches_a_non_thousands_power_of_ten(
+    memory_db: Database,
+) -> None:
+    """The candidate factor list must cover every power of ten (10x, 100x,
+    ...), not just the 1e3/1e6/1e9 grouping MCD/WAT happened to show -- a
+    code-review bot caught this gap in the original candidate list."""
+    db.sync_universe(memory_db, [_company("GGG")])
+    asset_id = db.load_universe(memory_db)[0]["id"]
+    _seed_filing(memory_db, asset_id, "FY2022", {"2022-12-31 (FY)": 50_000_000.0})
+    bad_filing_id, bad_stmts = _seed_filing(
+        memory_db,
+        asset_id,
+        "FY2023",
+        {"2022-12-31 (FY)": 500_000.0, "2023-12-31 (FY)": 510_000.0},  # both off by exactly 1e2
+    )
+
+    factors = db.detect_share_scale_factors(
+        memory_db, asset_id, bad_stmts, "2023-12-31 (FY)", exclude_filing_id=bad_filing_id
+    )
+
+    assert factors == {"diluted_shares": 100.0}
 
 
 def test_overlapping_history_excludes_the_filing_itself(memory_db: Database) -> None:

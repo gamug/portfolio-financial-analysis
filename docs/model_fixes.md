@@ -237,6 +237,51 @@ outside a code-review pass's authority to run unprompted. The code fix is
 verified correct and ready; applying it to the live data is a follow-up
 operational step for whoever owns that run.
 
+### Post-merge correction: a code-review bot caught two real gaps
+
+An automated PR review ([Sourcery](https://sourcery.ai)) flagged two
+`db.py` issues before merge, both confirmed as genuine bugs, not noise, and
+fixed the same day (2026-09-15):
+
+1. **A factor found from one period could contaminate an unrelated one.**
+   The original design collected matched factors across every anchored
+   period in a filing and, once exactly one distinct factor emerged,
+   applied it to whatever period `_share_count` happened to be asked about
+   — even a period that itself had direct, contradicting evidence of being
+   correctly scaled (e.g. a filing that mis-restates an old period while
+   its own current period is fine). **Fix**: `detect_share_scale_factors`
+   now takes the actual target `period_key`; direct evidence *at that
+   period* (from either signal) is checked first and is decisive —
+   including when it proves the period needs no correction, which now
+   overrides any factor a signal would otherwise infer from a *different*
+   period in the same filing. Only with no direct evidence at the target
+   does the detector fall back to inferring from the filing's other
+   periods, and only if *every one* of them (not just one) agrees on the
+   same factor — one period that fits no known defect shape now disqualifies
+   the inference outright rather than being silently skipped. New
+   regression tests: `test_direct_target_evidence_overrides_a_different_
+   defective_period` (both directions — the defective period still
+   corrects, the clean one in the same filing does not).
+2. **The candidate factor list only covered thousands-grouped scales**
+   (`1e-9, 1e-6, 1e-3, 1e3, 1e6, 1e9`) — an artifact of MCD and WAT both
+   happening to show that grouping, not a real constraint; nothing rules
+   out a filer being off by 10x or 100x. **Fix**: widened to every power of
+   ten from `1e-9` to `1e9` (18 candidates, excluding `1e0`). New test:
+   `test_detect_share_scale_factors_catches_a_non_thousands_power_of_ten`
+   (a synthetic 100x defect).
+
+`fundamental_agent.pipeline._analyze_one`'s call site was updated to pass
+`target.period.key`; `Statements` gained `resolve_column(item, period_key)`
+so a balance-sheet item's instant-date key resolves the same way `.get()`
+already does internally, keeping `shares_outstanding` and `diluted_shares`
+addressable by the one duration-style `period_key` the pipeline actually
+has. Re-verified read-only against the live production database after the
+fix: `detect_share_scale_factors` still recovers `{"diluted_shares":
+1000000.0}` for MCD's FY2025 10-K and `{"diluted_shares": 0.001}` for WAT's
+most recent 10-Q under the stricter logic. Full suite: 216 passed (was 214
+before this correction; +2 new regression tests, on top of the +11 from the
+original fix).
+
 ### Residual scope, deliberately deferred
 
 - **`shares_outstanding` with no temporal overlap and no EPS corroboration**
