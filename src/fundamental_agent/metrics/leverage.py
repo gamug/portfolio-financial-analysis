@@ -17,7 +17,12 @@ def _total_debt(stmts: Statements, period_key: str) -> float | None:
     return sum(known) if known else None
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     debt = _total_debt(stmts, period_key)
     equity = stmts.get("equity", period_key)
     assets = stmts.get("total_assets", period_key)

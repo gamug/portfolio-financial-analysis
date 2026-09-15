@@ -14,7 +14,12 @@ def _yoy(current: float | None, prior: float | None) -> float | None:
     return None if ratio is None else ratio - 1.0
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     if prior_key is None:
         return []
 

@@ -539,3 +539,111 @@ green.
   `long_term_debt`/`short_term_debt`/`cash` risk table above is flagged,
   not fixed — each needs its own live-data verification pass before
   changing, the same discipline F1 and F2 both applied.
+
+---
+
+## F4 — 10-Q flow/stock mismatch, never annualized
+
+**Status**: Fixed 2026-09-15 (`T-062`).
+
+### Symptom
+
+`metrics/profitability.py` and `metrics/efficiency.py` divide a 10-Q's
+3-month flow (net income, revenue, cogs) by an instantaneous balance-sheet
+stock (total assets, equity, inventory, receivables) with no annualization.
+Verified (robust medians, PLAN.md): `return_on_assets` 10-K median 6.01% vs.
+10-Q median 1.56% (3.86×); `return_on_equity` 15.80% vs. 4.17% (3.79×);
+`asset_turnover` 0.5347× vs. 0.1395× (3.83×) — all converging on ≈4×, the
+expected quarterly factor. This is not a rounding artifact: a 3-month flow
+compared against an annual-basis stock understates every affected ratio by
+roughly the number of quarters per year, making a 10-Q filing's ROA/ROE/
+turnover look structurally worse than the same company's own 10-K, for
+reasons that have nothing to do with its actual performance.
+
+### Fix
+
+Scope is exactly PLAN.md's two cited call sites — the specific
+flow-over-stock ratios, not every metric that touches these flows:
+`profitability.py`'s `return_on_assets`/`return_on_equity` (net income) and
+`efficiency.py`'s `asset_turnover`/`inventory_turnover`/
+`receivables_turnover` (revenue, cogs). Margins (`gross_margin`,
+`operating_margin`, `net_margin`) divide a flow by another flow from the
+*same* period and need no adjustment.
+
+`fundamental_agent/db.py` gains `ttm_flows(conn, asset_id, *, fiscal_year,
+quarter, current)`: for each flow item in `current`, sums the filing's own
+quarter plus the three immediately preceding ones (`_quarter_flow`/
+`_historical_flow`), falling back to `current * 4` for that item alone when
+the trailing history isn't fully available. A quarter's own value is read
+back from an **already-recorded** metric row's `inputs_json` — never
+re-derived from raw `financial_facts` — so it reuses whatever concept
+resolution was correct at the time that earlier filing was processed
+(F2's fix included) rather than duplicating that logic. A 10-Q never itself
+reports quarter 4 (the fiscal year's 10-K reports only the full-year total),
+so Q4 is derived as `FY − (Q1 + Q2 + Q3)`, and only when all four of those
+rows exist; otherwise the whole item falls back to the `×4` approximation.
+
+`pipeline._analyze_one` computes this once per 10-Q filing (`_ttm_flows`,
+empty for a 10-K) using the filing's own just-computed `net_income`/
+`revenue`/`cogs` as `current`, and threads the result through
+`FilingContext.ttm` into `compute_group`. Every `metrics/*.compute()`
+function gained a `ttm: dict[str, float] | None = None` parameter for one
+uniform `ComputeFn` signature; only `profitability`/`efficiency` consult it.
+Critically, each metric group's recorded `inputs` (`inputs_json`) still
+carries the **raw, single-quarter** value regardless of the TTM adjustment —
+that's what a *later* filing's own TTM lookup reads back as one of its
+trailing quarters, so the adjustment never compounds across filings.
+
+### Design decisions
+
+**Read the flow back from `fundamental_metrics.inputs_json`, not
+`financial_facts`.** The alternative — re-deriving each historical quarter's
+revenue/net_income/cogs straight from stored XBRL facts — would require
+re-implementing `Statements.get()`'s full total/sum/synonym resolution
+(F2) against raw facts outside a `Statements` object. Reading the value
+back from the metric row a prior run already computed avoids duplicating
+that logic and stays correct automatically as `Statements.get()` evolves.
+
+**Fallback is per-item, not all-or-nothing.** A filing missing `cogs` (a
+financial firm, say) still gets a real TTM `net_income`/`revenue` if that
+history exists — each of the three flow items is evaluated independently in
+`ttm_flows`.
+
+**Scope held to PLAN.md's two cited call sites.** `roic.py`'s NOPAT/invested
+capital and `leverage.py`'s `net_debt_to_ebitda` have the identical
+flow-over-stock structure, but neither was in F4's verified scope — flagged
+below, not silently fixed alongside this change.
+
+### Verification
+
+- New tests: `tests/test_ttm.py` (7 cases) — `db.ttm_flows` summing four
+  real quarters including a derived Q4, falling back to `×4` with no prior
+  history at all, and falling back when the prior year's 10-K (needed to
+  derive its Q4) hasn't been ingested even though its three quarters have;
+  `profitability.compute`/`efficiency.compute` picking up a supplied `ttm`
+  value for exactly the flow-over-stock ratios while leaving `net_margin`
+  and the recorded `inputs` untouched. `tests/test_pipeline.py` (+2) —
+  `_ttm_flows` returns `{}` for a 10-K and falls back to `×4` for a 10-Q
+  with no history.
+- `uv run pytest -q` — 231 passed (was 224).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green.
+
+**Not done as part of this change** (same as F1/F2, explicitly not an
+oversight): re-persisting corrected `fundamental_metrics`/`score_snapshot`
+rows for the live universe requires a `--fresh` re-run against production
+(paid LLM calls, mutates shared data) — outside a code-review pass's
+authority to run unprompted. `T-068`'s Phase A re-sequence is where that
+re-run belongs, after `T-063`/`T-064` (C1/C2) also land.
+
+### Residual scope, deliberately deferred
+
+- **`roic.py`'s NOPAT/invested-capital ratio** and **`leverage.py`'s
+  `net_debt_to_ebitda`** divide a flow by a stock the same way ROA/ROE do,
+  but neither was in PLAN.md's verified F4 scope — a separate, later pass
+  should verify and fix them the same way, not assume this fix already
+  covers them.
+- The TTM lookup's `_quarter_flow`/`_historical_flow` pick the
+  *most-recently-written* `fundamental_metrics` row when more than one
+  `engine_version` exists for the same key (mirrors `overlapping_history`'s
+  rule) — it does not attempt to reconcile disagreeing engine versions
+  beyond that.

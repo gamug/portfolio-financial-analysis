@@ -415,6 +415,106 @@ def overlapping_history(
     return out
 
 
+# Which already-recorded metric row's `inputs_json` carries each flow item's raw,
+# never-TTM-adjusted value -- see :func:`ttm_flows`, F4 (docs/model_fixes.md). Both
+# groups are always computed for every filing (fundamental_agent.metrics.CORE_GROUPS/
+# OPTIONAL_GROUPS), so either metric name works as an anchor regardless of whether
+# its own ratio value came out null.
+_FISCAL_Q4 = 4
+
+_TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
+    "net_income": ("profitability", "return_on_assets"),
+    "revenue": ("profitability", "return_on_assets"),
+    "cogs": ("efficiency", "asset_turnover"),
+}
+
+
+def _historical_flow(
+    conn: Database, asset_id: int, form: str, fiscal_period: str, item: str
+) -> float | None:
+    """The single-quarter (or FY) *item* value already recorded for this asset's
+    ``(form, fiscal_period)`` filing, read from the metric row's own audit
+    ``inputs_json`` -- already resolved through :meth:`Statements.get`'s full
+    concept-selection logic (F2) at the time that filing was processed, so this
+    never re-derives concept resolution itself. When more than one
+    ``engine_version`` row exists for the same key, the most recently written one
+    wins (mirrors :func:`overlapping_history`'s "last/most-recent wins" rule)."""
+    group, name = _TTM_FLOW_SOURCE[item]
+    row = conn.execute(
+        """
+        SELECT fm.inputs_json
+        FROM fundamental_metrics fm
+        JOIN sec_filings sf ON sf.id = fm.filing_id
+        WHERE sf.asset_id = ? AND sf.form = ? AND sf.fiscal_period = ?
+          AND fm.metric_group = ? AND fm.metric_name = ?
+        ORDER BY fm.id DESC
+        LIMIT 1
+        """,
+        (asset_id, form, fiscal_period, group, name),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return None
+    value = json.loads(row["inputs_json"]).get(item)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _quarter_flow(
+    conn: Database, asset_id: int, year: int, quarter: int, item: str
+) -> float | None:
+    """The single-quarter value of *item* for fiscal *year*'s *quarter* (1-4).
+
+    A 10-Q never itself reports quarter 4 -- the fiscal year's 10-K reports only
+    the full-year total. Quarter 4 is derived as that FY total minus its own
+    three 10-Q quarters, and only once all four of those are ingested; otherwise
+    ``None`` (the caller falls back to the ``x4`` approximation -- F4,
+    docs/model_fixes.md)."""
+    if quarter == _FISCAL_Q4:
+        fy = _historical_flow(conn, asset_id, "10-K", f"FY{year}", item)
+        q1 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q1", item)
+        q2 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q2", item)
+        q3 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q3", item)
+        if fy is None or q1 is None or q2 is None or q3 is None:
+            return None
+        return fy - q1 - q2 - q3
+    return _historical_flow(conn, asset_id, "10-Q", f"{year}Q{quarter}", item)
+
+
+def ttm_flows(
+    conn: Database,
+    asset_id: int,
+    *,
+    fiscal_year: int,
+    quarter: int,
+    current: dict[str, float],
+) -> dict[str, float]:
+    """Trailing-twelve-month value of each *current* (this filing's own,
+    single-quarter) flow, keyed the same way (F4, docs/model_fixes.md): a 10-Q
+    reports a 3-month flow, but ROA/ROE/turnover ratios divide it by an
+    instantaneous balance-sheet stock, so it must be measured on the same
+    annual basis first. Sums the filing's own quarter plus the three
+    immediately preceding ones when all three are already ingested (a prior
+    quarter's own already-recorded, never-TTM-adjusted value -- see
+    :func:`_historical_flow` -- so this never compounds a prior TTM
+    adjustment into the new one); otherwise falls back to ``current * 4`` for
+    that item alone (a fresh ticker, or a not-yet-derivable prior-year Q4)."""
+    idx = fiscal_year * 4 + (quarter - 1)
+    out: dict[str, float] = {}
+    for item, value in current.items():
+        trailing = [value]
+        complete = True
+        for offset in range(1, 4):
+            year, zero_based_quarter = divmod(idx - offset, 4)
+            flow = _quarter_flow(conn, asset_id, year, zero_based_quarter + 1, item)
+            if flow is None:
+                complete = False
+                break
+            trailing.append(flow)
+        out[item] = sum(trailing) if complete else value * 4.0
+    return out
+
+
 def _scale_factor_between(new_value: float | None, anchor_value: float | None) -> float | None:
     """The candidate power-of-ten factor under which ``new_value * factor``
     matches ``anchor_value`` (within ``_SHARE_SCALE_TOLERANCE``), or ``None``

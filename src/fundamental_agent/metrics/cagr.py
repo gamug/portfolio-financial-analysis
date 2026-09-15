@@ -28,7 +28,12 @@ def _cagr(begin: float | None, end: float | None, years: int) -> float | None:
     return float((end / begin) ** (1.0 / years) - 1.0)
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     fy = stmts.fy_periods()
     if not fy:
         return []

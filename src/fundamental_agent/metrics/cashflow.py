@@ -19,7 +19,12 @@ def free_cash_flow(stmts: Statements, period_key: str) -> tuple[float | None, fl
     return ocf, ocf - abs(capex)
 
 
-def compute(stmts: Statements, period_key: str, prior_key: str | None = None) -> list[MetricResult]:
+def compute(
+    stmts: Statements,
+    period_key: str,
+    prior_key: str | None = None,
+    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+) -> list[MetricResult]:
     revenue = stmts.get("revenue", period_key)
     net_income = stmts.get("net_income", period_key)
     ocf, fcf = free_cash_flow(stmts, period_key)
