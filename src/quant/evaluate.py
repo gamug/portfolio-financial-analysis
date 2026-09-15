@@ -19,6 +19,7 @@ from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
+    earliest_portfolio_as_of,
     ensure_schema,
     insert_portfolio,
     load_benchmark_returns,
@@ -35,6 +36,7 @@ PERF_ENGINE_VERSION = "perf-v1"
 
 @dataclass
 class EvaluateResult:
+    date_from: str  # the resolved value, even when the caller omitted --from
     benchmark_rows: int
     books_evaluated: int
     perf_rows: int
@@ -100,15 +102,28 @@ def _snapshot_live_book(
 def run_evaluate(
     settings: QuantSettings,
     *,
-    date_from: str,
+    date_from: str | None = None,
     date_to: str,
     conn: Database | None = None,
     benchmark: str = INTERNAL_EW,
 ) -> EvaluateResult:
+    """*date_from* defaults to the earliest persisted ``quant_portfolio.as_of``
+    (Q2, docs/model_fixes.md) when omitted -- maximizes the forward window
+    actually evaluated, rather than a caller picking a date (e.g. the same
+    ``as_of`` an `optimize` run just used) that leaves no room between it and
+    whatever price data has actually been ingested. Raises ``ValueError`` if
+    omitted and no book has been persisted yet."""
     owns = conn is None
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
+        if date_from is None:
+            date_from = earliest_portfolio_as_of(conn)
+            if date_from is None:
+                raise ValueError(
+                    "no --from given and no quant_portfolio rows exist yet -- "
+                    "run 'quant optimize' first, or pass --from explicitly"
+                )
         run_id = open_run(
             conn,
             "evaluate",
@@ -154,6 +169,7 @@ def run_evaluate(
             fail_run(conn, run_id, str(exc))
             raise
         return EvaluateResult(
+            date_from=date_from,
             benchmark_rows=bench_rows,
             books_evaluated=evaluated,
             perf_rows=perf_rows,

@@ -996,3 +996,113 @@ with real `corpact-v1` ex-dates/values, via the same priority list.
   whichever signal was found each quarter), but a filer that tags the same
   quarter both ways with disagreeing values isn't cross-checked; the
   discrete tag simply wins outright per `_quarterly_dps_signal`'s order.
+
+---
+
+## Q2 — Empty forward evaluation: two independent findings, one code fix
+
+**Status**: Fixed 2026-09-15 (`T-067`) — the `evaluate` half. The `frontier`
+half needed **no code change**; see below.
+
+### Symptom
+
+`quant_benchmark_performance` and `quant_frontier_point` both had 0 rows.
+PLAN.md's audit traced this to two independent causes bundled under one
+finding.
+
+### Finding 1 — `evaluate`'s `--from` had no default, and the documented
+example value guarantees an empty forward window
+
+`quant evaluate`'s `--from` was `required=True` with no default, and both
+`docs/quant.md` and (untracked) `CLAUDE.md` documented running it with the
+*same* `--analysis-date` value just used for `build-risk-model`/`optimize`
+(e.g. `evaluate --from 2026-08-27 --analysis-date TODAY`, `optimize
+--analysis-date 2026-08-27`). That date is, by construction, the **most
+recent** date with any ingested price data at all — a book can't be
+optimized against price history that doesn't exist yet. Using it as
+`evaluate`'s `--from` leaves nothing between it and `--to` for a forward
+return to realize over: `_evaluate_book` needs `quant_return_daily` rows
+strictly after `as_of` (`load_forward_simple_returns(..., after=as_of,
+until=date_to, ...)`), and `_snapshot_live_book`'s own forward window is
+`(date_from, date_to]` — both empty when `date_from` already sits at the
+data's leading edge. Verified: the audit's own run used
+`date_from='2026-08-27'` (where `price_daily` ends) → `date_to=
+'2026-09-03'`, netting exactly 0 rows.
+
+**Fix**: `run_evaluate`'s `date_from` is now optional (`str | None = None`);
+when omitted, it defaults to `quant.db.earliest_portfolio_as_of` — the
+earliest `as_of` across every persisted `quant_portfolio` book, read live
+from the database rather than hardcoded or guessed. Starting from the
+earliest book maximizes whatever forward window the actually-ingested
+price history allows, instead of a caller (or a doc example) picking a
+date that happens to be the newest one available. If no book has been
+persisted yet and `--from` is also omitted, `run_evaluate` now raises a
+clear `ValueError` ("no --from given and no quant_portfolio rows exist
+yet...") instead of silently proceeding to evaluate an empty range.
+`EvaluateResult` gained a `date_from` field so the CLI's own summary line
+reports the value actually used, not `None` when defaulted.
+`docs/quant.md`'s example was corrected to stop demonstrating the
+anti-pattern, with an explanatory note.
+
+### Finding 2 — `quant_frontier_point`'s 0 rows is not a code defect
+
+`optimize`'s default `--objectives` (`min_var, tangency, target_vol,
+risk_parity`) has never included `frontier` — `frontier` is deliberately
+opt-in (`objective.py::resolve_objectives` treats it as a recognized but
+separately-handled name; `persist.py`'s `if "frontier" in
+settings.objectives:` branch only runs when asked). This is confirmed
+**already correct and already covered end-to-end** by the pre-existing
+`tests/test_quant_pipeline.py::test_optimize_persists_one_book_per_
+objective`, which explicitly requests `frontier` and asserts
+`frontier_points == 5` plus real, monotone `quant_frontier_point` rows —
+passing before this change, untouched by it. The audit's live-DB
+observation is fully explained by the specific historical `optimize` run
+never having been invoked with `--objectives ...,frontier` — an
+operational choice, not a code path that silently drops the request. No
+`_DEFAULT_OBJECTIVES`/`persist.py` change was made: flipping `frontier` on
+by default would add a real, ongoing computational cost (an
+`efficient_frontier` sweep of `frontier_k` extra QP solves) to every
+default `optimize` run, a bigger behavioral change than this finding
+calls for.
+
+### Design decisions
+
+**Default `--from`, not a hardcoded fallback.** `earliest_portfolio_as_of`
+queries the live `quant_portfolio` table rather than any fixed date, so
+the default stays correct as new books are optimized over time and needs
+no manual updating.
+
+**Fail loudly on the genuinely ambiguous case.** With no books and no
+explicit `--from`, there is no sensible default to fall back to — raising
+immediately (before `open_run` even creates a `quant_run` row) is more
+useful than silently persisting an empty, misleading `evaluate` run.
+
+**`--from` stays a CLI flag a caller can still narrow.** The default
+covers "evaluate everything on record"; passing `--from` explicitly still
+works exactly as before, e.g. to scope evaluation to books optimized on or
+after a specific date.
+
+### Verification
+
+- New tests in `tests/test_quant_pipeline.py`:
+  `test_evaluate_defaults_from_to_earliest_optimized_book` (omitting
+  `--from` resolves to the earliest persisted book's `as_of` and produces
+  real `perf_rows`), `test_evaluate_raises_when_no_from_given_and_no_
+  books_persisted`.
+- `uv run pytest -q` — 245 passed (was 243).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green.
+
+### Residual scope, deliberately deferred
+
+- **Not re-verified against the live production database.** Whether a
+  real Phase-A `evaluate` run against `data/financial.db` now produces
+  `quant_benchmark_performance` rows depends on whether `price_daily` has
+  actually been re-ingested with dates forward of whatever `quant_
+  portfolio.as_of` exists — a data-freshness precondition this fix cannot
+  manufacture. Deferred to `T-068`'s Phase A re-sequence, same category as
+  every prior fix's "not done as part of this change" note.
+- **`quant_frontier_point`'s emptiness is closed operationally, not in
+  code**: `T-068`'s Phase-A re-run must explicitly pass `--objectives
+  min_var,tangency,target_vol,risk_parity,frontier` to `optimize` for
+  `quant_frontier_point` to actually populate — this fix does not change
+  `optimize`'s default behavior.

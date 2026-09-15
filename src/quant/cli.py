@@ -85,7 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     ev = sub.add_parser("evaluate", help="forward realized returns: each book vs the live book")
     _add_common(ev)
-    ev.add_argument("--from", dest="date_from", required=True, help=_TODAY_HELP)
+    ev.add_argument(
+        "--from",
+        dest="date_from",
+        help=f"{_TODAY_HELP} (default: the earliest optimized book's as-of)",
+    )
     ev.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     ev.add_argument("--benchmark", default="SP500_EW_INTERNAL")
 
@@ -219,7 +223,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
             benchmark=args.benchmark,
         )
         print(
-            f"evaluate {args.date_from}..{date_to}: {ev.benchmark_rows} "
+            f"evaluate {ev.date_from}..{date_to}: {ev.benchmark_rows} "
             f"benchmark rows, {ev.books_evaluated} books, {ev.perf_rows} perf rows"
             + (f", live_book #{ev.live_book_id}" if ev.live_book_id else "")
         )

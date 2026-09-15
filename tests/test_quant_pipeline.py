@@ -167,3 +167,35 @@ def test_evaluate_scores_books_forward_vs_benchmark_and_live(
         "SELECT active_weight FROM v_quant_vs_live WHERE kind = 'min_var' AND asset_id = 1"
     ).fetchone()
     assert active is not None
+
+
+def test_evaluate_defaults_from_to_earliest_optimized_book(seeded: Database) -> None:
+    """Q2 (docs/model_fixes.md): omitting --from defaults to the earliest
+    persisted quant_portfolio.as_of -- not a caller-guessed date (e.g. the
+    same as_of an optimize/build-risk-model run just used) that may coincide
+    with the last date price data actually covers, leaving no forward
+    window at all."""
+    dates = [
+        r[0]
+        for r in seeded.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    s = _settings(objectives=["min_var"])
+    run_optimize(s, as_of=as_of, conn=seeded)
+
+    ev = run_evaluate(s, date_to=end, conn=seeded)  # date_from omitted
+
+    assert ev.date_from == as_of
+    assert ev.perf_rows > 0
+
+
+def test_evaluate_raises_when_no_from_given_and_no_books_persisted(
+    memory_quant_db: Database,
+) -> None:
+    """A clear, actionable error instead of silently evaluating an empty
+    range (Q2, docs/model_fixes.md)."""
+    with pytest.raises(ValueError, match="no --from given"):
+        run_evaluate(_settings(), date_to="2024-01-01", conn=memory_quant_db)
