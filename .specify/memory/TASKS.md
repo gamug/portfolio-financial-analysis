@@ -289,13 +289,29 @@ instead.
       `PLAN.md` Work item 7's table) writing to `data_quality_issue` +
       driving a new `cycle` data-quality veto on HARD. **Needs T-040.** →
       Ring-1 section.
-- [ ] **T-066** Fix **Q3** — derive quarterly dividends from successive
+- [x] **T-066** Fix **Q3** — derive quarterly dividends from successive
       10-Q YTD differences (`corpact-v1-derived`) in
       `src/quant/actions.py`; add engine-version priority
       (`corpact-v2` > `corpact-v1` > `corpact-v1-derived` >
       `corpact-v0-approx`) in `quant/db.py::load_actions`. Verify:
       XOM/PG/T/NEE show `cash_dividend > 0` (was $0.00 for all four). →
-      Q3.
+      Q3. **Fixed 2026-09-15**: `actions.py` gained
+      `derive_quarterly_dividends_from_10q_ytd`, run unconditionally
+      alongside the existing FY-level derivation — per 10-Q, prefers a
+      discrete-quarter-tagged DPS fact, else differences successive
+      `(YTD)`-tagged values per fiscal year, else falls back to aggregate
+      payments/shares; anchored to each filing's own `period_end`.
+      `db.py::load_actions` now resolves the best engine **per asset**
+      (not per ex-date, unlike `v_corporate_action`'s existing
+      resolution) to avoid the two derived sources' non-overlapping
+      synthetic ex-dates being blended and roughly double-counting the
+      dividend. 5 new tests (`tests/test_quant_actions.py`); full suite
+      (243, was 238), ruff, mypy all green. Live re-verification of
+      XOM/PG/T/NEE against production data deferred to `T-068`'s Phase A
+      re-sequence (same category as F1/F2/F4/C1/C2). Only the Level-1,
+      local-only half of Q3 — Work item 6's gateway `corpact-v1` target
+      remains unimplemented, unaffected by this fix. Full record in
+      `docs/model_fixes.md`'s Q3 entry. → `PLAN.md` Work item 7, Q3.
 - [ ] **T-067** Fix **Q2** — align `quant evaluate`'s default `--from` to a
       date with real forward price coverage; ensure the `frontier`
       objective is exercised end-to-end. Verify:
@@ -380,9 +396,10 @@ instead.
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
 `T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
-(C1) and `T-064` (C2) are **done**, 2026-09-15 (`T-063` via a corrected
-diagnosis, no code change) — see `docs/model_fixes.md`. Nothing else in
-`T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
+(C1), `T-064` (C2) and `T-066` (Q3, Level-1 local half only) are **done**,
+2026-09-15 (`T-063` via a corrected diagnosis, no code change) — see
+`docs/model_fixes.md`. Nothing else in `T-040`–`T-084` has started.
+Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/
 `T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final target needs

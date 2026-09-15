@@ -207,16 +207,41 @@ def load_daily_closes(
     ]
 
 
+# Priority when more than one engine has rows for the same asset + action_type
+# (Q3, docs/model_fixes.md): the gateway's real ex-dates/values win outright;
+# among derived fallbacks, the finer-grained 10-Q year-to-date derivation beats
+# the coarse fiscal-year-spread-into-four-quarters approximation. Deliberately
+# NOT ``v_corporate_action``'s per-(asset, action_type, ex_date) "most recently
+# ingested" resolution -- two engines' synthetic ex-dates rarely collide, so
+# that view would return BOTH sources' rows side by side and double-count the
+# dividend, not supersede one with the other.
+_ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1", "corpact-v1-derived", "corpact-v0-approx")
+
+
 def load_actions(
     conn: Database, asset_id: int, action_type: str, *, start: str, end: str
 ) -> dict[str, float]:
-    """``ex_date -> value`` from ``v_corporate_action`` (latest engine per ex-date)."""
+    """``ex_date -> value`` in ``[start, end]``, from whichever single
+    engine_version is the best available for *asset_id* (see
+    ``_ACTION_ENGINE_PRIORITY``) -- never a blend of two engines' ex-dates."""
+    available = {
+        str(r["engine_version"])
+        for r in conn.execute(
+            "SELECT DISTINCT engine_version FROM corporate_action "
+            "WHERE asset_id = ? AND action_type = ?",
+            (asset_id, action_type),
+        )
+    }
+    engine = next((e for e in _ACTION_ENGINE_PRIORITY if e in available), None)
+    if engine is None:
+        return {}
     return {
         str(r["ex_date"]): float(r["value"])
         for r in conn.execute(
-            "SELECT ex_date, value FROM v_corporate_action "
-            "WHERE asset_id = ? AND action_type = ? AND ex_date >= ? AND ex_date <= ?",
-            (asset_id, action_type, start, end),
+            "SELECT ex_date, value FROM corporate_action "
+            "WHERE asset_id = ? AND action_type = ? AND engine_version = ? "
+            "AND ex_date >= ? AND ex_date <= ?",
+            (asset_id, action_type, engine, start, end),
         )
     }
 

@@ -870,3 +870,129 @@ rule in the catalog already has for a missing metric.
   `net_debt_to_ebitda`** (flagged in F4's own residual-scope note) are
   *also* flow-over-stock ratios that could show a related sign/magnitude
   distortion under negative equity — not examined as part of this pass.
+
+---
+
+## Q3 — Dividend shortage: Level-1 quarterly derivation from 10-Q YTD differences
+
+**Status**: Fixed 2026-09-15 (branch `fix/q3-10q-ytd-dividend-derivation`,
+`T-066`).
+
+### Symptom
+
+`src/quant/actions.py`'s only derived-dividend source,
+`derive_corporate_actions_from_facts`, reads a 10-K's fiscal-year cash
+dividend per share and spreads it evenly across four synthetic quarterly
+ex-dates. Verified against production data: only 301/503 assets have any
+`corporate_action` row at all, and XOM/PG/T/NEE — all with 0 rows — show
+`SUM(cash_dividend) = $0.00` in `quant_return_daily`, even though all four
+are long-standing dividend payers. Firms whose 10-Ks don't carry a usable
+annual DPS/aggregate-payments fact (or with no 10-K DPS fact processed yet)
+get nothing from the FY-level path, regardless of what their 10-Q filings
+report.
+
+### Fix
+
+`src/quant/actions.py` gains a second, independent derived source,
+`derive_quarterly_dividends_from_10q_ytd`, run unconditionally alongside
+the existing FY-level derivation in the `--source derive` path (never
+replacing it) and tagged under its own `engine_version =
+'corpact-v1-derived'`:
+
+- For each of an asset's 10-Q filings (ascending `period_end`, capped by
+  `as_of` — no lookahead), reads the dividend-per-share concept
+  (`_DPS_CONCEPTS`, same tags `derive_corporate_actions_from_facts` already
+  uses) tagged for that filing's own discrete quarter (e.g. `(Q2)`) when
+  present — no differencing needed. When only a `(YTD)` tag exists (some
+  filers tag `CommonStockDividendsPerShareDeclared` cumulatively in interim
+  filings), the quarter's dividend is the difference from the running
+  year-to-date total for that fiscal year: `DPS_quarter(Qn) = DPS_YTD(Qn) -
+  DPS_YTD(Qn-1)`, tracked incrementally per fiscal year as filings are
+  processed in period order.
+- Falls back to aggregate dividends paid ÷ a share count (same fallback
+  shape as the FY-level path, `_period_fact` generalized from the
+  FY-only `_fy_fact` to accept any tag) when no per-share concept is tagged
+  at all, tried at the discrete-quarter tag first, then `(YTD)`.
+- Each derived dividend is anchored to the 10-Q's own `period_end` — coarse
+  on purpose (no real ex-date at this level), same limitation the FY-level
+  path already has.
+- A `quarterly <= 0` result (a restatement/decrease artifact between
+  successive YTD readings) is dropped rather than recorded as a negative
+  dividend.
+
+`src/quant/db.py::load_actions` is rewritten to resolve engine-version
+priority **per asset**, not per `(asset, ex_date)`: it looks up which
+engines have any row for the asset, picks the highest-priority one present
+(`corpact-v2` > `corpact-v1` > `corpact-v1-derived` > `corpact-v0-approx`),
+and returns only that engine's rows. This is deliberately *not*
+`v_corporate_action`'s existing "most recently ingested row per
+`(asset, action_type, ex_date)`" resolution: the two derived sources'
+synthetic ex-dates rarely coincide (FY-level spreads across the fiscal
+year's own quarter-boundaries; 10-Q-level anchors to each filing's actual
+period_end), so that view would return **both** sources' rows side by
+side for the same asset and roughly double-count the annual dividend
+instead of one source superseding the other.
+
+### Design decisions
+
+**Both derived sources always run, never gated on which "wins."**
+`backfill_corporate_actions`'s derive branch calls both
+`derive_corporate_actions_from_facts` (→ `corpact-v0-approx`) and
+`derive_quarterly_dividends_from_10q_ytd` (→ `corpact-v1-derived`)
+unconditionally and upserts each under its own engine_version; resolving
+which one a caller actually sees is entirely `load_actions`'s job. This
+keeps `backfill-actions` idempotent and simple — no branching logic needed
+to decide in advance which source an asset "should" get.
+
+**`load_actions` picks one engine per asset, not per ex-date.** Blending
+rows from two engines for the same asset would silently roughly double the
+recorded annual dividend (both sources cover the same real dividend
+history via different, non-overlapping synthetic ex-dates) — a much worse
+outcome than picking a single, coarser-but-consistent source.
+
+**No new persisted metric or `fundamental_agent` change.** The
+dividend-per-share/aggregate-payments concepts this fix reads
+(`_DPS_CONCEPTS`/`_DIV_PAID_CONCEPTS`/`_SHARES_CONCEPTS`) already reach
+`financial_facts` today: `fundamental_agent.statements.iter_facts` extracts
+*every* non-abstract, non-dimensional concept row from a filing's payload,
+not just the ones `Statements.REGISTRY` recognizes — so no new
+`fundamental_agent` ingestion work was needed to read them from `quant`.
+
+**Final target unchanged.** Once Work item 6's gateway endpoint is live,
+`backfill-actions --source gateway` still supersedes both derived sources
+with real `corpact-v1` ex-dates/values, via the same priority list.
+
+### Verification
+
+- New tests in `tests/test_quant_actions.py`:
+  `test_derive_from_10q_ytd_differences_a_flat_quarterly_dividend` (three
+  successive YTD-tagged 10-Qs correctly difference into three equal
+  quarterly dividends), `test_derive_from_10q_prefers_a_discrete_quarter_
+  tag_over_ytd`, `test_derive_from_10q_ytd_falls_back_to_aggregate_paid_
+  over_shares`, `test_load_actions_prefers_a_single_engine_never_blends_
+  two` (proves the priority fix directly: two engines' distinct ex-dates
+  for the same asset don't both come back), and
+  `test_backfill_derive_writes_both_engines_for_a_10q_only_asset` (an
+  asset with only 10-Q dividend facts — the XOM/PG/T/NEE shape — gets a
+  non-zero, `load_actions`-visible dividend after `backfill-actions
+  --source derive`).
+- `uv run pytest -q` — 243 passed (was 238).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green.
+
+### Residual scope, deliberately deferred
+
+- **The final `corpact-v1` gateway target (Work item 6) remains
+  unimplemented** — this fix only closes the Level-1, local-only half of
+  Q3, exactly as PLAN.md scoped it.
+- **Not re-verified against the live production database.** Actually
+  confirming XOM/PG/T/NEE show `cash_dividend > 0` in `quant_return_daily`
+  requires running `quant backfill-actions --source derive` (idempotent,
+  $0, no LLM calls, but still a production-data-mutating operation) against
+  `data/financial.db` — deferred to `T-068`'s Phase A re-sequence, same
+  category as F1/F2/F4/C1/C2's own "not done as part of this change" notes.
+- **No attempt to reconcile disagreeing tag shapes across a single asset's
+  own filings** — e.g. a filer that tags Q1 discretely but Q2/Q3
+  cumulatively is handled correctly (the running YTD total updates from
+  whichever signal was found each quarter), but a filer that tags the same
+  quarter both ways with disagreeing values isn't cross-checked; the
+  discrete tag simply wins outright per `_quarterly_dps_signal`'s order.

@@ -583,7 +583,9 @@ the verified counts above (adjusted downward for whatever F1/F2/F4 fixes
 already `NULL`'d); `cycle_ranking` reflects HARD `DQ_*` quarantines as an
 active veto.
 
-**Q3 — Dividend shortage: Level-1 quarterly derivation** (needs Work
+**Q3 — Dividend shortage: Level-1 quarterly derivation. RESOLVED
+2026-09-15, `T-066` (Level-1/local half only) — full record in
+`docs/model_fixes.md`'s Q3 entry.** (needs Work
 item 6 for the final `corpact-v1` target, but this half is local-only and
 zero-cost). `src/quant/actions.py`'s `corpact-v0-approx` divides annual
 10-K DPS by 4 onto synthetic quarterly dates; verified: only 301/503
