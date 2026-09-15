@@ -631,6 +631,10 @@ layer, independent of Work item 8's costly LLM re-run.
 acceptance criterion above holds simultaneously against the live
 `data/financial.db` after a Phase-A re-run; `uv run pytest`/`ruff`/`mypy`
 green with new regression tests for F1/F2/F4/C1/C2 added under `tests/`.
+**`T-069` AUDITED 2026-09-15** — each fix already shipped its own
+regression coverage at fix time; full test-by-test inventory in
+`TASKS.md`'s `T-069` entry. The live-DB Phase-A re-run itself remains
+`T-068`, still open.
 
 ## Work item 8 — P1: methodological redesign (technical/valorization/fundamental scoring + μ estimator) — supersedes Work item 3's approach
 
