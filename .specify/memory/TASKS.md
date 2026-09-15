@@ -238,11 +238,29 @@ instead.
       record in `docs/model_fixes.md`'s F4 entry, including the
       deliberately-deferred `roic.py`/`leverage.py` analogous cases. →
       `PLAN.md` Work item 7, F4.
-- [ ] **T-063** Fix **C1** — correct the T-1 veto cutoff bug in
+- [x] **T-063** Fix **C1** — correct the T-1 veto cutoff bug in
       `src/cycle/orchestrator.py:264`'s `_rank()`. Verify:
       `SELECT COUNT(*) FROM cycle_ranking WHERE vetoed != 0` is `> 0` on
       the next real cycle run following an active HARD veto (was 0/503
       always); the vetoed name is excluded from `portfolio_position`. → C1.
+      **Investigated 2026-09-15 — diagnosis corrected, no code fix made**:
+      the comparator (`_t_minus_1`/`hard_vetoed_as_of`/
+      `active_soft_vetoes`) matches SPEC.md's FR-006 exactly and is proven
+      correct by both the pre-existing `test_t_minus_1_hard_veto_excludes_
+      asset` and a new test exercising the real rule-detection path across
+      two genuinely different cycle dates
+      (`test_hard_veto_detected_via_rules_excludes_asset_starting_next_
+      cycle`); `git log` confirms `orchestrator.py`/`writers.py` were never
+      touched by any prior fix. "0/503 always" is explained by `--analysis-
+      date` defaulting to today on every invocation combined with
+      `cycle_run`'s `UNIQUE(cycle_type, cycle_date)` resume-by-key design —
+      repeated same-day invocations collapse onto one snapshot rather than
+      ever advancing to a genuinely new day, so the T-1 settling period has
+      apparently never elapsed once in production; this is an operational
+      cadence gap, not a code defect. Full record, including why the
+      original "off-by-one/direction bug" framing needed correcting (same
+      pattern as F2), in `docs/model_fixes.md`'s C1 entry. → `PLAN.md` Work
+      item 7, C1.
 - [ ] **T-064** Fix **C2** — special-case `equity <= 0` in
       `src/cycle/rules/builtin.py`'s `LEVERAGE_EXTREME` rule (or gate on
       `debt_to_assets`/`interest_coverage` instead of `debt_to_equity` when
@@ -345,8 +363,9 @@ instead.
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2) and `T-062` (F4) are
-**done**, 2026-09-15 — see `docs/model_fixes.md`. Nothing else in
+`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4) and
+`T-063` (C1) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis,
+no code change) — see `docs/model_fixes.md`. Nothing else in
 `T-040`–`T-084` has started. Execute Work item 5 ∥ 6 (external,
 independent prerequisites) → **Work item 7, `T-060`–`T-069` (P0, this
 repo's highest priority — no external dependency for `T-060`–`T-064`/

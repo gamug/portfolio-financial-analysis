@@ -514,7 +514,9 @@ when they don't. **Acceptance**: 10-Q vs. 10-K medians for
 ROA/ROE/asset_turnover converge to within a small tolerance of each other
 (not 3.8–3.9× apart) after the fix.
 
-**C1 — T-1 veto cutoff bug: zero vetoes ever applied (Critical).**
+**C1 — T-1 veto cutoff bug: zero vetoes ever applied (Critical).
+INVESTIGATED 2026-09-15, `T-063` — diagnosis corrected, no code fix; full
+record in `docs/model_fixes.md`'s C1 entry.**
 `src/cycle/orchestrator.py:264`'s `_rank()` computes `cutoff =
 _t_minus_1(cycle_date)` and queries `hard_vetoed_as_of(cutoff)`, but vetoes
 are written with `cycle_date` equal to the run's own date — so a query for
