@@ -290,6 +290,39 @@ def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: Database) -> None:
     assert row["selected"] == 0
 
 
+def test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle(
+    cycle_seed: Database,
+) -> None:
+    """C1 (docs/model_fixes.md): the T-1 lag mechanism exercised end-to-end
+    through the *real* rule-detection path, not a hand-inserted veto row
+    (unlike `test_t_minus_1_hard_veto_excludes_asset` above) -- closing the
+    one gap that left room to suspect a live comparator bug. EEE (asset 5)
+    naturally trips `LEVERAGE_EXTREME` via `cycle_seed`'s own
+    `debt_to_equity = 5.5` (threshold 3.0)."""
+    conn = cycle_seed
+    seed_catalog(conn)
+
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    day1 = conn.execute(
+        "SELECT vetoed, selected FROM v_cycle_ranking WHERE ticker = 'EEE' AND cycle_date = '2026-06-30'"
+    ).fetchone()
+    assert day1["vetoed"] == 0  # same-day exemption: today's own veto doesn't apply yet
+    veto_row = conn.execute(
+        "SELECT severity, cycle_date, cleared_at FROM veto "
+        "WHERE asset_id = 5 AND rule_id = 'LEVERAGE_EXTREME'"
+    ).fetchone()
+    assert veto_row["severity"] == "HARD"
+    assert veto_row["cycle_date"] == "2026-06-30"
+    assert veto_row["cleared_at"] is None
+
+    run_selection(_settings(conn), "2026-07-01", conn=conn)
+    day2 = conn.execute(
+        "SELECT vetoed, selected FROM v_cycle_ranking WHERE ticker = 'EEE' AND cycle_date = '2026-07-01'"
+    ).fetchone()
+    assert day2["vetoed"] == 1
+    assert day2["selected"] == 0
+
+
 def test_monitoring_cycle_skips_positions(cycle_seed: Database) -> None:
     conn = cycle_seed
     r = run_monitoring(_settings(conn), "2026-07-31", conn=conn)

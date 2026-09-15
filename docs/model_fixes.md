@@ -647,3 +647,93 @@ re-run belongs, after `T-063`/`T-064` (C1/C2) also land.
   `engine_version` exists for the same key (mirrors `overlapping_history`'s
   rule) — it does not attempt to reconcile disagreeing engine versions
   beyond that.
+
+---
+
+## C1 — T-1 veto cutoff: diagnosis corrected, no code fix
+
+**Status**: Investigated 2026-09-15 (`T-063`) — **no code change made**.
+
+### Original claim
+
+PLAN.md's 2026-09-08 forensic audit described a "Critical" bug in
+`src/cycle/orchestrator.py`'s `_rank()`: live `data/financial.db` allegedly
+showed `cycle_ranking` with **0 rows ever having `vetoed != 0` out of 503**,
+with Mastercard (MA) ranking #13 despite carrying an "active HARD
+`LEVERAGE_EXTREME` veto" — framed as an off-by-one/direction bug in the T-1
+cutoff comparator (`_t_minus_1`, `writers.hard_vetoed_as_of`,
+`writers.active_soft_vetoes`), with the proposed fix: "correct the
+off-by-one/direction bug in the cutoff comparator (or in how
+`veto.cycle_date` is stamped relative to the run it should first apply
+to)."
+
+### Investigation — corrected from PLAN.md's own stated framing
+
+Same pattern as F2's own corrected framing: the audit's diagnosis doesn't
+survive direct code-level and reproduction testing.
+
+**The comparator is not buggy — it matches spec exactly.** `_rank()`
+computes `cutoff = _t_minus_1(cycle_date)` (yesterday) and queries
+`WHERE cycle_date <= cutoff`; `_veto()` stamps a newly detected veto with
+the run's own (today's) `cycle_date`. This is precisely SPEC.md's FR-006:
+"a veto row inserted for cycle date N does not exclude the asset from
+`cycle_ranking`/`portfolio_position` computed for date N itself, but does
+for the next cycle run at N+1." `tests/test_cycle.py::
+test_t_minus_1_hard_veto_excludes_asset` already passed before this
+investigation, proving the mechanism for a hand-seeded prior-day veto row.
+A new test added here,
+`test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle`,
+closes the one remaining gap — proof through the *real* rule-detection path
+(`cycle_seed`'s EEE, `debt_to_equity = 5.5` naturally trips
+`LEVERAGE_EXTREME`), not a hand-inserted row: `run_selection` on day 1
+correctly leaves EEE unvetoed (same-day exemption) while writing the HARD
+veto row; `run_selection` again for day 2 correctly excludes EEE
+(`vetoed = 1`, `selected = 0`). `git log` on `orchestrator.py`/`writers.py`
+shows neither file has ever been touched by a prior fix commit — the code
+the audit describes as buggy is the same code sitting in this repo today,
+unmodified, and it already matches spec.
+
+**What actually explains "0/503 always" — an operational/data-cadence
+artifact, not a code defect.** `cycle select`/`cycle monitor`'s
+`--analysis-date` defaults to `kg_schema.rundate.today()` (wall-clock
+"today") on *every* invocation — nothing advances it forward between runs.
+`cycle_run` has `UNIQUE(cycle_type, cycle_date)`, and
+`state.open_cycle` explicitly creates-**or-resumes** the row for that key;
+`writers.write_ranking` deletes and reinserts `cycle_ranking` scoped to one
+`cycle_run_id`. So repeated invocations that omit `--analysis-date` — the
+natural result of the default above — collapse onto the **same** single
+day's `cycle_run`/`cycle_ranking` snapshot rather than ever advancing to a
+genuinely new calendar date. The exact match between "503" and the known
+S&P 500 universe size is consistent with this being one run's worth of
+rows, not an accumulation across many distinct dates. Under this reading,
+the T-1 "settling" period simply has never actually elapsed once in
+production — the pipeline has apparently never yet been re-run on a later
+calendar date since any veto was first raised — not that an elapsed period
+was ignored by a bug.
+
+### Verification
+
+- New regression test (see above) added to `tests/test_cycle.py`,
+  exercising the real detection path across two genuinely different
+  `cycle_date`s — closes the one gap `test_t_minus_1_hard_veto_excludes_
+  asset`'s hand-seeded row left open.
+- `uv run pytest -q` — full suite green (232 passed, was 231).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` — all green
+  (no `src/` changes in this pass).
+- `git log -- src/cycle/orchestrator.py src/cycle/writers.py` reviewed:
+  neither file has been touched by any prior commit in this repo's history.
+
+### Residual scope, deliberately not addressed here
+
+- **The operational gap itself is out of scope for this code-only pass.**
+  Actually exercising T-1 exclusion in production requires running `cycle
+  select`/`monitor` with an explicit `--analysis-date` that genuinely
+  advances day over day (or a scheduled daily invocation) — a deployment/
+  operations concern, not a code defect this pass is positioned to fix.
+  No CLI change (e.g. a warning when `--analysis-date` is omitted and
+  today's `cycle_run` already exists) was made; the option was considered
+  and explicitly declined for this pass.
+- If a genuine subtle defect does surface later (e.g. under a real
+  multi-day production cadence this investigation had no live data to
+  exercise), it should be re-opened as a new, separately-verified finding —
+  not assumed to be within this entry's scope.
