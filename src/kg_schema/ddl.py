@@ -279,7 +279,7 @@ CREATE TABLE IF NOT EXISTS quant_return_daily (
     price_log_return REAL,                        -- ln(C_t / C_{t-1})  (== price_observation.log_return)
     tr_log_return    REAL,                        -- ln((C_t + D_t) / C_{t-1})  <- the optimizer input
     source           TEXT NOT NULL,               -- 'quant-tr-v1'
-    engine_version   TEXT NOT NULL,               -- 'qret-v1'
+    engine_version   TEXT NOT NULL,               -- 'qret-v2' (was 'qret-v1')
     computed_at      TEXT NOT NULL,
     UNIQUE (asset_id, obs_date, engine_version)
 );

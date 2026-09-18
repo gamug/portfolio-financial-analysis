@@ -61,7 +61,11 @@ class QuantSettings(BaseModel):
 
     # --- append-only engine-version knobs ---
     corpact_engine_version: str = "corpact-v1"
-    return_engine_version: str = "qret-v1"
+    # Bumped from "qret-v1" when the Q3 fix (derive_quarterly_dividends_from_10q_ytd,
+    # docs/model_fixes.md) landed: quant_return_daily is append-only keyed on
+    # (asset_id, obs_date, engine_version), so a static version would silently
+    # no-op every re-run and never fold the corrected dividends into the series.
+    return_engine_version: str = "qret-v2"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"
     benchmark_engine_version: str = "bench-v1"

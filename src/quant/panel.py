@@ -127,7 +127,7 @@ def build_return_panel(  # noqa: PLR0913 - all keyword-only knobs with defaults
     lookback_days: int = 756,
     min_history_days: int = 504,
     universe_asset_ids: Sequence[int] | None = None,
-    return_engine_version: str = "qret-v1",
+    return_engine_version: str = "qret-v2",
     on_short_history: Literal["exclude", "shrink_window"] = "exclude",
     max_gap_ffill: int = 1,
     min_coverage: float = 0.98,
