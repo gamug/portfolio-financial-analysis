@@ -73,10 +73,14 @@ Splits are recorded for provenance only and never re-applied.
 `build_total_return_series` folds each day's cash dividend into the return —
 `tr_log_return_t = ln((C_t + D_t) / C_{t-1})` — compounds a forward `tr_index`,
 and carries a dividend-back-adjusted `adj_close`. Rows land in `quant_return_daily`
-under `engine_version = qret-v1` (`INSERT OR IGNORE`; re-runs are a no-op). This is
-a dedicated table, **not** `price_observation` rows under a new engine_version —
-`v_price_observation` resolves the latest engine per (asset, day), so writing there
-would silently move `cycle`'s technical/veto path onto quant's rows.
+under `engine_version = qret-v2` (`INSERT OR IGNORE`; re-runs are a no-op *for
+that version* — bump `QuantSettings.return_engine_version` whenever an upstream
+input the return series depends on changes, e.g. `qret-v1` → `qret-v2` when the
+Q3 dividend fix landed, or the corrected values never make it past the
+`INSERT OR IGNORE`). This is a dedicated table, **not** `price_observation` rows
+under a new engine_version — `v_price_observation` resolves the latest engine
+per (asset, day), so writing there would silently move `cycle`'s
+technical/veto path onto quant's rows.
 
 ### `universe.py` — the score-independent gate
 

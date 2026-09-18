@@ -22,7 +22,7 @@ def build_internal_benchmark(  # noqa: PLR0913 - keyword-only knobs with default
     *,
     date_from: str,
     date_to: str,
-    return_engine_version: str = "qret-v1",
+    return_engine_version: str = "qret-v2",
     engine_version: str = "bench-v1",
     benchmark: str = INTERNAL_EW,
 ) -> int:
