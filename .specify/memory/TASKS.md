@@ -174,16 +174,29 @@ instead.
       `v0.3.0`, regenerate `uv.lock`, `uv sync`, and re-verify `ensure()`
       against the live `KG_FINANCIAL_DB`. → `PLAN.md` acceptance criteria.
 
-## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external)
+## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external) — implementation MOVED, verification stays
 
-- [ ] **T-050** Implement `GET /pricing/{ticker}/actions` (or
+**Moved 2026-09-19**: the yfinance-backed endpoint is data acquisition, not
+analysis, so its implementation is tracked in `portfolio-data-mining`
+(`.specify/memory/PLAN.md` Work item 3, `T-020`–`T-027`; PR
+https://github.com/gamug/portfolio-data-mining/pull/30). `T-050`/`T-051`
+stay unchecked here as the historical record, per this file's own "mark
+superseded in place" rule — do not implement them in this repo. `T-052`
+stays open: it is this repo's consumer-side verification and is now
+**blocked on that upstream work landing and being redeployed**.
+
+- [ ] **T-050** *(moved to `portfolio-data-mining` `T-020`–`T-022` — do not
+      implement here)* Implement `GET /pricing/{ticker}/actions` (or
       `actions=true` on the existing route) returning
       `{dividends, splits, source}` per the probe's expected contract,
       backed by `yfinance`'s `Ticker(t).dividends`/`.splits`; empty lists
       (never 404) when no actions exist in range. → `PLAN.md` Work item 6,
       step 1.
-- [ ] **T-051** Redeploy the `:8000` gateway service. → step 3.
-- [ ] **T-052** Verify: `QuantPricingClient(...).probe('XOM')` returns
+- [ ] **T-051** *(moved to `portfolio-data-mining`, redeploy is its
+      `T-026` handoff — do not implement here)* Redeploy the `:8000`
+      gateway service. → step 3.
+- [ ] **T-052** *(blocked on `portfolio-data-mining` `T-020`–`T-026`)*
+      Verify: `QuantPricingClient(...).probe('XOM')` returns
       `True`; after `quant backfill-actions` (priority `corpact-v1`),
       XOM/PG/T/NEE show `cash_dividend > 0` in `quant_return_daily`. →
       `PLAN.md` acceptance criteria.
@@ -443,10 +456,12 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. Execute Work item 5 ∥ 6
-(external, independent prerequisites) → **Work item 7, `T-060`–`T-069`
+(external, independent prerequisites; Work item 6's implementation now
+lives in `portfolio-data-mining`) → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
 `T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final
-target needs `T-050`–`T-052`)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
+target needs `T-052`, itself blocked on `portfolio-data-mining`'s
+corporate-actions endpoint — `T-050`/`T-051` moved there)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

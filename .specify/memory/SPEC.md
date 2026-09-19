@@ -581,7 +581,9 @@ treating a related FR/NR as done:
    until cut over: keep the blend weight low/zero for names with no
    SEMANTIC row rather than treating its absence as a zero score.
 5. **Dividends are FY-derived, not a precise daily series.** The pricing
-   gateway serves no corporate actions, so `quant`'s total-return series
+   gateway serves no corporate actions (the yfinance-backed endpoint is
+   tracked in `portfolio-data-mining`'s `PLAN.md` Work item 3, not built
+   here — this stays true until it ships and is redeployed), so `quant`'s total-return series
    defaults to fiscal-year dividends spread over synthetic quarterly
    ex-dates (`corpact-v0-approx`) — wrong intra-year timing, no special
    dividends. No vendor risk-free curve or index series is loaded yet either

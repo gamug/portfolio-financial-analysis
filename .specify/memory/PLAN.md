@@ -29,7 +29,8 @@ additive, backward-compatible upstream schema/API change first (Work items
 
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work item 5 ∥ Work item 6 (independent, external
-prerequisites) → **Work item 7 (P0 — critical correctness fixes,
+prerequisites; Work item 6's implementation now lives in
+`portfolio-data-mining`) → **Work item 7 (P0 — critical correctness fixes,
 highest priority in this file)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
@@ -105,7 +106,8 @@ Everything else in `SPEC.md` §13 stays exactly as §14 disposed of it —
   current scope; the root cause (point-in-time universe) is already fixed.
 - Item 5's dividend-precision half beyond what Work items 6/7 now cover:
   **partially superseded** by the 2026-09-08 audit — the free,
-  `yfinance`-backed gateway endpoint (Work item 6) and the zero-cost
+  `yfinance`-backed gateway endpoint (Work item 6, built upstream in
+  `portfolio-data-mining`) and the zero-cost
   10-Q-derived Level-1 dividend fix (Work item 7's Q3 task) are now in
   scope as P0, since both were found to be low-cost and already
   practically necessary. Still out of scope: a **paid vendor** total-return
@@ -375,7 +377,7 @@ re-pinning, not asserted upstream):
   re-verified against the live `KG_FINANCIAL_DB` before any code in Work
   items 7–9 reads the new columns/tables.
 
-## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite)
+## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite) — implementation MOVED
 
 **Why**: `src/quant/pricing_client.py::QuantPricingClient.actions` already
 probes two request shapes for corporate actions (an `actions=true` query
@@ -388,21 +390,27 @@ assets) with zero recorded dividends, despite the gateway already
 depending on `yfinance` (`src/pricing/fetcher.py:22`), whose
 `Ticker(t).dividends`/`.splits` return exact ex-dates and values for free.
 
-**Approach**:
+**Moved 2026-09-19**: the endpoint itself is data acquisition, not
+analysis, so its implementation is tracked in `portfolio-data-mining`
+(`PLAN.md` Work item 3, `T-020`–`T-027`; PR
+https://github.com/gamug/portfolio-data-mining/pull/30) and is **not
+built in this repo**. Nothing under `src/` here changes for it —
+`QuantPricingClient` is already the consumer. What stays here is the
+contract that client depends on, and the verification:
 
-1. Implement `GET /pricing/{ticker}/actions?start_date=&end_date=` (or
-   accept `actions=true` on the existing `/pricing/{ticker}` route — either
-   satisfies the probe) returning `{"ticker", "dividends": [{"date":
-   "YYYY-MM-DD", "value": float}], "splits": [...], "source": "yfinance"}`
-   — `dividends[].value` is cash/share, `splits[].value` is a ratio (e.g.
-   `4.0` for a 4:1 split). No corporate actions in range → empty lists,
-   **never** a 404 (a 404 reads to the probe as "endpoint doesn't exist"
-   and it keeps falling back to the derive path).
-2. Reuse the fetcher's existing Finnhub-first/`yfinance`-fallback pattern
-   and include `"source"` in the response, matching the candle endpoint's
-   existing convention.
-3. Redeploy the `:8000` gateway service this repo's `PRICING_BASE_URL`
-   points at.
+- **Contract (unchanged)**: `GET /pricing/{ticker}/actions?start_date=&end_date=`
+  (or `actions=true` on the existing route) returns `{"ticker", "dividends":
+  [{"date": "YYYY-MM-DD", "value": float}], "splits": [...], "source":
+  "yfinance"}` — `dividends[].value` is cash/share, `splits[].value` is a
+  ratio (e.g. `4.0` for a 4:1 split). No corporate actions in range → empty
+  lists, **never** a 404 (a 404 reads to the probe as "endpoint doesn't
+  exist" and it keeps falling back to the derive path).
+- **Upstream decision (differs from this work item's original step 2)**: v1 is
+  yfinance-only, not the candle endpoint's Finnhub-first/yfinance-fallback
+  pattern — Finnhub's dividend/split endpoints are unverified as free-tier.
+  The contract above is unaffected (`source` is `"yfinance"`).
+- **Redeploy** of the `:8000` gateway is part of the upstream hand-off
+  (`portfolio-data-mining` `T-026`), then `T-052` below runs from here.
 
 **Acceptance criteria**:
 
@@ -832,7 +840,8 @@ execution priority — see the Priority Override section near the top of
 this document.** Their internal sequencing:
 
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
-  (`portfolio-data-mining` corporate-actions endpoint) are independent
+  (`portfolio-data-mining` corporate-actions endpoint — implemented there
+  as its `PLAN.md` Work item 3, verified here by `T-052`) are independent
   external prerequisites — develop concurrently.
 - Work item 7 (P0 critical fixes) is the top priority in this repo. Its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
