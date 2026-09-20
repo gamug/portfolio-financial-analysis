@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 from portfolio_common.db import Database
 
-from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
 from quant.returns import _snap_to_calendar, build_total_return_series, run_build_returns
 
@@ -57,9 +56,6 @@ def test_run_build_returns_end_to_end(
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=3, n_days=260)
     settings = QuantSettings(db_path=Path(":memory:"))
-    backfill_corporate_actions(
-        settings, date_from="2024-01-01", date_to="2025-12-31", source="derive", conn=conn
-    )
 
     rep = run_build_returns(settings, date_from="2024-01-01", date_to="2025-12-31", conn=conn)
     assert rep.assets == 3

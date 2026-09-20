@@ -7,6 +7,7 @@ notice and exits 0.
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -14,10 +15,10 @@ from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
-from quant.actions import backfill_corporate_actions
+from quant.actions import GatewayUnavailable, backfill_corporate_actions
 from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
-from quant.db import ensure_schema
+from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
@@ -41,7 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(ba)
     ba.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
     ba.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
-    ba.add_argument("--source", choices=("gateway", "derive"), default="derive")
 
     br = sub.add_parser("build-returns", help="derive the total-return daily series")
     _add_common(br)
@@ -143,6 +143,32 @@ def _date_to(analysis_date: str, args: argparse.Namespace) -> str:
     return min(dt, analysis_date) if dt else analysis_date
 
 
+def _print_actions_report(report: ActionsReport) -> None:
+    print(
+        f"backfill-actions [gateway]: {report.assets_fetched} of {report.assets_seen} assets "
+        f"fetched, {report.dividends} dividends + {report.splits} splits, "
+        f"{report.inserted} new rows ({report.engine_version})"
+    )
+    if report.errors:
+        print(
+            f"  {len(report.errors)} asset(s) got no data from the gateway and have no rows "
+            f"written; first: {report.errors[0]}",
+            file=sys.stderr,
+        )
+
+
+def _run_backfill_actions(settings: QuantSettings, args: argparse.Namespace, date_to: str) -> int:
+    """The gateway is the only source: exit 1 when it cannot serve at all, and also when
+    it left any asset without data (the dividend series would be incomplete)."""
+    try:
+        report = backfill_corporate_actions(settings, date_from=args.date_from, date_to=date_to)
+    except GatewayUnavailable as exc:
+        print(f"backfill-actions: {exc}", file=sys.stderr)
+        return 1
+    _print_actions_report(report)
+    return 1 if report.errors else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -154,21 +180,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
     analysis_date = _analysis_date(parser, args)
 
     if args.command == "backfill-actions":
-        report = backfill_corporate_actions(
-            settings,
-            date_from=args.date_from,
-            date_to=_date_to(analysis_date, args),
-            source=args.source,
-        )
-        probe = " (gateway probe failed -> derived)" if report.gateway_probe_failed else ""
-        print(
-            f"backfill-actions [{report.source}{probe}]: {report.assets_seen} assets, "
-            f"{report.dividends} dividends + {report.splits} splits, "
-            f"{report.inserted} new rows ({report.engine_version})"
-        )
-        if report.errors:
-            print(f"  {len(report.errors)} asset(s) errored; first: {report.errors[0]}")
-        return 0
+        return _run_backfill_actions(settings, args, _date_to(analysis_date, args))
 
     if args.command == "build-returns":
         rep = run_build_returns(

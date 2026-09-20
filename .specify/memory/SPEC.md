@@ -191,7 +191,7 @@ re-litigated without a constitution amendment:
 flowchart TB
     EDGAR[("EDGAR gateway<br/>SEC statements")]
     SECGOV[("www.sec.gov<br/>narrative filing text")]
-    PRICING[("pricing gateway<br/>daily OHLCV")]
+    PRICING[("pricing gateway<br/>daily OHLCV + corporate actions")]
     URLSDB[("urls.db (ro)<br/>KG_NEWS_DB")]
     UNIVDB[("universe.db (ro)<br/>KG_UNIVERSE_DB<br/>point-in-time S&P 500")]
 
@@ -269,7 +269,7 @@ are not owned by any single package.
 | `shared_executive_edge` | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` | `sharedExecutiveWith` candidate | `entity_resolution build` |
 | `universe_membership` | `UNIQUE(asset_id, universe, valid_from)` | **frozen** — superseded by `universe.db` | not on any write path |
 | `universe_coverage` | `UNIQUE(as_of, universe, symbol)` | per-member core-data coverage for a dated universe | `coverage` command |
-| `corporate_action` | `UNIQUE(asset_id, action_type, ex_date, engine_version)` | dividends/splits (gateway or XBRL-derived) | `quant backfill-actions` |
+| `corporate_action` | `UNIQUE(asset_id, action_type, ex_date, engine_version)` | dividends/splits (pricing gateway only; legacy XBRL-derived rows remain as history, unread) | `quant backfill-actions` |
 | `quant_return_daily` | `UNIQUE(asset_id, obs_date, engine_version)` | total-return daily series, dividend-folded | `quant build-returns` |
 | `risk_free_rate` / `benchmark_series` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` | rf curve + benchmark index | `quant` |
 | `quant_risk_model` / `quant_expected_return` / `quant_covariance` | `UNIQUE(as_of, model_version)` / … | Markowitz μ / Σ per as-of model | `quant build-risk-model` |
@@ -325,7 +325,8 @@ resumes from the last completed step rather than restarting.
 candidate edges from executive co-occurrence above `--min-weight`.
 
 **Quant benchmark** (`quant backfill-actions` → `build-returns` →
-`build-risk-model` → `optimize` → `evaluate`): derive/pull corporate actions
+`build-risk-model` → `optimize` → `evaluate`): pull corporate actions from the
+pricing gateway (the only source; a gateway that cannot serve fails the run)
 → build a dividend-folded total-return series → gate the universe on
 liquidity/history/T-1-hard-veto (score-blind) → estimate Σ (Ledoit-Wolf) and
 μ (equilibrium/James-Stein/hist_mean) → optimize one or more objectives →
@@ -394,11 +395,11 @@ job.
   score/ranking data, keeping the benchmark an independent control
   (`tests/test_quant_gate.py`).
 - **Total-return construction**: `tr_log_return_t = ln((C_t + D_t) /
-  C_{t-1})`, dividends sourced either from the gateway (`corpact-v1`, when
-  served) or derived from fiscal-year `financial_facts` dividends spread
-  over four synthetic quarterly ex-dates (`corpact-v0-approx`, the
-  self-contained default — coarse: wrong intra-year timing, no special
-  dividends; see §13).
+  C_{t-1})`, dividends sourced **only** from the pricing gateway
+  (`corpact-v1`; `portfolio-data-mining`'s yfinance-backed
+  `GET /pricing/{ticker}/actions`) — `quant` mines nothing itself and has no
+  filing-derived fallback, so a gateway that cannot serve fails
+  `backfill-actions` rather than degrading (see §13 and `PLAN.md` Work item 10).
 
 ## 8. Error Handling & Resilience
 
@@ -507,7 +508,8 @@ There is no formal CD pipeline for this repo yet; what exists:
 
 - **Upstream (required, external services)**: an EDGAR gateway (SEC
   financial statements; `portfolio-data-mining`'s `sec_edgar` service) and a
-  pricing gateway (daily OHLCV; `portfolio-data-mining`'s pricing service),
+  pricing gateway (daily OHLCV, and `quant`'s only source of dividends/splits;
+  `portfolio-data-mining`'s pricing service),
   both defaulting to `host.docker.internal:8000`; `www.sec.gov` directly for
   `fundamental_agent run --sections`; an OpenAI-compatible LLM endpoint
   (`LLM_API_KEY`/`LLM_MODEL`/`LLM_URL`, today DeepSeek) for the metrics-
@@ -580,16 +582,20 @@ treating a related FR/NR as done:
    and open sub-questions: `docs/semantic-score-boundary.md`. Mitigation
    until cut over: keep the blend weight low/zero for names with no
    SEMANTIC row rather than treating its absence as a zero score.
-5. **Dividends are FY-derived, not a precise daily series.** The pricing
-   gateway serves no corporate actions (the yfinance-backed endpoint is
-   tracked in `portfolio-data-mining`'s `PLAN.md` Work item 3, not built
-   here — this stays true until it ships and is redeployed; this repo's
-   consumer half, making it `quant`'s primary source with the derived paths
-   kept as fallback, is `PLAN.md` Work item 10 / `T-085`), so `quant`'s total-return series
-   defaults to fiscal-year dividends spread over synthetic quarterly
-   ex-dates (`corpact-v0-approx`) — wrong intra-year timing, no special
-   dividends. No vendor risk-free curve or index series is loaded yet either
-   (the tables/CSV loaders exist, unpopulated).
+5. **Dividends come only from the pricing gateway, which is not yet live.**
+   `quant` does not mine or derive corporate actions: acquiring data is
+   `portfolio-data-mining`'s job, and its yfinance-backed
+   `GET /pricing/{ticker}/actions` (that repo's `PLAN.md` Work item 3) is built
+   but not yet redeployed or verified from here (`T-052`). Until it is, the
+   database has no gateway `corporate_action` rows, so a total-return series
+   built now would be price-only — `build-returns` must follow a successful
+   `backfill-actions`. The consumer (`PLAN.md` Work item 10 / `T-085`) fails the
+   run when the gateway cannot serve, and gives an asset the gateway cannot serve
+   no rows. Upstream is yfinance: unofficial, no SLA, and it cannot tell an unknown
+   symbol from a name that paid nothing. The retired XBRL-derived engines
+   (`corpact-v0-approx`, `corpact-v1-derived`) left history in `corporate_action`
+   that `quant` no longer reads. No vendor risk-free curve or index series is
+   loaded yet either (the tables/CSV loaders exist, unpopulated).
 6. **Vetoes are flat threshold rules, not an AND/OR clause tree.**
    `rule_catalog` has no analogue of the system ontology's `RuleClause`
    composite structure — every rule is a single leaf comparison (§7).
@@ -666,7 +672,7 @@ boundary of what this project is, not a gap someone forgot to close:
 | 2 — survivorship residuals | Root cause fixed (point-in-time universe); residuals accepted at current scope, tracked in `PLAN.md` | A historical replay needed pre-2022 delisted-name price history or point-in-time EDGAR |
 | 3 — no cross-module orchestrator | Accepted for now, being actively worked (see `PLAN.md`) | Manual sequencing became error-prone at higher run frequency |
 | 4 — SEMANTIC boundary uncut | Accepted, designed, not yet built — full plan in `docs/semantic-score-boundary.md` | The blend weight moves above the current placeholder or `portfolio-nlp` ships the aggregation stage |
-| 5 — FY-derived dividends, no rf/index series | Accepted; a documented approximation (`corpact-v0-approx`) | Precise total-return figures were needed for a specific evaluation |
+| 5 — gateway-only dividends (not yet live), no rf/index series | Being closed: the consumer is `PLAN.md` Work item 10 / `T-085` (done), verified live by `T-052` once upstream redeploys. rf/index series accepted as approximations | Precise total-return figures were needed before `T-052` passes, or yfinance's accuracy mattered |
 | 6 — flat veto rules | Accepted; sufficient for the current rule set | The rule set needed genuine AND/OR composition to express a policy |
 | 7 — ~~`portfolio-common` pin lags upstream~~ | **Resolved (2026-09-05, PR #32)** — `v1.2.1` re-pin landed, no `import sqlite3` remains under `src/` | — |
 | 8 — no LLM synthesis accuracy measurement | Accepted; the rule-based fallback and deterministic ratios are the load-bearing correctness guarantee, not the narrative | The narrative/rating output itself became a scored input rather than context |

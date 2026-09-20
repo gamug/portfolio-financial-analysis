@@ -215,19 +215,15 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
                 prev = price
 
             if with_dividends:
-                fid = conn.execute(
-                    "INSERT INTO sec_filings "
-                    "(asset_id, form, fiscal_year, fiscal_period, period_end, retrieved_at) "
-                    "VALUES (?, '10-K', 2024, 'FY', ?, ?) RETURNING id",
-                    (a, days[-1], days[-1] + "T00:00:00Z"),
-                ).fetchone()["id"]
-                conn.execute(
-                    "INSERT INTO financial_facts "
-                    "(filing_id, statement, concept, period_key, value, event_time) "
-                    "VALUES (?, 'income_statement', "
-                    "'us-gaap_CommonStockDividendsPerShareDeclared', ?, ?, ?)",
-                    (fid, f"{days[-1]} (FY)", 1.20 + 0.1 * a, days[-1]),
-                )
+                # Four quarterly dividends per asset, as the gateway (the only corporate-actions
+                # source, T-085) would have written them, spread across the seeded window.
+                for q in range(1, 5):
+                    conn.execute(
+                        "INSERT INTO corporate_action (asset_id, action_type, ex_date, value, "
+                        "source, engine_version, ingested_at) "
+                        "VALUES (?, 'DIVIDEND', ?, ?, 'pricing-gateway', 'corpact-v1', ?)",
+                        (a, days[q * n_days // 5], (1.20 + 0.1 * a) / 4, days[0] + "T00:00:00Z"),
+                    )
         conn.commit()
 
         udb = tmp_path / "quant_seed_universe.db"

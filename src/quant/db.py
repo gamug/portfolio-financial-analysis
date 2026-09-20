@@ -76,13 +76,15 @@ class CorporateAction:
 
 @dataclass
 class ActionsReport:
-    source: str
+    """One ``backfill-actions`` run. The gateway is the only source (T-085), so an
+    asset either has its rows fetched or appears in ``errors`` with none written."""
+
     engine_version: str
     assets_seen: int = 0
+    assets_fetched: int = 0
     dividends: int = 0
     splits: int = 0
     inserted: int = 0
-    gateway_probe_failed: bool = False
     errors: list[str] = field(default_factory=list)
 
 
@@ -207,15 +209,15 @@ def load_daily_closes(
     ]
 
 
-# Priority when more than one engine has rows for the same asset + action_type
-# (Q3, docs/model_fixes.md): the gateway's real ex-dates/values win outright;
-# among derived fallbacks, the finer-grained 10-Q year-to-date derivation beats
-# the coarse fiscal-year-spread-into-four-quarters approximation. Deliberately
-# NOT ``v_corporate_action``'s per-(asset, action_type, ex_date) "most recently
-# ingested" resolution -- two engines' synthetic ex-dates rarely collide, so
-# that view would return BOTH sources' rows side by side and double-count the
-# dividend, not supersede one with the other.
-_ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1", "corpact-v1-derived", "corpact-v0-approx")
+# The gateway is the only corporate-actions source (T-085), so only its engines are
+# read; if a newer gateway engine ever coexists with an older one for the same asset +
+# action_type, the newer wins outright. Rows written before T-085 under the
+# XBRL-derived engines ('corpact-v0-approx', 'corpact-v1-derived') stay in the
+# append-only table as history but are deliberately NOT in this tuple -- they are
+# never read. Deliberately NOT ``v_corporate_action``'s per-(asset, action_type,
+# ex_date) "most recently ingested" resolution either: two engines' ex-dates rarely
+# collide, so that view would return BOTH engines' rows side by side.
+_ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1")
 
 
 def load_actions(

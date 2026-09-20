@@ -75,6 +75,16 @@ def finish_run(conn: Database, run_id: int, status: str = "completed") -> None:
     conn.commit()
 
 
+def set_run_params(conn: Database, run_id: int, params: dict[str, Any]) -> None:
+    """Replace a run's ``params_json`` -- for facts only known once the run has
+    done its work (e.g. ``backfill-actions``' per-source asset counts)."""
+    conn.execute(
+        "UPDATE quant_run SET params_json = ? WHERE id = ?",
+        (json.dumps(_redact(params), default=str), run_id),
+    )
+    conn.commit()
+
+
 def fail_run(conn: Database, run_id: int, error: str) -> None:
     conn.execute(
         "UPDATE quant_run SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",

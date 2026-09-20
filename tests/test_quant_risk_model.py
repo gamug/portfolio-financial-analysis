@@ -8,7 +8,6 @@ from pathlib import Path
 import numpy as np
 from portfolio_common.db import Database
 
-from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
 from quant.db import load_covariance
 from quant.persist import run_build_risk_model
@@ -21,9 +20,6 @@ def _prep(conn: Database) -> QuantSettings:
         lookback_days=220,
         min_history_days=150,
         liquidity_min_dollar_volume=0.0,
-    )
-    backfill_corporate_actions(
-        s, date_from="2000-01-01", date_to="2100-01-01", source="derive", conn=conn
     )
     run_build_returns(s, date_from="2000-01-01", date_to="2100-01-01", conn=conn)
     return s

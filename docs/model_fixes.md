@@ -876,7 +876,16 @@ rule in the catalog already has for a missing metric.
 ## Q3 — Dividend shortage: Level-1 quarterly derivation from 10-Q YTD differences
 
 **Status**: Fixed 2026-09-15 (branch `fix/q3-10q-ytd-dividend-derivation`,
-`T-066`).
+`T-066`) — **then superseded 2026-09-20 by `T-085`**: the derivation this entry
+describes (`derive_quarterly_dividends_from_10q_ytd`, and the FY-level
+`derive_corporate_actions_from_facts` it ran beside) was **removed from `src/`**.
+Dividends and splits now come only from the pricing gateway, because acquiring data
+is `portfolio-data-mining`'s job and no other repository should host it. The
+symptom below is real and the Level-1 derivation did close it, but the chosen
+resolution is the gateway (`T-052` verifies it live), not a local derivation. The
+`corpact-v0-approx` / `corpact-v1-derived` rows it wrote stay in `corporate_action` as
+history; `quant.db.load_actions` no longer reads them. The rest of this entry is kept
+as the historical record of how the fix worked.
 
 ### Symptom
 
@@ -981,10 +990,13 @@ with real `corpact-v1` ex-dates/values, via the same priority list.
 
 ### Residual scope, deliberately deferred
 
-- **The final `corpact-v1` gateway target (Work item 6) remains
-  unimplemented** — this fix only closes the Level-1, local-only half of
-  Q3, exactly as PLAN.md scoped it.
-- **Not re-verified against the live production database.** Actually
+- **The `corpact-v1` gateway target (Work item 6)** was unimplemented when this
+  fix landed. *(Updated 2026-09-20: it is built upstream —
+  `portfolio-data-mining` PR #36 — and `T-085` made it `quant`'s only source,
+  removing the derivation this fix added. Not yet verified live: that is `T-052`,
+  blocked on upstream's redeploy.)*
+- **Not re-verified against the live production database** *(moot after
+  `T-085`: the derive path this refers to no longer exists)*. Actually
   confirming XOM/PG/T/NEE show `cash_dividend > 0` in `quant_return_daily`
   requires running `quant backfill-actions --source derive` (idempotent,
   $0, no LLM calls, but still a production-data-mutating operation) against
