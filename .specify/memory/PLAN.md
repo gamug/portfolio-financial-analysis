@@ -28,10 +28,13 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: Work item 5 ∥ Work item 6 (independent, external
-prerequisites; Work item 6's implementation now lives in
-`portfolio-data-mining`) → **Work item 7 (P0 — critical correctness fixes,
-highest priority in this file)** → **Work item 8 (P1 — methodological
+Execute in this order: **Work item 10 (P0 — `T-085`, next up, added
+2026-09-20: consume the `portfolio-data-mining` corporate-actions endpoint;
+no external dependency)**, with Work item 5 ∥ Work item 6 (independent,
+external prerequisites; Work item 6's implementation now lives in
+`portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
+correctness fixes, highest priority in this file; its remaining live run
+`T-068` is sequenced after `T-085`)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)**.
@@ -424,7 +427,10 @@ contract that client depends on, and the verification:
   `$0.00` for all four — see Work item 7's Q3 finding).
 - Sequencing: land after Work item 5, before Work item 7's dividend task —
   `backfill-actions --source gateway` at priority `corpact-v1` only
-  produces real data once this endpoint is live.
+  produces real data once this endpoint is live. *(2026-09-20: the
+  consumer-side code that makes `--source gateway` the default and survives
+  the gateway's failure modes is Work item 10 / `T-085`; this section's
+  acceptance criteria are what `T-052` verifies live.)*
 
 ## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
 
@@ -819,6 +825,96 @@ verified against fixtures, not a re-graphed production `shared_executive_edge`.
   tracked as blocked-pending-`urls.db`-transfer, not silently treated as
   done once the code fix lands.
 
+## Work item 10 — P0: consume the `portfolio-data-mining` corporate-actions endpoint (this repo, NEXT UP)
+
+**Why**: PR #45 (2026-09-19) moved the yfinance-backed endpoint's
+*implementation* to `portfolio-data-mining` — built and merged there as its
+PR #36 (`T-020`–`T-025`), awaiting only the operator's redeploy (`T-026`).
+That left this repo's *consumption* of it un-tasked, and reading
+`src/quant/actions.py`/`pricing_client.py`/`cli.py` on 2026-09-20 shows the
+consumer is still shaped for a gateway that "may not serve actions":
+
+1. **The default is the fallback.** `backfill-actions --source` defaults to
+   `derive` (`cli.py`, and `backfill_corporate_actions(source="derive")`), so
+   real ex-dates are fetched only if someone remembers `--source gateway`.
+2. **One gateway failure aborts the run, and a dead gateway is slow.** Only
+   the first asset is probed; a per-asset `GatewayError` is not in the
+   `except (ActionsNotSupported, DatabaseError)` clause, so it propagates to
+   `fail_run` and re-raises. Each dead call costs `max_retries` (3) × the
+   60 s timeout plus backoff, over a 503-asset universe — the same shape as
+   the 2026-09-19 `fundamental_agent` runs (`analysis_run` 5–9), which spent
+   hours per run on gateway retries.
+3. **An upstream failure looks like "no dividends".** Upstream's
+   `get_corporate_actions` never raises: a yfinance failure yields empty
+   lists plus a `warning` field (`portfolio-data-mining` `T-020`).
+   `RawActions` has no `warning`, so `_parse_rows` returns `[]` and the outage
+   is stored as a ticker that paid nothing — in gateway mode the derived
+   paths do not run, so the asset ends up with no dividend row at all.
+
+**Approach**:
+
+1. Default `backfill-actions --source` to `gateway`, in the CLI and in
+   `backfill_corporate_actions`; `--source derive` stays selectable.
+   Flipping the default is safe before upstream's redeploy: a failed probe
+   already falls back to deriving the whole run and reports
+   `(gateway probe failed -> derived)`.
+2. Per-asset fallback: on `GatewayError`, `ActionsNotSupported`, or a
+   response with a non-empty `warning`, derive **that asset** with both
+   derived engines instead of aborting or writing a false empty. Never
+   record a warning-bearing empty response as a result.
+3. `RawActions` gains `warning: str | None`. Parse the upstream contract's
+   extra fields (`start_date`/`end_date`/`source`/`warning`) while staying
+   tolerant of the two older request shapes and the `[date, value]` pair
+   row format.
+4. Circuit breaker: after `K` consecutive gateway failures (a
+   `QuantSettings` field, default 3), stop calling the gateway for the rest
+   of the run and derive the remaining assets. Report it
+   (`gateway_circuit_open`).
+5. Report per-source asset counts (`gateway`, `derived_fallback`) in the
+   `backfill-actions` output line and in `quant_run.params_json`, so a run
+   that silently became mostly-derived is visible.
+6. **Keep the derived paths** (`corpact-v0-approx`, `corpact-v1-derived`) as
+   the documented fallback; do not retire them. Upstream's yfinance is
+   unofficial and has no SLA (`portfolio-data-mining` `SPEC.md` §13 item 9),
+   so the gateway will fail sometimes; retiring the fallback would swap a
+   $0-dividend bug for an outage-shaped one. `_ACTION_ENGINE_PRIORITY` in
+   `quant/db.py` is unchanged, and history stays append-only (nothing is
+   rewritten). *(A decision made in this plan — flagged for review.)*
+7. Pin the upstream contract in a hermetic test through
+   `httpx.MockTransport` (no live network): the response shape
+   `{ticker, start_date, end_date, source: "yfinance", dividends, splits,
+   warning}`, using upstream's own verified values (XOM's four 2024
+   dividends; NVDA's 10-for-1 split on 2024-06-10).
+8. Docs: `docs/quant.md` (source semantics, per-asset fallback, breaker),
+   `SPEC.md` §13 item 5, and a residual-scope note in `docs/model_fixes.md`'s
+   Q3 entry.
+
+**Acceptance criteria**:
+
+- Hermetic tests (`tests/test_quant_actions.py`, plus a `QuantPricingClient`
+  test module) cover: default source is `gateway`; a per-asset `GatewayError`
+  derives that asset while the others still come from the gateway and the
+  run completes; a `warning` response derives and writes no gateway row;
+  the breaker opens after `K` consecutive failures and later assets make no
+  further HTTP calls; a probe failure still derives the whole run (the
+  existing test stays green); the upstream fixture parses to the expected
+  dividends/splits; `load_actions` priority is unchanged.
+- The report line and `quant_run.params_json` show the per-source counts.
+- `uv run pytest`, `ruff check`, `ruff format --check` and `mypy` are green.
+- **Not part of this task's box:** live verification. That is `T-052` — it
+  needs upstream's `T-026` redeploy and must run against the deployed
+  `PRICING_BASE_URL` (the gateway's `/pricing` mount), because upstream
+  verified the client only against a local copy of the service.
+
+**Sequencing**: no external dependency — start now. Work item 7's `T-068`
+live re-run should not write production dividends before this lands: its
+dividend backfill and `quant` re-run wait for `T-085` (and for `T-052` once
+the endpoint is redeployed), so dividends are written once from the gateway
+rather than derived first and redone. `T-068`'s metrics-recompute and
+`cycle` steps are not held up. If the redeploy slips and `T-068` cannot
+wait, run its dividend step with an explicit `--source derive` and repeat
+that step only after `T-052`.
+
 ## Sequencing
 
 Work item 1 (`portfolio-common` re-pin) touched every package's `db.py` and
@@ -839,10 +935,14 @@ items 1–3 and can proceed in parallel at any time; it does not touch
 execution priority — see the Priority Override section near the top of
 this document.** Their internal sequencing:
 
+- **Work item 10 (`T-085`, consume the corporate-actions endpoint) is next
+  up (2026-09-20).** It has no external dependency, and Work item 7's
+  `T-068` dividend backfill / `quant` re-run wait for it.
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
-  as its `PLAN.md` Work item 3, verified here by `T-052`) are independent
-  external prerequisites — develop concurrently.
+  as its `PLAN.md` Work item 3, consumed here by Work item 10, verified
+  here by `T-052`) are independent external prerequisites — develop
+  concurrently.
 - Work item 7 (P0 critical fixes) is the top priority in this repo. Its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
   within it; its Ring-1 `DQ_*` gates need Work item 5 (A1); its dividend
