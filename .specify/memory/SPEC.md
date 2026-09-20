@@ -583,7 +583,9 @@ treating a related FR/NR as done:
 5. **Dividends are FY-derived, not a precise daily series.** The pricing
    gateway serves no corporate actions (the yfinance-backed endpoint is
    tracked in `portfolio-data-mining`'s `PLAN.md` Work item 3, not built
-   here — this stays true until it ships and is redeployed), so `quant`'s total-return series
+   here — this stays true until it ships and is redeployed; this repo's
+   consumer half, making it `quant`'s primary source with the derived paths
+   kept as fallback, is `PLAN.md` Work item 10 / `T-085`), so `quant`'s total-return series
    defaults to fiscal-year dividends spread over synthetic quarterly
    ex-dates (`corpact-v0-approx`) — wrong intra-year timing, no special
    dividends. No vendor risk-free curve or index series is loaded yet either
