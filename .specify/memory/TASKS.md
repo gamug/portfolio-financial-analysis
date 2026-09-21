@@ -17,7 +17,7 @@ fallback was removed: no repository but `portfolio-data-mining` mines data) — 
 done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order —
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
-multi-filing `sec_edgar` endpoints — **done 2026-09-21**), **`T-094` (F4 fiscal-calendar mismatch — next in the row)**, `T-087` (the constitution
+multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
 amendment), `T-090` (metric-version selection and run manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
 `T-091` is superseded by `T-092`), `T-088`
 (purge the malformed Fundamental/Quant data — **the purge itself is done, 2026-09-21** — and
@@ -567,11 +567,11 @@ dependency for the code; live verification is `T-052`.
 
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
-Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086` and `T-092` (all done
-2026-09-21) → **`T-094`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a
+Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092` and `T-094` (all
+done 2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a
 **P0 blocker** — the fundamental pipeline could not ingest anything against the live gateway —
-and is done; it exposed `T-094`, which must land before `T-088`'s re-ingest or the clean re-run
-would activate it. `T-088`'s backup and purge (steps 1–2) were executed early, on 2026-09-21.
+and is done; it exposed `T-094` (now also done), which had to land before `T-088`'s re-ingest or
+the clean re-run would have activated it. `T-088`'s backup and purge (steps 1–2) were executed early, on 2026-09-21.
 `T-090`/`T-093` (added the same day) come before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
 → `PLAN.md` Work item 11.
@@ -662,7 +662,7 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       re-ingest would activate it for STZ, BF.B and every other non-December filer. The
       `--fresh` upsert on `(asset, form, fiscal_period)` heals the filing rows' accessions
       but metrics stay `INSERT OR IGNORE`, so `T-088`'s purge is still needed.
-- [ ] **T-094** **F4: TTM fiscal-calendar alignment for non-calendar filers — next in the row.**
+- [x] **T-094** **F4: TTM fiscal-calendar alignment for non-calendar filers.**
       Found during `T-092`'s acceptance: `db._quarter_flow`/`ttm_flows` assume a fiscal year's
       label and its quarters' labels line up on the calendar. `FY{y}` is the calendar year the
       fiscal year *ends* in; `{y}Q{n}` is the calendar year each quarter *ends* in — equal only
@@ -683,7 +683,27 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       current 10-Q payload already carries — as a cross-check. Audit every other consumer of
       `FY{y}`/`{y}Q{n}` for the same assumption. A methodology change: constitution AI behavior
       #12 requires real-data verification and a `docs/model_fixes.md` entry. Acceptance and
-      tests in `PLAN.md`. → `PLAN.md` Work item 11, `T-094`.
+      tests in `PLAN.md`. → `PLAN.md` Work item 11, `T-094`. **Done 2026-09-21.** `db.ttm_flows(conn, asset_id, *, period_end, current)` now finds a 10-Q's three
+      prior quarters by **date** — those ending 3, 6 and 9 months before `period_end`, matched within a
+      20-day window, month-end preserving — and a fiscal Q4 as the 10-K ending near that date minus the
+      three 10-Qs at 3/6/9 months before *its own* period end, form-matched; `× 4` only when a quarter is
+      genuinely missing. No arithmetic on the `fiscal_period` labels remains; the audit found no other
+      label arithmetic in the codebase (every other use is an identity key or keys on dates/period
+      columns). The stored labels are unchanged. **Real-data verification** (the real client, the live
+      gateway, a scratch copy of the purged DB, a stub analyst; XOM Dec, STZ Feb, BF.B Apr, MSFT Jun,
+      AAPL Sep 52/53-week; 95 filings ingested, 0 failed): against the independent definition TTM = last
+      FY + current YTD − prior-year YTD from each 10-Q's own payload, **52 of 52 quarters agree, maximum
+      difference 0.00%**; of the 44 quarters where the *old* code did not fall back to `× 4`, **33 read
+      the wrong quarters** — every one a non-calendar filer (AAPL 4/4, MSFT 9/9, BF.B 10/10 up to 69%,
+      STZ 10/10 up to 409%: STZ 2025Q1 old +$1,366.5M vs a correct −$442.3M) — while XOM (calendar) was
+      right 11/11. Fallback (by design, early quarters of the 2022+ window): XOM 3/14, AAPL 3/15, MSFT
+      5/14, BF.B 4/14, STZ 4/14. 13 new hermetic tests (24 in `tests/test_ttm.py` +
+      `tests/test_pipeline.py`), incl. the STZ February case with the FY2025 quarters poisoned and
+      Saturday quarter ends; full suite (311), ruff, mypy green; mutation-checked seven ways incl. one
+      that re-creates the original bug. `docs/model_fixes.md` has the F4 addendum (constitution AI
+      behavior #12). Residual: metrics recorded before this fix are wrong for non-calendar filers —
+      the derived data was purged (`T-088` step 2), so the recompute is `T-088`'s re-run under
+      `metrics-v2`; a transition-period short quarter is untested (it should fall back, not mis-sum).
 - [ ] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
       still lists `backfill-actions [--source derive|gateway]` and the flag no longer exists.
       Per its Governance section this is its own reviewed change — fix the line, bump PATCH
@@ -805,7 +825,7 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-`T-086` and `T-092` are done, and `T-088`'s purge was executed early; next up `T-094` → `T-087`
+`T-086`, `T-092` and `T-094` are done, and `T-088`'s purge was executed early; next up `T-087`
 → `T-090` → `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,

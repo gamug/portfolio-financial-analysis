@@ -35,7 +35,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 (done 2026-09-21),
 `T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
 `sec_edgar` endpoints (done 2026-09-21),
-**`T-094` the F4 fiscal-calendar fix (next in the row)**, `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
+`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
@@ -951,8 +951,8 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6), `T-086` and `T-092` (all done 2026-09-21) → **`T-094`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
-`T-094` was found by `T-092`'s acceptance and must land before `T-088`'s re-ingest. `T-088`'s backup
+Work item 6), `T-086`, `T-092` and `T-094` (all done 2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
+`T-094` was found by `T-092`'s acceptance and had to land before `T-088`'s re-ingest. `T-088`'s backup
 and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
 `T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
 day, from review of `T-088`'s caveats, and sit before `T-088` because its deep validation runs
@@ -1090,6 +1090,20 @@ sane band. A `docs/model_fixes.md` entry with the real-data verification (consti
 #12); `pytest`/`ruff`/`mypy` green. *Consequence*: metrics computed under the old logic are wrong for
 non-calendar filers, so the recompute is `T-088`'s re-run under `metrics-v2`. *Order*: next in the
 row, before `T-088`'s re-ingest.
+
+**T-094 — Done 2026-09-21.** Built as specified, with the quarter-sum method kept (the calendar-agnostic
+FY + YTD − prior-YTD definition served as the independent check instead of a replacement, since the two
+agree exactly and the quarter sum keeps the recorded-`inputs_json` contract). `db.ttm_flows` takes
+`period_end` and locates quarters by date within a 20-day window, month-end preserving and form-matched;
+a fiscal Q4 is the 10-K ending near the date minus the three 10-Qs 3/6/9 months before *its own* period
+end. The audit found no other label arithmetic. **Real-data verification** (real client, live gateway,
+scratch copy of the purged DB, stub analyst; XOM Dec / STZ Feb / BF.B Apr / MSFT Jun / AAPL Sep 52/53-week;
+95 filings, 0 failed): 52 of 52 quarters agree with the independent definition to 0.00%; of 44 quarters
+where the old code did not fall back to `× 4`, 33 read the wrong quarters (all non-calendar; STZ up to
+409%, e.g. +$1,366.5M vs a correct −$442.3M), while XOM was right 11/11. 13 new hermetic tests, full suite
+311, mutation-checked seven ways including the original bug. `docs/model_fixes.md` carries the F4
+addendum. Residual: the pre-fix metrics were purged and are recomputed by `T-088`'s re-run under
+`metrics-v2`.
 
 **T-087 — Constitution amendment.** `.specify/memory/constitution.md` "Executable cmds" still
 lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. Per its
@@ -1282,7 +1296,7 @@ this document.** Their internal sequencing:
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
-  `sec_edgar` integration — done 2026-09-21) → **`T-094`** (F4 fiscal-calendar fix; next) → `T-087` (constitution) → `T-090`
+  `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution) → `T-090`
   (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run

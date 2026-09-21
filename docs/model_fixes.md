@@ -571,9 +571,12 @@ flow-over-stock ratios, not every metric that touches these flows:
 *same* period and need no adjustment.
 
 `fundamental_agent/db.py` gains `ttm_flows(conn, asset_id, *, fiscal_year,
-quarter, current)`: for each flow item in `current`, sums the filing's own
-quarter plus the three immediately preceding ones (`_quarter_flow`/
-`_historical_flow`), falling back to `current * 4` for that item alone when
+quarter, current)` *(as first written; it located the prior quarters by their
+`fiscal_period` labels, which only line up for a December year-end — superseded
+by the date-anchored `ttm_flows(conn, asset_id, *, period_end, current)` of the
+"F4 addendum — fiscal-calendar alignment" below)*: for each flow item in
+`current`, sums the filing's own quarter plus the three immediately preceding
+ones (`_quarter_flow`/`_historical_flow`), falling back to `current * 4` for that item alone when
 the trailing history isn't fully available. A quarter's own value is read
 back from an **already-recorded** metric row's `inputs_json` — never
 re-derived from raw `financial_facts` — so it reuses whatever concept
@@ -657,8 +660,68 @@ re-run belongs, after `T-063`/`T-064` (C1/C2) also land.
   the *next* fiscal year's quarters for any non-calendar filer — on real stored values it would
   read STZ's 2024Q2 net income of −$1,199M (an FY2025 impairment quarter). Invisible while the
   quarters were missing; a clean re-ingest would activate it for STZ, BF.B and every other
-  non-December filer. Not fixed by `T-092`.
+  non-December filer. Not fixed by `T-092` — **fixed by `T-094`, next.**
 
+
+### F4 addendum — fiscal-calendar alignment (`T-094`, 2026-09-21)
+
+**Symptom.** Found by `T-092`'s acceptance. `ttm_flows` located a 10-Q's three prior quarters, and
+derived a fiscal Q4 as `FY{y} − {y}Q1..Q3`, by the `fiscal_period` **labels**. The pipeline builds
+those labels from the calendar year the period *ends* in (`Period.year` is `int(date[:4])`), so a fiscal
+year and its own quarters carry the same year only for a December year-end. STZ's year ends in
+February: `FY2024` covers Mar-2023..Feb-2024 and its quarters are labelled `2023Q1`–`Q3`, so the old
+Q4 derivation read `2024Q1`–`Q3` — the *next* fiscal year's quarters. The `fiscal_year × 4 + quarter`
+index was also non-monotonic in time for such a filer (2023Q3 → 2024Q4 → 2024Q1), so "the three
+preceding quarters" were wrong before Q4 even came into play. It was invisible while about one 10-Q per
+year was stored (the quarters were never all present, so the code fell back to `× 4`); `T-092`
+ingests every quarter and made it reachable.
+
+**Fix.** `ttm_flows(conn, asset_id, *, period_end, current)` finds the quarters by **date**: the ones
+ending 3, 6 and 9 months before `period_end`, matched within a 20-day window on the asset's 10-Qs
+(`_filing_near`). A fiscal Q4 (no 10-Q exists) is the 10-K whose period ends near that date, minus the
+three 10-Qs at 3/6/9 months before *that 10-K's own* period end (`_quarter_flow_ending`). Still `× 4`
+for an item only when a quarter is genuinely missing. `pipeline._ttm_flows` passes `target.period.date`.
+
+**Design decisions.**
+- **Dates, never labels.** The stored `fiscal_period` labels are kept (relabelling changes unique keys
+  and every consumer) but nothing does arithmetic on them any more. Audit: the only label arithmetic in
+  the codebase was in `_quarter_flow`/`ttm_flows`; every other use of `fiscal_period` is an identity key
+  (uniqueness, the resume set, display), and growth, CAGR, `prior_of`, share-scale detection and
+  `cycle`'s "latest filing" all key on dates or on the payload's own period columns.
+- **Month-end preserving** (`2023-08-31` − 3 → `2023-05-31`, `2024-05-31` − 3 → `2024-02-29`), and a
+  **20-day tolerance** because 52/53-week filers (AAPL) end quarters on a Saturday, a day or two from
+  "exactly three months earlier"; adjacent quarters are ~91 days apart, so the window never matches two.
+- **Form-matched**: quarters come from 10-Qs and only a Q4 from a 10-K, so a 10-K is never read as a quarter.
+- **Kept the quarter-sum method** rather than switching to TTM = last FY + current YTD − prior-year YTD.
+  The two agree exactly (below), and the quarter sum reuses the already-recorded raw inputs without
+  changing the recorded-`inputs_json` contract that stops the adjustment compounding.
+
+**Verification against real data** (constitution AI behavior #12). The real `EdgarClient` against the
+live gateway, on a **scratch copy** of the purged DB with a stub analyst (no LLM), five filers on five
+fiscal calendars, 2022–2026: XOM (Dec), STZ (Feb), BF.B (Apr), MSFT (Jun), AAPL (Sep, 52/53-week) →
+**95 filings ingested, 0 failed**.
+- **Independent cross-check.** For every quarter that has real history (revenue: XOM 11, AAPL 12, MSFT 9,
+  BF.B 10, STZ 10 = **52 quarters**), the new TTM equals TTM = last FY + current YTD − prior-year YTD,
+  computed from that 10-Q's *own* payload (a different data path): **maximum difference 0.00%.**
+- **Before / after** on the same data, net income: of the **44** quarters where the old code did *not*
+  fall back to `× 4`, **33 read the wrong quarters** — every one a non-calendar filer (AAPL 4 of 4,
+  worst 15.5%; MSFT 9 of 9, 17.4%; BF.B 10 of 10, 69.0%; STZ 10 of 10, 409%) — while XOM, the calendar
+  filer, was right in all 11. The worst: STZ 2025Q1, old TTM net income **+$1,366.5M** against a correct
+  **−$442.3M**.
+- **Fallback share** (still `× 4`, by design): XOM 3 of 14, AAPL 3 of 15, MSFT 5 of 14, BF.B 4 of 14,
+  STZ 4 of 14 — the earliest quarters of the 2022+ window, where four quarters of history do not exist yet.
+- 24 hermetic tests (`tests/test_ttm.py`, `tests/test_pipeline.py`), including the STZ February case with
+  the FY2025 quarters poisoned (a −1,199 impairment) and 52/53-week Saturday ends; mutation-checked
+  seven ways, including one that re-creates the original bug (a Q4 that reads the next fiscal year's
+  quarters).
+
+**Residual scope, deliberately deferred.**
+- **Metrics recorded before this fix are wrong for non-calendar filers.** The derived data was purged
+  (`T-088` step 2); the recompute is `T-088`'s re-run, under the `metrics-v2` bump.
+- The stub analyst exercised ingestion and the TTM lookup, not the LLM scoring.
+- A fiscal-year *change* (a transition period with a short quarter) is untested. By construction an
+  off-cycle quarter is simply not matched by the 20-day date window, so it should count as missing and
+  fall back to `× 4` rather than be mis-summed — but that has not been exercised on real data.
 ---
 
 ## C1 — T-1 veto cutoff: diagnosis corrected, no code fix
