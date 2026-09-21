@@ -582,14 +582,14 @@ treating a related FR/NR as done:
    and open sub-questions: `docs/semantic-score-boundary.md`. Mitigation
    until cut over: keep the blend weight low/zero for names with no
    SEMANTIC row rather than treating its absence as a zero score.
-5. **Dividends come only from the pricing gateway, which is not yet live.**
+5. **Dividends come only from the pricing gateway (live and verified 2026-09-21, `T-052`).**
    `quant` does not mine or derive corporate actions: acquiring data is
    `portfolio-data-mining`'s job, and its yfinance-backed
    `GET /pricing/{ticker}/actions` (that repo's `PLAN.md` Work item 3) is built
-   but not yet redeployed or verified from here (`T-052`). Until it is, the
-   database has no gateway `corporate_action` rows, so a total-return series
-   built now would be price-only — `build-returns` must follow a successful
-   `backfill-actions`. The consumer (`PLAN.md` Work item 10 / `T-085`) fails the
+   and, as of 2026-09-21, deployed and verified from here (`T-052`): production
+   `corporate_action` holds 7,481 gateway rows for all 503 assets. `build-returns`
+   must still follow a successful `backfill-actions` (a series built without
+   dividends locks in as price-only); the guard is `T-086`. The consumer (`PLAN.md` Work item 10 / `T-085`) fails the
    run when the gateway cannot serve, and gives an asset the gateway cannot serve
    no rows. Upstream is yfinance: unofficial, no SLA, and it cannot tell an unknown
    symbol from a name that paid nothing. The retired XBRL-derived engines
@@ -672,7 +672,7 @@ boundary of what this project is, not a gap someone forgot to close:
 | 2 — survivorship residuals | Root cause fixed (point-in-time universe); residuals accepted at current scope, tracked in `PLAN.md` | A historical replay needed pre-2022 delisted-name price history or point-in-time EDGAR |
 | 3 — no cross-module orchestrator | Accepted for now, being actively worked (see `PLAN.md`) | Manual sequencing became error-prone at higher run frequency |
 | 4 — SEMANTIC boundary uncut | Accepted, designed, not yet built — full plan in `docs/semantic-score-boundary.md` | The blend weight moves above the current placeholder or `portfolio-nlp` ships the aggregation stage |
-| 5 — gateway-only dividends (not yet live), no rf/index series | Being closed: the consumer is `PLAN.md` Work item 10 / `T-085` (done), verified live by `T-052` once upstream redeploys. rf/index series accepted as approximations | Precise total-return figures were needed before `T-052` passes, or yfinance's accuracy mattered |
+| 5 — gateway-only dividends, no rf/index series | Closed for dividends: the consumer is `PLAN.md` Work item 10 / `T-085` (done), verified live by `T-052` (2026-09-21). rf/index series accepted as approximations | yfinance's accuracy mattered, or a symbol yfinance does not recognise paid a dividend (it returns a clean empty result) |
 | 6 — flat veto rules | Accepted; sufficient for the current rule set | The rule set needed genuine AND/OR composition to express a policy |
 | 7 — ~~`portfolio-common` pin lags upstream~~ | **Resolved (2026-09-05, PR #32)** — `v1.2.1` re-pin landed, no `import sqlite3` remains under `src/` | — |
 | 8 — no LLM synthesis accuracy measurement | Accepted; the rule-based fallback and deterministic ratios are the load-bearing correctness guarantee, not the narrative | The narrative/rating output itself became a scored input rather than context |

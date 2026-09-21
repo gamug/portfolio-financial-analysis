@@ -993,8 +993,8 @@ with real `corpact-v1` ex-dates/values, via the same priority list.
 - **The `corpact-v1` gateway target (Work item 6)** was unimplemented when this
   fix landed. *(Updated 2026-09-20: it is built upstream —
   `portfolio-data-mining` PR #36 — and `T-085` made it `quant`'s only source,
-  removing the derivation this fix added. Not yet verified live: that is `T-052`,
-  blocked on upstream's redeploy.)*
+  removing the derivation this fix added. Verified live 2026-09-21 (`T-052`): 7,481
+  gateway rows in production, every asset fetched.)*
 - **Not re-verified against the live production database** *(moot after
   `T-085`: the derive path this refers to no longer exists)*. Actually
   confirming XOM/PG/T/NEE show `cash_dividend > 0` in `quant_return_daily`

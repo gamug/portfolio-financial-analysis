@@ -83,7 +83,7 @@ A gateway that cannot serve is therefore a **failure**, not a degraded run:
 Share classes are requested in yfinance's spelling (`BF.B` → `BF-B`): the route only
 upper-cases what it is given, and yfinance answers an unknown symbol with a clean empty
 result — the one silent failure this consumer cannot see. Point `PRICING_BASE_URL` at
-the **deployed** gateway (its `/pricing` mount); live verification is `T-052`.
+the **deployed** gateway (its `/pricing` mount); live verification, `T-052`, passed 2026-09-21.
 `quant_run.params_json` records `assets_seen` / `assets_fetched` / `assets_errored` and
 the first error messages.
 
@@ -228,8 +228,11 @@ creates them before it builds the views.
 
 - **Total-return quality** hinges on the gateway. Dividends come only from
   `portfolio-data-mining`'s yfinance-backed endpoint, which is unofficial and has no
-  SLA; until it is redeployed and `T-052` verifies it, `corporate_action` has no
-  gateway rows and a total-return series would be price-only.
+  SLA. It is live and verified (`T-052`, 2026-09-21: every asset fetched), but a
+  yfinance symbol it does not recognise still returns a clean empty result, and
+  dividends with ex-dates after the last `price_daily` bar cannot fold into the
+  series until prices are refreshed. A series built while `corporate_action` has no
+  gateway rows would be price-only — the guard for that is `T-086`.
 - **Survivorship bias (partly addressed).** The universe is now read point-in-time
   from `universe.db`, which carries real `valid_from` / `valid_to` stints, so
   `build-risk-model --analysis-date D` gates to the constituents that were in the
