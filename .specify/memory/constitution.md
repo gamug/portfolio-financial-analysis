@@ -261,8 +261,8 @@ uv run python -m cycle select  --analysis-date D [--top-n 30]
 uv run python -m cycle monitor --analysis-date D
 uv run python -m cycle backfill --from D1 --to D2 --step-days N
 
-uv run python -m quant backfill-actions [--source derive|gateway]
-uv run python -m quant build-returns
+uv run python -m quant backfill-actions      # dividends/splits from the pricing gateway (its only source)
+uv run python -m quant build-returns         # refuses without a clean backfill-actions covering the window
 uv run python -m quant build-risk-model --analysis-date D
 uv run python -m quant optimize --analysis-date D --objectives min_var,tangency,target_vol,frontier
 uv run python -m quant evaluate --from D
@@ -379,7 +379,7 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-15
+**Version**: 1.2.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-21
 
 **Amendment log**:
 - 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc path from
@@ -399,3 +399,13 @@ above should cite the section by name.
   exactly this pattern in pre-existing code
   (`fundamental_agent.db.bump_run_counter`), fixed by routing the
   identifier through a static literal-SQL-string map instead.
+- 1.2.1 (2026-09-21) — PATCH: corrected "Executable cmds" — `quant backfill-actions
+  [--source derive|gateway]` named a flag that no longer exists (`T-085` made the
+  `portfolio-data-mining` pricing gateway `quant`'s only corporate-actions source and removed
+  the XBRL-derived fallback, since no repository but `portfolio-data-mining` mines data), so the
+  line is now `quant backfill-actions`, annotated with that. Also annotated `build-returns`
+  with the precondition `T-086` made a hard rule (it refuses without a clean gateway
+  `backfill-actions` covering the window). Every `python -m` line in the block was re-checked
+  against the real CLIs' `--help` (17 of 18 already correct; the `--source` line was the only
+  stale one) and the rest of the document was re-scanned: nothing else claims dividends are
+  derived from filings. No principle changed, only this document's own factual claims.
