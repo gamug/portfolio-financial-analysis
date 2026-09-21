@@ -566,8 +566,8 @@ dependency for the code; live verification is `T-052`.
 Added 2026-09-21. Order: `T-052` (Work item 6, live check) → `T-086` → `T-087` → `T-088` →
 `T-089`. → `PLAN.md` Work item 11.
 
-- [ ] **T-086** Guard against false `build-returns` runs: `run_build_returns`
-      (`src/quant/returns.py`) refuses — exit 1, clear message — unless the latest
+- [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
+      (`src/quant/returns.py`) refuses — exit 1, clear message — unless a
       `backfill-actions` `quant_run` covering the build window is `completed` with
       `assets_errored == 0` (both recorded in its `params_json` by `T-085`) and gateway
       `corporate_action` rows exist; an explicit `--allow-no-dividends` override builds a
@@ -575,7 +575,22 @@ Added 2026-09-21. Order: `T-052` (Work item 6, live check) → `T-086` → `T-08
       is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built with no
       dividends is price-only *and* locks in under `qret-v2`. Hermetic tests: no backfill
       run, failed run, run with errored assets, window not covered, override; `pytest`/
-      `ruff`/`mypy` green. → `PLAN.md` Work item 11, `T-086`.
+      `ruff`/`mypy` green. → `PLAN.md` Work item 11, `T-086`. **Done 2026-09-21**:
+      `quant.actions.dividends_not_ready_reason` (next to the `params_json` writer it
+      reads) plus `DividendsNotReady`; `run_build_returns(..., allow_no_dividends=False)`
+      checks it before `open_run`, so a refusal writes nothing and is not a run; the CLI
+      gains `--allow-no-dividends` and exits 1 with the reason and the remedy. Any clean
+      covering run suffices — a *later* failed run, or one that completed with errors, does
+      not block, because the earlier run's rows are still there (`INSERT OR IGNORE`); a run
+      recorded before `T-085` (no `assets_errored`) does not count. The override is loud on
+      stderr and recorded in the run's `params_json`. 17 new hermetic tests; full suite (280)
+      (`tests/test_quant_dividends_guard.py`) including a real backfill-then-build through a
+      mocked gateway; the `quant_seed(with_dividends=True)` fixture now also records the
+      clean backfill run that would have written its dividends, and the two helpers that
+      build price-only series on purpose (panel, risk model) pass the override. Mutation-
+      checked: a guard that never refuses, an override that is ignored, errored assets
+      tolerated, window coverage unchecked, pre-`T-085` runs accepted, failed runs counted,
+      no check for gateway rows, and an exit code of 0 on refusal each fail their own test.
 - [ ] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
       still lists `backfill-actions [--source derive|gateway]` and the flag no longer exists.
       Per its Governance section this is its own reviewed change — fix the line, bump PATCH

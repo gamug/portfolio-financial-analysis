@@ -953,13 +953,16 @@ Work item 6) → `T-086` → `T-087` → `T-088` → `T-089`.
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
 gateway rows is price-only *and* locks in under that version. `run_build_returns`
-(`src/quant/returns.py`) must refuse — exit 1 with a clear message — unless the latest
+(`src/quant/returns.py`) must refuse — exit 1 with a clear message — unless a
 `backfill-actions` `quant_run` covering the build window is `completed` with
 `assets_errored == 0` (both already recorded in its `params_json` by `T-085`) and gateway
 `corporate_action` rows exist. An explicit `--allow-no-dividends` override builds a knowingly
 price-only series and records that in `params_json`. *Acceptance*: hermetic tests for no
 backfill run, a failed run, a run with errored assets, a window the run does not cover, and the
-override; `pytest`/`ruff`/`mypy` green.
+override; `pytest`/`ruff`/`mypy` green. **Done 2026-09-21.** Any clean covering run is enough
+(a later failed run, or one that completed with errors, does not undo the rows an earlier clean
+one wrote); a run recorded before `T-085` has no `assets_errored` and does not count; a refusal
+happens before `open_run`, so nothing is written and it is not recorded as a run.
 
 **T-087 — Constitution amendment.** `.specify/memory/constitution.md` "Executable cmds" still
 lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. Per its

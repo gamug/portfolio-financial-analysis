@@ -25,6 +25,8 @@ Consequently a gateway that cannot serve is a failure, not a degraded run:
 
 from __future__ import annotations
 
+import json
+
 from portfolio_common.db import Database
 
 from kg_schema import connect
@@ -34,6 +36,7 @@ from quant.db import (
     ActionsReport,
     CorporateAction,
     ensure_schema,
+    has_gateway_actions,
     load_assets,
     upsert_corporate_actions,
 )
@@ -50,6 +53,11 @@ _MAX_ERROR_MESSAGES = 20  # per-run cap on the messages kept in quant_run.params
 
 class GatewayUnavailable(RuntimeError):
     """The pricing gateway cannot serve corporate actions, and there is no other source."""
+
+
+class DividendsNotReady(RuntimeError):
+    """``build-returns`` was asked to build a total-return series without a complete,
+    gateway-sourced set of dividends behind it (T-086)."""
 
 
 def fetch_corporate_actions_gateway(
@@ -230,3 +238,51 @@ def backfill_corporate_actions(
     finally:
         if owns:
             conn.close()
+
+
+def _run_window(raw: str | None) -> dict[str, object]:
+    try:
+        parsed = json.loads(raw or "{}")
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def dividends_not_ready_reason(conn: Database, *, date_from: str, date_to: str) -> str | None:
+    """Why a total-return series for ``[date_from, date_to]`` would be built without a
+    complete set of gateway dividends -- or ``None`` when it is safe (T-086).
+
+    ``quant_return_daily`` is ``INSERT OR IGNORE`` per ``(asset, day, engine_version)``, so
+    a series built while dividends are missing is price-only *and* locks in under that
+    version. Safe means: a completed ``backfill-actions`` run whose window covers the
+    build window fetched **every** asset (``assets_errored == 0``), and gateway rows exist.
+    Any such run will do -- a later run that failed does not undo the rows an earlier clean
+    one already wrote. A run recorded before T-085 has no ``assets_errored`` and does not
+    count: it is not a gateway backfill.
+    """
+    runs = conn.execute(
+        "SELECT params_json FROM quant_run "
+        "WHERE command = 'backfill-actions' AND status = 'completed' ORDER BY id DESC"
+    ).fetchall()
+    if not runs:
+        return "no completed `backfill-actions` run is recorded"
+    gateway_runs = [
+        p for p in (_run_window(r["params_json"]) for r in runs) if "assets_errored" in p
+    ]
+    if not gateway_runs:
+        return "the recorded `backfill-actions` runs predate the gateway-only backfill (T-085)"
+    covering = [
+        p
+        for p in gateway_runs
+        if str(p.get("date_from", "")) <= date_from and str(p.get("date_to", "")) >= date_to
+    ]
+    if not covering:
+        return f"no completed `backfill-actions` run covers {date_from}..{date_to}"
+    if all(int(str(p["assets_errored"])) > 0 for p in covering):
+        return (
+            f"the latest `backfill-actions` run covering {date_from}..{date_to} left "
+            f"{int(str(covering[0]['assets_errored']))} asset(s) without data"
+        )
+    if not has_gateway_actions(conn):
+        return "`corporate_action` holds no gateway rows"
+    return None

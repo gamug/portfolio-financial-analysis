@@ -21,7 +21,10 @@ def _prep(conn: Database) -> QuantSettings:
         min_history_days=150,
         liquidity_min_dollar_volume=0.0,
     )
-    run_build_returns(s, date_from="2000-01-01", date_to="2100-01-01", conn=conn)
+    # These tests seed price-only history on purpose (with_dividends=False).
+    run_build_returns(
+        s, date_from="2000-01-01", date_to="2100-01-01", conn=conn, allow_no_dividends=True
+    )
     return s
 
 

@@ -20,6 +20,7 @@ from portfolio_common.db import Database
 
 from kg_schema import connect
 from kg_schema.provenance import code_version
+from quant.actions import DividendsNotReady, dividends_not_ready_reason
 from quant.config import QuantSettings
 from quant.db import (
     ReturnRow,
@@ -95,6 +96,8 @@ class ReturnsReport:
         self.assets = 0
         self.rows_written = 0
         self.assets_with_dividends = 0
+        # Why the dividends guard would have refused, when --allow-no-dividends overrode it.
+        self.dividends_guard_bypassed: str | None = None
 
 
 def run_build_returns(
@@ -103,17 +106,35 @@ def run_build_returns(
     date_from: str,
     date_to: str,
     conn: Database | None = None,
+    allow_no_dividends: bool = False,
 ) -> ReturnsReport:
+    """Build the total-return series into ``quant_return_daily``.
+
+    Raises :class:`DividendsNotReady` (T-086) unless a clean gateway ``backfill-actions``
+    covers the window: the table is ``INSERT OR IGNORE`` per ``(asset, day,
+    engine_version)``, so a series built without dividends is price-only and locks in.
+    *allow_no_dividends* builds one knowingly; the override is recorded on the run.
+    """
     owns = conn is None
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
         report = ReturnsReport(settings.return_engine_version)
+        reason = dividends_not_ready_reason(conn, date_from=date_from, date_to=date_to)
+        if reason is not None and not allow_no_dividends:
+            raise DividendsNotReady(reason)
+        report.dividends_guard_bypassed = reason
         run_id = open_run(
             conn,
             "build-returns",
             as_of=date_to,
-            params={"analysis_date": date_to, "date_from": date_from, "date_to": date_to},
+            params={
+                "analysis_date": date_to,
+                "date_from": date_from,
+                "date_to": date_to,
+                "allow_no_dividends": allow_no_dividends,
+                "dividends_guard_bypassed": reason,
+            },
             code_version=code_version(),
         )
         try:

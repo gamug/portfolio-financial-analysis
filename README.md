@@ -176,7 +176,7 @@ which no other package imports. See [docs/quant.md](docs/quant.md).
 
 ```bash
 uv run python -m quant backfill-actions                          # dividends/splits from the pricing gateway
-uv run python -m quant build-returns                             # total-return series -> quant_return_daily
+uv run python -m quant build-returns                             # total-return series; needs a clean backfill-actions first (T-086)
 uv run python -m quant build-risk-model --analysis-date 2026-08-27   # Ledoit-Wolf Sigma + shrunk mu
 uv run python -m quant optimize --analysis-date 2026-08-27 \
     --objectives min_var,tangency,target_vol,frontier            # persist the benchmark books
