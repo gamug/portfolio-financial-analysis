@@ -15,7 +15,7 @@ from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
-from quant.actions import GatewayUnavailable, backfill_corporate_actions
+from quant.actions import DividendsNotReady, GatewayUnavailable, backfill_corporate_actions
 from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
@@ -47,6 +47,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(br)
     br.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
     br.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
+    br.add_argument(
+        "--allow-no-dividends",
+        action="store_true",
+        help="build even though no clean gateway backfill-actions covers the window: the "
+        "series is price-only and locks in under the return engine version (T-086)",
+    )
 
     rm = sub.add_parser("build-risk-model", help="estimate mu / covariance for an as-of date")
     _add_common(rm)
@@ -169,6 +175,37 @@ def _run_backfill_actions(settings: QuantSettings, args: argparse.Namespace, dat
     return 1 if report.errors else 0
 
 
+def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_to: str) -> int:
+    """Exit 1 when the dividends guard refuses (T-086); a bypass is loudly reported."""
+    try:
+        rep = run_build_returns(
+            settings,
+            date_from=args.date_from,
+            date_to=date_to,
+            allow_no_dividends=args.allow_no_dividends,
+        )
+    except DividendsNotReady as exc:
+        print(
+            f"build-returns: refusing to build a total-return series -- {exc}.\n"
+            "  Run `python -m quant backfill-actions` first (it must finish with no errored "
+            "assets), or pass --allow-no-dividends to build a price-only series knowingly.",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        f"build-returns [{rep.engine_version}]: {rep.assets} assets, "
+        f"{rep.rows_written} new rows, {rep.assets_with_dividends} with dividends"
+    )
+    if rep.dividends_guard_bypassed is not None:
+        print(
+            f"  WARNING: --allow-no-dividends overrode the dividends guard "
+            f"({rep.dividends_guard_bypassed}); the series is price-only where dividends are "
+            f"missing and is locked in under {rep.engine_version}",
+            file=sys.stderr,
+        )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -183,14 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return _run_backfill_actions(settings, args, _date_to(analysis_date, args))
 
     if args.command == "build-returns":
-        rep = run_build_returns(
-            settings, date_from=args.date_from, date_to=_date_to(analysis_date, args)
-        )
-        print(
-            f"build-returns [{rep.engine_version}]: {rep.assets} assets, "
-            f"{rep.rows_written} new rows, {rep.assets_with_dividends} with dividends"
-        )
-        return 0
+        return _run_build_returns(settings, args, _date_to(analysis_date, args))
 
     if args.command == "build-risk-model":
         res = run_build_risk_model(settings, as_of=analysis_date, store_cov=args.store_cov)

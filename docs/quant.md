@@ -87,9 +87,19 @@ the **deployed** gateway (its `/pricing` mount); live verification, `T-052`, pas
 `quant_run.params_json` records `assets_seen` / `assets_fetched` / `assets_errored` and
 the first error messages.
 
-**Run `build-returns` only after a successful `backfill-actions`.** `quant_return_daily`
-is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built while
-`corporate_action` is empty is price-only *and* locks in under that version.
+**`build-returns` refuses to run without a clean gateway backfill behind it** (T-086).
+`quant_return_daily` is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series
+built while dividends are missing is price-only *and* locks in under that version. It
+proceeds only if a **completed** `backfill-actions` run whose window covers the build
+window fetched **every** asset (`assets_errored == 0`, both recorded in that run's
+`params_json`) and `corporate_action` holds gateway rows. Any such run will do — a later
+run that failed does not undo the rows an earlier clean one wrote. Otherwise it exits 1
+naming the reason (no run, a failed run, errored assets, a window that is not covered, a
+run recorded before T-085, or no gateway rows) and writes nothing; a refusal is not
+recorded as a run. `--allow-no-dividends` builds a knowingly price-only series anyway: it
+is loud on stderr and recorded in the `build-returns` run's `params_json`
+(`allow_no_dividends`, `dividends_guard_bypassed`), and the rows still lock in under
+`return_engine_version`.
 
 Splits are recorded for provenance only and never re-applied.
 

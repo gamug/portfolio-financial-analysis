@@ -16,7 +16,10 @@ from quant.returns import run_build_returns
 
 def _build_returns(conn: Database) -> None:
     s = QuantSettings(db_path=Path(":memory:"))
-    run_build_returns(s, date_from="2000-01-01", date_to="2100-01-01", conn=conn)
+    # These tests seed price-only history on purpose (with_dividends=False).
+    run_build_returns(
+        s, date_from="2000-01-01", date_to="2100-01-01", conn=conn, allow_no_dividends=True
+    )
 
 
 def test_panel_excludes_short_history_and_has_no_nan(

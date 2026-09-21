@@ -69,9 +69,9 @@ class QuantSettings(BaseModel):
     # was later removed by T-085 -- dividends now come only from the gateway) landed:
     # quant_return_daily is append-only keyed on (asset_id, obs_date, engine_version), so
     # a static version would silently no-op every re-run and never fold corrected
-    # dividends into the series. Run build-returns only *after* a successful
-    # backfill-actions -- rows built without dividends would be locked in under this
-    # version by INSERT OR IGNORE.
+    # dividends into the series. build-returns refuses to run until a clean gateway
+    # backfill-actions covers the window (T-086), because rows built without dividends
+    # would be locked in under this version by INSERT OR IGNORE.
     return_engine_version: str = "qret-v2"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"
