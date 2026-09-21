@@ -588,8 +588,8 @@ treating a related FR/NR as done:
    `GET /pricing/{ticker}/actions` (that repo's `PLAN.md` Work item 3) is built
    and, as of 2026-09-21, deployed and verified from here (`T-052`): production
    `corporate_action` holds 7,481 gateway rows for all 503 assets. `build-returns`
-   must still follow a successful `backfill-actions` (a series built without
-   dividends locks in as price-only); the guard is `T-086`. The consumer (`PLAN.md` Work item 10 / `T-085`) fails the
+   must follow a successful `backfill-actions` (a series built without
+   dividends locks in as price-only); and since `T-086` (2026-09-21) it refuses to run otherwise. The consumer (`PLAN.md` Work item 10 / `T-085`) fails the
    run when the gateway cannot serve, and gives an asset the gateway cannot serve
    no rows. Upstream is yfinance: unofficial, no SLA, and it cannot tell an unknown
    symbol from a name that paid nothing. The retired XBRL-derived engines

@@ -242,7 +242,7 @@ creates them before it builds the views.
   yfinance symbol it does not recognise still returns a clean empty result, and
   dividends with ex-dates after the last `price_daily` bar cannot fold into the
   series until prices are refreshed. A series built while `corporate_action` has no
-  gateway rows would be price-only — the guard for that is `T-086`.
+  gateway rows would be price-only — `build-returns` now refuses to do that (`T-086`).
 - **Survivorship bias (partly addressed).** The universe is now read point-in-time
   from `universe.db`, which carries real `valid_from` / `valid_to` stints, so
   `build-risk-model --analysis-date D` gates to the constituents that were in the
