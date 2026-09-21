@@ -38,8 +38,10 @@ _SHARE_SCALE_TOLERANCE = 0.10
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.
+# ``metrics-v2`` (T-088): F1/F2/F4/C1 and T-092/T-094 changed the ratios and the filing set, so a
+# row computed before them is distinguishable from one computed after.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v1"
+METRICS_ENGINE_VERSION = "metrics-v2"
 
 
 @dataclass(frozen=True)
