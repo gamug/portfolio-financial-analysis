@@ -18,7 +18,7 @@ done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order �
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
-amendment), `T-090` (metric-version selection and run manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
+amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
 `T-091` is superseded by `T-092`), `T-088`
 (purge the malformed Fundamental/Quant data — **the purge itself is done, 2026-09-21** — and
 run the 20-ticker deep validation),
@@ -567,8 +567,8 @@ dependency for the code; live verification is `T-052`.
 
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
-Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092` and `T-094` (all
-done 2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a
+Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092`, `T-094` and `T-087` (all
+done 2026-09-21) → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a
 **P0 blocker** — the fundamental pipeline could not ingest anything against the live gateway —
 and is done; it exposed `T-094` (now also done), which had to land before `T-088`'s re-ingest or
 the clean re-run would have activated it. `T-088`'s backup and purge (steps 1–2) were executed early, on 2026-09-21.
@@ -704,11 +704,21 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       behavior #12). Residual: metrics recorded before this fix are wrong for non-calendar filers —
       the derived data was purged (`T-088` step 2), so the recompute is `T-088`'s re-run under
       `metrics-v2`; a transition-period short quarter is untested (it should fall back, not mis-sum).
-- [ ] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
+- [x] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
       still lists `backfill-actions [--source derive|gateway]` and the flag no longer exists.
       Per its Governance section this is its own reviewed change — fix the line, bump PATCH
       (1.2.0 → 1.2.1), update "Last Amended" and the amendment log, and re-scan for any other
-      claim that dividends are derived from filings. → `PLAN.md` Work item 11, `T-087`.
+      claim that dividends are derived from filings. → `PLAN.md` Work item 11, `T-087`. **Done 2026-09-21** — constitution **1.2.0 → 1.2.1** (PATCH),
+      "Last Amended" 2026-09-21, amendment-log entry added. `quant backfill-actions` no longer
+      lists `--source` (annotated "dividends/splits from the pricing gateway (its only
+      source)"), and `build-returns` is annotated with the precondition `T-086` made a hard
+      rule. **Verification**: every `python -m` line in the block was re-checked against the real
+      CLIs' `--help` — 17 of 18 already correct, the `--source` line the only stale one (and
+      `quant backfill-actions --source derive` now really fails: `unrecognized arguments`); the
+      rest of the document was re-scanned for a claim that dividends are derived from filings
+      — none (its only mentions of `quant` are the import-isolation rules, the `quant_*` tables and
+      the deterministic-numerics rule); no other reference to version 1.2.0 remains. Docs-only,
+      its own change per Governance; no principle changed.
 - [ ] **T-090** Metric-version selection and run manifests ("version of versions") for `cycle`
       and `quant`, so several runs can coexist on different input versions. Today
       `cycle/data.py` (both metric reads) and `quant/db.py::load_market_caps` read
@@ -825,8 +835,8 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-`T-086`, `T-092` and `T-094` are done, and `T-088`'s purge was executed early; next up `T-087`
-→ `T-090` → `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
+`T-086`, `T-092`, `T-094` and `T-087` are done, and `T-088`'s purge was executed early; next up
+`T-090` → `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive

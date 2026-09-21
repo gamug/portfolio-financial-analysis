@@ -35,7 +35,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 (done 2026-09-21),
 `T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
 `sec_edgar` endpoints (done 2026-09-21),
-`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
+`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests,
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
@@ -951,7 +951,7 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6), `T-086`, `T-092` and `T-094` (all done 2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
+Work item 6), `T-086`, `T-092`, `T-094` and `T-087` (all done 2026-09-21) → `T-090` → `T-093` → `T-088` → `T-089`.
 `T-094` was found by `T-092`'s acceptance and had to land before `T-088`'s re-ingest. `T-088`'s backup
 and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
 `T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
@@ -1110,6 +1110,13 @@ lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. P
 Governance section this is its own reviewed change: fix the line, bump the version PATCH
 (1.2.0 → 1.2.1), update "Last Amended" and the amendment log, and re-scan the document for any
 other claim that dividends are derived from filings.
+
+**T-087 — Done 2026-09-21.** Constitution 1.2.0 → 1.2.1 (PATCH). `quant backfill-actions` no longer
+lists `--source`; it and `build-returns` carry short factual annotations (the gateway is the only
+source; `build-returns` refuses without a clean backfill, `T-086`). Every `python -m` line in the block
+was re-checked against the real CLIs' `--help` — 17 of 18 already correct, the `--source` line the only
+stale one; the rest of the document has no claim that dividends are derived from filings. No principle
+changed.
 
 **T-088 — Purge the malformed Fundamental/Quant data and run the 20-ticker deep validation.**
 The stored derived data pre-dates the F1/F2/F4/C1/C2 fixes and the audit found it malformed
@@ -1296,7 +1303,7 @@ this document.** Their internal sequencing:
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
-  `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution) → `T-090`
+  `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
   (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run
