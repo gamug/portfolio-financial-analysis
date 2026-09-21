@@ -16,9 +16,8 @@ pricing gateway as `quant`'s *only* corporate-actions source (the XBRL-derived
 fallback was removed: no repository but `portfolio-data-mining` mines data) — is
 done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order —
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
-`build-returns` guard — **done 2026-09-21**), **`T-092` (CRITICAL: integrate `portfolio-data-mining`'s
-multi-filing `sec_edgar` endpoints — the fundamental pipeline is broken against the live
-gateway)**, `T-087` (the constitution amendment), `T-090` (metric-version selection and run
+`build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
+multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-087` (the constitution amendment), `T-090` (metric-version selection and run
 manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
 `T-091` is superseded by `T-092`), `T-088`
 (purge the malformed Fundamental/Quant data and run the 20-ticker deep validation),
@@ -567,10 +566,10 @@ dependency for the code; live verification is `T-052`.
 
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
-Added 2026-09-21. Order: `T-052` (Work item 6, live check) and `T-086` (both done 2026-09-21) → **`T-092`** →
-`T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` is a **P0 blocker** — the fundamental
-pipeline cannot ingest anything against the live gateway until it lands — so it is next in the
-row. `T-090`/`T-093` (added the same day) come before `T-088` because its deep validation runs
+Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086` and `T-092` (all done
+2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a **P0 blocker** — the
+fundamental pipeline could not ingest anything against the live gateway — and is done.
+`T-090`/`T-093` (added the same day) come before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
 → `PLAN.md` Work item 11.
 
@@ -599,7 +598,7 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       checked: a guard that never refuses, an override that is ignored, errored assets
       tolerated, window coverage unchecked, pre-`T-085` runs accepted, failed runs counted,
       no check for gateway rows, and an exit code of 0 on refusal each fail their own test.
-- [ ] **T-092** **CRITICAL — next in the row.** Integrate `portfolio-data-mining`'s multi-filing
+- [x] **T-092** **CRITICAL.** Integrate `portfolio-data-mining`'s multi-filing
       `sec_edgar` endpoints. Its PR #39 ("return all filings for a form+year", merged
       2026-09-21T16:32Z, live on the gateway) is a **breaking change** to two routes:
       `GET /edgar/filing_by_year/{ticker}` now returns a **list** of every matching filing
@@ -624,7 +623,42 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       fixtures and tests for the new shapes, replacing the ones built on the old. This also
       resolves `T-091`'s root cause (one 10-Q per year, quarters stamped with a borrowed
       accession). Already-stored mis-attributed rows are repaired under `T-088`. Acceptance and
-      the live check in `PLAN.md`. → `PLAN.md` Work item 11, `T-092`.
+      the live check in `PLAN.md`. → `PLAN.md` Work item 11, `T-092`. **Done 2026-09-21.** `EdgarClient.filing_by_year` returns `list[FilingRef]` (an
+      object payload raises a clear `EdgarError`; an empty list is valid), `financials` takes
+      `accession_number`, and the ambiguity reply is `EdgarAmbiguousError(candidates)`;
+      "Company not found" is now `EdgarNotFoundError`, which makes the spelling fallback
+      work. The pipeline lists a year's filings, ingests **each** by accession **oldest
+      first**, gives each **one** target — its own period — so comparatives never become a
+      filing with a borrowed accession, skips already-scored accessions on resume without a
+      `financials` call, skips a filing dated after the analysis date without fetching it,
+      and one failing filing no longer stops its siblings; an empty year is a quiet skip,
+      while a company no spelling matches is a visible failure. The old
+      `period.year == task.year` filter is gone (`task.year` is the *filing* year, so it also
+      dropped a January 10-Q for a December quarter). 18 new hermetic tests on real captured
+      payloads (`tests/test_edgar_client.py`, `tests/test_pipeline_multi_filing.py`, fixtures
+      `edgar_multi_filing_responses.json` and a real STZ 10-Q whose payload carries a Q1
+      comparative), 2 existing tests updated; full suite (298), ruff, mypy green.
+      Mutation-checked ten ways (comparatives as filings, no oldest-first sort, a 10-K keeping
+      every match, no resume skip, no lookahead guard, only the first filing ingested, an
+      unknown company skipped quietly, the old object payload accepted, `accession_number`
+      never sent, the ambiguity reply treated as a generic error). **Live check** — the real
+      client against the live gateway, on a **scratch copy** of the DB with a stub analyst
+      (no LLM), XOM and STZ, 10-K and 10-Q, 2022–2026: 20 tasks → **38 filings ingested, 0
+      failed, 0 skipped, 0 errors**; XOM now holds Q1–Q3 in every year (it held one a year),
+      STZ likewise including its January-filed 10-Qs; **no (asset, accession) pair carries
+      more than one fiscal period**, and STZ's 2022Q1/2022Q2, which used to share
+      `0000016918-22-000181`, are now `-000143` and `-000181`. Production untouched; scratch
+      copy deleted. F4: XOM's TTM is now real from 2023Q1 (TTM/quarter revenue 3.2–4.7×,
+      ≈$334–460B); 2022 still falls back because no 2021 quarters are ingested. **Finding, not
+      fixed here**: `_quarter_flow` labels a fiscal year by the calendar year it *ends* in
+      (`FY2024` = STZ's year ending Feb-2024) but its quarters by the calendar year each
+      *ends* in (`2023Q1`–`Q3` belong to FY2024), so its Q4 derivation `FY{y} − {y}Q1..Q3`
+      reads the *next* fiscal year's quarters for a non-calendar filer — verified on real
+      stored values: it would read 2024Q2 net income of −$1,199M, STZ's FY2025 Q2
+      impairment. The scratch copy hid it only because its Q1 flows were not stored; a clean
+      re-ingest would activate it for STZ, BF.B and every other non-December filer. The
+      `--fresh` upsert on `(asset, form, fiscal_period)` heals the filing rows' accessions
+      but metrics stay `INSERT OR IGNORE`, so `T-088`'s purge is still needed.
 - [ ] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
       still lists `backfill-actions [--source derive|gateway]` and the flag no longer exists.
       Per its Governance section this is its own reviewed change — fix the line, bump PATCH
@@ -727,7 +761,7 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-and `T-086` are done; next up `T-092` → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.** **`T-085` (Work item 10, P0) is
+`T-086` and `T-092` are done; next up `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive

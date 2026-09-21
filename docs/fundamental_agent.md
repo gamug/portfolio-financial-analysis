@@ -37,10 +37,20 @@ doubled `/edgar` is intentional), `SEC_USER_AGENT`.
 
 Blocking HTTP client for the gateway. Endpoints: `/company_info/{t}`,
 `/years_available/{t}?form=`, `/filing_by_year/{t}?form=&year=`,
-`/financials/{t}?form=&year=`. Every response is a `{"success", "data"}` envelope,
-unwrapped by `_unwrap`. Retries 500/502/503/504 + transport errors (3 attempts,
-exp backoff ≤ 8 s); 404 → `EdgarNotFoundError`. `normalize_ticker` yields spelling
-candidates (`BRK.B` → `BRK-B` → `BRKB`).
+`/financials/{t}?form=&year=[&accession_number=]`. Every response is a
+`{"success", "data"}` envelope, unwrapped by `_unwrap`. Retries 500/502/503/504 +
+transport errors (3 attempts, exp backoff ≤ 8 s); 404 or "Company not found" →
+`EdgarNotFoundError`. `normalize_ticker` yields spelling candidates (`BRK.B` → `BRK-B`
+→ `BRKB`).
+
+**Multi-filing contract (T-092).** Since `portfolio-data-mining` PR #39, `year` is the
+*filing* year and one year can hold several filings of a form (three 10-Qs).
+`filing_by_year` returns a **list** of `FilingRef(form, filing_date, accession_number)`,
+most recent first, and an empty list — not an error — when there is none; an
+object-shaped (pre-#39) payload raises `EdgarError` rather than being guessed at.
+`financials` takes an optional `accession_number`, required whenever the year holds more
+than one filing of the form: without it the gateway answers `success: false` ("Found 3
+'10-Q' filings … Available: …"), surfaced as `EdgarAmbiguousError(candidates=[…])`.
 
 ### universe source
 
@@ -159,9 +169,18 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 ### `pipeline.py`
 
 `run(settings, params)` → connect, `ensure_schema`, sync universe, plan
-asset×form×year tasks, `_drive` with a `tqdm` bar. `_process` → fetch financials +
-meta → for each `_target` (10-K: latest FY + prior; 10-Q: matching-year quarters)
-→ `_analyze_one`. `_analyze_one`: upsert filing → `append_financial_facts` → (if
+asset×form×year tasks, `_drive` with a `tqdm` bar. `_run_task` → `_list_filings` (the
+ticker spelling EDGAR knows + every filing of the form that year) → `_select_filings`
+(**oldest first** — F4's TTM reads the prior quarters' already-recorded values — and, for
+a 10-K, only the most recent of several matches) → for each filing `_process_filing`:
+skip it if it is filed after the analysis date or its accession is already scored (a
+resumed run makes no `financials` call for it), fetch its statements by
+`accession_number`, then for its `_target` → `_analyze_one`. A filing has exactly **one**
+target — its *own* reporting period (10-K: the latest FY + prior; 10-Q: the latest quarter
+in the payload). The comparative columns (prior quarter, prior year) stay facts and never
+become a filing row of their own, which would stamp them with this filing's accession and
+date. One failing filing goes to `analysis_run_error` (with its accession) and does not stop
+its siblings. `_analyze_one`: upsert filing → `append_financial_facts` → (if
 `--sections`) `_extract_sections` (non-fatal, logged `stage='sections'`) → build
 `FilingContext` (+ price via `close_on_or_before`) → `analyst.analyze` →
 `record_metrics` → `insert_snapshot`. Failures per task go to `analysis_run_error`

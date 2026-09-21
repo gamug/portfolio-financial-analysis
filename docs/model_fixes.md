@@ -648,6 +648,17 @@ re-run belongs, after `T-063`/`T-064` (C1/C2) also land.
   rule) — it does not attempt to reconcile disagreeing engine versions
   beyond that.
 
+- **Update 2026-09-21 (`T-092`) — real TTM now works, and a non-calendar-year mismatch is
+  exposed.** The pipeline now ingests every 10-Q of a year (it stored about one a year), so the
+  three prior quarters this fix reads can exist: on a scratch re-ingest XOM's TTM is real from
+  2023Q1 (TTM/quarter revenue 3.2–4.7×). But `db._quarter_flow` labels a fiscal year by the
+  calendar year it *ends* in (`FY2024` = STZ's year ending Feb-2024) and a quarter by the calendar
+  year it ends in (`2023Q1`–`Q3` belong to FY2024), so its Q4 derivation `FY{y} − {y}Q1..Q3` reads
+  the *next* fiscal year's quarters for any non-calendar filer — on real stored values it would
+  read STZ's 2024Q2 net income of −$1,199M (an FY2025 impairment quarter). Invisible while the
+  quarters were missing; a clean re-ingest would activate it for STZ, BF.B and every other
+  non-December filer. Not fixed by `T-092`.
+
 ---
 
 ## C1 — T-1 veto cutoff: diagnosis corrected, no code fix

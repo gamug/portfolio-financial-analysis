@@ -33,8 +33,8 @@ pricing gateway is `quant`'s *only* corporate-actions source — data mining
 belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 2026-09-21 — in this order: the `T-052` live check of the gateway dividends
 (done 2026-09-21),
-`T-086` the `build-returns` guard (done 2026-09-21), **`T-092` the critical integration of the multi-filing
-`sec_edgar` endpoints (the fundamental pipeline is broken against the live gateway)**,
+`T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
+`sec_edgar` endpoints (done 2026-09-21),
 `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
@@ -951,8 +951,8 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6) and `T-086` (both done 2026-09-21) → **`T-092`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
-`T-092` is a **P0 blocker** (below) and is next in the row. `T-090`/`T-093` were added the same
+Work item 6), `T-086` and `T-092` (all done 2026-09-21) → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
+`T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
 day, from review of `T-088`'s caveats, and sit before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
 
@@ -1026,6 +1026,21 @@ path is unchanged; `pytest`/`ruff`/`mypy` green. **Live**, on a *scratch copy* o
 run reports no `AttributeError` and no ambiguity error; no (asset, accession) pair among the newly
 ingested rows carries more than one fiscal period. *Order*: **P0, next in the row** — every
 downstream task (`T-088`'s validation, the Phase A re-run) needs a pipeline that can ingest.
+
+**T-092 — Done 2026-09-21.** Built as specified, plus: "Company not found" is now
+`EdgarNotFoundError` so the ticker-spelling fallback works, and a resumed run skips the
+`financials` call for an already-scored accession. 18 new hermetic tests on real captured payloads;
+full suite 298; mutation-checked ten ways. **Live check** (real client, live gateway, scratch copy
+of the DB, stub analyst): XOM and STZ, 10-K and 10-Q, 2022–2026 → 38 filings ingested, 0 failed;
+XOM holds Q1–Q3 in every year; no (asset, accession) pair carries more than one fiscal period;
+STZ's formerly shared accession is now two distinct filings. XOM's F4 TTM is real from 2023Q1.
+**Finding for follow-up (not fixed here):** F4's `_quarter_flow` mismatches fiscal-year and quarter
+labels for a **non-calendar** filer — `FY{y}` is keyed by the calendar year the fiscal year *ends*
+in, `{y}Q1..Q3` by the calendar year each quarter ends in — so its Q4 derivation
+`FY{y} − {y}Q1..Q3` reads the *next* fiscal year's quarters (verified on STZ: it would read a
+−$1,199M net-income quarter from FY2025). It was invisible while only one 10-Q per year was stored;
+ingesting Q1–Q3 makes it reachable, so a clean re-ingest (`T-088`) would activate it for STZ, BF.B
+and every other non-December filer in the universe.
 
 **T-087 — Constitution amendment.** `.specify/memory/constitution.md` "Executable cmds" still
 lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. Per its
@@ -1208,8 +1223,8 @@ this document.** Their internal sequencing:
 
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
-  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → **`T-092` (critical: multi-filing
-  `sec_edgar` integration; blocks the fundamental pipeline)** → `T-087` (constitution) → `T-090`
+  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
+  `sec_edgar` integration — done 2026-09-21) → `T-087` (constitution) → `T-090`
   (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run

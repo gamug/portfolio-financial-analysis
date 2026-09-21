@@ -781,6 +781,21 @@ def completed_units(conn: Database) -> set[tuple[str, str, str]]:
     return {(r["ticker"], r["form"], r["fiscal_period"]) for r in rows}
 
 
+def completed_accessions(conn: Database) -> set[str]:
+    """Accession numbers whose filing already has a FUNDAMENTAL score -- lets a resumed
+    run skip the ``financials`` call for a filing it has already ingested (T-092: a year
+    now holds up to three 10-Qs, each fetched by its own accession)."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT f.accession_number AS accession
+        FROM score_snapshot s
+        JOIN sec_filings f ON f.id = s.filing_id
+        WHERE s.score_type = 'FUNDAMENTAL' AND f.accession_number IS NOT NULL
+        """
+    )
+    return {str(r["accession"]) for r in rows}
+
+
 def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = None) -> None:
     """Append one immutable FUNDAMENTAL ``score_snapshot`` row. Resume-safe:
     a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored."""
