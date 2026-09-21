@@ -28,13 +28,19 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: **Work item 10 (P0 — `T-085`, next up, added
-2026-09-20: consume the `portfolio-data-mining` corporate-actions endpoint;
-no external dependency)**, with Work item 5 ∥ Work item 6 (independent,
-external prerequisites; Work item 6's implementation now lives in
+Execute in this order: **Work item 10 (P0 — `T-085`; done 2026-09-20: the
+pricing gateway is `quant`'s *only* corporate-actions source — data mining
+belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
+2026-09-21 — in this order: the `T-052` live check of the gateway dividends
+(done 2026-09-21),
+`T-086` the `build-returns` guard, `T-087` the constitution amendment, `T-088`
+the malformed-data purge + 20-ticker deep validation run, `T-089` the
+architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
+(independent, external prerequisites; Work item 6's implementation now lives in
 `portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
 correctness fixes, highest priority in this file; its remaining live run
-`T-068` is sequenced after `T-085`)** → **Work item 8 (P1 — methodological
+`T-068` is re-scoped: Phase A runs first on the 20-ticker sample inside
+`T-088`, and `T-068` keeps only the full-universe extension)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)**.
@@ -111,9 +117,11 @@ Everything else in `SPEC.md` §13 stays exactly as §14 disposed of it —
   **partially superseded** by the 2026-09-08 audit — the free,
   `yfinance`-backed gateway endpoint (Work item 6, built upstream in
   `portfolio-data-mining`) and the zero-cost
-  10-Q-derived Level-1 dividend fix (Work item 7's Q3 task) are now in
+  10-Q-derived Level-1 dividend fix (Work item 7's Q3 task) were put in
   scope as P0, since both were found to be low-cost and already
-  practically necessary. Still out of scope: a **paid vendor** total-return
+  practically necessary. *(2026-09-20: the Level-1 derivation was then
+  removed — Work item 10 / `T-085` makes the gateway `quant`'s only source,
+  since mining data is `portfolio-data-mining`'s job alone.)* Still out of scope: a **paid vendor** total-return
   pull or a precise, split-adjusted historical corporate-actions series —
   that remains a separate, larger conversation about vendor cost/access,
   per SPEC.md §14.
@@ -407,7 +415,7 @@ contract that client depends on, and the verification:
   "yfinance"}` — `dividends[].value` is cash/share, `splits[].value` is a
   ratio (e.g. `4.0` for a 4:1 split). No corporate actions in range → empty
   lists, **never** a 404 (a 404 reads to the probe as "endpoint doesn't
-  exist" and it keeps falling back to the derive path).
+  exist" and the client treats the route as absent).
 - **Upstream decision (differs from this work item's original step 2)**: v1 is
   yfinance-only, not the candle endpoint's Finnhub-first/yfinance-fallback
   pattern — Finnhub's dividend/split endpoints are unverified as free-tier.
@@ -426,11 +434,11 @@ contract that client depends on, and the verification:
   `quant_return_daily.cash_dividend` is `> 0` for those tickers (currently
   `$0.00` for all four — see Work item 7's Q3 finding).
 - Sequencing: land after Work item 5, before Work item 7's dividend task —
-  `backfill-actions --source gateway` at priority `corpact-v1` only
-  produces real data once this endpoint is live. *(2026-09-20: the
-  consumer-side code that makes `--source gateway` the default and survives
-  the gateway's failure modes is Work item 10 / `T-085`; this section's
-  acceptance criteria are what `T-052` verifies live.)*
+  `backfill-actions` at priority `corpact-v1` only produces real data once
+  this endpoint is live. *(2026-09-20: the consumer — the gateway as `quant`'s
+  **only** dividend/split source, failing fast when it cannot serve — is Work
+  item 10 / `T-085`; this section's acceptance criteria are what `T-052`
+  verifies live.)*
 
 ## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
 
@@ -599,7 +607,10 @@ active veto.
 
 **Q3 — Dividend shortage: Level-1 quarterly derivation. RESOLVED
 2026-09-15, `T-066` (Level-1/local half only) — full record in
-`docs/model_fixes.md`'s Q3 entry.** (needs Work
+`docs/model_fixes.md`'s Q3 entry. SUPERSEDED 2026-09-20 by Work item 10 /
+`T-085`: the derivation below was removed from `src/` — dividends now come
+only from the gateway, because no repository other than `portfolio-data-mining`
+should mine data. The text is kept as the historical record.** (needs Work
 item 6 for the final `corpact-v1` target, but this half is local-only and
 zero-cost). `src/quant/actions.py`'s `corpact-v0-approx` divides annual
 10-K DPS by 4 onto synthetic quarterly dates; verified: only 301/503
@@ -635,7 +646,7 @@ both `> 0` rows after a corrected `evaluate`/`optimize` run.
 **Sequencing note** (from the audit's own recommended re-run order —
 preserve this since the source doc is deleted): run as **Phase A —
 deterministic, $0, minutes-to-hours, no LLM calls**: F1/F2/F4 recompute →
-Ring-1 `DQ_*` backfill + Q3 Level-1 dividends → re-run `cycle` (scores +
+Ring-1 `DQ_*` backfill + gateway dividends (Work item 10 / `T-085`, live check `T-052`) → re-run `cycle` (scores +
 vetoes + ranking, exercising the C1 fix) → re-run the full `quant`
 pipeline + `evaluate` (exercising the Q2 fix). This phase alone is enough
 to produce a valid "iteration 2" that validates the entire deterministic
@@ -825,95 +836,184 @@ verified against fixtures, not a re-graphed production `shared_executive_edge`.
   tracked as blocked-pending-`urls.db`-transfer, not silently treated as
   done once the code fix lands.
 
-## Work item 10 — P0: consume the `portfolio-data-mining` corporate-actions endpoint (this repo, NEXT UP)
+## Work item 10 — P0: make the `portfolio-data-mining` corporate-actions gateway `quant`'s only source (this repo) — DONE 2026-09-20
+
+**Scope (corrected 2026-09-20)**: the first version of this item made the gateway
+the *primary* source and kept the XBRL-derived engines as a fallback. That was
+wrong. **`portfolio-data-mining` is the only repository whose scope is mining
+data; no other repository should host that kind of service.** Deriving dividends
+from filings inside `quant` was data acquisition done in the wrong repo. So the
+gateway is the **only** source and the derivation is **removed**, not kept.
 
 **Why**: PR #45 (2026-09-19) moved the yfinance-backed endpoint's
 *implementation* to `portfolio-data-mining` — built and merged there as its
-PR #36 (`T-020`–`T-025`), awaiting only the operator's redeploy (`T-026`).
-That left this repo's *consumption* of it un-tasked, and reading
-`src/quant/actions.py`/`pricing_client.py`/`cli.py` on 2026-09-20 shows the
-consumer is still shaped for a gateway that "may not serve actions":
+PR #36 (`T-020`–`T-025`), awaiting only the operator's redeploy (`T-026`) — but
+left this repo's *consumption* of it un-tasked. And `src/quant/actions.py` was
+still shaped around a gateway that "may not serve actions":
 
-1. **The default is the fallback.** `backfill-actions --source` defaults to
-   `derive` (`cli.py`, and `backfill_corporate_actions(source="derive")`), so
-   real ex-dates are fetched only if someone remembers `--source gateway`.
-2. **One gateway failure aborts the run, and a dead gateway is slow.** Only
-   the first asset is probed; a per-asset `GatewayError` is not in the
-   `except (ActionsNotSupported, DatabaseError)` clause, so it propagates to
-   `fail_run` and re-raises. Each dead call costs `max_retries` (3) × the
-   60 s timeout plus backoff, over a 503-asset universe — the same shape as
-   the 2026-09-19 `fundamental_agent` runs (`analysis_run` 5–9), which spent
-   hours per run on gateway retries.
-3. **An upstream failure looks like "no dividends".** Upstream's
-   `get_corporate_actions` never raises: a yfinance failure yields empty
-   lists plus a `warning` field (`portfolio-data-mining` `T-020`).
-   `RawActions` has no `warning`, so `_parse_rows` returns `[]` and the outage
-   is stored as a ticker that paid nothing — in gateway mode the derived
-   paths do not run, so the asset ends up with no dividend row at all.
+1. **A second, in-repo source of the same data.** `derive_corporate_actions_from_facts`
+   (`corpact-v0-approx`) and `derive_quarterly_dividends_from_10q_ytd`
+   (`corpact-v1-derived`, `T-066`) mined dividends out of `financial_facts`, and the
+   CLI defaulted to them (`--source derive`).
+2. **One gateway failure aborted the run, and a dead gateway was slow.** Only the
+   first asset was probed; a per-asset `GatewayError` was not in the
+   `except (ActionsNotSupported, DatabaseError)` clause, so it propagated to
+   `fail_run` and re-raised. Each dead call costs `max_retries` (3) × the 60 s
+   timeout plus backoff, over a 503-asset universe — the same shape as the
+   2026-09-19 `fundamental_agent` runs (`analysis_run` 5–9), which spent hours per
+   run on gateway retries.
+3. **An upstream failure looked like "no dividends".** Upstream's
+   `get_corporate_actions` never raises: a yfinance failure yields empty lists plus
+   a `warning` field (`portfolio-data-mining` `T-020`), which the client dropped.
 
 **Approach**:
 
-1. Default `backfill-actions --source` to `gateway`, in the CLI and in
-   `backfill_corporate_actions`; `--source derive` stays selectable.
-   Flipping the default is safe before upstream's redeploy: a failed probe
-   already falls back to deriving the whole run and reports
-   `(gateway probe failed -> derived)`.
-2. Per-asset fallback: on `GatewayError`, `ActionsNotSupported`, or a
-   response with a non-empty `warning`, derive **that asset** with both
-   derived engines instead of aborting or writing a false empty. Never
-   record a warning-bearing empty response as a result.
-3. `RawActions` gains `warning: str | None`. Parse the upstream contract's
-   extra fields (`start_date`/`end_date`/`source`/`warning`) while staying
-   tolerant of the two older request shapes and the `[date, value]` pair
-   row format.
-4. Circuit breaker: after `K` consecutive gateway failures (a
-   `QuantSettings` field, default 3), stop calling the gateway for the rest
-   of the run and derive the remaining assets. Report it
-   (`gateway_circuit_open`).
-5. Report per-source asset counts (`gateway`, `derived_fallback`) in the
-   `backfill-actions` output line and in `quant_run.params_json`, so a run
-   that silently became mostly-derived is visible.
-6. **Keep the derived paths** (`corpact-v0-approx`, `corpact-v1-derived`) as
-   the documented fallback; do not retire them. Upstream's yfinance is
-   unofficial and has no SLA (`portfolio-data-mining` `SPEC.md` §13 item 9),
-   so the gateway will fail sometimes; retiring the fallback would swap a
-   $0-dividend bug for an outage-shaped one. `_ACTION_ENGINE_PRIORITY` in
-   `quant/db.py` is unchanged, and history stays append-only (nothing is
-   rewritten). *(A decision made in this plan — flagged for review.)*
-7. Pin the upstream contract in a hermetic test through
-   `httpx.MockTransport` (no live network): the response shape
-   `{ticker, start_date, end_date, source: "yfinance", dividends, splits,
-   warning}`, using upstream's own verified values (XOM's four 2024
-   dividends; NVDA's 10-for-1 split on 2024-06-10).
-8. Docs: `docs/quant.md` (source semantics, per-asset fallback, breaker),
-   `SPEC.md` §13 item 5, and a residual-scope note in `docs/model_fixes.md`'s
-   Q3 entry.
+1. **Remove the derivation.** Delete `derive_corporate_actions_from_facts`,
+   `derive_quarterly_dividends_from_10q_ytd`, their helpers and constants, the
+   `--source` flag and the report's per-source fields. `quant.actions` no longer
+   reads `financial_facts`. History is untouched (the table is append-only):
+   rows written earlier under `corpact-v0-approx` / `corpact-v1-derived` stay, but
+   `quant.db.load_actions` reads only gateway engines (`corpact-v2` > `corpact-v1`).
+2. **Fail fast, never degrade.** A failed probe of the first asset, or the circuit
+   breaker opening after `K` consecutive gateway *errors*
+   (`QuantSettings.gateway_max_consecutive_failures`, default 3), raises
+   `GatewayUnavailable`: `quant_run.status = 'failed'`, CLI exit 1. Only errors count —
+   each has already paid `max_retries` × the timeout. Rows already written are kept,
+   so a re-run resumes cheaply.
+3. **An asset the gateway cannot serve gets no rows** and is listed in the report
+   (a warning, an unsupported route, or one isolated error). The run completes and
+   the CLI exits 1, because the dividend series would be incomplete. A warning
+   means the gateway answered, so it resets the breaker's streak; a global yfinance
+   outage (every ticker a fast warning) lists every asset without tripping it.
+4. **Client.** `QuantPricingClient.actions` raises `ActionsUnavailable` on a non-null
+   `warning` (upstream sets it only when yfinance failed), so `probe()` is `False`
+   while yfinance is down and no caller can mistake an outage for an empty result; an
+   error status or unparseable body becomes `GatewayError`. Dotted share classes are
+   requested in yfinance's spelling (`BF.B` → `BF-B`): upstream's route only
+   upper-cases the ticker and yfinance answers an unknown symbol with a clean empty
+   result, so `BF.B` would otherwise read as a name that paid nothing.
+5. **Report** `assets_seen` / `assets_fetched` / `assets_errored` and the first error
+   messages in the summary and in `quant_run.params_json`.
+6. **Pin the upstream contract** in a hermetic `httpx.MockTransport` test
+   (`{ticker, start_date, end_date, source: "yfinance", dividends, splits, warning}`;
+   illustrative values modelled on upstream's own live check), and pin the scope with
+   a test that `quant.actions` neither reads `financial_facts` nor exposes a derive
+   function.
+7. **Docs/spec**: `docs/quant.md`, `README.md`, `SPEC.md` (§5 data flow, FR-009, §13
+   item 5 and its §14 disposition), `docs/model_fixes.md`'s Q3 entry (superseded).
 
 **Acceptance criteria**:
 
-- Hermetic tests (`tests/test_quant_actions.py`, plus a `QuantPricingClient`
-  test module) cover: default source is `gateway`; a per-asset `GatewayError`
-  derives that asset while the others still come from the gateway and the
-  run completes; a `warning` response derives and writes no gateway row;
-  the breaker opens after `K` consecutive failures and later assets make no
-  further HTTP calls; a probe failure still derives the whole run (the
-  existing test stays green); the upstream fixture parses to the expected
-  dividends/splits; `load_actions` priority is unchanged.
-- The report line and `quant_run.params_json` show the per-source counts.
+- Hermetic tests (`tests/test_quant_actions.py`, `tests/test_quant_pricing_client.py`)
+  cover: no `--source` flag and no `source` parameter; `quant.actions` has no derive
+  path; `load_actions` ignores the retired derived engines and prefers the newest
+  gateway engine; a healthy run writes `corpact-v1` rows and is idempotent; an
+  isolated gateway error and a `warning` each leave that asset without rows, list it,
+  and let the run complete; warnings never open the breaker and a success resets the
+  streak; a failed probe fails the run with nothing written and only the probe
+  request made; the breaker fails the run after `K` consecutive errors, makes no
+  further calls, and keeps earlier rows; the CLI exits 1 for an unavailable gateway
+  and for any errored asset; the upstream contract parses; a dotted ticker is
+  requested as `BF-B`.
 - `uv run pytest`, `ruff check`, `ruff format --check` and `mypy` are green.
-- **Not part of this task's box:** live verification. That is `T-052` — it
-  needs upstream's `T-026` redeploy and must run against the deployed
-  `PRICING_BASE_URL` (the gateway's `/pricing` mount), because upstream
-  verified the client only against a local copy of the service.
+- **Not part of this task's box:** live verification. That is `T-052` — it needs
+  upstream's `T-026` redeploy and must run against the deployed `PRICING_BASE_URL`
+  (the gateway's `/pricing` mount), because upstream verified the client only against
+  a local copy of the service.
 
-**Sequencing**: no external dependency — start now. Work item 7's `T-068`
-live re-run should not write production dividends before this lands: its
-dividend backfill and `quant` re-run wait for `T-085` (and for `T-052` once
-the endpoint is redeployed), so dividends are written once from the gateway
-rather than derived first and redone. `T-068`'s metrics-recompute and
-`cycle` steps are not held up. If the redeploy slips and `T-068` cannot
-wait, run its dividend step with an explicit `--source derive` and repeat
-that step only after `T-052`.
+**Consequences and residual risks** (deliberate, flagged for review):
+
+- **No dividends until `T-052`.** *(Resolved 2026-09-21: `T-052` passed — 7,481
+  gateway rows are in production `corporate_action`.)* With the derive path gone,
+  `corporate_action` had no gateway rows and `quant` could not produce dividends
+  until the endpoint was live. `build-returns` must follow a successful `backfill-actions`: it is
+  `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built with no
+  dividends is price-only *and* locks in under `qret-v2`.
+- **A single, unofficial source.** yfinance has no SLA and cannot tell an unknown
+  symbol from a name that paid nothing, so a symbol it does not recognise stays at
+  `$0` with no error — only `T-052`'s live check on real tickers (`BF.B` is the one
+  dotted symbol in the current set) can catch that.
+- **`v_corporate_action`** (the `kg_schema` read contract the knowledge-graph repo
+  consumes) still resolves legacy derived rows; whether to hide the retired engines
+  from that contract is a separate decision, not made here.
+- **The constitution's "Executable cmds"** still lists
+  `backfill-actions [--source derive|gateway]`; under its Governance section that
+  needs its own reviewed change (PATCH), so it is not edited here.
+
+**Sequencing**: the code has no external dependency and is done. `T-068`'s dividend
+backfill and `quant` re-run wait for `T-052` (upstream's redeploy + the live check);
+there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute and
+`cycle` steps are not held up.
+
+## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
+
+Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
+Work item 6) → `T-086` → `T-087` → `T-088` → `T-089`.
+
+**T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
+IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
+gateway rows is price-only *and* locks in under that version. `run_build_returns`
+(`src/quant/returns.py`) must refuse — exit 1 with a clear message — unless the latest
+`backfill-actions` `quant_run` covering the build window is `completed` with
+`assets_errored == 0` (both already recorded in its `params_json` by `T-085`) and gateway
+`corporate_action` rows exist. An explicit `--allow-no-dividends` override builds a knowingly
+price-only series and records that in `params_json`. *Acceptance*: hermetic tests for no
+backfill run, a failed run, a run with errored assets, a window the run does not cover, and the
+override; `pytest`/`ruff`/`mypy` green.
+
+**T-087 — Constitution amendment.** `.specify/memory/constitution.md` "Executable cmds" still
+lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. Per its
+Governance section this is its own reviewed change: fix the line, bump the version PATCH
+(1.2.0 → 1.2.1), update "Last Amended" and the amendment log, and re-scan the document for any
+other claim that dividends are derived from filings.
+
+**T-088 — Purge the malformed Fundamental/Quant data and run the 20-ticker deep validation.**
+The stored derived data pre-dates the F1/F2/F4/C1/C2 fixes and the audit found it malformed
+(e.g. CPT's 127× net margin from a mis-resolved revenue concept, 10-Q ratios ≈0.26× their 10-K
+equivalents), and `fundamental_metrics` is `INSERT OR IGNORE` per engine version, so a re-run
+could not replace it. Scope, decided 2026-09-21: **all 503 assets, derived data only**.
+1. Fresh backup `financial.db.pre-t088-backup-<date>`; confirm it opens and row counts match.
+2. One transaction, explicit table list, counts logged before and after. *Delete*:
+   `fundamental_metrics`, `score_snapshot` (all types), `fundamental_snapshot_legacy`,
+   `cycle_ranking`, `cycle_checkpoint`, `cycle_run`, `veto`, `portfolio_position`,
+   `sector_aggregate_snapshot`, `quant_return_daily`, `quant_covariance`,
+   `quant_expected_return`, `quant_risk_model`, `quant_position`, `quant_portfolio`,
+   `quant_frontier_point`, `quant_benchmark_performance`, `quant_run`, and the retired derived
+   `corporate_action` rows (`corpact-v0-approx`, `corpact-v1-derived`), children before parents.
+   *Keep*: `assets`, `sectors`, the raw ingest (`sec_filings`, `financial_facts`,
+   `sec_filing_section`), prices, universe tables, `benchmark_series`, `risk_free_rate`,
+   `rule_catalog`, `schema_version`, `shared_executive_edge`, the run logs (`analysis_run*`,
+   `pricing_run*`) and the gateway `corporate_action` rows from `T-052`.
+3. Bump `METRICS_ENGINE_VERSION` to `metrics-v2` (`src/fundamental_agent/db.py`) with a test, so
+   fixed-engine rows are distinguishable from any old copy. Also make the three readers
+   engine-aware — `cycle/data.py` (both metric reads) and `quant/db.py::load_market_caps` filter
+   on no `engine_version`, so a future parallel version would be read twice or won by row order;
+   they are safe today only because the purge leaves a single version.
+4. Run the validation on **20 tickers** (MCD, WAT, XOM, PG, T, NEE, MA, CPT, UDR, ESS, SBAC,
+   APO, WFC, HUM, HOOD, APA, BF.B, PM, STZ, PSX): `fundamental_agent`/`pricing_agent` take
+   `--tickers`; `cycle` and `quant` take `--universe-db`, so use a 20-member `universe.db`. Then
+   Phase A: fundamental run → `cycle` → `quant backfill-actions` → `build-returns` (the `T-086`
+   guard active) → risk model → `optimize` (including `frontier`) → `evaluate`.
+5. *Acceptance*: re-run the data-quality audit on the 20 tickers — margins within plausible
+   bounds, 10-Q ratios on the annual basis, `LEVERAGE_EXTREME` firing for negative-equity names,
+   gateway dividends present in `quant_return_daily`.
+*Consequences*: the purge empties `cycle`, `quant` and the API's `v_*` views for all 503 assets
+until a full re-run (`T-079`); it departs from the repo's append-only convention, so it is a
+one-off, backed-up, transactional reset rather than a new command. *Validity caveat*: F4's true
+TTM (`db.ttm_flows`) needs four consecutive quarters already recorded, and the data holds about
+one 10-Q per fiscal year, so most 10-Qs will take the `current × 4` fallback — record that
+fraction in the result. Fixing 10-Q ingestion is a separate task, not a blocker.
+
+**T-089 — Reconcile the two architecture artifacts.** Constitution AI behavior #11 requires it
+at the close of every development effort, and no task covered the audit-era fixes. Update both
+the system-wide [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
+and the repository-specific [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0)
+artifact: **content only — never rename either or change its `<title>`**. Cover F1, F2, F4,
+C1 (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (the gateway as the only
+corporate-actions source) and, as they land, `T-086`/`T-088`; close the gaps and plan steps
+they built, and correct prose that describes a fixed gap. Read the live artifact first and
+republish in place by URL. A first pass can run any time after the `T-085` PR merges; a second,
+delta pass follows `T-088`.
 
 ## Sequencing
 
@@ -935,9 +1035,12 @@ items 1–3 and can proceed in parallel at any time; it does not touch
 execution priority — see the Priority Override section near the top of
 this document.** Their internal sequencing:
 
-- **Work item 10 (`T-085`, consume the corporate-actions endpoint) is next
-  up (2026-09-20).** It has no external dependency, and Work item 7's
-  `T-068` dividend backfill / `quant` re-run wait for it.
+- **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
+  (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
+  (live check — done 2026-09-21) → `T-086` (guard) → `T-087` (constitution) → `T-088` (purge +
+  20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run
+  any time after `T-085` merges). Work item 7's `T-068` is re-scoped behind
+  `T-088`.
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
   as its `PLAN.md` Work item 3, consumed here by Work item 10, verified
@@ -946,7 +1049,8 @@ this document.** Their internal sequencing:
 - Work item 7 (P0 critical fixes) is the top priority in this repo. Its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
   within it; its Ring-1 `DQ_*` gates need Work item 5 (A1); its dividend
-  fix's Level-1 half is local-only, its final target needs Work item 6.
+  fix's Level-1 half was local-only but has since been removed — dividends
+  now come only from the gateway (Work item 10), verified live by `T-052`.
   Follow the audit's own **Phase A → Phase B → Phase A-downstream**
   re-run order (documented in Work item 7's own Sequencing note) once the
   code fixes land — recomputation is $0/deterministic and can run

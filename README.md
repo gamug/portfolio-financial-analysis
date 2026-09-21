@@ -175,7 +175,7 @@ numeric dependency in the repo (numpy / scipy / cvxpy); confined to `quant/`,
 which no other package imports. See [docs/quant.md](docs/quant.md).
 
 ```bash
-uv run python -m quant backfill-actions --source derive          # dividends -> corporate_action
+uv run python -m quant backfill-actions                          # dividends/splits from the pricing gateway
 uv run python -m quant build-returns                             # total-return series -> quant_return_daily
 uv run python -m quant build-risk-model --analysis-date 2026-08-27   # Ledoit-Wolf Sigma + shrunk mu
 uv run python -m quant optimize --analysis-date 2026-08-27 \
@@ -185,8 +185,7 @@ uv run python -m quant evaluate --from 2026-08-27               # forward return
 
 For the `--from`/`--to` subcommands (`backfill-actions`, `build-returns`, `benchmark`,
 `evaluate`), `--analysis-date` (default: today) is the upper bound: `--to` is clamped to it,
-`quant_run.as_of` is stamped with it, and `backfill-actions --source derive` only reads
-filings with `period_end <= analysis-date`.
+`quant_run.as_of` is stamped with it.
 
 `entity_resolution build` also takes `--analysis-date`: it drives the `cycle_run.cycle_date`
 stamp, reads the universe from `universe.db` as of that date, and drops news whose

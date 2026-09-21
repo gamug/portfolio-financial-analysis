@@ -11,14 +11,18 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 5–9 below
 (`T-040`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. **Next up (2026-09-20): Work item 10 (`T-085`, P0) —
-consume the `portfolio-data-mining` corporate-actions endpoint as
-`quant`'s primary dividend/split source.** It has no external dependency
-and goes first; Work item 5 ∥ 6 continue in parallel as external
-prerequisites. Then **7 (P0; its remaining live run `T-068` is sequenced
-after `T-085`)** → **8 (P1, supersedes Work item 3/`T-020`–`T-026`)** →
-Work items 2/4 (unaffected, original priority) → **9 (P2)**. See
-`PLAN.md`'s "🔴 Priority Override"
+open design work. **Work item 10 (`T-085`, P0) — the `portfolio-data-mining`
+pricing gateway as `quant`'s *only* corporate-actions source (the XBRL-derived
+fallback was removed: no repository but `portfolio-data-mining` mines data) — is
+done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order —
+`T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
+`build-returns` guard), `T-087` (the constitution amendment), `T-088` (purge the
+malformed Fundamental/Quant data and run the 20-ticker deep validation), `T-089`
+(reconcile the two architecture artifacts; docs-only, first pass any time after the
+`T-085` PR merges).** Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
+continue in parallel as external prerequisites → **8 (P1, supersedes Work item
+3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
+**9 (P2)**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
@@ -200,15 +204,38 @@ stays open: it is this repo's consumer-side verification and is now
 - [ ] **T-051** *(moved to `portfolio-data-mining`, redeploy is its
       `T-026` handoff — do not implement here)* Redeploy the `:8000`
       gateway service. → step 3.
-- [ ] **T-052** *(blocked on `portfolio-data-mining` `T-020`–`T-026`;
-      the consumer code it exercises is `T-085`)*
+- [x] **T-052** *(was blocked on `portfolio-data-mining` `T-020`–`T-026`;
+      the consumer code it exercises is `T-085` — now the **only** source)*
       Verify: `QuantPricingClient(...).probe('XOM')` returns
       `True`; after `quant backfill-actions` (priority `corpact-v1`),
       XOM/PG/T/NEE show `cash_dividend > 0` in `quant_return_daily`. Run
       it against the *deployed* `PRICING_BASE_URL` (the gateway's `/pricing`
       mount), not a local copy of the service — upstream's `T-026`
       verified the client against the latter only. →
-      `PLAN.md` acceptance criteria.
+      `PLAN.md` acceptance criteria. **Done 2026-09-21**, live against the
+      deployed gateway (`http://host.docker.internal:8000/pricing`; the route is
+      `/pricing/pricing/{ticker}/actions`, the single-segment path is a 404).
+      `quant backfill-actions --analysis-date 2026-09-21` (run from the `T-085`
+      branch, `quant_run` 6, `completed`, exit 0, backup taken first): **503 of
+      503 assets fetched, 0 errored, 7,412 dividends + 69 splits = 7,481
+      `corpact-v1` rows**; the only tables that changed versus the backup are
+      `corporate_action` (+7,481) and `quant_run` (+1). XOM, PG, T and NEE each
+      have 19 gateway dividends (all had $0 before); BF.B has 19 through the
+      dotted-ticker spelling (`BF-B`); NVDA's 10-for-1 split (2024-06-10) is
+      present. On a **scratch copy** of the DB, `build-returns` wrote 580,343
+      `qret-v2` rows with 409 assets carrying dividends and
+      `SUM(cash_dividend) > 0` for XOM (18.16), PG (18.72), T (5.524), NEE (9.146);
+      production `build-returns` was deliberately not run (`T-086` not built,
+      `T-088` will rebuild). Independent cross-check of the 77 assets with no
+      gateway rows: only GNRC, BSX and APTV had filing-derived dividends, all
+      phantom values ($0.001–$0.058) from the removed derivation — none of
+      them pays a dividend — while the gateway found dividends for 111 assets
+      the derivation had missed; BRK.B (dotted) is a genuine non-payer, and
+      HOOD and WAT are non-payers. Notes: ex-dates after the last price bar
+      (2026-08-27) — NEE's 2026-08-28, BF.B's 2026-09-03 — cannot fold into
+      the return series until prices are refreshed; T shows a 2022-04-11
+      `SPLIT` of 1.324 (yfinance's encoding of the WarnerMedia spin-off) —
+      splits are recorded for provenance only and never re-applied.
 
 ## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
 
@@ -311,7 +338,11 @@ stays open: it is this repo's consumer-side verification and is now
       `PLAN.md` Work item 7's table) writing to `data_quality_issue` +
       driving a new `cycle` data-quality veto on HARD. **Needs T-040.** →
       Ring-1 section.
-- [x] **T-066** Fix **Q3** — derive quarterly dividends from successive
+- [x] **T-066** *(**SUPERSEDED 2026-09-20 by `T-085`**: the derivation below was
+      removed from `src/` — dividends now come only from the pricing gateway,
+      because mining data is `portfolio-data-mining`'s job alone. Kept unchanged
+      as the historical record; the `corpact-v1-derived` rows it wrote remain in
+      the table but `load_actions` no longer reads them.)* Fix **Q3** — derive quarterly dividends from successive
       10-Q YTD differences (`corpact-v1-derived`) in
       `src/quant/actions.py`; add engine-version priority
       (`corpact-v2` > `corpact-v1` > `corpact-v1-derived` >
@@ -334,8 +365,8 @@ stays open: it is this repo's consumer-side verification and is now
       local-only half of Q3 — Work item 6's gateway `corpact-v1` target
       is unaffected by this fix. *(Updated 2026-09-20: the endpoint is now
       built upstream — `portfolio-data-mining` PR #36 — but not yet
-      redeployed (its `T-026`), and this repo does not yet consume it by
-      default; that consumer half is `T-085`, verified by `T-052`.)* Full record in
+      redeployed (its `T-026`); `T-085` made it `quant`'s only source and
+      removed this fix's derivation, and `T-052` verifies it live.)* Full record in
       `docs/model_fixes.md`'s Q3 entry. → `PLAN.md` Work item 7, Q3.
 - [x] **T-067** Fix **Q2** — align `quant evaluate`'s default `--from` to a
       date with real forward price coverage; ensure the `frontier`
@@ -358,15 +389,21 @@ stays open: it is this repo's consumer-side verification and is now
       (245, was 243), ruff, mypy all green. Full record in
       `docs/model_fixes.md`'s Q2 entry. → `PLAN.md` Work item 7, Q2.
 - [ ] **T-068** Run the audit's **Phase A** re-sequence: recompute metrics
-      (F1/F2/F4) → backfill `data_quality_issue` (T-065) + Q3 dividends
-      (T-066) → re-run `cycle` (exercising T-063/T-064) → re-run the full
+      (F1/F2/F4) → backfill `data_quality_issue` (T-065) + gateway dividends
+      (T-085/T-052) → re-run `cycle` (exercising T-063/T-064) → re-run the full
       `quant` pipeline + `evaluate` (exercising T-067). → `PLAN.md` Work
       item 7 Sequencing note. **Sequencing amended 2026-09-20**: the
-      dividend backfill and the `quant` re-run steps wait for `T-085` (and
-      for `T-052` once the upstream endpoint is redeployed), so production
-      dividends are written once from the gateway instead of first derived
-      and then redone. The metrics-recompute and `cycle` steps have no such
-      dependency and are not held up.
+      dividend backfill and the `quant` re-run steps wait for `T-052` (upstream's
+      redeploy + the live check). `T-085` removed the derived-dividend path, so
+      there is **no `--source derive` escape hatch**: running `quant` before the
+      gateway serves would yield a price-only series — and `build-returns` is
+      `INSERT OR IGNORE` per `(asset, day, engine_version)`, so it would lock in
+      under `qret-v2`. The metrics-recompute and `cycle` steps have no such
+      dependency and are not held up. **Re-scoped 2026-09-21**: the Phase A
+      re-sequence now runs *first* on the 20-ticker sample, inside `T-088`
+      (after its purge of the malformed derived data — a same-version re-run
+      could not have replaced it); `T-068` keeps only the full-universe
+      extension, after `T-088` validates and after `T-079`.
 - [x] **T-069** Add regression tests for F1/F2/F4/C1/C2 under `tests/`;
       full suite (`pytest`/`ruff`/`mypy`) green. → `PLAN.md` Work item 7
       acceptance criteria. **Audited 2026-09-15**: each fix already landed
@@ -462,56 +499,133 @@ stays open: it is this repo's consumer-side verification and is now
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
-## Work item 10 — P0: consume the `portfolio-data-mining` corporate-actions endpoint (this repo, NEXT UP)
+## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to
 `portfolio-data-mining` (`T-050`/`T-051`) and left the *consumption* here
-un-tasked. No external dependency: a failed gateway probe already falls back
-to the derived dividends, so this can land before upstream's redeploy
-(`portfolio-data-mining` `T-026`).
+un-tasked. **Scope, corrected the same day**: the gateway is the *only* source —
+not the primary one with a derived fallback, which was the first draft. Only
+`portfolio-data-mining` mines data; no other repository hosts that kind of
+service, so `quant`'s XBRL-derived dividend engines are removed. No external
+dependency for the code; live verification is `T-052`.
 
-- [ ] **T-085** Make the gateway `quant`'s primary corporate-actions source
-      in `src/quant/actions.py`/`cli.py`/`pricing_client.py`, and harden the
-      consumer against the gateway's failure modes: (1) default
-      `backfill-actions --source` to `gateway` (`derive` stays selectable);
-      (2) per-asset fallback to the derived engines on `GatewayError`,
-      `ActionsNotSupported`, or a response carrying a non-empty `warning`
-      (upstream returns *empty lists plus `warning`* when yfinance fails, and
-      `RawActions` currently drops the field, so an outage is stored as "no
-      dividends"); (3) a circuit breaker — after `K` consecutive gateway
-      failures, derive the remaining assets without more HTTP calls (today a
-      mid-run `GatewayError` is uncaught and aborts the run, and each dead
-      call costs `max_retries` × timeout); (4) per-source asset counts in
-      the report and `quant_run.params_json`; (5) keep
-      `corpact-v0-approx`/`corpact-v1-derived` as the documented fallback,
-      not retired, with `_ACTION_ENGINE_PRIORITY` unchanged; (6) pin the
-      upstream response contract with a hermetic `httpx.MockTransport`
-      fixture; (7) update `docs/quant.md`, `SPEC.md` §13 item 5 and `docs/
-      model_fixes.md`'s Q3 residual-scope note; (8) correct `T-066`'s and
-      `T-068`'s text (done in this docs change). Tick this box when the
-      code, tests and docs land with `pytest`/`ruff`/`mypy` green —
-      **live** verification is `T-052`, not this box. → `PLAN.md` Work item
-      10.
+- [x] **T-085** Make the `portfolio-data-mining` pricing gateway `quant`'s
+      **only** corporate-actions source, and remove the derivation:
+      (1) delete `derive_corporate_actions_from_facts`,
+      `derive_quarterly_dividends_from_10q_ytd` and their helpers/constants
+      from `src/quant/actions.py`, the `--source` flag, and the report's
+      per-source fields — `quant.actions` no longer reads `financial_facts`;
+      `load_actions` reads only the gateway engines (`corpact-v2` >
+      `corpact-v1`), and rows the retired `corpact-v0-approx` /
+      `corpact-v1-derived` engines wrote stay as unread history;
+      (2) **fail fast, never degrade**: a failed probe, or the circuit breaker
+      opening after `K` consecutive gateway *errors*
+      (`QuantSettings.gateway_max_consecutive_failures`, default 3), raises
+      `GatewayUnavailable` — `quant_run.status = 'failed'`, CLI exit 1, rows
+      already written kept; (3) an asset the gateway cannot serve
+      (`ActionsUnavailable` — a non-null `warning`, which upstream returns
+      with empty lists when yfinance fails —, `ActionsNotSupported`, or one
+      isolated error) gets **no rows** and is listed in the report; the run
+      completes and the CLI exits 1 because the data is incomplete; (4)
+      `QuantPricingClient`: `GatewayError` (not a bare
+      `HTTPStatusError`/`JSONDecodeError`) for an error status or unusable
+      body, `probe()` `False` while yfinance is down, and dotted share classes
+      requested in yfinance's spelling (`BF.B` → `BF-B`); (5) per-run counts in
+      the summary and `quant_run.params_json`; (6) a hermetic
+      `httpx.MockTransport` contract test, plus a test pinning that
+      `quant.actions` neither reads `financial_facts` nor exposes a derive
+      function; (7) update `docs/quant.md`, `README.md`, `SPEC.md` and
+      `docs/model_fixes.md`'s Q3 entry (superseded), and correct
+      `T-066`/`T-068`/`T-052`. **Live** verification is `T-052`, not this box.
+      → `PLAN.md` Work item 10. **Done 2026-09-20**: only gateway *errors*
+      count toward the breaker — a per-ticker warning means the gateway
+      answered, so it resets the streak, and a global yfinance outage lists
+      every asset without tripping it. 27 hermetic tests
+      (`tests/test_quant_pricing_client.py`, `tests/test_quant_actions.py`);
+      the fixtures that seeded dividends through the derive path now seed
+      `corpact-v1` rows directly; full suite (263), ruff, mypy green.
+      Mutation-checked: a probe or breaker that no longer fails the run, an
+      exit code that ignores errored assets, `load_actions` reading the
+      retired engines, ignoring the warning, dropping the dotted-ticker
+      spelling, and a breaker that never opens or never resets each fail
+      their own test. **Consequences** (deliberate, flagged): with no
+      derive path, `quant` had **no dividends until `T-052`** passed *(it did,
+      2026-09-21: 7,481 gateway rows in production)*, and
+      `build-returns` must follow a successful `backfill-actions` (a
+      dividend-less series locks in under `qret-v2`); yfinance is a single,
+      unofficial source that cannot tell an unknown symbol from a name that
+      paid nothing, so such a symbol stays at `$0` with no error until
+      `T-052`'s live check (`BF.B` is the one dotted symbol in the current
+      set); `v_corporate_action` still resolves legacy derived rows for the
+      knowledge-graph repo (a separate decision); and the constitution's
+      "Executable cmds" line still lists `--source derive|gateway` — that
+      needs its own governed change (PATCH), not made here.
+
+## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
+
+Added 2026-09-21. Order: `T-052` (Work item 6, live check) → `T-086` → `T-087` → `T-088` →
+`T-089`. → `PLAN.md` Work item 11.
+
+- [ ] **T-086** Guard against false `build-returns` runs: `run_build_returns`
+      (`src/quant/returns.py`) refuses — exit 1, clear message — unless the latest
+      `backfill-actions` `quant_run` covering the build window is `completed` with
+      `assets_errored == 0` (both recorded in its `params_json` by `T-085`) and gateway
+      `corporate_action` rows exist; an explicit `--allow-no-dividends` override builds a
+      knowingly price-only series and records that in `params_json`. Why: `quant_return_daily`
+      is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built with no
+      dividends is price-only *and* locks in under `qret-v2`. Hermetic tests: no backfill
+      run, failed run, run with errored assets, window not covered, override; `pytest`/
+      `ruff`/`mypy` green. → `PLAN.md` Work item 11, `T-086`.
+- [ ] **T-087** Amend the constitution: `.specify/memory/constitution.md` "Executable cmds"
+      still lists `backfill-actions [--source derive|gateway]` and the flag no longer exists.
+      Per its Governance section this is its own reviewed change — fix the line, bump PATCH
+      (1.2.0 → 1.2.1), update "Last Amended" and the amendment log, and re-scan for any other
+      claim that dividends are derived from filings. → `PLAN.md` Work item 11, `T-087`.
+- [ ] **T-088** Purge the malformed Fundamental/Quant derived data (**all 503 assets, derived
+      data only**; raw EDGAR filings/facts/sections, prices, universe, benchmark, run logs and
+      the gateway `corporate_action` rows are kept) and run the **20-ticker deep validation**
+      (MCD, WAT, XOM, PG, T, NEE, MA, CPT, UDR, ESS, SBAC, APO, WFC, HUM, HOOD, APA, BF.B, PM,
+      STZ, PSX). Steps: fresh backup → one-transaction purge with an explicit table list and
+      before/after counts → bump `METRICS_ENGINE_VERSION` to `metrics-v2` and make the three
+      readers (`cycle/data.py` ×2, `quant/db.py::load_market_caps`) engine-aware → Phase A on
+      the 20 tickers (`--tickers`; a 20-member `universe.db` for `cycle`/`quant`) with the
+      `T-086` guard active → re-run the data-quality audit. Acceptance and the validity
+      caveat (most 10-Qs will take F4's `current × 4` fallback: about one 10-Q per fiscal year
+      is ingested) in `PLAN.md`. Consequence: `cycle`, `quant` and the API's `v_*` views are
+      empty for all 503 assets until a full re-run (`T-079`). Needs `T-085` merged, `T-052`
+      passed and `T-086` built. → `PLAN.md` Work item 11, `T-088`.
+- [ ] **T-089** Reconcile the two architecture artifacts per constitution AI behavior #11 —
+      [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
+      and [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0):
+      **content only, never rename or change either `<title>`**. Cover F1, F2, F4, C1
+      (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (gateway as the only
+      corporate-actions source) and, as they land, `T-086`/`T-088`; close the gaps and plan
+      steps they built and correct prose describing a fixed gap. Read the live artifact,
+      republish in place by URL. First pass any time after the `T-085` PR merges; a delta pass
+      after `T-088`. → `PLAN.md` Work item 11, `T-089`.
 
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
 `T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
-(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only), `T-067` (Q2,
+(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only — superseded by
+`T-085`), `T-067` (Q2,
 `evaluate` half only) and `T-069` (regression-coverage audit, no new tests
 needed) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis, no
 code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
-Nothing else in `T-040`–`T-084` has started. **`T-085` (Work item 10, P0)
-is next up (added 2026-09-20)** — the consumer half of the corporate-actions
-work that PR #45 moved upstream; `T-068`'s dividend backfill and `quant`
-re-run wait for it. Execute Work item 10, with Work item 5 ∥ 6
+Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
+is done; next up `T-086` → `T-087` → `T-088` → `T-089`.** **`T-085` (Work item 10, P0) is
+done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
+corporate-actions source and the derivation was removed (live verification, `T-052`,
+passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
+fallback. Execute Work item 10, with Work item 5 ∥ 6
 (external, independent prerequisites; Work item 6's implementation now
 lives in `portfolio-data-mining`) in parallel → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
-`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-066`'s final
-target needs `T-052`, itself blocked on `portfolio-data-mining`'s
+`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-068`'s dividend
+steps need `T-052`, itself blocked on `portfolio-data-mining`'s
 corporate-actions endpoint — `T-050`/`T-051` moved there)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

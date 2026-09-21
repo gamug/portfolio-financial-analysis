@@ -256,8 +256,8 @@ CREATE TABLE IF NOT EXISTS corporate_action (
     record_date    TEXT,
     pay_date       TEXT,
     frequency      TEXT,                          -- 'quarterly'|'annual'|'special'|NULL
-    source         TEXT NOT NULL,                 -- 'pricing-gateway' | 'financial-facts-derived'
-    engine_version TEXT NOT NULL,                 -- 'corpact-v1' (gateway) | 'corpact-v0-approx' (derived)
+    source         TEXT NOT NULL,                 -- 'pricing-gateway' (legacy: 'financial-facts-derived')
+    engine_version TEXT NOT NULL,                 -- 'corpact-v1' (gateway; legacy: 'corpact-v0-approx', 'corpact-v1-derived')
     ingested_at    TEXT NOT NULL,
     UNIQUE (asset_id, action_type, ex_date, engine_version)
 );

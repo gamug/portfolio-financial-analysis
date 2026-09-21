@@ -26,6 +26,10 @@ class QuantSettings(BaseModel):
         default_factory=lambda: Path(universe_database_path()).expanduser()
     )
     pricing_base_url: str = DEFAULT_PRICING_BASE_URL
+    # backfill-actions circuit breaker (T-085): the gateway is the only corporate-actions
+    # source, so after this many consecutive gateway *errors* (not per-ticker warnings)
+    # the run fails fast instead of paying max_retries x timeout for every remaining asset.
+    gateway_max_consecutive_failures: int = Field(default=3, ge=1)
 
     # --- score-independent universe gate ---
     universe: str = "SP500"
@@ -61,10 +65,13 @@ class QuantSettings(BaseModel):
 
     # --- append-only engine-version knobs ---
     corpact_engine_version: str = "corpact-v1"
-    # Bumped from "qret-v1" when the Q3 fix (derive_quarterly_dividends_from_10q_ytd,
-    # docs/model_fixes.md) landed: quant_return_daily is append-only keyed on
-    # (asset_id, obs_date, engine_version), so a static version would silently
-    # no-op every re-run and never fold the corrected dividends into the series.
+    # Bumped from "qret-v1" when the Q3 fix (docs/model_fixes.md; the derivation it added
+    # was later removed by T-085 -- dividends now come only from the gateway) landed:
+    # quant_return_daily is append-only keyed on (asset_id, obs_date, engine_version), so
+    # a static version would silently no-op every re-run and never fold corrected
+    # dividends into the series. Run build-returns only *after* a successful
+    # backfill-actions -- rows built without dividends would be locked in under this
+    # version by INSERT OR IGNORE.
     return_engine_version: str = "qret-v2"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"

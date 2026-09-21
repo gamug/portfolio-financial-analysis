@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 from portfolio_common.db import Database
 
-from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
 from quant.panel import PanelError, build_return_panel
 from quant.returns import run_build_returns
@@ -17,9 +16,6 @@ from quant.returns import run_build_returns
 
 def _build_returns(conn: Database) -> None:
     s = QuantSettings(db_path=Path(":memory:"))
-    backfill_corporate_actions(
-        s, date_from="2000-01-01", date_to="2100-01-01", source="derive", conn=conn
-    )
     run_build_returns(s, date_from="2000-01-01", date_to="2100-01-01", conn=conn)
 
 

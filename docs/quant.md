@@ -13,7 +13,7 @@ clarabel — the first in the repo) stay off their import path. This is pinned b
 `tests/test_quant_import_isolation.py`.
 
 ```bash
-uv run python -m quant backfill-actions [--source derive|gateway] [--from 2022-01-01] [--analysis-date TODAY]
+uv run python -m quant backfill-actions [--from 2022-01-01] [--analysis-date TODAY]
 uv run python -m quant build-returns    [--from 2022-01-01] [--analysis-date TODAY]
 uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
@@ -36,9 +36,8 @@ optimized on or after that date.
 Every subcommand takes `--analysis-date YYYY-MM-DD` (default: today). For
 `build-risk-model` / `optimize` it is the as-of date (`--as-of` is kept as an
 alias; disagreeing values error). For the `--from`/`--to` subcommands it is the
-range upper bound — `--to` is clamped to it, `quant_run.as_of` is stamped with it,
-and `backfill-actions --source derive` only reads filings with
-`period_end <= analysis-date`. Every `quant_run` records `code_version`.
+range upper bound — `--to` is clamped to it and `quant_run.as_of` is stamped with it.
+Every `quant_run` records `code_version`.
 
 `QuantSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` is optional (the
 point-in-time universe reads — `load_universe_asset_ids` / `load_assets` /
@@ -52,19 +51,45 @@ knob is a CLI flag.
 
 ### `actions.py` — corporate actions
 
-`price_daily.close` is split-adjusted but **not** dividend-adjusted, and the
-pricing gateway serves only OHLCV. Two sources, both append-only under a distinct
-`corporate_action.engine_version`:
+`price_daily.close` is split-adjusted but **not** dividend-adjusted. Dividends and
+splits come from **one source only: the pricing gateway** (T-085) —
+`portfolio-data-mining`'s yfinance-backed
+`GET /pricing/{ticker}/actions?start_date=&end_date=`, rows landing in
+`corporate_action` under `engine_version = corpact-v1`. Acquiring data is that
+repo's job, so `quant` consumes it and mines nothing itself: there is no `--source`
+flag and no fallback that re-derives dividends from `financial_facts` (the
+`corpact-v0-approx` / `corpact-v1-derived` engines were removed; rows they wrote
+before T-085 stay in the append-only table as history and `load_actions` never reads
+them). `quant.db.load_actions` uses the newest gateway engine per asset
+(`corpact-v2` > `corpact-v1`).
 
-- `--source gateway` probes `GET /pricing/{ticker}?actions=true` (and
-  `/pricing/{ticker}/actions`); when the deployment serves actions this gives true
-  ex-dates (`engine_version = corpact-v1`).
-- `--source derive` (the self-contained default) takes the fiscal-year cash
-  dividend per share from `financial_facts`
-  (`us-gaap_CommonStockDividendsPerShareDeclared`, then `…CashPaid`) and spreads it
-  over four synthetic quarterly ex-dates (`engine_version = corpact-v0-approx`).
-  **Coarse**: wrong intra-year timing, no special dividends. A gateway extension or
-  an accepted small direct vendor pull is the way to a precise daily series.
+A gateway that cannot serve is therefore a **failure**, not a degraded run:
+
+- **the run fails** — `GatewayUnavailable`, `quant_run.status = 'failed'`, CLI exit 1 —
+  when the probe of the first asset fails (route missing, gateway down, or yfinance
+  failing upstream), or when the circuit breaker opens after
+  `gateway_max_consecutive_failures` (default 3) consecutive gateway *errors*. Each of
+  those has already paid `max_retries` × the timeout, so continuing would spend hours
+  writing nothing. Rows already written are kept (`INSERT OR IGNORE`), so a re-run
+  after the gateway is back is cheap.
+- **an asset the gateway cannot serve gets no rows** and is listed in the report — an
+  `ActionsUnavailable` (upstream answers `200` + empty lists + a non-null `warning`
+  when yfinance failed; a genuine "no dividends in range" arrives with
+  `warning: null` and is recorded as such), an unsupported route, or one isolated
+  error. The run still completes, and the CLI exits **1** because the dividend series
+  would be incomplete. Only gateway *errors* trip the breaker; a per-ticker warning
+  means the gateway answered, so it resets the streak.
+
+Share classes are requested in yfinance's spelling (`BF.B` → `BF-B`): the route only
+upper-cases what it is given, and yfinance answers an unknown symbol with a clean empty
+result — the one silent failure this consumer cannot see. Point `PRICING_BASE_URL` at
+the **deployed** gateway (its `/pricing` mount); live verification, `T-052`, passed 2026-09-21.
+`quant_run.params_json` records `assets_seen` / `assets_fetched` / `assets_errored` and
+the first error messages.
+
+**Run `build-returns` only after a successful `backfill-actions`.** `quant_return_daily`
+is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built while
+`corporate_action` is empty is price-only *and* locks in under that version.
 
 Splits are recorded for provenance only and never re-applied.
 
@@ -77,7 +102,7 @@ under `engine_version = qret-v2` (`INSERT OR IGNORE`; re-runs are a no-op *for
 that version* — bump `QuantSettings.return_engine_version` whenever an upstream
 input the return series depends on changes, e.g. `qret-v1` → `qret-v2` when the
 Q3 dividend fix landed, or the corrected values never make it past the
-`INSERT OR IGNORE`). This is a dedicated table, **not** `price_observation` rows
+`INSERT OR IGNORE`; see `actions.py` above for the sequencing this implies). This is a dedicated table, **not** `price_observation` rows
 under a new engine_version — `v_price_observation` resolves the latest engine
 per (asset, day), so writing there would silently move `cycle`'s
 technical/veto path onto quant's rows.
@@ -201,9 +226,13 @@ creates them before it builds the views.
 
 ## Known gaps / caveats
 
-- **Total-return quality** hinges on the dividend source. The `derive` fallback is
-  FY-granular with synthetic ex-dates and no special dividends; a proper daily TR
-  series needs the gateway to expose actions.
+- **Total-return quality** hinges on the gateway. Dividends come only from
+  `portfolio-data-mining`'s yfinance-backed endpoint, which is unofficial and has no
+  SLA. It is live and verified (`T-052`, 2026-09-21: every asset fetched), but a
+  yfinance symbol it does not recognise still returns a clean empty result, and
+  dividends with ex-dates after the last `price_daily` bar cannot fold into the
+  series until prices are refreshed. A series built while `corporate_action` has no
+  gateway rows would be price-only — the guard for that is `T-086`.
 - **Survivorship bias (partly addressed).** The universe is now read point-in-time
   from `universe.db`, which carries real `valid_from` / `valid_to` stints, so
   `build-risk-model --analysis-date D` gates to the constituents that were in the

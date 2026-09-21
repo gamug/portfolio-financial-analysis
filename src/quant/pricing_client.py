@@ -33,6 +33,24 @@ class GatewayError(RuntimeError):
     """The gateway returned an error status or an unparseable body."""
 
 
+class ActionsUnavailable(RuntimeError):
+    """The gateway answered, but flagged the data unusable.
+
+    ``portfolio-data-mining``'s actions route never raises: when yfinance fails it
+    returns 200 with empty lists and a non-null ``warning``. That is *not* "this
+    ticker paid nothing" (which arrives with ``warning: null``), so it must never
+    be recorded as an empty result.
+    """
+
+
+def yfinance_symbol(ticker: str) -> str:
+    """The spelling the actions route needs: yfinance writes a share class with a
+    dash (``BF-B``), not the index's dot. The route only upper-cases what it is
+    given, and yfinance answers an unknown symbol with a clean empty result, so a
+    dotted ticker would otherwise read as a name that paid no dividends."""
+    return ticker.strip().upper().replace(".", "-")
+
+
 @dataclass(frozen=True)
 class RawActions:
     ticker: str
@@ -82,26 +100,45 @@ class QuantPricingClient:
         """True when the gateway serves corporate actions for *sample_ticker*."""
         try:
             self.actions(sample_ticker, "1900-01-01", "1900-01-02")
-        except ActionsNotSupported:
-            return False
-        except GatewayError:
+        except (ActionsNotSupported, GatewayError, ActionsUnavailable):
             return False
         return True
 
     def actions(self, ticker: str, start_date: str, end_date: str) -> RawActions:
+        """Dividends and splits with ex-dates in ``[start_date, end_date]``.
+
+        Raises :class:`ActionsNotSupported` when the deployment has no such route,
+        :class:`GatewayError` on an error status / unusable body (after retries),
+        and :class:`ActionsUnavailable` when the gateway flags the data unusable.
+        """
         params = {"start_date": start_date, "end_date": end_date, "actions": "true"}
-        for path in (f"/pricing/{ticker}/actions", f"/pricing/{ticker}"):
+        symbol = yfinance_symbol(ticker)
+        for path in (f"/pricing/{symbol}/actions", f"/pricing/{symbol}"):
             resp = self._get(path, params)
             if resp.status_code == httpx.codes.NOT_FOUND:
                 continue
-            resp.raise_for_status()
-            body = resp.json()
+            body = _json_object(resp, path)
             divs = _parse_rows(body.get("dividends"))
             splits = _parse_rows(body.get("splits"))
             if divs is None and splits is None:
                 continue
+            if body.get("warning"):
+                raise ActionsUnavailable(f"{ticker}: {body['warning']}")
             return RawActions(ticker=ticker, dividends=divs or [], splits=splits or [])
         raise ActionsNotSupported(f"no corporate-actions data at {self._base_url} for {ticker}")
+
+
+def _json_object(resp: httpx.Response, path: str) -> dict[str, object]:
+    """The response body as a JSON object, or :class:`GatewayError`."""
+    if resp.is_error:
+        raise GatewayError(f"{path} -> {resp.status_code}")
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise GatewayError(f"{path} -> unparseable body") from exc
+    if not isinstance(body, dict):
+        raise GatewayError(f"{path} -> expected a JSON object")
+    return body
 
 
 def _parse_rows(rows: object) -> list[RawAction] | None:

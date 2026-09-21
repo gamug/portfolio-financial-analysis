@@ -11,7 +11,6 @@ import pytest
 from portfolio_common.db import Database
 
 from kg_schema import queries
-from quant.actions import backfill_corporate_actions
 from quant.config import QuantSettings
 from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
@@ -37,9 +36,6 @@ def _settings(**over: object) -> QuantSettings:
 def seeded(memory_quant_db: Database, quant_seed: Callable[..., Database]) -> Database:
     conn = quant_seed(memory_quant_db, n_assets=6, n_days=280, with_dividends=True)
     s = QuantSettings(db_path=Path(":memory:"))
-    backfill_corporate_actions(
-        s, date_from="2000-01-01", date_to="2100-01-01", source="derive", conn=conn
-    )
     run_build_returns(s, date_from="2000-01-01", date_to="2100-01-01", conn=conn)
     return conn
 
