@@ -272,7 +272,7 @@ are not owned by any single package.
 | `corporate_action` | `UNIQUE(asset_id, action_type, ex_date, engine_version)` | dividends/splits (pricing gateway only; legacy XBRL-derived rows remain as history, unread) | `quant backfill-actions` |
 | `quant_return_daily` | `UNIQUE(asset_id, obs_date, engine_version)` | total-return daily series, dividend-folded | `quant build-returns` |
 | `risk_free_rate` / `benchmark_series` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` | rf curve + benchmark index | `quant` |
-| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | `UNIQUE(as_of, model_version)` / … | Markowitz μ / Σ per as-of model | `quant build-risk-model` |
+| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | `UNIQUE(as_of, model_version)` / … | Markowitz μ / Σ per as-of model; `model_version` carries the run's input-manifest tag (T-090) | `quant build-risk-model` |
 | `quant_portfolio` / `quant_position` / `quant_frontier_point` | `UNIQUE(as_of, kind, frontier_k, engine_version)` / … | optimized benchmark books + frontier | `quant optimize` |
 | `quant_benchmark_performance` | `UNIQUE(portfolio_id, date, engine_version)` | forward realized/active return of a frozen book | `quant evaluate` |
 | `analysis_run` / `analysis_run_error`, `pricing_run` / `pricing_run_error`, `quant_run`, `cycle_run` | run PK | `run_id`, `as_of`, `code_version`, params, status | every agent |

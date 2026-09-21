@@ -335,6 +335,7 @@ CREATE TABLE IF NOT EXISTS quant_risk_model (
     rf_annual            REAL,
     computed_at          TEXT NOT NULL,
     params_json          TEXT,
+    manifest_json        TEXT,                    -- the input versions this model was built on (T-090)
     UNIQUE (as_of, model_version)
 );
 
@@ -375,9 +376,10 @@ CREATE TABLE IF NOT EXISTS quant_portfolio (
     n_positions     INTEGER NOT NULL,
     turnover        REAL,                         -- vs the prior open book of the same kind
     target_param    REAL,
-    engine_version  TEXT NOT NULL,                -- 'opt-v1'
+    engine_version  TEXT NOT NULL,                -- 'opt-v1+<manifest tag>' (T-090)
     computed_at     TEXT NOT NULL,
     params_json     TEXT,
+    manifest_json   TEXT,                         -- the input versions this book was built on (T-090)
     UNIQUE (as_of, kind, frontier_k, engine_version)
 );
 
@@ -467,6 +469,14 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     },
     "quant_run": {
         "code_version": "TEXT",  # `as_of` already exists on this table
+    },
+    # T-090: which input versions a risk model / book was built on. Additive and nullable, so
+    # a database created before it simply has NULLs there.
+    "quant_risk_model": {
+        "manifest_json": "TEXT",
+    },
+    "quant_portfolio": {
+        "manifest_json": "TEXT",
     },
     "cycle_run": {
         "code_version": "TEXT",  # `cycle_date` is this table's as-of

@@ -11,6 +11,10 @@ Read (``universe.db`` -- point-in-time S&P 500 membership, never written here):
     resolve_asset_ids      case-insensitive ticker -> assets.id lookup (financial DB,
                             chunked IN (...), never inserts)
 
+Read (metric versions -- which engine versions of fundamental_metrics are stored):
+    metric_versions_present  {metric_group: [engine_version, ...]} actually stored; the
+                              input to kg_schema.versions' resolver (T-090)
+
 Read (data-coverage report -- does the dated universe have core data yet):
     _distinct_ids           one SELECT DISTINCT per required-data table, tolerant of
                              a table that doesn't exist yet in a partial DB
@@ -182,6 +186,24 @@ def resolve_asset_ids(
 
 
 # -- data-coverage report -----------------------------------------------------
+
+
+def metric_versions_present(conn: Database) -> dict[str, list[str]]:
+    """``{metric_group: [engine_version, ...]}`` for every version stored in
+    ``fundamental_metrics`` (unordered; :mod:`kg_schema.versions` orders them). A row with a
+    NULL ``engine_version`` predates versioning and is ignored. Empty for a database with
+    no such table or no metric rows."""
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT metric_group, engine_version FROM fundamental_metrics "
+            "WHERE engine_version IS NOT NULL"
+        ).fetchall()
+    except DatabaseError:
+        return {}
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        out.setdefault(str(row["metric_group"]), []).append(str(row["engine_version"]))
+    return out
 
 
 def _distinct_ids(db: Database, sql: str, params: tuple[object, ...]) -> set[int]:

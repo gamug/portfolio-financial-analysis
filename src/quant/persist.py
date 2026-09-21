@@ -27,6 +27,7 @@ from quant.db import (
     load_sector_of,
     sync_positions,
 )
+from quant.manifest import QuantManifest, resolve_quant_manifest
 from quant.objective import ObjectiveContext, objective_param, resolve_objectives
 from quant.optimize import Constraints, efficient_frontier, min_variance
 from quant.panel import ReturnPanel, build_return_panel
@@ -54,6 +55,7 @@ class RiskModelResult:
     cov_shrinkage: float | None
     cov_rows: int
     stored_cov: bool
+    manifest_tag: str = ""
 
 
 def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray, float | None]:
@@ -72,11 +74,12 @@ def _expected_returns(
     panel: ReturnPanel,
     sigma: np.ndarray,
     conn: Database,
+    manifest: QuantManifest,
 ) -> dict[str, dict[int, float]]:
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
     js = james_stein_mean(panel.returns, periods_per_year=ppy)
-    caps_by_id = load_market_caps(conn, panel.asset_ids)
+    caps_by_id = load_market_caps(conn, panel.asset_ids, manifest.metrics)
     caps = np.array([caps_by_id.get(a, 0.0) for a in panel.asset_ids], dtype=np.float64)
     if caps.sum() <= 0:
         caps = np.ones(panel.n_assets)
@@ -99,11 +102,18 @@ def run_build_risk_model(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
+        # Resolve the input versions first: a selection naming a version that is not stored
+        # is a user error and should fail before any run row is written.
+        manifest = resolve_quant_manifest(conn, settings)
         run_id = open_run(
             conn,
             "build-risk-model",
             as_of=as_of,
-            params=settings.model_dump(mode="json"),
+            params={
+                **settings.model_dump(mode="json"),
+                "manifest": manifest.inputs,
+                "manifest_tag": manifest.tag,
+            },
             code_version=code_version(),
         )
         try:
@@ -129,7 +139,7 @@ def run_build_risk_model(
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
-            mu_by_model = _expected_returns(settings, panel, sigma, conn)
+            mu_by_model = _expected_returns(settings, panel, sigma, conn, manifest)
 
             spec = {
                 "asset_ids": panel.asset_ids,
@@ -142,7 +152,7 @@ def run_build_risk_model(
                 conn,
                 RiskModelMeta(
                     as_of=as_of,
-                    model_version=settings.risk_model_version,
+                    model_version=manifest.tagged(settings.risk_model_version),
                     lookback_days=settings.lookback_days,
                     min_history_days=settings.min_history_days,
                     n_assets=panel.n_assets,
@@ -155,6 +165,7 @@ def run_build_risk_model(
                     rf_annual=rf.annualized_rate,
                     params_json=json.dumps(settings.model_dump(mode="json"), default=str),
                     quant_run_id=run_id,
+                    manifest_json=manifest.json(),
                 ),
             )
             insert_expected_returns(conn, model_id, mu_by_model)
@@ -171,6 +182,7 @@ def run_build_risk_model(
             cov_shrinkage=delta,
             cov_rows=cov_rows,
             stored_cov=store_cov,
+            manifest_tag=manifest.tag,
         )
     finally:
         if owns:
@@ -186,6 +198,7 @@ class OptimizeRunResult:
     as_of: str
     books: dict[str, int]  # kind -> quant_portfolio.id
     frontier_points: int
+    manifest_tag: str = ""
 
 
 def _weights_json(ids: list[int], w: np.ndarray) -> str:
@@ -195,8 +208,12 @@ def _weights_json(ids: list[int], w: np.ndarray) -> str:
     )
 
 
-def _resolve_model_id(settings: QuantSettings, as_of: str, conn: Database, run_id: int) -> int:
-    row = load_risk_model(conn, as_of=as_of, model_version=settings.risk_model_version)
+def _resolve_model_id(
+    settings: QuantSettings, as_of: str, conn: Database, run_id: int, manifest: QuantManifest
+) -> int:
+    row = load_risk_model(
+        conn, as_of=as_of, model_version=manifest.tagged(settings.risk_model_version)
+    )
     if row is not None:
         return int(row["id"])
     build = run_build_risk_model(settings, as_of=as_of, conn=conn)
@@ -226,15 +243,20 @@ def run_optimize(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
+        manifest = resolve_quant_manifest(conn, settings)  # fail on an unstored version first
         run_id = open_run(
             conn,
             "optimize",
             as_of=as_of,
-            params=settings.model_dump(mode="json"),
+            params={
+                **settings.model_dump(mode="json"),
+                "manifest": manifest.inputs,
+                "manifest_tag": manifest.tag,
+            },
             code_version=code_version(),
         )
         try:
-            model_id = _resolve_model_id(settings, as_of, conn, run_id)
+            model_id = _resolve_model_id(settings, as_of, conn, run_id, manifest)
             ids, sigma = load_covariance(conn, model_id)
             if not ids:
                 raise RuntimeError(  # noqa: TRY301
@@ -243,7 +265,9 @@ def run_optimize(
                 )
             mu_map = load_expected_returns(conn, model_id, settings.ret_estimator)
             mu = np.array([mu_map[a] for a in ids], dtype=np.float64)
-            rm = load_risk_model(conn, as_of=as_of, model_version=settings.risk_model_version)
+            rm = load_risk_model(
+                conn, as_of=as_of, model_version=manifest.tagged(settings.risk_model_version)
+            )
             rf = (
                 float(rm["rf_annual"])
                 if rm and rm["rf_annual"] is not None
@@ -283,10 +307,11 @@ def run_optimize(
                         sharpe=res.sharpe,
                         rf_annual=rf,
                         n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
-                        engine_version=settings.optimizer_engine_version,
+                        engine_version=manifest.tagged(settings.optimizer_engine_version),
                         target_param=objective_param(name, ctx),
                         model_id=model_id,
                         quant_run_id=run_id,
+                        manifest_json=manifest.json(),
                     ),
                 )
                 sync_positions(
@@ -328,7 +353,11 @@ def run_optimize(
             fail_run(conn, run_id, str(exc))
             raise
         return OptimizeRunResult(
-            model_id=model_id, as_of=as_of, books=books, frontier_points=frontier_points
+            model_id=model_id,
+            as_of=as_of,
+            books=books,
+            frontier_points=frontier_points,
+            manifest_tag=manifest.tag,
         )
     finally:
         if owns:

@@ -15,6 +15,7 @@ from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
+from kg_schema.versions import VersionError
 from quant.actions import DividendsNotReady, GatewayUnavailable, backfill_corporate_actions
 from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
@@ -24,6 +25,11 @@ from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
 
 _TODAY_HELP = "date, YYYY-MM-DD"
+_METRICS_VERSION_HELP = (
+    "which fundamental_metrics engine version the risk model reads: a version (metrics-v1) or "
+    "GROUP=VERSION pairs (valuation=metrics-v1); default: the newest stored. Runs over different "
+    "versions write parallel books (T-090)"
+)
 
 
 def _add_common(sub: argparse.ArgumentParser) -> None:
@@ -65,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--cov", dest="cov_estimator", choices=("ledoit_wolf_cc", "ledoit_wolf_diag", "sample")
     )
     rm.add_argument("--model-version", dest="model_version")
+    rm.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
 
     op = sub.add_parser("optimize", help="run the objective family and persist the benchmark books")
@@ -83,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     op.add_argument("--solver")
     op.add_argument("--model-version", dest="model_version")
+    op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
 
     bm = sub.add_parser("benchmark", help="build the internal equal-weight benchmark series")
     _add_common(bm)
@@ -111,6 +119,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "cov_estimator": ("cov_estimator", str),
     "ret_estimator": ("ret_estimator", str),
     "model_version": ("risk_model_version", str),
+    "metrics_version": ("metrics_version", str),
     "frontier_k": ("frontier_k", int),
     "target_vol": ("target_volatility", float),
     "max_name_weight": ("max_name_weight", float),
@@ -147,6 +156,35 @@ def _date_to(analysis_date: str, args: argparse.Namespace) -> str:
     """The range end: ``--to`` clamped to the analysis date, else the analysis date."""
     dt = getattr(args, "date_to", None)
     return min(dt, analysis_date) if dt else analysis_date
+
+
+def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
+    try:
+        res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
+    except VersionError as exc:
+        print(f"build-risk-model: {exc}", file=sys.stderr)
+        return 1
+    shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
+    print(
+        f"build-risk-model {res.model_id} @ {res.as_of}: {res.n_assets} assets, "
+        f"cov={res.cov_estimator} (shrink {shr}), {res.cov_rows} cov rows, "
+        f"manifest {res.manifest_tag}"
+    )
+    return 0
+
+
+def _run_optimize(settings: QuantSettings, as_of: str) -> int:
+    try:
+        opt = run_optimize(settings, as_of=as_of)
+    except VersionError as exc:
+        print(f"optimize: {exc}", file=sys.stderr)
+        return 1
+    books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())
+    print(
+        f"optimize @ {opt.as_of} (model {opt.model_id}): books [{books}], "
+        f"{opt.frontier_points} frontier points, manifest {opt.manifest_tag}"
+    )
+    return 0
 
 
 def _print_actions_report(report: ActionsReport) -> None:
@@ -223,22 +261,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return _run_build_returns(settings, args, _date_to(analysis_date, args))
 
     if args.command == "build-risk-model":
-        res = run_build_risk_model(settings, as_of=analysis_date, store_cov=args.store_cov)
-        shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
-        print(
-            f"build-risk-model {res.model_id} @ {res.as_of}: {res.n_assets} assets, "
-            f"cov={res.cov_estimator} (shrink {shr}), {res.cov_rows} cov rows"
-        )
-        return 0
+        return _run_build_risk_model(settings, analysis_date, store_cov=args.store_cov)
 
     if args.command == "optimize":
-        opt = run_optimize(settings, as_of=analysis_date)
-        books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())
-        print(
-            f"optimize @ {opt.as_of} (model {opt.model_id}): books [{books}], "
-            f"{opt.frontier_points} frontier points"
-        )
-        return 0
+        return _run_optimize(settings, analysis_date)
 
     if args.command == "benchmark":
         conn = connect(settings.db_path)

@@ -143,6 +143,8 @@ uv run python -m fundamental_agent run --sections          # + narrative filing 
 uv run python -m entity_resolution build --min-weight 3    # sharedExecutiveWith from urls.db news co-occurrence
 uv run python -m cycle select --analysis-date 2026-06-30 --top-n 30  # score, veto, rank, open positions
 uv run python -m cycle monitor --analysis-date 2026-07-31  # refresh vetoes / ranking only
+# cycle and quant read the newest stored fundamental_metrics version by default; pin one with
+#   --metrics-version metrics-v1   (or GROUP=VERSION pairs) -- see docs/kg_schema.md, versions.py
 ```
 
 Every agent takes an optional `--analysis-date YYYY-MM-DD` (default: today) — the single
@@ -178,6 +180,8 @@ which no other package imports. See [docs/quant.md](docs/quant.md).
 uv run python -m quant backfill-actions                          # dividends/splits from the pricing gateway
 uv run python -m quant build-returns                             # total-return series; needs a clean backfill-actions first (T-086)
 uv run python -m quant build-risk-model --analysis-date 2026-08-27   # Ledoit-Wolf Sigma + shrunk mu
+uv run python -m quant build-risk-model --analysis-date 2026-08-27 \
+    --metrics-version metrics-v1                                 # a parallel model on other inputs (T-090)
 uv run python -m quant optimize --analysis-date 2026-08-27 \
     --objectives min_var,tangency,target_vol,frontier            # persist the benchmark books
 uv run python -m quant evaluate --from 2026-08-27               # forward returns vs the live book

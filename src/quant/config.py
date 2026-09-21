@@ -30,6 +30,11 @@ class QuantSettings(BaseModel):
     # source, so after this many consecutive gateway *errors* (not per-ticker warnings)
     # the run fails fast instead of paying max_retries x timeout for every remaining asset.
     gateway_max_consecutive_failures: int = Field(default=3, ge=1)
+    # Which ``fundamental_metrics`` engine version(s) the risk model reads (T-090): ``None`` =
+    # the newest stored; ``"metrics-v1"`` = that one; ``"valuation=metrics-v1"`` = per group.
+    # Resolved into a manifest whose tag is folded into the risk-model / optimizer version keys,
+    # so runs over different inputs write parallel rows instead of overwriting each other.
+    metrics_version: str | None = None
 
     # --- score-independent universe gate ---
     universe: str = "SP500"

@@ -45,15 +45,25 @@ optional. Knobs:
 status, detail)`. `done_steps(conn, id) -> set[str]` — steps with status `done`
 are skipped on re-run. `finish_cycle(conn, id, status)`.
 
+`check_manifest(conn, cycle_type, cycle_date, tag)` (T-090) raises `ManifestMismatch` when a
+`cycle_run` for that (type, date) already exists **built on a different manifest**. A cycle
+run is unique per (type, date) and its outputs are keyed by date, so — unlike `quant`'s books —
+a second run over other input versions cannot sit beside the first; resuming it would mix the
+two. It runs *before* `open_cycle`, which would otherwise flip the earlier run back to
+`running`. A run recorded before T-090 has no manifest and is left alone.
+
 ### `data.py` — read helpers (plain SQL, no agent imports)
 
 `active_universe(conn, universe, cycle_date, universe_db_path=None)` — reads
 `universe.db` point-in-time (`members_asof` → `resolve_asset_ids`) and returns the
 matching `assets` rows; raises loudly if `universe.db` yields nothing or nothing
-resolves. `latest_metrics` (newest filing with `period_end ≤ date`, keyed
-`"group.name"`), `latest_price_observation`, `last_fundamental_dates`,
-`latest_fundamental_score`, `latest_semantic_score`, `market_cap_estimates` (reads
-the stored `valuation.market_capitalization` metric inputs).
+resolves. `latest_metrics(conn, date, versions)` (newest filing with `period_end ≤ date`,
+keyed `"group.name"`), `latest_price_observation`, `last_fundamental_dates`,
+`latest_fundamental_score`, `latest_semantic_score`, `market_cap_estimates(conn, metrics,
+versions)` (reads the stored `valuation.market_capitalization` metric inputs; the most recent
+filing per asset wins). Both metric readers take the `MetricVersions` the run resolved
+(`kg_schema.versions`, T-090) and read **only** those engine versions — they used to join
+`fundamental_metrics` unfiltered and let row order pick among versions.
 
 ### `scores/normalize.py`
 
@@ -157,7 +167,11 @@ whatever FUNDAMENTAL `score_snapshot` rows `fundamental_agent run` already wrote
 ### `cli.py`
 
 `select` / `monitor` / `backfill`. `--dry-run` on `select` sets `top_n = 0` so
-`rank` / `cycle_ranking` run but no positions are touched.
+`rank` / `cycle_ranking` run but no positions are touched. `--metrics-version` (T-090; a version
+like `metrics-v1`, or `GROUP=VERSION` pairs) chooses which `fundamental_metrics` engine version
+the cycle reads — default the newest stored per group. The resolved manifest and its tag are
+recorded in `cycle_run.params_json` and printed. An unstored version exits 1 before a run is
+created; a run of the same type and date built on other versions exits 1 rather than being mixed.
 
 ## Gotchas
 

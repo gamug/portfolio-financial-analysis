@@ -36,6 +36,35 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
+class ManifestMismatch(RuntimeError):
+    """A ``cycle_run`` for this (type, date) exists, built on different input versions."""
+
+
+def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -> None:
+    """Refuse to resume an existing ``(cycle_type, cycle_date)`` run under a different manifest.
+
+    ``cycle_run`` is unique per (type, date) and its outputs are keyed by date, so a second
+    run over other input versions cannot sit beside the first (unlike ``quant``'s books) --
+    resuming it would mix the two. A run recorded before T-090 has no manifest and is left
+    alone. Call this *before* :func:`open_cycle`, which flips an existing run to ``running``."""
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return
+    try:
+        recorded = json.loads(row["params_json"]).get("manifest_tag")
+    except (TypeError, ValueError):
+        return
+    if recorded is not None and recorded != tag:
+        raise ManifestMismatch(
+            f"the {cycle_type} run for {cycle_date} was built on manifest {recorded}; this run "
+            f"resolves manifest {tag}. Resuming would mix inputs -- choose the recorded "
+            f"--metrics-version, or a different date"
+        )
+
+
 def open_cycle(
     conn: Database,
     cycle_type: str,

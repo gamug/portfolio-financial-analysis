@@ -18,7 +18,7 @@ done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order �
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
-amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
+amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant` — **done 2026-09-21**), `T-093` (user-tunable version constraints for `quant`;
 `T-091` is superseded by `T-092`), `T-088`
 (purge the malformed Fundamental/Quant data — **the purge itself is done, 2026-09-21** — and
 run the 20-ticker deep validation),
@@ -567,8 +567,8 @@ dependency for the code; live verification is `T-052`.
 
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
-Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092`, `T-094` and `T-087` (all
-done 2026-09-21) → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` was a
+Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all
+done 2026-09-21) → `T-093` → `T-088` → `T-089`. `T-092` was a
 **P0 blocker** — the fundamental pipeline could not ingest anything against the live gateway —
 and is done; it exposed `T-094` (now also done), which had to land before `T-088`'s re-ingest or
 the clean re-run would have activated it. `T-088`'s backup and purge (steps 1–2) were executed early, on 2026-09-21.
@@ -719,7 +719,7 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       — none (its only mentions of `quant` are the import-isolation rules, the `quant_*` tables and
       the deterministic-numerics rule); no other reference to version 1.2.0 remains. Docs-only,
       its own change per Governance; no principle changed.
-- [ ] **T-090** Metric-version selection and run manifests ("version of versions") for `cycle`
+- [x] **T-090** Metric-version selection and run manifests ("version of versions") for `cycle`
       and `quant`, so several runs can coexist on different input versions. Today
       `cycle/data.py` (both metric reads) and `quant/db.py::load_market_caps` read
       `fundamental_metrics` with no `engine_version` filter, a run cannot choose which version
@@ -740,7 +740,42 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       constraints on the quant agent, from user input (`T-093`). Still to confirm: the
       ordering rule for version strings (recommended in `PLAN.md`). Acceptance and tests in
       `PLAN.md`.
-      → `PLAN.md` Work item 11, `T-090`.
+      → `PLAN.md` Work item 11, `T-090`. **Done 2026-09-21.** `kg_schema/versions.py` (the pure resolver:
+      `resolve_metric_versions`/`choose_versions`/`parse_metric_selection`/`manifest_tag`; the SQL
+      in `kg_schema/queries.py::metric_versions_present`), a **static** `VERSION_FILTER_SQL`
+      readers apply with one JSON bound parameter (no interpolation — constitution Code & Git #10).
+      Every reader now takes the resolved `MetricVersions`: `cycle.data.latest_metrics` and
+      `market_cap_estimates`, `quant.db.load_market_caps`; a test fails on any raw
+      `fundamental_metrics` read in `src/` lacking the filter, and no view resolves "latest" on its
+      own. **quant**: `quant/manifest.py` — the manifest is the `valuation` metric version + the
+      return engine (what `quant` actually reads); its 8-hex tag is folded into
+      `quant_risk_model.model_version` (`rm-v1+<tag>`) and `quant_portfolio.engine_version`
+      (`opt-v1+<tag>`), the keys those tables were **already** unique on, so runs over different
+      inputs write parallel rows and the same inputs update in place — **no schema change beyond an
+      additive nullable `manifest_json`** on both tables (exposed on their views); `evaluate` needed
+      nothing, it already evaluates every book in its window. **cycle**: records the manifest in
+      `cycle_run.params_json` and **refuses** to resume a `(type, date)` run built on a different
+      manifest (`ManifestMismatch`, checked *before* `open_cycle` so the earlier run is untouched);
+      forking cycle outputs would need non-additive key changes, which the scope rules out. CLI:
+      `--metrics-version` on `cycle select/monitor/backfill` and `quant build-risk-model/optimize`
+      (a version, or `GROUP=VERSION` pairs), printing the manifest; an unstored version or an unread
+      group exits 1 before any run row exists. 57 new hermetic tests (368 in the suite), incl. two
+      real risk models on different metrics versions with genuinely different equilibrium returns,
+      parallel books each tied to its own model, and `evaluate` comparing both; mutation-checked
+      twelve ways incl. removing the filter (the original defect) and running the cycle check after
+      `open_cycle`. **Live smoke** on a scratch copy of the production DB: the additive columns were
+      grafted onto the existing tables, all 31 views still query, and the real CLIs fail cleanly (exit
+      1) on an unstored version and an unread group with no run rows created. **Decisions made in
+      the build, for review**: (1) the version-ordering rule is the *recommended* one (`pre` <
+      `metrics`, then by number) — adopted, not user-confirmed; (2) the manifest covers what each
+      consumer reads (so a new version of an unrelated group does not fork `quant`'s books); (3) every
+      run is tagged, not only explicit selections, so the keys `rm-v1`/`opt-v1` become
+      `rm-v1+<tag>`/`opt-v1+<tag>` — a consumer that filters on the exact old string must filter on
+      `manifest_json` instead; (4) one explicit version applies to every group that has rows, while
+      `GROUP=VERSION` is strict. **Finding, not fixed**: `market_cap_estimates` and
+      `load_market_caps` take no as-of date, so they read the most recent filing even when it is
+      dated after the run's `as_of` — a look-ahead in any historical run. `market_cap_estimates` now
+      orders by `period_end` (it relied on row order).
 - [ ] **T-093** *(feature; builds on `T-090`)* User-tunable **version constraints** for the
       `quant` agent: the user states which versions of each input `quant` may use, and it
       resolves them against what is stored and runs on the result. Per input — each metric
@@ -786,7 +821,7 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       (MCD, WAT, XOM, PG, T, NEE, MA, CPT, UDR, ESS, SBAC, APO, WFC, HUM, HOOD, APA, BF.B, PM,
       STZ, PSX). Steps: fresh backup → one-transaction purge with an explicit table list and
       before/after counts → bump `METRICS_ENGINE_VERSION` to `metrics-v2` (the readers are
-      made version-aware by `T-090`) → Phase A on
+      made version-aware by `T-090`, done) → Phase A on
       the 20 tickers (`--tickers`; a 20-member `universe.db` for `cycle`/`quant`) with the
       `T-086` guard active → re-run the data-quality audit. Acceptance in `PLAN.md`; record
       the fraction of 10-Q metric rows still on F4's `current × 4` fallback (the ingestion
@@ -835,8 +870,8 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-`T-086`, `T-092`, `T-094` and `T-087` are done, and `T-088`'s purge was executed early; next up
-`T-090` → `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
+`T-086`, `T-092`, `T-094`, `T-087` and `T-090` are done, and `T-088`'s purge was executed early;
+next up `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
