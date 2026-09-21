@@ -378,13 +378,7 @@ def _ttm_flows(
     }
     if not current:
         return {}
-    return db.ttm_flows(
-        engine.conn,
-        task.asset_id,
-        fiscal_year=target.period.year,
-        quarter=int(target.period.tag[1]),
-        current=current,
-    )
+    return db.ttm_flows(engine.conn, task.asset_id, period_end=target.period.date, current=current)
 
 
 def _analyze_one(

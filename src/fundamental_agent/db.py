@@ -8,10 +8,11 @@ is owned by this agent. ``fundamental_snapshot`` is append-only: one immutable r
 
 from __future__ import annotations
 
+import calendar
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -420,8 +421,6 @@ def overlapping_history(
 # groups are always computed for every filing (fundamental_agent.metrics.CORE_GROUPS/
 # OPTIONAL_GROUPS), so either metric name works as an anchor regardless of whether
 # its own ratio value came out null.
-_FISCAL_Q4 = 4
-
 _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
     "net_income": ("profitability", "return_on_assets"),
     "revenue": ("profitability", "return_on_assets"),
@@ -429,28 +428,62 @@ _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
 }
 
 
-def _historical_flow(
-    conn: Database, asset_id: int, form: str, fiscal_period: str, item: str
-) -> float | None:
-    """The single-quarter (or FY) *item* value already recorded for this asset's
-    ``(form, fiscal_period)`` filing, read from the metric row's own audit
-    ``inputs_json`` -- already resolved through :meth:`Statements.get`'s full
-    concept-selection logic (F2) at the time that filing was processed, so this
-    never re-derives concept resolution itself. When more than one
-    ``engine_version`` row exists for the same key, the most recently written one
-    wins (mirrors :func:`overlapping_history`'s "last/most-recent wins" rule)."""
+# A fiscal quarter/year end can drift from "exactly N months earlier": 52/53-week calendars
+# (AAPL's quarters end on a Saturday) land within a few days. Adjacent quarters are ~91 days
+# apart, so a window this wide still identifies exactly one.
+_PERIOD_TOLERANCE_DAYS = 20
+_QUARTER_MONTHS = 3
+
+
+def _months_before(iso_date: str, months: int) -> date:
+    """*iso_date* moved back *months* calendar months; a month-end stays a month-end
+    (2023-08-31 - 3 -> 2023-05-31, 2024-02-29 - 3 -> 2023-11-30)."""
+    d = date.fromisoformat(iso_date)
+    year, month0 = divmod(d.year * 12 + (d.month - 1) - months, 12)
+    month = month0 + 1
+    last = calendar.monthrange(year, month)[1]
+    was_month_end = d.day == calendar.monthrange(d.year, d.month)[1]
+    return date(year, month, last if was_month_end else min(d.day, last))
+
+
+def _filing_near(conn: Database, asset_id: int, form: str, target: date) -> tuple[int, str] | None:
+    """``(filing id, period_end)`` of the asset's *form* filing whose period ends closest
+    to *target* (within :data:`_PERIOD_TOLERANCE_DAYS`), or ``None``.
+
+    Filings are located by **date**, never by their ``fiscal_period`` label. The labels are
+    ``FY{y}`` / ``{y}Q{n}`` with *y* the calendar year the period ends in, so a fiscal year
+    and its own quarters carry different years unless the year ends in December -- STZ's
+    ``FY2024`` (ending Feb-2024) owns the quarters ``2023Q1``-``Q3`` (T-094)."""
+    iso = target.isoformat()
+    row = conn.execute(
+        """
+        SELECT id, period_end FROM sec_filings
+        WHERE asset_id = ? AND form = ? AND period_end IS NOT NULL
+          AND ABS(julianday(period_end) - julianday(?)) <= ?
+        ORDER BY ABS(julianday(period_end) - julianday(?))
+        LIMIT 1
+        """,
+        (asset_id, form, iso, _PERIOD_TOLERANCE_DAYS, iso),
+    ).fetchone()
+    return (int(row["id"]), str(row["period_end"])) if row else None
+
+
+def _recorded_flow(conn: Database, filing_id: int, item: str) -> float | None:
+    """The single-quarter (or FY) *item* value already recorded for a filing, read from the
+    metric row's own audit ``inputs_json`` -- already resolved through
+    :meth:`Statements.get`'s full concept-selection logic (F2) at the time that filing was
+    processed, so this never re-derives concept resolution itself. When more than one
+    ``engine_version`` row exists for the same key, the most recently written one wins
+    (mirrors :func:`overlapping_history`'s "last/most-recent wins" rule)."""
     group, name = _TTM_FLOW_SOURCE[item]
     row = conn.execute(
         """
-        SELECT fm.inputs_json
-        FROM fundamental_metrics fm
-        JOIN sec_filings sf ON sf.id = fm.filing_id
-        WHERE sf.asset_id = ? AND sf.form = ? AND sf.fiscal_period = ?
-          AND fm.metric_group = ? AND fm.metric_name = ?
-        ORDER BY fm.id DESC
+        SELECT inputs_json FROM fundamental_metrics
+        WHERE filing_id = ? AND metric_group = ? AND metric_name = ?
+        ORDER BY id DESC
         LIMIT 1
         """,
-        (asset_id, form, fiscal_period, group, name),
+        (filing_id, group, name),
     ).fetchone()
     if row is None or not row["inputs_json"]:
         return None
@@ -460,58 +493,65 @@ def _historical_flow(
     return float(value)
 
 
-def _quarter_flow(
-    conn: Database, asset_id: int, year: int, quarter: int, item: str
+def _quarter_flow_ending(
+    conn: Database, asset_id: int, quarter_end: date, item: str
 ) -> float | None:
-    """The single-quarter value of *item* for fiscal *year*'s *quarter* (1-4).
+    """The single-quarter value of *item* for the fiscal quarter ending near *quarter_end*.
 
-    A 10-Q never itself reports quarter 4 -- the fiscal year's 10-K reports only
-    the full-year total. Quarter 4 is derived as that FY total minus its own
-    three 10-Q quarters, and only once all four of those are ingested; otherwise
-    ``None`` (the caller falls back to the ``x4`` approximation -- F4,
-    docs/model_fixes.md)."""
-    if quarter == _FISCAL_Q4:
-        fy = _historical_flow(conn, asset_id, "10-K", f"FY{year}", item)
-        q1 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q1", item)
-        q2 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q2", item)
-        q3 = _historical_flow(conn, asset_id, "10-Q", f"{year}Q3", item)
-        if fy is None or q1 is None or q2 is None or q3 is None:
+    A 10-Q reports quarters 1-3. A fiscal **Q4** has no 10-Q -- the 10-K reports only the
+    full-year total -- so it is derived as that 10-K's FY flow minus the three 10-Q quarters
+    inside the same fiscal year, all located by date, and only when all four are ingested;
+    otherwise ``None`` and the caller falls back to ``x4`` (F4, docs/model_fixes.md)."""
+    quarter = _filing_near(conn, asset_id, "10-Q", quarter_end)
+    if quarter is not None:
+        return _recorded_flow(conn, quarter[0], item)
+    fiscal_year = _filing_near(conn, asset_id, "10-K", quarter_end)
+    if fiscal_year is None:
+        return None
+    fy = _recorded_flow(conn, fiscal_year[0], item)
+    if fy is None:
+        return None
+    total = fy
+    for months in (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS):
+        q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
+        flow = _recorded_flow(conn, q[0], item) if q else None
+        if flow is None:
             return None
-        return fy - q1 - q2 - q3
-    return _historical_flow(conn, asset_id, "10-Q", f"{year}Q{quarter}", item)
+        total -= flow
+    return total
 
 
 def ttm_flows(
     conn: Database,
     asset_id: int,
     *,
-    fiscal_year: int,
-    quarter: int,
+    period_end: str,
     current: dict[str, float],
 ) -> dict[str, float]:
-    """Trailing-twelve-month value of each *current* (this filing's own,
-    single-quarter) flow, keyed the same way (F4, docs/model_fixes.md): a 10-Q
-    reports a 3-month flow, but ROA/ROE/turnover ratios divide it by an
-    instantaneous balance-sheet stock, so it must be measured on the same
-    annual basis first. Sums the filing's own quarter plus the three
-    immediately preceding ones when all three are already ingested (a prior
-    quarter's own already-recorded, never-TTM-adjusted value -- see
-    :func:`_historical_flow` -- so this never compounds a prior TTM
-    adjustment into the new one); otherwise falls back to ``current * 4`` for
-    that item alone (a fresh ticker, or a not-yet-derivable prior-year Q4)."""
-    idx = fiscal_year * 4 + (quarter - 1)
+    """Trailing-twelve-month value of each *current* flow (this 10-Q's own single-quarter
+    value, whose period ends on *period_end*), keyed the same way (F4,
+    docs/model_fixes.md): a 10-Q reports a 3-month flow, but ROA/ROE/turnover ratios divide
+    it by an instantaneous balance-sheet stock, so it must be measured on the same annual
+    basis first. Sums the filing's own quarter plus the three quarters ending 3, 6 and 9
+    months earlier when all three are already ingested (a prior quarter's own
+    already-recorded, never-TTM-adjusted value -- see :func:`_recorded_flow` -- so this never
+    compounds a prior TTM adjustment into the new one); otherwise falls back to
+    ``current * 4`` for that item alone (a fresh ticker, or a not-yet-derivable Q4).
+
+    The quarters are found by **date** relative to *period_end*, so it works for any fiscal
+    calendar (T-094); it used to do arithmetic on the ``fiscal_period`` labels, which only
+    line up for a December year-end."""
+    ends = [_months_before(period_end, _QUARTER_MONTHS * k) for k in (1, 2, 3)]
     out: dict[str, float] = {}
     for item, value in current.items():
         trailing = [value]
-        complete = True
-        for offset in range(1, 4):
-            year, zero_based_quarter = divmod(idx - offset, 4)
-            flow = _quarter_flow(conn, asset_id, year, zero_based_quarter + 1, item)
+        for quarter_end in ends:
+            flow = _quarter_flow_ending(conn, asset_id, quarter_end, item)
             if flow is None:
-                complete = False
+                trailing = []
                 break
             trailing.append(flow)
-        out[item] = sum(trailing) if complete else value * 4.0
+        out[item] = sum(trailing) if trailing else value * 4.0
     return out
 
 

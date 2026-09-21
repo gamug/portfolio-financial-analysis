@@ -14,8 +14,10 @@ from portfolio_common.db import Database
 from fundamental_agent import db, pipeline
 from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
 from fundamental_agent.config import Settings
+from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.edgar_client import FilingRef
 from fundamental_agent.metrics import compute_group
+from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.pipeline import RunParams, _Engine, _plan, _targets, _ttm_flows, _YearTask
 from fundamental_agent.statements import Statements
 from kg_schema.queries import UniverseMember
@@ -92,6 +94,44 @@ def test_ttm_flows_empty_for_10k(memory_db: Database) -> None:
     targets = _targets(stmts, task)
 
     assert _ttm_flows(_engine(memory_db), task, stmts, targets[0]) == {}
+
+
+def test_ttm_flows_reads_the_prior_quarters_by_the_targets_period_end(
+    memory_db: Database,
+) -> None:
+    """The pipeline hands ``db.ttm_flows`` the target's own period-end date (T-094); the three
+    preceding quarters, 3/6/9 months earlier, are found by it -- not by any label."""
+    db.sync_universe(memory_db, [_member("MSFT")])
+    asset_id = db.load_universe(memory_db)[0]["id"]
+    stmts = Statements.from_payload(_payload("financials_MSFT_10-Q_2024.json"))
+    task = _YearTask(asset_id=asset_id, ticker="MSFT", company_name="MSFT", form="10-Q", year=2024)
+    target = _targets(stmts, task)[0]
+    assert target.period.date == "2024-09-30"
+    # seed the three prior quarters (a June fiscal year: 2024-06-30 is its Q4-adjacent 10-Q end)
+    for label, end, ni in (("2024Q3", "2024-06-30", 30.0), ("2024Q2", "2024-03-31", 20.0)):
+        fid = db.upsert_filing(
+            memory_db,
+            FilingKey(asset_id, "10-Q", 2024, label),
+            FilingMeta(period_end=end),
+        )
+        inputs = {"net_income": ni, "revenue": 1.0}
+        db.record_metrics(
+            memory_db, fid, [("profitability", MetricResult("return_on_assets", None, "r", inputs))]
+        )
+    fid = db.upsert_filing(
+        memory_db, FilingKey(asset_id, "10-Q", 2023, "2023Q1"), FilingMeta(period_end="2023-12-31")
+    )
+    db.record_metrics(
+        memory_db,
+        fid,
+        [("profitability", MetricResult("return_on_assets", None, "r", {"net_income": 10.0}))],
+    )
+    current = stmts.get("net_income", target.period.key)
+    assert current is not None
+
+    result = _ttm_flows(_engine(memory_db), task, stmts, target)
+
+    assert result["net_income"] == current + 30.0 + 20.0 + 10.0
 
 
 def test_ttm_flows_falls_back_to_times_four_for_a_fresh_10q(memory_db: Database) -> None:
