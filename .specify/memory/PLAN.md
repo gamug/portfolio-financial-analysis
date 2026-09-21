@@ -36,8 +36,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 `T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
 `sec_edgar` endpoints (done 2026-09-21),
 `T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests (done 2026-09-21),
-`T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
-the malformed-data purge + 20-ticker deep validation run, `T-089` the
+`T-088` the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
 `portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
@@ -46,7 +45,8 @@ correctness fixes, highest priority in this file; its remaining live run
 `T-088`, and `T-068` keeps only the full-universe extension)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
-cleanup)**.
+cleanup)** → **the low-priority path: `T-093`** (user-tunable version constraints for
+`quant`'s Markowitz runs — deferred on purpose, 2026-09-21; to be tackled late, not now).
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -951,12 +951,14 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-093` → `T-088` → `T-089`.
+Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-088` → `T-089`; `T-093` is **deferred to the low-priority path** (below).
 `T-094` was found by `T-092`'s acceptance and had to land before `T-088`'s re-ingest. `T-088`'s backup
 and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
 `T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
-day, from review of `T-088`'s caveats, and sit before `T-088` because its deep validation runs
-on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
+day, from review of `T-088`'s caveats. `T-090` sits before `T-088` because its deep validation
+runs on the versioned readers and on the 10-Q data `T-092` fixes; `T-093` was deferred to the
+low-priority path on 2026-09-21, and `T-088` needs only `T-090`'s `--metrics-version`, so the
+deferral blocks nothing. `T-091` is superseded by `T-092`.
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -1223,7 +1225,9 @@ user-confirmed; every run is tagged (so `rm-v1`/`opt-v1` become `rm-v1+<tag>`/`o
 version applies to every group that has rows while `GROUP=VERSION` is strict. *Finding, not fixed:*
 `market_cap_estimates`/`load_market_caps` take no as-of date, so a historical run can read a market cap from
 a filing dated after its `as_of`.
-**T-093 — User-tunable version constraints for the `quant` agent** *(feature; builds on `T-090`)*.
+**T-093 — User-tunable version constraints for the `quant` agent** *(feature; builds on `T-090`;
+**DEFERRED 2026-09-21 to the low-priority path** — to be tackled late, after Work item 9; nothing in
+Work items 7–11 depends on it. The design below is kept as written)*.
 `T-090` gives `cycle`/`quant` a resolver and a run manifest; this task lets the **user** steer it,
 so the quant agent can be run under different version constraints and the results compared.
 1. **Constraints.** Per input — each metric group, and the `corpact`, return and risk-model
@@ -1293,7 +1297,8 @@ the system-wide [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894
 and the repository-specific [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0)
 artifact: **content only — never rename either or change its `<title>`**. Cover F1, F2, F4,
 C1 (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (the gateway as the only
-corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-093`/`T-088`; close the gaps and plan steps
+corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-088` (`T-093` is deferred, so it appears only as a
+low-priority plan step); close the gaps and plan steps
 they built, and correct prose that describes a fixed gap. Read the live artifact first and
 republish in place by URL. A first pass can run any time after the `T-085` PR merges; a second,
 delta pass follows `T-088`.
@@ -1322,8 +1327,7 @@ this document.** Their internal sequencing:
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
-  (metric-version selection + run manifests — done 2026-09-21) → `T-093` (version constraints; `T-091` is
-  superseded by `T-092`) → `T-088` (purge +
+  (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run
   any time after `T-085` merges). Work item 7's `T-068` is re-scoped behind
   `T-088`.
@@ -1356,5 +1360,10 @@ this document.** Their internal sequencing:
 - Work items 2 (orchestrator) and 4 (SEMANTIC boundary) are unaffected by
   the audit and keep their original priority — after Work items 5–9, per
   the Priority Override section.
+- **Low-priority path (2026-09-21):** `T-093` (user-tunable version constraints for `quant`'s
+  Markowitz runs) is deferred behind everything above, at the user's direction — "tackle this
+  late, not this time". It keeps its Work item 11 home and ID (IDs are stable) but has no place
+  in the current order; `T-088` and `T-089` do not wait on it (`T-090`'s `--metrics-version`
+  already gives `T-088` the version selection it needs).
 
 See `TASKS.md` for the discrete, checkable task breakdown.

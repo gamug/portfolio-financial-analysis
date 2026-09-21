@@ -18,15 +18,16 @@ done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order �
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
-amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant` — **done 2026-09-21**), `T-093` (user-tunable version constraints for `quant`;
-`T-091` is superseded by `T-092`), `T-088`
+amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant` — **done 2026-09-21**), `T-088`
 (purge the malformed Fundamental/Quant data — **the purge itself is done, 2026-09-21** — and
 run the 20-ticker deep validation),
 `T-089` (reconcile the two architecture artifacts; docs-only, first pass any time after
 the `T-085` PR merges).** Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
-**9 (P2)**. See `PLAN.md`'s "🔴 Priority Override"
+**9 (P2)** → **the low-priority path (2026-09-21): `T-093`**, the user-tunable version
+constraints for `quant`'s Markowitz runs, deferred on purpose — to be tackled late, not now
+(`T-091` is superseded by `T-092`). See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
@@ -568,12 +569,15 @@ dependency for the code; live verification is `T-052`.
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all
-done 2026-09-21) → `T-093` → `T-088` → `T-089`. `T-092` was a
+done 2026-09-21) → `T-088` → `T-089`; `T-093` is **deferred to the low-priority path**
+(2026-09-21, at the user's direction). `T-092` was a
 **P0 blocker** — the fundamental pipeline could not ingest anything against the live gateway —
 and is done; it exposed `T-094` (now also done), which had to land before `T-088`'s re-ingest or
 the clean re-run would have activated it. `T-088`'s backup and purge (steps 1–2) were executed early, on 2026-09-21.
-`T-090`/`T-093` (added the same day) come before `T-088` because its deep validation runs
-on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
+`T-090` (added the same day) comes before `T-088` because its deep validation runs
+on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-090`'s
+`--metrics-version`, not `T-093`'s constraint language, so deferring `T-093` blocks nothing;
+`T-091` is superseded by `T-092`.
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -776,7 +780,9 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       `load_market_caps` take no as-of date, so they read the most recent filing even when it is
       dated after the run's `as_of` — a look-ahead in any historical run. `market_cap_estimates` now
       orders by `period_end` (it relied on row order).
-- [ ] **T-093** *(feature; builds on `T-090`)* User-tunable **version constraints** for the
+- [ ] **T-093** *(**DEFERRED 2026-09-21 — low-priority path**: tackled late, after Work
+      item 9, not in the current run of work; nothing in Work items 7–11 depends on it)*
+      *(feature; builds on `T-090`)* User-tunable **version constraints** for the
       `quant` agent: the user states which versions of each input `quant` may use, and it
       resolves them against what is stored and runs on the result. Per input — each metric
       group, and the `corpact`, return and risk-model engines — a constraint is `latest`
@@ -853,7 +859,8 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       and [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0):
       **content only, never rename or change either `<title>`**. Cover F1, F2, F4, C1
       (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (gateway as the only
-      corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-093`/`T-088`; close the gaps and plan
+      corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-088` (`T-093` is deferred, so it appears only as a
+      low-priority plan step); close the gaps and plan
       steps they built and correct prose describing a fixed gap. Read the live artifact,
       republish in place by URL. First pass any time after the `T-085` PR merges; a delta pass
       after `T-088`. → `PLAN.md` Work item 11, `T-089`.
@@ -871,7 +878,7 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
 `T-086`, `T-092`, `T-094`, `T-087` and `T-090` are done, and `T-088`'s purge was executed early;
-next up `T-093` → `T-088` (remainder) → `T-089`.** **`T-085` (Work item 10, P0) is
+next up `T-088` (remainder) → `T-089`; `T-093` is on the low-priority path.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
