@@ -33,7 +33,8 @@ pricing gateway is `quant`'s *only* corporate-actions source — data mining
 belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 2026-09-21 — in this order: the `T-052` live check of the gateway dividends
 (done 2026-09-21),
-`T-086` the `build-returns` guard, `T-087` the constitution amendment, `T-088`
+`T-086` the `build-returns` guard, `T-087` the constitution amendment, `T-090`
+metric-version selection and run manifests, `T-091` the 10-Q ingestion fix, `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
@@ -948,7 +949,10 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6) → `T-086` → `T-087` → `T-088` → `T-089`.
+Work item 6) → `T-086` → `T-087` → `T-090` → `T-091` → `T-088` → `T-089`. `T-090` and
+`T-091` were added the same day, from review of `T-088`'s two caveats, and sit before
+`T-088` because its deep validation runs on the versioned readers and on the 10-Q data
+they fix.
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -985,10 +989,9 @@ could not replace it. Scope, decided 2026-09-21: **all 503 assets, derived data 
    `rule_catalog`, `schema_version`, `shared_executive_edge`, the run logs (`analysis_run*`,
    `pricing_run*`) and the gateway `corporate_action` rows from `T-052`.
 3. Bump `METRICS_ENGINE_VERSION` to `metrics-v2` (`src/fundamental_agent/db.py`) with a test, so
-   fixed-engine rows are distinguishable from any old copy. Also make the three readers
-   engine-aware — `cycle/data.py` (both metric reads) and `quant/db.py::load_market_caps` filter
-   on no `engine_version`, so a future parallel version would be read twice or won by row order;
-   they are safe today only because the purge leaves a single version.
+   fixed-engine rows are distinguishable from any old copy. The readers are made
+   version-aware by `T-090` (they filter on no `engine_version` today, so a parallel version
+   would be read twice or won by row order; safe only because the purge leaves one version).
 4. Run the validation on **20 tickers** (MCD, WAT, XOM, PG, T, NEE, MA, CPT, UDR, ESS, SBAC,
    APO, WFC, HUM, HOOD, APA, BF.B, PM, STZ, PSX): `fundamental_agent`/`pricing_agent` take
    `--tickers`; `cycle` and `quant` take `--universe-db`, so use a 20-member `universe.db`. Then
@@ -1001,16 +1004,86 @@ could not replace it. Scope, decided 2026-09-21: **all 503 assets, derived data 
 until a full re-run (`T-079`); it departs from the repo's append-only convention, so it is a
 one-off, backed-up, transactional reset rather than a new command. *Validity caveat*: F4's true
 TTM (`db.ttm_flows`) needs four consecutive quarters already recorded, and the data holds about
-one 10-Q per fiscal year, so most 10-Qs will take the `current × 4` fallback — record that
-fraction in the result. Fixing 10-Q ingestion is a separate task, not a blocker.
+one 10-Q per fiscal year, so most 10-Qs take the `current × 4` fallback; `T-091` fixes the
+cause. Record the remaining fallback fraction in the result. `T-091` may also change this
+task's "keep the raw ingest" scope for the mis-attributed 10-Q rows.
 
+**T-090 — Metric-version selection and run manifests ("version of versions") for `cycle` and
+`quant`.** *Problem.* `fundamental_metrics` is append-only per `engine_version`, so parallel
+versions accumulate, but nothing chooses among them: `cycle/data.py` (both metric reads) and
+`quant/db.py::load_market_caps` join it with no `engine_version` filter, so a second version is
+read twice or won by row order. A run also cannot say which input versions it used, and
+`quant`'s outputs are not keyed by them, so re-running over a new metrics version no-ops or
+collides — the user cannot run `quant` several times against different versions and compare.
+`T-088` step 3 planned only a minimal "make the three readers engine-aware"; this task
+supersedes it. *Design.*
+1. **One resolver**, in `kg_schema` (which `cycle` and `quant` may both import; they may not
+   import each other): a requested selection → a concrete `engine_version` **per metric
+   group** — profitability, liquidity, leverage, efficiency, growth, cashflow, roic, cagr,
+   valuation. Default is the latest version present for each group; a per-group override is
+   allowed (e.g. `valuation=metrics-v1,profitability=metrics-v2`); an absent requested
+   version is an error, never a silent fallback.
+2. **Every reader goes through it** — the three known readers, and any `v_*` view that resolves
+   "latest" on its own — with a test that fails on any raw `fundamental_metrics` read in `src/`
+   that bypasses the resolver, so a new reader cannot reintroduce the problem.
+3. **Run manifest** — the resolved input versions (metrics per group, the `corpact`, return and
+   risk-model engines) recorded in `cycle_run`/`quant_run.params_json` with a short hash, and
+   carried by the outputs (`quant_risk_model`, `quant_portfolio`, …) so runs at different
+   manifests write **parallel** books instead of colliding, and `evaluate` can compare them.
+4. **CLI**: `--metrics-version` on the `cycle` and `quant` subcommands (default latest), printing
+   the manifest it resolved.
+*To settle first*: the ordering rule for version strings (`pre-v1` < `metrics-v1` < `metrics-v2`,
+without relying on `computed_at`), and whether keying `quant_*` by manifest is additive DDL in
+`kg_schema` or a non-additive `migrate` (its unique keys change). *Acceptance*: hermetic tests
+with `metrics-v1` and `metrics-v2` rows coexisting for the same filing — the default reads
+`v2` only, an explicit `v1` reads `v1` only, a per-group mix works, an absent version errors,
+the manifest is recorded and hashed deterministically, two `quant` runs at different manifests
+coexist and neither no-ops the other, and the no-bypass test; `pytest`/`ruff`/`mypy` green.
+*Not in scope*: changing the default (latest) behaviour of the `v_*` read contract the
+knowledge-graph repo consumes.
+
+**T-091 — Fix 10-Q ingestion.** *Findings (2026-09-21, read-only, against the DB and the live
+gateway).*
+1. **One 10-Q per fiscal year.** The pipeline makes one
+   `GET /edgar/edgar/financials/{ticker}?form=10-Q&year=Y` per (ticker, form, year)
+   (`fundamental_agent/pipeline.py::_fetch_financials`, `_targets`). The route accepts only
+   `form` and `year` (gateway OpenAPI) and returns **one** filing: XOM 2024 → its Q3 filing
+   only (`0000034088-24-000068`; columns Q3 and YTD for 2024/2023), STZ 2023 → its Q2 filing.
+   Q1/Q2 10-Qs are unreachable through it. In the DB 2,424 of 2,471 (asset, fiscal-year) pairs
+   hold a single 10-Q; for the 20 validation tickers the 10-Qs split Q3 70 / Q2 24 / Q1 10 /
+   Q4 1.
+2. **Comparative columns become filings with a borrowed accession.** `_targets` turns every
+   quarter column of the payload (for the task's year) into a `sec_filings` row stamped with the
+   one filing's accession and date, so 45 (asset, accession) pairs carry several fiscal
+   periods (STZ 2022Q1/Q2 = `0000016918-22-000181`; ALLE, DAL, PNR, REGN, TT, NOC …) and are
+   scored separately — STZ 2024's two rows scored 48 and 32 on the same filing.
+3. **Consequence.** F4's true TTM (`db.ttm_flows`) needs four consecutive recorded quarters, so
+   most 10-Qs fall back to `current × 4`.
+*Approach.* (a) **Consumer fix, no upstream needed**: store a filing row only for the payload's
+own reporting period (the one `filing_by_year` identifies); comparative columns stay facts and
+never become a filing with a borrowed accession; repair the mis-attributed rows. (b)
+**Per-quarter access, upstream**: `portfolio-data-mining`'s `sec_edgar` service needs
+`financials` by `quarter` or `accession` (its `filings/{ticker}?form=10-Q` route already lists
+accessions). Data acquisition is that repo's job, so the route is tracked and built there; this
+repo then enumerates each fiscal year's 10-Qs and ingests Q1–Q3 through `EdgarClient`. An
+upstream task **has not yet been filed**. (c) **Evaluate an alternative that needs no extra
+filing** — TTM = last FY + current YTD − prior-year YTD, which the current 10-Q payload
+(both YTD columns) plus the latest ingested 10-K already supply; verify it against real payloads
+before adopting it. *Acceptance*: for the 20 validation tickers every fiscal year with filed
+10-Qs has its Q1, Q2 and Q3 rows, each with its own accession, filing date and period end; no
+(asset, accession) pair carries more than one fiscal period; the share of 10-Q metric rows on
+the `× 4` fallback is reported and is near zero wherever four quarters exist; hermetic tests
+on captured payloads (a Q3-only payload like XOM 2024, a Q2 payload with a Q1 comparative like
+STZ 2023) added under `tests/fixtures/`. *Order*: before `T-088`; if the upstream half slips,
+(a) and (c) still improve F4 and `T-088` may proceed with the fallback fraction recorded — the
+user's call.
 **T-089 — Reconcile the two architecture artifacts.** Constitution AI behavior #11 requires it
 at the close of every development effort, and no task covered the audit-era fixes. Update both
 the system-wide [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
 and the repository-specific [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0)
 artifact: **content only — never rename either or change its `<title>`**. Cover F1, F2, F4,
 C1 (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (the gateway as the only
-corporate-actions source) and, as they land, `T-086`/`T-088`; close the gaps and plan steps
+corporate-actions source) and, as they land, `T-086`/`T-090`/`T-091`/`T-088`; close the gaps and plan steps
 they built, and correct prose that describes a fixed gap. Read the live artifact first and
 republish in place by URL. A first pass can run any time after the `T-085` PR merges; a second,
 delta pass follows `T-088`.
@@ -1037,7 +1110,8 @@ this document.** Their internal sequencing:
 
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
-  (live check — done 2026-09-21) → `T-086` (guard) → `T-087` (constitution) → `T-088` (purge +
+  (live check — done 2026-09-21) → `T-086` (guard) → `T-087` (constitution) → `T-090`
+  (metric-version selection + run manifests) → `T-091` (10-Q ingestion) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run
   any time after `T-085` merges). Work item 7's `T-068` is re-scoped behind
   `T-088`.
