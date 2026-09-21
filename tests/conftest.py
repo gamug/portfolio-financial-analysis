@@ -224,6 +224,29 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
                         "VALUES (?, 'DIVIDEND', ?, ?, 'pricing-gateway', 'corpact-v1', ?)",
                         (a, days[q * n_days // 5], (1.20 + 0.1 * a) / 4, days[0] + "T00:00:00Z"),
                     )
+        if with_dividends:
+            # ...and the clean, gateway-sourced backfill-actions run that would have written
+            # them, which is what build-returns' dividends guard (T-086) looks for.
+            conn.execute(
+                "INSERT INTO quant_run (command, as_of, started_at, finished_at, status, "
+                "engine_version, params_json) "
+                "VALUES ('backfill-actions', ?, ?, ?, 'completed', 'quant-v1', ?)",
+                (
+                    days[-1],
+                    days[0] + "T00:00:00Z",
+                    days[0] + "T00:01:00Z",
+                    json.dumps(
+                        {
+                            "source": "gateway",
+                            "date_from": "2000-01-01",
+                            "date_to": "2100-01-01",
+                            "assets_seen": n_assets,
+                            "assets_fetched": n_assets,
+                            "assets_errored": 0,
+                        }
+                    ),
+                ),
+            )
         conn.commit()
 
         udb = tmp_path / "quant_seed_universe.db"

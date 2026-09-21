@@ -220,6 +220,16 @@ def load_daily_closes(
 _ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1")
 
 
+def has_gateway_actions(conn: Database) -> bool:
+    """True when ``corporate_action`` holds at least one row from a gateway engine."""
+    marks = ", ".join("?" for _ in _ACTION_ENGINE_PRIORITY)
+    row = conn.execute(
+        f"SELECT 1 FROM corporate_action WHERE engine_version IN ({marks}) LIMIT 1",  # noqa: S608
+        _ACTION_ENGINE_PRIORITY,
+    ).fetchone()
+    return row is not None
+
+
 def load_actions(
     conn: Database, asset_id: int, action_type: str, *, start: str, end: str
 ) -> dict[str, float]:

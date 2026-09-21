@@ -33,7 +33,7 @@ pricing gateway is `quant`'s *only* corporate-actions source — data mining
 belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 2026-09-21 — in this order: the `T-052` live check of the gateway dividends
 (done 2026-09-21),
-`T-086` the `build-returns` guard, **`T-092` the critical integration of the multi-filing
+`T-086` the `build-returns` guard (done 2026-09-21), **`T-092` the critical integration of the multi-filing
 `sec_edgar` endpoints (the fundamental pipeline is broken against the live gateway)**,
 `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
@@ -951,7 +951,7 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6) → `T-086` → **`T-092`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
+Work item 6) and `T-086` (both done 2026-09-21) → **`T-092`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
 `T-092` is a **P0 blocker** (below) and is next in the row. `T-090`/`T-093` were added the same
 day, from review of `T-088`'s caveats, and sit before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
@@ -959,13 +959,16 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
 gateway rows is price-only *and* locks in under that version. `run_build_returns`
-(`src/quant/returns.py`) must refuse — exit 1 with a clear message — unless the latest
+(`src/quant/returns.py`) must refuse — exit 1 with a clear message — unless a
 `backfill-actions` `quant_run` covering the build window is `completed` with
 `assets_errored == 0` (both already recorded in its `params_json` by `T-085`) and gateway
 `corporate_action` rows exist. An explicit `--allow-no-dividends` override builds a knowingly
 price-only series and records that in `params_json`. *Acceptance*: hermetic tests for no
 backfill run, a failed run, a run with errored assets, a window the run does not cover, and the
-override; `pytest`/`ruff`/`mypy` green.
+override; `pytest`/`ruff`/`mypy` green. **Done 2026-09-21.** Any clean covering run is enough
+(a later failed run, or one that completed with errors, does not undo the rows an earlier clean
+one wrote); a run recorded before `T-085` has no `assets_errored` and does not count; a refusal
+happens before `open_run`, so nothing is written and it is not recorded as a run.
 
 **T-092 — CRITICAL: integrate `portfolio-data-mining`'s multi-filing `sec_edgar` endpoints.**
 *What changed upstream.* `portfolio-data-mining` PR #39 ("return all filings for a form+year, not
@@ -1205,7 +1208,7 @@ this document.** Their internal sequencing:
 
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
-  (live check — done 2026-09-21) → `T-086` (guard) → **`T-092` (critical: multi-filing
+  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → **`T-092` (critical: multi-filing
   `sec_edgar` integration; blocks the fundamental pipeline)** → `T-087` (constitution) → `T-090`
   (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +

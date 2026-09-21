@@ -16,7 +16,7 @@ pricing gateway as `quant`'s *only* corporate-actions source (the XBRL-derived
 fallback was removed: no repository but `portfolio-data-mining` mines data) — is
 done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order —
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
-`build-returns` guard), **`T-092` (CRITICAL: integrate `portfolio-data-mining`'s
+`build-returns` guard — **done 2026-09-21**), **`T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — the fundamental pipeline is broken against the live
 gateway)**, `T-087` (the constitution amendment), `T-090` (metric-version selection and run
 manifests for `cycle`/`quant`), `T-093` (user-tunable version constraints for `quant`;
@@ -567,15 +567,15 @@ dependency for the code; live verification is `T-052`.
 
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
-Added 2026-09-21. Order: `T-052` (Work item 6, live check) → `T-086` → **`T-092`** →
+Added 2026-09-21. Order: `T-052` (Work item 6, live check) and `T-086` (both done 2026-09-21) → **`T-092`** →
 `T-087` → `T-090` → `T-093` → `T-088` → `T-089`. `T-092` is a **P0 blocker** — the fundamental
 pipeline cannot ingest anything against the live gateway until it lands — so it is next in the
 row. `T-090`/`T-093` (added the same day) come before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
 → `PLAN.md` Work item 11.
 
-- [ ] **T-086** Guard against false `build-returns` runs: `run_build_returns`
-      (`src/quant/returns.py`) refuses — exit 1, clear message — unless the latest
+- [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
+      (`src/quant/returns.py`) refuses — exit 1, clear message — unless a
       `backfill-actions` `quant_run` covering the build window is `completed` with
       `assets_errored == 0` (both recorded in its `params_json` by `T-085`) and gateway
       `corporate_action` rows exist; an explicit `--allow-no-dividends` override builds a
@@ -583,7 +583,22 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is supersed
       is `INSERT OR IGNORE` per `(asset, day, engine_version)`, so a series built with no
       dividends is price-only *and* locks in under `qret-v2`. Hermetic tests: no backfill
       run, failed run, run with errored assets, window not covered, override; `pytest`/
-      `ruff`/`mypy` green. → `PLAN.md` Work item 11, `T-086`.
+      `ruff`/`mypy` green. → `PLAN.md` Work item 11, `T-086`. **Done 2026-09-21**:
+      `quant.actions.dividends_not_ready_reason` (next to the `params_json` writer it
+      reads) plus `DividendsNotReady`; `run_build_returns(..., allow_no_dividends=False)`
+      checks it before `open_run`, so a refusal writes nothing and is not a run; the CLI
+      gains `--allow-no-dividends` and exits 1 with the reason and the remedy. Any clean
+      covering run suffices — a *later* failed run, or one that completed with errors, does
+      not block, because the earlier run's rows are still there (`INSERT OR IGNORE`); a run
+      recorded before `T-085` (no `assets_errored`) does not count. The override is loud on
+      stderr and recorded in the run's `params_json`. 17 new hermetic tests
+      (`tests/test_quant_dividends_guard.py`) including a real backfill-then-build through a
+      mocked gateway; full suite (280); the `quant_seed(with_dividends=True)` fixture now also records the
+      clean backfill run that would have written its dividends, and the two helpers that
+      build price-only series on purpose (panel, risk model) pass the override. Mutation-
+      checked: a guard that never refuses, an override that is ignored, errored assets
+      tolerated, window coverage unchecked, pre-`T-085` runs accepted, failed runs counted,
+      no check for gateway rows, and an exit code of 0 on refusal each fail their own test.
 - [ ] **T-092** **CRITICAL — next in the row.** Integrate `portfolio-data-mining`'s multi-filing
       `sec_edgar` endpoints. Its PR #39 ("return all filings for a form+year", merged
       2026-09-21T16:32Z, live on the gateway) is a **breaking change** to two routes:
@@ -712,7 +727,7 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-is done; next up `T-086` → **`T-092`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.** **`T-085` (Work item 10, P0) is
+and `T-086` are done; next up `T-092` → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
