@@ -33,9 +33,9 @@ pricing gateway is `quant`'s *only* corporate-actions source — data mining
 belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 2026-09-21 — in this order: the `T-052` live check of the gateway dividends
 (done 2026-09-21),
-`T-086` the `build-returns` guard (done 2026-09-21), **`T-092` the critical integration of the multi-filing
-`sec_edgar` endpoints (the fundamental pipeline is broken against the live gateway)**,
-`T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
+`T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
+`sec_edgar` endpoints (done 2026-09-21),
+**`T-094` the F4 fiscal-calendar fix (next in the row)**, `T-087` the constitution amendment, `T-090` metric-version selection and run manifests,
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
@@ -951,8 +951,10 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6) and `T-086` (both done 2026-09-21) → **`T-092`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
-`T-092` is a **P0 blocker** (below) and is next in the row. `T-090`/`T-093` were added the same
+Work item 6), `T-086` and `T-092` (all done 2026-09-21) → **`T-094`** → `T-087` → `T-090` → `T-093` → `T-088` → `T-089`.
+`T-094` was found by `T-092`'s acceptance and must land before `T-088`'s re-ingest. `T-088`'s backup
+and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
+`T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
 day, from review of `T-088`'s caveats, and sit before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-091` is superseded by `T-092`.
 
@@ -1027,6 +1029,68 @@ run reports no `AttributeError` and no ambiguity error; no (asset, accession) pa
 ingested rows carries more than one fiscal period. *Order*: **P0, next in the row** — every
 downstream task (`T-088`'s validation, the Phase A re-run) needs a pipeline that can ingest.
 
+**T-092 — Done 2026-09-21.** Built as specified, plus: "Company not found" is now
+`EdgarNotFoundError` so the ticker-spelling fallback works, and a resumed run skips the
+`financials` call for an already-scored accession. 18 new hermetic tests on real captured payloads;
+full suite 298; mutation-checked ten ways. **Live check** (real client, live gateway, scratch copy
+of the DB, stub analyst): XOM and STZ, 10-K and 10-Q, 2022–2026 → 38 filings ingested, 0 failed;
+XOM holds Q1–Q3 in every year; no (asset, accession) pair carries more than one fiscal period;
+STZ's formerly shared accession is now two distinct filings. XOM's F4 TTM is real from 2023Q1.
+**Finding for follow-up (not fixed here):** F4's `_quarter_flow` mismatches fiscal-year and quarter
+labels for a **non-calendar** filer — `FY{y}` is keyed by the calendar year the fiscal year *ends*
+in, `{y}Q1..Q3` by the calendar year each quarter ends in — so its Q4 derivation
+`FY{y} − {y}Q1..Q3` reads the *next* fiscal year's quarters (verified on STZ: it would read a
+−$1,199M net-income quarter from FY2025). It was invisible while only one 10-Q per year was stored;
+ingesting Q1–Q3 makes it reachable, so a clean re-ingest (`T-088`) would activate it for STZ, BF.B
+and every other non-December filer in the universe.
+
+**T-094 — F4: TTM fiscal-calendar alignment for non-calendar filers.** *Found by `T-092`'s
+acceptance (2026-09-21); recorded in `docs/model_fixes.md` (F4).*
+
+*The defect.* F4 (`db.ttm_flows`, `db._quarter_flow`) computes a 10-Q's trailing-twelve-month flow from
+the prior quarters already recorded, and derives a fiscal Q4 as the 10-K's FY flow minus that year's
+three 10-Qs. It finds them by **label**: `FY{y}` and `{y}Q{n}`. The pipeline assigns those labels
+from the calendar year the period *ends* in (`Period.year` is `int(date[:4])`) — `FY2024` for a year
+ending Feb-2024, `2023Q1` for the quarter ending May-2023. The two agree only for a December
+year-end. For STZ:
+
+| fiscal year | 10-K label | its 10-Qs are labelled | `_quarter_flow(2024, 4)` reads |
+|---|---|---|---|
+| Mar-2023 … Feb-2024 | `FY2024` | `2023Q1`, `2023Q2`, `2023Q3` | `2024Q1`, `2024Q2`, `2024Q3` (**FY2025's**) |
+
+Verified on real stored values: it would read `2024Q2` net income of **−$1,199M**, an FY2025
+impairment quarter, as a quarter of FY2024. The `fiscal_year × 4 + quarter` index is also
+non-monotonic in time for such a filer (2023Q3 → 2024Q4 → 2024Q1), so "the three preceding
+quarters" are wrong even before Q4 comes into play. It stayed hidden because only about one 10-Q
+per year was stored, so the quarters were never all present and the code fell back to `× 4`;
+`T-092` stores all of them, and a clean re-ingest would activate it for STZ, BF.B and every other
+non-December filer — AAPL (Sep), MSFT (Jun), NVDA (Jan), ORCL (May) and many more. XOM
+(calendar) is correct: on a scratch re-ingest its TTM/quarter revenue is 3.2–4.7×.
+
+*Approach.*
+1. **Anchor on dates, not labels.** The prior quarters of a 10-Q are the asset's 10-Qs ordered by
+   `period_end` strictly before it, roughly three months apart (reject a gap outside about 70–110
+   days, which means a missing quarter); a Q4 flow is the 10-K's FY flow minus the three 10-Qs whose
+   `period_end` falls inside that fiscal year (`(FYE − 1 year, FYE]`). Fall back to `× 4` only when
+   a quarter is genuinely missing, and say so in the recorded inputs.
+2. **Keep the stored labels** (`fiscal_period`, `FY{y}`) — relabelling changes unique keys and every
+   consumer — but do no arithmetic on them.
+3. **Cross-check** against the calendar-agnostic definition TTM = last FY + current YTD − prior-year
+   YTD, which the current 10-Q payload (both YTD columns) plus the latest 10-K already carry; adopt
+   it instead if the real-payload comparison favours it.
+4. **Audit** every other consumer of the `FY{y}`/`{y}Q{n}` labels for the same assumption (growth,
+   CAGR, `prior_of`, share-scale detection, sections) and record what is found.
+
+*Acceptance.* Hermetic tests on real stored values, for a calendar filer (XOM) and non-calendar filers
+(STZ year-end Feb, and one June or September filer): TTM equals the sum of the true trailing four
+quarters; the STZ mix-up above cannot recur (a fiscal-year Q4 never reads another fiscal year's
+quarters); the `× 4` fallback fires only when a quarter is truly absent. A live check on a scratch
+copy for XOM, STZ and BF.B reports the share of 10-Qs on the fallback and the TTM/quarter ratios in a
+sane band. A `docs/model_fixes.md` entry with the real-data verification (constitution AI behavior
+#12); `pytest`/`ruff`/`mypy` green. *Consequence*: metrics computed under the old logic are wrong for
+non-calendar filers, so the recompute is `T-088`'s re-run under `metrics-v2`. *Order*: next in the
+row, before `T-088`'s re-ingest.
+
 **T-087 — Constitution amendment.** `.specify/memory/constitution.md` "Executable cmds" still
 lists `backfill-actions [--source derive|gateway]`; the flag no longer exists. Per its
 Governance section this is its own reviewed change: fix the line, bump the version PATCH
@@ -1062,6 +1126,15 @@ could not replace it. Scope, decided 2026-09-21: **all 503 assets, derived data 
 5. *Acceptance*: re-run the data-quality audit on the 20 tickers — margins within plausible
    bounds, 10-Q ratios on the annual basis, `LEVERAGE_EXTREME` firing for negative-equity names,
    gateway dividends present in `quant_return_daily`.
+**Steps 1–2 were executed early on 2026-09-21, at the user's direction:**
+backup `financial.db.pre-t088-purge-backup-20260921` (identical counts on all 38 tables); one
+transaction, foreign keys enforced, rollback on any surprise; **857,387 rows across 19 tables**
+deleted, the other 19 tables unchanged, `foreign_key_check` clean, all 31 views still query. One
+refinement of the list above: `quant_run` run 6 (the T-052 gateway backfill) was **kept** because the
+`T-086` guard reads it; runs 1–5 (derive-era) were deleted. `cycle`, `quant` and the API's `v_*`
+views are empty for all 503 assets until the re-run. Remaining: the `metrics-v2` bump (step 3, with
+`T-090`), the 20-ticker re-ingest and Phase A (step 4), and the audit (step 5) — after `T-094`.
+
 *Consequences*: the purge empties `cycle`, `quant` and the API's `v_*` views for all 503 assets
 until a full re-run (`T-079`); it departs from the repo's append-only convention, so it is a
 one-off, backed-up, transactional reset rather than a new command. *Validity caveat*: F4's true
@@ -1208,8 +1281,8 @@ this document.** Their internal sequencing:
 
 - **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
-  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → **`T-092` (critical: multi-filing
-  `sec_edgar` integration; blocks the fundamental pipeline)** → `T-087` (constitution) → `T-090`
+  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
+  `sec_edgar` integration — done 2026-09-21) → **`T-094`** (F4 fiscal-calendar fix; next) → `T-087` (constitution) → `T-090`
   (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run

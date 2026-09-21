@@ -1,0 +1,55 @@
+{
+  "_note": "Real responses captured from the gateway on 2026-09-21, after portfolio-data-mining PR #39 (filing_by_year returns every filing; financials takes accession_number).",
+  "filing_by_year_XOM_10-Q_2024": {
+    "success": true,
+    "data": [
+      {
+        "form": "10-Q",
+        "filing_date": "2024-11-04",
+        "accession_number": "0000034088-24-000068"
+      },
+      {
+        "form": "10-Q",
+        "filing_date": "2024-08-05",
+        "accession_number": "0000034088-24-000050"
+      },
+      {
+        "form": "10-Q",
+        "filing_date": "2024-04-29",
+        "accession_number": "0000034088-24-000029"
+      }
+    ]
+  },
+  "filing_by_year_STZ_10-Q_2023": {
+    "success": true,
+    "data": [
+      {
+        "form": "10-Q",
+        "filing_date": "2023-10-05",
+        "accession_number": "0000016918-23-000190"
+      },
+      {
+        "form": "10-Q",
+        "filing_date": "2023-06-30",
+        "accession_number": "0000016918-23-000103"
+      },
+      {
+        "form": "10-Q",
+        "filing_date": "2023-01-05",
+        "accession_number": "0000016918-23-000006"
+      }
+    ]
+  },
+  "filing_by_year_APO_10-K_2022_empty": {
+    "success": true,
+    "data": []
+  },
+  "filing_by_year_ZZZZZZ_unknown_company": {
+    "success": false,
+    "error": "Failed to retrieve filing: Company not found: 'ZZZZZZ'\n  Tip: Search by name with find_company(\"...\") or pass a CIK directly."
+  },
+  "financials_XOM_10-Q_2024_ambiguous": {
+    "success": false,
+    "error": "Found 3 '10-Q' filings for 'XOM' in 2024; call get_filing_by_year to list them, then pass the accession_number of the one you want. Available: 0000034088-24-000068, 0000034088-24-000050, 0000034088-24-000029"
+  }
+}

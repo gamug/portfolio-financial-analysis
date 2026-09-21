@@ -20,7 +20,9 @@ from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
 from fundamental_agent.edgar_client import (
     EdgarClient,
+    EdgarError,
     EdgarNotFoundError,
+    FilingRef,
     normalize_ticker,
 )
 from fundamental_agent.filing_text import fetch_primary_document
@@ -96,6 +98,8 @@ class _Engine:
     report: RunReport
     completed: set[_Unit]
     resolved: dict[str, str] = field(default_factory=dict)
+    # Accessions already scored: a resumed run skips their ``financials`` call.
+    completed_accessions: set[str] = field(default_factory=set)
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
@@ -113,6 +117,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             )
         tasks = _plan(assets, params)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
+        accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
         run_id = db.start_run(
             conn,
@@ -125,7 +130,9 @@ def run(settings: Settings, params: RunParams) -> RunReport:
 
         analyst = FundamentalAnalyst(build_model(settings), settings.llm_model)
         with EdgarClient(settings.edgar_base_url) as edgar:
-            engine = _Engine(conn, edgar, analyst, params, report, completed)
+            engine = _Engine(
+                conn, edgar, analyst, params, report, completed, completed_accessions=accessions
+            )
             _drive(engine, tasks)
 
         db.finish_run(conn, run_id, status="completed")
@@ -173,47 +180,116 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
 
 
 def _run_task(engine: _Engine, task: _YearTask) -> None:
-    report = engine.report
+    """One (ticker, form, filing-year): list its filings, then ingest each one."""
     try:
-        done, skipped = _process(engine, task)
+        ticker_api, refs = _list_filings(engine, task)
     except EdgarNotFoundError:
-        report.skipped += 1
-        db.bump_run_counter(engine.conn, report.run_id, "skipped_units")
+        _count(engine, skipped=1)  # the company filed no such form that year
         return
-    except Exception as exc:  # one bad filing must not stop the batch
-        report.failed += 1
-        report.errors.append(f"{task.ticker} {task.form} {task.year}: {exc}")
-        db.bump_run_counter(engine.conn, report.run_id, "failed_units")
-        db.record_error(
-            engine.conn,
-            report.run_id,
-            RunError(task.ticker, task.form, str(task.year), "process", str(exc)),
-        )
+    except Exception as exc:  # one bad ticker/year must not stop the batch
+        _record_failure(engine, task, None, exc)
         return
+    for ref in _select_filings(task, refs):
+        _run_filing(engine, task, ticker_api, ref)
 
-    report.completed += done
+
+def _run_filing(engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef) -> None:
+    try:
+        done, skipped = _process_filing(engine, task, ticker_api, ref)
+    except EdgarNotFoundError:
+        _count(engine, skipped=1)
+        return
+    except Exception as exc:  # one bad filing must not stop its siblings or the batch
+        _record_failure(engine, task, ref, exc)
+        return
+    _count(engine, completed=done, skipped=skipped)
+
+
+def _count(engine: _Engine, *, completed: int = 0, skipped: int = 0) -> None:
+    report = engine.report
+    report.completed += completed
     report.skipped += skipped
-    for _ in range(done):
+    for _ in range(completed):
         db.bump_run_counter(engine.conn, report.run_id, "completed_units")
     for _ in range(skipped):
         db.bump_run_counter(engine.conn, report.run_id, "skipped_units")
 
 
-def _process(engine: _Engine, task: _YearTask) -> tuple[int, int]:
-    if (
-        task.form == "10-K"
-        and not engine.params.fresh
-        and (task.ticker, "10-K", f"FY{task.year}") in engine.completed
-    ):
-        return 0, 1
+def _record_failure(
+    engine: _Engine, task: _YearTask, ref: FilingRef | None, exc: Exception
+) -> None:
+    report = engine.report
+    where = f" [{ref.accession_number}]" if ref else ""
+    report.failed += 1
+    report.errors.append(f"{task.ticker} {task.form} {task.year}{where}: {exc}")
+    db.bump_run_counter(engine.conn, report.run_id, "failed_units")
+    db.record_error(
+        engine.conn,
+        report.run_id,
+        RunError(
+            task.ticker,
+            task.form,
+            str(task.year),
+            "process",
+            f"{ref.accession_number}: {exc}" if ref else str(exc),
+        ),
+    )
 
-    ticker_api, payload = _fetch_financials(engine, task)
-    stmts = Statements.from_payload(payload)
-    meta = _fetch_meta(engine, ticker_api, task)
 
+def _list_filings(engine: _Engine, task: _YearTask) -> tuple[str, list[FilingRef]]:
+    """The ticker spelling EDGAR knows and its filings for the task's form and year.
+
+    Raises :class:`EdgarNotFoundError` when the company exists but filed nothing that year
+    (a skip), and a plain :class:`EdgarError` when no spelling matches a company at all (a
+    failure worth seeing)."""
+    candidates = (
+        [engine.resolved[task.ticker]]
+        if task.ticker in engine.resolved
+        else normalize_ticker(task.ticker)
+    )
+    company_found = False
+    last: EdgarNotFoundError | None = None
+    for candidate in candidates:
+        try:
+            refs = engine.edgar.filing_by_year(candidate, task.form, task.year)
+        except EdgarNotFoundError as exc:
+            last = exc
+            continue
+        company_found = True
+        if refs:
+            engine.resolved[task.ticker] = candidate
+            return candidate, refs
+    if company_found:
+        raise EdgarNotFoundError(f"no {task.form} filing for {task.ticker} in {task.year}")
+    raise EdgarError(f"no EDGAR match for {task.ticker!r}") from last
+
+
+def _select_filings(task: _YearTask, refs: Sequence[FilingRef]) -> list[FilingRef]:
+    """The filings to ingest, **oldest first**.
+
+    Chronological order matters: F4's trailing-twelve-month figure for a 10-Q reads the
+    prior quarters' already-recorded values (``db.ttm_flows``), so Q1 must be recorded
+    before Q2 and Q2 before Q3. The gateway lists most-recent-first, hence the re-sort.
+    A 10-K reports one fiscal year, so if several match (an amendment) only the most
+    recent is kept."""
+    ordered = sorted(refs, key=lambda r: (r.filing_date or "", r.accession_number))
+    return ordered[-1:] if task.form == "10-K" else ordered
+
+
+def _process_filing(
+    engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef
+) -> tuple[int, int]:
     as_of = engine.params.analysis_date
-    if meta.filing_date and meta.filing_date > as_of:
+    if ref.filing_date and ref.filing_date > as_of:
         return 0, 1  # no lookahead: this filing was filed after the analysis date
+    if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
+        return 0, 1  # already ingested and scored by an earlier run
+
+    payload = engine.edgar.financials(
+        ticker_api, task.form, task.year, accession_number=ref.accession_number
+    )
+    stmts = Statements.from_payload(payload)
+    meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number)
 
     done = skipped = 0
     for target in _targets(stmts, task):
@@ -226,51 +302,32 @@ def _process(engine: _Engine, task: _YearTask) -> tuple[int, int]:
             continue
         _analyze_one(engine, task, stmts, target, meta)
         engine.completed.add(unit)
+        engine.completed_accessions.add(ref.accession_number)
         done += 1
     return done, skipped
 
 
-def _fetch_financials(engine: _Engine, task: _YearTask) -> tuple[str, _Payload]:
-    candidates = (
-        [engine.resolved[task.ticker]]
-        if task.ticker in engine.resolved
-        else normalize_ticker(task.ticker)
-    )
-    last: EdgarNotFoundError | None = None
-    for candidate in candidates:
-        try:
-            payload = engine.edgar.financials(candidate, task.form, task.year)
-        except EdgarNotFoundError as exc:
-            last = exc
-            continue
-        engine.resolved[task.ticker] = candidate
-        return candidate, payload
-    raise last or EdgarNotFoundError(f"no financials for {task.ticker}")
-
-
-def _fetch_meta(engine: _Engine, ticker_api: str, task: _YearTask) -> FilingMeta:
-    try:
-        raw = engine.edgar.filing_by_year(ticker_api, task.form, task.year)
-    except EdgarNotFoundError:
-        return FilingMeta()
-    return FilingMeta(
-        filing_date=_as_str(raw.get("filing_date")),
-        accession_number=_as_str(raw.get("accession_number")),
-    )
-
-
 def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
+    """The filing's **own** reporting period, and nothing else.
+
+    A payload carries comparative columns (the prior quarter, the prior year) beside the
+    period the filing reports. Those are facts about earlier filings; recording them as a
+    filing of their own would stamp them with *this* filing's accession and date (T-091:
+    45 asset-accession pairs carried several fiscal periods). The own period is the latest
+    fiscal year (10-K) or the latest quarter (10-Q) the payload holds. The old
+    ``period.year == task.year`` filter is gone: ``task.year`` is the *filing* year, so it
+    also dropped a January 10-Q for a December quarter."""
     if task.form == "10-K":
         period = stmts.latest_fy()
         if period is None:
             return []
         return [_Target(period, f"FY{period.year}", stmts.prior_of(period))]
 
-    return [
-        _Target(period, f"{period.year}Q{period.tag[1]}", stmts.prior_of(period))
-        for period in stmts.quarter_periods()
-        if period.year == task.year
-    ]
+    quarters = stmts.quarter_periods()
+    if not quarters:
+        return []
+    period = max(quarters, key=lambda p: p.date)
+    return [_Target(period, f"{period.year}Q{period.tag[1]}", stmts.prior_of(period))]
 
 
 def _extract_sections(

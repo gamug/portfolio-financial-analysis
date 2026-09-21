@@ -14,6 +14,7 @@ from portfolio_common.db import Database
 from fundamental_agent import db, pipeline
 from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
 from fundamental_agent.config import Settings
+from fundamental_agent.edgar_client import FilingRef
 from fundamental_agent.metrics import compute_group
 from fundamental_agent.pipeline import RunParams, _Engine, _plan, _targets, _ttm_flows, _YearTask
 from fundamental_agent.statements import Statements
@@ -48,11 +49,12 @@ def test_targets_10k_picks_latest_fiscal_year() -> None:
     assert prior.date == "2022-09-24"
 
 
-def test_targets_10q_expands_matching_year_quarters() -> None:
+def test_targets_10q_is_the_filings_own_quarter() -> None:
     stmts = Statements.from_payload(_payload("financials_MSFT_10-Q_2024.json"))
-    targets = _targets(stmts, _task("MSFT", "10-Q", 2024))
-    assert [t.fiscal_period for t in targets] == ["2024Q1"]
-    assert _targets(stmts, _task("MSFT", "10-Q", 2019)) == []
+    assert [t.fiscal_period for t in _targets(stmts, _task("MSFT", "10-Q", 2024))] == ["2024Q1"]
+    # task.year is the *filing* year, not a period filter (a January 10-Q reports a
+    # December quarter): the own period comes from the payload, whatever year was asked.
+    assert [t.fiscal_period for t in _targets(stmts, _task("MSFT", "10-Q", 2019))] == ["2024Q1"]
 
 
 def _member(symbol: str) -> UniverseMember:
@@ -134,11 +136,13 @@ class _FakeEdgar:
     def __exit__(self, *_exc: object) -> None:
         return None
 
-    def financials(self, ticker: str, form: str, year: int) -> dict:
+    def financials(
+        self, ticker: str, form: str, year: int, accession_number: str | None = None
+    ) -> dict:
         return self._by_form[form]
 
-    def filing_by_year(self, ticker: str, form: str, year: int) -> dict:
-        return {"filing_date": f"{year}-02-01", "accession_number": f"acc-{ticker}-{year}"}
+    def filing_by_year(self, ticker: str, form: str, year: int) -> list[FilingRef]:
+        return [FilingRef(form, f"{year}-02-01", f"acc-{ticker}-{year}")]
 
 
 class _StubAnalyst:
