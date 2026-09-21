@@ -315,14 +315,15 @@ VIEWS: dict[str, str] = {
         SELECT rm.id, rm.as_of, rm.model_version, rm.lookback_days, rm.min_history_days,
                rm.n_assets, rm.cov_estimator, rm.cov_shrinkage, rm.ret_estimator,
                rm.periods_per_year, rm.panel_engine_version, rm.panel_spec_json,
-               rm.rf_annual, rm.computed_at, rm.quant_run_id
+               rm.rf_annual, rm.computed_at, rm.quant_run_id, rm.manifest_json
         FROM quant_risk_model rm
     """,
     "v_quant_portfolio": """
         CREATE VIEW v_quant_portfolio AS
         SELECT qp.id, qp.as_of, qp.kind, qp.frontier_k, qp.objective, qp.solver, qp.status,
                qp.expected_return, qp.expected_vol, qp.sharpe, qp.rf_annual, qp.n_positions,
-               qp.turnover, qp.target_param, qp.model_id, qp.engine_version, qp.computed_at
+               qp.turnover, qp.target_param, qp.model_id, qp.engine_version, qp.computed_at,
+               qp.manifest_json
         FROM quant_portfolio qp
     """,
     "v_quant_position": """

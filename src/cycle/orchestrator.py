@@ -23,9 +23,10 @@ from cycle.db import ensure_schema
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
-from cycle.state import checkpoint, done_steps, finish_cycle, open_cycle
+from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
 from kg_schema import connect
 from kg_schema.provenance import code_version
+from kg_schema.versions import manifest_tag, parse_metric_selection, resolve_metric_versions
 
 FundamentalHook = Callable[[Database, list[int], str], None]
 
@@ -53,6 +54,7 @@ class CycleReport:
     steps_skipped: list[str] = field(default_factory=list)
     selected: int = 0
     vetoed: int = 0
+    manifest_tag: str = ""
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -83,18 +85,28 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
     ensure_schema(conn)
+    # Resolve the metric versions this run reads (T-090) and refuse to resume an earlier run of
+    # the same (type, date) that was built on different ones -- before touching that run.
+    versions = resolve_metric_versions(conn, parse_metric_selection(settings.metrics_version))
+    manifest = {"consumer": "cycle", "metrics": versions.manifest()}
+    tag = manifest_tag(manifest)
+    check_manifest(conn, cycle_type, cycle_date, tag)
     run_id = open_cycle(
-        conn, cycle_type, cycle_date, settings.model_dump(), code_version=code_version()
+        conn,
+        cycle_type,
+        cycle_date,
+        {**settings.model_dump(), "manifest": manifest, "manifest_tag": tag},
+        code_version=code_version(),
     )
     already = done_steps(conn, run_id)
-    report = CycleReport(run_id, cycle_type, cycle_date)
+    report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
 
     universe_rows = data.active_universe(
         conn, settings.universe, cycle_date, settings.universe_db_path
     )
     asset_ids = [int(r["id"]) for r in universe_rows]
     sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
-    metrics = data.latest_metrics(conn, cycle_date)
+    metrics = data.latest_metrics(conn, cycle_date, versions)
     price_obs = data.latest_price_observation(conn, cycle_date)
 
     def _do(step: str, fn: Callable[[], dict]) -> None:
@@ -141,7 +153,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
     # -- valorization
     def _valorization() -> dict:
-        mcap = data.market_cap_estimates(conn, metrics)
+        mcap = data.market_cap_estimates(conn, metrics, versions)
         rows = {}
         for a in asset_ids:
             m = dict(metrics.get(a, {}))

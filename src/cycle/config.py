@@ -31,6 +31,11 @@ class CycleSettings(BaseModel):
     max_name_weight: float = 0.10
     max_sector_weight: float = 0.30
     soft_veto_penalty: float = 15.0  # points knocked off blended score per active soft veto
+    # Which fundamental_metrics engine version(s) the cycle reads (T-090): None = the newest
+    # stored per group; "metrics-v1" = that one; "valuation=metrics-v1" = per group. A cycle_run
+    # is unique per (type, date), so it records the manifest and refuses to be resumed under
+    # different inputs rather than mixing them.
+    metrics_version: str | None = None
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

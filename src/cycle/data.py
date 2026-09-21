@@ -9,6 +9,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
+from kg_schema.versions import MetricVersions
 
 
 def active_universe(
@@ -46,8 +47,11 @@ def active_universe(
     )
 
 
-def latest_metrics(conn: Database, cycle_date: str) -> dict[int, dict[str, float | None]]:
-    """asset_id -> {"group.name": value} from the newest filing with period_end <= cycle_date."""
+def latest_metrics(
+    conn: Database, cycle_date: str, versions: MetricVersions
+) -> dict[int, dict[str, float | None]]:
+    """asset_id -> {"group.name": value} from the newest filing with period_end <= cycle_date,
+    read from the metrics engine *versions* the run resolved (T-090) -- never every version."""
     rows = conn.execute(
         """
         WITH latest AS (
@@ -60,8 +64,9 @@ def latest_metrics(conn: Database, cycle_date: str) -> dict[int, dict[str, float
         FROM fundamental_metrics m
         JOIN sec_filings f ON f.id = m.filing_id
         JOIN latest l ON l.asset_id = f.asset_id AND l.pe = f.period_end
+        WHERE (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
         """,
-        (cycle_date,),
+        (cycle_date, versions.json_param()),
     ).fetchall()
     out: dict[int, dict[str, float | None]] = {}
     for r in rows:
@@ -132,15 +137,19 @@ def latest_semantic_score(conn: Database, cycle_date: str) -> dict[int, float | 
 
 
 def market_cap_estimates(
-    conn: Database, metrics: dict[int, dict[str, float | None]]
+    conn: Database, metrics: dict[int, dict[str, float | None]], versions: MetricVersions
 ) -> dict[int, float | None]:
-    """Read market cap straight off the stored valuation metric inputs, when present."""
+    """Read market cap straight off the stored valuation metric inputs of the resolved
+    *versions* (T-090), when present; the most recent filing per asset wins."""
     rows = conn.execute(
         """
         SELECT f.asset_id, m.inputs_json
         FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
         WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
-        """
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        ORDER BY f.period_end
+        """,
+        (versions.json_param(),),
     ).fetchall()
     out: dict[int, float | None] = {}
     for r in rows:

@@ -21,6 +21,7 @@ from portfolio_common.db import Database, DatabaseError, Row, in_clause
 import kg_schema
 from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
+from kg_schema.versions import MetricVersions
 
 _ZERO_W = 1e-9  # weights this small are treated as "no position"
 _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
@@ -309,16 +310,23 @@ def upsert_return_daily(
     return inserted
 
 
-def load_market_caps(conn: Database, asset_ids: list[int]) -> dict[int, float]:
+def load_market_caps(
+    conn: Database, asset_ids: list[int], versions: MetricVersions
+) -> dict[int, float]:
     """``asset_id -> market cap`` parsed from ``fundamental_metrics.inputs_json``
-    (latest per asset); mirrors ``cycle.data.market_cap_estimates``. Missing -> absent."""
+    (latest per asset) of the *versions* the run resolved (T-090); mirrors
+    ``cycle.data.market_cap_estimates``. Missing -> absent."""
     out: dict[int, float] = {}
     try:
         rows = conn.execute(
-            "SELECT sf.asset_id, fm.value, fm.inputs_json "
-            "FROM fundamental_metrics fm JOIN sec_filings sf ON sf.id = fm.filing_id "
-            "WHERE fm.metric_group = 'valuation' AND fm.metric_name = 'market_capitalization' "
-            "ORDER BY sf.period_end"
+            """
+            SELECT sf.asset_id, m.value, m.inputs_json
+            FROM fundamental_metrics m JOIN sec_filings sf ON sf.id = m.filing_id
+            WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
+              AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+            ORDER BY sf.period_end
+            """,
+            (versions.json_param(),),
         ).fetchall()
     except DatabaseError:
         return out
@@ -355,6 +363,7 @@ class RiskModelMeta:
     rf_annual: float | None
     params_json: str
     quant_run_id: int | None = None
+    manifest_json: str | None = None
 
 
 def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
@@ -363,8 +372,8 @@ def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
         INSERT INTO quant_risk_model
             (quant_run_id, as_of, model_version, lookback_days, min_history_days, n_assets,
              cov_estimator, cov_shrinkage, ret_estimator, periods_per_year, panel_engine_version,
-             panel_spec_json, rf_annual, computed_at, params_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             panel_spec_json, rf_annual, computed_at, params_json, manifest_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (as_of, model_version) DO UPDATE SET
             quant_run_id = excluded.quant_run_id, lookback_days = excluded.lookback_days,
             min_history_days = excluded.min_history_days, n_assets = excluded.n_assets,
@@ -372,7 +381,8 @@ def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
             ret_estimator = excluded.ret_estimator, periods_per_year = excluded.periods_per_year,
             panel_engine_version = excluded.panel_engine_version,
             panel_spec_json = excluded.panel_spec_json, rf_annual = excluded.rf_annual,
-            computed_at = excluded.computed_at, params_json = excluded.params_json
+            computed_at = excluded.computed_at, params_json = excluded.params_json,
+            manifest_json = excluded.manifest_json
         """,
         (
             meta.quant_run_id,
@@ -390,6 +400,7 @@ def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
             meta.rf_annual,
             _now(),
             meta.params_json,
+            meta.manifest_json,
         ),
     )
     conn.commit()
@@ -500,6 +511,7 @@ class PortfolioRow:
     model_id: int | None = None
     quant_run_id: int | None = None
     params_json: str | None = None
+    manifest_json: str | None = None
 
 
 def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
@@ -508,8 +520,8 @@ def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
         INSERT INTO quant_portfolio
             (quant_run_id, model_id, as_of, kind, frontier_k, objective, solver, status,
              expected_return, expected_vol, sharpe, rf_annual, n_positions, turnover,
-             target_param, engine_version, computed_at, params_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             target_param, engine_version, computed_at, params_json, manifest_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (as_of, kind, frontier_k, engine_version) DO UPDATE SET
             quant_run_id = excluded.quant_run_id, model_id = excluded.model_id,
             objective = excluded.objective, solver = excluded.solver, status = excluded.status,
@@ -517,7 +529,7 @@ def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
             sharpe = excluded.sharpe, rf_annual = excluded.rf_annual,
             n_positions = excluded.n_positions, turnover = excluded.turnover,
             target_param = excluded.target_param, computed_at = excluded.computed_at,
-            params_json = excluded.params_json
+            params_json = excluded.params_json, manifest_json = excluded.manifest_json
         """,
         (
             row.quant_run_id,
@@ -538,6 +550,7 @@ def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
             row.engine_version,
             _now(),
             row.params_json,
+            row.manifest_json,
         ),
     )
     conn.commit()

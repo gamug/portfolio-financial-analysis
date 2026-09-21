@@ -11,13 +11,16 @@ from conftest import write_universe_db
 from portfolio_common.db import Database
 
 import kg_schema
+from cycle.cli import build_parser
+from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.orchestrator import run_monitoring, run_selection
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
-from cycle.state import _redact, checkpoint, open_cycle
+from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
+from kg_schema.versions import VersionError
 
 # -- normalize ----------------------------------------------------------
 
@@ -524,3 +527,130 @@ def test_open_cycle_never_persists_the_api_key() -> None:
     assert json.loads(params)["llm_api_key"] == "***REDACTED***"
     assert json.loads(params)["llm_url"] == "https://api.deepseek.com"
     assert json.loads(detail)["n"] == 5
+
+
+# -- metric-version manifest (T-090) --------------------------------------------------------
+
+
+def _manifest(conn: Database, cycle_type: str, cycle_date: str) -> dict[str, object]:
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    return dict(json.loads(row["params_json"]))
+
+
+def _add_metrics_v2(conn: Database) -> None:
+    """A newer engine writes a parallel copy of every metric (values doubled)."""
+    kg_schema.apply_migrations(conn)  # the migrated key is what lets versions coexist
+    conn.execute(
+        "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
+        "computed_at, engine_version, event_time) "
+        "SELECT filing_id, metric_group, metric_name, value * 2, unit, computed_at, "
+        "'metrics-v2', event_time FROM fundamental_metrics WHERE engine_version = 'metrics-v1'"
+    )
+    conn.commit()
+
+
+def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    report = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    recorded = _manifest(conn, "SELECTION", "2026-06-30")
+    assert recorded["manifest_tag"] == report.manifest_tag
+    assert recorded["manifest"] == {
+        "consumer": "cycle",
+        "metrics": {
+            "cashflow": "metrics-v1",
+            "leverage": "metrics-v1",
+            "liquidity": "metrics-v1",
+            "profitability": "metrics-v1",
+            "valuation": "metrics-v1",
+        },
+    }
+
+
+def test_resuming_a_run_after_a_newer_metrics_version_appears_is_refused(
+    cycle_seed: Database,
+) -> None:
+    """cycle_run is unique per (type, date) and its outputs are keyed by date, so a second run
+    over other inputs cannot sit beside the first -- resuming would mix them. Refuse, and do
+    not touch the earlier run."""
+    conn = cycle_seed
+    first = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    _add_metrics_v2(conn)  # the default now resolves metrics-v2
+
+    with pytest.raises(ManifestMismatch, match=first.manifest_tag):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
+
+    status = conn.execute(
+        "SELECT status FROM cycle_run WHERE cycle_type = 'SELECTION' AND cycle_date = '2026-06-30'"
+    ).fetchone()["status"]
+    assert status == "completed"  # the refusal happened before open_cycle re-opened the run
+    assert _manifest(conn, "SELECTION", "2026-06-30")["manifest_tag"] == first.manifest_tag
+
+
+def test_naming_the_recorded_version_resumes_the_run(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    first = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    _add_metrics_v2(conn)
+    pinned = _settings(conn).model_copy(update={"metrics_version": "metrics-v1"})
+
+    again = run_selection(pinned, "2026-06-30", conn=conn)
+
+    assert again.manifest_tag == first.manifest_tag
+    assert again.steps_run == []  # everything was already done under that manifest
+
+
+def test_a_new_date_reads_the_newer_version_and_gets_its_own_manifest(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    first = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    _add_metrics_v2(conn)
+
+    later = run_monitoring(_settings(conn), "2026-07-31", conn=conn)
+
+    assert later.manifest_tag != first.manifest_tag
+    metrics = _manifest(conn, "MONITORING", "2026-07-31")["manifest"]
+    assert metrics["metrics"]["leverage"] == "metrics-v2"  # type: ignore[index]
+
+
+def test_an_unstored_metrics_version_fails_before_a_run_is_created(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    bad = _settings(conn).model_copy(update={"metrics_version": "metrics-v9"})
+    with pytest.raises(VersionError, match="metrics-v9"):
+        run_selection(bad, "2026-06-30", conn=conn)
+    assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == 0
+
+
+def test_the_cycle_flag_exists_and_the_cli_exits_1_on_a_refusal(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    parser = build_parser()
+    for command in ("select", "monitor"):
+        assert parser.parse_args([command, "--metrics-version", "metrics-v1"]).metrics_version == (
+            "metrics-v1"
+        )
+    assert (
+        parser.parse_args(
+            ["backfill", "--from", "2026-01-01", "--to", "2026-02-01"]
+        ).metrics_version
+        is None
+    )
+
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+
+    def refuse(*_a: object, **_k: object) -> None:
+        raise ManifestMismatch("built on manifest abc12345")
+
+    monkeypatch.setattr("cycle.cli.run_selection", refuse)
+    assert cycle_main(["select", "--date", "2026-06-30"]) == 1
+    assert "abc12345" in capsys.readouterr().err
+
+    def unstored(*_a: object, **_k: object) -> None:
+        raise VersionError("metrics version 'metrics-v9' is not stored")
+
+    monkeypatch.setattr("cycle.cli.run_monitoring", unstored)
+    assert cycle_main(["monitor", "--date", "2026-06-30", "--metrics-version", "metrics-v9"]) == 1
+    assert "metrics-v9" in capsys.readouterr().err

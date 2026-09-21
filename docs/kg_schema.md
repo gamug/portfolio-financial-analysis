@@ -62,7 +62,9 @@ New tables (see the table below) plus `REQUIRED_COLUMNS`, a
 agent tables — `event_time` / `ingested_at` / `filing_version` on the fact tables,
 plus **run provenance**: `run_id` on `sec_filings` / `financial_facts` /
 `fundamental_metrics` / `price_window` / `price_daily`, `as_of` + `code_version` on
-`analysis_run` / `pricing_run`, and `code_version` on `quant_run` / `cycle_run`.
+`analysis_run` / `pricing_run`, and `code_version` on `quant_run` / `cycle_run`, and
+`manifest_json` on `quant_risk_model` / `quant_portfolio` (T-090: the input versions a
+model or book was built on; NULL on rows written before it).
 `m002` / `m003` carry `run_id` forward in their rebuilds so a not-yet-migrated dev
 DB does not drop it (no new migration, no `schema_version` bump).
 
@@ -85,6 +87,10 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   `persist_coverage(fin_db, report) -> int` (upserts one `universe_coverage`
   row per member). The report *shape* (`SymbolCoverage` / `CoverageReport`
   dataclasses, no SQL) lives in `coverage.py`.
+- **Metric versions:** `metric_versions_present(db) -> {group: [engine_version, ...]}` —
+  the versions actually stored in `fundamental_metrics` (a NULL `engine_version` predates
+  versioning and is ignored; empty for a database without the table). The input to
+  `versions.py`'s resolver.
 - **`schema_version`:** `ensure(db)`, `current_version(db) -> int`,
   `record(db, version, description)` — the monotonic floor other repos assert
   against.
@@ -92,6 +98,35 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   as_of, run_id=None, run_kind=None, source) -> (opened, closed)` — opens
   memberships for newcomers, closes them for the departed. No longer on any
   write path (see `v_universe_membership` below), kept for compatibility.
+
+### `versions.py` — metric-version selection and run manifests (T-090)
+
+`fundamental_metrics` is append-only per `engine_version`, so parallel versions of a
+metric accumulate. This module is the **one place that chooses among them**; every
+reader goes through it (`cycle.data.latest_metrics` / `market_cap_estimates`,
+`quant.db.load_market_caps`), and `tests/test_metric_versions.py` fails on any raw
+`fundamental_metrics` read in `src/` that lacks the filter.
+
+- `resolve_metric_versions(db, selection=None, *, groups=METRIC_GROUPS) -> MetricVersions`
+  resolves a user selection against what is stored, **per metric group** (profitability,
+  liquidity, leverage, efficiency, growth, cashflow, roic, cagr, valuation): no selection →
+  the newest stored version of each group; `"metrics-v1"` → that version for every group
+  the consumer reads that has any rows; `{"valuation": "metrics-v1"}` → per-group overrides,
+  newest for the rest. **A requested version that is not stored is an error**
+  (`VersionError`), never a silent fallback; so is a group the consumer does not read.
+  `choose_versions(present, ...)` is the pure core; `parse_metric_selection(text)` parses
+  a `--metrics-version` string (`metrics-v1` or `valuation=metrics-v1,profitability=metrics-v2`).
+- **Ordering is an explicit rule, not `computed_at`:** `<family>-v<N>` sorts by the family's
+  rank in `FAMILY_RANK` (`pre` < `metrics`) then by `N`, so `pre-v1` < `metrics-v1` <
+  `metrics-v2` < `metrics-v10`. An unparseable string or an unregistered family is an error.
+- `MetricVersions.json_param()` is the single bound parameter of `VERSION_FILTER_SQL` — a
+  **static** SQL fragment (`(m.metric_group || '/' || m.engine_version) IN (SELECT value FROM
+  json_each(?))`), so readers interpolate nothing (constitution Code & Git #10). An empty
+  selection reads nothing, never everything.
+- `manifest_tag(manifest)` — 8 hex chars of a stable hash of the run's input versions.
+  The same inputs give the same tag; different inputs give a different one.
+
+Passive like the rest of the package: it reads and computes, never writes.
 
 ### `coverage.py` — pure business logic, no SQL
 
@@ -187,11 +222,11 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |
 | `shared_executive_edge` | `sharedExecutiveWith` candidates | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
 | `sector_aggregate_snapshot` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `UNIQUE(sector_id, cycle_date, metric_type)` |
-| `corporate_action` | dividends / splits (gateway or XBRL-derived) | `UNIQUE(asset_id, action_type, ex_date, engine_version)` |
+| `corporate_action` | dividends / splits (the pricing gateway only; legacy derived rows are unread history) | `UNIQUE(asset_id, action_type, ex_date, engine_version)` |
 | `quant_return_daily` | total-return daily series (dividends folded in) | `UNIQUE(asset_id, obs_date, engine_version)` |
 | `risk_free_rate` / `benchmark_series` | rf curve + benchmark index for `quant/` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` |
-| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
-| `quant_portfolio` / `quant_position` / `quant_frontier_point` | optimized benchmark books + frontier | `UNIQUE(as_of, kind, frontier_k, engine_version)` / `…(portfolio_id, asset_id, valid_from)` / `…(model_id, k)` |
+| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model; `model_version` = base + manifest tag (`rm-v1+3f9a1c2b`, T-090) | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
+| `quant_portfolio` / `quant_position` / `quant_frontier_point` | optimized benchmark books + frontier; `engine_version` = base + manifest tag (`opt-v1+3f9a1c2b`), `manifest_json` records the inputs | `UNIQUE(as_of, kind, frontier_k, engine_version)` / `…(portfolio_id, asset_id, valid_from)` / `…(model_id, k)` |
 | `quant_benchmark_performance` | forward realized / active return of a frozen book | `UNIQUE(portfolio_id, date, engine_version)` |
 
 ## Gotchas

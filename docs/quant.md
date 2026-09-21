@@ -188,11 +188,40 @@ Clarabel, falling back to OSQP then SCS.
 
 ### `persist.py` — the benchmark books
 
-`run_optimize` loads the risk model for the as-of date (auto-building it when
-absent), then writes one `quant_portfolio` row + a `quant_position` stint per
+`run_optimize` loads the risk model for the as-of date **of its own manifest** (auto-building
+it when absent), then writes one `quant_portfolio` row + a `quant_position` stint per
 objective, plus a `quant_frontier_point` sweep when `frontier` is requested.
 `quant_position` is keyed `(portfolio_id, asset_id, valid_from)` — many concurrent
 books at one as-of, unlike `portfolio_position`'s `(asset_id, valid_from)`.
+
+### `manifest.py` — the input versions of a run (T-090)
+
+`quant` reads two versioned inputs: the `valuation` metric group (market capitalisation, the
+weights behind the equilibrium expected return — the risk model always computes all three μ
+estimators) and the return series named by `return_engine_version`. `resolve_quant_manifest`
+resolves `--metrics-version` against what `fundamental_metrics` actually stores (via
+`kg_schema.versions`) and returns a `QuantManifest` whose 8-hex **tag** is folded into the
+keys the outputs already use: `quant_risk_model.model_version` (`rm-v1` → `rm-v1+3f9a1c2b`)
+and `quant_portfolio.engine_version` (`opt-v1` → `opt-v1+3f9a1c2b`). Because those tables
+were already unique on those columns, **no schema change** is needed, and:
+
+- the **same inputs give the same tag**, so a re-run refreshes the same rows in place;
+- **different inputs give a different tag**, so the run writes *parallel* rows beside the first
+  instead of overwriting it (they used to be `ON CONFLICT … DO UPDATE` on a constant key);
+- `quant_expected_return` / `quant_covariance` / `quant_position` / `quant_frontier_point` hang
+  off the model or portfolio id, so they follow automatically;
+- `quant evaluate` already evaluates every book in its window, so books built on different
+  inputs are compared side by side with no extra flag.
+
+`--metrics-version` (on `build-risk-model` and `optimize`) takes a version (`metrics-v1`) or
+`GROUP=VERSION` pairs; the default is the newest stored. An unstored version, or a group `quant`
+does not read, is an error **before any run row is written** (CLI exit 1). Every run records its
+manifest and tag in `quant_run.params_json`, and each model and book carries `manifest_json`
+(exposed on `v_quant_risk_model` / `v_quant_portfolio`). The `live_book` snapshot is not
+manifest-dependent and keeps the base version. **Note for consumers of the read contract:**
+`v_quant_risk_model` / `v_quant_portfolio` are one row per stored model / book, so once runs at
+two manifests exist for an as-of there are two rows — filter on `manifest_json` (or the version
+string) to pick one.
 
 ### `benchmark.py` / `evaluate.py` — forward comparison
 

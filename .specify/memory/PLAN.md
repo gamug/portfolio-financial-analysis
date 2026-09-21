@@ -35,7 +35,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 (done 2026-09-21),
 `T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
 `sec_edgar` endpoints (done 2026-09-21),
-`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests,
+`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests (done 2026-09-21),
 `T-093` user-tunable version constraints (`T-091` is superseded by `T-092`), `T-088`
 the malformed-data purge + 20-ticker deep validation run, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
@@ -951,7 +951,7 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6), `T-086`, `T-092`, `T-094` and `T-087` (all done 2026-09-21) → `T-090` → `T-093` → `T-088` → `T-089`.
+Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-093` → `T-088` → `T-089`.
 `T-094` was found by `T-092`'s acceptance and had to land before `T-088`'s re-ingest. `T-088`'s backup
 and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
 `T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
@@ -1205,6 +1205,24 @@ coexist and neither no-ops the other, and the no-bypass test; `pytest`/`ruff`/`m
 *Not in scope*: changing the default (latest) behaviour of the `v_*` read contract the
 knowledge-graph repo consumes.
 
+
+**T-090 — Done 2026-09-21.** Built as specified, additive throughout. `kg_schema/versions.py` holds the
+pure resolver (SQL in `queries.metric_versions_present`); every `fundamental_metrics` reader applies the
+same **static** `VERSION_FILTER_SQL` with one JSON parameter (no interpolation, constitution Code & Git
+#10), guarded by a test that fails on any unfiltered read in `src/`. `quant`'s manifest is the `valuation`
+metric version + the return engine (what it actually reads); its tag is folded into
+`quant_risk_model.model_version` and `quant_portfolio.engine_version` — the keys those tables were already
+unique on — so different inputs write parallel rows and the same inputs update in place, with only an
+additive nullable `manifest_json` added (and exposed on the two views). `cycle` records its manifest and
+**refuses** to resume a `(type, date)` run built on a different one (checked before `open_cycle`), because
+forking its date-keyed outputs would need non-additive key changes. `--metrics-version` on both CLIs.
+57 new tests (368 total), mutation-checked twelve ways, and a live smoke on a scratch copy of the production
+DB (additive columns grafted on, 31/31 views query, clean exit-1 failures with no run rows).
+*Decisions made in the build, for review:* the ordering rule is the recommended one, adopted but not
+user-confirmed; every run is tagged (so `rm-v1`/`opt-v1` become `rm-v1+<tag>`/`opt-v1+<tag>`); one explicit
+version applies to every group that has rows while `GROUP=VERSION` is strict. *Finding, not fixed:*
+`market_cap_estimates`/`load_market_caps` take no as-of date, so a historical run can read a market cap from
+a filing dated after its `as_of`.
 **T-093 — User-tunable version constraints for the `quant` agent** *(feature; builds on `T-090`)*.
 `T-090` gives `cycle`/`quant` a resolver and a run manifest; this task lets the **user** steer it,
 so the quant agent can be run under different version constraints and the results compared.
@@ -1304,7 +1322,7 @@ this document.** Their internal sequencing:
   (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
-  (metric-version selection + run manifests) → `T-093` (version constraints; `T-091` is
+  (metric-version selection + run manifests — done 2026-09-21) → `T-093` (version constraints; `T-091` is
   superseded by `T-092`) → `T-088` (purge +
   20-ticker validation) → `T-089` (artifacts; docs-only, its first pass may run
   any time after `T-085` merges). Work item 7's `T-068` is re-scoped behind

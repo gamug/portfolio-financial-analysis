@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from datetime import date, timedelta
 from pathlib import Path
@@ -10,8 +11,16 @@ from pathlib import Path
 from cycle.config import CycleSettings
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import run_monitoring, run_selection
+from cycle.state import ManifestMismatch
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
+from kg_schema.versions import VersionError
+
+_METRICS_VERSION_HELP = (
+    "which fundamental_metrics engine version the cycle reads: a version (metrics-v1) or "
+    "GROUP=VERSION pairs; default: the newest stored per group. A run of the same type and date "
+    "built on other versions is refused, not mixed (T-090)"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         add_analysis_date_argument(p)
         p.add_argument("--db", help="override KG_FINANCIAL_DB path")
         p.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+        p.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
 
@@ -37,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--to", dest="date_to", required=True)
     bf.add_argument("--step-days", type=int, default=7)
     bf.add_argument("--db")
+    bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     return parser
 
 
@@ -49,6 +60,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["universe_db_path"] = Path(args.universe_db)
     if getattr(args, "top_n", None):
         updates["top_n"] = args.top_n
+    if getattr(args, "metrics_version", None):
+        updates["metrics_version"] = args.metrics_version
     return s.model_copy(update=updates) if updates else s
 
 
@@ -63,13 +76,24 @@ def _resolve_cycle_date(parser: argparse.ArgumentParser, args: argparse.Namespac
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    try:
+        return _dispatch(parser, args)
+    except (VersionError, ManifestMismatch) as exc:
+        print(f"cycle {args.command}: {exc}", file=sys.stderr)
+        return 1
+
+
+def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     settings = _settings(args)
     hook = make_hook(settings)
 
     if args.command == "monitor":
         cycle_date = _resolve_cycle_date(parser, args)
         r = run_monitoring(settings, cycle_date, fundamental_hook=hook)
-        print(f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed")
+        print(
+            f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed "
+            f"(manifest {r.manifest_tag})"
+        )
         return 0
     if args.command == "select":
         cycle_date = _resolve_cycle_date(parser, args)
@@ -78,7 +102,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         r = run_selection(settings, cycle_date, fundamental_hook=hook)
         print(
             f"select {r.cycle_run_id} {r.cycle_date}: {r.selected} selected, "
-            f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'})"
+            f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
+            f"manifest {r.manifest_tag})"
         )
         return 0
     # backfill
