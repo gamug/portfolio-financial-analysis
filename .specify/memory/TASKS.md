@@ -19,8 +19,9 @@ done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order �
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
 amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant` — **done 2026-09-21**), `T-088`
-(purge the malformed Fundamental/Quant data — **the purge itself is done, 2026-09-21** — and
-run the 20-ticker deep validation),
+(purge the malformed Fundamental/Quant data and run the 20-ticker deep validation —
+**done 2026-09-22**; its own acceptance audit found `T-095`/`T-096`/`T-097`, recorded but not
+yet prioritized),
 `T-089` (reconcile the two architecture artifacts; docs-only, first pass any time after
 the `T-085` PR merges).** Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
@@ -577,7 +578,9 @@ the clean re-run would have activated it. `T-088`'s backup and purge (steps 1–
 `T-090` (added the same day) comes before `T-088` because its deep validation runs
 on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-090`'s
 `--metrics-version`, not `T-093`'s constraint language, so deferring `T-093` blocks nothing;
-`T-091` is superseded by `T-092`.
+`T-091` is superseded by `T-092`. **`T-088` is done, 2026-09-22**; its acceptance audit
+found `T-095`/`T-096`/`T-097` (revenue mis-resolution, a 10-Q filing gap, an out-of-order
+`cycle` run guard), recorded below with no priority assigned yet — none blocks `T-089`.
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -821,7 +824,7 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-09
       filing — TTM = last FY + current YTD − prior-year YTD from the current payload plus the
       latest 10-K. Needs an upstream task opened in `portfolio-data-mining` (not yet filed).
       Acceptance and fixtures in `PLAN.md`. → `PLAN.md` Work item 11, `T-091`.
-- [ ] **T-088** Purge the malformed Fundamental/Quant derived data (**all 503 assets, derived
+- [x] **T-088** Purge the malformed Fundamental/Quant derived data (**all 503 assets, derived
       data only**; raw EDGAR filings/facts/sections, prices, universe, benchmark, run logs and
       the gateway `corporate_action` rows are kept) and run the **20-ticker deep validation**
       (MCD, WAT, XOM, PG, T, NEE, MA, CPT, UDR, ESS, SBAC, APO, WFC, HUM, HOOD, APA, BF.B, PM,
@@ -853,7 +856,47 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-09
       7-minute backfill. `cycle`, `quant` and the API's `v_*` views are now empty for all 503
       assets until the re-run. The file size is unchanged (freed pages are not reclaimed; a
       `VACUUM` is optional). Still open: the `metrics-v2` bump, the readers (`T-090`), the
-      F4 fix (`T-094`), and the 20-ticker re-ingest and Phase A.
+      F4 fix (`T-094`), and the 20-ticker re-ingest and Phase A. **Steps 3–5 DONE 2026-09-22.**
+      Fresh backup `financial.db.pre-t088-rerun-backup-20260921` (identical counts, clean
+      `quick_check`). Repaired the 20 tickers' own borrowed-accession rows first (8 STZ
+      `sec_filings` rows, 1,900 facts, 14 sections, foreign keys enforced — `T-092`'s repair
+      obligation). `METRICS_ENGINE_VERSION` bumped to `metrics-v2` (`bae8355`, 3 tests,
+      mutation-checked). 20-member `universe.db` built; Phase A run: `fundamental_agent run`
+      (377/379 filings scored, 1 failed — WFC's 2023 10-Q, gateway payload-extraction error,
+      not retried) → `cycle select` (10 selected, 2 hard-vetoed) → `quant backfill-actions`/
+      `build-returns` (`qret-v2`, 23,340 rows, 18/20 assets with dividends, `T-086` guard
+      passed) → `build-risk-model`/`optimize --max-name-weight 0.15` (3 non-degenerate books +
+      a 15-point frontier; the 5% default box cap would have forced equal weight on 20 names)
+      → `evaluate` (a second, backdated chain at `2026-06-30` gave it a forward window: 42
+      benchmark rows, 4 books, 164 performance rows against `SP500_EW_INTERNAL`). **Acceptance**
+      (`PLAN.md`): margins mostly plausible (9/754 flagged; 6 genuine, 3 a new distinct defect
+      → `T-095`); 10-Q/10-K `asset_turnover` median 1.00 across 262 comparisons (F4 confirmed on
+      real rebuilt data); `LEVERAGE_EXTREME` correctly fires for SBAC and correctly does not for
+      MCD (C2's guard reads as designed); gateway dividends present for 18/20 (WAT/HOOD
+      correctly have none). F4 fallback: 72/278 (25.9%) — 60 are the unavoidable first three
+      quarters, 12 are a real filing-set gap → `T-096`. **Found while validating, not part of
+      this task's own scope**: an out-of-order `cycle select` run silently mutated the live
+      `portfolio_position` book; reverted by hand and confirmed restored → `T-097`. Full detail,
+      including the APA/PM/WAT/APO specifics, in `PLAN.md`.
+- [ ] **T-095** *(found by `T-088`'s acceptance, 2026-09-22)* Revenue mis-resolution when a
+      filer's own "total" tag is a sub-line, not the aggregate: `LineItem.total_concepts`
+      (`statements.py`) lets a `us-gaap_Revenues`-family match win outright over every
+      `concepts` candidate; for APA FY2021 and PM FY2021/FY2022 that tag sits on a sub-line
+      (APA: $1,082M resolved vs. a true ~$7,988M — net margin 121% instead of ≈16%), a
+      different shape from the already-fixed C1 (CPT's 127×). Approach and acceptance in
+      `PLAN.md` (not yet designed). *Not yet prioritized.* → `PLAN.md` Work item 11, `T-095`.
+- [ ] **T-096** *(found by `T-088`'s acceptance, 2026-09-22)* 10-Q filing gaps beyond F4's
+      expected "first three quarters" fallback: 12 of 278 10-Qs in the 20-ticker sample (APO ×8,
+      one each PG/BF.B/STZ/WAT) fall back for no such reason. Two shapes on the live gateway:
+      APO's 2023Q1 10-Q is listed but its `/financials` payload carries only the FY period, so
+      it's silently never scored; WAT is missing a Q1 10-Q in every year 2022–2025. Needs a live
+      reproduction to place the fix (this repo vs. upstream `portfolio-data-mining`). *Not yet
+      prioritized.* → `PLAN.md` Work item 11, `T-096`.
+- [ ] **T-097** *(found while validating `T-088`, 2026-09-22)* Guard `cycle select`/`monitor`
+      against an out-of-order (backdated) `--analysis-date` silently mutating the live
+      `portfolio_position` book — the same class of false-run hazard `T-086` closed for
+      `build-returns`. Refuse unless an explicit override is given, mirroring
+      `--allow-no-dividends`. *Not yet prioritized.* → `PLAN.md` Work item 11, `T-097`.
 - [ ] **T-089** Reconcile the two architecture artifacts per constitution AI behavior #11 —
       [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
       and [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0):
@@ -876,9 +919,10 @@ needed) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis, no
 code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
-Nothing else in `T-040`–`T-084` has started. **Work item 11 (2026-09-21): `T-052`
-`T-086`, `T-092`, `T-094`, `T-087` and `T-090` are done, and `T-088`'s purge was executed early;
-next up `T-088` (remainder) → `T-089`; `T-093` is on the low-priority path.** **`T-085` (Work item 10, P0) is
+Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
+`T-094`, `T-087`, `T-090` and `T-088` are done (2026-09-21/22); next up `T-089`. `T-093` is on
+the low-priority path; `T-095`/`T-096`/`T-097` (found by `T-088`'s acceptance audit) are
+recorded but not yet prioritized.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
