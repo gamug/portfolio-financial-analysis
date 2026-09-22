@@ -1312,3 +1312,118 @@ pass's authority to run unprompted.
   whether the same mistagging shape recurs elsewhere in the 20-ticker
   sample or the full 503-asset universe was not swept — `T-088`'s
   acceptance flagged APA specifically, not a broader pattern.
+
+---
+
+## T-096 — 10-Q filing gaps beyond F4's expected fallback: three distinct root causes, two corrected
+
+**Status**: Fixed 2026-09-22 (branch `feat/t096-10q-filing-gaps`, `T-096`) — the WAT local
+half. The APO half is a confirmed upstream gap, routed rather than fixed here. The original
+PG/BF.B/STZ characterization did not survive a precise reproduction and is corrected.
+
+### Symptom
+
+`T-088`'s 20-ticker acceptance flagged 12 of 278 10-Q filings computing their flows via F4's
+`current × 4` fallback for no "first three quarters of stored history" reason — concentrated
+in APO (8 of 13), and one instance each in PG, BF.B, STZ, WAT.
+
+### Reproduction — a precise simulation of `db.ttm_flows`/`_quarter_flow_ending`, not a re-guess
+
+The original count was a high-level tally; this task reproduces the *mechanism* by re-running
+the exact live logic (`_filing_near`'s date-and-tolerance matching, `_recorded_flow`'s
+`fundamental_metrics.inputs_json` read, and the fiscal-Q4-derived-from-10-K-minus-three-
+quarters branch of `_quarter_flow_ending`) against the production database, read-only,
+2026-09-22 — not a re-derivation of "which periods exist", which undercounts real fallbacks and
+overcounts apparent ones. Three distinct root causes emerged, two different from the original
+framing:
+
+**1. APO — confirmed upstream, a single defect cascading forward (not 8 independent gaps).**
+Read live against the gateway (`GET /financials/APO?form=10-Q&year=2023&accession_number=
+0001858681-23-000017`, the 2023Q1 10-Q `filing_by_year` lists): the `/financials` payload's
+`income_statement` and `cash_flow` carry **only** the `2022-12-31 (FY)` column — no quarterly
+duration period at all — while `balance_sheet` correctly carries both `2023-03-31` and
+`2022-12-31`. `Statements.quarter_periods()` finds nothing, so `_targets` returns `[]` and this
+filing is **silently never even inserted into `sec_filings`** (not an error, not a skip count).
+Every one of APO's other 7 flagged 10-Qs and 10-Ks traces back to this **same single gap**:
+`_quarter_flow_ending`'s fiscal-Q4-derivation needs 2023Q1 (`_filing_near` finds nothing near
+2023-03-31, by design — it was never ingested), so it cascades forward through every later
+quarter/10-K that needs to reach back across that date, until (by 2025Q1) three full years of
+otherwise-complete quarters no longer need to. **Decision: upstream** — `portfolio-data-mining`'s
+`/financials` extraction for this one accession, per this repo's own rule that only it mines
+data. No local code can synthesize duration columns the payload does not carry. Not filed in
+that repo directly (no local checkout in this workspace); recorded here in full so it can be
+filed from the reproduction above.
+
+**2. WAT — corrected: NOT a missing 10-Q, a `net_income`-concept registry gap.** Re-read live
+against the gateway for WAT's 10-Qs across 2022–2026: **every fiscal quarter is present** —
+`filing_by_year` lists exactly 3 10-Qs every year, matching `sec_filings`. The original "missing
+Q1" read was a **labeling artifact**: the gateway's own period tag for the *same real quarter*
+(the one filed each May, ending late March/early April) is inconsistent across years —
+`"(Q2)"` in WAT's 2022/2023 filings, `"(Q1)"` in 2024/2025 (confirmed live: even a single 2024
+payload tags its *own* current period `2024-03-30` as `"(Q1)"` while its own prior-year
+comparative column `2023-04-01` — the identical relative quarter one year earlier — is tagged
+`"(Q2)"`). `_targets` trusts the gateway's own tag (`period.tag[1]`) rather than deriving a
+quarter number itself (correctly, per F4/T-094's date-based-not-label-based lesson) — no bug
+there. **The real defect, found while reproducing**: `net_income` (`REGISTRY["net_income"]`,
+`concepts=("us-gaap_NetIncomeLoss", "us-gaap_ProfitLoss")`) silently resolves to `None` for
+**14 of WAT's 18 `metrics-v2` filings** (every 10-Q and 10-K from FY2021 through FY2025, except
+the four most recent quarters) — confirmed exclusive to WAT within the 20-ticker sample (0
+other tickers affected). WAT tags neither whitelisted concept for most of its history; it uses
+`us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` instead (live-verified,
+WAT's real 2022-10-01 10-Q: $155,998,000, tagged nowhere else) — switching to the plain
+`us-gaap_NetIncomeLoss` tag only starting 2025Q2 (also live-verified; the two never co-occur
+non-dimensionally in the same WAT filing). A missing `net_income` poisons `net_margin`, ROA, ROE
+directly, **and**, chained through F4's `ttm_flows`, every later quarter's trailing-twelve-month
+window that needs this quarter's own recorded value — this is the actual mechanism behind WAT's
+flagged 10-Q gap, not a missing filing.
+
+**3. PG/BF.B/STZ — corrected: no extra gap beyond the unavoidable case.** All three have exactly
+3 10-Qs every fiscal year, every year, in `sec_filings` — no missing quarter. The precise
+simulation's only fallback beyond the "first 3 quarters of stored history" rule for these three
+is the **fiscal-year-boundary case**: `_quarter_flow_ending`'s Q4-derivation for their earliest
+stored 10-K needs a quarter that predates the start of each ticker's own stored history (e.g.
+PG's FY2022 10-K needs its fiscal Q1 ending Sept 2021, one quarter before PG's earliest ingested
+10-Q, 2021Q2/Dec 2021) — the same *class* of unavoidable gap the original "first 3 quarters"
+rule already accounts for, just one more filing deep because it is reached via the 10-K's Q4
+derivation rather than directly. **Not a defect**: the original "PG/BF.B/STZ ×1 each" tally
+appears to have come from a coarser check (raw period-membership, not the actual
+`_quarter_flow_ending` simulation) that does not account for the Q4-derivation branch; corrected
+here rather than left standing.
+
+### Fix
+
+`src/fundamental_agent/statements.py`, `REGISTRY["net_income"]`: added
+`us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` as a third `concepts` candidate.
+Document-order resolution (Tier 2's plain first-match — `net_income` sets no
+`total_concepts`/`sum_components`) is unchanged; the new concept only ever matches when
+neither `NetIncomeLoss` nor `ProfitLoss` is tagged, which is the live-verified WAT shape.
+
+### Verification
+
+- `tests/test_statements.py`: 2 new tests — WAT's real 2022-10-01 10-Q value resolves via the
+  new concept, and a defensive regression pinning that `NetIncomeLoss` still wins when both are
+  present (the live-verified case never occurs for WAT, but the test documents the intended
+  behavior regardless). Mutation-checked: removing the new concept fails the WAT test.
+- Confirmed via a live production-DB query: exactly 0 tickers other than WAT, within the
+  20-ticker sample, have a `profitability.return_on_assets` row missing `net_income` from its
+  `inputs_json` — the fix's blast radius matches what was verified, nothing broader assumed.
+- `uv run pytest -q` — **377 passed** (was 375 after T-095). `ruff`/`mypy` — all green.
+
+**Not done as part of this change** (same discipline as every prior fix): re-persisting
+corrected `fundamental_metrics`/TTM-dependent rows for WAT's affected filings needs a re-run
+against production, outside a code-review pass's authority to run unprompted.
+
+### Residual scope, deliberately deferred
+
+- **APO's upstream gap is recorded, not filed** — this workspace has no local checkout of
+  `portfolio-data-mining` to open a task in; the reproduction above (exact accession, exact
+  missing columns) is written out in full so it can be filed from here.
+- **The `NetIncomeLossAvailableToCommonStockholdersBasic` document-order risk is unverified
+  beyond WAT** — a filer that genuinely tags both `NetIncomeLoss` and the "available to common"
+  variant, with different values (real for any company with preferred-stock dividends), and
+  happens to document-order the wrong one first, is a live, unverified risk; not swept across
+  the wider universe.
+- **Not swept for other registry items or other tickers.** This fix targets only WAT's
+  `net_income` gap, live-verified; whether other items (`shares_outstanding`, `diluted_shares`,
+  …) have a similar filer-specific concept gap elsewhere in the 20-ticker sample or the full
+  503-asset universe was not checked.

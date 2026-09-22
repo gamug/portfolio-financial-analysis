@@ -39,7 +39,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 `T-088` the malformed-data purge + 20-ticker deep validation run (**done 2026-09-22**;
 its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, below —
 **promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`
-(**done 2026-09-22**), `T-096`,
+(**done 2026-09-22**), `T-096` (**done 2026-09-22**),
 `T-097` (in that order — see Work item 11), then, last in the fixing process, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
@@ -970,7 +970,11 @@ very end of the fixing process** — its reconciliation pass now waits until `T-
 are done, so it covers the whole process in one pass instead of needing a second delta.
 **`T-095` is done, 2026-09-22** — the plausibility-floor fix, confirmed live against APA FY2021;
 PM did not reproduce the defect on a live re-read, correcting this task's own earlier
-misattribution (below). Next is `T-096`.
+misattribution (below). **`T-096` is done, 2026-09-22** — a precise reproduction of the live
+`ttm_flows` logic found three distinct causes, correcting its own original tally: APO's gap is
+one upstream defect cascading forward (routed, not fixed here — no local `portfolio-data-mining`
+checkout to file it in), WAT's is a local `net_income`-concept gap (fixed), and the original
+PG/BF.B/STZ "×1 each" claim did not survive reproduction (below). Next is `T-097`.
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -1264,22 +1268,61 @@ and one real correct case (UDR) — not swept across the rest of the 20-ticker s
 503-asset universe; the corrected `fundamental_metrics` row for APA FY2021 is not re-persisted (needs
 a production re-run, outside this change's authority).
 
-**T-096 — 10-Q filing gaps beyond the expected "first three quarters" F4 fallback.** *Found by
-`T-088`'s acceptance (2026-09-22).* Of 278 10-Q filings in the 20-ticker sample, 72 (25.9%) compute
-their flows via F4's `current × 4` fallback; 60 are the unavoidable first three quarters of each
-ticker's stored history, but 12 are not, concentrated in APO (8 of 13) and single instances in
-PG/BF.B/STZ/WAT. Two distinct shapes found on the live gateway (`/filing_by_year`, `/financials`):
-(a) APO's 2023Q1 10-Q (accession `0001858681-23-000017`, filed 2023-05-09) is listed by
-`filing_by_year`, but its `/financials` payload carries only the FY2022 period — no quarterly income
-statement — so `_targets` finds nothing and the filing is silently never scored (not an error, not
-counted in `analysis_run`'s failed/skipped either); (b) WAT is missing a Q1 10-Q in **every** year
-(2022–2025) in the stored `sec_filings`, recurring rather than a one-off. *Approach (not yet
-designed)*: reproduce both against the live gateway outside this run to confirm whether the gap is
-upstream (the gateway's `/financials` extraction, `portfolio-data-mining`'s job) or this repo's own
-`filing_by_year`/`_targets` handling of an FY-only quarterly payload; if upstream, file the task in
-`portfolio-data-mining` per this repo's own rule that only it mines data. *Acceptance*: a live,
-read-only reproduction against the two accessions above; a decision on where the fix belongs; if
-local, hermetic tests plus a `docs/model_fixes.md` entry. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — second of the three.
+**T-096 — 10-Q filing gaps beyond the expected "first three quarters" F4 fallback. Done
+2026-09-22** (branch `feat/t096-10q-filing-gaps`). *Found by `T-088`'s acceptance (2026-09-22).*
+Of 278 10-Q filings in the 20-ticker sample, 72 (25.9%) compute their flows via F4's
+`current × 4` fallback; 60 are the unavoidable first three quarters of each ticker's stored
+history. The original finding attributed the remaining 12 to APO (×8) and one each of
+PG/BF.B/STZ/WAT. **A precise reproduction of the live logic itself** (`db.ttm_flows`/
+`_quarter_flow_ending`/`_filing_near`/`_recorded_flow`, re-run against production, read-only,
+2026-09-22 — not a re-check of which periods exist, which is what produced the original,
+imprecise tally) found **three distinct causes, two of which correct the original framing**:
+
+1. **APO — confirmed upstream, one gap cascading, not 8 independent ones.** Read live
+   (`GET /financials/APO?form=10-Q&year=2023&accession_number=0001858681-23-000017`, the
+   2023Q1 10-Q `filing_by_year` lists): `income_statement`/`cash_flow` carry only the
+   `2022-12-31 (FY)` column, no quarterly duration period at all, while `balance_sheet`
+   correctly carries `2023-03-31`. `_targets` finds nothing quarterly and the filing is never
+   inserted into `sec_filings` at all — not an error, not a skip. Every one of APO's other 7
+   flagged filings traces back to *this same gap*: the fiscal-Q4-derivation branch of
+   `_quarter_flow_ending` needs 2023Q1 and cannot find it, cascading forward until (2025Q1) a
+   full three years of complete quarters no longer reach back across that date. **Decision:
+   upstream** (`portfolio-data-mining`'s `/financials` extraction for this one accession) — no
+   local checkout of that repo exists in this workspace to file the task directly, so the
+   reproduction above is recorded in full here instead.
+2. **WAT — corrected: not a missing 10-Q, a `net_income`-concept registry gap. Fixed locally.**
+   Re-read live for 2022–2026: every fiscal quarter *is* present; `filing_by_year` lists exactly
+   3 10-Qs every year, matching `sec_filings`. "Missing Q1" was a **gateway period-tag labeling
+   inconsistency**: the same real quarter (filed each May) is tagged `"(Q2)"` in WAT's
+   2022/2023 filings and `"(Q1)"` in 2024/2025 — confirmed even *within one payload*, where the
+   current period is tagged `"(Q1)"` but the identical relative prior-year comparative is
+   tagged `"(Q2)"`. `_targets` correctly trusts the gateway's own tag rather than deriving one
+   itself (F4/T-094's date-not-label lesson) — no bug there. **The real defect, found while
+   reproducing**: `REGISTRY["net_income"]` (`us-gaap_NetIncomeLoss`/`us-gaap_ProfitLoss` only)
+   silently resolves to `None` for **14 of WAT's 18 `metrics-v2` filings** (confirmed exclusive
+   to WAT in the 20-ticker sample) — WAT tags neither concept for most of its history, only
+   `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (live-verified: WAT's real
+   2022-10-01 10-Q, $155,998,000; switches to the plain `NetIncomeLoss` tag only from 2025Q2,
+   never co-tagging both). Missing `net_income` poisons `net_margin`/ROA/ROE directly and, via
+   `ttm_flows`, later quarters' TTM windows too — the actual mechanism, not a filing gap. **Fix**:
+   `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` added as a third `net_income`
+   concept.
+3. **PG/BF.B/STZ — corrected: no extra gap.** All three have complete quarterly coverage every
+   fiscal year; the precise simulation's only fallback beyond "first 3" for them is the
+   fiscal-year-boundary Q4-derivation needing a quarter that predates each ticker's own stored
+   history — the same *class* of unavoidable gap the "first 3" rule already covers, one filing
+   deeper. The original "×1 each" tally does not survive this reproduction and is corrected here
+   rather than left standing.
+
+*Fix*: see WAT above (the only local code change). *Acceptance*: 2 new hermetic tests (WAT's
+real value resolving via the new concept; a defensive regression pinning `NetIncomeLoss`'s
+precedence when both are present), mutation-checked; confirmed via a live query that exactly 0
+tickers other than WAT are affected within the sample; `docs/model_fixes.md` T-096 entry
+(constitution AI behavior #12, includes all three findings and both corrections); `uv run
+pytest -q` 377 passed (was 375); `ruff`/`mypy` green. *Residual*: APO's gap recorded, not filed
+upstream (no local checkout); the `AvailableToCommonStockholdersBasic` document-order risk is
+unverified beyond WAT; not swept for other registry items or the wider universe. **Prioritized
+above `T-089` at the user's explicit direction, 2026-09-22** — second of the three.
 
 **T-097 — Guard `cycle select`/`monitor` against an out-of-order (backdated) run mutating the live
 book.** *Found while validating `T-088` (2026-09-22).* `cycle select --analysis-date D` always writes
@@ -1461,7 +1504,8 @@ this document.** Their internal sequencing:
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
   (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
-  20-ticker validation — **done 2026-09-22**) → `T-095` (**done 2026-09-22**) → `T-096` → `T-097` → `T-089`
+  20-ticker validation — **done 2026-09-22**) → `T-095` (**done 2026-09-22**) → `T-096`
+  (**done 2026-09-22**) → `T-097` → `T-089`
   (artifacts; its first pass may run any time after `T-085` merges, but the final,
   comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
   Work item 7's `T-068` is re-scoped behind
@@ -1473,7 +1517,10 @@ this document.** Their internal sequencing:
   process** — it no longer runs immediately after `T-088`. **`T-095` is done**: confirmed
   live for APA FY2021 (a plausibility floor now rejects a `total_concepts` tag mistagged
   on a small dimensional slice); PM did not reproduce the defect, correcting this task's
-  own earlier misattribution. Next is `T-096`.
+  own earlier misattribution. **`T-096` is done**: a precise reproduction of the live TTM
+  logic found APO's gap is one upstream defect cascading (routed, not fixed here), WAT's is
+  a local `net_income`-concept gap (fixed), and the original PG/BF.B/STZ tally did not
+  survive reproduction. Next is `T-097`.
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
   as its `PLAN.md` Work item 3, consumed here by Work item 10, verified

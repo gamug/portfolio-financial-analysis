@@ -26,7 +26,9 @@ they are prioritized fixes now, not unprioritized findings, and `T-089` moves to
 of the fixing process (its first pass still runs any time after the `T-085` PR merges, but the
 delta pass that covers `T-088`/`T-095`/`T-096`/`T-097` waits until all three are done). `T-095`
 (revenue mis-resolution — **done 2026-09-22**; also corrected the PM misattribution in its
-own PLAN.md/TASKS.md write-up) is done; next up `T-096`, then `T-097`, then `T-089`.
+own PLAN.md/TASKS.md write-up) and `T-096` (10-Q filing gaps — **done 2026-09-22**; fixed
+WAT's `net_income` concept gap locally, routed APO's gap upstream, and corrected the original
+PG/BF.B/STZ tally) are done; next up `T-097`, then `T-089`.
 Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
@@ -588,7 +590,11 @@ found `T-095`/`T-096`/`T-097` (revenue mis-resolution, a 10-Q filing gap, an out
 prioritized ahead of `T-089`, which moves to the very end of the fixing process** (below,
 `T-089`'s own entry). **`T-095` is done, 2026-09-22** — confirmed live for APA FY2021, but
 did NOT reproduce for PM (its own PLAN.md/TASKS.md write-up corrected the earlier
-misattribution); next is `T-096`.
+misattribution). **`T-096` is done, 2026-09-22** — a precise reproduction of the real TTM
+logic found three distinct root causes, correcting the original tally: APO's gap is one
+upstream defect cascading (routed, not fixed here), WAT's is a local `net_income`-concept gap
+(fixed), and PG/BF.B/STZ's original "×1 each" claim did not survive reproduction (no real
+gap). Next is `T-097`.
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -902,13 +908,27 @@ misattribution); next is `T-096`.
       through to Tier 2; a no-comparison filer (JPM) is unaffected. 3 new tests
       (375 total), mutation-checked. `docs/model_fixes.md` entry added (constitution AI
       behavior #12). → `PLAN.md` Work item 11, `T-095`.
-- [ ] **T-096** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
-      user's direction, 2026-09-22**)* 10-Q filing gaps beyond F4's
-      expected "first three quarters" fallback: 12 of 278 10-Qs in the 20-ticker sample (APO ×8,
-      one each PG/BF.B/STZ/WAT) fall back for no such reason. Two shapes on the live gateway:
-      APO's 2023Q1 10-Q is listed but its `/financials` payload carries only the FY period, so
-      it's silently never scored; WAT is missing a Q1 10-Q in every year 2022–2025. Needs a live
-      reproduction to place the fix (this repo vs. upstream `portfolio-data-mining`).
+- [x] **T-096** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22; done 2026-09-22**)* 10-Q filing gaps beyond F4's
+      expected "first three quarters" fallback. A precise reproduction of the actual
+      `db.ttm_flows`/`_quarter_flow_ending` logic (not a re-guess) found **three** distinct
+      root causes, correcting the original "12: APO×8, one each PG/BF.B/STZ/WAT" tally: (1)
+      **APO — confirmed upstream**: its 2023Q1 10-Q's `/financials` payload carries only the FY
+      period for income/cash-flow, so it's silently never scored; all 8 of APO's flagged
+      filings trace to this **one** gap cascading forward through the fiscal-Q4-derivation
+      logic, not 8 independent gaps — recorded for `portfolio-data-mining` (no local checkout
+      to file it in). (2) **WAT — corrected, fixed locally**: NOT a missing 10-Q (every quarter
+      is present; "missing Q1" was a gateway period-tag labeling inconsistency across years).
+      The real defect: `net_income`'s concept whitelist didn't include
+      `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic`, WAT's real tag for 14/18
+      `metrics-v2` filings — silently `None`, poisoning `net_margin`/ROA/ROE and, via
+      `ttm_flows`, later quarters' TTM windows too. Fixed: added the concept, live-verified
+      never to co-occur with the standard tags for WAT. (3) **PG/BF.B/STZ — corrected, no real
+      gap**: all three have complete quarterly coverage every year; the original "×1 each" tally
+      doesn't survive the precise simulation (their only fallback beyond "first 3" is an
+      unavoidable fiscal-year-boundary case predating each ticker's own stored history). 2 new
+      tests (377 total), mutation-checked. `docs/model_fixes.md` entry added (constitution AI
+      behavior #12), including all three corrections.
       → `PLAN.md` Work item 11, `T-096`.
 - [ ] **T-097** *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
       user's direction, 2026-09-22**)* Guard `cycle select`/`monitor`
@@ -942,10 +962,12 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
-`T-094`, `T-087`, `T-090`, `T-088` and `T-095` are done (2026-09-21/22); next up `T-096`, then
+`T-094`, `T-087`, `T-090`, `T-088`, `T-095` and `T-096` are done (2026-09-21/22); next up
 `T-097`, then `T-089` last** (found by `T-088`'s acceptance audit, promoted above `T-089` at the
-user's explicit direction, 2026-09-22 — `T-095` also corrected a misattribution in its own
-finding: PM did not reproduce the defect). `T-093` is on
+user's explicit direction, 2026-09-22 — both `T-095` and `T-096` also corrected their own
+earlier findings: PM did not reproduce T-095's defect; APO's/PG's/BF.B's/STZ's original T-096
+tally did not survive a precise reproduction, only WAT had a real, now-fixed local gap).
+`T-093` is on
 the low-priority path.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
