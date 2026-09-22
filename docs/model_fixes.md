@@ -1427,3 +1427,85 @@ against production, outside a code-review pass's authority to run unprompted.
   `net_income` gap, live-verified; whether other items (`shares_outstanding`, `diluted_shares`,
   …) have a similar filer-specific concept gap elsewhere in the 20-ticker sample or the full
   503-asset universe was not checked.
+
+---
+
+## T-097 — Guard against an out-of-order (backdated) `cycle select` run mutating the live book
+
+**Status**: Fixed 2026-09-22 (branch `feat/t097-cycle-out-of-order-guard`, `T-097`).
+
+### Symptom
+
+Found live while validating `T-088` (2026-09-22), not guessed at: to give `quant evaluate` a
+forward window, a second `cycle select --analysis-date 2026-06-30` was run *after* an earlier
+`select` at a later date. It silently closed a live position early (`valid_to` backdated to
+2026-06-30) and left a stray `quant_portfolio(kind='live_book')` row — exactly the class of
+false, unnoticed corruption `T-086` closed for `build-returns`. Reverted by hand on production,
+with the user's explicit go-ahead first (a direct write to shared state), and confirmed restored
+before this task was recorded.
+
+### Root cause
+
+`sync_positions` (`src/cycle/writers.py`, called from `orchestrator.py`'s "positions" step —
+**SELECTION only**; `MONITORING` never reaches it, so `monitor` was never actually at risk
+despite the original finding's "select/monitor" title, corrected here) always writes the live
+`portfolio_position` book unconditionally: it closes whatever is open at `valid_to = cycle_date`
+and opens the new targets at `valid_from = cycle_date`, with **no check** that `cycle_date` is
+not older than a date the book has already moved to. `cycle_run` is keyed uniquely per
+`(cycle_type, cycle_date)` (`check_manifest`), which prevents *resuming* an existing run under a
+different manifest, but that guard has nothing to say about a **new**, valid, checkpointable run
+at an *earlier* date than one already completed — the exact gap T-086 closed for
+`quant_return_daily`'s `INSERT OR IGNORE` lock-in, one layer up.
+
+### Fix
+
+`src/cycle/writers.py`: new `OutOfOrderCycle` (mirrors `quant.actions.DividendsNotReady`) and
+`out_of_order_reason(conn, cycle_date) -> str | None` — a pure read of
+`MAX(valid_from) FROM portfolio_position` across *every* row, open or closed (a closed
+position's `valid_from` still marks a date the book has already moved past), returning a reason
+string when `cycle_date` is older. `sync_positions` itself is untouched — same pattern as
+`run_build_returns` checking `dividends_not_ready_reason` before writing, not the low-level
+writer checking itself.
+
+`src/cycle/orchestrator.py`: the `_positions()` closure checks `out_of_order_reason` before
+calling `sync_positions`, raising `OutOfOrderCycle` unless
+`settings.allow_backdated_positions` is set; the bypass reason (when overridden) is recorded on
+`CycleReport.backdated_guard_bypassed` for the CLI to surface — the same shape as
+`ReturnsReport.dividends_guard_bypassed` (T-086).
+
+`src/cycle/config.py`: new `CycleSettings.allow_backdated_positions: bool = False`.
+
+`src/cycle/cli.py`: `--allow-backdated` added **only to `select`'s** parser (not `monitor`'s —
+it would be a silent no-op there, since monitor never reaches the positions step); threaded into
+`CycleSettings`; `OutOfOrderCycle` added to `main()`'s existing generic exception-to-exit-1
+handler (alongside `VersionError`/`ManifestMismatch`, matching cycle's existing simpler style
+rather than quant's dedicated multi-line handler — the reason string itself is already
+complete and actionable); a `WARNING` line printed when the override was used, mirroring
+`build-returns`'s own bypass warning.
+
+### Verification
+
+- 4 new tests in `tests/test_cycle.py`: the pure `out_of_order_reason` function (no rows → safe;
+  newer/same date → safe; older date → a reason naming both dates and `--allow-backdated`); a
+  full `run_selection` at an older date raises `OutOfOrderCycle` and leaves the book **and** the
+  refused run's own `cycle_run` row untouched (not partially applied); the override succeeds,
+  records the bypass reason on the report, and a closed position's `valid_from` still protects a
+  *further* out-of-order attempt afterward. Mutation-checked: removing the guard call fails two
+  of the four tests.
+- `uv run pytest -q` — **380 passed** (was 377). `ruff`/`mypy` — all green.
+
+**Not done as part of this change**: no production re-run needed — the incident this task
+documents was already found and reverted by hand during `T-088`'s own validation, before this
+task existed; this change only prevents a recurrence.
+
+### Residual scope, deliberately deferred
+
+- **`cycle backfill`** (the `--from`/`--to` loop subcommand) has no `--allow-backdated` flag of
+  its own and will hit the same `OutOfOrderCycle` refusal, with no way to override it from that
+  path, if run against a live book with a later `valid_from` than its own range — not exercised
+  by T-088's incident (which used `select` directly) and not covered by this task's acceptance
+  criteria; flagged, not built.
+- **The guard is a `MAX(valid_from)` check, not a full ordering log** — a book that was itself
+  corrupted by an *already-reverted* out-of-order run (as the original incident was) is
+  indistinguishable, after cleanup, from one that was never touched; this guard only prevents a
+  *future* recurrence, it cannot detect a *past* one that predates it.

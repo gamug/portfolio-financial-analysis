@@ -36,6 +36,12 @@ class CycleSettings(BaseModel):
     # is unique per (type, date), so it records the manifest and refuses to be resumed under
     # different inputs rather than mixing them.
     metrics_version: str | None = None
+    # T-097: `select`'s "positions" step refuses to write the live `portfolio_position` book at
+    # a `cycle_date` older than one it has already written (a backdated run silently closes
+    # recent positions early and reopens a stale book), unless this is set. Meant for a
+    # deliberate historical backfill/validation run, not routine use; MONITORING never reaches
+    # the positions step, so this has no effect there.
+    allow_backdated_positions: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

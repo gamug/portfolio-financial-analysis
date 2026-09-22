@@ -24,6 +24,7 @@ from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
+from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import connect
 from kg_schema.provenance import code_version
 from kg_schema.versions import manifest_tag, parse_metric_selection, resolve_metric_versions
@@ -55,6 +56,9 @@ class CycleReport:
     selected: int = 0
     vetoed: int = 0
     manifest_tag: str = ""
+    # Why the out-of-order-cycle guard (T-097) would have refused, when --allow-backdated
+    # overrode it. Always None for a MONITORING run -- it never reaches the positions step.
+    backdated_guard_bypassed: str | None = None
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -333,6 +337,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 max_name_weight=settings.max_name_weight,
                 max_sector_weight=settings.max_sector_weight,
             )
+            reason = out_of_order_reason(conn, cycle_date)
+            if reason is not None and not settings.allow_backdated_positions:
+                raise OutOfOrderCycle(reason)
+            report.backdated_guard_bypassed = reason
             closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
             opened, closed = writers.sync_positions(
                 conn, cycle_date, weights, closes, cycle_run_id=run_id

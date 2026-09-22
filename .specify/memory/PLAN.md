@@ -40,7 +40,7 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, below —
 **promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`
 (**done 2026-09-22**), `T-096` (**done 2026-09-22**),
-`T-097` (in that order — see Work item 11), then, last in the fixing process, `T-089` the
+`T-097` (**done 2026-09-22** — see Work item 11), then, last in the fixing process, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
 `portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
@@ -974,7 +974,11 @@ misattribution (below). **`T-096` is done, 2026-09-22** — a precise reproducti
 `ttm_flows` logic found three distinct causes, correcting its own original tally: APO's gap is
 one upstream defect cascading forward (routed, not fixed here — no local `portfolio-data-mining`
 checkout to file it in), WAT's is a local `net_income`-concept gap (fixed), and the original
-PG/BF.B/STZ "×1 each" claim did not survive reproduction (below). Next is `T-097`.
+PG/BF.B/STZ "×1 each" claim did not survive reproduction (below). **`T-097` is done, 2026-09-22**
+— `cycle select`'s "positions" step now refuses an out-of-order `--analysis-date` unless
+`--allow-backdated` overrides it; scope corrected to `select` only (`monitor` never writes
+`portfolio_position`, so it was never at risk despite the original title). **All three
+prioritized findings are closed. `T-089` is next, and last, in the fixing process.**
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -1324,18 +1328,37 @@ upstream (no local checkout); the `AvailableToCommonStockholdersBasic` document-
 unverified beyond WAT; not swept for other registry items or the wider universe. **Prioritized
 above `T-089` at the user's explicit direction, 2026-09-22** — second of the three.
 
-**T-097 — Guard `cycle select`/`monitor` against an out-of-order (backdated) run mutating the live
-book.** *Found while validating `T-088` (2026-09-22).* `cycle select --analysis-date D` always writes
-the live `portfolio_position` book via `load_live_book`-style open/close logic with no check that `D`
-is not older than the book's current `valid_from`. Running `select` for an earlier date after a later
-one silently closed a live position early (`valid_to` set to the earlier date) and left a stray
-backdated `quant_portfolio(kind='live_book')` row, exactly the kind of false, unnoticed corruption
-`T-086` was built to prevent for `build-returns`. *Approach (not yet designed)*: `select`/`monitor`
-refuse (exit 1, clear message) when `--analysis-date` is older than the live book's latest
-`valid_from`, unless an explicit override is given (mirroring `T-086`'s `--allow-no-dividends`
-pattern) — needed for a deliberate historical backfill, e.g. `T-088`'s own use above. *Acceptance*:
-hermetic tests for older-than-live (refuses), same-date (no-op/update, already covered), newer date
-(the normal case), and the override. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — third of the three.
+**T-097 — Guard `cycle select` against an out-of-order (backdated) run mutating the live
+book. Done 2026-09-22** (branch `feat/t097-cycle-out-of-order-guard`). *Found while validating
+`T-088` (2026-09-22).* `cycle select --analysis-date D` always writes the live `portfolio_position`
+book via `sync_positions`'s open/close logic with no check that `D` is not older than the book's
+current `valid_from`. Running `select` for an earlier date after a later one silently closed a
+live position early (`valid_to` set to the earlier date) and left a stray backdated
+`quant_portfolio(kind='live_book')` row, exactly the kind of false, unnoticed corruption `T-086`
+was built to prevent for `build-returns`. **Scope corrected**: `sync_positions` is called only
+from the "positions" step, which `_SELECTION_STEPS` includes but `_MONITORING_STEPS` explicitly
+excludes — `monitor` never writes `portfolio_position` at all, so it was never actually at risk;
+the original title's "select/monitor" is corrected to `select` alone. *Fix*:
+`cycle.writers.out_of_order_reason(conn, cycle_date) -> str | None` (a pure read of
+`MAX(valid_from)` across every `portfolio_position` row, open or closed — a closed position's
+`valid_from` still marks a date the book has already moved past) and `OutOfOrderCycle`, mirroring
+`quant.actions.dividends_not_ready_reason`/`DividendsNotReady` (T-086) exactly:
+`sync_positions` itself is untouched; `orchestrator.py`'s `_positions()` step checks the reason
+before calling it, raising unless `CycleSettings.allow_backdated_positions` is set, and records
+a bypass on `CycleReport.backdated_guard_bypassed` (mirrors `ReturnsReport.
+dividends_guard_bypassed`) for the CLI to warn about. `--allow-backdated` was added only to
+`select`'s argparse subparser (not `monitor`'s, where it would be a silent no-op);
+`OutOfOrderCycle` joins `main()`'s existing generic exception-to-exit-1 handler. *Acceptance*: 4
+new hermetic tests — the pure function (no rows/newer/same-date all safe, older date names both
+dates and the override flag), a full `run_selection` refusing an older date with the book and the
+refused run's own `cycle_run` left untouched (not partially applied), and the override succeeding
+with the bypass recorded, plus confirming a closed position's `valid_from` still protects a
+further attempt; mutation-checked. `uv run pytest -q` 380 passed (was 377); `ruff`/`mypy` green;
+`docs/model_fixes.md` T-097 entry (constitution AI behavior #12). *Residual*: `cycle backfill` has
+no override flag of its own and would hit the same refusal with no way past it if it ever ran
+against a book with a later `valid_from`; not exercised by the original incident, not built here.
+**Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — third of the three,
+and the last of the prioritized findings — `T-089` is next, and last, in the fixing process.
 
 **T-090 — Metric-version selection and run manifests ("version of versions") for `cycle` and
 `quant`.** *Problem.* `fundamental_metrics` is append-only per `engine_version`, so parallel
@@ -1505,14 +1528,15 @@ this document.** Their internal sequencing:
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
   (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
   20-ticker validation — **done 2026-09-22**) → `T-095` (**done 2026-09-22**) → `T-096`
-  (**done 2026-09-22**) → `T-097` → `T-089`
+  (**done 2026-09-22**) → `T-097` (**done 2026-09-22**) → `T-089`
   (artifacts; its first pass may run any time after `T-085` merges, but the final,
   comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
   Work item 7's `T-068` is re-scoped behind
   `T-088`. `T-088`'s own acceptance audit found three further findings — `T-095`
   (revenue mis-resolution on a filer's own "total" tag), `T-096` (10-Q filing
-  gaps beyond F4's expected fallback) and `T-097` (a `cycle select`/`monitor` guard
-  against out-of-order runs). **At the user's explicit direction (2026-09-22), all
+  gaps beyond F4's expected fallback) and `T-097` (a `cycle select` guard
+  against out-of-order runs, scope corrected from "select/monitor"). **At the user's explicit
+  direction (2026-09-22), all
   three are prioritized ahead of `T-089`, which moves to the very end of the fixing
   process** — it no longer runs immediately after `T-088`. **`T-095` is done**: confirmed
   live for APA FY2021 (a plausibility floor now rejects a `total_concepts` tag mistagged
@@ -1520,7 +1544,10 @@ this document.** Their internal sequencing:
   own earlier misattribution. **`T-096` is done**: a precise reproduction of the live TTM
   logic found APO's gap is one upstream defect cascading (routed, not fixed here), WAT's is
   a local `net_income`-concept gap (fixed), and the original PG/BF.B/STZ tally did not
-  survive reproduction. Next is `T-097`.
+  survive reproduction. **`T-097` is done**: `select`'s "positions" step now refuses an
+  out-of-order `--analysis-date` unless `--allow-backdated` overrides it; `monitor` was never
+  at risk (it never writes `portfolio_position`). **All three prioritized findings are closed —
+  `T-089` is next, and last.**
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
   as its `PLAN.md` Work item 3, consumed here by Work item 10, verified
