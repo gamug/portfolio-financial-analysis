@@ -1192,3 +1192,123 @@ after a specific date.
   min_var,tangency,target_vol,risk_parity,frontier` to `optimize` for
   `quant_frontier_point` to actually populate — this fix does not change
   `optimize`'s default behavior.
+
+---
+
+## T-095 — Revenue mis-resolution: a `total_concepts` tag mistagged on one small dimensional slice
+
+**Status**: Fixed 2026-09-22 (branch `feat/t095-revenue-total-concepts-plausibility`, `T-095`).
+
+### Symptom
+
+Found by `T-088`'s 20-ticker acceptance audit (2026-09-22): APA's FY2021 10-K
+`net_margin` computed to **121.3%** (`fundamental_metrics.net_margin =
+1.2134935304990757`, `inputs_json.revenue = 1,082,000,000.0`), implausible
+for an E&P company with net income of $1,313M. PLAN.md's initial write-up of
+the finding also named PM FY2021/FY2022 as a second instance of the same
+mechanism, flagged as needing its own read of the payload before assuming
+so.
+
+### Root cause — confirmed for APA, NOT reproduced for PM
+
+Read live against the gateway (`GET /financials/APA?form=10-K&year=2022&
+accession_number=0001784031-22-000009`, the FY2021 10-K), read-only,
+2026-09-22: APA tags `us-gaap_Revenues` (F2's `total_concepts` set,
+label "Total revenues") on **two** rows for FY2021 — a non-dimensional row
+valued **$1,082,000,000** and a dimensional row (`dimension=true`,
+`dimension_axis=us-gaap:EquityMethodInvestmentNonconsolidatedInvesteeAxis`)
+valued the **identical** $1,082,000,000. This is a filer-side XBRL tagging
+defect: the generic aggregate concept was (also) used, without a member
+context, for what is really one dimensional disclosure slice (APA's
+equity-method investee, Altus Midstream/BCP Raptor) — not the consolidated
+total. The real total sits on
+`us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax`
+($7,988,000,000), corroborated by APA's own custom-taxonomy
+`apa_RevenuesAndOther` ("Total revenues and other", $7,928,000,000 — the
+$60M gap is `apa_OtherSalesRevenueLossesNet`, not separately whitelisted).
+F2's `_first_total_match` had no way to distinguish a mistagged
+non-dimensional row from a genuine one: it takes the first `total_concepts`
+match unconditionally, regardless of magnitude.
+
+**PM does not reproduce this mechanism.** Read live against the gateway for
+both FY2021 (`GET /financials/PM?form=10-K&year=2022&
+accession_number=0001413329-22-000011`) and FY2022
+(`.../PM?form=10-K&year=2023&accession_number=0001413329-23-000025`),
+2026-09-22: PM tags **neither** `us-gaap_Revenues` nor
+`us-gaap_RevenuesNetOfInterestExpense` (F2's `total_concepts`) at all, in
+either filing — `_first_total_match` never fires for PM; Tier 1 is a no-op.
+Resolution falls to Tier 2 (`sum_components`), which correctly picks
+`us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax` ("Net
+revenues", $31,405M FY2021 / $31,762M FY2022) over its
+`synonym_groups`-paired `...IncludingAssessedTax` ("Revenues including
+excise taxes", $82,223M / $80,669M) — exactly F2's Sourcery-follow-up
+design (excluding-tax is the real income-statement line; this is the same
+rule already live-verified for PM in F2's own writeup). The stored
+`net_margin` for PM FY2021/FY2022 (30.9% / 30.0%, `inputs_json.revenue =
+31,405,000,000.0` / `31,762,000,000.0`) is realistic for the filer, not an
+outlier. **PLAN.md's initial flag on PM was a misattribution, corrected
+here** — the excluding-tax figure it questioned is the intentional, already
+independently verified behavior, not a new defect.
+
+### Fix
+
+`src/fundamental_agent/statements.py`, `Statements`:
+- New `_total_is_plausible(spec, column, total_value)`: rejects a
+  `total_concepts` match when it is **less than 50% of the largest**
+  first-matching-row value among `spec.concepts` (a genuine aggregate is
+  never far smaller than one of its own named components). A filer with no
+  `spec.concepts` rows tagged at all (e.g. JPM's
+  `RevenuesNetOfInterestExpense`) has nothing to compare against, so its
+  total is trusted exactly as before — the check only ever rejects, never
+  invents a floor.
+- New `_largest_component_value`/`_matching_component_values` (the latter
+  factored out of, and now shared with, `_sum_matching_components` — no
+  behavior change to the sum path).
+- `get()`: Tier 1 now requires `total_value is not None and
+  self._total_is_plausible(...)`; a rejected total falls through to Tier 2
+  exactly as if no `total_concepts` row had matched at all.
+- The 0.5 floor is a documented, pinned constant
+  (`Statements._TOTAL_PLAUSIBILITY_FLOOR`), not a magic number — chosen to
+  sit well above every known-correct case (the total exactly equals or
+  slightly exceeds the largest component; UDR's real shape, ratio ~1.0,
+  F2's own regression fixture) and well below the observed defect (APA's
+  ratio ~0.14).
+
+### Verification
+
+- `tests/test_statements.py`: 3 new tests —
+  `test_revenue_rejects_a_total_far_smaller_than_a_named_component` (APA's
+  real FY2021 values, non-dimensional rows only), and a parametrized pin of
+  the exact floor boundary
+  (`test_revenue_total_concepts_plausibility_floor_is_pinned`, ratio 0.5
+  trusted / 0.49 rejected). Mutation-checked: reverting the plausibility
+  gate call in `get()` fails both new floor-boundary assertions.
+  `test_revenue_total_concepts_with_no_component_to_compare_is_trusted`
+  pins the JPM-shape no-op case.
+- Every existing F2 regression test unchanged and still green, including
+  `test_revenue_prefers_total_over_components_regardless_of_document_order`
+  (UDR, ratio ~1.0 — confirms the floor does not disturb the already-correct
+  case the original F2 fix targeted) and the full `jpm_10k`/`aapl_10k`
+  fixture suite (JPM's total has no `concepts` rows to compare against at
+  all, so it stays trusted unconditionally, confirmed by
+  `test_bank_has_no_operating_income_or_current_split`).
+- `uv run pytest -q` — 375 passed (was 372 baseline on `master` post-`T-088`,
+  +3 new). `uv run ruff check` / `ruff format --check` / `uv run mypy` — all
+  green.
+
+**Not done as part of this change** (same discipline as every prior fix):
+re-persisting a corrected `fundamental_metrics`/`score_snapshot` row for
+APA's FY2021 10-K needs a re-run against production, outside a code-review
+pass's authority to run unprompted.
+
+### Residual scope, deliberately deferred
+
+- **The 0.5 floor is a heuristic**, verified against exactly one real
+  defect (APA) and one real correct case (UDR); a future counter-example
+  (a legitimately much-smaller-than-component total) would need its own
+  live verification before changing the constant.
+- **Not scanned for other filers/other line items.** This fix targets only
+  `revenue`'s `total_concepts` path (the only registry item that sets it);
+  whether the same mistagging shape recurs elsewhere in the 20-ticker
+  sample or the full 503-asset universe was not swept — `T-088`'s
+  acceptance flagged APA specifically, not a broader pattern.

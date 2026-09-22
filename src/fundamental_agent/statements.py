@@ -79,7 +79,10 @@ class LineItem:
     standard: tuple[str, ...] = ()
     label_contains: tuple[str, ...] = ()
     # An already-aggregated total: if any row matches one of these, it wins
-    # outright over every `concepts` match, regardless of document order.
+    # outright over every `concepts` match, regardless of document order --
+    # unless Statements._total_is_plausible (T-095) rejects it as far smaller
+    # than a named `concepts` candidate, a tagging defect rather than a real
+    # aggregate.
     total_concepts: tuple[str, ...] = ()
     # When no `total_concepts` row matches: sum one value per distinct
     # additive component (instead of just returning the first match) --
@@ -358,11 +361,18 @@ class Statements:
         Two-tier resolution (F2, ``docs/model_fixes.md``): **Tier 1** -- if
         ``spec.total_concepts`` is set, any row tagged with one of them wins
         outright over every ``concepts`` match, regardless of document
-        order. Absent a match there, **Tier 2** falls back to the original
-        single-row lookup: the first ``concepts``-matching row in document
-        order (unchanged default for every item that doesn't set
-        ``sum_components``), or, when ``spec.sum_components`` is set, the sum
-        of the first row per distinct matching concept -- multiple
+        order -- *unless* :meth:`_total_is_plausible` rejects it (T-095,
+        ``docs/model_fixes.md``): a ``total_concepts`` tag is sometimes
+        mistagged on one small dimensional slice of the real breakdown
+        rather than the consolidated aggregate (APA FY2021's real shape --
+        ``us-gaap_Revenues`` = $1,082M, matching only its "Equity Method
+        Investment, Nonconsolidated Investee" dimensional row, while the
+        real total is $7,988M), and such a value can never be the genuine
+        aggregate. Absent a trusted match there, **Tier 2** falls back to
+        the original single-row lookup: the first ``concepts``-matching row
+        in document order (unchanged default for every item that doesn't
+        set ``sum_components``), or, when ``spec.sum_components`` is set,
+        the sum of the first row per distinct matching concept -- multiple
         co-reported streams with no separately tagged total.
         """
         spec = REGISTRY[item]
@@ -375,7 +385,7 @@ class Statements:
 
         if spec.total_concepts:
             total_value = self._first_total_match(spec, column)
-            if total_value is not None:
+            if total_value is not None and self._total_is_plausible(spec, column, total_value):
                 return total_value
 
         if spec.sum_components:
@@ -391,6 +401,38 @@ class Statements:
                     return value
         return None
 
+    # A `total_concepts` match must be at least this fraction of the largest
+    # `spec.concepts` candidate to be trusted outright (T-095, docs/model_fixes.md).
+    # A genuine aggregate is never far smaller than one of its own named
+    # components; a total this much smaller is a tagging defect (a filer's
+    # generic "total" concept landing on one small dimensional slice instead of
+    # the consolidated figure -- APA FY2021's real shape, see :meth:`get`).
+    # Picked to sit well above real, correct cases (the total exactly equals or
+    # slightly exceeds the largest component -- UDR's real shape, ratio ~1.0)
+    # and well below the observed defect (ratio ~0.14); pinned exactly by
+    # ``tests/test_statements.py::test_revenue_total_concepts_plausibility_floor_is_pinned``.
+    _TOTAL_PLAUSIBILITY_FLOOR = 0.5
+
+    def _total_is_plausible(self, spec: LineItem, column: str, total_value: float) -> bool:
+        """Sanity-check a Tier 1 ``total_concepts`` match against the largest
+        named ``spec.concepts`` candidate -- see :meth:`get` and
+        :data:`_TOTAL_PLAUSIBILITY_FLOOR`. A filer with no ``concepts`` rows at
+        all (e.g. a bank's ``RevenuesNetOfInterestExpense`` total, JPM's real
+        shape) has nothing to compare against, so its total is trusted as
+        before -- this only ever *rejects*, never invents a floor where none
+        of ``spec.concepts`` is tagged."""
+        largest = self._largest_component_value(spec, column)
+        if largest is None:
+            return True
+        return total_value >= largest * self._TOTAL_PLAUSIBILITY_FLOOR
+
+    def _largest_component_value(self, spec: LineItem, column: str) -> float | None:
+        """The largest single first-matching-row value among ``spec.concepts``
+        -- used only by :meth:`_total_is_plausible`. Shares its one-row-per-
+        concept collection with :meth:`_sum_matching_components`."""
+        values = self._matching_component_values(spec, column)
+        return max(values.values()) if values else None
+
     def _first_component_match(self, spec: LineItem, column: str) -> float | None:
         """Tier 2 (default): the original single-row, first-document-order
         lookup, unchanged for every item that doesn't set ``sum_components``."""
@@ -401,18 +443,15 @@ class Statements:
                     return value
         return None
 
-    def _sum_matching_components(self, spec: LineItem, column: str) -> float | None:
-        """Sum one value per distinct additive component -- the
-        ``sum_components`` branch of :meth:`get`.
-
-        Matches only ``spec.concepts`` (never the fuzzy ``label_contains``
-        fallback :func:`_matches` also checks -- an unrecognized custom
-        "Total ..." extension concept can match by label text alone and
-        would double-count against the real components). Concepts sharing a
-        ``spec.synonym_groups`` entry are alternate encodings of ONE stream,
-        not separate amounts: at most one value per group counts, preferring
-        whichever member is listed earliest in ``spec.concepts``.
-        """
+    def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
+        """One value per distinct ``spec.concepts`` member, first occurrence in
+        document order. Matches only ``spec.concepts`` (never the fuzzy
+        ``label_contains`` fallback :func:`_matches` also checks -- an
+        unrecognized custom "Total ..." extension concept can match by label
+        text alone and would double-count against the real components, or
+        wrongly inflate the plausibility floor). Shared by
+        :meth:`_sum_matching_components` (the sum) and
+        :meth:`_largest_component_value` (the max, for :meth:`_total_is_plausible`)."""
         values: dict[str, float] = {}
         for row in self._rows_for(spec):
             concept = row.get("concept")
@@ -421,6 +460,18 @@ class Statements:
             value = _numeric(row.get(column))
             if value is not None:
                 values[concept] = value
+        return values
+
+    def _sum_matching_components(self, spec: LineItem, column: str) -> float | None:
+        """Sum one value per distinct additive component -- the
+        ``sum_components`` branch of :meth:`get`.
+
+        Concepts sharing a ``spec.synonym_groups`` entry are alternate
+        encodings of ONE stream, not separate amounts: at most one value per
+        group counts, preferring whichever member is listed earliest in
+        ``spec.concepts``.
+        """
+        values = self._matching_component_values(spec, column)
         if not values:
             return None
 

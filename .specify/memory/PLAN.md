@@ -38,7 +38,8 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 `T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests (done 2026-09-21),
 `T-088` the malformed-data purge + 20-ticker deep validation run (**done 2026-09-22**;
 its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, below —
-**promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`, `T-096`,
+**promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`
+(**done 2026-09-22**), `T-096`,
 `T-097` (in that order — see Work item 11), then, last in the fixing process, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
@@ -967,6 +968,9 @@ own acceptance audit found `T-095`/`T-096`/`T-097`. **At the user's explicit dir
 (2026-09-22), all three are now prioritized fixes, ordered ahead of `T-089`, which moves to the
 very end of the fixing process** — its reconciliation pass now waits until `T-095`/`T-096`/`T-097`
 are done, so it covers the whole process in one pass instead of needing a second delta.
+**`T-095` is done, 2026-09-22** — the plausibility-floor fix, confirmed live against APA FY2021;
+PM did not reproduce the defect on a live re-read, correcting this task's own earlier
+misattribution (below). Next is `T-096`.
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -1229,24 +1233,36 @@ these results; not itself part of the malformed data this task purged. Recorded 
 *Residual, unchanged from before*: the purge still leaves `cycle`, `quant` and the API's `v_*` views
 empty for the 483 assets outside the 20-ticker sample, closed by `T-079`'s full-universe re-run.
 
-**T-095 — Revenue mis-resolution when a filer's own "total" tag is a sub-line, not the aggregate.**
-*Found by `T-088`'s acceptance (2026-09-22).* `LineItem.total_concepts` (`statements.py`) lets a match
-on `us-gaap_Revenues` (or `…RevenuesNetOfInterestExpense`) win outright over every `concepts`
-candidate, on the premise that a filer's own "Total revenue(s)" tag is authoritative. For APA FY2021
-that concept is tagged on `apa_RevenuesFromCustomersAndNonCustomers`'s "Other, net" component
-($1,082M), while the real total sits in `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax`
-($7,988M, matched by `apa_RevenuesAndOther` at $7,928M) — net margin comes out at 121% instead of
-≈16%. Same shape for PM FY2021 ($31.4B resolved vs. a true ~$82.2B gross-of-excise-tax figure — though
-PM's case may be the ExcludingAssessedTax/IncludingAssessedTax synonym rule choosing the wrong member
-rather than `total_concepts`; needs its own read of the payload) and PM FY2022. *Approach (not yet
-designed)*: a `total_concepts` match needs a plausibility check against the `concepts` candidates it
-overrides — e.g. reject the total's own precedence when it is materially smaller than the largest
-`concepts` match, not just prefer it unconditionally. *Acceptance*: hermetic tests on the real APA/PM
-payloads (already captured as fixtures via `T-088`'s live run) plus a regression fixture for a filer
-where the current outright-wins rule is *correct* (the rule exists for a reason — verify which
-fixture that is before changing it); `docs/model_fixes.md` entry (constitution AI behavior #12);
-`pytest`/`ruff`/`mypy` green. Needs its own real-data verification, not assumed from this task's audit
-alone. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — first of the three, per the order recorded in Work item 11's intro above.
+**T-095 — Revenue mis-resolution when a filer's own "total" tag is a sub-line, not the aggregate.
+Done 2026-09-22** (branch `feat/t095-revenue-total-concepts-plausibility`). *Found by `T-088`'s
+acceptance (2026-09-22).* `LineItem.total_concepts` (`statements.py`) let a match on
+`us-gaap_Revenues` (or `…RevenuesNetOfInterestExpense`) win outright over every `concepts`
+candidate, on the premise that a filer's own "Total revenue(s)" tag is authoritative.
+**Confirmed live for APA FY2021** (read against the gateway, 2026-09-22, read-only): its
+`us-gaap_Revenues` tag has **two** FY2021 rows valued identically at $1,082M — a non-dimensional
+one (the one `total_concepts` matches) and a dimensional one
+(`dimension_axis=us-gaap:EquityMethodInvestmentNonconsolidatedInvesteeAxis`, APA's equity-method
+investee) — a filer-side tagging defect, not "Other, net" as first guessed. The real total sits in
+`us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax` ($7,988M, corroborated by
+`apa_RevenuesAndOther`'s $7,928M "Total revenues and other") — net margin came out at 121% instead
+of ≈16%. **PM did NOT reproduce** — read live for both FY2021 and FY2022, PM tags neither
+`us-gaap_Revenues` nor `RevenuesNetOfInterestExpense` at all; `total_concepts` never fires, and the
+`sum_components`/`synonym_groups` fallback already correctly picks the ExcludingAssessedTax figure
+(the same rule F2 independently verified for PM). **This corrects the original finding's guess that
+PM's case might be the synonym rule choosing wrong** — it wasn't; PM's resolution was correct all
+along, no bug there. *Fix*: a new plausibility floor,
+`Statements._TOTAL_PLAUSIBILITY_FLOOR = 0.5` — a `total_concepts` match under half the largest
+first-matching-row value among `spec.concepts` is rejected, falling through to Tier 2; a filer with
+no `concepts` rows to compare against (JPM) is unaffected, trusted exactly as before. *Acceptance*:
+3 new hermetic tests on APA's real FY2021 values plus a parametrized pin of the exact floor boundary
+(0.5 trusted / 0.49 rejected), mutation-checked (reverting the gate call fails the floor-boundary
+assertions); every existing F2 regression test (including UDR's ratio-~1.0 "correct total" case and
+the `jpm_10k`/`aapl_10k` fixtures) unchanged and green; `docs/model_fixes.md` T-095 entry
+(constitution AI behavior #12, includes the PM correction); `uv run pytest -q` 375 passed (was 372);
+`ruff`/`mypy` green. *Residual*: the 0.5 floor is a heuristic verified against one real defect (APA)
+and one real correct case (UDR) — not swept across the rest of the 20-ticker sample or the full
+503-asset universe; the corrected `fundamental_metrics` row for APA FY2021 is not re-persisted (needs
+a production re-run, outside this change's authority).
 
 **T-096 — 10-Q filing gaps beyond the expected "first three quarters" F4 fallback.** *Found by
 `T-088`'s acceptance (2026-09-22).* Of 278 10-Q filings in the 20-ticker sample, 72 (25.9%) compute
@@ -1445,7 +1461,7 @@ this document.** Their internal sequencing:
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
   (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
-  20-ticker validation — **done 2026-09-22**) → `T-095` → `T-096` → `T-097` → `T-089`
+  20-ticker validation — **done 2026-09-22**) → `T-095` (**done 2026-09-22**) → `T-096` → `T-097` → `T-089`
   (artifacts; its first pass may run any time after `T-085` merges, but the final,
   comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
   Work item 7's `T-068` is re-scoped behind
@@ -1454,7 +1470,10 @@ this document.** Their internal sequencing:
   gaps beyond F4's expected fallback) and `T-097` (a `cycle select`/`monitor` guard
   against out-of-order runs). **At the user's explicit direction (2026-09-22), all
   three are prioritized ahead of `T-089`, which moves to the very end of the fixing
-  process** — it no longer runs immediately after `T-088`.
+  process** — it no longer runs immediately after `T-088`. **`T-095` is done**: confirmed
+  live for APA FY2021 (a plausibility floor now rejects a `total_concepts` tag mistagged
+  on a small dimensional slice); PM did not reproduce the defect, correcting this task's
+  own earlier misattribution. Next is `T-096`.
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
   as its `PLAN.md` Work item 3, consumed here by Work item 10, verified

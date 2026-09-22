@@ -24,7 +24,9 @@ amendment — **done 2026-09-21**), `T-090` (metric-version selection and run ma
 user's explicit direction (2026-09-22), **`T-095`/`T-096`/`T-097` are promoted above `T-089`** —
 they are prioritized fixes now, not unprioritized findings, and `T-089` moves to the very end
 of the fixing process (its first pass still runs any time after the `T-085` PR merges, but the
-delta pass that covers `T-088`/`T-095`/`T-096`/`T-097` waits until all three are done).
+delta pass that covers `T-088`/`T-095`/`T-096`/`T-097` waits until all three are done). `T-095`
+(revenue mis-resolution — **done 2026-09-22**; also corrected the PM misattribution in its
+own PLAN.md/TASKS.md write-up) is done; next up `T-096`, then `T-097`, then `T-089`.
 Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
@@ -584,7 +586,9 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-09
 found `T-095`/`T-096`/`T-097` (revenue mis-resolution, a 10-Q filing gap, an out-of-order
 `cycle` run guard). **At the user's explicit direction (2026-09-22), all three are now
 prioritized ahead of `T-089`, which moves to the very end of the fixing process** (below,
-`T-089`'s own entry).
+`T-089`'s own entry). **`T-095` is done, 2026-09-22** — confirmed live for APA FY2021, but
+did NOT reproduce for PM (its own PLAN.md/TASKS.md write-up corrected the earlier
+misattribution); next is `T-096`.
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -882,14 +886,22 @@ prioritized ahead of `T-089`, which moves to the very end of the fixing process*
       this task's own scope**: an out-of-order `cycle select` run silently mutated the live
       `portfolio_position` book; reverted by hand and confirmed restored → `T-097`. Full detail,
       including the APA/PM/WAT/APO specifics, in `PLAN.md`.
-- [ ] **T-095** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
-      user's direction, 2026-09-22**)* Revenue mis-resolution when a
+- [x] **T-095** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22; done 2026-09-22**)* Revenue mis-resolution when a
       filer's own "total" tag is a sub-line, not the aggregate: `LineItem.total_concepts`
       (`statements.py`) lets a `us-gaap_Revenues`-family match win outright over every
-      `concepts` candidate; for APA FY2021 and PM FY2021/FY2022 that tag sits on a sub-line
-      (APA: $1,082M resolved vs. a true ~$7,988M — net margin 121% instead of ≈16%), a
-      different shape from the already-fixed C1 (CPT's 127×). Approach and acceptance in
-      `PLAN.md` (not yet designed). → `PLAN.md` Work item 11, `T-095`.
+      `concepts` candidate; confirmed live for APA FY2021 (a non-dimensional
+      `us-gaap_Revenues` row mistagged with a dimensional equity-method-investee value,
+      $1,082M, vs. a true $7,988M — net margin 121% instead of ≈16%), a
+      different shape from the already-fixed C1 (CPT's 127×). **PM was NOT reproduced** —
+      re-read live, PM tags no `total_concepts` at all in either FY2021 or FY2022; its
+      resolution (the ExcludingAssessedTax figure, F2's already-verified rule) was correct
+      all along, so the original flag on PM is corrected here as a misattribution. **Fix**:
+      a new plausibility floor (`Statements._TOTAL_PLAUSIBILITY_FLOOR = 0.5`) rejects a
+      `total_concepts` match under half the largest named `concepts` candidate, falling
+      through to Tier 2; a no-comparison filer (JPM) is unaffected. 3 new tests
+      (375 total), mutation-checked. `docs/model_fixes.md` entry added (constitution AI
+      behavior #12). → `PLAN.md` Work item 11, `T-095`.
 - [ ] **T-096** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
       user's direction, 2026-09-22**)* 10-Q filing gaps beyond F4's
       expected "first three quarters" fallback: 12 of 278 10-Qs in the 20-ticker sample (APO ×8,
@@ -930,9 +942,10 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
-`T-094`, `T-087`, `T-090` and `T-088` are done (2026-09-21/22); next up `T-095`/`T-096`/`T-097`
-(found by `T-088`'s acceptance audit, promoted above `T-089` at the user's explicit direction,
-2026-09-22), then `T-089` last. `T-093` is on
+`T-094`, `T-087`, `T-090`, `T-088` and `T-095` are done (2026-09-21/22); next up `T-096`, then
+`T-097`, then `T-089` last** (found by `T-088`'s acceptance audit, promoted above `T-089` at the
+user's explicit direction, 2026-09-22 — `T-095` also corrected a misattribution in its own
+finding: PM did not reproduce the defect). `T-093` is on
 the low-priority path.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,

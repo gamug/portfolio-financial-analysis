@@ -235,6 +235,78 @@ def test_revenue_sum_ignores_a_label_only_match_from_a_custom_total_concept() ->
     assert stmts.get("revenue", key) == 111_476_000_000.0  # NOT the sum
 
 
+def test_revenue_rejects_a_total_far_smaller_than_a_named_component() -> None:
+    """T-095 (docs/model_fixes.md): APA FY2021's real shape -- its
+    `us-gaap_Revenues` "Total revenues" tag is mistagged on one small
+    dimensional slice ($1,082M, matching only the "Equity Method Investment,
+    Nonconsolidated Investee" breakdown row) rather than the consolidated
+    aggregate; the real total sits on
+    `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax` ($7,988M,
+    corroborated by `apa_RevenuesAndOther`'s $7,928M "Total revenues and
+    other", not modeled here). A `total_concepts` match this far below a
+    named `concepts` candidate must be rejected, not trusted outright."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_082_000_000.0}),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+                "Revenue from contract with customer, including assessed tax",
+                **{key: 7_988_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 7_988_000_000.0  # NOT the mistagged 1_082_000_000.0
+
+
+def test_revenue_total_concepts_with_no_component_to_compare_is_trusted() -> None:
+    """A filer with no `concepts` rows tagged at all -- a bank's
+    `RevenuesNetOfInterestExpense` total, JPM's real shape (also covered end
+    to end by the `jpm_10k` fixture) -- has nothing to sanity-check the total
+    against, so T-095's plausibility floor must not invent a rejection."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_RevenuesNetOfInterestExpense", "Total net revenue", **{key: 5_000_000.0}
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 5_000_000.0
+
+
+@pytest.mark.parametrize(
+    ("ratio", "expect_total"),
+    [(0.5, True), (0.49, False)],
+    ids=["at_floor_trusted", "just_below_floor_rejected"],
+)
+def test_revenue_total_concepts_plausibility_floor_is_pinned(
+    ratio: float, expect_total: bool
+) -> None:
+    """T-095's plausibility floor (`Statements._TOTAL_PLAUSIBILITY_FLOOR`) is
+    an exact, documented fraction of the largest named component -- not an
+    arbitrary cutoff picked to fit APA alone. Pin the boundary explicitly so
+    a future change to the constant is a deliberate edit, not a silent
+    mutation."""
+    key = "2023-12-31 (FY)"
+    largest_component = 1_000_000_000.0
+    total = largest_component * ratio
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: total}),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Net revenues",
+                **{key: largest_component},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == (total if expect_total else largest_component)
+
+
 def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     """`cogs` has the same two-distinct-concepts shape `revenue` had pre-F2
     but has NOT opted into `sum_components` -- must still return exactly the
