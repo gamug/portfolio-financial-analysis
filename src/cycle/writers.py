@@ -15,6 +15,35 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
+class OutOfOrderCycle(RuntimeError):
+    """``select`` was asked to write the live ``portfolio_position`` book at a date older
+    than a date it has already written (T-097)."""
+
+
+def out_of_order_reason(conn: Database, cycle_date: str) -> str | None:
+    """Why writing the live book at *cycle_date* would be an out-of-order (backdated) run --
+    or ``None`` when it is safe (T-097).
+
+    ``sync_positions`` always writes the live book unconditionally: it closes whatever is
+    open (``valid_to = cycle_date``) and opens the new targets (``valid_from = cycle_date``),
+    with no check that *cycle_date* is not older than a date it has already run at. A run for
+    an earlier date, after a later one, silently closes positions early and backdates new
+    ones -- found live (T-088's own validation run) rather than guessed at. Safe means:
+    *cycle_date* is not older than the latest ``valid_from`` already recorded on
+    ``portfolio_position`` -- read across *every* row (open or closed), because a closed
+    position's ``valid_from`` still marks a date this book has already moved past. No rows at
+    all (a fresh book) is always safe: there is nothing yet for any date to be "older" than.
+    """
+    row = conn.execute("SELECT MAX(valid_from) AS latest FROM portfolio_position").fetchone()
+    latest = row["latest"] if row else None
+    if latest is None or cycle_date >= str(latest):
+        return None
+    return (
+        f"cycle_date {cycle_date} is older than the live book's latest valid_from {latest}; "
+        "pass --allow-backdated for a deliberate historical backfill"
+    )
+
+
 def write_scores(  # noqa: PLR0913, PLR0917 - a wide row writer; splitting hurts clarity
     conn: Database,
     score_type: str,

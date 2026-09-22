@@ -20,6 +20,7 @@ from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
+from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema.versions import VersionError
 
 # -- normalize ----------------------------------------------------------
@@ -418,6 +419,70 @@ def test_cycle_resumes_without_duplicating(cycle_seed: Database) -> None:
     assert set(again.steps_skipped) >= {"technical", "valorization", "rank", "positions"}
     assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
+
+
+# -- T-097: the out-of-order-cycle guard -------------------------
+
+
+def test_out_of_order_reason_pure_function(memory_db: Database) -> None:
+    assert out_of_order_reason(memory_db, "2020-01-01") is None  # no rows yet -- nothing to guard
+    memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
+    memory_db.execute(
+        "INSERT INTO portfolio_position (asset_id, valid_from, valid_to, weight, opened_by_cycle) "
+        "VALUES (1, '2026-06-30', NULL, 0.5, 1)"
+    )
+    memory_db.commit()
+    assert out_of_order_reason(memory_db, "2026-07-01") is None  # newer -- fine
+    assert out_of_order_reason(memory_db, "2026-06-30") is None  # same date -- fine
+    reason = out_of_order_reason(memory_db, "2026-05-01")
+    assert reason is not None
+    assert "2026-05-01" in reason and "2026-06-30" in reason and "--allow-backdated" in reason
+
+
+def test_select_refuses_to_write_a_backdated_book(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    before = conn.execute(
+        "SELECT id, valid_from, valid_to FROM portfolio_position ORDER BY id"
+    ).fetchall()
+
+    with pytest.raises(OutOfOrderCycle, match="2026-06-30"):
+        run_selection(_settings(conn), "2026-05-01", conn=conn)
+
+    # the live book is untouched -- refused before any write, not partially applied
+    after = conn.execute(
+        "SELECT id, valid_from, valid_to FROM portfolio_position ORDER BY id"
+    ).fetchall()
+    assert [dict(r) for r in after] == [dict(r) for r in before]
+    # the refused run's own cycle_run is marked "failed", not left stuck "running" (T-097 review)
+    assert (
+        conn.execute("SELECT status FROM cycle_run WHERE cycle_date = '2026-05-01'").fetchone()[
+            "status"
+        ]
+        == "failed"
+    )
+    step_status = conn.execute(
+        "SELECT cc.status FROM cycle_checkpoint cc "
+        "JOIN cycle_run cr ON cr.id = cc.cycle_run_id "
+        "WHERE cr.cycle_date = '2026-05-01' AND cc.step = 'positions'"
+    ).fetchone()["status"]
+    assert step_status == "failed"
+
+
+def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+
+    backdated = _settings(conn).model_copy(update={"allow_backdated_positions": True})
+    report = run_selection(backdated, "2026-05-01", conn=conn)
+
+    assert "positions" in report.steps_run
+    assert report.backdated_guard_bypassed is not None
+    assert "2026-05-01" in report.backdated_guard_bypassed
+    assert "2026-06-30" in report.backdated_guard_bypassed
+    # the guard's own MAX(valid_from) read still reflects the later, now-closed positions --
+    # a closed position's valid_from still marks a date this book has already moved past.
+    assert out_of_order_reason(conn, "2026-04-01") is not None
 
 
 def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: Database) -> None:

@@ -26,9 +26,11 @@ they are prioritized fixes now, not unprioritized findings, and `T-089` moves to
 of the fixing process (its first pass still runs any time after the `T-085` PR merges, but the
 delta pass that covers `T-088`/`T-095`/`T-096`/`T-097` waits until all three are done). `T-095`
 (revenue mis-resolution — **done 2026-09-22**; also corrected the PM misattribution in its
-own PLAN.md/TASKS.md write-up) and `T-096` (10-Q filing gaps — **done 2026-09-22**; fixed
+own PLAN.md/TASKS.md write-up), `T-096` (10-Q filing gaps — **done 2026-09-22**; fixed
 WAT's `net_income` concept gap locally, routed APO's gap upstream, and corrected the original
-PG/BF.B/STZ tally) are done; next up `T-097`, then `T-089`.
+PG/BF.B/STZ tally) and `T-097` (the out-of-order-cycle guard — **done 2026-09-22**; scoped to
+`select` only, `monitor` was never at risk) are done. All three prioritized findings are
+closed; **`T-089` is next, and last, in the fixing process.**
 Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
@@ -594,7 +596,10 @@ misattribution). **`T-096` is done, 2026-09-22** — a precise reproduction of t
 logic found three distinct root causes, correcting the original tally: APO's gap is one
 upstream defect cascading (routed, not fixed here), WAT's is a local `net_income`-concept gap
 (fixed), and PG/BF.B/STZ's original "×1 each" claim did not survive reproduction (no real
-gap). Next is `T-097`.
+gap). **`T-097` is done, 2026-09-22** — `cycle select`'s "positions" step now refuses an
+out-of-order `--analysis-date` unless `--allow-backdated` is given; scope corrected to `select`
+only (`monitor` never writes `portfolio_position`). All three findings are closed; `T-089` is
+next, and last.
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -930,12 +935,19 @@ gap). Next is `T-097`.
       tests (377 total), mutation-checked. `docs/model_fixes.md` entry added (constitution AI
       behavior #12), including all three corrections.
       → `PLAN.md` Work item 11, `T-096`.
-- [ ] **T-097** *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
-      user's direction, 2026-09-22**)* Guard `cycle select`/`monitor`
+- [x] **T-097** *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22; done 2026-09-22**)* Guard `cycle select`
       against an out-of-order (backdated) `--analysis-date` silently mutating the live
       `portfolio_position` book — the same class of false-run hazard `T-086` closed for
-      `build-returns`. Refuse unless an explicit override is given, mirroring
-      `--allow-no-dividends`. → `PLAN.md` Work item 11, `T-097`.
+      `build-returns`. **Scope corrected**: only `select`'s "positions" step ever writes
+      `portfolio_position`; `monitor` never reaches it, so it was never actually at risk despite
+      the original title. **Fix**: `cycle.writers.out_of_order_reason`/`OutOfOrderCycle` (mirrors
+      `quant.actions.dividends_not_ready_reason`/`DividendsNotReady`, T-086) — refuses when
+      `--analysis-date` is older than the live book's `MAX(valid_from)` across every row (open or
+      closed); `--allow-backdated` (added only to `select`'s parser) overrides it for a
+      deliberate historical run, recorded on the report. 4 new tests (380 total), mutation-
+      checked. `docs/model_fixes.md` entry added (constitution AI behavior #12). → `PLAN.md` Work
+      item 11, `T-097`.
 - [ ] **T-089** *(**moved to the very end of the fixing process, at the user's explicit
       direction, 2026-09-22** — was next after `T-088`; now runs after `T-095`/`T-096`/`T-097`)*
       Reconcile the two architecture artifacts per constitution AI behavior #11 —
@@ -962,11 +974,12 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
-`T-094`, `T-087`, `T-090`, `T-088`, `T-095` and `T-096` are done (2026-09-21/22); next up
-`T-097`, then `T-089` last** (found by `T-088`'s acceptance audit, promoted above `T-089` at the
-user's explicit direction, 2026-09-22 — both `T-095` and `T-096` also corrected their own
-earlier findings: PM did not reproduce T-095's defect; APO's/PG's/BF.B's/STZ's original T-096
-tally did not survive a precise reproduction, only WAT had a real, now-fixed local gap).
+`T-094`, `T-087`, `T-090`, `T-088`, `T-095`, `T-096` and `T-097` are all done (2026-09-21/22);
+`T-089` is next, and last** (found by `T-088`'s acceptance audit, `T-095`/`T-096`/`T-097`
+promoted above `T-089` at the user's explicit direction, 2026-09-22 — `T-095` and `T-096` also
+corrected their own earlier findings: PM did not reproduce T-095's defect; APO's/PG's/BF.B's/
+STZ's original T-096 tally did not survive a precise reproduction, only WAT had a real,
+now-fixed local gap; `T-097`'s own "select/monitor" title was corrected to `select` only).
 `T-093` is on
 the low-priority path.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*

@@ -12,6 +12,7 @@ from cycle.config import CycleSettings
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import run_monitoring, run_selection
 from cycle.state import ManifestMismatch
+from cycle.writers import OutOfOrderCycle
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -20,6 +21,11 @@ _METRICS_VERSION_HELP = (
     "which fundamental_metrics engine version the cycle reads: a version (metrics-v1) or "
     "GROUP=VERSION pairs; default: the newest stored per group. A run of the same type and date "
     "built on other versions is refused, not mixed (T-090)"
+)
+_ALLOW_BACKDATED_HELP = (
+    "override the out-of-order-cycle guard (T-097) and write the live portfolio_position book "
+    "at a --analysis-date older than one already written -- for a deliberate historical "
+    "backfill/validation run, not routine use"
 )
 
 
@@ -41,6 +47,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
+        if name == "select":
+            # MONITORING never reaches the positions step (T-097), so the flag would be a
+            # silent no-op there -- offered only where it can actually do something.
+            p.add_argument("--allow-backdated", action="store_true", help=_ALLOW_BACKDATED_HELP)
 
     bf = sub.add_parser("backfill", help="run selection cycles across a date range")
     bf.add_argument("--from", dest="date_from", required=True)
@@ -62,6 +72,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["top_n"] = args.top_n
     if getattr(args, "metrics_version", None):
         updates["metrics_version"] = args.metrics_version
+    if getattr(args, "allow_backdated", False):
+        updates["allow_backdated_positions"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -78,7 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(parser, args)
-    except (VersionError, ManifestMismatch) as exc:
+    except (VersionError, ManifestMismatch, OutOfOrderCycle) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1
 
@@ -105,6 +117,12 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
+        if r.backdated_guard_bypassed is not None:
+            print(
+                f"  WARNING: --allow-backdated overrode the out-of-order-cycle guard "
+                f"({r.backdated_guard_bypassed})",
+                file=sys.stderr,
+            )
         return 0
     # backfill
     d = date.fromisoformat(args.date_from)
