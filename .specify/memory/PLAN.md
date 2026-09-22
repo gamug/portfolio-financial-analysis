@@ -37,8 +37,9 @@ belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
 `sec_edgar` endpoints (done 2026-09-21),
 `T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests (done 2026-09-21),
 `T-088` the malformed-data purge + 20-ticker deep validation run (**done 2026-09-22**;
-its own acceptance surfaced three new, unprioritized findings — `T-095`/`T-096`/`T-097`,
-below), `T-089` the
+its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, below —
+**promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`, `T-096`,
+`T-097` (in that order — see Work item 11), then, last in the fixing process, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
 (independent, external prerequisites; Work item 6's implementation now lives in
 `portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
@@ -953,7 +954,8 @@ there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
-Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-088` → `T-089`; `T-093` is **deferred to the low-priority path** (below).
+Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-088` →
+`T-095`/`T-096`/`T-097` → `T-089`; `T-093` is **deferred to the low-priority path** (below).
 `T-094` was found by `T-092`'s acceptance and had to land before `T-088`'s re-ingest. `T-088`'s backup
 and purge (steps 1–2) were executed early, on 2026-09-21, at the user's direction.
 `T-092` was a **P0 blocker** (below), now done. `T-090`/`T-093` were added the same
@@ -961,8 +963,10 @@ day, from review of `T-088`'s caveats. `T-090` sits before `T-088` because its d
 runs on the versioned readers and on the 10-Q data `T-092` fixes; `T-093` was deferred to the
 low-priority path on 2026-09-21, and `T-088` needs only `T-090`'s `--metrics-version`, so the
 deferral blocks nothing. `T-091` is superseded by `T-092`. **`T-088` is done, 2026-09-22**; its
-own acceptance audit found `T-095`/`T-096`/`T-097`, recorded in place below with no priority
-assigned yet — none of the three blocks `T-089`.
+own acceptance audit found `T-095`/`T-096`/`T-097`. **At the user's explicit direction
+(2026-09-22), all three are now prioritized fixes, ordered ahead of `T-089`, which moves to the
+very end of the fixing process** — its reconciliation pass now waits until `T-095`/`T-096`/`T-097`
+are done, so it covers the whole process in one pass instead of needing a second delta.
 
 **T-086 — Guard against false `build-returns` runs.** `quant_return_daily` is `INSERT OR
 IGNORE` per `(asset, day, engine_version)`, so a series built while `corporate_action` has no
@@ -1242,7 +1246,7 @@ payloads (already captured as fixtures via `T-088`'s live run) plus a regression
 where the current outright-wins rule is *correct* (the rule exists for a reason — verify which
 fixture that is before changing it); `docs/model_fixes.md` entry (constitution AI behavior #12);
 `pytest`/`ruff`/`mypy` green. Needs its own real-data verification, not assumed from this task's audit
-alone. *Not yet prioritized* — recorded here, ordering left to the next planning pass.
+alone. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — first of the three, per the order recorded in Work item 11's intro above.
 
 **T-096 — 10-Q filing gaps beyond the expected "first three quarters" F4 fallback.** *Found by
 `T-088`'s acceptance (2026-09-22).* Of 278 10-Q filings in the 20-ticker sample, 72 (25.9%) compute
@@ -1259,7 +1263,7 @@ upstream (the gateway's `/financials` extraction, `portfolio-data-mining`'s job)
 `filing_by_year`/`_targets` handling of an FY-only quarterly payload; if upstream, file the task in
 `portfolio-data-mining` per this repo's own rule that only it mines data. *Acceptance*: a live,
 read-only reproduction against the two accessions above; a decision on where the fix belongs; if
-local, hermetic tests plus a `docs/model_fixes.md` entry. *Not yet prioritized*.
+local, hermetic tests plus a `docs/model_fixes.md` entry. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — second of the three.
 
 **T-097 — Guard `cycle select`/`monitor` against an out-of-order (backdated) run mutating the live
 book.** *Found while validating `T-088` (2026-09-22).* `cycle select --analysis-date D` always writes
@@ -1272,7 +1276,7 @@ refuse (exit 1, clear message) when `--analysis-date` is older than the live boo
 `valid_from`, unless an explicit override is given (mirroring `T-086`'s `--allow-no-dividends`
 pattern) — needed for a deliberate historical backfill, e.g. `T-088`'s own use above. *Acceptance*:
 hermetic tests for older-than-live (refuses), same-date (no-op/update, already covered), newer date
-(the normal case), and the override. *Not yet prioritized*.
+(the normal case), and the override. **Prioritized above `T-089` at the user's explicit direction, 2026-09-22** — third of the three.
 
 **T-090 — Metric-version selection and run manifests ("version of versions") for `cycle` and
 `quant`.** *Problem.* `fundamental_metrics` is append-only per `engine_version`, so parallel
@@ -1399,17 +1403,22 @@ on captured payloads (a Q3-only payload like XOM 2024, a Q2 payload with a Q1 co
 STZ 2023) added under `tests/fixtures/`. *Order*: before `T-088`; if the upstream half slips,
 (a) and (c) still improve F4 and `T-088` may proceed with the fallback fraction recorded — the
 user's call.
-**T-089 — Reconcile the two architecture artifacts.** Constitution AI behavior #11 requires it
+**T-089 — Reconcile the two architecture artifacts.** *Moved to the very end of the fixing
+process, at the user's explicit direction (2026-09-22)*: it was next after `T-088`; now
+`T-095`/`T-096`/`T-097` are prioritized ahead of it and it runs last, once all three are done.
+Constitution AI behavior #11 requires it
 at the close of every development effort, and no task covered the audit-era fixes. Update both
 the system-wide [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
 and the repository-specific [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0)
 artifact: **content only — never rename either or change its `<title>`**. Cover F1, F2, F4,
 C1 (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (the gateway as the only
-corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-088` (`T-093` is deferred, so it appears only as a
+corporate-actions source) and `T-086`/`T-092`/`T-090`/`T-088`/`T-095`/`T-096`/`T-097`
+(`T-093` is deferred, so it appears only as a
 low-priority plan step); close the gaps and plan steps
 they built, and correct prose that describes a fixed gap. Read the live artifact first and
-republish in place by URL. A first pass can run any time after the `T-085` PR merges; a second,
-delta pass follows `T-088`.
+republish in place by URL. A first pass can run any time after the `T-085` PR merges; the final,
+comprehensive pass runs last, after `T-095`/`T-096`/`T-097` close — one pass covering the whole
+fixing process rather than a second delta.
 
 ## Sequencing
 
@@ -1436,13 +1445,16 @@ this document.** Their internal sequencing:
   (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
   `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
   (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
-  20-ticker validation — **done 2026-09-22**) → `T-089` (artifacts; docs-only, its first pass
-  may run any time after `T-085` merges). Work item 7's `T-068` is re-scoped behind
+  20-ticker validation — **done 2026-09-22**) → `T-095` → `T-096` → `T-097` → `T-089`
+  (artifacts; its first pass may run any time after `T-085` merges, but the final,
+  comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
+  Work item 7's `T-068` is re-scoped behind
   `T-088`. `T-088`'s own acceptance audit found three further findings — `T-095`
   (revenue mis-resolution on a filer's own "total" tag), `T-096` (10-Q filing
   gaps beyond F4's expected fallback) and `T-097` (a `cycle select`/`monitor` guard
-  against out-of-order runs) — recorded in Work item 11 with no priority assigned yet;
-  none blocks `T-089` or anything else currently in this order.
+  against out-of-order runs). **At the user's explicit direction (2026-09-22), all
+  three are prioritized ahead of `T-089`, which moves to the very end of the fixing
+  process** — it no longer runs immediately after `T-088`.
 - Work item 5 (`portfolio-common` v0.3.0) and Work item 6
   (`portfolio-data-mining` corporate-actions endpoint — implemented there
   as its `PLAN.md` Work item 3, consumed here by Work item 10, verified

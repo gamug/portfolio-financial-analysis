@@ -20,10 +20,12 @@ done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order �
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
 amendment — **done 2026-09-21**), `T-090` (metric-version selection and run manifests for `cycle`/`quant` — **done 2026-09-21**), `T-088`
 (purge the malformed Fundamental/Quant data and run the 20-ticker deep validation —
-**done 2026-09-22**; its own acceptance audit found `T-095`/`T-096`/`T-097`, recorded but not
-yet prioritized),
-`T-089` (reconcile the two architecture artifacts; docs-only, first pass any time after
-the `T-085` PR merges).** Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
+**done 2026-09-22**; its own acceptance audit found `T-095`/`T-096`/`T-097`), then, at the
+user's explicit direction (2026-09-22), **`T-095`/`T-096`/`T-097` are promoted above `T-089`** —
+they are prioritized fixes now, not unprioritized findings, and `T-089` moves to the very end
+of the fixing process (its first pass still runs any time after the `T-085` PR merges, but the
+delta pass that covers `T-088`/`T-095`/`T-096`/`T-097` waits until all three are done).
+Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
 continue in parallel as external prerequisites → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **the low-priority path (2026-09-21): `T-093`**, the user-tunable version
@@ -570,7 +572,7 @@ dependency for the code; live verification is `T-052`.
 ## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
 
 Added 2026-09-21. Order: `T-052` (Work item 6, live check), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all
-done 2026-09-21) → `T-088` → `T-089`; `T-093` is **deferred to the low-priority path**
+done 2026-09-21) → `T-088` → `T-095`/`T-096`/`T-097` → `T-089`; `T-093` is **deferred to the low-priority path**
 (2026-09-21, at the user's direction). `T-092` was a
 **P0 blocker** — the fundamental pipeline could not ingest anything against the live gateway —
 and is done; it exposed `T-094` (now also done), which had to land before `T-088`'s re-ingest or
@@ -580,7 +582,9 @@ on the versioned readers and on the 10-Q data `T-092` fixes; `T-088` needs `T-09
 `--metrics-version`, not `T-093`'s constraint language, so deferring `T-093` blocks nothing;
 `T-091` is superseded by `T-092`. **`T-088` is done, 2026-09-22**; its acceptance audit
 found `T-095`/`T-096`/`T-097` (revenue mis-resolution, a 10-Q filing gap, an out-of-order
-`cycle` run guard), recorded below with no priority assigned yet — none blocks `T-089`.
+`cycle` run guard). **At the user's explicit direction (2026-09-22), all three are now
+prioritized ahead of `T-089`, which moves to the very end of the fixing process** (below,
+`T-089`'s own entry).
 → `PLAN.md` Work item 11.
 
 - [x] **T-086** Guard against false `build-returns` runs: `run_build_returns`
@@ -878,35 +882,41 @@ found `T-095`/`T-096`/`T-097` (revenue mis-resolution, a 10-Q filing gap, an out
       this task's own scope**: an out-of-order `cycle select` run silently mutated the live
       `portfolio_position` book; reverted by hand and confirmed restored → `T-097`. Full detail,
       including the APA/PM/WAT/APO specifics, in `PLAN.md`.
-- [ ] **T-095** *(found by `T-088`'s acceptance, 2026-09-22)* Revenue mis-resolution when a
+- [ ] **T-095** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22**)* Revenue mis-resolution when a
       filer's own "total" tag is a sub-line, not the aggregate: `LineItem.total_concepts`
       (`statements.py`) lets a `us-gaap_Revenues`-family match win outright over every
       `concepts` candidate; for APA FY2021 and PM FY2021/FY2022 that tag sits on a sub-line
       (APA: $1,082M resolved vs. a true ~$7,988M — net margin 121% instead of ≈16%), a
       different shape from the already-fixed C1 (CPT's 127×). Approach and acceptance in
-      `PLAN.md` (not yet designed). *Not yet prioritized.* → `PLAN.md` Work item 11, `T-095`.
-- [ ] **T-096** *(found by `T-088`'s acceptance, 2026-09-22)* 10-Q filing gaps beyond F4's
+      `PLAN.md` (not yet designed). → `PLAN.md` Work item 11, `T-095`.
+- [ ] **T-096** *(found by `T-088`'s acceptance, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22**)* 10-Q filing gaps beyond F4's
       expected "first three quarters" fallback: 12 of 278 10-Qs in the 20-ticker sample (APO ×8,
       one each PG/BF.B/STZ/WAT) fall back for no such reason. Two shapes on the live gateway:
       APO's 2023Q1 10-Q is listed but its `/financials` payload carries only the FY period, so
       it's silently never scored; WAT is missing a Q1 10-Q in every year 2022–2025. Needs a live
-      reproduction to place the fix (this repo vs. upstream `portfolio-data-mining`). *Not yet
-      prioritized.* → `PLAN.md` Work item 11, `T-096`.
-- [ ] **T-097** *(found while validating `T-088`, 2026-09-22)* Guard `cycle select`/`monitor`
+      reproduction to place the fix (this repo vs. upstream `portfolio-data-mining`).
+      → `PLAN.md` Work item 11, `T-096`.
+- [ ] **T-097** *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
+      user's direction, 2026-09-22**)* Guard `cycle select`/`monitor`
       against an out-of-order (backdated) `--analysis-date` silently mutating the live
       `portfolio_position` book — the same class of false-run hazard `T-086` closed for
       `build-returns`. Refuse unless an explicit override is given, mirroring
-      `--allow-no-dividends`. *Not yet prioritized.* → `PLAN.md` Work item 11, `T-097`.
-- [ ] **T-089** Reconcile the two architecture artifacts per constitution AI behavior #11 —
+      `--allow-no-dividends`. → `PLAN.md` Work item 11, `T-097`.
+- [ ] **T-089** *(**moved to the very end of the fixing process, at the user's explicit
+      direction, 2026-09-22** — was next after `T-088`; now runs after `T-095`/`T-096`/`T-097`)*
+      Reconcile the two architecture artifacts per constitution AI behavior #11 —
       [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
       and [Portfolio Financial Analysis](https://claude.ai/code/artifact/bfc6efde-aecd-4408-83b8-081bc3abccb0):
       **content only, never rename or change either `<title>`**. Cover F1, F2, F4, C1
       (diagnosis correction), C2, Q2, Q3 (superseded), `T-085` (gateway as the only
-      corporate-actions source) and, as they land, `T-086`/`T-092`/`T-090`/`T-088` (`T-093` is deferred, so it appears only as a
+      corporate-actions source) and `T-086`/`T-092`/`T-090`/`T-088`/`T-095`/`T-096`/`T-097`
+      (`T-093` is deferred, so it appears only as a
       low-priority plan step); close the gaps and plan
       steps they built and correct prose describing a fixed gap. Read the live artifact,
-      republish in place by URL. First pass any time after the `T-085` PR merges; a delta pass
-      after `T-088`. → `PLAN.md` Work item 11, `T-089`.
+      republish in place by URL. Runs last, after `T-095`/`T-096`/`T-097` are done, so its
+      pass covers the whole fixing process in one go. → `PLAN.md` Work item 11, `T-089`.
 
 ## Status
 
@@ -920,9 +930,10 @@ code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
 `T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
 production-data-mutating run, not a code change) remain in Work item 7.
 Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
-`T-094`, `T-087`, `T-090` and `T-088` are done (2026-09-21/22); next up `T-089`. `T-093` is on
-the low-priority path; `T-095`/`T-096`/`T-097` (found by `T-088`'s acceptance audit) are
-recorded but not yet prioritized.** **`T-085` (Work item 10, P0) is
+`T-094`, `T-087`, `T-090` and `T-088` are done (2026-09-21/22); next up `T-095`/`T-096`/`T-097`
+(found by `T-088`'s acceptance audit, promoted above `T-089` at the user's explicit direction,
+2026-09-22), then `T-089` last. `T-093` is on
+the low-priority path.** **`T-085` (Work item 10, P0) is
 done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
 corporate-actions source and the derivation was removed (live verification, `T-052`,
 passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
