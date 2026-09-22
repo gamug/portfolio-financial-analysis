@@ -307,6 +307,47 @@ def test_revenue_total_concepts_plausibility_floor_is_pinned(
     assert stmts.get("revenue", key) == (total if expect_total else largest_component)
 
 
+def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_exists() -> None:
+    """T-096 (docs/model_fixes.md): WAT's real shape -- 14 of 18 `metrics-v2` filings in
+    the 20-ticker sample tag no `us-gaap_NetIncomeLoss`/`us-gaap_ProfitLoss` row at all,
+    only `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (WAT's Oct-2022 10-Q,
+    real value). Left unresolved, `net_income` silently comes back `None` -- and, chained
+    through F4's `ttm_flows` (`db.ttm_flows`/`_recorded_flow`), poisons every later
+    quarter's trailing-twelve-month window that needs this quarter's own value."""
+    key = "2022-10-01 (Q4)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+                "Net income",
+                **{key: 155_998_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("net_income", key) == 155_998_000.0
+
+
+def test_net_income_still_prefers_the_plain_tag_when_both_are_present() -> None:
+    """The `AvailableToCommonStockholdersBasic` fallback must not disturb the ordinary
+    case (`us-gaap_NetIncomeLoss` present) -- a defensive regression guard; live
+    verification (WAT) found the two never co-occur non-dimensionally in the same
+    filing, but this pins the intended behavior if they ever did."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_NetIncomeLoss", "Net income", **{key: 100.0}),
+            _income_row(
+                "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+                "Net income available to common stockholders",
+                **{key: 80.0},
+            ),
+        )
+    )
+
+    assert stmts.get("net_income", key) == 100.0
+
+
 def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     """`cogs` has the same two-distinct-concepts shape `revenue` had pre-F2
     but has NOT opted into `sum_components` -- must still return exactly the

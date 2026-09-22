@@ -152,7 +152,23 @@ REGISTRY: dict[str, LineItem] = {
         "operating_income", _INCOME, concepts=("us-gaap_OperatingIncomeLoss",)
     ),
     "net_income": LineItem(
-        "net_income", _INCOME, concepts=("us-gaap_NetIncomeLoss", "us-gaap_ProfitLoss")
+        "net_income",
+        _INCOME,
+        concepts=(
+            "us-gaap_NetIncomeLoss",
+            "us-gaap_ProfitLoss",
+            # T-096, docs/model_fixes.md: WAT tags no NetIncomeLoss/ProfitLoss row at
+            # all for most of its filing history (14/18 metrics-v2 filings in the
+            # 20-ticker sample) -- only this "available to common" variant. Live-
+            # verified never to co-occur with the two above in the same WAT filing
+            # (WAT switched tagging convention outright starting 2025Q2), so
+            # document-order (this item sets no `total_concepts`/`sum_components`,
+            # Tier 2's plain first-match) carries no live-verified ambiguity risk for
+            # it; a filer that genuinely tags both, with a different preferred-
+            # dividend-adjusted value, is a residual, unverified risk (see the
+            # docs entry).
+            "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+        ),
     ),
     "pretax_income": LineItem(
         "pretax_income",
