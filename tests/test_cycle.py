@@ -454,13 +454,19 @@ def test_select_refuses_to_write_a_backdated_book(cycle_seed: Database) -> None:
         "SELECT id, valid_from, valid_to FROM portfolio_position ORDER BY id"
     ).fetchall()
     assert [dict(r) for r in after] == [dict(r) for r in before]
-    # the refused run's own cycle_run is not left "completed"
+    # the refused run's own cycle_run is marked "failed", not left stuck "running" (T-097 review)
     assert (
         conn.execute("SELECT status FROM cycle_run WHERE cycle_date = '2026-05-01'").fetchone()[
             "status"
         ]
-        == "running"
+        == "failed"
     )
+    step_status = conn.execute(
+        "SELECT cc.status FROM cycle_checkpoint cc "
+        "JOIN cycle_run cr ON cr.id = cc.cycle_run_id "
+        "WHERE cr.cycle_date = '2026-05-01' AND cc.step = 'positions'"
+    ).fetchone()["status"]
+    assert step_status == "failed"
 
 
 def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database) -> None:

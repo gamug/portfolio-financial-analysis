@@ -1483,16 +1483,29 @@ rather than quant's dedicated multi-line handler — the reason string itself is
 complete and actionable); a `WARNING` line printed when the override was used, mirroring
 `build-returns`'s own bypass warning.
 
+**Review follow-up (2026-09-22, PR #58, automated review)**: a refused run's own `cycle_run` row
+was originally left stuck at status `"running"` forever — `finish_cycle` was only ever called
+once, at the very end of `_run`, on the success path, so *any* exception raised mid-run (this
+guard's included) skipped it with no failure transition, even though `cycle_checkpoint`'s own DDL
+comment already documented `'failed'` as an expected status no code wrote. Fixed generally, not
+just for this guard: `_do()` now wraps `fn()` in `try`/`except` and marks that step's own
+checkpoint `"failed"` (with the error message) before re-raising; `_run()`'s whole step sequence
+is now one `try`/`except` that marks the parent `cycle_run` `"failed"` too, then re-raises
+unchanged. `docs`/tests below updated to match (a refused run's `cycle_run` is now `"failed"`,
+not `"running"`).
+
 ### Verification
 
 - 4 new tests in `tests/test_cycle.py`: the pure `out_of_order_reason` function (no rows → safe;
   newer/same date → safe; older date → a reason naming both dates and `--allow-backdated`); a
-  full `run_selection` at an older date raises `OutOfOrderCycle` and leaves the book **and** the
-  refused run's own `cycle_run` row untouched (not partially applied); the override succeeds,
+  full `run_selection` at an older date raises `OutOfOrderCycle`, leaves the position book
+  untouched, and marks both the refused run's `cycle_run` row and its `"positions"` checkpoint
+  `"failed"` (not partially applied, and not left stuck `"running"`); the override succeeds,
   records the bypass reason on the report, and a closed position's `valid_from` still protects a
   *further* out-of-order attempt afterward. Mutation-checked: removing the guard call fails two
-  of the four tests.
-- `uv run pytest -q` — **380 passed** (was 377). `ruff`/`mypy` — all green.
+  of the four tests; separately, removing either the per-step or the per-run `"failed"` transition
+  each fails the refusal test's new status assertions (checked by hand, not left in the suite).
+- `uv run pytest -q` — **380 passed** (was 377 before T-097). `ruff`/`mypy` — all green.
 
 **Not done as part of this change**: no production re-run needed — the incident this task
 documents was already found and reverted by hand during `T-088`'s own validation, before this
@@ -1509,3 +1522,16 @@ task existed; this change only prevents a recurrence.
   corrupted by an *already-reverted* out-of-order run (as the original incident was) is
   indistinguishable, after cleanup, from one that was never touched; this guard only prevents a
   *future* recurrence, it cannot detect a *past* one that predates it.
+- **Two further automated-review findings on PR #58, considered and declined**: (1) the guard's
+  read (`out_of_order_reason`) and `sync_positions`'s write are not wrapped in one serialized
+  transaction, so two genuinely *concurrent* `select` processes could both pass the check before
+  either commits — not fixed, because nothing in `cycle`'s checkpoint/resume design assumes
+  concurrent writers to begin with (every step here is read-checkpoint-write with its own
+  `commit()`, not one enclosing transaction; `T-090`'s manifest check has the identical
+  check-then-act shape), so this would be a new concurrency contract for the whole package, out
+  of scope for one guard. (2) the refusal is "not atomic" in that the scoring/veto/ranking steps
+  ahead of `"positions"` already committed by the time it fires — by design: those steps are
+  idempotent per `(cycle_type, cycle_date)` and safe to have run (they are what `T-086`'s
+  `DividendsNotReady` guard does too, checked deep in `run_build_returns`, not before every
+  upstream step); the guard's only job is to keep the *live* `portfolio_position` book itself
+  from being corrupted, and it does, unconditionally, before `sync_positions` runs.
