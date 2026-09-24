@@ -236,6 +236,15 @@ assumes the stack actually pinned in `pyproject.toml`.
     originates — this repo's own testing, a `SPEC.md`/`PLAN.md` item, or an
     external review — a fix landed without this record is incomplete, the
     same way a fix landed without a test is incomplete (Code & Git #1).
+13. **Once a Work Item is finished, move the entire work item to
+    `.specify/memory/CHANGELOG.md`.** When every task in a `TASKS.md` work
+    item is checked (or explicitly superseded/moved elsewhere), cut its whole
+    `## Work item N` section — heading, preamble, and every task, verbatim,
+    task IDs unchanged — out of `TASKS.md` and into `CHANGELOG.md`, in the
+    same change that closes it. `TASKS.md` carries only open work, so the
+    spec-driven loop doesn't re-read closed history on every pass;
+    `CHANGELOG.md` is the legacy record, read only when that history is
+    actually needed.
 
 ## Executable cmds
 
@@ -339,7 +348,7 @@ uv run pre-commit run --all-files            # all of the above hooks, plus hygi
    `.claude/`, and any local agent scratch directory stay git-ignored — see
    `.gitignore`'s "Claude Code / agent tool artifacts" block. `.specify/` is
    the deliberate exception: it holds this constitution and `SPEC.md`/
-   `PLAN.md`/`TASKS.md`, the project's own versioned source of truth, not a
+   `PLAN.md`/`TASKS.md`/`CHANGELOG.md`, the project's own versioned source of truth, not a
    tool scratch dir — it stays tracked. Don't move spec-kit content into
    `.claude/` or vice versa.
 10. **Never interpolate a caller-controlled or dynamically-selected
@@ -360,6 +369,11 @@ uv run pre-commit run --all-files            # all of the above hooks, plus hygi
     placeholder can't bind. `pricing_agent.db.bump_run_counter` has the
     same pre-existing pattern, not yet hardened — treat it as a known,
     tracked gap, not a precedent to copy into new code.
+11. **Always present the PR link at the end of the development.** Whenever
+    a development effort ends in a pushed branch/PR, the final message to
+    the user closes with the PR's full URL (one per repo when the effort
+    spans several), so it can be opened for review directly — never just
+    "PR opened" or a bare number.
 
 ## Governance
 
@@ -379,7 +393,7 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.2.1 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-21
+**Version**: 1.3.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-24
 
 **Amendment log**:
 - 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc path from
@@ -409,3 +423,10 @@ above should cite the section by name.
   against the real CLIs' `--help` (17 of 18 already correct; the `--source` line was the only
   stale one) and the rest of the document was re-scanned: nothing else claims dividends are
   derived from filings. No principle changed, only this document's own factual claims.
+- 1.3.0 (2026-09-24) — MINOR: two new principles. AI behavior #13: a finished
+  work item moves, whole and verbatim, from `TASKS.md` to a new
+  `.specify/memory/CHANGELOG.md` legacy record, so the spec-driven loop stops
+  re-reading closed history (token cost); introduced alongside the initial move
+  of Work items 1, 3, 6 and 10. Code & Git #11: always end a development effort
+  with the PR link. Code & Git #9 now lists `CHANGELOG.md` among `.specify/`'s
+  tracked files.
