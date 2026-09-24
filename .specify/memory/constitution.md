@@ -245,6 +245,9 @@ assumes the stack actually pinned in `pyproject.toml`.
     spec-driven loop doesn't re-read closed history on every pass;
     `CHANGELOG.md` is the legacy record, read only when that history is
     actually needed.
+    Work items already closed when this rule was adopted (2026-09-24)
+    were backfilled into `CHANGELOG.md` by the change that introduced it —
+    the one sanctioned exception to "the same change that closes it".
 
 ## Executable cmds
 
