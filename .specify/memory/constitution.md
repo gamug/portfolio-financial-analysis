@@ -245,6 +245,14 @@ assumes the stack actually pinned in `pyproject.toml`.
     spec-driven loop doesn't re-read closed history on every pass;
     `CHANGELOG.md` is the legacy record, read only when that history is
     actually needed.
+    Moving the section is not enough on its own: in the same change, reduce
+    every other mention of the closed work item in `TASKS.md` (the preamble/
+    priority notes, the `## Status` section) to a one-line pointer to
+    `CHANGELOG.md` — keeping only cross-references an open task genuinely
+    depends on — and mark the work item closed in `PLAN.md`'s own status/
+    sequencing text, so no summary of it is left behind to re-read. "Verbatim"
+    governs the move, not the closing: check off the last task and record its
+    closure evidence first, then move the section as it then stands.
     Work items already closed when this rule was adopted (2026-09-24)
     were backfilled into `CHANGELOG.md` by the change that introduced it —
     the one sanctioned exception to "the same change that closes it".
@@ -430,6 +438,11 @@ above should cite the section by name.
   work item moves, whole and verbatim, from `TASKS.md` to a new
   `.specify/memory/CHANGELOG.md` legacy record, so the spec-driven loop stops
   re-reading closed history (token cost); introduced alongside the initial move
-  of Work items 1, 3, 6 and 10. Code & Git #11: always end a development effort
+  of Work items 1, 3, 6 and 10. The rule also requires reducing every other
+  `TASKS.md` mention of a closed item (preamble, Status) to a pointer and marking
+  it closed in `PLAN.md` (found in PR #59's review: moving the section alone left
+  closed history in the Status narrative), clarifies that "verbatim" governs the
+  move, not the closing, and exempts items already closed at adoption (backfilled
+  by this change). Code & Git #11: always end a development effort
   with the PR link. Code & Git #9 now lists `CHANGELOG.md` among `.specify/`'s
   tracked files.

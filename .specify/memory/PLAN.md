@@ -41,9 +41,8 @@ its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, belo
 **promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`
 (**done 2026-09-22**), `T-096` (**done 2026-09-22**),
 `T-097` (**done 2026-09-22** — see Work item 11), then, last in the fixing process, `T-089` the
-architecture-artifact reconciliation)**, with Work item 5 ∥ Work item 6
-(independent, external prerequisites; Work item 6's implementation now lives in
-`portfolio-data-mining`) running in parallel → **Work item 7 (P0 — critical
+architecture-artifact reconciliation)**, with Work item 5 (independent, external
+prerequisite) running in parallel → **Work item 7 (P0 — critical
 correctness fixes, highest priority in this file; its remaining live run
 `T-068` is re-scoped: Phase A runs first on the 20-ticker sample inside
 `T-088`, and `T-068` keeps only the full-universe extension)** → **Work item 8 (P1 — methodological
@@ -395,7 +394,11 @@ re-pinning, not asserted upstream):
   re-verified against the live `KG_FINANCIAL_DB` before any code in Work
   items 7–9 reads the new columns/tables.
 
-## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite) — implementation MOVED
+## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite) — implementation MOVED — DONE 2026-09-21
+
+**Status: closed** — built upstream (`portfolio-data-mining` Work item 3, PR #36),
+verified live here by `T-052` (2026-09-21), and made `quant`'s only source by Work
+item 10. Tasks and the closure record are in `CHANGELOG.md`.
 
 **Why**: `src/quant/pricing_client.py::QuantPricingClient.actions` already
 probes two request shapes for corporate actions (an `actions=true` query
@@ -1548,11 +1551,9 @@ this document.** Their internal sequencing:
   out-of-order `--analysis-date` unless `--allow-backdated` overrides it; `monitor` was never
   at risk (it never writes `portfolio_position`). **All three prioritized findings are closed —
   `T-089` is next, and last.**
-- Work item 5 (`portfolio-common` v0.3.0) and Work item 6
-  (`portfolio-data-mining` corporate-actions endpoint — implemented there
-  as its `PLAN.md` Work item 3, consumed here by Work item 10, verified
-  here by `T-052`) are independent external prerequisites — develop
-  concurrently.
+- Work item 5 (`portfolio-common` v0.3.0) is an independent external
+  prerequisite. (Work item 6, the `portfolio-data-mining` corporate-actions
+  endpoint, is closed — see `CHANGELOG.md`.)
 - Work item 7 (P0 critical fixes) is the top priority in this repo. Its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
   within it; its Ring-1 `DQ_*` gates need Work item 5 (A1); its dividend
