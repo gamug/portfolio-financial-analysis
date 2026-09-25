@@ -30,7 +30,9 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11 and 13 are **closed** (done 2026-09-25, 2026-09-20,
 2026-09-25 and 2026-09-25 — see `CHANGELOG.md`), and so is Work item 5 (built in this repo's
-vendored `kg_schema`, 2026-09-25) → **Work item 8 (P1 — methodological
+vendored `kg_schema`, 2026-09-25) → **Work item 14 (P0/P1 — the second audit's live defects,
+added 2026-09-25; before Work item 8 because it corrects metrics the LLM re-run consumes)** →
+**Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
@@ -1569,6 +1571,53 @@ record and a new metrics engine version (append-only), then a `quality` re-gate.
 
 **Acceptance criteria**: NEE's revenue resolves and `DQ_REVENUE_POS` clears for it; MCD's
 seven filings pass `DQ_MCAP_SCALE` under the new version; the full suite stays green.
+
+## Work item 14 — P0/P1: second forensic audit — defects still live (added 2026-09-25)
+
+**Source**: `feedback_plan 1.md` (repo root, untracked), a revised version of the 2026-09-08
+audit with new sections on temporal coherence (T1–T7), benchmark arithmetic (Q5), forward
+evaluation (Q6), trigger-based rebalancing (§4.9) and an econometric validation protocol (§5).
+Every claim was re-checked on 2026-09-25 against today's code and production
+(`KG_FINANCIAL_DB`, read-only); the tasks (`T-104`–`T-116`, `TASKS.md`) are only the defects
+that reproduce today.
+
+**Triage of the audit's claims**
+
+| Claim | Status today | Where |
+|---|---|---|
+| Live book after the backdated run | **live defect** — book is the 2026-06-30 run's (weights 0.10, BF.B in, WFC's stint inverted); `T-097`'s "reverted" was wrong | `T-104` |
+| F4 on FCF yields, `net_debt_to_ebitda`, ROIC | **live defect** — 10-Q medians ×3.6–3.9, ×4, ×3.5 off the 10-K (ROA/turnover fixed) | `T-105` |
+| T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **live defect** (gap 48.7 d 10-K / 34.4 d 10-Q, max 420) | `T-106` |
+| T1 parts 1/3 — `event_time = period_end` | **live** (377/377 scores, 11,878/11,878 metrics) — but SPEC defines it so: a contract decision | `T-107` |
+| Q5 — benchmark mean-of-log, all names | **live defect** (−4.34 pp/yr on the 20-asset panel) | `T-108` |
+| §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **live defect** | `T-109` |
+| T2/T3/T7 — as-of past the price spine, orphan observations | **live** (runs dated 2026-09-21/22 vs prices to 2026-08-27; 503 orphan rows) | `T-110` |
+| Q6 — missing asset-day = 0% | **live defect** | `T-111` |
+| Q4 — frontier returns *k* identical "optimal" points | **live** (documented, but mislabelled) | `T-112` |
+| §4.3.2 — LLM reproducibility | **live** (fallback labelled as the model: 1/377; temperature 0.2; no prompt hash) | `T-113` (before `T-079`) |
+| Dirty `code_version` on production runs | **live** (`359797e-dirty`) | `T-114` |
+| Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
+| `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **live methodology gap** (never reaches MCD, 0.665) | `T-116`, after `T-105` |
+| Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
+| `turnover_cap` inert (no `w_prev`) | refinement | noted on `T-077` |
+| Q6 — current weights used for past formations | **not reproduced** — books are keyed per formation date | — |
+| Splits not applied | **not a defect** — prices *and* gateway dividends are split-adjusted (NVDA, AVGO, WMT checked) | — |
+| F1, F2, F4 (ROA/ROE/turnover), C1, C2, Q1, Q2, Q3/T5, Ring 1, A1, MD-1, 10-Q coverage, `universe_coverage`, `universe.db` | fixed | `CHANGELOG.md` (Work items 5, 6, 7, 10, 11, 13; `T-092`) |
+| E1 entity resolution; Technical V2; valuation redesign; EBITDA; rubric; flags; skills; Carhart | already planned | Work items 8, 9 |
+| §5 validation layer (IC, Newey-West, quintiles, Carhart α, test-retest) | out of scope — the ground `T-078` was deprecated on | — |
+| §4.9 trigger-based rebalancing; equal composite weights | design proposals, not defects | not added |
+| `dei` cover-page share count; survivorship change log | upstream / data acquisition | not added |
+
+**Sequencing**: P0 first (`T-104` is operational and independent; `T-105` before `T-116` and
+before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` together; `T-108`/
+`T-109` before any `evaluate` result is read). `T-113` must land before `T-079`. Methodology
+changes (`T-105`, `T-108`, `T-109`, `T-116`) each get their constitution AI behavior #12
+record.
+
+**Acceptance criteria**: each task's own (in `TASKS.md`), plus: the live book equals the
+latest cycle's selection; no `cycle` reader can reach a fact filed after the cycle date; 10-Q
+and 10-K medians of every flow-over-stock ratio within ~1.3×; the benchmark matches an
+independent equal-weight index; one μ convention across estimators.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
