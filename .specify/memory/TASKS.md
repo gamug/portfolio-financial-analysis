@@ -306,18 +306,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       breakdown figure presented as the company total. APA never filed a consolidated
       `us-gaap:Revenues` (per the reviewer, from SEC companyfacts — to be re-verified); the
       gateway presents a breakdown figure as the total: too small in FY2021 (T-095's case), and
-      2× too large since — resolved revenue vs the income statement's own "Total revenues and
-      other" (`apa_RevenuesAndOther`): FY2023 16,558 vs 8,192, FY2024 19,474 vs 9,737, FY2025
-      17,840 vs 9,220 ($M; `scripts/verify_t105.py`); APA 2024Q1–Q3 revenue also trips the
-      TTM cross-check (11–25%). Reject a revenue total that the filing's own income statement
+      exactly 2× the consolidated **"Total revenues"** line every year since FY2023 — 16,558 /
+      19,474 / 17,840 vs 8,279 / 9,737 / 8,920 ($M); FY2022 is correct (11,075). "Total
+      revenues" is not stored as its own fact since FY2023; it is the statement's "Total
+      revenues and other" less the lines between the two totals (derivative results,
+      divestiture gains, losses on previously sold Gulf properties, other) — verified to the
+      $M for FY2022–FY2025 (`scripts/verify_t105.py` derives and prints it). APA 2024Q1–Q3
+      revenue also trips the TTM cross-check (11–25%). Reject a revenue total that the filing's own income statement
       contradicts. The rule must be validated on the **full universe** — the number of filings
       it rejects reported and each inspected — not tuned on APA (the mistake `T-095` made).
       Also correct `T-095`'s diagnosis in `docs/model_fixes.md`: APA FY2021 was not a
       filer-side tagging defect but this gateway issue. Methodology change: #12 record.
-      **Acceptance**: APA FY2023 revenue resolves to the statement's consolidated revenue (the
-      reviewer cites $8,279M; the stored facts show "Total revenues and other" $8,192M —
-      establish which line is the consolidated revenue); the full-universe rejection count
-      reported and inspected; `T-095`'s entry corrected.
+      **Acceptance**: APA revenue = "Total revenues" (FY2023 8,279; FY2024 9,737; FY2025
+      8,920 $M) — not "Total revenues and other", which matches only in FY2024, where the
+      in-between items net to zero; the full-universe rejection count reported and inspected;
+      `T-095`'s entry corrected.
 - [ ] **T-118** *(P1 — upstream, `portfolio-data-mining`; added 2026-09-25 from PR #77's
       review)* Fix the root cause of `T-117`: the EDGAR gateway (`sec_edgar`) presents
       breakdown figures as company totals. Implemented upstream (same pattern as Work item 6);

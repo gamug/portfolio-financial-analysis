@@ -91,11 +91,30 @@ def _ttm(
     )
 
 
+def _apa_total_revenues(conn: Database, filing_id: int, key: str) -> float | None:
+    """APA's consolidated "Total revenues": its statement's "Total revenues and other"
+    (``apa_RevenuesAndOther``) less the lines between the two totals -- derivative results,
+    divestiture gains, losses on previously sold Gulf properties, "Other, net". The gateway's
+    own "Total revenues" row cannot be used: since FY2023 it carries twice that amount
+    (T-117). Rows are in statement order, so "between" is by position."""
+    rows = conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ? "
+        "AND statement = 'income_statement' ORDER BY id",
+        (filing_id, key),
+    ).fetchall()
+    concepts = [str(r["concept"]) for r in rows]
+    if "us-gaap_Revenues" not in concepts or "apa_RevenuesAndOther" not in concepts:
+        return None
+    start, end = concepts.index("us-gaap_Revenues"), concepts.index("apa_RevenuesAndOther")
+    between = sum(float(r["value"] or 0.0) for r in rows[start + 1 : end])
+    return float(rows[end]["value"]) - between
+
+
 def _median(values: list[float]) -> float | None:
     return statistics.median(values) if values else None
 
 
-def main() -> int:  # noqa: C901, PLR0912 - one linear report
+def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--db")
     parser.add_argument("--engine-version", default="metrics-v2")
@@ -118,7 +137,8 @@ def main() -> int:  # noqa: C901, PLR0912 - one linear report
         lambda: collections.defaultdict(list)
     )
     methods: collections.Counter[str] = collections.Counter()
-    both = gaps = 0
+    both = 0
+    flagged: list[tuple[str, str, str, float, float, float]] = []
     filings = conn.execute(
         "SELECT f.*, a.ticker FROM sec_filings f JOIN assets a ON a.id = f.asset_id "
         "WHERE f.asset_id IN (SELECT DISTINCT f2.asset_id FROM fundamental_metrics m "
@@ -135,13 +155,16 @@ def main() -> int:  # noqa: C901, PLR0912 - one linear report
         if target is None:
             continue
         flows = _ttm(conn, f, stmts, target, version)
-        for flow in flows.values():
+        for item, flow in flows.items():
             methods[flow.method] += 1
             if flow.method == "ytd" and flow.alt is not None:
                 both += 1
                 scale = max(abs(flow.value), abs(flow.alt))
                 if scale and abs(flow.value - flow.alt) > TTM_CROSSCHECK_TOLERANCE * scale:
-                    gaps += 1
+                    gap = abs(flow.value - flow.alt) / scale
+                    flagged.append(
+                        (f["ticker"], f["fiscal_period"], item, flow.value, flow.alt, gap)
+                    )
         ttm = {k: v.value for k, v in flows.items()}
         out: dict[str, float | None] = {}
         for group in ("leverage", "roic", "profitability"):
@@ -171,27 +194,31 @@ def main() -> int:  # noqa: C901, PLR0912 - one linear report
     print(f"2. TTM methods over {total} flows: {dict(sorted(methods.items()))}")
     print(
         f"   identity and four quarters both computable: {both}; "
-        f"differ by > {TTM_CROSSCHECK_TOLERANCE:.0%}: {gaps} (-> SOFT DQ_TTM_CROSSCHECK review)"
+        f"differ by > {TTM_CROSSCHECK_TOLERANCE:.0%}: {len(flagged)} "
+        "(-> SOFT DQ_TTM_CROSSCHECK review)"
     )
+    print(f"   {'ticker':6} {'period':7} {'flow':26} {'identity $M':>12} {'4 quarters $M':>14} gap")
+    for ticker, period, item, identity, quarters, gap in sorted(flagged):
+        print(
+            f"   {ticker:6} {period:7} {item:26} {identity / 1e6:12,.0f} "
+            f"{quarters / 1e6:14,.0f} {gap:5.1%}"
+        )
 
-    print("3. APA revenue: resolved vs the statement's own 'Total revenues and other'")
+    print("3. APA revenue: resolved vs the statement's own consolidated 'Total revenues'")
     for f in conn.execute(
         "SELECT f.id, f.fiscal_period, f.period_end FROM sec_filings f "
         "JOIN assets a ON a.id = f.asset_id WHERE a.ticker = 'APA' AND f.form = '10-K' "
         "ORDER BY f.period_end"
     ):
-        stmts = _statements(conn, int(f["id"]))
         key = f"{f['period_end']} (FY)"
-        own = conn.execute(
-            "SELECT value FROM financial_facts WHERE filing_id = ? "
-            "AND concept = 'apa_RevenuesAndOther' AND period_key = ?",
-            (f["id"], key),
-        ).fetchone()
-        resolved = stmts.get("revenue", key)
+        resolved = _statements(conn, int(f["id"])).get("revenue", key)
+        total = _apa_total_revenues(conn, int(f["id"]), key)
+        if resolved is None or total is None:
+            print(f"   {f['fiscal_period']}: n/a")
+            continue
         print(
-            f"   {f['fiscal_period']}: resolved {resolved:,.0f}  own total {own[0]:,.0f}"
-            if resolved is not None and own
-            else f"   {f['fiscal_period']}: n/a"
+            f"   {f['fiscal_period']}: resolved {resolved / 1e6:9,.0f}  "
+            f"total revenues {total / 1e6:9,.0f}  ratio {resolved / total:.2f}"
         )
     conn.close()
     return 0

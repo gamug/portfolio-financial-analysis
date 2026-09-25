@@ -1991,9 +1991,14 @@ A reviewer asked for four changes before merge; two further items became tasks (
    operating income and interest 1.5–3.7%: the restatement), APA 2024Q1–Q3 revenue 11–25%
    (the `T-117` defect, differing filing by filing), WFC 2023Q3 net income 1.1%.
 4. **Verification script.** `scripts/verify_t105.py` reproduces, read-only from stored facts:
-   the before/after median table above, the TTM methods and the cross-check counts, and APA's
-   resolved revenue against its statement's own "Total revenues and other" (FY2023 16,558 vs
-   8,192; FY2024 19,474 vs 9,737; FY2025 17,840 vs 9,220, $M).
+   the before/after median table above, the TTM methods, the cross-check count **and each
+   flagged flow** (ticker, period, flow, both values, gap), and APA's resolved revenue against
+   its consolidated "Total revenues" — derived as "Total revenues and other" less the lines
+   between the two totals, since that line is not stored as its own fact after FY2022:
+   exactly 2.00× in FY2023–FY2025 (16,558 / 19,474 / 17,840 vs 8,279 / 9,737 / 8,920 $M),
+   1.00 in FY2021–FY2022. (A second review round corrected the comparison line: against
+   "Total revenues and other" it only matched in FY2024, where the in-between items net to
+   zero.)
 
 Tests (+4, mutation-checked): the valuation stamp with an SBC or interest × 4; an older
 engine's prior year not feeding the TTM (and the same engine's doing so); the cross-check on
