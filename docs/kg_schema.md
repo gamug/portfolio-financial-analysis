@@ -159,6 +159,7 @@ are present / it hasn't already run).
 | m004 | `INSERT … SELECT` `fundamental_snapshot` rows into `score_snapshot` as `FUNDAMENTAL`; rename the table to `fundamental_snapshot_legacy`; recreate `fundamental_snapshot` **as a compatibility VIEW** (joins `score_snapshot` → `sec_filings` for `form` / `fiscal_period`) so the README query and external consumers keep working until they move to `v_score_snapshot` |
 | m005 | rebuild `score_snapshot` with its `score_type` CHECK widened to admit `'SECTOR'` (guard: skipped when the CHECK already lists it); drops + recreates `v_score_snapshot` and the `fundamental_snapshot` compat view around the swap |
 | m006 | rename `score_snapshot.score_type` `'QUANTITATIVE'` → `'VALORIZATION'` everywhere it is persisted: the CHECK, the stored rows, and the score-type keys inside `cycle_run.params_json` / `cycle_ranking.components_json` |
+| m007 | `quant_portfolio` book key made NULL-safe (`T-101`): per duplicate `(as_of, kind, IFNULL(frontier_k, -1), engine_version)` group keep the oldest id (it holds the positions), refresh it with the newest copy's metadata, move `quant_frontier_point` references onto it, drop the newer copies with their positions and forward-performance rows; then `CREATE UNIQUE INDEX ux_quant_portfolio_book` on that NULL-safe key |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -247,7 +248,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 - **Shared-DB migration runbook:** quiesce all writers → `cp financial.db{,.bak}` →
   `python -m fundamental_agent migrate` once → check `SELECT * FROM schema_version`
   → resume. `-wal` / `-shm` files may exist even though this code forces rollback
-  journal; standardise journal mode across writers before running m002–m006.
+  journal; standardise journal mode across writers before running m002–m007.
 - **Never drop the `fundamental_snapshot` compat view** until every external
   consumer has moved to `v_score_snapshot`.
 - **`Database` is not a `sqlite3.Connection` subclass** (composition, not

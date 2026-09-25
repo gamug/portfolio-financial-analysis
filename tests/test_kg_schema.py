@@ -109,7 +109,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert queries.current_version(conn) == 6
+    assert queries.current_version(conn) == 7
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
