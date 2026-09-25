@@ -27,7 +27,12 @@ from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, op
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import connect
 from kg_schema.provenance import code_version
-from kg_schema.versions import manifest_tag, parse_metric_selection, resolve_metric_versions
+from kg_schema.versions import (
+    DATA_QUALITY_GATE_VERSION,
+    manifest_tag,
+    parse_metric_selection,
+    resolve_metric_versions,
+)
 
 FundamentalHook = Callable[[Database, list[int], str], None]
 
@@ -92,7 +97,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # Resolve the metric versions this run reads (T-090) and refuse to resume an earlier run of
     # the same (type, date) that was built on different ones -- before touching that run.
     versions = resolve_metric_versions(conn, parse_metric_selection(settings.metrics_version))
-    manifest = {"consumer": "cycle", "metrics": versions.manifest()}
+    manifest = {
+        "consumer": "cycle",
+        "metrics": versions.manifest(),
+        "quality": DATA_QUALITY_GATE_VERSION,
+    }
     tag = manifest_tag(manifest)
     check_manifest(conn, cycle_type, cycle_date, tag)
     run_id = open_cycle(
@@ -110,7 +119,9 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     )
     asset_ids = [int(r["id"]) for r in universe_rows]
     sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
-    metrics = data.latest_metrics(conn, cycle_date, versions)
+    # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
+    dq = data.data_quality(conn, cycle_date, versions)
+    metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
     price_obs = data.latest_price_observation(conn, cycle_date)
 
     def _do(step: str, fn: Callable[[], dict]) -> None:
@@ -176,7 +187,12 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             rows = {}
             for a in asset_ids:
                 m = dict(metrics.get(a, {}))
-                mc = mcap.get(a)
+                quarantined = dq.quarantined.get(a, set())
+                mc = None if "valuation.market_capitalization" in quarantined else mcap.get(a)
+                if a in dq.negative_equity:
+                    # D/E is quarantined, but negative book equity is still the worst leverage
+                    # in the cohort, never a missing factor (C2, docs/model_fixes.md).
+                    m["leverage.debt_to_equity"] = float("inf")
                 ni = m.get("profitability.net_income") or m.get("income_statement.net_income")
                 if ni is not None and mc:
                     m["earnings_yield"] = ni / mc
@@ -281,6 +297,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 metrics={a: metrics.get(a, {}) for a in asset_ids},
                 price_obs={a: price_obs[a] for a in asset_ids if a in price_obs},
                 last_fundamental=data.last_fundamental_dates(conn, cycle_date),
+                data_quality={a: dq.hard[a] for a in asset_ids if a in dq.hard},
             )
             hits = [h for rule in enabled_rules(conn) for h in rule.evaluate(ctx)]  # type: ignore[attr-defined]
             opened, cleared = writers.write_vetoes(conn, cycle_date, hits, run_id=run_id)

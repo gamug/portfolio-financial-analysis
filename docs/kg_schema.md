@@ -178,7 +178,8 @@ asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section` (carries
 … — built in SQL, kept identical to
 `fundamental_agent.sections.canonical_item_label`), `v_veto`,
 `v_rule_catalog` (veto rules as data — `params_json` verbatim plus unpacked
-`param_metric` / `param_operator` / `param_threshold`), `v_portfolio_position`,
+`param_metric` / `param_operator` / `param_threshold`), `v_data_quality_issue` (Ring-1
+`DQ_*` gate hits with the filing's form / period, T-065), `v_portfolio_position`,
 `v_shared_executive_edge` (pair-level aggregate), `v_cycle_ranking`,
 `v_weight_scheme` (one row per `cycle_run` that recorded a blend — scheme id +
 scalar knobs), `v_weight_component` (that blend exploded to one row per
@@ -225,6 +226,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `universe_coverage` | per-member core-data coverage for a dated universe (from `coverage`) | `UNIQUE(as_of, universe, symbol)` |
 | `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
+| `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
 | `portfolio_position` | position stints | `UNIQUE(asset_id, valid_from)` |
 | `cycle_run` / `cycle_checkpoint` | orchestrator provenance + resume | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` |

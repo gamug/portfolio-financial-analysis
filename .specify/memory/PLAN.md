@@ -28,11 +28,10 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: Work items 10 and 11 are **closed** (done 2026-09-20 and 2026-09-25 —
-see `CHANGELOG.md`), with Work item 5 (independent, external prerequisite) running in parallel → **Work item 7 (P0 — critical
-correctness fixes, highest priority in this file; its live run `T-068` —
-the small-sample Phase A validation — is done, run on the 20-ticker sample inside
-`T-088`)** → **Work item 8 (P1 — methodological
+Execute in this order: Work items 7, 10 and 11 are **closed** (done 2026-09-25, 2026-09-20 and
+2026-09-25 — see `CHANGELOG.md`) → **Work item 13 (P0 — the data defects Work item 7's Ring-1
+gates found)**, with Work item 5 (now built in this repo's vendored `kg_schema`, `T-040` done)
+running in parallel → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
@@ -331,6 +330,11 @@ ship "anytime, concurrent" per `kg_schema/ddl.py`/`version.py`, and need
 Target: **`v0.3.0`** (a minor bump — no non-additive migration involved
 despite the version jump).
 
+**Update 2026-09-25**: `kg_schema` is vendored in this repo (`src/kg_schema/`), so steps
+1–4 land here, not in `portfolio-common`, and the release-and-re-pin (`T-044`) is
+**deprecated** — the pin stays at `v1.2.1`. The last two acceptance criteria below
+("Tagged and released", the `pyproject.toml` bump) no longer apply; `T-040` (step 1) is done.
+
 **Approach** (implement in `portfolio_common/kg_schema/ddl.py` +
 `views.py`, exposed via the existing `ensure()`/`ensure_views()`):
 
@@ -374,11 +378,11 @@ re-pinning, not asserted upstream):
 - `ensure_views()` rebuilds `v_quant_vs_live` with a `LIVE_ONLY` kind
   present in a fixture that includes a live-only position; base tables
   unchanged.
-- Tagged and released as `v0.3.0`.
-- This repo's `pyproject.toml` (`[tool.uv.sources]`) bumped from `v1.2.1`
+- ~~Tagged and released as `v0.3.0`.~~ *(dropped with `T-044`)*
+- ~~This repo's `pyproject.toml` (`[tool.uv.sources]`) bumped from `v1.2.1`
   → `v0.3.0`, `uv.lock` regenerated, `uv sync` run, and `ensure()`
   re-verified against the live `KG_FINANCIAL_DB` before any code in Work
-  items 7–9 reads the new columns/tables.
+  items 7–9 reads the new columns/tables.~~ *(dropped with `T-044`)*
 
 ## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite) — implementation MOVED — DONE 2026-09-21
 
@@ -436,7 +440,11 @@ contract that client depends on, and the verification:
   item 10 / `T-085`; this section's acceptance criteria are what `T-052`
   verifies live.)*
 
-## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
+## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority) — DONE 2026-09-25
+
+**Status: closed** — every finding fixed or re-diagnosed; `T-065` (the Ring-1 gates, with
+`T-040`'s table) landed last, 2026-09-25. Tasks and closure records are in `CHANGELOG.md`;
+the defects its gates surfaced are Work item 13.
 
 **Why**: verified directly against `data/financial.db` (queries and
 expected output preserved below since the source audit markdown is
@@ -573,7 +581,9 @@ a fixture with negative book equity and high absolute debt triggers
 `LEVERAGE_EXTREME` (HARD or SOFT per calibrated threshold), not a pass.
 
 **Ring-1 deterministic data-quality gates (`DQ_*`) — needs Work item 5
-(A1) first.** Add 7 threshold-based, zero-LLM-cost gates writing to the
+(A1) first. BUILT 2026-09-25, `T-065` (with `T-040`'s table, built in this repo's vendored
+`kg_schema`) — full record, including the production-copy counts, in
+`docs/model_fixes.md`'s T-065 entry.** Add 7 threshold-based, zero-LLM-cost gates writing to the
 new `data_quality_issue` table (quarantines a metric to `NULL` in the
 consumption view + records the issue; HARD triggers a new `cycle`
 data-quality veto, SOFT goes to a non-blocking review list). Calibrated,
@@ -658,7 +668,7 @@ green with new regression tests for F1/F2/F4/C1/C2 added under `tests/`.
 regression coverage at fix time; full test-by-test inventory in
 `TASKS.md`'s `T-069` entry. The live-DB Phase-A re-run itself was
 `T-068` — done 2026-09-22 on the 20-ticker sample; the full-universe run is `T-100`
-(Work item 12). Work item 7 closes once `T-065` (blocked on `T-040`) lands.
+(Work item 12). `T-065` landed 2026-09-25, closing Work item 7.
 
 ## Work item 8 — P1: methodological redesign (technical/valorization/fundamental scoring + μ estimator) — supersedes Work item 3's approach
 
@@ -1527,6 +1537,28 @@ republish in place by URL. A first pass can run any time after the `T-085` PR me
 comprehensive pass runs last, after `T-095`/`T-096`/`T-097` close — one pass covering the whole
 fixing process rather than a second delta.
 
+## Work item 13 — P0: data defects surfaced by the Ring-1 gates
+
+**Why**: `T-065`'s verification on a copy of production (2026-09-25) found two live data
+defects. The gates already quarantine the affected metrics and veto on HARD, so nothing
+corrupt is scored — but NEE is now excluded from every cycle, and MCD's historical market
+caps are unusable, until the causes are fixed.
+
+1. **`T-102` — NEE revenue.** NEE tags revenue as
+   `us-gaap_RegulatedAndUnregulatedOperatingRevenue`, absent from
+   `statements.REGISTRY["revenue"]`, so all 19 filings resolve revenue to NULL
+   (`DQ_REVENUE_POS`). Add the tag in the right role (aggregate vs. component) against
+   F2/`T-095`'s rules and check other utilities.
+2. **`T-103` — MCD share scale, FY2023–2025Q2.** Seven consecutive filings store `shares`
+   in millions; F1's overlapping-history anchor is mis-scaled inside the run and EPS only
+   corroborates `diluted_shares` (`DQ_MCAP_SCALE`, `DQ_FCF_YIELD`).
+
+Both change a deterministic computation, so each needs constitution AI behavior #12's
+record and a new metrics engine version (append-only), then a `quality` re-gate.
+
+**Acceptance criteria**: NEE's revenue resolves and `DQ_REVENUE_POS` clears for it; MCD's
+seven filings pass `DQ_MCAP_SCALE` under the new version; the full suite stays green.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small
@@ -1578,10 +1610,11 @@ this document.** Their internal sequencing:
 - **Work items 10 and 11 are closed** (2026-09-20 / 2026-09-25) — the gateway-only cutover and
   its follow-ups; see `CHANGELOG.md`. Work item 7's `T-068` (the small-sample Phase A
   validation) was run inside `T-088`.
-- Work item 5 (`portfolio-common` v0.3.0) is an independent external
-  prerequisite. (Work item 6, the `portfolio-data-mining` corporate-actions
+- Work item 5 (`portfolio-common` v0.3.0) is an independent prerequisite — now local:
+  `kg_schema` is vendored here, and `T-040` was built that way (2026-09-25). (Work item 6, the `portfolio-data-mining` corporate-actions
   endpoint, is closed — see `CHANGELOG.md`.)
-- Work item 7 (P0 critical fixes) is the top priority in this repo. Its
+- Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`); Work item
+  13 fixes what its gates found. Historical note: its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
   within it; its Ring-1 `DQ_*` gates need Work item 5 (A1); its dividend
   fix's Level-1 half was local-only but has since been removed — dividends

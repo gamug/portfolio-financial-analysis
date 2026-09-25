@@ -13,7 +13,8 @@ Scores & signals         v_score_snapshot, v_sector_aggregate_snapshot
 Pricing & returns        v_price_observation, v_corporate_action, v_quant_return_daily,
                          v_risk_free_rate, v_benchmark_series
 Filings & narrative      v_sec_filing, v_sec_filing_section
-Rules & live portfolio   v_veto, v_rule_catalog, v_portfolio_position, v_shared_executive_edge
+Rules & live portfolio   v_veto, v_rule_catalog, v_data_quality_issue, v_portfolio_position,
+                         v_shared_executive_edge
 Cycle ranking & weights  v_cycle_ranking, v_weight_scheme, v_weight_component
 Quant optimization       v_quant_risk_model, v_quant_portfolio, v_quant_position,
                          v_quant_frontier_point, v_quant_benchmark_performance, v_quant_vs_live
@@ -51,6 +52,10 @@ Projection semantics
                           from ``(item_number, section_type)`` -- kept identical to
                           ``fundamental_agent.sections.canonical_item_label``.
 ``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
+``v_data_quality_issue``  one row per Ring-1 ``DQ_*`` gate hit on a filing's metric (T-065),
+                          with the filing's form / period beside it. ``quarantined = 1`` =
+                          consumers read the metric as NULL; HARD = a ``cycle`` DATA_QUALITY
+                          veto; SOFT and not quarantined = the non-blocking review list.
 ``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
                           is kept verbatim; ``param_metric`` / ``param_operator`` /
                           ``param_threshold`` unpack the threshold-rule shape when present.
@@ -201,6 +206,15 @@ VIEWS: dict[str, str] = {
         SELECT v.id, a.ticker, v.asset_id, v.rule_id, v.severity, v.detected_at,
                v.cycle_date, v.cleared_at, v.evidence_json, v.run_id
         FROM veto v JOIN assets a ON a.id = v.asset_id
+    """,
+    "v_data_quality_issue": """
+        CREATE VIEW v_data_quality_issue AS
+        SELECT d.id, a.ticker, d.asset_id, d.filing_id, f.form, f.fiscal_period, f.period_end,
+               d.metric_group, d.metric_name, d.metric_engine_version, d.rule_id, d.severity,
+               d.quarantined, d.value, d.evidence_json, d.gate_version, d.created_at, d.run_id
+        FROM data_quality_issue d
+        JOIN assets a ON a.id = d.asset_id
+        JOIN sec_filings f ON f.id = d.filing_id
     """,
     "v_rule_catalog": """
         CREATE VIEW v_rule_catalog AS

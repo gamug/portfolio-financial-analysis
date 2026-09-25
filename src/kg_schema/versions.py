@@ -203,6 +203,12 @@ def manifest_tag(manifest: Mapping[str, object]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:8]
 
 
+# The Ring-1 data-quality gate version (T-065). ``fundamental_agent`` writes
+# ``data_quality_issue`` rows under it and ``cycle`` reads only rows of it; kept here so the
+# writer and the reader agree without importing each other.
+DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v1"
+
+
 # -- version constraints (T-093) -------------------------------------------------------------
 #
 # T-090's selection is exact: one version, or ``GROUP=VERSION`` pairs. A **constraint** also

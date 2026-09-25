@@ -263,3 +263,29 @@ def test_run_writes_snapshots_then_resumes(tmp_path: Path) -> None:
         ).fetchone()[0]
         == 2
     )
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_run_gates_every_filing_it_analyses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-065: the Ring-1 data-quality gates run over each newly stored filing's metrics,
+    under the engine version just written and the run that wrote them."""
+    calls: list[tuple[str, int | None, int | None]] = []
+    real = pipeline.quality.gate_version
+
+    def spy(
+        conn: Any, version: str, *, filing_id: int | None = None, run_id: int | None = None
+    ) -> Any:
+        calls.append((version, filing_id, run_id))
+        return real(conn, version, filing_id=filing_id, run_id=run_id)
+
+    monkeypatch.setattr(pipeline.quality, "gate_version", spy)
+    report = pipeline.run(
+        _settings(tmp_path), RunParams(forms=["10-K"], since_year=2023, until_year=2023)
+    )
+    assert report.completed == 2
+    assert len(calls) == 2
+    assert {c[0] for c in calls} == {db.METRICS_ENGINE_VERSION}
+    assert {c[2] for c in calls} == {report.run_id}
+    assert all(c[1] is not None for c in calls)

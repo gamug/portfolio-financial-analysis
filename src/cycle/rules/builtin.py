@@ -160,6 +160,33 @@ class _StaleFundamentalRule:
         return hits
 
 
+@dataclass
+class _DataQualityRule:
+    """A HARD Ring-1 ``DQ_*`` gate hit on the asset's latest filing (T-065). The gates run
+    in ``fundamental_agent`` and are read from ``data_quality_issue``; this rule only turns
+    their HARD verdicts into a veto, so the evidence names the gates that fired."""
+
+    RULE_ID = "DATA_QUALITY"
+    SEVERITY = "HARD"
+    DESCRIPTION = "a HARD Ring-1 data-quality gate (DQ_*) fired on the latest filing"
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {"source": "data_quality_issue", "severity": "HARD"}
+
+    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+        return [
+            VetoHit(
+                aid,
+                self.RULE_ID,
+                self.SEVERITY,
+                {"gates": sorted({i["rule_id"] for i in issues}), "issues": issues},
+            )
+            for aid, issues in sorted(ctx.data_quality.items())
+            if issues and aid in ctx.metrics
+        ]
+
+
 RULES: list[Rule] = [
     _LeverageRule(),
     _ThresholdRule(
@@ -180,4 +207,5 @@ RULES: list[Rule] = [
     ),
     _DrawdownRule(),
     _StaleFundamentalRule(),
+    _DataQualityRule(),
 ]

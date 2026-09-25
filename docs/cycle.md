@@ -61,7 +61,10 @@ resolves. `latest_metrics(conn, date, versions)` (newest filing with `period_end
 keyed `"group.name"`), `latest_price_observation`, `last_fundamental_dates`,
 `latest_fundamental_score`, `latest_semantic_score`, `market_cap_estimates(conn, metrics,
 versions)` (reads the stored `valuation.market_capitalization` metric inputs; the most recent
-filing per asset wins). Both metric readers take the `MetricVersions` the run resolved
+filing per asset wins), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
+`data_quality_issue` verdicts on the same latest filing, for the run's metric versions and the
+current gate version — `quarantined` keys, `hard` issues, `negative_equity` assets; `apply()`
+blanks quarantined values). Both metric readers take the `MetricVersions` the run resolved
 (`kg_schema.versions`, T-090) and read **only** those engine versions — they used to join
 `fundamental_metrics` unfiltered and let row order pick among versions.
 
@@ -100,12 +103,14 @@ dropped. Pure derivation — nothing fetched.
 ### `rules/`
 
 - `base.py` — `VetoHit(asset_id, rule_id, severity, evidence)`, `RuleContext`
-  (`metrics`, `price_obs`, `last_fundamental` per asset), `Rule` protocol
+  (`metrics`, `price_obs`, `last_fundamental`, `data_quality` per asset), `Rule` protocol
   (`RULE_ID`, `SEVERITY`, `DESCRIPTION`, `PARAMS` property, `evaluate(ctx)`).
 - `builtin.py` — `RULES`: `LEVERAGE_EXTREME` (`debt_to_equity > 3`, HARD),
   `NEGATIVE_FCF` (`free_cash_flow_margin < 0`, HARD), `LIQUIDITY_DISTRESS`
   (`current_ratio < 1`, SOFT), `PRICE_CRASH` (`max_drawdown_90d < −0.35`, SOFT),
-  `EARNINGS_MISSING` (no FUNDAMENTAL score within 400 days, SOFT).
+  `EARNINGS_MISSING` (no FUNDAMENTAL score within 400 days, SOFT), `DATA_QUALITY` (a HARD
+  Ring-1 `DQ_*` gate fired on the latest filing — read from `RuleContext.data_quality`; the
+  evidence names the gates, T-065).
 - `__init__.py` — `seed_catalog(conn)` (`INSERT OR IGNORE` into `rule_catalog`,
   never overwrites), `enabled_rules(conn)`.
 - The rule catalog and the per-run blend (`score_weights` + knobs in
@@ -138,6 +143,10 @@ universe → fundamental → technical → valorization → semantic_read →
 normalize → sector → veto → rank → [positions]   (positions is SELECTION only)
 ```
 
+- **metrics** (before any step) — `latest_metrics` with the Ring-1 quarantine applied
+  (`data_quality().apply`): a quarantined metric reads as NULL in every score and rule; its
+  market cap too. A negative-equity name keeps the worst leverage rank in VALORIZATION (C2).
+  The manifest records `"quality": "dq-v1"`.
 - **fundamental** — delegates to `fundamental_hook`; with no hook it just reports
   the count of existing FUNDAMENTAL scores.
 - **semantic_read** — a no-op that records a checkpoint noting the aggregation runs

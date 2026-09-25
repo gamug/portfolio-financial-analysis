@@ -7,7 +7,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from conftest import write_universe_db
 from portfolio_common.db import Database
 
 import kg_schema
@@ -311,66 +310,6 @@ def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Databas
 # -- full cycle smoke -----------------------------------------
 
 
-@pytest.fixture
-def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Database:
-    conn = memory_db
-    conn.execute("INSERT INTO sectors (id, name) VALUES (1, 'S1'), (2, 'S2')")
-    tickers = ["AAA", "BBB", "CCC", "DDD", "EEE"]
-    udb = write_universe_db(
-        tmp_path / "cycle_universe.db", [(tk, "2026-01-01", None) for tk in tickers]
-    )
-    monkeypatch.setenv("KG_UNIVERSE_DB", str(udb))
-    for i, tk in enumerate(tickers, start=1):
-        conn.execute(
-            "INSERT INTO assets (id, ticker, sector_id) VALUES (?, ?, ?)", (i, tk, 1 + i % 2)
-        )
-        fid = conn.execute(
-            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', '2025-12-31', '2026-02-01T00:00:00Z') "
-            "RETURNING id",
-            (i,),
-        ).fetchone()["id"]
-        for grp, name, val in [
-            ("leverage", "debt_to_equity", 0.5 + i),  # AAA best, EEE worst
-            ("profitability", "return_on_equity", 0.35 - 0.05 * i),
-            ("valuation", "free_cash_flow_yield", 0.10 - 0.015 * i),
-            ("cashflow", "free_cash_flow_margin", 0.2 - 0.03 * i),
-            ("liquidity", "current_ratio", 2.5 - 0.1 * i),
-        ]:
-            conn.execute(
-                "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, "
-                "unit, computed_at, engine_version, event_time) "
-                "VALUES (?, ?, ?, ?, 'x', '2026-02-01T00:00:00Z', 'metrics-v1', '2025-12-31')",
-                (fid, grp, name, val),
-            )
-        conn.execute(
-            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
-            "event_time, computed_at, model, run_kind) VALUES (?, 'FUNDAMENTAL', ?, ?, "
-            "'2025-12-31', '2026-02-01T00:00:00Z', 'seed', 'analysis')",
-            (i, 80 - 8 * i, 80 - 8 * i),
-        )
-        for d in range(1, 121):
-            conn.execute(
-                "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "
-                "realized_vol_90d, max_drawdown_90d, momentum_63d, momentum_21d, event_time, "
-                "computed_at, engine_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "'2026-06-30T00:00:00Z', 'priceobs-v1')",
-                (
-                    i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
-                    100.0 + d * (6 - i),
-                    2.0 * i,
-                    0.10 * i,
-                    -0.03 * i,
-                    0.25 - 0.06 * i,
-                    0.05 - 0.01 * i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
-                ),
-            )
-    conn.commit()
-    return conn
-
-
 def _settings(conn: Database) -> CycleSettings:
     return CycleSettings(db_path=Path(":memory:"), top_n=3)
 
@@ -631,6 +570,7 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
             "profitability": "metrics-v1",
             "valuation": "metrics-v1",
         },
+        "quality": "dq-v1",  # the Ring-1 gate version it read quarantines under (T-065)
     }
 
 

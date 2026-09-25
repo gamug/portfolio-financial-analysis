@@ -261,6 +261,7 @@ are not owned by any single package.
 | `price_window` / `price_daily` | natural key per ticker/range; `price_daily` per bar | return, daily-return std-dev, annualized vol; OHLCV | `pricing_agent` |
 | `price_observation` | `UNIQUE(asset_id, obs_date, engine_version)` | ATR, realized vol, drawdown, momentum | `pricing_agent run --observations` |
 | `rule_catalog` | `rule_id` PK | veto rule definition (metric/operator/threshold) | `cycle` (`seed_catalog`) |
+| `data_quality_issue` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` | Ring-1 `DQ_*` gate hit: `severity` (HARD → `cycle` `DATA_QUALITY` veto), `quarantined` (metric read as NULL), gated value | `fundamental_agent` (per filing + `quality` backfill) |
 | `veto` | `UNIQUE(asset_id, rule_id, cycle_date)` | `severity` (HARD/SOFT), `cleared_at` (cleared, never deleted) | `cycle` |
 | `portfolio_position` | `UNIQUE(asset_id, valid_from)` | position stints, weight | `cycle select` |
 | `cycle_ranking` | `UNIQUE(cycle_run_id, asset_id)` | ranked cohort of a cycle | `cycle` |
@@ -281,7 +282,7 @@ are not owned by any single package.
 what `portfolio-knowledge-graph` consumes — the physical schema above can
 evolve underneath them: `v_score_snapshot`, `v_sector`, `v_industry`,
 `v_price_observation`, `v_sec_filing`, `v_sec_filing_section`, `v_veto`,
-`v_rule_catalog`, `v_portfolio_position`, `v_shared_executive_edge`,
+`v_rule_catalog`, `v_data_quality_issue`, `v_portfolio_position`, `v_shared_executive_edge`,
 `v_cycle_ranking`, `v_weight_scheme`, `v_weight_component`,
 `v_sector_aggregate_snapshot`, the `quant`-side `v_quant_*`/`v_corporate_
 action`/`v_risk_free_rate`/`v_benchmark_series`/`v_quant_vs_live`, and the
