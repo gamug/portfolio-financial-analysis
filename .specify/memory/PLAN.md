@@ -43,13 +43,14 @@ its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, belo
 `T-097` (**done 2026-09-22** — see Work item 11), then, last in the fixing process, `T-089` the
 architecture-artifact reconciliation)**, with Work item 5 (independent, external
 prerequisite) running in parallel → **Work item 7 (P0 — critical
-correctness fixes, highest priority in this file; its remaining live run
-`T-068` is re-scoped: Phase A runs first on the 20-ticker sample inside
-`T-088`, and `T-068` keeps only the full-universe extension)** → **Work item 8 (P1 — methodological
+correctness fixes, highest priority in this file; its live run `T-068` —
+the small-sample Phase A validation — is done, run on the 20-ticker sample inside
+`T-088`)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)** → **the low-priority path: `T-093`** (user-tunable version constraints for
-`quant`'s Markowitz runs — deferred on purpose, 2026-09-21; to be tackled late, not now).
+`quant`'s Markowitz runs — deferred on purpose, 2026-09-21; to be tackled late, not now)
+→ **Work item 12 (`T-100`) — the full-universe production run, last of all**.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -660,7 +661,9 @@ Ring-1 `DQ_*` backfill + gateway dividends (Work item 10 / `T-085`, live check `
 vetoes + ranking, exercising the C1 fix) → re-run the full `quant`
 pipeline + `evaluate` (exercising the Q2 fix). This phase alone is enough
 to produce a valid "iteration 2" that validates the entire deterministic
-layer, independent of Work item 8's costly LLM re-run.
+layer, independent of Work item 8's costly LLM re-run. **Scope (2026-09-25)**: this
+Phase A is a **small-sample** validation (`T-068`, done on the 20-ticker sample); the
+full as-of universe runs once, at the very end, as Work item 12's `T-100`.
 
 **Acceptance criteria (Work item 7, overall)**: every fix's per-finding
 acceptance criterion above holds simultaneously against the live
@@ -668,8 +671,9 @@ acceptance criterion above holds simultaneously against the live
 green with new regression tests for F1/F2/F4/C1/C2 added under `tests/`.
 **`T-069` AUDITED 2026-09-15** — each fix already shipped its own
 regression coverage at fix time; full test-by-test inventory in
-`TASKS.md`'s `T-069` entry. The live-DB Phase-A re-run itself remains
-`T-068`, still open.
+`TASKS.md`'s `T-069` entry. The live-DB Phase-A re-run itself was
+`T-068` — done 2026-09-22 on the 20-ticker sample; the full-universe run is `T-100`
+(Work item 12). Work item 7 closes once `T-065` (blocked on `T-040`) lands.
 
 ## Work item 8 — P1: methodological redesign (technical/valorization/fundamental scoring + μ estimator) — supersedes Work item 3's approach
 
@@ -1505,6 +1509,34 @@ republish in place by URL. A first pass can run any time after the `T-085` PR me
 comprehensive pass runs last, after `T-095`/`T-096`/`T-097` close — one pass covering the whole
 fixing process rather than a second delta.
 
+## Work item 12 — Final: full-universe production run (runs last of all)
+
+**Why**: every other work item either changes code or validates it on a **small
+sample** of assets (`T-068`'s Phase A on 20 tickers, `T-088`'s deep validation). A
+full-universe run is expensive — the fundamental step makes LLM calls for every
+filing of ~500 companies — and `fundamental_metrics`/`build-returns` are
+`INSERT OR IGNORE` per engine version, so a defect found *after* a full run means
+purging and re-running at full scale again. So the full universe runs **once, at the
+very end of the repository setup**, when nothing is left to change underneath it.
+(Added 2026-09-25 at the user's direction, taking over `T-068`'s former
+full-universe scope, which was never that task's real purpose.)
+
+**Dependency rule**: `T-100` depends on **every other task in `TASKS.md` — every task
+open today and every task added later**. A new work item goes above this one, never
+below; `T-100` stays unchecked until every other box is checked, or explicitly
+superseded/moved.
+
+**Approach**: purge the sample-era derived data if a version bump requires it (same
+mechanism as `T-088`) → `fundamental_agent run` over the full as-of universe →
+Ring-1 `data_quality_issue` backfill (`T-065`) → `cycle select` → `quant
+backfill-actions` → `build-returns` → `build-risk-model` → `optimize` → `evaluate`.
+
+**Acceptance criteria**:
+- `coverage` for `fundamental_agent`, `pricing_agent` and `quant --strict` reports
+  every as-of universe member with core data, or an explained, recorded exception.
+- `cycle` ranks the full universe; the `quant` books and `evaluate` run clean on it.
+- Every step is recorded on its `*_run` log row with its `code_version`.
+
 ## Sequencing
 
 Work item 1 (`portfolio-common` re-pin) touched every package's `db.py` and
@@ -1534,8 +1566,8 @@ this document.** Their internal sequencing:
   (**done 2026-09-22**) → `T-097` (**done 2026-09-22**) → `T-089`
   (artifacts; its first pass may run any time after `T-085` merges, but the final,
   comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
-  Work item 7's `T-068` is re-scoped behind
-  `T-088`. `T-088`'s own acceptance audit found three further findings — `T-095`
+  Work item 7's `T-068` (the small-sample Phase A validation) was run
+  inside `T-088`. `T-088`'s own acceptance audit found three further findings — `T-095`
   (revenue mis-resolution on a filer's own "total" tag), `T-096` (10-Q filing
   gaps beyond F4's expected fallback) and `T-097` (a `cycle select` guard
   against out-of-order runs, scope corrected from "select/monitor"). **At the user's explicit
@@ -1583,5 +1615,7 @@ this document.** Their internal sequencing:
   late, not this time". It keeps its Work item 11 home and ID (IDs are stable) but has no place
   in the current order; `T-088` and `T-089` do not wait on it (`T-090`'s `--metrics-version`
   already gives `T-088` the version selection it needs).
+- **Work item 12 (`T-100`, the full-universe production run) runs last of all** — after
+  every other task in `TASKS.md`, including the low-priority path and any task added later.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
