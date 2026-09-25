@@ -621,22 +621,25 @@ next, and last.
       orders by `period_end` (it relied on row order).
 - [ ] **T-093** *(**DEFERRED 2026-09-21 — low-priority path**: tackled late, after Work
       item 9, not in the current run of work; nothing in Work items 7–11 depends on it)*
-      *(feature; builds on `T-090`)* User-tunable **version constraints** for the
-      `quant` agent: the user states which versions of each input `quant` may use, and it
-      resolves them against what is stored and runs on the result. Per input — each metric
-      group, and the `corpact`, return and risk-model engines — a constraint is `latest`
-      (default), exact (`=metrics-v1`), a minimum (`>=metrics-v2`), an exclusion
-      (`!=metrics-v1`), or a comma-separated combination. Given as repeated
-      `--version-constraint GROUP=EXPR` flags (`--metrics-version EXPR` sets every metric group)
-      and/or a `--version-profile FILE` (TOML) of named, reusable profiles; flags win over the
-      file. It must resolve to exactly one present version per input (the highest that
-      satisfies), otherwise a clear error lists what is present and why each candidate was
-      rejected — never a silent fallback. Tuning aids: `quant versions` lists, per input, the
-      versions present with row counts and first/last `computed_at`, and `--dry-run` on
-      `build-risk-model`/`optimize` prints the resolved manifest and writes nothing. The
-      constraints as given and their resolution are recorded in the `T-090` run manifest, so
-      runs under different constraint sets are reproducible and comparable. Additive only.
-      Acceptance in `PLAN.md`. → `PLAN.md` Work item 11, `T-093`.
+      *(feature; builds on `T-090`; **trimmed 2026-09-25, at the user's direction, to only
+      what `T-090` doesn't already deliver** — `T-090` already gives: latest-by-default, an
+      exact version for every metric group or per `GROUP=VERSION`, a strict error listing the
+      stored versions, the version-ordering rule, and the run manifest)* Extend `quant`'s
+      version selection with: (1) **constraint operators** in `--metrics-version` — minimum
+      (`>=metrics-v2`), exclusion (`!=metrics-v1`) and comma-separated combinations, resolving
+      to the highest stored version that satisfies; a bare version and `GROUP=VERSION` keep
+      their current exact meaning (backward compatible); on no match the error also says why
+      each stored candidate was rejected; (2) **selection for the non-metric inputs** — the
+      `corpact`, return and risk-model engines are fixed config values today with no check
+      that they are stored: add flags accepting the same grammar (default latest stored) and
+      resolve them through the same strict resolver; (3) **`--version-profile FILE`** — a TOML
+      file of named, reusable constraint sets, flags winning over the file; (4) **tuning
+      aids** — `quant versions` (per input: versions present, row counts, first/last
+      `computed_at`) and `--dry-run` on `build-risk-model`/`optimize` (prints the resolved
+      manifest, writes nothing); (5) the **constraints as given and the profile name** recorded
+      in the `T-090` manifest alongside the resolved versions. `quant` only (`cycle` keeps
+      `T-090`'s exact selection). Additive only. Acceptance in `PLAN.md`. → `PLAN.md` Work
+      item 11, `T-093`.
 - [x] **T-091** *(**SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining` fixed the
       route (its PR #39, "return all filings for a form+year") while this task was still in
       review, so the upstream half is done and the consumer halves are now `T-092`. Kept
