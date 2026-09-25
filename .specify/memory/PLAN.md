@@ -1431,31 +1431,40 @@ version applies to every group that has rows while `GROUP=VERSION` is strict. *F
 a filing dated after its `as_of`.
 **T-093 — User-tunable version constraints for the `quant` agent** *(feature; builds on `T-090`;
 **DEFERRED 2026-09-21 to the low-priority path** — to be tackled late, after Work item 9; nothing in
-Work items 7–11 depends on it. The design below is kept as written)*.
-`T-090` gives `cycle`/`quant` a resolver and a run manifest; this task lets the **user** steer it,
-so the quant agent can be run under different version constraints and the results compared.
-1. **Constraints.** Per input — each metric group, and the `corpact`, return and risk-model
-   engines — a constraint is `latest` (the default), exact (`=metrics-v1`), a minimum
-   (`>=metrics-v2`), an exclusion (`!=metrics-v1`), or a comma-separated combination
-   (`>=metrics-v1,!=pre-v1`). Comparison uses `T-090`'s ordering rule.
-2. **Where they come from.** Repeated `--version-constraint GROUP=EXPR` flags (`--metrics-version
-   EXPR` sets every metric group) and/or `--version-profile FILE`, a TOML file of named, reusable
-   profiles selected by name; flags win over the file.
-3. **Resolution is strict.** Each input must resolve to exactly one present version — the highest
-   that satisfies its constraint. If none does, the error lists the versions present and why each
-   was rejected; there is no silent fallback to a different version.
+Work items 7–11 depends on it. **Trimmed 2026-09-25, at the user's direction, to only what `T-090`
+doesn't already deliver.**)*
+**Already delivered by `T-090` — not part of this task**: `--metrics-version` on `quant
+build-risk-model`/`optimize` (and on `cycle`), taking one version for every metric group or
+`GROUP=VERSION` pairs; latest stored as the default; a strict error, before any run row exists,
+that lists the stored versions when a requested one is absent; the version-ordering rule
+(`kg_schema/versions.py::version_key`); and the run manifest with its tag folded into
+`rm-v1+<tag>`/`opt-v1+<tag>`.
+**What this task adds**:
+1. **Constraint operators.** Extend `parse_metric_selection`'s grammar with a minimum
+   (`>=metrics-v2`), an exclusion (`!=metrics-v1`) and comma-separated combinations
+   (`>=metrics-v1,!=metrics-v3`), per group or for all groups; each resolves to the **highest**
+   stored version that satisfies it. A bare version and `GROUP=VERSION` keep their current exact
+   meaning, so every existing invocation behaves the same. On no match, the error also states why
+   each stored candidate was rejected.
+2. **Non-metric inputs.** The `corpact`, return and risk-model engine versions are fixed config
+   values today (`quant/config.py`: `corpact-v1`, `qret-v2`, `rm-v1`), with no check that they are
+   stored. Add a flag per input accepting the same grammar (default: latest stored) and resolve it
+   through the same strict resolver.
+3. **Profiles.** `--version-profile FILE`: a TOML file of named, reusable constraint sets,
+   selected by name; flags win over the file.
 4. **Tuning aids.** `quant versions` lists, per input, the versions present with row counts and
-   first/last `computed_at`, so the user can see what there is to constrain; `--dry-run` on
-   `build-risk-model`/`optimize` prints the resolved manifest and writes nothing.
-5. **Recorded.** The constraints as given, their resolution and the profile name (if any) go into
-   the `T-090` run manifest, so a run is reproducible and runs under different constraint sets are
+   first/last `computed_at`; `--dry-run` on `build-risk-model`/`optimize` prints the resolved
+   manifest and writes nothing.
+5. **Recorded.** The constraints as given and the profile name (if any) join the resolved versions
+   in the `T-090` manifest, so runs under different constraint sets are reproducible and
    comparable in `evaluate`.
-*Additive only*: no schema change beyond `T-090`'s additive DDL. *Acceptance*: hermetic tests for
-each operator and for combinations; a per-group mix; an unsatisfiable constraint erroring with the
-candidate list; profile-file parsing and flag-over-file precedence; `quant versions` output;
-`--dry-run` writing nothing; and two runs under different constraints coexisting without either
-no-opping the other; `pytest`/`ruff`/`mypy` green. *Not in scope*: constraint flags on `cycle`
-(`T-090` covers version selection there).
+*Additive only*: no schema change. *Acceptance*: hermetic tests for each new operator and for
+combinations; every pre-existing `--metrics-version` form still resolving exactly as before; a
+per-group mix; an unsatisfiable constraint erroring with per-candidate reasons; constraints on
+the `corpact`/return/risk-model inputs, including an absent version erroring; profile parsing and
+flag-over-file precedence; `quant versions` output; `--dry-run` writing nothing; two runs under
+different constraints coexisting without either no-opping the other; `pytest`/`ruff`/`mypy`
+green. *Not in scope*: anything on `cycle` (`T-090`'s exact selection stays as it is there).
 
 **T-091 — Fix 10-Q ingestion. SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining`
 fixed the route (its PR #39, "return all filings for a form+year") while this task was in
