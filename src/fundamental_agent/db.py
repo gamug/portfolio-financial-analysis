@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -35,13 +36,25 @@ _SHARE_SCALE_FACTORS: tuple[float, ...] = tuple(10.0**i for i in range(-9, 10) i
 # (buybacks/issuance) landing on a different overlapping period than the one
 # being corrected.
 _SHARE_SCALE_TOLERANCE = 0.10
+# The EPS cross-check (T-103) only trusts an as-filed diluted EPS inside this range. Below the
+# floor, rounding to the cent alone can exceed half the tolerance (MCHP FY2025: -$0.01); above
+# the ceiling, the per-share figure is itself a scale defect (HAL 2022Q3 tags $0.60 as 600,000).
+_EPS_MIN_ABS = 0.10
+_EPS_MAX_ABS = 10_000.0
+# Shares outstanding (a period-end balance) and weighted diluted shares (a period average) of
+# the same filing differ by one period's buybacks, issuance and dilution: within 25% of a power
+# of ten they are that power apart (T-103). Wider would snap a *different* concept -- NVR tags
+# shares issued (20.6M) where outstanding is ~3.5M -- onto the wrong decade.
+_CROSS_ITEM_BAND = 1.25
 
 # Bump when the fact extraction or ratio engine changes in a way that should
 # produce a *new* immutable row rather than silently colliding with the old one.
 # ``metrics-v2`` (T-088): F1/F2/F4/C1 and T-092/T-094 changed the ratios and the filing set, so a
 # row computed before them is distinguishable from one computed after.
 # ``metrics-v3`` (T-102): utilities' total operating revenue now resolves, so every
-# revenue-denominated ratio of AWK/DTE/DUK/NEE/SRE/XEL changes from NULL to a value.
+# revenue-denominated ratio of AWK/DTE/DUK/NEE/SRE/XEL changes from NULL to a value; and
+# (T-103) the share-scale check is point in time, so e.g. MCD FY2023-2025Q2's market caps
+# are corrected. Both landed before any ``metrics-v3`` row was persisted.
 FACTS_ENGINE_VERSION = "facts-v1"
 METRICS_ENGINE_VERSION = "metrics-v3"
 
@@ -391,7 +404,15 @@ def overlapping_history(
     analyzed, whose own (possibly defective) facts are already appended by the
     time this runs (see :func:`detect_share_scale_factors`). One value per
     period_key: the most recently *filed* row wins when more than one earlier
-    filing restated the same period."""
+    filing restated the same period.
+
+    **Point in time (T-103)**: only filings filed strictly *before*
+    *exclude_filing_id* count. A later filing is not history -- reading it was a
+    look-ahead, and worse, a later filing that restates this period with the same
+    scale defect then looked like first-hand proof the period was clean, vetoing
+    the EPS signal (MCD FY2023-2025Q2, docs/model_fixes.md). When the current
+    filing has no ``filing_date`` the old, undated behaviour applies; an earlier
+    row with no ``filing_date`` cannot be proven earlier and is skipped."""
     keys = list(dict.fromkeys(period_keys))  # de-dup, keep order
     if not keys or not concepts:
         return {}
@@ -405,14 +426,16 @@ def overlapping_history(
         SELECT ff.period_key, ff.value
         FROM financial_facts ff
         JOIN sec_filings sf ON sf.id = ff.filing_id
+        LEFT JOIN sec_filings cur ON cur.id = ?
         WHERE sf.asset_id = ?
           AND ff.filing_id != ?
+          AND (cur.filing_date IS NULL OR sf.filing_date < cur.filing_date)
           AND ff.concept IN ({concept_placeholders})
           AND ff.period_key IN ({key_placeholders})
           AND ff.value IS NOT NULL
         ORDER BY sf.filing_date ASC, ff.id ASC
         """,  # noqa: S608 -- interpolated segments are only "?" placeholders, see above
-        [asset_id, exclude_filing_id, *concepts, *keys],
+        [exclude_filing_id, asset_id, exclude_filing_id, *concepts, *keys],
     ).fetchall()
     out: dict[str, float] = {}
     for row in rows:
@@ -628,18 +651,54 @@ def _eps_implied_diluted_shares(stmts: Statements) -> dict[str, float]:
     whatever ``diluted_shares`` itself reports. This is what catches a defect
     that has already persisted long enough (or a filing cadence sparse enough)
     that no clean prior filing remains to compare against -- see
-    ``docs/model_fixes.md``, F1."""
-    net_income = stmts.get_all("net_income")
+    ``docs/model_fixes.md``, F1.
+
+    T-103: the numerator is net income *available to common* where the filing
+    reports it (EPS's own numerator; plain net income otherwise), and an EPS
+    outside ``[_EPS_MIN_ABS, _EPS_MAX_ABS]`` is not used -- see those constants."""
+    net_income = {**stmts.get_all("net_income"), **stmts.get_all("net_income_to_common")}
     eps = stmts.get_all("eps_diluted")
     out: dict[str, float] = {}
     for period_key, ni in net_income.items():
         e = eps.get(period_key)
-        if not e:
+        if e is None or not _EPS_MIN_ABS <= abs(e) <= _EPS_MAX_ABS:
             continue
         implied = ni / e
         if implied > 0:  # a share count is never negative or zero
             out[period_key] = implied
     return out
+
+
+def _magnitude_offset(value: float | None, reference: float | None) -> float | None:
+    """The power of ten (``1.0`` = none) putting *value* in *reference*'s order of
+    magnitude, when the two agree to within ``_CROSS_ITEM_BAND`` of it; ``None`` when
+    either is missing or non-positive, or the ratio sits between powers of ten."""
+    if value is None or reference is None or value <= 0 or reference <= 0:
+        return None
+    log_ratio = math.log10(reference / value)
+    k = round(log_ratio)
+    if abs(log_ratio - k) > math.log10(_CROSS_ITEM_BAND):
+        return None
+    return 10.0**k
+
+
+def _cross_item_signal(
+    stmts: Statements, period_key: str, eps_implied: dict[str, float]
+) -> tuple[bool, float | None]:
+    """``shares_outstanding``'s read against the same filing's weighted diluted count --
+    used only when EPS independently confirms that diluted count at the target period
+    (T-103). ``(True, None)``: same order of magnitude, so outstanding is clean;
+    ``(False, factor)``: it is off by ``factor``. Otherwise no opinion."""
+    out_key = stmts.resolve_column("shares_outstanding", period_key)
+    outstanding = stmts.get_all("shares_outstanding").get(out_key) if out_key else None
+    diluted = stmts.get_all("diluted_shares").get(period_key)
+    implied = eps_implied.get(period_key)
+    if diluted is None or implied is None or abs(implied / diluted - 1.0) > _SHARE_SCALE_TOLERANCE:
+        return False, None  # diluted itself is not confirmed at the target
+    offset = _magnitude_offset(outstanding, diluted)
+    if offset is None:
+        return False, None
+    return (True, None) if offset == 1.0 else (False, offset)
 
 
 def detect_share_scale_factors(
@@ -689,7 +748,9 @@ def detect_share_scale_factors(
             # point-in-time shares_outstanding balance-sheet figure.
             eps_clean, eps_factor = _signal_factor(reported, eps_implied, target_key)
         else:
-            eps_clean, eps_factor = False, None
+            # ...but an EPS-confirmed diluted count of the same filing is a magnitude
+            # reference for shares_outstanding (T-103).
+            eps_clean, eps_factor = _cross_item_signal(stmts, period_key, eps_implied)
         if history_clean or eps_clean:
             continue  # direct evidence says the target period itself is fine
         candidates = {f for f in (history_factor, eps_factor) if f is not None}

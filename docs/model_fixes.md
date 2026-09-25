@@ -1738,3 +1738,125 @@ plausibility floor like the other totals. `METRICS_ENGINE_VERSION` → `metrics-
   `quality` backfill gates them.
 - **Only utilities' 10-Ks were surveyed** for this concept (it is a utility-industry element);
   other sectors were not swept for other unrecognised revenue totals.
+
+---
+
+## T-103 — F1 residual: share-scale evidence read from the future
+
+**Status**: Fixed 2026-09-25 (branch `fix/t103-share-scale-runs`, `T-103`), under
+`metrics-v3` (T-102's bump; no `metrics-v3` row had been persisted yet). Production is not
+recomputed here (`T-100`).
+
+### Symptom
+
+`T-065`'s gates flagged seven consecutive MCD filings, FY2023 through 2025Q2
+(`DQ_MCAP_SCALE` + `DQ_FCF_YIELD`): stored market caps of $184k–$224k (true: $184B–$224B)
+and FCF yields of 318–33,410. The diluted share counts are tagged in millions (`732.3` …
+`717.6`); F1 exists to correct exactly this, and did correct MCD from 2025Q3 on — but not
+these seven.
+
+### Root cause — re-derived; T-103's own framing was wrong
+
+The task text guessed that F1's history anchor was "itself mis-scaled inside the run" and
+that EPS "only covers `diluted_shares`". Reproducing FY2023 with its real gateway payload
+against production showed otherwise — the EPS signal *did* say ×10⁶ (8,468.8M / $11.56 =
+732.6M against 732.3), and was overruled:
+
+- `overlapping_history` read facts from **every other filing of the company, including ones
+  filed later**. For FY2023 it found FY2023 restated as 732.3 by the FY2024 10-K (filed
+  2025-02-25) and FY2025 10-K. That is a look-ahead — this repo never lets a filing's
+  analysis read anything filed after it — and here it was also wrong evidence.
+- F1 treats direct evidence *at the target period* as decisive. The later filings' 732.3
+  matched the defective 732.3 exactly, so history declared the period **clean**, vetoing
+  the EPS signal's correct ×10⁶. The same happened to all seven filings (each is restated,
+  mis-scaled, by a later one), while from 2025Q3 no later mis-scaled restatement existed.
+
+Removing the look-ahead alone was not safe. Re-running detection old vs. point-in-time over
+**all 5,076 filings in production** (statements rebuilt from their stored facts) showed the
+look-ahead had also been *masking* false signals, usually with a clean later restatement:
+
+| Filing | Point-in-time alone would apply | Why it is wrong |
+|---|---|---|
+| ALL 2023Q3 | diluted ×0.1 | net income −$5M, but EPS divides −$41M *available to common* ($36M preferred dividends) |
+| MCHP FY2025 | diluted ×0.1 | EPS −$0.01: rounding to the cent is far beyond the 10% tolerance |
+| HAL 2022Q3–2024Q3 | diluted ×10⁻⁶ | the EPS fact is itself mis-scaled ($0.60 tagged 600,000) |
+| RTX FY2022 | outstanding ×0.001 | its only earlier anchor is FY2021's own defective 1,708,065 |
+
+### Theoretical/technical reference
+
+- **No look-ahead**: a value used in a point-in-time analysis may depend only on information
+  available at that time — the repo's own `--analysis-date` contract (SPEC.md FR-001: skip
+  filings with a `filing_date` after the as-of date), applied here to the history a filing's
+  own check may read.
+- **EPS identity**: ASC 260-10-45-11 — "income available to common stockholders shall be
+  computed by deducting both the dividends declared in the period on preferred stock ... and
+  the dividends accumulated for the period on cumulative preferred stock ... from income from
+  continuing operations and also from net income" (a net loss is *increased* by them); EPS is
+  that numerator over the weighted-average share count (verified via
+  [Deloitte DART, EPS Roadmap §3.2](https://dart.deloitte.com/USDART/home/codification/presentation/asc260-10/roadmap-earnings-per-share/chapter-3-basic-eps/3-2-income-available-common-stockholders)).
+  Plain net income is the wrong numerator whenever preferred dividends exist.
+- **Scale errors**: the SEC staff notices cited in F1 (values off by a clean power of ten).
+
+### Fix (`fundamental_agent/db.py`, `statements.py`)
+
+1. **Point-in-time history**: `overlapping_history` reads only filings filed strictly
+   before the one analysed (undated current filing: old behaviour; undated earlier rows:
+   skipped).
+2. **EPS numerator**: net income *available to common* (new registry item
+   `net_income_to_common`, diluted then basic concept) where reported, plain net income
+   otherwise.
+3. **EPS bounds**: only `$0.10 ≤ |EPS| ≤ $10,000` is used — below, cent rounding alone can
+   exceed half the tolerance; above, the per-share figure is itself a scale defect.
+4. **Cross-item signal** for `shares_outstanding`: when EPS confirms the same filing's
+   diluted count at the target (within the 10% tolerance), outstanding is compared with it
+   by order of magnitude (within ±25% of a power of ten) — same decade: clean; otherwise
+   that power is a correction candidate. Diluted is never judged by outstanding (both are
+   often mis-scaled together, and EPS is the stronger witness — F1's existing test).
+
+### Design decisions
+
+- **±25% cross-item band, not ×2.** Outstanding (a balance) and weighted diluted (a period
+  average) differ by one period's buybacks and issuance. A ×2 band snapped NVR's *shares
+  issued* (20.6M, a different concept the registry falls back to) onto 2.06M against ~3.5M
+  outstanding; ±25% leaves it alone and still accepts RTX FY2021 (12% from 10³).
+- **Conservative by construction.** Every signal can still only produce a correction when
+  the signals that have an opinion agree on one factor; any direct "clean" still vetoes.
+  A missed correction is quarantined by `DQ_MCAP_SCALE`; a false 10× correction usually is
+  not — so each guard errs toward leaving a value alone.
+
+### Verification
+
+- **All 5,076 production filings, old vs. new** (stored facts, read-only): 14 corrections
+  before → 24 after; 14 filings changed:
+  - **gained, true** (10 filings): MCD FY2023–2025Q2 ×10⁶ (all 7), DLR FY2022 ×10³
+    (297,919 diluted vs 303.6M EPS-implied — the old check missed it on DLR's preferred
+    dividends), ECHO 2024Q3 ×10³ (271,736 vs 276.5M);
+  - **gained, value-improving** (3): AEP 2022Q3/2023Q3/2024Q3 outstanding ×10 — the tagged
+    51,868,653 disagrees with AEP's own 10-Ks (524M) and is likely another entity's figure
+    in a combined filing, not a unit slip; ×10 lands within 1% of the EPS-confirmed diluted
+    count, which is closer to the truth than before but by magnitude, not mechanism;
+  - **dropped, false** (2): AEP FY2021/FY2022 outstanding ×0.1 — the old code borrowed a
+    *later* 10-Q's 51.9M to shrink a correct 524M;
+  - every other old correction (CHD, COP, ECHO 2025Q3, MCD 2025Q3+, RTX FY2021, TER, V,
+    WAT) is unchanged; ALL/MCHP/HAL/RTX FY2022/NVR stay uncorrected.
+- **Gates**: MCD's seven filings with ×10⁶ applied — market cap $184–224B, 3.4–4.0× total
+  assets, FCF yield 0.6–3.3%: `DQ_MCAP_SCALE` and `DQ_FCF_YIELD` clear (the SOFT
+  `DQ_NEG_EQUITY` remains — MCD's book equity is genuinely negative). Computed by scaling
+  the stored valuation inputs; the pipeline path itself is covered by F1's valuation tests.
+- Tests (`tests/test_share_scale.py`, +10): MCD's run with a later mis-scaled restatement;
+  point-in-time history (dated, undated); one test per guard on ALL/MCHP/HAL/RTX×2/NVR's
+  shapes; `_magnitude_offset`. Mutation-checked: removing the date filter, the
+  to-common numerator, the EPS bounds or the cross-item signal, or widening the band to ×2,
+  each fails its tests. F1's existing tests pass unchanged.
+- `uv run pytest -q` — 571 passed (was 561). `ruff`/`mypy` green.
+
+### Residual scope, deliberately deferred
+
+- **Production re-persist** — `T-100`'s full recompute under `metrics-v3`, then `quality`.
+- **Concept mismatches, not scale defects** (NVR's *issued* for outstanding; AEP's
+  51.9M): the registry's `shares_outstanding` fallback to `CommonStockSharesIssued` and
+  combined-filing entity selection are ingestion questions, not F1's.
+- **A run of mis-scaled `shares_outstanding` with no EPS-confirmed diluted count** is still
+  uncorrected (no independent witness); `DQ_MCAP_SCALE` quarantines it.
+- **An earlier-filed restatement of the target period itself** (an amendment) is still
+  decisive direct evidence; not observed in production.

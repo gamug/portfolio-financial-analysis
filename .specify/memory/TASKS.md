@@ -15,9 +15,8 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 5–9 below
 (`T-040`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. (Closed Work items 1, 3, 6, 7, 10 and 11 are in `CHANGELOG.md`.)
-**Work item 13 (`T-102`/`T-103`, P0)** fixes the data defects `T-065`'s gates found. Work
-item 5 continues in parallel (now local, see its note) → **8 (P1, supersedes Work item
+open design work. (Closed Work items 1, 3, 6, 7, 10, 11 and 13 are in `CHANGELOG.md`.)
+Work item 5 continues in parallel (now local, see its note) → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
@@ -191,42 +190,6 @@ only durable record.
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
-## Work item 13 — P0: data defects surfaced by the Ring-1 gates
-
-Added 2026-09-25 by `T-065`: its verification on a copy of production found two live data
-defects the gates now quarantine and veto, but do not fix. Each is a methodology change
-(constitution AI behavior #12: verified, cited, recorded in `docs/model_fixes.md`). →
-`PLAN.md` Work item 13.
-
-- [x] **T-102** Resolve NEE's revenue: its income statement reports
-      `us-gaap_RegulatedAndUnregulatedOperatingRevenue` ("OPERATING REVENUES", a utility
-      tag), which `statements.REGISTRY["revenue"]` does not list, so revenue is NULL in all
-      19 NEE filings and every revenue-denominated ratio with it; `DQ_REVENUE_POS` HARD-vetoes
-      NEE until this lands. Decide how the tag joins the registry (total vs. component,
-      against `T-095`'s plausibility floor), check other utilities for it. **Acceptance**:
-      NEE's revenue resolves to the reported operating revenues; a `quality` re-gate of the
-      new metrics version clears `DQ_REVENUE_POS` for NEE. **Done 2026-09-25**: the tag is
-      the taxonomy's *total* operating revenue (parent of `Regulated-`/
-      `UnregulatedOperatingRevenue`), so it joined `total_concepts` (still behind `T-095`'s
-      floor). A survey of all 31 as-of S&P 500 utilities' latest 10-K via the gateway: 6
-      resolved NULL — AWK, DTE, DUK, NEE, SRE, XEL, every one tagging its total only this
-      way (the components sum to it exactly where reported) — and all 6 now resolve (net
-      margins 9–22%); the other 25 are unchanged. NEE's 10-Qs resolve too (8 checked,
-      2022–2026). The engine is bumped to **`metrics-v3`**. Gate check: the metrics computed
-      from NEE's real FY2025 10-K raise no `DQ_REVENUE_POS`
-      (`tests/test_data_quality.py`). Production still holds only `metrics-v2`; its `v3`
-      rows come from `T-100`'s full recompute — until then, pin `--metrics-version
-      metrics-v2` if anything writes `v3` rows for only part of the universe. Full record in
-      `docs/model_fixes.md`'s T-102 entry.
-- [ ] **T-103** Fix F1's residual on MCD FY2023–2025Q2: seven consecutive filings store
-      `shares` in millions (`732.3` … `717.6`), so market cap is ~10⁻⁶ of the real value
-      (`DQ_MCAP_SCALE` + `DQ_FCF_YIELD`). F1's overlapping-history anchor is itself
-      mis-scaled inside such a run, and its EPS corroboration only covers
-      `diluted_shares`. **Acceptance**: those filings' market cap within the gate's range
-      under a new metrics version, F1's existing tests unchanged, and a `quality` re-gate
-      clears them. *(Version: `T-102` bumped to `metrics-v3`; this lands under `metrics-v3`
-      too if no `v3` rows have been persisted in production by then, else it bumps again.)*
-
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 Added 2026-09-25, at the user's direction. Every other task in this file is either
@@ -253,11 +216,10 @@ added above it, never below. → `PLAN.md` Work item 12.
 
 ## Status
 
-**🔴 Current top priority (2026-09-08 forensic audit): Work items 5, 8, 9 and 13.**
-Work item 7 is closed (2026-09-25, `T-065` last) — see `CHANGELOG.md`. `T-040` (Work
-item 5) is done; `T-041`–`T-084` have not started. Execute **Work item 13, `T-102`/`T-103`
-(P0 — the defects `T-065`'s gates found)**, with Work item 5 (now local) in parallel →
-**Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+**🔴 Current top priority (2026-09-08 forensic audit): Work items 5, 8 and 9.**
+Work items 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. `T-040` (Work
+item 5) is done; `T-041`–`T-084` have not started. Execute, with Work item 5 (now local) in
+parallel → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
@@ -265,7 +227,8 @@ re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 transfer independent of any task here)**.
 
 Work items 1 (done), 3 (superseded by `T-077` — do not implement), 6 (done
-upstream + `T-052`), 7 (done 2026-09-25), 10 (done) and 11 (done 2026-09-25) are closed — see
+upstream + `T-052`), 7 (done 2026-09-25), 10 (done), 11 (done 2026-09-25) and 13 (done
+2026-09-25) are closed — see
 `CHANGELOG.md`.
 
 Work items 2 and 4 are unaffected by the audit and keep their original,

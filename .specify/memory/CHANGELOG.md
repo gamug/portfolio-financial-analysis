@@ -871,3 +871,54 @@ next, and last.
       unchanged, all 31 views query, `optimize --dry-run` still resolves `9d34ff69`. 10 new tests
       (`tests/test_quant_book_key.py`), `T-093`'s strict `xfail` flipped to a pass, mutation-checked
       five ways; 512 passed, ruff, mypy green. Docs: `docs/quant.md`, `docs/kg_schema.md`.
+
+## Work item 13 — P0: data defects surfaced by the Ring-1 gates — DONE 2026-09-25
+
+Added 2026-09-25 by `T-065`: its verification on a copy of production found two live data
+defects the gates now quarantine and veto, but do not fix. Each is a methodology change
+(constitution AI behavior #12: verified, cited, recorded in `docs/model_fixes.md`). →
+`PLAN.md` Work item 13.
+
+- [x] **T-102** Resolve NEE's revenue: its income statement reports
+      `us-gaap_RegulatedAndUnregulatedOperatingRevenue` ("OPERATING REVENUES", a utility
+      tag), which `statements.REGISTRY["revenue"]` does not list, so revenue is NULL in all
+      19 NEE filings and every revenue-denominated ratio with it; `DQ_REVENUE_POS` HARD-vetoes
+      NEE until this lands. Decide how the tag joins the registry (total vs. component,
+      against `T-095`'s plausibility floor), check other utilities for it. **Acceptance**:
+      NEE's revenue resolves to the reported operating revenues; a `quality` re-gate of the
+      new metrics version clears `DQ_REVENUE_POS` for NEE. **Done 2026-09-25**: the tag is
+      the taxonomy's *total* operating revenue (parent of `Regulated-`/
+      `UnregulatedOperatingRevenue`), so it joined `total_concepts` (still behind `T-095`'s
+      floor). A survey of all 31 as-of S&P 500 utilities' latest 10-K via the gateway: 6
+      resolved NULL — AWK, DTE, DUK, NEE, SRE, XEL, every one tagging its total only this
+      way (the components sum to it exactly where reported) — and all 6 now resolve (net
+      margins 9–22%); the other 25 are unchanged. NEE's 10-Qs resolve too (8 checked,
+      2022–2026). The engine is bumped to **`metrics-v3`**. Gate check: the metrics computed
+      from NEE's real FY2025 10-K raise no `DQ_REVENUE_POS`
+      (`tests/test_data_quality.py`). Production still holds only `metrics-v2`; its `v3`
+      rows come from `T-100`'s full recompute — until then, pin `--metrics-version
+      metrics-v2` if anything writes `v3` rows for only part of the universe. Full record in
+      `docs/model_fixes.md`'s T-102 entry.
+- [x] **T-103** Fix F1's residual on MCD FY2023–2025Q2: seven consecutive filings store
+      `shares` in millions (`732.3` … `717.6`), so market cap is ~10⁻⁶ of the real value
+      (`DQ_MCAP_SCALE` + `DQ_FCF_YIELD`). F1's overlapping-history anchor is itself
+      mis-scaled inside such a run, and its EPS corroboration only covers
+      `diluted_shares`. **Acceptance**: those filings' market cap within the gate's range
+      under a new metrics version, F1's existing tests unchanged, and a `quality` re-gate
+      clears them. *(Version: `T-102` bumped to `metrics-v3`; this lands under `metrics-v3`
+      too if no `v3` rows have been persisted in production by then, else it bumps again.)*
+      **Done 2026-09-25**, under `metrics-v3` (production still had no `v3` row). The
+      guessed mechanism above was wrong: reproduced on FY2023's real payload, the EPS signal
+      *did* say ×10⁶, but `overlapping_history` also read **later** filings (a look-ahead),
+      whose mis-scaled restatement of the same period read as first-hand proof it was
+      clean and vetoed EPS. Fix: history is point in time (only filings filed before), the
+      EPS numerator is net income available to common (ASC 260-10-45-11), EPS is used only
+      in `[$0.10, $10,000]`, and `shares_outstanding` is checked against an EPS-confirmed
+      diluted count of the same filing (±25% of a power of ten). Old vs. new over all 5,076
+      production filings: 14 → 24 corrections — gained MCD ×7, DLR FY2022, ECHO 2024Q3
+      (true) and AEP 2022Q3/2023Q3/2024Q3 (a mismatched 51.9M snapped within 1% of the
+      diluted count); dropped AEP FY2021/FY2022's false ×0.1; ALL/MCHP/HAL/RTX FY2022/NVR
+      false signals exposed by the point-in-time change are all guarded. With ×10⁶, MCD's
+      seven filings (market cap $184–224B, 3.4–4.0× assets) clear `DQ_MCAP_SCALE` and
+      `DQ_FCF_YIELD`. F1's tests unchanged; +10 tests. Full record in `docs/model_fixes.md`'s
+      T-103 entry; production re-persist is `T-100`'s.

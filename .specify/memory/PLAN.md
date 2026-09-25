@@ -28,9 +28,8 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: Work items 7, 10 and 11 are **closed** (done 2026-09-25, 2026-09-20 and
-2026-09-25 — see `CHANGELOG.md`) → **Work item 13 (P0 — the data defects Work item 7's Ring-1
-gates found)**, with Work item 5 (now built in this repo's vendored `kg_schema`, `T-040` done)
+Execute in this order: Work items 7, 10, 11 and 13 are **closed** (done 2026-09-25, 2026-09-20,
+2026-09-25 and 2026-09-25 — see `CHANGELOG.md`), with Work item 5 (now built in this repo's vendored `kg_schema`, `T-040` done)
 running in parallel → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
@@ -1537,7 +1536,11 @@ republish in place by URL. A first pass can run any time after the `T-085` PR me
 comprehensive pass runs last, after `T-095`/`T-096`/`T-097` close — one pass covering the whole
 fixing process rather than a second delta.
 
-## Work item 13 — P0: data defects surfaced by the Ring-1 gates
+## Work item 13 — P0: data defects surfaced by the Ring-1 gates — DONE 2026-09-25
+
+**Status: closed** — `T-102` and `T-103` landed 2026-09-25 under `metrics-v3`; tasks and
+closure records are in `CHANGELOG.md`, detail in `docs/model_fixes.md`. Production's
+`metrics-v3` rows come from `T-100`.
 
 **Why**: `T-065`'s verification on a copy of production (2026-09-25) found two live data
 defects. The gates already quarantine the affected metrics and veto on HARD, so nothing
@@ -1550,7 +1553,9 @@ caps are unusable, until the causes are fixed.
    `statements.REGISTRY["revenue"]`, so all 19 filings resolve revenue to NULL
    (`DQ_REVENUE_POS`). Add the tag in the right role (aggregate vs. component) against
    F2/`T-095`'s rules and check other utilities.
-2. **`T-103` — MCD share scale, FY2023–2025Q2.** Seven consecutive filings store `shares`
+2. **`T-103` — MCD share scale, FY2023–2025Q2. DONE 2026-09-25** (the cause was a look-ahead
+   in F1's history, not the mechanism guessed below — see `docs/model_fixes.md`'s T-103
+   entry). Seven consecutive filings store `shares`
    in millions; F1's overlapping-history anchor is mis-scaled inside the run and EPS only
    corroborates `diluted_shares` (`DQ_MCAP_SCALE`, `DQ_FCF_YIELD`).
 
@@ -1614,8 +1619,8 @@ this document.** Their internal sequencing:
 - Work item 5 (`portfolio-common` v0.3.0) is an independent prerequisite — now local:
   `kg_schema` is vendored here, and `T-040` was built that way (2026-09-25). (Work item 6, the `portfolio-data-mining` corporate-actions
   endpoint, is closed — see `CHANGELOG.md`.)
-- Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`); Work item
-  13 fixes what its gates found. Historical note: its
+- Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`), and so is
+  Work item 13, which fixed what its gates found. Historical note: its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
   within it; its Ring-1 `DQ_*` gates need Work item 5 (A1); its dividend
   fix's Level-1 half was local-only but has since been removed — dividends
