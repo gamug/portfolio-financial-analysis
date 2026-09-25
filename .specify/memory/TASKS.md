@@ -15,10 +15,8 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 5–9 below
 (`T-040`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. **Work item 10 (`T-085`, P0) — the `portfolio-data-mining`
-pricing gateway as `quant`'s *only* corporate-actions source (the XBRL-derived
-fallback was removed: no repository but `portfolio-data-mining` mines data) — is
-done (2026-09-20)**. **Next up (2026-09-21): Work item 11 (P0), in this order —
+open design work. (Closed Work items 1, 3, 6 and 10 are in `CHANGELOG.md`.)
+**Next up (2026-09-21): Work item 11 (P0), in this order —
 `T-052` (the live check of the gateway dividends — **done 2026-09-21**), `T-086` (the
 `build-returns` guard — **done 2026-09-21**), `T-092` (CRITICAL: integrate `portfolio-data-mining`'s
 multi-filing `sec_edgar` endpoints — **done 2026-09-21**), `T-094` (F4 fiscal-calendar mismatch — **done 2026-09-21**), `T-087` (the constitution
@@ -35,8 +33,8 @@ WAT's `net_income` concept gap locally, routed APO's gap upstream, and corrected
 PG/BF.B/STZ tally) and `T-097` (the out-of-order-cycle guard — **done 2026-09-22**; scoped to
 `select` only, `monitor` was never at risk) are done. All three prioritized findings are
 closed; **`T-089` is next, and last, in the fixing process.**
-Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5 ∥ 6
-continue in parallel as external prerequisites → **8 (P1, supersedes Work item
+Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5
+continues in parallel as an external prerequisite → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **the low-priority path (2026-09-21): `T-093`**, the user-tunable version
 constraints for `quant`'s Markowitz runs, deferred on purpose — to be tackled late, not now
@@ -792,31 +790,21 @@ corrected their own earlier findings: PM did not reproduce T-095's defect; APO's
 STZ's original T-096 tally did not survive a precise reproduction, only WAT had a real,
 now-fixed local gap; `T-097`'s own "select/monitor" title was corrected to `select` only).
 `T-093` is on
-the low-priority path.** **`T-085` (Work item 10, P0) is
-done, 2026-09-20** — the pricing gateway is now `quant`'s *only*
-corporate-actions source and the derivation was removed (live verification, `T-052`,
-passed 2026-09-21). `T-068` is re-scoped behind `T-088`; there is no derive
-fallback. Execute Work item 10, with Work item 5 ∥ 6
-(external, independent prerequisites; Work item 6's implementation now
-lives in `portfolio-data-mining`) in parallel → **Work item 7, `T-060`–`T-069`
+the low-priority path.** `T-068` is re-scoped behind `T-088`; there is no derive
+fallback. Execute, with Work item 5 (external, independent prerequisite) in
+parallel → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
 `T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-068`'s dividend
-steps need `T-052`, itself blocked on `portfolio-data-mining`'s
-corporate-actions endpoint — `T-050`/`T-051` moved there)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
+steps needed `T-052`, now done)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
 `entity_resolution` re-graph is additionally blocked on a `urls.db`
 transfer independent of any task here)**.
 
-Work item 3 (`T-020`–`T-026`) is **superseded** by Work item 8's `T-077` —
-do not implement it.
-
-Work item 1 (T-001–T-008) is **done** — landed via PR #32
-(`refactor/engine-agnostic`), fully re-verified 2026-09-12 (quality gates,
-`SPEC.md`, and both architecture artifacts all confirmed current).
+Work items 1 (done), 3 (superseded by `T-077` — do not implement), 6 (done
+upstream + `T-052`) and 10 (done) are closed — see `CHANGELOG.md`.
 
 Work items 2 and 4 are unaffected by the audit and keep their original,
 lower priority (after Work items 5–9 above): nothing in either has
-started; both are unblocked (Work item 1 already landed; Work item 4 was
-always independent of it).
+started; both are unblocked.

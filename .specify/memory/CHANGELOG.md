@@ -83,7 +83,19 @@ instead.
       resolved, or explicitly re-scoped if the comparison doesn't show an
       improvement. → fourth acceptance criterion.
 
-## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external) — implementation MOVED, verification stays
+## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external) — implementation MOVED, verification stays — CLOSED 2026-09-21
+
+**Closed (re-verified 2026-09-24)**: the implementation shipped upstream
+(`portfolio-data-mining` Work item 3, PR #36, `T-026` checked off there) and
+this repo's consumer-side check `T-052` passed live on 2026-09-21; `T-085`
+(Work item 10) then made the gateway `quant`'s only corporate-actions source.
+Production `KG_FINANCIAL_DB` today satisfies every acceptance criterion:
+7,481 `corpact-v1` rows over 426 assets, and no other `corporate_action`
+engine version left (the XBRL-derived `corpact-v0-approx`/`corpact-v1-derived`
+engines are removed from `src/quant/actions.py`); XOM/PG/T/NEE each have 19
+`corpact-v1` dividends; `quant_return_daily.cash_dividend` sums are XOM 18.16,
+PG 18.72, T 5.524, NEE 9.146 (all were `$0.00` when this work item opened).
+`T-050`/`T-051` stay unchecked only as the "moved upstream" historical record.
 
 **Moved 2026-09-19**: the yfinance-backed endpoint is data acquisition, not
 analysis, so its implementation is tracked in `portfolio-data-mining`
