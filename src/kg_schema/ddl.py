@@ -472,6 +472,12 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     "sec_filings": {
         "run_id": "INTEGER",
     },
+    # T-041: the fundamental synthesis's structured forensic flags (Work item 8, T-074) --
+    # a JSON object of four booleans (data_error_suspected, negative_equity_buyback,
+    # value_destroyer_sub_wacc, severe_sbc_dilution). NULL until T-074 writes it.
+    "score_snapshot": {
+        "forensic_flags_json": "TEXT",
+    },
     "price_window": {
         "event_time": "TEXT",
         "run_id": "INTEGER",
