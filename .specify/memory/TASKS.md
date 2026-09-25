@@ -198,7 +198,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       weights — the live book at 2026-09-22 equals cycle 1's selection (10 names, weights sum
       1.0), nothing live at 2026-06-30, 0 inverted stints, run 2 `reverted`, both triggers
       installed, `quick_check` ok, all views query.
-- [ ] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
+- [x] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
       quarter's flow by a stock or a price level: FCF yield (and its enterprise and SBC
       variants) 10-Q median 0.9% vs 10-K 3.4% (×3.6–3.9 too small), `net_debt_to_ebitda`
       10.47× vs 2.62× (×4 too large; MCD ~10× on every 10-Q, 2.7× on its 10-K),
@@ -208,7 +208,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       existing `db.ttm_flows` path in `valuation.py`, `leverage.py` and `roic.py`; new metrics
       version (`metrics-v3` if still unpersisted in production, else the next). Methodology
       change: `docs/model_fixes.md` record. **Acceptance**: those 10-Q medians within ~1.3× of
-      10-K; F4's existing tests unchanged.
+      10-K; F4's existing tests unchanged. **Done 2026-09-25**, under `metrics-v3` (still
+      unpersisted in production). The TTM now prefers the standard identity `FY(prior 10-K) −
+      YTD(last year) + YTD(this year)` — the filing's own YTD columns, so it also covers
+      filers whose 10-Q cash flow has no quarterly column (XOM) — then F4's four quarters, then
+      ×4, and stamps each group `annualized_ttm`/`annualized_x4`. Valuation, leverage and
+      ROIC take the TTM flows (never mixing a raw quarter in); raw values stay in the inputs.
+      Recomputed over every production filing of the 20-asset sample (stored facts, read-only):
+      10-K/10-Q median ratios FCF yield 0.86, enterprise 0.95, SBC-adjusted 0.94, net debt /
+      EBITDA 0.95, ROIC 0.95 (were 3.6–3.9, 0.25, 3.5); 10-Q FCF-yield coverage 97 filings;
+      the identity used for 1,789 of 1,891 flows (94.6%), ×4 for 92; no recomputed |FCF yield| > 0.5.
+      F4's tests unchanged; +12 tests, mutation-checked. Record: `docs/model_fixes.md` T-105.
+      **Review follow-ups (PR #77)**: SBC and interest in the valuation group's provenance;
+      TTM reads pinned to the running engine version; identity-vs-four-quarter cross-check
+      recorded as a SOFT `DQ_TTM_CROSSCHECK` review (16 of 780 on the sample: AT&T's 2022
+      restatement, APA's revenue, one WFC value); `scripts/verify_t105.py`. +4 tests.
 - [ ] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
       `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
       `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
@@ -287,6 +301,32 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `net_debt_to_ebitda` is only usable once `T-105` annualizes it. Methodology change:
       `docs/model_fixes.md` record. **Acceptance**: thresholds calibrated on annualized data;
       NULL-on-both never passes silently.
+
+- [ ] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
+      breakdown figure presented as the company total. APA never filed a consolidated
+      `us-gaap:Revenues` (per the reviewer, from SEC companyfacts — to be re-verified); the
+      gateway presents a breakdown figure as the total: too small in FY2021 (T-095's case), and
+      exactly 2× the consolidated **"Total revenues"** line every year since FY2023 — 16,558 /
+      19,474 / 17,840 vs 8,279 / 9,737 / 8,920 ($M); FY2022 is correct (11,075). "Total
+      revenues" is not stored as its own fact since FY2023; it is the statement's "Total
+      revenues and other" less the lines between the two totals (derivative results,
+      divestiture gains, losses on previously sold Gulf properties, other) — verified to the
+      $M for FY2022–FY2025 (`scripts/verify_t105.py` derives and prints it). APA 2024Q1–Q3
+      revenue also trips the TTM cross-check (11–25%). Reject a revenue total that the filing's own income statement
+      contradicts. The rule must be validated on the **full universe** — the number of filings
+      it rejects reported and each inspected — not tuned on APA (the mistake `T-095` made).
+      Also correct `T-095`'s diagnosis in `docs/model_fixes.md`: APA FY2021 was not a
+      filer-side tagging defect but this gateway issue. Methodology change: #12 record.
+      **Acceptance**: APA revenue = "Total revenues" (FY2023 8,279; FY2024 9,737; FY2025
+      8,920 $M) — not "Total revenues and other", which matches only in FY2024, where the
+      in-between items net to zero; the full-universe rejection count reported and inspected;
+      `T-095`'s entry corrected.
+- [ ] **T-118** *(P1 — upstream, `portfolio-data-mining`; added 2026-09-25 from PR #77's
+      review)* Fix the root cause of `T-117`: the EDGAR gateway (`sec_edgar`) presents
+      breakdown figures as company totals. Implemented upstream (same pattern as Work item 6);
+      this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
+      until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
+      guard no longer rejects APA.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

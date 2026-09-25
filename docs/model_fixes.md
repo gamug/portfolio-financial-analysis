@@ -1860,3 +1860,147 @@ look-ahead had also been *masking* false signals, usually with a clean later res
   uncorrected (no independent witness); `DQ_MCAP_SCALE` quarantines it.
 - **An earlier-filed restatement of the target period itself** (an amendment) is still
   decisive direct evidence; not observed in production.
+
+---
+
+## T-105 — F4's deferred ratios: FCF yields, net debt / EBITDA, ROIC on 10-Qs
+
+**Status**: Fixed 2026-09-25 (branch `fix/t105-annualize-remaining-10q-ratios`, `T-105`), under
+`metrics-v3` (T-102's bump; no `metrics-v3` row persisted yet). Production is recomputed by
+`T-100`.
+
+### Symptom
+
+F4 annualized ROA/ROE and the turnovers and listed two more flow-over-stock ratios as deferred
+(its residual scope). The second audit (`feedback_plan 1.md`) and production confirm they are
+live, plus the FCF yields F4 never listed. 10-K vs 10-Q medians on production (metrics-v2): FCF
+yield 3.4% vs 0.9% (and the enterprise and SBC-adjusted variants), `net_debt_to_ebitda` 2.62×
+vs 10.47× (MCD: 2.7× on its 10-K, ~10× on every 10-Q), ROIC 14.2% vs 4.0%. The yields and ROIC
+feed `cycle`'s VALORIZATION, so a name whose latest filing is a 10-Q scored ~4× worse on value.
+
+### Root cause
+
+`valuation.py`, `leverage.py` and `roic.py` ignored the `ttm` their `compute` receives and
+divided the 10-Q's single-quarter FCF / EBITDA / NOPAT by a market cap, a net-debt stock or an
+invested-capital stock. A second, hidden cause: F4's TTM sums four *recorded quarters*, but
+many filers' 10-Q cash-flow statements carry only year-to-date columns (XOM), so no quarterly
+cash-flow value ever exists to sum — for them FCF was not annualizable at all by F4's method.
+
+### Theoretical/technical reference
+
+- A flow-over-stock or flow-over-price ratio needs the flow on the stock's annual basis — F4's
+  own rationale, unchanged.
+- The trailing-twelve-month identity **TTM = latest fiscal year + current YTD − prior YTD** is
+  the standard practitioner construction ([Wall Street Prep, "Trailing Twelve Months (TTM)"](https://www.wallstreetprep.com/knowledge/ttm-trailing-twelve-months/);
+  [CFI, "LTM"](https://corporatefinanceinstitute.com/resources/valuation/last-twelve-months-ltm/)):
+  the fiscal year covers twelve months, adding this year's YTD extends it, and subtracting the
+  prior year's same YTD removes the overlap. It needs only the filing's own two YTD columns
+  (every 10-Q reports its prior-year comparative) and the prior 10-K.
+
+### Fix
+
+- `db.ttm_detail` (new; `ttm_flows` keeps its contract): per flow, the YTD identity first — the
+  prior 10-K must end strictly between last year's YTD end and this period end, so it is the
+  fiscal year that YTD belongs to — then F4's four recorded quarters, then quarter × 4. Each
+  result carries its method (`TTMFlow`).
+- `pipeline._ttm_flows` builds each flow's YTD pair from the filing's own columns
+  (`_ytd_columns`: this period's `(YTD)` and the one ~a year earlier, ±20 days for 52/53-week
+  calendars; a Q1 filing's YTD is its `(Q1)`), over nine flows now (net income, revenue, cogs,
+  operating cash flow, capex, operating income, D&A, interest expense, SBC).
+- `valuation.compute` takes `ttm`: FCFE, FCFF (with TTM interest) and SBC-adjusted FCF are TTM
+  on a 10-Q — and never a TTM flow beside a raw quarter (a missing TTM input gives `None`).
+  `leverage`: EBITDA = TTM operating income + TTM D&A. `roic`: ROIC uses TTM NOPAT; the `nopat`
+  metric itself stays the filing's own period value, as reported.
+- Raw single-period values stay in every audit dict (later filings read them back); the
+  annual-basis numerators are added as `*_ttm`. Each annualizing group is stamped
+  `annualized_ttm = 1` or `annualized_x4 = 1` so a consumer can exclude crude annualization
+  (the second audit asked for this provenance).
+
+### Design decisions
+
+- **The YTD identity first, not only as a fallback**: it is exact whenever its three inputs
+  exist, needs no quarter to have been ingested, and covers YTD-only cash-flow statements.
+  Four recorded quarters remain the second choice; × 4 the last, and flagged.
+- **All nine flows through the same path**, including F4's three — so ROA/ROE/turnovers also
+  prefer the identity now. On the sample they barely move (10-K/10-Q ROA median ratio 1.09).
+- **`interest_coverage` stays quarterly/quarterly** — a flow over a flow is already
+  basis-consistent (median ratio 1.01).
+
+### Verification
+
+- Recomputed with the new code over every production filing of the 20-asset sample (statements
+  rebuilt from stored `financial_facts`, prior 10-Ks read from stored metrics; read-only):
+
+  | Metric | 10-K median | 10-Q median | K/Q before → after |
+  |---|---|---|---|
+  | FCF yield | 3.31% | 3.83% | 3.64 → 0.86 |
+  | enterprise FCF yield | 3.16% | 3.32% | 3.88 → 0.95 |
+  | SBC-adjusted FCF yield | 3.19% | 3.38% | 3.66 → 0.94 |
+  | net debt / EBITDA | 2.62× | 2.75× | 0.25 → 0.95 |
+  | ROIC | 14.2% | 14.8% | 3.54 → 0.95 |
+  | ROA (F4) | 6.15% | 5.62% | 1.07 → 1.09 |
+
+  10-Q FCF yields now exist for 97 filings (YTD-only filers included). Methods: the identity for
+  1,789 of 1,891 flows (94.6%; per flow 84% for cogs to 98% for operating cash flow), four
+  quarters for 10, × 4 for 92.
+  No recomputed |FCF yield| exceeds `DQ_FCF_YIELD`'s 0.5.
+- XOM 2025Q3 net income TTM = 35,063 − 27,108 + 23,155 = 31,110 ($M), consistent within one
+  concept (`ProfitLoss`, see residual); on attributable net income the same identity gives the
+  audit's 33,680 − 26,070 + 22,343 = 29,953.
+- `tests/test_ttm_t105.py` (+12): the identity (XOM's YTD-only shape), its precedence over four
+  quarters, the fiscal-year guard, YTD column selection (incl. Q1 and a 52/53-week calendar),
+  yields/EBITDA/ROIC on TTM with raw values kept, no TTM/raw mixing, the annualization stamps.
+  Mutation-checked: yields on the quarter, quarterly EBITDA, quarterly NOPAT, no identity, or
+  no fiscal-year guard each fails a test. F4's tests pass unchanged; `test_pipeline`'s two TTM
+  tests now also assert the method.
+- `uv run pytest -q` — 601 passed (was 589). `ruff`/`mypy` green.
+
+### Residual scope, deliberately deferred
+
+- **Production re-persist** — `T-100`'s full recompute under `metrics-v3`.
+- **`net_income` includes non-controlling interests for filers whose statement lists
+  `ProfitLoss` before `NetIncomeLoss`** (XOM): a pre-existing concept-order choice in
+  `statements.REGISTRY`, not a TTM question; TTM is consistent within whichever concept wins.
+- **`T-116`** can now calibrate the negative-equity distress screen on annualized
+  `net_debt_to_ebitda`.
+- **APA's revenue** (`T-117`, local guard; `T-118`, upstream root cause) — see the review
+  follow-ups below.
+
+### Review follow-ups (PR #77, 2026-09-25)
+
+A reviewer asked for four changes before merge; two further items became tasks (`T-117`,
+`T-118`).
+
+1. **Provenance covers every valuation input.** `_GROUP_TTM_ITEMS["valuation"]` now includes
+   `stock_based_compensation` and `interest_expense`: the SBC-adjusted yield and FCFF use them,
+   so a × 4 on either stamps the group `annualized_x4`, not `annualized_ttm`.
+2. **TTM reads are version-pinned.** `_recorded_flow` (and so the identity's prior 10-K and the
+   four-quarter path) reads only rows of the engine version being written; a prior filing
+   recorded only by an older engine reads as missing and the TTM falls through to its next
+   method, never combining two engines' concept resolution. In production this is what the
+   ordered full recompute (`T-100`) relies on: each filing's prior year is recorded under the
+   same version first.
+3. **Identity vs four-quarter cross-check.** Where both are computable, `TTMFlow.alt` carries
+   the four-quarter sum; `quality.record_ttm_crosscheck` (called by the pipeline after the
+   metrics are recorded) writes a **SOFT, unquarantined** `DQ_TTM_CROSSCHECK` row under the
+   pseudo-group `ttm` with both values when they differ by more than 1%. The identity stays the
+   value: it uses the filing's own *restated* comparative. Neither side is presumed right —
+   AT&T after the 2022 WarnerMedia spin-off is the case where the as-filed quarters are the
+   wrong side (Q1 2022 cogs $10.351B as filed, $6.036B restated). On the 20-asset sample: 780
+   flows computable both ways, 16 over 1% — AT&T 2023Q1–Q3 (revenue 6.9%, cogs ~18.5%,
+   operating income and interest 1.5–3.7%: the restatement), APA 2024Q1–Q3 revenue 11–25%
+   (the `T-117` defect, differing filing by filing), WFC 2023Q3 net income 1.1%.
+4. **Verification script.** `scripts/verify_t105.py` reproduces, read-only from stored facts:
+   the before/after median table above, the TTM methods, the cross-check count **and each
+   flagged flow** (ticker, period, flow, both values, gap), and APA's resolved revenue against
+   its consolidated "Total revenues" — derived as "Total revenues and other" less the lines
+   between the two totals, since that line is not stored as its own fact after FY2022:
+   exactly 2.00× in FY2023–FY2025 (16,558 / 19,474 / 17,840 vs 8,279 / 9,737 / 8,920 $M),
+   1.00 in FY2021–FY2022. (A second review round corrected the comparison line: against
+   "Total revenues and other" it only matched in FY2024, where the in-between items net to
+   zero.)
+
+Tests (+4, mutation-checked): the valuation stamp with an SBC or interest × 4; an older
+engine's prior year not feeding the TTM (and the same engine's doing so); the cross-check on
+AT&T's restated shape (identity kept, review row with both values); no review within 1% or
+with only one method. `uv run pytest -q` — 605 passed.

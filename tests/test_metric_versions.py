@@ -249,7 +249,7 @@ def test_a_database_without_the_table_has_no_versions() -> None:
 
 # Files that legitimately read ``fundamental_metrics`` without the version filter, and why.
 _UNFILTERED_OK = {
-    "fundamental_agent/db.py": "the writer's own F4 lookup: the newest-written raw flow wins",
+    "fundamental_agent/db.py": "the writer's own TTM lookup, pinned to the engine version it writes",
     "kg_schema/queries.py": "the version listing itself, and existence-only coverage checks",
     "kg_schema/migrations.py": "schema rebuilds copy the whole table",
 }

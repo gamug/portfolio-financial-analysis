@@ -17,6 +17,19 @@ class MetricResult:
     inputs: dict[str, float] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class TTMFlow:
+    """A trailing-twelve-month flow and how it was obtained (T-105): ``"ytd"`` (prior fiscal
+    year + this year-to-date - last year's same year-to-date), ``"quarters"`` (four recorded
+    quarters) or ``"x4"`` (this quarter times four -- crude annualization, not a TTM)."""
+
+    value: float
+    method: str
+    # T-105 review: the four-quarter sum, when it was computable beside the identity -- kept
+    # only for the cross-check, never used as the value.
+    alt: float | None = None
+
+
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:
     """Divide, returning ``None`` on missing operands or a zero/near-zero divisor."""
     if numerator is None or denominator is None or abs(denominator) < _EPSILON:

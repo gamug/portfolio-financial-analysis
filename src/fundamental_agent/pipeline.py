@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -26,6 +27,7 @@ from fundamental_agent.edgar_client import (
     normalize_ticker,
 )
 from fundamental_agent.filing_text import fetch_primary_document
+from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
@@ -360,14 +362,50 @@ def _extract_sections(
         )
 
 
-_TTM_ITEMS = ("net_income", "revenue", "cogs")
+_TTM_ITEMS = (
+    "net_income",
+    "revenue",
+    "cogs",
+    # T-105: FCF yield, net debt / EBITDA and ROIC divide these by a stock or a price level too
+    "operating_cash_flow",
+    "capital_expenditure",
+    "operating_income",
+    "depreciation_amortization",
+    "interest_expense",
+    "stock_based_compensation",
+)
+# A year-to-date column "one year earlier" can sit a few days off on a 52/53-week calendar.
+_YEAR_TOLERANCE_DAYS = 20
+
+
+def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | None, str | None]:
+    """``(this year's YTD column, last year's same YTD column, that column's end date)`` of a
+    10-Q. A first quarter's year-to-date *is* its quarter, so a Q1 filing with no ``(YTD)``
+    columns uses its ``(Q1)`` columns (T-105)."""
+    end = date.fromisoformat(target.period.date)
+    year_ago = end - timedelta(days=365)
+    tags = ("YTD", target.period.tag) if target.period.tag == "Q1" else ("YTD",)
+    for tag in tags:
+        periods = [p for p in stmts.periods if p.tag == tag]
+        current = next((p for p in periods if p.date == target.period.date), None)
+        prior = next(
+            (
+                p
+                for p in periods
+                if abs((date.fromisoformat(p.date) - year_ago).days) <= _YEAR_TOLERANCE_DAYS
+            ),
+            None,
+        )
+        if current is not None and prior is not None:
+            return current.key, prior.key, prior.date
+    return None, None, None
 
 
 def _ttm_flows(
     engine: _Engine, task: _YearTask, stmts: Statements, target: _Target
-) -> dict[str, float]:
+) -> dict[str, TTMFlow]:
     """This filing's flow inputs, annualized to trailing-twelve-months on a 10-Q
-    (F4, docs/model_fixes.md) -- empty for a 10-K, which already reports an
+    (F4, T-105, docs/model_fixes.md) -- empty for a 10-K, which already reports an
     annual flow and needs no adjustment."""
     if task.form != "10-Q":
         return {}
@@ -376,9 +414,20 @@ def _ttm_flows(
         for item in _TTM_ITEMS
         if (value := stmts.get(item, target.period.key)) is not None
     }
-    if not current:
+    cur_key, prior_key, prior_end = _ytd_columns(stmts, target)
+    ytd = (
+        {
+            item: db.YTDPair(stmts.get(item, cur_key), stmts.get(item, prior_key), prior_end)
+            for item in _TTM_ITEMS
+        }
+        if cur_key and prior_key
+        else {}
+    )
+    if not current and not ytd:
         return {}
-    return db.ttm_flows(engine.conn, task.asset_id, period_end=target.period.date, current=current)
+    return db.ttm_detail(
+        engine.conn, task.asset_id, period_end=target.period.date, current=current, ytd=ytd
+    )
 
 
 def _analyze_one(
@@ -418,6 +467,7 @@ def _analyze_one(
         engine.conn, task.asset_id, stmts, target.period.key, exclude_filing_id=filing_id
     )
 
+    ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
         company_name=task.company_name,
@@ -428,7 +478,7 @@ def _analyze_one(
         prior_key=target.prior.key if target.prior else None,
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
         share_scale_factors=share_scale_factors,
-        ttm=_ttm_flows(engine, task, stmts, target),
+        ttm_flows=ttm,
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(
@@ -437,6 +487,15 @@ def _analyze_one(
     # Ring-1 data-quality gates (T-065) over what was just stored, so every newly analysed
     # filing is gated; `python -m fundamental_agent quality` backfills older ones.
     quality.gate_version(engine.conn, db.METRICS_ENGINE_VERSION, filing_id=filing_id, run_id=run_id)
+    # T-105 review: where the TTM identity and four recorded quarters disagree, a SOFT review.
+    quality.record_ttm_crosscheck(
+        engine.conn,
+        filing_id,
+        task.asset_id,
+        ttm,
+        engine_version=db.METRICS_ENGINE_VERSION,
+        run_id=run_id,
+    )
 
     assessment = result.assessment
     db.insert_snapshot(

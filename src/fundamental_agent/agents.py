@@ -19,6 +19,7 @@ from strands.models.openai import OpenAIModel
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import CORE_GROUPS, OPTIONAL_GROUPS, MetricResult, compute_group
 from fundamental_agent.metrics import valuation as valuation_metrics
+from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.skills import load_skill
 from fundamental_agent.statements import Statements
@@ -133,11 +134,45 @@ class FilingContext:
     # value by this to correct a detected XBRL scale/tagging defect (see
     # docs/model_fixes.md, F1; fundamental_agent.db.detect_share_scale_factors).
     share_scale_factors: dict[str, float] = field(default_factory=dict)
-    # {"net_income" | "revenue" | "cogs": TTM value} on a 10-Q filing -- the
-    # trailing-twelve-month flow ROA/ROE/turnover ratios need instead of the raw
-    # 3-month value (F4, docs/model_fixes.md; fundamental_agent.db.ttm_flows).
-    # Empty for a 10-K, which already reports an annual flow.
-    ttm: dict[str, float] = field(default_factory=dict)
+    # {flow: TTMFlow} on a 10-Q filing -- the trailing-twelve-month flows that ratios over a
+    # stock or a price level need instead of the raw 3-month value (F4, T-105,
+    # docs/model_fixes.md; fundamental_agent.db.ttm_detail). Empty for a 10-K, which already
+    # reports annual flows.
+    ttm_flows: dict[str, TTMFlow] = field(default_factory=dict)
+
+    @property
+    def ttm(self) -> dict[str, float]:
+        return {item: flow.value for item, flow in self.ttm_flows.items()}
+
+
+# The flows each group annualizes on a 10-Q (F4, T-105): its ratios' TTM numerators.
+_GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
+    "profitability": ("net_income",),
+    "efficiency": ("revenue", "cogs"),
+    "leverage": ("operating_income", "depreciation_amortization"),
+    "roic": ("operating_income",),
+    "valuation": (
+        "operating_cash_flow",
+        "capital_expenditure",
+        "stock_based_compensation",
+        "interest_expense",
+    ),
+}
+
+
+def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str, TTMFlow]) -> None:
+    """Stamp each annualizing group's audit inputs with how its TTM numerators were obtained
+    (T-105): ``annualized_ttm = 1`` when every one is a real trailing twelve months,
+    ``annualized_x4 = 1`` when any fell back to quarter x 4 -- crude annualization a consumer
+    can exclude. A group's results share one inputs dict, so one stamp covers the group."""
+    for group, result in results:
+        items = [flows[i] for i in _GROUP_TTM_ITEMS.get(group, ()) if i in flows]
+        if not items:
+            continue
+        if any(f.method == "x4" for f in items):
+            result.inputs["annualized_x4"] = 1.0
+        else:
+            result.inputs["annualized_ttm"] = 1.0
 
 
 @dataclass(frozen=True)
@@ -187,9 +222,10 @@ class FundamentalAnalyst:
                 out.append((group, result))
         if ctx.price is not None:
             for result in valuation_metrics.compute(
-                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors
+                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors, ctx.ttm
             ):
                 out.append((valuation_metrics.GROUP, result))
+        _flag_annualization(out, ctx.ttm_flows)
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:

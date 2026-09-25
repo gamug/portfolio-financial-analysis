@@ -28,8 +28,11 @@ def compute(
     stmts: Statements,
     period_key: str,
     prior_key: str | None = None,
-    ttm: dict[str, float] | None = None,  # uniform ComputeFn signature, unused here
+    ttm: dict[str, float] | None = None,
 ) -> list[MetricResult]:
+    """ROIC divides NOPAT (a flow) by invested capital (a stock), so on a 10-Q its NOPAT is
+    trailing-twelve-months (*ttm*, T-105); the ``nopat`` metric itself stays the filing's own
+    period value, as reported."""
     operating = stmts.get("operating_income", period_key)
     tax = stmts.get("income_tax", period_key)
     pretax = stmts.get("pretax_income", period_key)
@@ -42,6 +45,8 @@ def compute(
 
     rate = effective_tax_rate(tax, pretax)
     nopat = operating * (1.0 - rate) if operating is not None else None
+    operating_annual = ttm.get("operating_income") if ttm else operating
+    nopat_annual = operating_annual * (1.0 - rate) if operating_annual is not None else None
     invested = sum_present(debt, equity)
     invested_ex_cash = invested - cash if invested is not None and cash is not None else invested
 
@@ -53,13 +58,14 @@ def compute(
         total_debt=debt,
         equity=equity,
         cash=cash,
+        nopat_ttm=nopat_annual if ttm else None,
     )
     return [
         MetricResult("effective_tax_rate", rate, "ratio", inputs),
         MetricResult("nopat", nopat, "usd", inputs),
         MetricResult(
             "return_on_invested_capital",
-            safe_div(nopat, invested_ex_cash),
+            safe_div(nopat_annual, invested_ex_cash),
             "ratio",
             inputs,
         ),

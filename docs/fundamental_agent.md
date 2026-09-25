@@ -190,6 +190,17 @@ its siblings. `_analyze_one`: upsert filing → `append_financial_facts` → (if
 `insert_snapshot`. Failures per task go to `analysis_run_error`
 and don't stop the batch.
 
+### TTM on 10-Qs (F4, T-105)
+
+Every ratio that divides a flow by a stock or a price level uses trailing-twelve-month flows on
+a 10-Q: ROA/ROE, asset/inventory/receivables turnover, FCF yield (all three variants), net debt
+/ EBITDA and ROIC. `pipeline._ttm_flows` builds them with `db.ttm_detail`, which tries, per flow:
+the year-to-date identity `FY(prior 10-K) − YTD(last year) + YTD(this year)` (the filing's own
+two YTD columns — a first quarter's YTD is its quarter — plus the recorded prior 10-K); then the
+four recorded quarters; then quarter × 4. Each annualizing group's audit inputs carry
+`annualized_ttm = 1` or `annualized_x4 = 1` (crude, excludable). Raw single-period values always
+stay in the inputs — later filings read them back.
+
 ### `quality.py` — Ring-1 data-quality gates (`DQ_*`, T-065)
 
 Seven deterministic, LLM-free checks over a filing's **stored** metrics (value +

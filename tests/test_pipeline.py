@@ -17,8 +17,16 @@ from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.edgar_client import FilingRef
 from fundamental_agent.metrics import compute_group
-from fundamental_agent.metrics.base import MetricResult
-from fundamental_agent.pipeline import RunParams, _Engine, _plan, _targets, _ttm_flows, _YearTask
+from fundamental_agent.metrics.base import MetricResult, TTMFlow
+from fundamental_agent.pipeline import (
+    _TTM_ITEMS,
+    RunParams,
+    _Engine,
+    _plan,
+    _targets,
+    _ttm_flows,
+    _YearTask,
+)
 from fundamental_agent.statements import Statements
 from kg_schema.queries import UniverseMember
 
@@ -131,7 +139,7 @@ def test_ttm_flows_reads_the_prior_quarters_by_the_targets_period_end(
 
     result = _ttm_flows(_engine(memory_db), task, stmts, target)
 
-    assert result["net_income"] == current + 30.0 + 20.0 + 10.0
+    assert result["net_income"] == TTMFlow(current + 30.0 + 20.0 + 10.0, "quarters")
 
 
 def test_ttm_flows_falls_back_to_times_four_for_a_fresh_10q(memory_db: Database) -> None:
@@ -146,8 +154,8 @@ def test_ttm_flows_falls_back_to_times_four_for_a_fresh_10q(memory_db: Database)
     result = _ttm_flows(_engine(memory_db), task, stmts, targets[0])
 
     expected = {
-        item: value * 4
-        for item in ("net_income", "revenue", "cogs")
+        item: TTMFlow(value * 4, "x4")
+        for item in _TTM_ITEMS
         if (value := stmts.get(item, targets[0].period.key)) is not None
     }
     assert expected  # the fixture does carry at least one of these
