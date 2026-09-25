@@ -84,6 +84,18 @@ def jpm_10k() -> Statements:
 
 
 @pytest.fixture
+def nee_10k() -> Statements:
+    """NextEra Energy FY2025: revenue only as the utility total (T-102)."""
+    return Statements.from_payload(_load("financials_NEE_10-K_2026_acc-0000753308-26-000015.json"))
+
+
+@pytest.fixture
+def xel_10k() -> Statements:
+    """Xcel Energy FY2025: the utility total beside its regulated/unregulated lines (T-102)."""
+    return Statements.from_payload(_load("financials_XEL_10-K_2026_acc-0000072903-26-000009.json"))
+
+
+@pytest.fixture
 def msft_10q() -> Statements:
     return Statements.from_payload(_load("financials_MSFT_10-Q_2024.json"))
 

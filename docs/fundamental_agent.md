@@ -10,7 +10,7 @@ immutable `score_snapshot` row (`score_type='FUNDAMENTAL'`) per
 ```bash
 uv run python -m fundamental_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
     [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections]
-uv run python -m fundamental_agent quality [--metrics-version metrics-v2]  # Ring-1 DQ gates (backfill)
+uv run python -m fundamental_agent quality [--metrics-version metrics-v3]  # Ring-1 DQ gates (backfill)
 uv run python -m fundamental_agent migrate        # shared-schema migrations
 ```
 
@@ -68,7 +68,9 @@ S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
 `cash_flow`. Duration columns look like `"2023-09-30 (FY)"` / `"(Q3)"` / `"(YTD)"`;
 **balance-sheet rows use bare instant dates** and resolve against the
 nearest-earlier instant. `REGISTRY` maps ~25 line items to US-GAAP tags with
-standard/label fallbacks. `iter_facts` flattens every non-abstract numeric cell for
+standard/label fallbacks. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
+`RevenuesNetOfInterestExpense` for banks, `RegulatedAndUnregulatedOperatingRevenue` for
+utilities — T-102) over summing its named components, subject to T-095's plausibility floor. `iter_facts` flattens every non-abstract numeric cell for
 `financial_facts`.
 
 ### `metrics/` — one module per group

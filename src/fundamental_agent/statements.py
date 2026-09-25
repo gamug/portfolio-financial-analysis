@@ -117,7 +117,15 @@ REGISTRY: dict[str, LineItem] = {
         ),
         # Aggregate/"Total revenue(s)" concepts: if present, used alone, never
         # summed with the component concepts above (F2).
-        total_concepts=("us-gaap_Revenues", "us-gaap_RevenuesNetOfInterestExpense"),
+        # ``RegulatedAndUnregulatedOperatingRevenue`` is a utility's total operating
+        # revenues -- the taxonomy parent of Regulated-/UnregulatedOperatingRevenue.
+        # AWK/DTE/DUK/NEE/SRE/XEL tag their income-statement total only with it, so
+        # without it their revenue resolved to NULL (T-102, docs/model_fixes.md).
+        total_concepts=(
+            "us-gaap_Revenues",
+            "us-gaap_RevenuesNetOfInterestExpense",
+            "us-gaap_RegulatedAndUnregulatedOperatingRevenue",
+        ),
         sum_components=True,
         # ExcludingAssessedTax / IncludingAssessedTax are the SAME line
         # reported two ways (net of vs. gross of pass-through sales/excise

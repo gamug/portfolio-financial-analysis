@@ -1661,3 +1661,80 @@ these is quarantined and vetoed until it is fixed, instead of scored.
 - **`DQ_SECTOR_Z`** — Work item 8's companion, once robust standardization exists.
 - **F1's ambiguous-case branch** could now also record into `data_quality_issue`
   (F1's residual note); not wired here.
+
+---
+
+## T-102 — Utilities' total operating revenue never resolved
+
+**Status**: Fixed 2026-09-25 (branch `fix/t102-utility-revenue-concept`, `T-102`), metrics
+engine bumped to `metrics-v3`. Production is not recomputed here (`T-100`).
+
+### Symptom
+
+`T-065`'s gates, backfilled on a copy of production, raised `DQ_REVENUE_POS` on all 19 NEE
+filings: net income reported (e.g. FY2025 $5,332M), revenue NULL — so gross, operating and
+net margin, both cash-flow margins, asset turnover and revenue growth were NULL too, and
+`cycle` HARD-vetoed NEE in every run.
+
+### Root cause — verified against the filings, then across the sector
+
+NEE's income statement carries its revenue on one row, `us-gaap_RegulatedAndUnregulatedOperatingRevenue`
+("OPERATING REVENUES", $27,412M for FY2025). `statements.REGISTRY["revenue"]` knew neither
+that concept as a total nor as a component, and the `label_contains` fallback does not apply
+to revenue, so `Statements.get("revenue")` returned None.
+
+To see whether NEE was alone, the latest 10-K of every as-of S&P 500 utility (31, from
+`universe.db` as of 2026-09-25) was fetched through the EDGAR gateway and resolved with the
+pre-fix registry: **6 of 31 returned None** — AWK, DTE, DUK, NEE, SRE, XEL — and every one of
+them tags its income-statement total only as this concept. Where the filer also reports the
+breakdown, the lines sum to it exactly: DTE 8,849 + 6,965 = 15,814; DUK 29,060 + 2,870 +
+307 = 32,237; SRE 7,319 + 4,552 + 1,831 = 13,702; XEL 12,160 + 2,452 + 57 = 14,669 ($M).
+None of the other 25 utilities carries the concept.
+
+### Theoretical/technical reference
+
+US-GAAP taxonomy element `RegulatedAndUnregulatedOperatingRevenue` (standard label
+"Regulated and Unregulated Operating Revenue"; documentation: "The total amount of operating
+revenues recognized during the period"; credit, duration), whose children in the taxonomy's
+presentation are `RegulatedOperatingRevenue` and `UnregulatedOperatingRevenue` — checked via
+[Calcbench's element page](https://www.calcbench.com/element/RegulatedAndUnregulatedOperatingRevenue).
+It is an aggregate by definition, which the four exact sums above confirm on real filings.
+
+### Fix
+
+`us-gaap_RegulatedAndUnregulatedOperatingRevenue` added to `REGISTRY["revenue"].total_concepts`
+(beside `Revenues` and the banks' `RevenuesNetOfInterestExpense`). As a total it is used alone —
+never summed with the regulated/unregulated lines (F2's rule) — and it passes through T-095's
+plausibility floor like the other totals. `METRICS_ENGINE_VERSION` → `metrics-v3`.
+
+### Design decisions
+
+- **A total, not a component.** Listing it in `concepts` would work for NEE/AWK (one row) but
+  is wrong in kind; and adding the regulated/unregulated lines as components instead would
+  sum XEL's company-specific `xel_RegulatedOperatingRevenueElectric` out (not a us-gaap tag),
+  under-counting it. The total is the reported figure.
+- **Why bump the version.** Production holds `metrics-v2` rows for NEE with NULL margins;
+  writing corrected rows under the same label would make two different computations share a
+  version — the collision `engine_version` exists to prevent (T-088's reasoning). Consequence
+  (T-090's resolver takes the newest version *present* per group): once any run writes
+  `metrics-v3` rows for only part of the universe, `cycle`/`quant` should pin
+  `--metrics-version metrics-v2` until the full recompute (`T-100`) has written `v3` for all.
+
+### Verification
+
+- Survey after the fix: all 31 utilities resolve; the 6 changed ones have net margins of
+  9.2–21.6% (DTE lowest, AWK highest), plausible for utilities; the other 25 resolve to the
+  same value as before. NEE's 10-Qs resolve as well (8 checked across 2022, 2024, 2026 —
+  e.g. 2022Q1 $2,890M, net income −$693M, matching the gate's recorded evidence).
+- Real captured fixtures added: NEE FY2025 10-K (the total alone) and XEL FY2025 10-K (the
+  total beside its lines). Tests: both resolve to the reported total; the new total still
+  loses to a far larger named component (T-095 floor); NEE's engine-computed metrics raise no
+  `DQ_REVENUE_POS`. Mutation-checked: removing the concept fails the three real-filing tests.
+- `uv run pytest -q` — 561 passed (was 557). `ruff`/`mypy` green.
+
+### Residual scope, deliberately deferred
+
+- **Production re-persist** — `T-100`'s full recompute writes the `metrics-v3` rows; then a
+  `quality` backfill gates them.
+- **Only utilities' 10-Ks were surveyed** for this concept (it is a utility-industry element);
+  other sectors were not swept for other unrecognised revenue totals.

@@ -198,21 +198,34 @@ defects the gates now quarantine and veto, but do not fix. Each is a methodology
 (constitution AI behavior #12: verified, cited, recorded in `docs/model_fixes.md`). →
 `PLAN.md` Work item 13.
 
-- [ ] **T-102** Resolve NEE's revenue: its income statement reports
+- [x] **T-102** Resolve NEE's revenue: its income statement reports
       `us-gaap_RegulatedAndUnregulatedOperatingRevenue` ("OPERATING REVENUES", a utility
       tag), which `statements.REGISTRY["revenue"]` does not list, so revenue is NULL in all
       19 NEE filings and every revenue-denominated ratio with it; `DQ_REVENUE_POS` HARD-vetoes
       NEE until this lands. Decide how the tag joins the registry (total vs. component,
       against `T-095`'s plausibility floor), check other utilities for it. **Acceptance**:
       NEE's revenue resolves to the reported operating revenues; a `quality` re-gate of the
-      new metrics version clears `DQ_REVENUE_POS` for NEE.
+      new metrics version clears `DQ_REVENUE_POS` for NEE. **Done 2026-09-25**: the tag is
+      the taxonomy's *total* operating revenue (parent of `Regulated-`/
+      `UnregulatedOperatingRevenue`), so it joined `total_concepts` (still behind `T-095`'s
+      floor). A survey of all 31 as-of S&P 500 utilities' latest 10-K via the gateway: 6
+      resolved NULL — AWK, DTE, DUK, NEE, SRE, XEL, every one tagging its total only this
+      way (the components sum to it exactly where reported) — and all 6 now resolve (net
+      margins 9–22%); the other 25 are unchanged. NEE's 10-Qs resolve too (8 checked,
+      2022–2026). The engine is bumped to **`metrics-v3`**. Gate check: the metrics computed
+      from NEE's real FY2025 10-K raise no `DQ_REVENUE_POS`
+      (`tests/test_data_quality.py`). Production still holds only `metrics-v2`; its `v3`
+      rows come from `T-100`'s full recompute — until then, pin `--metrics-version
+      metrics-v2` if anything writes `v3` rows for only part of the universe. Full record in
+      `docs/model_fixes.md`'s T-102 entry.
 - [ ] **T-103** Fix F1's residual on MCD FY2023–2025Q2: seven consecutive filings store
       `shares` in millions (`732.3` … `717.6`), so market cap is ~10⁻⁶ of the real value
       (`DQ_MCAP_SCALE` + `DQ_FCF_YIELD`). F1's overlapping-history anchor is itself
       mis-scaled inside such a run, and its EPS corroboration only covers
       `diluted_shares`. **Acceptance**: those filings' market cap within the gate's range
       under a new metrics version, F1's existing tests unchanged, and a `quality` re-gate
-      clears them.
+      clears them. *(Version: `T-102` bumped to `metrics-v3`; this lands under `metrics-v3`
+      too if no `v3` rows have been persisted in production by then, else it bumps again.)*
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
