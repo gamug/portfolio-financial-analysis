@@ -82,6 +82,31 @@ CREATE TABLE IF NOT EXISTS score_snapshot (
 CREATE INDEX IF NOT EXISTS ix_score_snapshot_type_time
     ON score_snapshot (score_type, event_time);
 
+-- Ring-1 deterministic data-quality gates (T-040 / T-065). One row per gated metric of a
+-- filing, per metrics engine version it was evaluated on and per gate version: append-only,
+-- a re-run of the same gate version over the same metrics is a no-op. `quarantined = 1`
+-- means consumers read that metric as NULL; a HARD row also triggers `cycle`'s
+-- DATA_QUALITY veto; a SOFT row that is not quarantined is a non-blocking review item.
+CREATE TABLE IF NOT EXISTS data_quality_issue (
+    id                    INTEGER PRIMARY KEY,
+    filing_id             INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    asset_id              INTEGER NOT NULL REFERENCES assets(id),
+    metric_group          TEXT NOT NULL,
+    metric_name           TEXT NOT NULL,
+    metric_engine_version TEXT NOT NULL,       -- the fundamental_metrics version gated
+    rule_id               TEXT NOT NULL,       -- 'DQ_MARGIN', ...
+    severity              TEXT NOT NULL CHECK (severity IN ('HARD', 'SOFT')),
+    quarantined           INTEGER NOT NULL,
+    value                 REAL,                -- the stored metric value that was gated
+    evidence_json         TEXT,
+    gate_version          TEXT NOT NULL,       -- 'dq-v1'
+    created_at            TEXT NOT NULL,
+    run_id                INTEGER,
+    UNIQUE (filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)
+);
+CREATE INDEX IF NOT EXISTS ix_dqi_asset ON data_quality_issue (asset_id);
+CREATE INDEX IF NOT EXISTS ix_dqi_rule ON data_quality_issue (rule_id, severity);
+
 CREATE TABLE IF NOT EXISTS rule_catalog (
     rule_id     TEXT PRIMARY KEY,
     description TEXT NOT NULL,

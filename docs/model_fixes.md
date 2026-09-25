@@ -1535,3 +1535,129 @@ task existed; this change only prevents a recurrence.
   `DividendsNotReady` guard does too, checked deep in `run_build_returns`, not before every
   upstream step); the guard's only job is to keep the *live* `portfolio_position` book itself
   from being corrupted, and it does, unconditionally, before `sync_positions` runs.
+
+---
+
+## T-065 — Ring-1 deterministic data-quality gates (`DQ_*`)
+
+**Status**: Built 2026-09-25 (branch `feat/t065-ring1-dq-gates`, `T-065`, with its table
+`T-040`). Verified against a copy of production; production's own `data_quality_issue` is
+filled by `T-100`'s full-universe run (it was already deferred there by `T-068`).
+
+### Symptom
+
+The 2026-09-08 forensic audit (`PLAN.md` Work item 7) found metric values that are not
+business facts but data errors — margins above 500%, FCF yields in the thousands, market
+capitalisations a million times too small — flowing unchecked into `cycle`'s scores and
+vetoes. F1/F2/F4 fixed the causes it identified, but nothing caught the *next* unknown cause.
+Re-checked against today's production (the 20-asset `T-068` sample, `metrics-v2`, 377
+filings), the symptoms are still present: MCD's FY2023–2025Q2 filings (7) store a market cap
+of about $200k (true: about $210B) and FCF yields of 318–33,410; NEE's 19 filings have no
+revenue at all while reporting net income.
+
+### Root cause — re-derived, not assumed
+
+The two live cases have different causes, both outside the gates' job to fix:
+
+- **MCD**: `inputs_json.shares` is `732.3` (FY2023) through `717.6` (2025Q2) — share counts
+  tagged in millions — against `747,600,000`-style values before and after. It is F1's
+  documented class (SEC scaling notices, F1's reference section), in a run of consecutive
+  mis-scaled filings where F1's overlapping-history anchor is itself mis-scaled and EPS
+  corroboration only covers `diluted_shares`. F1 fixed FY2025; these seven are its residual.
+- **NEE**: the income statement reports `us-gaap_RegulatedAndUnregulatedOperatingRevenue`
+  ("OPERATING REVENUES", a utility tag), which `statements.REGISTRY["revenue"]` does not list,
+  so revenue resolves to NULL and every revenue-denominated ratio is NULL.
+
+Both are tracked as their own fixes (`T-102`, `T-103`). The gates exist so that a defect like
+these is quarantined and vetoed until it is fixed, instead of scored.
+
+### Theoretical/technical reference
+
+- **Scale errors** (`DQ_MCAP_SCALE`, and the FCF-yield/margin ceilings that they surface as):
+  the SEC staff notices cited in F1 — filers tagging values off by a clean power of ten
+  ("three additional zeros"). A market cap outside `[0.001, 100] ×` total assets is five
+  orders of magnitude of tolerance around any real company, so a value outside it is a unit
+  error, not a valuation.
+- **Sign checks** (`DQ_REVENUE_POS`): XBRL US Data Quality Committee rule
+  [DQC_0015 "Negative Values"](https://xbrl.us/data-rule/dqc_0015/): "The US GAAP Taxonomy is
+  designed so that the majority of elements have a positive value. This rule tests whether the
+  values for a given list of elements are negative." (Cited for the principle — sign checks on
+  elements that should be positive — not for its exact element list, which was not verified to
+  include `Revenues`.) A missing revenue beside a reported net income is the same class of
+  defect: the filing's top line did not resolve.
+- **Non-positive denominators** (`DQ_NEG_EQUITY`): a ratio over book equity changes sign when
+  equity does, so D/E and ROE stop ordering companies by what they measure — C2's entry derives
+  this against MCD's data; the HARD condition reuses the thresholds C2 already adopted.
+- **Thresholds**: `PLAN.md` Work item 7's table, calibrated by the audit on the pre-fix
+  production database (21 / 50 / 74 / 39 / 11 / 342 / 0 filings). Not recalibrated here.
+
+### Fix
+
+- **`data_quality_issue`** (`kg_schema/ddl.py`, T-040 — built here: `kg_schema` is vendored,
+  so the "upstream `portfolio-common`" framing of Work item 5 no longer applies) plus the
+  read-contract view `v_data_quality_issue`.
+- **`fundamental_agent/quality.py`**: the seven gates as pure functions over a filing's stored
+  metrics (value + `inputs_json`), recorded one row per gated metric. Run automatically after
+  each filing's metrics are stored (`pipeline._analyze_one`), and as a backfill by
+  `python -m fundamental_agent quality`.
+- **`cycle`**: `data.data_quality()` reads the verdicts on each asset's latest filing;
+  quarantined metrics read as NULL before any score or rule sees them (including the market
+  cap used for size and earnings yield); a HARD verdict raises the new `DATA_QUALITY` veto.
+
+### Design decisions
+
+- **Keyed by metric engine version and gate version** (a deviation from `T-040`'s
+  `UNIQUE(filing_id, metric_name, rule_id)`): T-090 lets a consumer choose among parallel
+  metric versions, so a verdict must name the version it judged — `cycle` reading `metrics-v3`
+  is never quarantined by a verdict on `metrics-v2`. `gate_version` (`dq-v1`) makes a future
+  threshold change a parallel set of rows, the same append-only rule as every measurement
+  table. `metric_group` joined the key because metric names are only unique within a group.
+- **Quarantine and severity are separate columns.** `DQ_NEG_EQUITY` quarantines D/E and ROE
+  whether or not the firm is distressed, but is HARD only when it is; `DQ_MARGIN_REVIEW` is
+  SOFT and quarantines nothing (a review item). A SOFT verdict never becomes a SOFT veto —
+  that would penalise the score, which `PLAN.md` reserves for the review list.
+- **C2 is preserved.** With D/E quarantined, a negative-equity name would otherwise lose its
+  leverage penalty in VALORIZATION; `cycle` ranks it as the worst leverage instead
+  (`float("inf")`, C2's own transform). `_LeverageRule`'s negative-equity branch stays as a
+  backstop for filings not yet gated; on gated ones the HARD case surfaces as `DATA_QUALITY`.
+- **The gates live with the writer.** `fundamental_agent` owns `fundamental_metrics`; `cycle`
+  only reads the table (it never imports an agent). The shared `DATA_QUALITY_GATE_VERSION`
+  lives in `kg_schema.versions` so both agree without importing each other. The gate's read
+  goes through T-090's `VERSION_FILTER_SQL`, so the reader guard holds.
+- **`cycle`'s manifest names the gate version** (`"quality": "dq-v1"`): its output depends on
+  it. Consequence: an existing `cycle_run` recorded before T-065 has a different manifest tag,
+  so re-running *that same date* is refused by T-090's guard — new dates are unaffected.
+- **Same T-1 lag as every veto** (FR-006): a verdict found on cycle N applies from N+1.
+- **`quant` does not read the quarantine yet**: its equilibrium weights use the valuation
+  group's market cap directly. Flagged below.
+
+### Verification
+
+- `tests/test_data_quality.py` (new): each gate's trigger and boundary (the strict
+  inequalities of the table), per-metric recording, idempotence, per-version judging, the
+  single-filing path, the CHECK and the view, the `quality` command, `cycle` reading only the
+  latest filing's verdicts for its versions and gate version, a HARD gate vetoing end to end
+  from the next cycle, a quarantined metric dropping out of the score, and negative equity
+  keeping the worst leverage without a veto. `tests/test_pipeline.py`: the run gates every
+  analysed filing. Mutation-checked by hand: dropping the quarantine, the veto context or the
+  C2 transform each fails a test.
+- Backfill on a copy of production (`quality`, 15 s, $0): 377 filings, 264 issue rows —
+  `DQ_FCF_YIELD` 7 (MCD), `DQ_MARGIN` 0, `DQ_MARGIN_REVIEW` 6 (APO, CPT, HOOD), `DQ_OCF_MARGIN`
+  1 (APO 2022Q1), `DQ_MCAP_SCALE` 7 (MCD, the same filings), `DQ_NEG_EQUITY` 41 (19 HARD:
+  SBAC, debt/assets > 1; MCD, APA, APO SOFT), `DQ_REVENUE_POS` 19 (NEE). A second run inserts
+  0 rows. The audit's counts were for the full pre-fix universe, so they are not comparable
+  to a 20-asset sample; the pattern (scale and sign defects, negative equity) is the same.
+- `cycle monitor --analysis-date 2026-09-23` on that copy: HARD vetoes NEE (`DATA_QUALITY`,
+  `DQ_REVENUE_POS`) and SBAC (`DATA_QUALITY`, `DQ_NEG_EQUITY` — it was `LEVERAGE_EXTREME` on
+  2026-09-22 under the same thresholds), MA unchanged (`LEVERAGE_EXTREME`, D/E 4.39). Net
+  change on the live sample: NEE is now excluded until its revenue resolves.
+
+### Residual scope, deliberately deferred
+
+- **Production backfill** — `T-100` (full universe), per `T-068`.
+- **`T-102`** NEE's revenue concept; **`T-103`** MCD's FY2023–2025Q2 share scale.
+- **`quant` reading the quarantine** (market cap in the equilibrium weights) — not in
+  `PLAN.md`'s acceptance; the MCD filings it would matter for are historical as-ofs.
+- **`DQ_SECTOR_Z`** — Work item 8's companion, once robust standardization exists.
+- **F1's ambiguous-case branch** could now also record into `data_quality_issue`
+  (F1's residual note); not wired here.

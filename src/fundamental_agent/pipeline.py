@@ -14,7 +14,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
-from fundamental_agent import db
+from fundamental_agent import db, quality
 from fundamental_agent.agents import FilingContext, FundamentalAnalyst, build_model
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
@@ -434,6 +434,9 @@ def _analyze_one(
     db.record_metrics(
         engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
     )
+    # Ring-1 data-quality gates (T-065) over what was just stored, so every newly analysed
+    # filing is gated; `python -m fundamental_agent quality` backfills older ones.
+    quality.gate_version(engine.conn, db.METRICS_ENGINE_VERSION, filing_id=filing_id, run_id=run_id)
 
     assessment = result.assessment
     db.insert_snapshot(

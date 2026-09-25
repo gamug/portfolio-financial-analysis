@@ -15,9 +15,9 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 5–9 below
 (`T-040`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. (Closed Work items 1, 3, 6, 10 and 11 are in `CHANGELOG.md`.)
-Work item 7's `T-068` is done (the small-sample Phase A validation). Work item 5
-continues in parallel as an external prerequisite → **8 (P1, supersedes Work item
+open design work. (Closed Work items 1, 3, 6, 7, 10 and 11 are in `CHANGELOG.md`.)
+**Work item 13 (`T-102`/`T-103`, P0)** fixes the data defects `T-065`'s gates found. Work
+item 5 continues in parallel (now local, see its note) → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
@@ -86,11 +86,23 @@ only durable record.
 
 ## Work item 5 — Upstream: `portfolio-common` v0.3.0 additive data contract (P0, external)
 
-- [ ] **T-040** Add `data_quality_issue` table (`filing_id`/`asset_id` FKs,
+*(Note 2026-09-25: `kg_schema` is vendored in this repo (`src/kg_schema/`, see
+`docs/kg_schema.md`), so these additive changes land **here**, not in `portfolio-common` —
+`T-040` was built that way. `T-044`'s release-and-bump no longer has anything to bump;
+reformulate it when this work item is next picked up.)*
+
+- [x] **T-040** Add `data_quality_issue` table (`filing_id`/`asset_id` FKs,
       `metric_name`, `rule_id`, `severity CHECK IN ('HARD','SOFT')`,
       `value`, `created_at`, `run_id`, `UNIQUE(filing_id, metric_name,
       rule_id)` + indexes) in `portfolio_common/kg_schema/ddl.py`. →
-      `PLAN.md` Work item 5, step 1.
+      `PLAN.md` Work item 5, step 1. **Done 2026-09-25, inside `T-065`** — in this
+      repo's vendored `src/kg_schema/ddl.py` (`kg_schema` left `portfolio-common` at its
+      v1.0.0, so there is no upstream release to wait for), with the read-contract view
+      `v_data_quality_issue`. Key widened to `UNIQUE(filing_id, metric_group,
+      metric_name, metric_engine_version, rule_id, gate_version)` plus a `quarantined`
+      flag and `evidence_json`, so a verdict names the T-090 metric version it judged
+      and a future threshold change writes parallel rows — rationale in
+      `docs/model_fixes.md`'s T-065 entry.
 - [ ] **T-041** Add nullable `score_snapshot.forensic_flags_json` column
       via the existing missing-columns mechanism. → step 2.
 - [ ] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
@@ -102,205 +114,6 @@ only durable record.
       repo's `pyproject.toml` (`[tool.uv.sources]`) from `v1.2.1` →
       `v0.3.0`, regenerate `uv.lock`, `uv sync`, and re-verify `ensure()`
       against the live `KG_FINANCIAL_DB`. → `PLAN.md` acceptance criteria.
-
-## Work item 7 — P0: production data-integrity and correctness fixes (this repo, CRITICAL, highest priority)
-
-- [x] **T-060** Fix **F1** — cross-check a filing's reported share count
-      against already-ingested history and, for `diluted_shares`, its own
-      `net_income ÷ EPS_diluted` (`fundamental_agent.db.
-      detect_share_scale_factors`), correcting `_share_count` before market
-      cap is computed. Verified 2026-09-14: MCD's FY2025 10-K corrects to
-      ≈$219B (was $218,953.34); WAT's most recent 10-Q corrects to ≈$37.2B
-      (was ≈$37.2T) — full record, including why the original "unit-scale
-      sanity check"/"≈$22B" framing needed correcting, in
-      `docs/model_fixes.md`'s F1 entry. Repo-wide "0 filings with `|FCF
-      yield| > 50%`" not re-verified (needs a `--fresh` universe re-run,
-      out of scope here, and likely needs F2/F4 too). → `PLAN.md` Work item
-      7, F1.
-- [x] **T-061** Fix **F2** — make `Statements.get()` prefer an explicit
-      aggregate revenue concept over a component stream, order-independent,
-      and sum distinct components when no aggregate is tagged
-      (`src/fundamental_agent/statements.py`, `LineItem.total_concepts`/
-      `sum_components`/`synonym_groups`). Verified 2026-09-15: ~~98/124
-      (79.0%)~~ **93/124 (75.0%)** net_margin (corrected post-merge — a
-      code-review bot caught two live double-counting gaps in the summing
-      path, both fixed same-day) and 46/54 (85.2%, unaffected) operating_
-      cash_flow_margin outlier filings resolve — not REIT-specific (also
-      fixes `APO`/`WFC`/`HUM`/`HOOD`/`APA`); full record, including why the
-      original "REIT-classified filers" framing needed correcting and the
-      post-merge correction detail, in `docs/model_fixes.md`'s F2 entry.
-      Residual (mostly single-concept filings, several bank/broker
-      custom-tag cases) is a separate, larger investigation, explicitly
-      deferred. → `PLAN.md` Work item 7, F2.
-- [x] **T-062** Fix **F4** — TTM-annualize 10-Q flow numerators (trailing 4
-      quarters, fallback ×4) in `metrics/profitability.py`/`efficiency.py`.
-      Verify: 10-Q vs. 10-K medians for ROA/ROE/asset_turnover converge
-      (were 3.79–3.86× apart). → F4. **Fixed 2026-09-15**: `db.ttm_flows`
-      sums the filing's own quarter plus its three predecessors (deriving a
-      10-K-only Q4 as `FY − Q1 − Q2 − Q3`), read back from each earlier
-      filing's own already-recorded `fundamental_metrics.inputs_json` (never
-      re-deriving concept resolution), falling back to `current × 4` per
-      item when trailing history is incomplete; wired through
-      `FilingContext.ttm` into `profitability.py`'s `return_on_assets`/
-      `return_on_equity` and `efficiency.py`'s `asset_turnover`/
-      `inventory_turnover`/`receivables_turnover` only (margins are
-      flow-over-flow and need no adjustment). 7 new tests
-      (`tests/test_ttm.py`, `tests/test_pipeline.py`); full suite (231,
-      was 224), ruff, mypy all green. The stated acceptance criterion
-      (10-Q vs. 10-K medians actually converging in the live DB) needs a
-      `--fresh` re-run against production — same as F1/F2, deferred to
-      `T-068`'s Phase A re-sequence, not part of this code-only fix. Full
-      record in `docs/model_fixes.md`'s F4 entry, including the
-      deliberately-deferred `roic.py`/`leverage.py` analogous cases. →
-      `PLAN.md` Work item 7, F4.
-- [x] **T-063** Fix **C1** — correct the T-1 veto cutoff bug in
-      `src/cycle/orchestrator.py:264`'s `_rank()`. Verify:
-      `SELECT COUNT(*) FROM cycle_ranking WHERE vetoed != 0` is `> 0` on
-      the next real cycle run following an active HARD veto (was 0/503
-      always); the vetoed name is excluded from `portfolio_position`. → C1.
-      **Investigated 2026-09-15 — diagnosis corrected, no code fix made**:
-      the comparator (`_t_minus_1`/`hard_vetoed_as_of`/
-      `active_soft_vetoes`) matches SPEC.md's FR-006 exactly and is proven
-      correct by both the pre-existing `test_t_minus_1_hard_veto_excludes_
-      asset` and a new test exercising the real rule-detection path across
-      two genuinely different cycle dates
-      (`test_hard_veto_detected_via_rules_excludes_asset_starting_next_
-      cycle`); `git log` confirms `orchestrator.py`/`writers.py` were never
-      touched by any prior fix. "0/503 always" is explained by `--analysis-
-      date` defaulting to today on every invocation combined with
-      `cycle_run`'s `UNIQUE(cycle_type, cycle_date)` resume-by-key design —
-      repeated same-day invocations collapse onto one snapshot rather than
-      ever advancing to a genuinely new day, so the T-1 settling period has
-      apparently never elapsed once in production; this is an operational
-      cadence gap, not a code defect. Full record, including why the
-      original "off-by-one/direction bug" framing needed correcting (same
-      pattern as F2), in `docs/model_fixes.md`'s C1 entry. → `PLAN.md` Work
-      item 7, C1.
-- [x] **T-064** Fix **C2** — special-case `equity <= 0` in
-      `src/cycle/rules/builtin.py`'s `LEVERAGE_EXTREME` rule (or gate on
-      `debt_to_assets`/`interest_coverage` instead of `debt_to_equity` when
-      equity is non-positive); stop `valorization.py`'s quality percentile
-      from masking the leverage risk. Verify: a negative-book-equity,
-      high-absolute-debt fixture triggers the veto, not a pass. → C2.
-      **Fixed 2026-09-15**: `builtin.py`'s `LEVERAGE_EXTREME` is now a
-      dedicated `_LeverageRule` — a negative `debt_to_equity` (debt is
-      never negative, so this reliably signals non-positive equity, no new
-      persisted metric needed) gates on `debt_to_assets > 0.8` or
-      `interest_coverage < 1.5` instead, reusing PLAN.md's own Ring-1
-      `DQ_NEG_EQUITY` calibration (342 filings) rather than inventing new
-      thresholds; positive `debt_to_equity` keeps the original `> 3.0`
-      check unchanged. `valorization.py`'s quality factor now maps a
-      negative `debt_to_equity` to `float("inf")` before ranking so it
-      sorts as worst-, not best-in-cohort leverage. 6 new tests
-      (`tests/test_cycle.py`); full suite (238, was 232), ruff, mypy all
-      green. Residual: production's `rule_catalog` row is stale until a
-      one-time `UPDATE` (an operational follow-up, `seed_catalog` never
-      overwrites); `DQ_NEG_EQUITY` itself stays blocked on `T-040`. Full
-      record in `docs/model_fixes.md`'s C2 entry. → `PLAN.md` Work item 7,
-      C2.
-- [ ] **T-065** Implement the 7 Ring-1 `DQ_*` deterministic gates
-      (`DQ_FCF_YIELD`/`DQ_MARGIN`/`DQ_MARGIN_REVIEW`/`DQ_OCF_MARGIN`/
-      `DQ_MCAP_SCALE`/`DQ_NEG_EQUITY`/`DQ_REVENUE_POS`, thresholds in
-      `PLAN.md` Work item 7's table) writing to `data_quality_issue` +
-      driving a new `cycle` data-quality veto on HARD. **Needs T-040.** →
-      Ring-1 section.
-- [x] **T-066** *(**SUPERSEDED 2026-09-20 by `T-085`**: the derivation below was
-      removed from `src/` — dividends now come only from the pricing gateway,
-      because mining data is `portfolio-data-mining`'s job alone. Kept unchanged
-      as the historical record; the `corpact-v1-derived` rows it wrote remain in
-      the table but `load_actions` no longer reads them.)* Fix **Q3** — derive quarterly dividends from successive
-      10-Q YTD differences (`corpact-v1-derived`) in
-      `src/quant/actions.py`; add engine-version priority
-      (`corpact-v2` > `corpact-v1` > `corpact-v1-derived` >
-      `corpact-v0-approx`) in `quant/db.py::load_actions`. Verify:
-      XOM/PG/T/NEE show `cash_dividend > 0` (was $0.00 for all four). →
-      Q3. **Fixed 2026-09-15**: `actions.py` gained
-      `derive_quarterly_dividends_from_10q_ytd`, run unconditionally
-      alongside the existing FY-level derivation — per 10-Q, prefers a
-      discrete-quarter-tagged DPS fact, else differences successive
-      `(YTD)`-tagged values per fiscal year, else falls back to aggregate
-      payments/shares; anchored to each filing's own `period_end`.
-      `db.py::load_actions` now resolves the best engine **per asset**
-      (not per ex-date, unlike `v_corporate_action`'s existing
-      resolution) to avoid the two derived sources' non-overlapping
-      synthetic ex-dates being blended and roughly double-counting the
-      dividend. 5 new tests (`tests/test_quant_actions.py`); full suite
-      (243, was 238), ruff, mypy all green. Live re-verification of
-      XOM/PG/T/NEE against production data deferred to `T-068`'s Phase A
-      re-sequence (same category as F1/F2/F4/C1/C2). Only the Level-1,
-      local-only half of Q3 — Work item 6's gateway `corpact-v1` target
-      is unaffected by this fix. *(Updated 2026-09-20: the endpoint is now
-      built upstream — `portfolio-data-mining` PR #36 — but not yet
-      redeployed (its `T-026`); `T-085` made it `quant`'s only source and
-      removed this fix's derivation, and `T-052` verifies it live.)* Full record in
-      `docs/model_fixes.md`'s Q3 entry. → `PLAN.md` Work item 7, Q3.
-- [x] **T-067** Fix **Q2** — align `quant evaluate`'s default `--from` to a
-      date with real forward price coverage; ensure the `frontier`
-      objective is exercised end-to-end. Verify:
-      `quant_benchmark_performance` and `quant_frontier_point` both `> 0`
-      rows (both were 0). → Q2. **Fixed 2026-09-15**: `evaluate --from` is
-      now optional, defaulting to `quant.db.earliest_portfolio_as_of`
-      (the earliest persisted `quant_portfolio.as_of`) instead of the
-      previously-documented anti-pattern of reusing `optimize`'s own
-      `--analysis-date` — which, by construction, is the newest date with
-      any price data, leaving no forward window at all; raises a clear
-      `ValueError` if no book exists yet and `--from` is also omitted.
-      `docs/quant.md`'s misleading example corrected. The `frontier`
-      component needed **no code fix**: already correct and already
-      covered end-to-end by the pre-existing
-      `test_optimize_persists_one_book_per_objective`; its 0-rows
-      observation is explained by the historical run simply never having
-      requested it via `--objectives`, deferred as an operational step to
-      `T-068`. 2 new tests (`tests/test_quant_pipeline.py`); full suite
-      (245, was 243), ruff, mypy all green. Full record in
-      `docs/model_fixes.md`'s Q2 entry. → `PLAN.md` Work item 7, Q2.
-- [x] **T-068** *(**re-defined 2026-09-25, at the user's direction**: a small-sample
-      validation, not a full-universe run — the full universe was never this task's
-      purpose and now lives in `T-100`, Work item 12)* Run the audit's **Phase A**
-      re-sequence on a **small sample of assets**, to prove the deterministic pipeline
-      works end to end before anything runs at full scale: recompute metrics (F1/F2/F4)
-      → gateway dividends (T-085/T-052) → re-run `cycle` (exercising T-063/T-064) →
-      re-run the full `quant` pipeline + `evaluate` (exercising T-067). → `PLAN.md` Work
-      item 7 Sequencing note. **Done 2026-09-22** on the 20-ticker sample, inside
-      `T-088` (after its purge of the malformed derived data), then re-run on the same
-      sample once `T-095`/`T-096` landed, so the stored data reflects the fixed code.
-      Verified against production `KG_FINANCIAL_DB` on 2026-09-25: 11,878 `metrics-v2`
-      `fundamental_metrics` rows (20 assets); 7,481 `corpact-v1` gateway actions
-      (`quant_run` 6: 503 of 503 assets fetched, 0 errored); two `cycle select` runs
-      (2026-06-30 and 2026-09-22, 20 assets ranked each; 19 `veto`, 11
-      `portfolio_position` rows); `build-returns` (23,340 `qret-v2` rows, 20 assets) →
-      `build-risk-model` → `optimize` (4 books, 15 frontier points) → `evaluate` (41
-      `quant_benchmark_performance` rows) — `quant_run` 7–10, all `completed`. **Not part
-      of the sample run**: the Ring-1 `data_quality_issue` backfill — its table and gates
-      (`T-040`/`T-065`) aren't built yet, so it moves to `T-100`, which depends on both.
-- [x] **T-069** Add regression tests for F1/F2/F4/C1/C2 under `tests/`;
-      full suite (`pytest`/`ruff`/`mypy`) green. → `PLAN.md` Work item 7
-      acceptance criteria. **Audited 2026-09-15**: each fix already landed
-      with its own regression coverage at fix time (this repo's standing
-      convention, not deferred to a separate task), so no new tests were
-      needed — confirmed by re-reading every test against its finding's
-      mechanism: **F1** `tests/test_share_scale.py` (9 tests — divide/
-      multiply-by-power-of-ten detection, EPS-corroboration-only rule,
-      overlapping-history exclusion) + `tests/test_metrics_valuation.py`
-      (`test_diluted_shares_scale_defect_is_corrected_before_market_cap`,
-      `test_shares_outstanding_scale_defect_also_corrected`,
-      `test_no_scale_factor_leaves_share_count_untouched`); **F2**
-      `tests/test_statements.py` (5 tests — total-over-components
-      precedence, component-summing fallback, tax-synonym disambiguation,
-      label-only-match exclusion, non-revenue items unaffected); **F4**
-      `tests/test_ttm.py` (7 tests) + `tests/test_pipeline.py` (2 tests —
-      10-K unaffected, fresh-10-Q ×4 fallback); **C1**
-      `tests/test_cycle.py::test_t_minus_1_hard_veto_excludes_asset`
-      (pre-existing) plus
-      `test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle`
-      (added during `T-063`'s investigation, exercising the real
-      rule-detection path the diagnosis-correction was about); **C2**
-      `tests/test_cycle.py` (6 tests — both negative-equity HARD-veto
-      branches, the healthy/no-corroboration/positive-D/E non-veto paths,
-      and the valorization ranking-inversion fix). `uv run pytest -q`:
-      245 passed; `ruff check`/`ruff format --check`/`mypy`/`pre-commit`
-      all clean (no source changed by this task). → `PLAN.md` Work item 7
-      acceptance criteria.
 
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
@@ -373,6 +186,29 @@ only durable record.
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
+## Work item 13 — P0: data defects surfaced by the Ring-1 gates
+
+Added 2026-09-25 by `T-065`: its verification on a copy of production found two live data
+defects the gates now quarantine and veto, but do not fix. Each is a methodology change
+(constitution AI behavior #12: verified, cited, recorded in `docs/model_fixes.md`). →
+`PLAN.md` Work item 13.
+
+- [ ] **T-102** Resolve NEE's revenue: its income statement reports
+      `us-gaap_RegulatedAndUnregulatedOperatingRevenue` ("OPERATING REVENUES", a utility
+      tag), which `statements.REGISTRY["revenue"]` does not list, so revenue is NULL in all
+      19 NEE filings and every revenue-denominated ratio with it; `DQ_REVENUE_POS` HARD-vetoes
+      NEE until this lands. Decide how the tag joins the registry (total vs. component,
+      against `T-095`'s plausibility floor), check other utilities for it. **Acceptance**:
+      NEE's revenue resolves to the reported operating revenues; a `quality` re-gate of the
+      new metrics version clears `DQ_REVENUE_POS` for NEE.
+- [ ] **T-103** Fix F1's residual on MCD FY2023–2025Q2: seven consecutive filings store
+      `shares` in millions (`732.3` … `717.6`), so market cap is ~10⁻⁶ of the real value
+      (`DQ_MCAP_SCALE` + `DQ_FCF_YIELD`). F1's overlapping-history anchor is itself
+      mis-scaled inside such a run, and its EPS corroboration only covers
+      `diluted_shares`. **Acceptance**: those filings' market cap within the gate's range
+      under a new metrics version, F1's existing tests unchanged, and a `quality` re-gate
+      clears them.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 Added 2026-09-25, at the user's direction. Every other task in this file is either
@@ -399,19 +235,11 @@ added above it, never below. → `PLAN.md` Work item 12.
 
 ## Status
 
-**🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
-`T-060` (F1) is **done**, 2026-09-14; `T-061` (F2), `T-062` (F4), `T-063`
-(C1), `T-064` (C2), `T-066` (Q3, Level-1 local half only — superseded by
-`T-085`), `T-067` (Q2,
-`evaluate` half only) and `T-069` (regression-coverage audit, no new tests
-needed) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis, no
-code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
-`T-040`) remains in Work item 7; `T-068` is done (the small-sample Phase A
-validation, 2026-09-22).
-Nothing else in `T-040`–`T-084` has started. There is no derive fallback. Execute, with Work item 5 (external, independent prerequisite) in
-parallel → **Work item 7, `T-060`–`T-069`
-(P0, this repo's highest priority — no external dependency for
-`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`)** → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+**🔴 Current top priority (2026-09-08 forensic audit): Work items 5, 8, 9 and 13.**
+Work item 7 is closed (2026-09-25, `T-065` last) — see `CHANGELOG.md`. `T-040` (Work
+item 5) is done; `T-041`–`T-084` have not started. Execute **Work item 13, `T-102`/`T-103`
+(P0 — the defects `T-065`'s gates found)**, with Work item 5 (now local) in parallel →
+**Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
@@ -419,7 +247,8 @@ re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 transfer independent of any task here)**.
 
 Work items 1 (done), 3 (superseded by `T-077` — do not implement), 6 (done
-upstream + `T-052`), 10 (done) and 11 (done 2026-09-25) are closed — see `CHANGELOG.md`.
+upstream + `T-052`), 7 (done 2026-09-25), 10 (done) and 11 (done 2026-09-25) are closed — see
+`CHANGELOG.md`.
 
 Work items 2 and 4 are unaffected by the audit and keep their original,
 lower priority (after Work items 5–9 above): nothing in either has

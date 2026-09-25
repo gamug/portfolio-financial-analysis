@@ -10,6 +10,7 @@ immutable `score_snapshot` row (`score_type='FUNDAMENTAL'`) per
 ```bash
 uv run python -m fundamental_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
     [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections]
+uv run python -m fundamental_agent quality [--metrics-version metrics-v2]  # Ring-1 DQ gates (backfill)
 uv run python -m fundamental_agent migrate        # shared-schema migrations
 ```
 
@@ -183,12 +184,29 @@ date. One failing filing goes to `analysis_run_error` (with its accession) and d
 its siblings. `_analyze_one`: upsert filing → `append_financial_facts` → (if
 `--sections`) `_extract_sections` (non-fatal, logged `stage='sections'`) → build
 `FilingContext` (+ price via `close_on_or_before`) → `analyst.analyze` →
-`record_metrics` → `insert_snapshot`. Failures per task go to `analysis_run_error`
+`record_metrics` → `quality.gate_version` (the Ring-1 gates over the metrics just stored) →
+`insert_snapshot`. Failures per task go to `analysis_run_error`
 and don't stop the batch.
+
+### `quality.py` — Ring-1 data-quality gates (`DQ_*`, T-065)
+
+Seven deterministic, LLM-free checks over a filing's **stored** metrics (value +
+`inputs_json`), one metrics engine version at a time: `DQ_FCF_YIELD` (`|FCF yield| > 0.5`),
+`DQ_MARGIN` (`|net margin| > 5`), `DQ_MARGIN_REVIEW` (`(1, 5]`, SOFT, review only),
+`DQ_OCF_MARGIN` (`|OCF margin| > 3`), `DQ_MCAP_SCALE` (market cap / total assets outside
+`[0.001, 100]`), `DQ_NEG_EQUITY` (equity ≤ 0 — D/E and ROE quarantined; HARD only if
+debt/assets > 0.8 or interest coverage < 1.5), `DQ_REVENUE_POS` (revenue ≤ 0 or missing with
+net income reported). Each hit is one `data_quality_issue` row per gated metric, keyed by the
+metric engine version and `GATE_VERSION` (`dq-v1`), append-only (`INSERT OR IGNORE`).
+`evaluate(fm)` is the pure core; `gate_version(conn, version, *, filing_id=None, run_id=None)`
+records; `gate_all(conn, *, engine_version=None)` is the backfill. Rationale and the
+production-copy verification: `docs/model_fixes.md`, T-065.
 
 ### `cli.py`
 
-`run` subcommand (flags above) + `migrate` subcommand → `kg_schema.cli.run_migrate`.
+`run` subcommand (flags above), `quality` (the gate backfill over every stored filing; no LLM
+variables needed; exit 1 if no metrics are stored for `--metrics-version`) and `migrate` →
+`kg_schema.cli.run_migrate`.
 
 ## Gotchas
 

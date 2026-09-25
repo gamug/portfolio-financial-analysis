@@ -23,6 +23,8 @@ class RuleContext:
     price_obs: dict[int, dict[str, float | None]]
     # asset_id -> most recent FUNDAMENTAL event_time (ISO date) or None
     last_fundamental: dict[int, str | None]
+    # asset_id -> HARD Ring-1 data-quality issues on its latest filing (T-065)
+    data_quality: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 @runtime_checkable

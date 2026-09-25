@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
-from kg_schema.versions import MetricVersions
+from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
 
 
 def active_universe(
@@ -73,6 +75,68 @@ def latest_metrics(
         out.setdefault(int(r["asset_id"]), {})[f"{r['metric_group']}.{r['metric_name']}"] = r[
             "value"
         ]
+    return out
+
+
+@dataclass
+class DataQuality:
+    """What the Ring-1 gates (T-065) decided about each asset's latest filing, for the
+    metric versions this run reads."""
+
+    # asset_id -> {"group.name"} read as NULL
+    quarantined: dict[int, set[str]] = field(default_factory=dict)
+    # asset_id -> the HARD issues (the DATA_QUALITY veto's evidence)
+    hard: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    # assets whose latest filing reports book equity <= 0 (DQ_NEG_EQUITY)
+    negative_equity: set[int] = field(default_factory=set)
+
+    def apply(
+        self, metrics: dict[int, dict[str, float | None]]
+    ) -> dict[int, dict[str, float | None]]:
+        """*metrics* with every quarantined value replaced by None (the input is untouched)."""
+        out: dict[int, dict[str, float | None]] = {}
+        for aid, values in metrics.items():
+            q = self.quarantined.get(aid, set())
+            out[aid] = {k: (None if k in q else v) for k, v in values.items()}
+        return out
+
+
+def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> DataQuality:
+    """The quarantines and HARD issues recorded against each asset's latest filing (the same
+    filing :func:`latest_metrics` reads), for the metric *versions* the run resolved and the
+    current gate version only. A SOFT, unquarantined issue is a review item and is skipped."""
+    rows = conn.execute(
+        """
+        WITH latest AS (
+            SELECT f.asset_id, MAX(f.period_end) AS pe
+            FROM sec_filings f
+            WHERE f.period_end IS NOT NULL AND f.period_end <= ?
+            GROUP BY f.asset_id
+        )
+        SELECT f.asset_id, d.metric_group, d.metric_name, d.rule_id, d.severity,
+               d.quarantined, d.value
+        FROM data_quality_issue d
+        JOIN sec_filings f ON f.id = d.filing_id
+        JOIN latest l ON l.asset_id = f.asset_id AND l.pe = f.period_end
+        WHERE (d.metric_group || '/' || d.metric_engine_version) IN (SELECT value FROM json_each(?))
+          AND d.gate_version = ?
+          AND (d.quarantined = 1 OR d.severity = 'HARD')
+        ORDER BY f.asset_id, d.rule_id, d.metric_group, d.metric_name
+        """,
+        (cycle_date, versions.json_param(), DATA_QUALITY_GATE_VERSION),
+    ).fetchall()
+    out = DataQuality()
+    for r in rows:
+        aid = int(r["asset_id"])
+        key = f"{r['metric_group']}.{r['metric_name']}"
+        if r["quarantined"]:
+            out.quarantined.setdefault(aid, set()).add(key)
+        if r["rule_id"] == "DQ_NEG_EQUITY":
+            out.negative_equity.add(aid)
+        if r["severity"] == "HARD":
+            out.hard.setdefault(aid, []).append(
+                {"rule_id": r["rule_id"], "metric": key, "value": r["value"]}
+            )
     return out
 
 

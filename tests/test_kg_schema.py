@@ -317,6 +317,7 @@ def test_views_select_cleanly(migrated_db: Database) -> None:
         "v_sec_filing_section",
         "v_veto",
         "v_rule_catalog",
+        "v_data_quality_issue",
         "v_weight_scheme",
         "v_weight_component",
         "v_sector_aggregate_snapshot",
