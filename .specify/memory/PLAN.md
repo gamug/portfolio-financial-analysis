@@ -1469,7 +1469,8 @@ duplicates already stored, and the strict `xfail` in `tests/test_quant_version_c
 flipped to a pass. *Acceptance*: two identical `optimize` runs leave one book per objective.
 **Done 2026-09-25** — `insert_portfolio` update-or-insert on `frontier_k IS ?` (a second defect —
 the read-back returned the oldest duplicate — fixed with it) plus migration m007 (duplicates
-merged, NULL-safe unique index). Production held none; `migrate` verified on a scratch copy.
+merged, NULL-safe unique index). Production held none; `migrate` verified on a scratch copy, then
+run on production 2026-09-25 (schema_version 7; backup `financial.db.pre-t101-migrate-backup-20260925`).
 
 **T-091 — Fix 10-Q ingestion. SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining`
 fixed the route (its PR #39, "return all filings for a form+year") while this task was in
