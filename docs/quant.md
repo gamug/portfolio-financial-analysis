@@ -326,7 +326,7 @@ creates them before it builds the views.
 | `quant_position` | book weight stints | `v_quant_position` |
 | `quant_frontier_point` | the frontier sweep per model | `v_quant_frontier_point` |
 | `quant_benchmark_performance` | forward realized / cumulative / active return | `v_quant_benchmark_performance` |
-| — | live book vs each optimized book, per name | `v_quant_vs_live` |
+| — | live book vs each optimized book, per name (+ `LIVE_ONLY` rows for live names no book holds, T-042) | `v_quant_vs_live` |
 
 ## Known gaps / caveats
 

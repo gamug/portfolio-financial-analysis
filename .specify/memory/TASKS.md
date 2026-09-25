@@ -111,9 +111,18 @@ only durable record.
       Verified on a copy of production: column added, 497 rows kept, `schema_version` 7,
       all views query, `quick_check` ok, second `ensure()` a no-op. Not exposed in
       `v_score_snapshot` yet — that and writing it are `T-074`'s.
-- [ ] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
+- [x] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
       `LEFT JOIN` `UNION`ed with a `kind='LIVE_ONLY'` branch for live
-      positions absent from every quant benchmark. → step 3.
+      positions absent from every quant benchmark. → step 3. **Done 2026-09-25** in the
+      vendored `src/kg_schema/views.py` (views rebuild on every `ensure()`; no migration).
+      The benchmark branch is byte-for-byte the old view; `UNION ALL` (the branches are
+      disjoint by `kind`) adds, per as-of date that has optimized books, one row per live
+      position open that date and held in none of them (reference books `live_book`/
+      `equal_weight`/`cap_weight` don't count): `benchmark_weight` NULL, `active_weight =
+      -live_weight`. On a copy of production: APA (2026-09-22, live weight 0.10) — the one
+      live name the old view dropped — now appears as `LIVE_ONLY`; all 10 live names show,
+      their weights sum to 1.0; the 38 benchmark rows are identical. 4 tests in
+      `tests/test_quant_vs_live.py`, mutation-checked.
 - [ ] **T-043** Add `media_cooccurrence` table (same shape/grain as
       `shared_executive_edge`, different table). → step 4.
 - [ ] **T-044** *(**DEPRECATED 2026-09-25, at the user's direction — do not implement.**

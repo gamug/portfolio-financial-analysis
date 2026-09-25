@@ -349,7 +349,7 @@ despite the version jump).
    `value_destroyer_sub_wacc`/`severe_sbc_dilution` booleans), added via
    the existing missing-columns mechanism; `UNIQUE(asset_id, score_type,
    event_time)` stays intact.
-3. **`v_quant_vs_live` rewrite** (feeds Work item 9): the current view is a
+3. **`v_quant_vs_live` rewrite — DONE 2026-09-25 (`T-042`)** (feeds Work item 9): the view was a
    single `LEFT JOIN` anchored on `quant_portfolio`, so a live position
    held in `portfolio_position` but absent from every quant benchmark is
    dropped from the view **entirely**, not merely null-weighted — verified:
