@@ -768,7 +768,7 @@ next, and last.
       deliberate historical run, recorded on the report. 4 new tests (380 total), mutation-
       checked. `docs/model_fixes.md` entry added (constitution AI behavior #12). → `PLAN.md` Work
       item 11, `T-097`.
-- [ ] **T-089** *(**moved to the very end of the fixing process, at the user's explicit
+- [x] **T-089** *(**moved to the very end of the fixing process, at the user's explicit
       direction, 2026-09-22** — was next after `T-088`; now runs after `T-095`/`T-096`/`T-097`)*
       Reconcile the two architecture artifacts per constitution AI behavior #11 —
       [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040)
@@ -781,6 +781,16 @@ next, and last.
       steps they built and correct prose describing a fixed gap. Read the live artifact,
       republish in place by URL. Runs last, after `T-095`/`T-096`/`T-097` are done, so its
       pass covers the whole fixing process in one go. → `PLAN.md` Work item 11, `T-089`.
+      **Done 2026-09-25**, content only, both titles unchanged. **Portfolio Financial Analysis**
+      (v10): a new "What the audit found, and what changed" ledger (F1, F2, F4 + `T-094`, C1's
+      corrected diagnosis, C2, Q2, Q3 superseded, `T-085`, `T-086`, `T-092`, `T-090`, `T-088` +
+      `T-068`, `T-095`, `T-096`, `T-097`, plus the 2026-09-25 plan decisions on `T-078`/`T-093`/
+      `T-100`); stale prose fixed: `kg_schema` described as vendored (it still said "external,
+      `portfolio-common` v0.2.0"), the pricing gateway as serving corporate actions to `quant`,
+      the "FY-derived dividends" gap replaced by the 20-of-503 coverage gap, and the plan rewritten
+      to the current order with `T-100` last. **Portfolio Thesis** (v26): financial-analysis's
+      band tooltips, band caption and status row, and data-mining's row (its "next for
+      financial-analysis" step is done). `T-093` appears only as a low-priority plan step.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
