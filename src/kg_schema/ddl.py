@@ -142,6 +142,16 @@ CREATE TABLE IF NOT EXISTS portfolio_position (
     UNIQUE (asset_id, valid_from)
 );
 CREATE INDEX IF NOT EXISTS ix_pp_open ON portfolio_position (asset_id) WHERE valid_to IS NULL;
+-- T-104: a stint never ends before it starts, whoever writes it (a backdated run once closed
+-- WFC's 2026-09-22 stint at 2026-06-30). valid_to = valid_from is allowed: a stint held for no
+-- day at all, which is how a reverted run's positions are voided without deleting history.
+CREATE TRIGGER IF NOT EXISTS trg_pp_range_insert BEFORE INSERT ON portfolio_position
+WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
+BEGIN SELECT RAISE(ABORT, 'portfolio_position: valid_to before valid_from'); END;
+CREATE TRIGGER IF NOT EXISTS trg_pp_range_update
+BEFORE UPDATE OF valid_from, valid_to ON portfolio_position
+WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
+BEGIN SELECT RAISE(ABORT, 'portfolio_position: valid_to before valid_from'); END;
 
 CREATE TABLE IF NOT EXISTS cycle_run (
     id           INTEGER PRIMARY KEY,

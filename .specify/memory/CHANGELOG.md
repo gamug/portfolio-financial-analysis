@@ -865,7 +865,10 @@ next, and last.
       tests (377 total), mutation-checked. `docs/model_fixes.md` entry added (constitution AI
       behavior #12), including all three corrections.
       → `PLAN.md` Work item 11, `T-096`.
-- [x] **T-097** *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
+- [x] **T-097** *(**Correction 2026-09-25, `T-104`**: the incident below was **not** fully reverted —
+      the live book kept the backdated run's weights, its BF.B stint and an inverted WFC stint
+      until `cycle undo-run` (T-104) repaired it. Record otherwise kept verbatim.)*
+      *(found while validating `T-088`, 2026-09-22; **prioritized above `T-089` at the
       user's direction, 2026-09-22; done 2026-09-22**)* Guard `cycle select`
       against an out-of-order (backdated) `--analysis-date` silently mutating the live
       `portfolio_position` book — the same class of false-run hazard `T-086` closed for

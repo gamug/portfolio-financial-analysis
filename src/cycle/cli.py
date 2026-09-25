@@ -1,4 +1,4 @@
-"""``python -m cycle {select,monitor,backfill} --date YYYY-MM-DD``."""
+"""``python -m cycle {select,monitor,backfill,undo-run}``."""
 
 from __future__ import annotations
 
@@ -9,10 +9,14 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from cycle.config import CycleSettings
+from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import run_monitoring, run_selection
+from cycle.repair import NotBackdated, apply_undo, plan_undo
 from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
+from kg_schema import connect
+from kg_schema.cli import resolve_db_path
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -24,8 +28,8 @@ _METRICS_VERSION_HELP = (
 )
 _ALLOW_BACKDATED_HELP = (
     "override the out-of-order-cycle guard (T-097) and write the live portfolio_position book "
-    "at a --analysis-date older than one already written -- for a deliberate historical "
-    "backfill/validation run, not routine use"
+    "at a --analysis-date older than one already written -- never allowed to end a position "
+    "opened after that date (T-104); for a deliberate historical run, not routine use"
 )
 
 
@@ -51,6 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
             p.add_argument("--allow-backdated", action="store_true", help=_ALLOW_BACKDATED_HELP)
+
+    undo = sub.add_parser(
+        "undo-run",
+        help="revert a backdated select run's writes to the live book (T-104); dry run unless "
+        "--apply",
+    )
+    undo.add_argument("--cycle-run", type=int, required=True, help="the backdated cycle_run id")
+    undo.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    undo.add_argument("--apply", action="store_true", help="write the repair (default: print it)")
 
     bf = sub.add_parser("backfill", help="run selection cycles across a date range")
     bf.add_argument("--from", dest="date_from", required=True)
@@ -90,12 +103,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(parser, args)
-    except (VersionError, ManifestMismatch, OutOfOrderCycle) as exc:
+    except (VersionError, ManifestMismatch, OutOfOrderCycle, NotBackdated) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1
 
 
+def _undo_run(args: argparse.Namespace) -> int:
+    conn = connect(resolve_db_path(args.db))
+    try:
+        ensure_schema(conn)
+        plan = plan_undo(conn, args.cycle_run)
+        verb = "reverting" if args.apply else "would revert (dry run)"
+        print(f"{verb} cycle_run {plan.cycle_run_id} ({plan.cycle_date}):")
+        for sid, ticker, vf in plan.void:
+            print(f"  void    stint {sid} {ticker} (opened {vf} by this run)")
+        for sid, ticker, vf in plan.reopen:
+            print(f"  reopen  stint {sid} {ticker} (opened {vf}, closed early by this run)")
+        for sid, ticker, old, new in plan.reweight:
+            print(f"  reweight stint {sid} {ticker}: {old} -> {new}")
+        if plan.empty:
+            print("  nothing to change")
+        if args.apply:
+            apply_undo(conn, plan)
+            print(f"cycle_run {plan.cycle_run_id} marked reverted")
+    finally:
+        conn.close()
+    return 0
+
+
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    if args.command == "undo-run":  # needs no model settings
+        return _undo_run(args)
     settings = _settings(args)
     hook = make_hook(settings)
 
