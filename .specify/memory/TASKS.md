@@ -101,8 +101,16 @@ only durable record.
       flag and `evidence_json`, so a verdict names the T-090 metric version it judged
       and a future threshold change writes parallel rows — rationale in
       `docs/model_fixes.md`'s T-065 entry.
-- [ ] **T-041** Add nullable `score_snapshot.forensic_flags_json` column
-      via the existing missing-columns mechanism. → step 2.
+- [x] **T-041** Add nullable `score_snapshot.forensic_flags_json` column
+      via the existing missing-columns mechanism. → step 2. **Done 2026-09-25**: a
+      `REQUIRED_COLUMNS` entry in `src/kg_schema/ddl.py` (this repo's vendored `kg_schema`),
+      so every package's next `ensure()` adds it — additive, no `schema_version` bump, the
+      `UNIQUE(asset_id, score_type, event_time)` key untouched. m005/m006 rebuild
+      `score_snapshot` from an explicit column list, so both now carry the column (and add it
+      first when called directly) — flags written on a not-yet-migrated database survive.
+      Verified on a copy of production: column added, 497 rows kept, `schema_version` 7,
+      all views query, `quick_check` ok, second `ensure()` a no-op. Not exposed in
+      `v_score_snapshot` yet — that and writing it are `T-074`'s.
 - [ ] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
       `LEFT JOIN` `UNION`ed with a `kind='LIVE_ONLY'` branch for live
       positions absent from every quant benchmark. → step 3.

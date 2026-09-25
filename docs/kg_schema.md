@@ -64,7 +64,9 @@ plus **run provenance**: `run_id` on `sec_filings` / `financial_facts` /
 `fundamental_metrics` / `price_window` / `price_daily`, `as_of` + `code_version` on
 `analysis_run` / `pricing_run`, and `code_version` on `quant_run` / `cycle_run`, and
 `manifest_json` on `quant_risk_model` / `quant_portfolio` (T-090: the input versions a
-model or book was built on; NULL on rows written before it).
+model or book was built on; NULL on rows written before it), and `forensic_flags_json` on
+`score_snapshot` (T-041: the fundamental synthesis's four forensic booleans, written by
+T-074; m005/m006 carry it through their table rebuilds).
 `m002` / `m003` carry `run_id` forward in their rebuilds so a not-yet-migrated dev
 DB does not drop it (no new migration, no `schema_version` bump).
 

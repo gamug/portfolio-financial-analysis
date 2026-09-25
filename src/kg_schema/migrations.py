@@ -23,6 +23,7 @@ from collections.abc import Callable
 from portfolio_common.db import Database
 
 from . import queries as _queries
+from .ddl import REQUIRED_COLUMNS
 
 Migration = Callable[[Database], None]
 
@@ -173,6 +174,13 @@ def _m004_score_snapshot(db: Database) -> None:
     db.execute("PRAGMA foreign_keys = ON")
 
 
+def _ensure_forensic_flags_column(db: Database) -> None:
+    """The m005/m006 rebuilds copy ``forensic_flags_json`` (T-041), so a database that is
+    migrated before T-074 populates it keeps its flags. ``ensure()`` adds the column before
+    migrating; this covers a direct :func:`apply_migrations` call on an older table."""
+    db.ensure_columns("score_snapshot", REQUIRED_COLUMNS["score_snapshot"])
+
+
 # -- m005: widen score_snapshot.score_type CHECK to admit 'SECTOR' -----------
 
 
@@ -182,6 +190,7 @@ def _m005_score_type_sector(db: Database) -> None:
     ddl = db.relation_ddl("score_snapshot")
     if ddl is None or "'SECTOR'" in ddl:
         return  # fresh DB already has the widened CHECK
+    _ensure_forensic_flags_column(db)
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
     # Views that read score_snapshot must go before the table rebuild; ensure()'s
@@ -208,15 +217,16 @@ def _m005_score_type_sector(db: Database) -> None:
             narrative        TEXT,
             strengths_json   TEXT,
             risks_json       TEXT,
+            forensic_flags_json TEXT,
             UNIQUE (asset_id, score_type, event_time)
         );
         INSERT INTO score_snapshot__new
             (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-             risks_json)
+             risks_json, forensic_flags_json)
         SELECT id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
                model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-               risks_json
+               risks_json, forensic_flags_json
         FROM score_snapshot;
         DROP TABLE score_snapshot;
         ALTER TABLE score_snapshot__new RENAME TO score_snapshot;
@@ -252,6 +262,7 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
     ddl = db.relation_ddl("score_snapshot")
     if ddl is None or "'VALORIZATION'" in ddl:
         return  # fresh DB already has the renamed CHECK
+    _ensure_forensic_flags_column(db)
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
     db.create_schema(
@@ -276,17 +287,18 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
             narrative        TEXT,
             strengths_json   TEXT,
             risks_json       TEXT,
+            forensic_flags_json TEXT,
             UNIQUE (asset_id, score_type, event_time)
         );
         INSERT INTO score_snapshot__new
             (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-             risks_json)
+             risks_json, forensic_flags_json)
         SELECT id, asset_id,
                CASE score_type WHEN 'QUANTITATIVE' THEN 'VALORIZATION' ELSE score_type END,
                raw_value, normalized_score, event_time, computed_at,
                model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-               risks_json
+               risks_json, forensic_flags_json
         FROM score_snapshot;
         DROP TABLE score_snapshot;
         ALTER TABLE score_snapshot__new RENAME TO score_snapshot;

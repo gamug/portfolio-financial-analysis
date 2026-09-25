@@ -343,7 +343,7 @@ despite the version jump).
    `NULL` if invalid), `created_at`, `run_id`,
    `UNIQUE(filing_id, metric_name, rule_id)`, plus indexes on `asset_id`
    and `(rule_id, severity)`.
-2. **`score_snapshot.forensic_flags_json` column** (feeds Work item 8's
+2. **`score_snapshot.forensic_flags_json` column — DONE 2026-09-25 (`T-041`)** (feeds Work item 8's
    structured flags): nullable `TEXT` (JSON object with
    `data_error_suspected`/`negative_equity_buyback`/
    `value_destroyer_sub_wacc`/`severe_sbc_dilution` booleans), added via

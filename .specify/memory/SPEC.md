@@ -255,7 +255,7 @@ are not owned by any single package.
 
 | Table | Key | Notable columns | Written by |
 |---|---|---|---|
-| `score_snapshot` | `UNIQUE(asset_id, score_type, event_time)` | `score_type ∈ {FUNDAMENTAL, VALORIZATION, TECHNICAL, SEMANTIC, SECTOR}`, `raw_value`, `normalized_score` | `fundamental_agent`, `cycle`, (SEMANTIC: external — see §13) |
+| `score_snapshot` | `UNIQUE(asset_id, score_type, event_time)` | `score_type ∈ {FUNDAMENTAL, VALORIZATION, TECHNICAL, SEMANTIC, SECTOR}`, `raw_value`, `normalized_score`, nullable `forensic_flags_json` (T-041) | `fundamental_agent`, `cycle`, (SEMANTIC: external — see §13) |
 | `fundamental_metrics` / `financial_facts` | `UNIQUE(..., engine_version)` | per-group ratio outputs; raw EDGAR facts with `event_time`/`ingested_at`/`filing_version` | `fundamental_agent` |
 | `sec_filing_section` | `UNIQUE(filing_id, section_type, ordinal, engine_version)` | narrative text, `item_label` (ontology `itemLabel` token) | `fundamental_agent run --sections` |
 | `price_window` / `price_daily` | natural key per ticker/range; `price_daily` per bar | return, daily-return std-dev, annualized vol; OHLCV | `pricing_agent` |
