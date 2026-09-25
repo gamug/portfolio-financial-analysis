@@ -525,52 +525,68 @@ class PortfolioRow:
 
 
 def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
-    conn.execute(
-        """
-        INSERT INTO quant_portfolio
-            (quant_run_id, model_id, as_of, kind, frontier_k, objective, solver, status,
-             expected_return, expected_vol, sharpe, rf_annual, n_positions, turnover,
-             target_param, engine_version, computed_at, params_json, manifest_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (as_of, kind, frontier_k, engine_version) DO UPDATE SET
-            quant_run_id = excluded.quant_run_id, model_id = excluded.model_id,
-            objective = excluded.objective, solver = excluded.solver, status = excluded.status,
-            expected_return = excluded.expected_return, expected_vol = excluded.expected_vol,
-            sharpe = excluded.sharpe, rf_annual = excluded.rf_annual,
-            n_positions = excluded.n_positions, turnover = excluded.turnover,
-            target_param = excluded.target_param, computed_at = excluded.computed_at,
-            params_json = excluded.params_json, manifest_json = excluded.manifest_json
-        """,
-        (
-            row.quant_run_id,
-            row.model_id,
-            row.as_of,
-            row.kind,
-            row.frontier_k,
-            row.objective,
-            row.solver,
-            row.status,
-            row.expected_return,
-            row.expected_vol,
-            row.sharpe,
-            row.rf_annual,
-            row.n_positions,
-            row.turnover,
-            row.target_param,
-            row.engine_version,
-            _now(),
-            row.params_json,
-            row.manifest_json,
-        ),
+    """Write *row* and return its id: update the book already stored under the same key,
+    else insert a new one.
+
+    The key is ``(as_of, kind, frontier_k, engine_version)``, but ``frontier_k`` is NULL for
+    every non-frontier book, and SQL NULLs never compare equal -- so the table's own
+    ``UNIQUE``/``ON CONFLICT`` never matched and every identical re-run inserted another copy of
+    each book (T-101). The lookup therefore matches ``frontier_k IS ?``, which treats NULL as a
+    value; migration m007 adds the equivalent NULL-safe unique index. Should a database still
+    hold duplicates from before that migration, the oldest is the one updated -- it is the row
+    the old read-back returned, so it holds the book's positions."""
+    values = (
+        row.quant_run_id,
+        row.model_id,
+        row.objective,
+        row.solver,
+        row.status,
+        row.expected_return,
+        row.expected_vol,
+        row.sharpe,
+        row.rf_annual,
+        row.n_positions,
+        row.turnover,
+        row.target_param,
+        _now(),
+        row.params_json,
+        row.manifest_json,
     )
-    conn.commit()
-    fk = row.frontier_k
-    got = conn.execute(
+    existing = conn.execute(
         "SELECT id FROM quant_portfolio WHERE as_of = ? AND kind = ? AND engine_version = ? "
-        "AND frontier_k IS ?",
-        (row.as_of, row.kind, row.engine_version, fk),
+        "AND frontier_k IS ? ORDER BY id LIMIT 1",
+        (row.as_of, row.kind, row.engine_version, row.frontier_k),
     ).fetchone()
-    return int(got["id"])
+    if existing is not None:
+        pid = int(existing["id"])
+        conn.execute(
+            """
+            UPDATE quant_portfolio SET
+                quant_run_id = ?, model_id = ?, objective = ?, solver = ?, status = ?,
+                expected_return = ?, expected_vol = ?, sharpe = ?, rf_annual = ?,
+                n_positions = ?, turnover = ?, target_param = ?, computed_at = ?,
+                params_json = ?, manifest_json = ?
+            WHERE id = ?
+            """,
+            (*values, pid),
+        )
+    else:
+        pid = int(
+            conn.execute(
+                """
+                INSERT INTO quant_portfolio
+                    (quant_run_id, model_id, objective, solver, status, expected_return,
+                     expected_vol, sharpe, rf_annual, n_positions, turnover, target_param,
+                     computed_at, params_json, manifest_json,
+                     as_of, kind, frontier_k, engine_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
+                """,
+                (*values, row.as_of, row.kind, row.frontier_k, row.engine_version),
+            ).fetchone()["id"]
+        )
+    conn.commit()
+    return pid
 
 
 def sync_positions(

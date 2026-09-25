@@ -28,28 +28,14 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: **Work item 10 (P0 — `T-085`; done 2026-09-20: the
-pricing gateway is `quant`'s *only* corporate-actions source — data mining
-belongs to `portfolio-data-mining` alone)** → **Work item 11 (P0, added
-2026-09-21 — in this order: the `T-052` live check of the gateway dividends
-(done 2026-09-21),
-`T-086` the `build-returns` guard (done 2026-09-21), `T-092` the critical integration of the multi-filing
-`sec_edgar` endpoints (done 2026-09-21),
-`T-094` the F4 fiscal-calendar fix (done 2026-09-21), `T-087` the constitution amendment (done 2026-09-21), `T-090` metric-version selection and run manifests (done 2026-09-21),
-`T-088` the malformed-data purge + 20-ticker deep validation run (**done 2026-09-22**;
-its own acceptance surfaced three new findings — `T-095`/`T-096`/`T-097`, below —
-**promoted above `T-089` at the user's explicit direction, 2026-09-22**), `T-095`
-(**done 2026-09-22**), `T-096` (**done 2026-09-22**),
-`T-097` (**done 2026-09-22** — see Work item 11), then, last in the fixing process, `T-089` the
-architecture-artifact reconciliation)**, with Work item 5 (independent, external
-prerequisite) running in parallel → **Work item 7 (P0 — critical
+Execute in this order: Work items 10 and 11 are **closed** (done 2026-09-20 and 2026-09-25 —
+see `CHANGELOG.md`), with Work item 5 (independent, external prerequisite) running in parallel → **Work item 7 (P0 — critical
 correctness fixes, highest priority in this file; its live run `T-068` —
 the small-sample Phase A validation — is done, run on the 20-ticker sample inside
 `T-088`)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
-cleanup)** (`T-093`, the user-tunable version constraints, is done 2026-09-25; `T-101`, the
-book-duplication defect its tests found, is open) → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
+cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -961,7 +947,11 @@ backfill and `quant` re-run wait for `T-052` (upstream's redeploy + the live che
 there is no `--source derive` escape hatch any more. `T-068`'s metrics-recompute and
 `cycle` steps are not held up.
 
-## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts
+## Work item 11 — P0: follow-ups to the gateway-only cutover — guard, constitution, data purge + 20-ticker validation, artifacts — DONE 2026-09-25
+
+**Status: closed** — every task done (`T-091` superseded by `T-092`); tasks and their
+records are in `CHANGELOG.md`. Last to land: `T-089` (artifacts), `T-093` (version
+constraints) and `T-101` (book key, found by `T-093`).
 
 Added 2026-09-21, from review of `T-085`'s consequences. Order: `T-052` (live check,
 Work item 6), `T-086`, `T-092`, `T-094`, `T-087` and `T-090` (all done 2026-09-21) → `T-088` →
@@ -1469,7 +1459,7 @@ profiles and dry runs". One deliberate deviation from item 2 above: with no flag
 its current behaviour (configured return engine, per-asset corporate-action priority, `rm-v1`)
 instead of "latest stored", so no stored run or tag shifts; `latest` is explicit.
 
-**T-101 — Re-running `optimize` duplicates books** *(found by `T-093`'s tests, 2026-09-25; open)*.
+**T-101 — Re-running `optimize` duplicates books** *(found by `T-093`'s tests, 2026-09-25; done 2026-09-25)*.
 `quant_portfolio`'s unique key `(as_of, kind, frontier_k, engine_version)` includes `frontier_k`,
 NULL for every non-frontier book; SQLite NULLs never conflict, so `insert_portfolio`'s
 `ON CONFLICT … DO UPDATE` never fires and each identical re-run inserts another copy of every book
@@ -1477,6 +1467,9 @@ NULL for every non-frontier book; SQLite NULLs never conflict, so `insert_portfo
 behind a gated migration, or update-then-insert on `frontier_k IS ?`), a decision on the
 duplicates already stored, and the strict `xfail` in `tests/test_quant_version_constraints.py`
 flipped to a pass. *Acceptance*: two identical `optimize` runs leave one book per objective.
+**Done 2026-09-25** — `insert_portfolio` update-or-insert on `frontier_k IS ?` (a second defect —
+the read-back returned the oldest duplicate — fixed with it) plus migration m007 (duplicates
+merged, NULL-safe unique index). Production held none; `migrate` verified on a scratch copy.
 
 **T-091 — Fix 10-Q ingestion. SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining`
 fixed the route (its PR #39, "return all filings for a form+year") while this task was in
@@ -1581,32 +1574,9 @@ items 1–3 and can proceed in parallel at any time; it does not touch
 execution priority — see the Priority Override section near the top of
 this document.** Their internal sequencing:
 
-- **Work item 10 (`T-085`, consume the corporate-actions endpoint) is done
-  (2026-09-20).** **Work item 11 follows immediately (2026-09-21):** `T-052`
-  (live check — done 2026-09-21) → `T-086` (guard — done 2026-09-21) → `T-092` (critical: multi-filing
-  `sec_edgar` integration — done 2026-09-21) → `T-094` (F4 fiscal-calendar fix — done 2026-09-21) → `T-087` (constitution — done 2026-09-21) → `T-090`
-  (metric-version selection + run manifests — done 2026-09-21) → `T-088` (purge +
-  20-ticker validation — **done 2026-09-22**) → `T-095` (**done 2026-09-22**) → `T-096`
-  (**done 2026-09-22**) → `T-097` (**done 2026-09-22**) → `T-089`
-  (artifacts; its first pass may run any time after `T-085` merges, but the final,
-  comprehensive pass — covering `T-088`/`T-095`/`T-096`/`T-097` together — runs last).
-  Work item 7's `T-068` (the small-sample Phase A validation) was run
-  inside `T-088`. `T-088`'s own acceptance audit found three further findings — `T-095`
-  (revenue mis-resolution on a filer's own "total" tag), `T-096` (10-Q filing
-  gaps beyond F4's expected fallback) and `T-097` (a `cycle select` guard
-  against out-of-order runs, scope corrected from "select/monitor"). **At the user's explicit
-  direction (2026-09-22), all
-  three are prioritized ahead of `T-089`, which moves to the very end of the fixing
-  process** — it no longer runs immediately after `T-088`. **`T-095` is done**: confirmed
-  live for APA FY2021 (a plausibility floor now rejects a `total_concepts` tag mistagged
-  on a small dimensional slice); PM did not reproduce the defect, correcting this task's
-  own earlier misattribution. **`T-096` is done**: a precise reproduction of the live TTM
-  logic found APO's gap is one upstream defect cascading (routed, not fixed here), WAT's is
-  a local `net_income`-concept gap (fixed), and the original PG/BF.B/STZ tally did not
-  survive reproduction. **`T-097` is done**: `select`'s "positions" step now refuses an
-  out-of-order `--analysis-date` unless `--allow-backdated` overrides it; `monitor` was never
-  at risk (it never writes `portfolio_position`). **All three prioritized findings are closed —
-  `T-089` is next, and last.**
+- **Work items 10 and 11 are closed** (2026-09-20 / 2026-09-25) — the gateway-only cutover and
+  its follow-ups; see `CHANGELOG.md`. Work item 7's `T-068` (the small-sample Phase A
+  validation) was run inside `T-088`.
 - Work item 5 (`portfolio-common` v0.3.0) is an independent external
   prerequisite. (Work item 6, the `portfolio-data-mining` corporate-actions
   endpoint, is closed — see `CHANGELOG.md`.)
@@ -1634,10 +1604,6 @@ this document.** Their internal sequencing:
 - Work items 2 (orchestrator) and 4 (SEMANTIC boundary) are unaffected by
   the audit and keep their original priority — after Work items 5–9, per
   the Priority Override section.
-- **Low-priority path (2026-09-21):** `T-093` (user-tunable version constraints for `quant`'s
-  Markowitz runs) was deferred behind everything above; **done 2026-09-25** at the user's
-  request. Its tests found **`T-101`** (re-running `optimize` duplicates books), open in Work
-  item 11.
 - **Work item 12 (`T-100`, the full-universe production run) runs last of all** — after
   every other task in `TASKS.md`, including the low-priority path and any task added later.
 

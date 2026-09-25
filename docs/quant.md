@@ -206,7 +206,8 @@ and `quant_portfolio.engine_version` (`opt-v1` → `opt-v1+3f9a1c2b`). Because t
 were already unique on those columns, **no schema change** is needed, and:
 
 - the **same inputs give the same tag**, so a re-run refreshes the same risk model in place
-  (books do not yet — see "Known gaps": a NULL `frontier_k` defeats their conflict key);
+  — and the same books in place too (fixed by `T-101`; before that a NULL `frontier_k`
+  defeated their conflict key and every identical re-run added another copy);
 - **different inputs give a different tag**, so the run writes *parallel* rows beside the first
   instead of overwriting it (they used to be `ON CONFLICT … DO UPDATE` on a constant key);
 - `quant_expected_return` / `quant_covariance` / `quant_position` / `quant_frontier_point` hang
@@ -344,13 +345,15 @@ creates them before it builds the views.
   residual upward bias. Mitigations: `quant_risk_model.panel_spec_json` freezes
   each run's exact universe + dates + sha256; never delete `price_daily` rows for a
   name that later leaves the index; backfill delisted-name prices.
-- **Re-running `optimize` duplicates books (found by T-093, not yet fixed).**
-  `quant_portfolio` is unique on `(as_of, kind, frontier_k, engine_version)`, but `frontier_k`
-  is NULL for every non-frontier book and SQLite treats NULLs as distinct, so the
-  `ON CONFLICT … DO UPDATE` never fires: a second `optimize` over the same inputs inserts a
-  second copy of each book instead of refreshing it. Risk models (no NULL in their key) are
-  unaffected. Tracked as `T-101`; pinned by a strict `xfail` in
-  `tests/test_quant_version_constraints.py`.
+- **Book key and NULL `frontier_k` (`T-101`, fixed 2026-09-25).** `quant_portfolio` is keyed
+  `(as_of, kind, frontier_k, engine_version)` with `frontier_k` NULL for every non-frontier
+  book; SQLite NULLs never conflict, so its `UNIQUE` / `ON CONFLICT` never matched and each
+  identical `optimize` / `evaluate` re-run inserted another copy of every book (the read-back
+  then returned the oldest copy, which kept the positions). `insert_portfolio` now matches
+  `frontier_k IS ?` and updates the stored book; migration **m007** (run via `migrate`) merges
+  any existing duplicates and adds the NULL-safe unique index `ux_quant_portfolio_book` on
+  `IFNULL(frontier_k, -1)`. The code fix works without the migration; the migration makes the
+  database itself refuse a duplicate.
 - **No vendor risk-free / benchmark series** yet — a constant rf and an internal
   equal-weight benchmark are the v1 defaults; the tables + CSV loaders are in place.
 - `price_daily.event_time` / `ingested_at` are NULL for every row — a

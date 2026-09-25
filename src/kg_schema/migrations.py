@@ -322,6 +322,62 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
     db.execute("PRAGMA foreign_keys = ON")
 
 
+# -- m007: quant_portfolio's book key made NULL-safe (T-101) ----------------
+
+# Refresh the kept book with the newest copy's metadata: every column but the key and the id.
+# Fully literal SQL, never assembled from a column list (constitution Code & Git #10).
+_COPY_NEWEST_SQL = """
+UPDATE quant_portfolio SET
+    (quant_run_id, model_id, objective, solver, status, expected_return, expected_vol, sharpe,
+     rf_annual, n_positions, turnover, target_param, computed_at, params_json, manifest_json)
+  = (SELECT quant_run_id, model_id, objective, solver, status, expected_return, expected_vol,
+            sharpe, rf_annual, n_positions, turnover, target_param, computed_at, params_json,
+            manifest_json
+     FROM quant_portfolio WHERE id = ?)
+WHERE id = ?
+"""
+
+
+def _m007_quant_portfolio_null_safe_key(db: Database) -> None:
+    """Merge duplicate books, then enforce the book key with NULL treated as a value.
+
+    ``UNIQUE (as_of, kind, frontier_k, engine_version)`` never matched a non-frontier book,
+    whose ``frontier_k`` is NULL, so every identical ``optimize`` / ``evaluate`` re-run inserted
+    another copy of each book. The old read-back then returned the **oldest** copy, so
+    ``sync_positions`` kept writing the latest weights into it while each newer copy got none.
+    Per duplicate group this keeps the oldest id (it has the positions, and it is the id every
+    earlier reference used), refreshes it with the newest copy's metadata, moves frontier-point
+    references onto it, and drops the newer copies with their positions and forward
+    performance rows (both derived; ``quant evaluate`` recomputes performance). Then a unique
+    index on ``IFNULL(frontier_k, -1)`` makes the database refuse a duplicate book outright."""
+    if not _table_exists(db, "quant_portfolio"):
+        return
+    groups = db.execute(
+        "SELECT MIN(id) AS keep, MAX(id) AS newest, GROUP_CONCAT(id) AS ids "
+        "FROM quant_portfolio GROUP BY as_of, kind, IFNULL(frontier_k, -1), engine_version "
+        "HAVING COUNT(*) > 1"
+    ).fetchall()
+    for group in groups:
+        keep, newest = int(group["keep"]), int(group["newest"])
+        drop = [int(i) for i in str(group["ids"]).split(",") if int(i) != keep]
+        db.execute(_COPY_NEWEST_SQL, (newest, keep))
+        for pid in drop:
+            if _table_exists(db, "quant_frontier_point"):
+                db.execute(
+                    "UPDATE quant_frontier_point SET portfolio_id = ? WHERE portfolio_id = ?",
+                    (keep, pid),
+                )
+            if _table_exists(db, "quant_benchmark_performance"):
+                db.execute("DELETE FROM quant_benchmark_performance WHERE portfolio_id = ?", (pid,))
+            if _table_exists(db, "quant_position"):
+                db.execute("DELETE FROM quant_position WHERE portfolio_id = ?", (pid,))
+            db.execute("DELETE FROM quant_portfolio WHERE id = ?", (pid,))
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_quant_portfolio_book ON quant_portfolio "
+        "(as_of, kind, IFNULL(frontier_k, -1), engine_version)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -336,6 +392,11 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         6,
         "score_snapshot.score_type 'QUANTITATIVE' renamed to 'VALORIZATION' (rows + CHECK + blend JSON)",
         _m006_quantitative_to_valorization,
+    ),
+    (
+        7,
+        "quant_portfolio: duplicate books merged, NULL-safe unique book key (T-101)",
+        _m007_quant_portfolio_null_safe_key,
     ),
 ]
 

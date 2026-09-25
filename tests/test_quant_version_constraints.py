@@ -404,12 +404,6 @@ def test_two_runs_under_different_constraints_coexist(db: Database) -> None:
     assert db.execute("SELECT COUNT(*) FROM quant_portfolio").fetchone()[0] == 4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="pre-existing (not T-093): quant_portfolio's UNIQUE key includes frontier_k, NULL for "
-    "every non-frontier book, and SQLite NULLs never conflict -- so re-running optimize over the "
-    "same inputs inserts duplicate books instead of updating them in place",
-)
 def test_the_same_constraints_again_update_books_in_place(db: Database) -> None:
     as_of = _as_of(db)
     run_optimize(_settings(metrics_version="!=metrics-v3"), as_of=as_of, conn=db)
