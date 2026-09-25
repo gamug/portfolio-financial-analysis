@@ -330,6 +330,11 @@ ship "anytime, concurrent" per `kg_schema/ddl.py`/`version.py`, and need
 Target: **`v0.3.0`** (a minor bump — no non-additive migration involved
 despite the version jump).
 
+**Update 2026-09-25**: `kg_schema` is vendored in this repo (`src/kg_schema/`), so steps
+1–4 land here, not in `portfolio-common`, and the release-and-re-pin (`T-044`) is
+**deprecated** — the pin stays at `v1.2.1`. The last two acceptance criteria below
+("Tagged and released", the `pyproject.toml` bump) no longer apply; `T-040` (step 1) is done.
+
 **Approach** (implement in `portfolio_common/kg_schema/ddl.py` +
 `views.py`, exposed via the existing `ensure()`/`ensure_views()`):
 
@@ -373,11 +378,11 @@ re-pinning, not asserted upstream):
 - `ensure_views()` rebuilds `v_quant_vs_live` with a `LIVE_ONLY` kind
   present in a fixture that includes a live-only position; base tables
   unchanged.
-- Tagged and released as `v0.3.0`.
-- This repo's `pyproject.toml` (`[tool.uv.sources]`) bumped from `v1.2.1`
+- ~~Tagged and released as `v0.3.0`.~~ *(dropped with `T-044`)*
+- ~~This repo's `pyproject.toml` (`[tool.uv.sources]`) bumped from `v1.2.1`
   → `v0.3.0`, `uv.lock` regenerated, `uv sync` run, and `ensure()`
   re-verified against the live `KG_FINANCIAL_DB` before any code in Work
-  items 7–9 reads the new columns/tables.
+  items 7–9 reads the new columns/tables.~~ *(dropped with `T-044`)*
 
 ## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external, blocking prerequisite) — implementation MOVED — DONE 2026-09-21
 

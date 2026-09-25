@@ -88,8 +88,7 @@ only durable record.
 
 *(Note 2026-09-25: `kg_schema` is vendored in this repo (`src/kg_schema/`, see
 `docs/kg_schema.md`), so these additive changes land **here**, not in `portfolio-common` —
-`T-040` was built that way. `T-044`'s release-and-bump no longer has anything to bump;
-reformulate it when this work item is next picked up.)*
+`T-040` was built that way, and `T-044` (the upstream release-and-bump) is deprecated.)*
 
 - [x] **T-040** Add `data_quality_issue` table (`filing_id`/`asset_id` FKs,
       `metric_name`, `rule_id`, `severity CHECK IN ('HARD','SOFT')`,
@@ -110,7 +109,13 @@ reformulate it when this work item is next picked up.)*
       positions absent from every quant benchmark. → step 3.
 - [ ] **T-043** Add `media_cooccurrence` table (same shape/grain as
       `shared_executive_edge`, different table). → step 4.
-- [ ] **T-044** Tag and release `portfolio-common` `v0.3.0`; bump this
+- [ ] **T-044** *(**DEPRECATED 2026-09-25, at the user's direction — do not implement.**
+      Kept unchecked as the historical record, per this file's "mark cancelled in place,
+      don't renumber" rule. Reason: `kg_schema` left `portfolio-common` at its v1.0.0 and
+      is vendored here (`src/kg_schema/`), so `T-040`–`T-043` land in this repo and there
+      is nothing to release upstream or re-pin; `portfolio-common` stays at `v1.2.1`.
+      Each of `T-041`–`T-043` checks `ensure()` in its own tests, as `T-040` did.)*
+      Tag and release `portfolio-common` `v0.3.0`; bump this
       repo's `pyproject.toml` (`[tool.uv.sources]`) from `v1.2.1` →
       `v0.3.0`, regenerate `uv.lock`, `uv sync`, and re-verify `ensure()`
       against the live `KG_FINANCIAL_DB`. → `PLAN.md` acceptance criteria.
