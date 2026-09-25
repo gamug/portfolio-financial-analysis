@@ -174,7 +174,7 @@ consistently split-adjusted), design proposals that are not defects (§4.9 trigg
 rebalancing, equal composite weights) and the §5 validation layer (the scope `T-078` was
 deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work item 14.
 
-- [ ] **T-104** *(P0)* Repair the live book. `portfolio_position` still holds the backdated
+- [x] **T-104** *(P0)* Repair the live book. `portfolio_position` still holds the backdated
       2026-06-30 `cycle select` run's book (the `T-097` incident was not reverted, despite its
       record): all ten weights are that run's 0.10 instead of cycle 1's (2026-09-22) targets
       (0.1167 / 0.075), BF.B is open since 2026-06-30, and WFC's stint closes before it opens
@@ -191,8 +191,13 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       (`cycle/repair.py`) reverts a backdated run. On a copy of production, undoing run 2
       voids BF.B, reopens WFC, restores nine weights: the live book at 2026-09-22 equals
       cycle 1's selection (10 names, targets 0.1167/0.075), 0 inverted stints, run 2
-      `reverted`, `quick_check` ok. `T-097`'s CHANGELOG record corrected. **Open**: applying
-      the repair to production (awaiting approval).
+      `reverted`, `quick_check` ok. `T-097`'s CHANGELOG record corrected. **Production repaired
+      2026-09-25** (after merge, at the user's direction; no writers running; backup
+      `financial.db.pre-t104-undo-backup-20260925`, byte-identical by md5 + `quick_check` ok):
+      `cycle undo-run --cycle-run 2 --apply` voided BF.B, reopened WFC and restored nine
+      weights — the live book at 2026-09-22 equals cycle 1's selection (10 names, weights sum
+      1.0), nothing live at 2026-06-30, 0 inverted stints, run 2 `reverted`, both triggers
+      installed, `quick_check` ok, all views query.
 - [ ] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
       quarter's flow by a stock or a price level: FCF yield (and its enterprise and SBC
       variants) 10-Q median 0.9% vs 10-K 3.4% (×3.6–3.9 too small), `net_debt_to_ebitda`
