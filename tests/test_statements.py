@@ -367,3 +367,45 @@ def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     )
 
     assert stmts.get("cogs", key) == 100.0  # first match only, NOT summed to 150.0
+
+
+# -- T-102: a utility's total operating revenue --------------------------------------------------
+
+
+def test_a_utility_total_is_its_revenue_when_it_is_the_only_revenue_tag(
+    nee_10k: Statements,
+) -> None:
+    """NEE tags its income-statement revenue only as
+    `us-gaap_RegulatedAndUnregulatedOperatingRevenue` ("OPERATING REVENUES"); before T-102 it
+    resolved to None in every filing, and every revenue-denominated ratio with it."""
+    assert nee_10k.get("revenue", "2025-12-31 (FY)") == 27_412_000_000.0
+    assert nee_10k.get("revenue", "2024-12-31 (FY)") is not None
+
+
+def test_a_utility_total_wins_over_its_regulated_and_unregulated_lines(
+    xel_10k: Statements,
+) -> None:
+    """XEL reports electric (a company-specific tag), gas and other lines plus the total; the
+    total is the revenue -- the lines are its breakdown, not additional streams."""
+    key = "2025-12-31 (FY)"
+    assert xel_10k.get("revenue", key) == 14_669_000_000.0  # = 12,160 + 2,452 + 57 (millions)
+
+
+def test_the_utility_total_is_still_checked_against_a_named_component() -> None:
+    """The new total concept goes through T-095's plausibility floor like the others."""
+    key = "2025-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_RegulatedAndUnregulatedOperatingRevenue",
+                "Operating revenues",
+                **{key: 100.0},
+            ),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenue from contracts with customers",
+                **{key: 1_000.0},
+            ),
+        )
+    )
+    assert stmts.get("revenue", key) == 1_000.0

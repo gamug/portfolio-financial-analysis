@@ -1544,7 +1544,8 @@ defects. The gates already quarantine the affected metrics and veto on HARD, so 
 corrupt is scored — but NEE is now excluded from every cycle, and MCD's historical market
 caps are unusable, until the causes are fixed.
 
-1. **`T-102` — NEE revenue.** NEE tags revenue as
+1. **`T-102` — NEE revenue. DONE 2026-09-25** (`metrics-v3`; AWK/DTE/DUK/SRE/XEL had the
+   same gap — see `docs/model_fixes.md`'s T-102 entry). NEE tags revenue as
    `us-gaap_RegulatedAndUnregulatedOperatingRevenue`, absent from
    `statements.REGISTRY["revenue"]`, so all 19 filings resolve revenue to NULL
    (`DQ_REVENUE_POS`). Add the tag in the right role (aggregate vs. component) against

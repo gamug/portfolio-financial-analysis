@@ -22,6 +22,7 @@ from cycle.data import data_quality
 from cycle.orchestrator import run_selection
 from fundamental_agent import db, quality
 from fundamental_agent.cli import main as fundamental_main
+from fundamental_agent.metrics import compute_group
 from fundamental_agent.quality import Issue, StoredMetric, evaluate, gate_all, gate_version
 from kg_schema import connect
 from kg_schema.versions import MetricVersions
@@ -421,3 +422,15 @@ def test_a_quarantined_metric_drops_out_of_the_score(cycle_seed: Database) -> No
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
     assert _valorization(conn, 1, "2026-06-30")["value"] is None
     assert _valorization(conn, 2, "2026-06-30")["value"] is not None
+
+
+def test_nee_s_real_10k_now_passes_the_revenue_gate(nee_10k: Any) -> None:
+    """T-102 end to end on NEE's captured FY2025 10-K: the metrics the engine computes from it
+    now carry a revenue, so DQ_REVENUE_POS (which vetoed NEE in every cycle) stays silent."""
+    key = "2025-12-31 (FY)"
+    fm: dict[tuple[str, str], StoredMetric] = {}
+    for group in ("profitability", "cashflow", "efficiency", "leverage"):
+        for result in compute_group(group, nee_10k, key):
+            fm[(group, result.name)] = StoredMetric(result.value, dict(result.inputs))
+    assert fm[NET].value == pytest.approx(5_332 / 27_412, rel=1e-3)
+    assert [i for i in evaluate(fm) if i.rule_id == "DQ_REVENUE_POS"] == []

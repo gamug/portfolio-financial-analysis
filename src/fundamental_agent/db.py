@@ -40,8 +40,10 @@ _SHARE_SCALE_TOLERANCE = 0.10
 # produce a *new* immutable row rather than silently colliding with the old one.
 # ``metrics-v2`` (T-088): F1/F2/F4/C1 and T-092/T-094 changed the ratios and the filing set, so a
 # row computed before them is distinguishable from one computed after.
+# ``metrics-v3`` (T-102): utilities' total operating revenue now resolves, so every
+# revenue-denominated ratio of AWK/DTE/DUK/NEE/SRE/XEL changes from NULL to a value.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v2"
+METRICS_ENGINE_VERSION = "metrics-v3"
 
 
 @dataclass(frozen=True)
