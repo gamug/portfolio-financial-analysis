@@ -361,7 +361,12 @@ only durable record.
       `optimize.py`'s `--mu` choices; `equilibrium` stays default. Enable
       `turnover_cap` in `optimize.py` + a 10-15bps turnover cost in
       `evaluate.py`. **Supersedes T-020–T-026.** → step 6.
-- [ ] **T-078** Compute IC (Spearman, Newey-West SE) + quintile
+- [ ] **T-078** *(**DEPRECATED 2026-09-25, at the user's direction — not part of the
+      development; do not implement.** Kept unchecked as the historical record, per this
+      file's "mark cancelled in place, don't renumber" rule. Reason: a meaningful IC needs a
+      full-universe, multi-year history of point-in-time rankings (the costly part), and the
+      targets below were unlikely to be met in the ~20-month evaluation window even by a good
+      signal.)* Compute IC (Spearman, Newey-West SE) + quintile
       monotonicity + strict out-of-sample validation
       (`2022-01-01→2024-12-31` calibration, `2025-01-01→2026-08-27`
       evaluation); record in `docs/quant.md`/`docs/cycle.md`. → step 7.
@@ -820,7 +825,7 @@ now-fixed local gap; `T-097`'s own "select/monitor" title was corrected to `sele
 the low-priority path.** There is no derive fallback. Execute, with Work item 5 (external, independent prerequisite) in
 parallel → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
-`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
+`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`)** → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

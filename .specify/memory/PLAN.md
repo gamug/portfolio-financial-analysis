@@ -770,13 +770,15 @@ as task `T-077`.
    apply, just against this richer estimator). Also enable `turnover_cap`
    in `optimize.py` and deduct a 10-15bps turnover cost in `evaluate.py` so
    the comparison isn't distorted by an unconstrained rebalance.
-7. **Validation**: compute the cross-sectional Information Coefficient
+7. ~~**Validation**~~ — **DEPRECATED 2026-09-25 (`T-078`), at the user's direction: not
+   part of the development.** Kept struck through as the record of what was planned:
+   ~~compute the cross-sectional Information Coefficient
    (`IC_t = Spearman(cycle_ranking.final_score_t, 21-trading-day-forward
    return)`) with Newey-West standard errors, targeting `mean(IC) > 0.03`
    at `t-stat > 2.0` and `IR = mean(IC)/std(IC) > 0.5`; confirm forward
    mean returns are monotonic across score quintiles; use a strict
    out-of-sample split (`2022-01-01→2024-12-31` calibration,
-   `2025-01-01→2026-08-27` evaluation) rather than in-sample-only checks.
+   `2025-01-01→2026-08-27` evaluation) rather than in-sample-only checks.~~
 
 **Acceptance criteria**:
 
@@ -790,8 +792,9 @@ as task `T-077`.
 - New μ estimator covered analogously to `tests/test_quant_lw.py`'s
   covariance-estimator coverage; `tests/test_quant_gate.py`'s
   score-independence guarantee still holds.
-- IC/quintile-monotonicity/out-of-sample validation numbers recorded in
-  `docs/quant.md` and `docs/cycle.md` for at least one window.
+- ~~IC/quintile-monotonicity/out-of-sample validation numbers recorded in
+  `docs/quant.md` and `docs/cycle.md` for at least one window.~~ Dropped with step 7
+  (`T-078` deprecated 2026-09-25).
 - `SPEC.md` §13 item 1 (μ estimator) and §7 (business logic — technical/
   valorization formulas) updated to describe the shipped methodology, per
   this repo's own "spec/plan changes land with the requirement" rule —
