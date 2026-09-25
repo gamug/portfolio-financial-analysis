@@ -6,12 +6,13 @@ statement has no quarterly column (XOM reports only year-to-date).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 from portfolio_common.db import Database
 
-from fundamental_agent import db
+from fundamental_agent import db, quality
 from fundamental_agent.agents import _flag_annualization
 from fundamental_agent.db import FilingKey, FilingMeta, YTDPair
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
@@ -286,3 +287,120 @@ def test_each_group_is_stamped_with_how_it_was_annualized() -> None:
     assert lev.inputs == {"annualized_ttm": 1.0}
     assert val.inputs == {"annualized_x4": 1.0}  # one crude input taints the group
     assert liq.inputs == {}
+
+
+# -- review follow-ups: provenance, version pinning, the cross-check ---------------------------
+
+
+def test_valuation_is_flagged_crude_when_sbc_or_interest_was_times_four() -> None:
+    for crude in ("stock_based_compensation", "interest_expense"):
+        val = MetricResult("free_cash_flow_yield", 0.03, "ratio", {})
+        flows = {
+            "operating_cash_flow": TTMFlow(1.0, "ytd"),
+            "capital_expenditure": TTMFlow(1.0, "ytd"),
+            crude: TTMFlow(1.0, "x4"),
+        }
+        _flag_annualization([("valuation", val)], flows)
+        assert val.inputs == {"annualized_x4": 1.0}, crude
+
+
+def test_a_prior_year_recorded_only_by_an_older_engine_does_not_feed_the_ttm(
+    memory_db: Database,
+) -> None:
+    """The TTM reads only the running engine's rows: an older engine may resolve a concept
+    differently, so its FY2024 and its quarters must not mix into this engine's TTM."""
+    _asset(memory_db)
+    fid = db.upsert_filing(
+        memory_db, FilingKey(1, "10-K", 2024, "FY2024"), FilingMeta(period_end="2024-12-31")
+    )
+    db.record_metrics(
+        memory_db,
+        fid,
+        [("profitability", MetricResult("return_on_assets", None, "r", {"net_income": 100.0}))],
+        engine_version="metrics-v2",
+    )
+    ytd = {"net_income": YTDPair(75.0, 60.0, "2024-09-30")}
+    flows = db.ttm_detail(
+        memory_db, 1, period_end="2025-09-30", current={"net_income": 25.0}, ytd=ytd
+    )
+    assert flows["net_income"] == TTMFlow(100.0, "x4")  # not 115.0 via the old engine's FY
+    pinned = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2025-09-30",
+        current={"net_income": 25.0},
+        ytd=ytd,
+        engine_version="metrics-v2",
+    )
+    assert pinned["net_income"].method == "ytd"  # the same engine's own FY does
+
+
+def _att(conn: Database) -> int:
+    """AT&T's shape after the 2022 WarnerMedia spin-off, in $M: the 2023Q1 10-Q's prior-year
+    comparative is *restated* (Q1 2022 cogs 6,036), while the 2022Q1 10-Q *as filed* said
+    10,351. The identity uses the restated column; four quarters sum the as-filed one."""
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'T')")
+    _record(
+        conn, "10-K", "FY2022", "2022-12-31", "efficiency", "asset_turnover", {"cogs": 25_000.0}
+    )
+    for label, end, cogs in (
+        ("2022Q1", "2022-03-31", 10_351.0),  # as filed, before the restatement
+        ("2022Q2", "2022-06-30", 6_100.0),
+        ("2022Q3", "2022-09-30", 6_300.0),
+    ):
+        _record(conn, "10-Q", label, end, "efficiency", "asset_turnover", {"cogs": cogs})
+    fid = db.upsert_filing(
+        conn, FilingKey(1, "10-Q", 2023, "2023Q1"), FilingMeta(period_end="2023-03-31")
+    )
+    return fid
+
+
+def test_the_identity_is_kept_and_a_gap_to_four_quarters_goes_to_review(
+    memory_db: Database,
+) -> None:
+    fid = _att(memory_db)
+    flows = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2023-03-31",
+        current={"cogs": 6_200.0},
+        ytd={"cogs": YTDPair(6_200.0, 6_036.0, "2022-03-31")},  # restated comparative
+    )
+    identity = 25_000.0 - 6_036.0 + 6_200.0
+    # the fiscal Q4 2022 = FY - the three as-filed quarters; + this quarter
+    quarters = 6_200.0 + (25_000.0 - 10_351.0 - 6_100.0 - 6_300.0) + 6_300.0 + 6_100.0
+    assert flows["cogs"] == TTMFlow(identity, "ytd", alt=quarters)
+
+    assert (
+        quality.record_ttm_crosscheck(
+            memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+        )
+        == 1
+    )
+    row = memory_db.execute(
+        "SELECT metric_group, metric_name, rule_id, severity, quarantined, value, evidence_json "
+        "FROM data_quality_issue"
+    ).fetchone()
+    assert (row["metric_group"], row["metric_name"], row["rule_id"]) == (
+        "ttm",
+        "cogs",
+        "DQ_TTM_CROSSCHECK",
+    )
+    assert (row["severity"], row["quarantined"], row["value"]) == ("SOFT", 0, identity)
+    evidence = json.loads(row["evidence_json"])
+    assert (evidence["identity"], evidence["four_quarters"]) == (identity, quarters)
+
+
+def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) -> None:
+    _asset(memory_db)
+    flows = {
+        "net_income": TTMFlow(100.0, "ytd", alt=100.5),  # 0.5%: within tolerance
+        "revenue": TTMFlow(1_000.0, "ytd"),  # no four-quarter sum to compare
+        "cogs": TTMFlow(400.0, "quarters"),  # not the identity
+    }
+    assert (
+        quality.record_ttm_crosscheck(
+            memory_db, 1, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+        )
+        == 0
+    )

@@ -1598,6 +1598,7 @@ that reproduce today.
 | Dirty `code_version` on production runs | **live** (`359797e-dirty`) | `T-114` |
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
 | `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **live methodology gap** (never reaches MCD, 0.665) | `T-116`, after `T-105` |
+| APA revenue — a breakdown figure presented as the total (PR #77 review) | **live defect** — FY2023–FY2025 resolved revenue ~2× the statement's own total | `T-117` (local guard), `T-118` (upstream) |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
 | `turnover_cap` inert (no `w_prev`) | refinement | noted on `T-077` |
 | Q6 — current weights used for past formations | **not reproduced** — books are keyed per formation date | — |

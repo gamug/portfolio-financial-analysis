@@ -25,6 +25,9 @@ class TTMFlow:
 
     value: float
     method: str
+    # T-105 review: the four-quarter sum, when it was computable beside the identity -- kept
+    # only for the cross-check, never used as the value.
+    alt: float | None = None
 
 
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:

@@ -151,7 +151,12 @@ _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
     "efficiency": ("revenue", "cogs"),
     "leverage": ("operating_income", "depreciation_amortization"),
     "roic": ("operating_income",),
-    "valuation": ("operating_cash_flow", "capital_expenditure"),
+    "valuation": (
+        "operating_cash_flow",
+        "capital_expenditure",
+        "stock_based_compensation",
+        "interest_expense",
+    ),
 }
 
 

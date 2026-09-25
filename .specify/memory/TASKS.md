@@ -219,6 +219,10 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       EBITDA 0.95, ROIC 0.95 (were 3.6–3.9, 0.25, 3.5); 10-Q FCF-yield coverage 97 filings;
       the identity used for 1,789 of 1,891 flows (94.6%), ×4 for 92; no recomputed |FCF yield| > 0.5.
       F4's tests unchanged; +12 tests, mutation-checked. Record: `docs/model_fixes.md` T-105.
+      **Review follow-ups (PR #77)**: SBC and interest in the valuation group's provenance;
+      TTM reads pinned to the running engine version; identity-vs-four-quarter cross-check
+      recorded as a SOFT `DQ_TTM_CROSSCHECK` review (16 of 780 on the sample: AT&T's 2022
+      restatement, APA's revenue, one WFC value); `scripts/verify_t105.py`. +4 tests.
 - [ ] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
       `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
       `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
@@ -297,6 +301,29 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `net_debt_to_ebitda` is only usable once `T-105` annualizes it. Methodology change:
       `docs/model_fixes.md` record. **Acceptance**: thresholds calibrated on annualized data;
       NULL-on-both never passes silently.
+
+- [ ] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
+      breakdown figure presented as the company total. APA never filed a consolidated
+      `us-gaap:Revenues` (per the reviewer, from SEC companyfacts — to be re-verified); the
+      gateway presents a breakdown figure as the total: too small in FY2021 (T-095's case), and
+      2× too large since — resolved revenue vs the income statement's own "Total revenues and
+      other" (`apa_RevenuesAndOther`): FY2023 16,558 vs 8,192, FY2024 19,474 vs 9,737, FY2025
+      17,840 vs 9,220 ($M; `scripts/verify_t105.py`); APA 2024Q1–Q3 revenue also trips the
+      TTM cross-check (11–25%). Reject a revenue total that the filing's own income statement
+      contradicts. The rule must be validated on the **full universe** — the number of filings
+      it rejects reported and each inspected — not tuned on APA (the mistake `T-095` made).
+      Also correct `T-095`'s diagnosis in `docs/model_fixes.md`: APA FY2021 was not a
+      filer-side tagging defect but this gateway issue. Methodology change: #12 record.
+      **Acceptance**: APA FY2023 revenue resolves to the statement's consolidated revenue (the
+      reviewer cites $8,279M; the stored facts show "Total revenues and other" $8,192M —
+      establish which line is the consolidated revenue); the full-universe rejection count
+      reported and inspected; `T-095`'s entry corrected.
+- [ ] **T-118** *(P1 — upstream, `portfolio-data-mining`; added 2026-09-25 from PR #77's
+      review)* Fix the root cause of `T-117`: the EDGAR gateway (`sec_edgar`) presents
+      breakdown figures as company totals. Implemented upstream (same pattern as Work item 6);
+      this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
+      until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
+      guard no longer rejects APA.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

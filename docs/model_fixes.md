@@ -1963,3 +1963,39 @@ cash-flow value ever exists to sum — for them FCF was not annualizable at all 
   `statements.REGISTRY`, not a TTM question; TTM is consistent within whichever concept wins.
 - **`T-116`** can now calibrate the negative-equity distress screen on annualized
   `net_debt_to_ebitda`.
+- **APA's revenue** (`T-117`, local guard; `T-118`, upstream root cause) — see the review
+  follow-ups below.
+
+### Review follow-ups (PR #77, 2026-09-25)
+
+A reviewer asked for four changes before merge; two further items became tasks (`T-117`,
+`T-118`).
+
+1. **Provenance covers every valuation input.** `_GROUP_TTM_ITEMS["valuation"]` now includes
+   `stock_based_compensation` and `interest_expense`: the SBC-adjusted yield and FCFF use them,
+   so a × 4 on either stamps the group `annualized_x4`, not `annualized_ttm`.
+2. **TTM reads are version-pinned.** `_recorded_flow` (and so the identity's prior 10-K and the
+   four-quarter path) reads only rows of the engine version being written; a prior filing
+   recorded only by an older engine reads as missing and the TTM falls through to its next
+   method, never combining two engines' concept resolution. In production this is what the
+   ordered full recompute (`T-100`) relies on: each filing's prior year is recorded under the
+   same version first.
+3. **Identity vs four-quarter cross-check.** Where both are computable, `TTMFlow.alt` carries
+   the four-quarter sum; `quality.record_ttm_crosscheck` (called by the pipeline after the
+   metrics are recorded) writes a **SOFT, unquarantined** `DQ_TTM_CROSSCHECK` row under the
+   pseudo-group `ttm` with both values when they differ by more than 1%. The identity stays the
+   value: it uses the filing's own *restated* comparative. Neither side is presumed right —
+   AT&T after the 2022 WarnerMedia spin-off is the case where the as-filed quarters are the
+   wrong side (Q1 2022 cogs $10.351B as filed, $6.036B restated). On the 20-asset sample: 780
+   flows computable both ways, 16 over 1% — AT&T 2023Q1–Q3 (revenue 6.9%, cogs ~18.5%,
+   operating income and interest 1.5–3.7%: the restatement), APA 2024Q1–Q3 revenue 11–25%
+   (the `T-117` defect, differing filing by filing), WFC 2023Q3 net income 1.1%.
+4. **Verification script.** `scripts/verify_t105.py` reproduces, read-only from stored facts:
+   the before/after median table above, the TTM methods and the cross-check counts, and APA's
+   resolved revenue against its statement's own "Total revenues and other" (FY2023 16,558 vs
+   8,192; FY2024 19,474 vs 9,737; FY2025 17,840 vs 9,220, $M).
+
+Tests (+4, mutation-checked): the valuation stamp with an SBC or interest × 4; an older
+engine's prior year not feeding the TTM (and the same engine's doing so); the cross-check on
+AT&T's restated shape (identity kept, review row with both values); no review within 1% or
+with only one method. `uv run pytest -q` — 605 passed.

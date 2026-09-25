@@ -467,6 +467,7 @@ def _analyze_one(
         engine.conn, task.asset_id, stmts, target.period.key, exclude_filing_id=filing_id
     )
 
+    ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
         company_name=task.company_name,
@@ -477,7 +478,7 @@ def _analyze_one(
         prior_key=target.prior.key if target.prior else None,
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
         share_scale_factors=share_scale_factors,
-        ttm_flows=_ttm_flows(engine, task, stmts, target),
+        ttm_flows=ttm,
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(
@@ -486,6 +487,15 @@ def _analyze_one(
     # Ring-1 data-quality gates (T-065) over what was just stored, so every newly analysed
     # filing is gated; `python -m fundamental_agent quality` backfills older ones.
     quality.gate_version(engine.conn, db.METRICS_ENGINE_VERSION, filing_id=filing_id, run_id=run_id)
+    # T-105 review: where the TTM identity and four recorded quarters disagree, a SOFT review.
+    quality.record_ttm_crosscheck(
+        engine.conn,
+        filing_id,
+        task.asset_id,
+        ttm,
+        engine_version=db.METRICS_ENGINE_VERSION,
+        run_id=run_id,
+    )
 
     assessment = result.assessment
     db.insert_snapshot(

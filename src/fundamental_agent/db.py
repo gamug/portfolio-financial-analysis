@@ -513,22 +513,27 @@ def _filing_near(conn: Database, asset_id: int, form: str, target: date) -> tupl
     return (int(row["id"]), str(row["period_end"])) if row else None
 
 
-def _recorded_flow(conn: Database, filing_id: int, item: str) -> float | None:
+def _recorded_flow(
+    conn: Database, filing_id: int, item: str, engine_version: str = METRICS_ENGINE_VERSION
+) -> float | None:
     """The single-quarter (or FY) *item* value already recorded for a filing, read from the
     metric row's own audit ``inputs_json`` -- already resolved through
     :meth:`Statements.get`'s full concept-selection logic (F2) at the time that filing was
-    processed, so this never re-derives concept resolution itself. When more than one
-    ``engine_version`` row exists for the same key, the most recently written one wins
-    (mirrors :func:`overlapping_history`'s "last/most-recent wins" rule)."""
+    processed, so this never re-derives concept resolution itself.
+
+    Pinned to *engine_version* -- the version the running engine writes (T-105 review): a
+    TTM must never combine this engine's values with an older engine's, which may resolve a
+    concept differently. A prior filing not yet recorded under this version reads as missing,
+    so the caller falls through to its next method."""
     group, name = _TTM_FLOW_SOURCE[item]
     row = conn.execute(
         """
         SELECT inputs_json FROM fundamental_metrics
-        WHERE filing_id = ? AND metric_group = ? AND metric_name = ?
+        WHERE filing_id = ? AND metric_group = ? AND metric_name = ? AND engine_version = ?
         ORDER BY id DESC
         LIMIT 1
         """,
-        (filing_id, group, name),
+        (filing_id, group, name, engine_version),
     ).fetchone()
     if row is None or not row["inputs_json"]:
         return None
@@ -539,7 +544,11 @@ def _recorded_flow(conn: Database, filing_id: int, item: str) -> float | None:
 
 
 def _quarter_flow_ending(
-    conn: Database, asset_id: int, quarter_end: date, item: str
+    conn: Database,
+    asset_id: int,
+    quarter_end: date,
+    item: str,
+    engine_version: str = METRICS_ENGINE_VERSION,
 ) -> float | None:
     """The single-quarter value of *item* for the fiscal quarter ending near *quarter_end*.
 
@@ -549,17 +558,17 @@ def _quarter_flow_ending(
     otherwise ``None`` and the caller falls back to ``x4`` (F4, docs/model_fixes.md)."""
     quarter = _filing_near(conn, asset_id, "10-Q", quarter_end)
     if quarter is not None:
-        return _recorded_flow(conn, quarter[0], item)
+        return _recorded_flow(conn, quarter[0], item, engine_version)
     fiscal_year = _filing_near(conn, asset_id, "10-K", quarter_end)
     if fiscal_year is None:
         return None
-    fy = _recorded_flow(conn, fiscal_year[0], item)
+    fy = _recorded_flow(conn, fiscal_year[0], item, engine_version)
     if fy is None:
         return None
     total = fy
     for months in (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS):
         q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
-        flow = _recorded_flow(conn, q[0], item) if q else None
+        flow = _recorded_flow(conn, q[0], item, engine_version) if q else None
         if flow is None:
             return None
         total -= flow
@@ -577,13 +586,14 @@ def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str)
     return int(row["id"]) if row else None
 
 
-def ttm_detail(
+def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the version pin
     conn: Database,
     asset_id: int,
     *,
     period_end: str,
     current: dict[str, float],
     ytd: dict[str, YTDPair] | None = None,
+    engine_version: str = METRICS_ENGINE_VERSION,
 ) -> dict[str, TTMFlow]:
     """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
 
@@ -593,36 +603,55 @@ def ttm_detail(
     2. ``quarters`` (F4): this quarter plus the three before it, all recorded;
     3. ``x4``: this quarter times four -- flagged downstream as crude annualization.
 
-    A flow with none of the three (no current value, no usable year-to-date pair) is absent."""
+    A flow with none of the three (no current value, no usable year-to-date pair) is absent.
+    When the identity *and* four quarters are both computable, the four-quarter sum rides
+    along as :attr:`TTMFlow.alt` for the cross-check -- the identity stays the value: it uses
+    the filing's own restated comparative, so it survives a restated prior year that the
+    as-filed quarters do not (AT&T's WarnerMedia spin-off, see
+    :func:`fundamental_agent.quality.record_ttm_crosscheck`). Every recorded value read is of
+    *engine_version* only."""
     out: dict[str, TTMFlow] = {}
     for item in sorted(set(current) | set(ytd or {})):
+        summed = (
+            _trailing_quarters(
+                conn, asset_id, period_end, item, current[item], engine_version=engine_version
+            )
+            if item in current
+            else None
+        )
         pair = (ytd or {}).get(item)
         if pair and pair.current is not None and pair.prior is not None and pair.prior_end:
             fy_filing = _fiscal_year_between(conn, asset_id, pair.prior_end, period_end)
-            fy = _recorded_flow(conn, fy_filing, item) if fy_filing is not None else None
-            if fy is not None:
-                out[item] = TTMFlow(fy - pair.prior + pair.current, "ytd")
-                continue
-        if item in current:
-            summed = _trailing_quarters(conn, asset_id, period_end, item, current[item])
-            out[item] = (
-                TTMFlow(summed, "quarters")
-                if summed is not None
-                else TTMFlow(current[item] * 4.0, "x4")
+            fy = (
+                _recorded_flow(conn, fy_filing, item, engine_version)
+                if fy_filing is not None
+                else None
             )
+            if fy is not None:
+                out[item] = TTMFlow(fy - pair.prior + pair.current, "ytd", alt=summed)
+                continue
+        if summed is not None:
+            out[item] = TTMFlow(summed, "quarters")
+        elif item in current:
+            out[item] = TTMFlow(current[item] * 4.0, "x4")
     return out
 
 
-def _trailing_quarters(
-    conn: Database, asset_id: int, period_end: str, item: str, value: float
+def _trailing_quarters(  # noqa: PLR0913 - one quarter's identity plus the version pin
+    conn: Database,
+    asset_id: int,
+    period_end: str,
+    item: str,
+    value: float,
+    *,
+    engine_version: str = METRICS_ENGINE_VERSION,
 ) -> float | None:
     """*value* (this quarter) plus the three recorded quarters before it, or ``None`` when
     any of them is missing."""
     total = value
     for k in (1, 2, 3):
-        flow = _quarter_flow_ending(
-            conn, asset_id, _months_before(period_end, _QUARTER_MONTHS * k), item
-        )
+        end = _months_before(period_end, _QUARTER_MONTHS * k)
+        flow = _quarter_flow_ending(conn, asset_id, end, item, engine_version)
         if flow is None:
             return None
         total += flow
@@ -635,6 +664,7 @@ def ttm_flows(
     *,
     period_end: str,
     current: dict[str, float],
+    engine_version: str = METRICS_ENGINE_VERSION,
 ) -> dict[str, float]:
     """Trailing-twelve-month value of each *current* flow (this 10-Q's own single-quarter
     value, whose period ends on *period_end*), keyed the same way (F4,
@@ -651,7 +681,9 @@ def ttm_flows(
     line up for a December year-end."""
     out: dict[str, float] = {}
     for item, value in current.items():
-        summed = _trailing_quarters(conn, asset_id, period_end, item, value)
+        summed = _trailing_quarters(
+            conn, asset_id, period_end, item, value, engine_version=engine_version
+        )
         out[item] = summed if summed is not None else value * 4.0
     return out
 

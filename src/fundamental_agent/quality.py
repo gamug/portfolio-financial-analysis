@@ -39,6 +39,7 @@ from typing import Any, Final
 
 from portfolio_common.db import Database
 
+from fundamental_agent.metrics.base import TTMFlow
 from kg_schema import queries
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, METRIC_GROUPS, MetricVersions
 
@@ -371,3 +372,74 @@ def gate_all(
     present = sorted({v for vs in queries.metric_versions_present(conn).values() for v in vs})
     chosen = [v for v in present if engine_version is None or v == engine_version]
     return {v: gate_version(conn, v, run_id=run_id) for v in chosen}
+
+
+# -- TTM cross-check (T-105 review) ------------------------------------------------------------
+
+TTM_CROSSCHECK_RULE: Final[str] = "DQ_TTM_CROSSCHECK"
+# Relative gap between the two TTM constructions above which a filing goes to review.
+TTM_CROSSCHECK_TOLERANCE: Final[float] = 0.01
+
+
+def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provenance
+    conn: Database,
+    filing_id: int,
+    asset_id: int,
+    flows: Mapping[str, TTMFlow],
+    *,
+    engine_version: str,
+    run_id: int | None = None,
+) -> int:
+    """Where a flow's TTM was computable both ways -- the year-to-date identity (its value) and
+    four recorded quarters (:attr:`TTMFlow.alt`) -- and they differ by more than
+    :data:`TTM_CROSSCHECK_TOLERANCE`, record a SOFT, unquarantined review row with both.
+
+    Neither side is treated as the truth, so nothing is quarantined or vetoed: the identity is
+    kept because it uses the filing's own *restated* comparative column, while the quarters
+    are as-filed -- after AT&T's 2022 WarnerMedia spin-off its Q1 2022 cogs were $10.351B as
+    filed and $6.036B restated, and the four-quarter sum is the wrong side. A gap is still worth
+    a look: it can equally mean a concept resolved differently in one filing. The row sits
+    under the pseudo-group ``ttm`` (never a metric group, so no consumer reads it as a metric).
+    Returns the rows inserted."""
+    now = _now()
+    rows = []
+    for item, flow in sorted(flows.items()):
+        if flow.method != "ytd" or flow.alt is None:
+            continue
+        scale = max(abs(flow.value), abs(flow.alt))
+        if scale == 0 or abs(flow.value - flow.alt) <= TTM_CROSSCHECK_TOLERANCE * scale:
+            continue
+        evidence = {
+            "identity": flow.value,
+            "four_quarters": flow.alt,
+            "relative_gap": abs(flow.value - flow.alt) / scale,
+        }
+        rows.append(
+            (
+                filing_id,
+                asset_id,
+                "ttm",
+                item,
+                engine_version,
+                TTM_CROSSCHECK_RULE,
+                "SOFT",
+                0,
+                flow.value,
+                json.dumps(evidence, sort_keys=True),
+                GATE_VERSION,
+                now,
+                run_id,
+            )
+        )
+    before = _count_issues(conn)
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO data_quality_issue
+            (filing_id, asset_id, metric_group, metric_name, metric_engine_version, rule_id,
+             severity, quarantined, value, evidence_json, gate_version, created_at, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    return _count_issues(conn) - before
