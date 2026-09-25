@@ -93,6 +93,10 @@ Projection semantics
                           book, and its active return vs the internal benchmark.
 ``v_quant_vs_live``       per-name weight of every optimized book beside the live
                           ``portfolio_position`` book as of the same date (active weight).
+                          Plus (T-042) one ``kind = 'LIVE_ONLY'`` row per live position held
+                          in *no* optimized book of that as-of date: ``benchmark_weight`` NULL,
+                          ``active_weight = -live_weight``. Before, such a name was absent from
+                          the view altogether, so the live book looked smaller than it is.
 """
 
 from __future__ import annotations
@@ -375,6 +379,20 @@ VIEWS: dict[str, str] = {
              AND pp.valid_from <= qp.as_of
              AND (pp.valid_to IS NULL OR pp.valid_to > qp.as_of)
         WHERE qp.kind NOT IN ('live_book', 'equal_weight', 'cap_weight')
+        UNION ALL
+        SELECT b.as_of, 'LIVE_ONLY' AS kind, a.ticker, pp.asset_id,
+               NULL AS benchmark_weight, pp.weight AS live_weight,
+               -COALESCE(pp.weight, 0) AS active_weight
+        FROM (SELECT DISTINCT as_of FROM quant_portfolio
+              WHERE kind NOT IN ('live_book', 'equal_weight', 'cap_weight')) b
+        JOIN portfolio_position pp ON pp.valid_from <= b.as_of
+             AND (pp.valid_to IS NULL OR pp.valid_to > b.as_of)
+        JOIN assets a ON a.id = pp.asset_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM quant_portfolio q2
+            JOIN quant_position p2 ON p2.portfolio_id = q2.id AND p2.valid_to IS NULL
+            WHERE q2.as_of = b.as_of AND p2.asset_id = pp.asset_id
+              AND q2.kind NOT IN ('live_book', 'equal_weight', 'cap_weight'))
     """,
 }
 

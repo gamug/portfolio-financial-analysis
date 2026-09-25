@@ -193,7 +193,8 @@ members' TECHNICAL score per sector).
 `v_quant_risk_model` (model metadata; μ / Σ stay internal), `v_quant_portfolio`,
 `v_quant_position` (book weight stints), `v_quant_frontier_point`,
 `v_quant_benchmark_performance`, and `v_quant_vs_live` (each optimized book beside
-the live `portfolio_position` weights, per name).
+the live `portfolio_position` weights, per name, plus a `kind = 'LIVE_ONLY'` row for each
+live name that no optimized book of that as-of date holds — T-042).
 
 **Run-log views** for `portfolio-reports`: `v_analysis_run`, `v_pricing_run`,
 `v_quant_run`, `v_cycle_run` — one row per agent run with `run_id`, `as_of`
