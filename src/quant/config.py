@@ -35,6 +35,17 @@ class QuantSettings(BaseModel):
     # Resolved into a manifest whose tag is folded into the risk-model / optimizer version keys,
     # so runs over different inputs write parallel rows instead of overwriting each other.
     metrics_version: str | None = None
+    # Version *constraints* for the non-metric inputs (T-093), same grammar as
+    # ``metrics_version`` plus ``>=``/``!=``/``latest``. ``None`` keeps today's behaviour: the
+    # configured ``return_engine_version``, the per-asset corporate-action priority, and the
+    # ``risk_model_version`` label (loaded, or built when missing). A constraint resolves
+    # strictly against what is stored -- an unsatisfiable one is an error, never a fallback.
+    returns_version: str | None = None  # which quant_return_daily series build-risk-model reads
+    risk_model_select: str | None = None  # which stored risk model optimize reads
+    corpact_version: str | None = None  # which corporate_action engine build-returns reads
+    # The named profile (``--version-profile FILE --profile NAME``) the constraints came from,
+    # recorded on the run manifest; the flags themselves win over the profile.
+    version_profile: str | None = None
 
     # --- score-independent universe gate ---
     universe: str = "SP500"

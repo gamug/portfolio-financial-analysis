@@ -26,6 +26,7 @@ Consequently a gateway that cannot serve is a failure, not a degraded run:
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from portfolio_common.db import Database
 
@@ -248,7 +249,9 @@ def _run_window(raw: str | None) -> dict[str, object]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def dividends_not_ready_reason(conn: Database, *, date_from: str, date_to: str) -> str | None:
+def dividends_not_ready_reason(
+    conn: Database, *, date_from: str, date_to: str, engines: Sequence[str] | None = None
+) -> str | None:
     """Why a total-return series for ``[date_from, date_to]`` would be built without a
     complete set of gateway dividends -- or ``None`` when it is safe (T-086).
 
@@ -283,6 +286,7 @@ def dividends_not_ready_reason(conn: Database, *, date_from: str, date_to: str) 
             f"the latest `backfill-actions` run covering {date_from}..{date_to} left "
             f"{int(str(covering[0]['assets_errored']))} asset(s) without data"
         )
-    if not has_gateway_actions(conn):
-        return "`corporate_action` holds no gateway rows"
+    if not has_gateway_actions(conn, engines):
+        pinned = f" for {', '.join(engines)}" if engines else ""
+        return f"`corporate_action` holds no gateway rows{pinned}"
     return None

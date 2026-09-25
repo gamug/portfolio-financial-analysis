@@ -125,6 +125,16 @@ reader goes through it (`cycle.data.latest_metrics` / `market_cap_estimates`,
   selection reads nothing, never everything.
 - `manifest_tag(manifest)` — 8 hex chars of a stable hash of the run's input versions.
   The same inputs give the same tag; different inputs give a different one.
+- **Constraints (T-093).** `parse_constraint(text, key=...)` parses `=v` / bare `v` (exact),
+  `>=v`, `!=v`, comma-separated combinations and `latest` into a `Constraint`;
+  `pick_version(stored, constraint, key=..., what=...)` returns the highest stored version
+  satisfying it, or raises a `VersionError` naming why each candidate was rejected.
+  `parse_metric_constraints` / `choose_constrained_versions` extend the metric selection with
+  per-group constraints, and hand every T-090 form to `parse_metric_selection` /
+  `choose_versions` unchanged. `engine_version_key(family)` orders one engine's versions
+  (`qret-v2` < `qret-v10`) and rejects another family; `recognized_engine_versions` separates
+  them from history strings like `corpact-v1-derived`. `quant` uses all of these; `cycle`
+  still uses only the exact T-090 functions.
 
 Passive like the rest of the package: it reads and computes, never writes.
 

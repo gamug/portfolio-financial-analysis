@@ -1,4 +1,4 @@
-"""``python -m quant {backfill-actions,build-returns,build-risk-model,optimize,benchmark,evaluate}``.
+"""``python -m quant {backfill-actions,build-returns,build-risk-model,optimize,benchmark,evaluate,versions}``.
 
 Subcommands are filled in milestone by milestone; an unimplemented one prints a
 notice and exits 0.
@@ -21,21 +21,110 @@ from quant.benchmark import build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
-from quant.persist import run_build_risk_model, run_optimize
+from quant.persist import (
+    DryRunPlan,
+    plan_build_risk_model,
+    plan_optimize,
+    run_build_risk_model,
+    run_optimize,
+)
+from quant.profiles import load_profile
 from quant.returns import run_build_returns
+from quant.versions_report import versions_report
 
 _TODAY_HELP = "date, YYYY-MM-DD"
 _METRICS_VERSION_HELP = (
-    "which fundamental_metrics engine version the risk model reads: a version (metrics-v1) or "
-    "GROUP=VERSION pairs (valuation=metrics-v1); default: the newest stored. Runs over different "
-    "versions write parallel books (T-090)"
+    "which fundamental_metrics engine version the risk model reads: a version (metrics-v1), "
+    "GROUP=VERSION pairs (valuation=metrics-v1), or a constraint (>=metrics-v2, !=metrics-v1, "
+    "combinations, latest; T-093); default: the newest stored. Runs over different versions "
+    "write parallel books (T-090)"
 )
+_RETURNS_VERSION_HELP = (
+    "constraint on the return series read (qret-v2, >=qret-v2, !=qret-v1, latest); resolved "
+    "strictly against what is stored. Default: the configured return engine"
+)
+_RISK_MODEL_VERSION_HELP = (
+    "constraint on the stored risk model optimize reads (rm-v1, >=rm-v1, latest), matched "
+    "among models for this as-of over the same inputs. Default: --model-version (loaded, or "
+    "built when missing)"
+)
+_CORPACT_VERSION_HELP = (
+    "pin one corporate-action engine (corpact-v1, >=corpact-v1, latest) instead of the "
+    "per-asset priority. The series is append-only per return engine, so a different choice "
+    "only takes effect under a new return engine version"
+)
+
+
+def _add_profile(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--version-profile",
+        dest="version_profile",
+        metavar="FILE",
+        help="TOML file of named version-constraint profiles; flags win over it (T-093)",
+    )
+    sub.add_argument(
+        "--profile",
+        dest="profile_name",
+        metavar="NAME",
+        help="which profile in --version-profile (optional when the file holds one)",
+    )
+
+
+def _add_dry_run(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the resolved manifest and the rows it would key; write nothing",
+    )
 
 
 def _add_common(sub: argparse.ArgumentParser) -> None:
     sub.add_argument("--db", help="override KG_FINANCIAL_DB path")
     sub.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
     add_analysis_date_argument(sub)
+
+
+def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    rm = sub.add_parser("build-risk-model", help="estimate mu / covariance for an as-of date")
+    _add_common(rm)
+    rm.add_argument(
+        "--as-of", dest="as_of", help="alias of --analysis-date (default: --analysis-date)"
+    )
+    rm.add_argument("--lookback", type=int, help="return-window length in trading days")
+    rm.add_argument("--min-history", dest="min_history", type=int)
+    rm.add_argument(
+        "--cov", dest="cov_estimator", choices=("ledoit_wolf_cc", "ledoit_wolf_diag", "sample")
+    )
+    rm.add_argument("--model-version", dest="model_version")
+    rm.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
+    rm.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
+    rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
+    _add_profile(rm)
+    _add_dry_run(rm)
+
+
+def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    op = sub.add_parser("optimize", help="run the objective family and persist the benchmark books")
+    _add_common(op)
+    op.add_argument(
+        "--as-of", dest="as_of", help="alias of --analysis-date (default: --analysis-date)"
+    )
+    op.add_argument("--objectives", help="comma-separated: min_var,tangency,target_vol,frontier")
+    op.add_argument("--frontier-k", dest="frontier_k", type=int)
+    op.add_argument("--target-vol", dest="target_vol", type=float)
+    op.add_argument("--max-name-weight", dest="max_name_weight", type=float)
+    op.add_argument("--max-sector-weight", dest="max_sector_weight", type=float)
+    op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
+    op.add_argument(
+        "--mu", dest="ret_estimator", choices=("equilibrium", "james_stein", "hist_mean")
+    )
+    op.add_argument("--solver")
+    op.add_argument("--model-version", dest="model_version")
+    op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
+    op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
+    op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
+    _add_profile(op)
+    _add_dry_run(op)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,38 +148,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="build even though no clean gateway backfill-actions covers the window: the "
         "series is price-only and locks in under the return engine version (T-086)",
     )
+    br.add_argument("--corpact-version", dest="corpact_version", help=_CORPACT_VERSION_HELP)
+    _add_profile(br)
 
-    rm = sub.add_parser("build-risk-model", help="estimate mu / covariance for an as-of date")
-    _add_common(rm)
-    rm.add_argument(
-        "--as-of", dest="as_of", help="alias of --analysis-date (default: --analysis-date)"
-    )
-    rm.add_argument("--lookback", type=int, help="return-window length in trading days")
-    rm.add_argument("--min-history", dest="min_history", type=int)
-    rm.add_argument(
-        "--cov", dest="cov_estimator", choices=("ledoit_wolf_cc", "ledoit_wolf_diag", "sample")
-    )
-    rm.add_argument("--model-version", dest="model_version")
-    rm.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
-    rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
-
-    op = sub.add_parser("optimize", help="run the objective family and persist the benchmark books")
-    _add_common(op)
-    op.add_argument(
-        "--as-of", dest="as_of", help="alias of --analysis-date (default: --analysis-date)"
-    )
-    op.add_argument("--objectives", help="comma-separated: min_var,tangency,target_vol,frontier")
-    op.add_argument("--frontier-k", dest="frontier_k", type=int)
-    op.add_argument("--target-vol", dest="target_vol", type=float)
-    op.add_argument("--max-name-weight", dest="max_name_weight", type=float)
-    op.add_argument("--max-sector-weight", dest="max_sector_weight", type=float)
-    op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
-    op.add_argument(
-        "--mu", dest="ret_estimator", choices=("equilibrium", "james_stein", "hist_mean")
-    )
-    op.add_argument("--solver")
-    op.add_argument("--model-version", dest="model_version")
-    op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
+    _add_build_risk_model_parser(sub)
+    _add_optimize_parser(sub)
 
     bm = sub.add_parser("benchmark", help="build the internal equal-weight benchmark series")
     _add_common(bm)
@@ -107,6 +169,11 @@ def build_parser() -> argparse.ArgumentParser:
     ev.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     ev.add_argument("--benchmark", default="SP500_EW_INTERNAL")
 
+    vs = sub.add_parser(
+        "versions", help="list the stored versions of every input quant can be constrained on"
+    )
+    vs.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
     add_coverage_parser(sub)
     return parser
 
@@ -120,6 +187,9 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "ret_estimator": ("ret_estimator", str),
     "model_version": ("risk_model_version", str),
     "metrics_version": ("metrics_version", str),
+    "returns_version": ("returns_version", str),
+    "risk_model_select": ("risk_model_select", str),
+    "corpact_version": ("corpact_version", str),
     "frontier_k": ("frontier_k", int),
     "target_vol": ("target_volatility", float),
     "max_name_weight": ("max_name_weight", float),
@@ -130,8 +200,16 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
 
 
 def _settings(args: argparse.Namespace) -> QuantSettings:
+    """Env, then the named version profile (if any), then the flags -- a flag wins."""
     s = QuantSettings.load()
     updates: dict[str, object] = {}
+    profile_path = getattr(args, "version_profile", None)
+    if profile_path:
+        profile = load_profile(profile_path, getattr(args, "profile_name", None))
+        updates.update(profile.settings_updates())
+        updates["version_profile"] = profile.label
+    elif getattr(args, "profile_name", None):
+        raise VersionError("--profile needs --version-profile FILE")
     for flag, (field, cast) in _FLAG_TO_FIELD.items():
         val = getattr(args, flag, None)
         if val is not None:
@@ -156,6 +234,40 @@ def _date_to(analysis_date: str, args: argparse.Namespace) -> str:
     """The range end: ``--to`` clamped to the analysis date, else the analysis date."""
     dt = getattr(args, "date_to", None)
     return min(dt, analysis_date) if dt else analysis_date
+
+
+def _print_plan(plan: DryRunPlan) -> None:
+    m = plan.manifest
+    state = "stored, would be reused" if plan.model_stored else "not stored, would be built"
+    print(f"{plan.command} --dry-run @ {plan.as_of} (nothing written)")
+    print(f"  manifest: {m.json()}")
+    print(f"  manifest tag: {m.tag}" + (f", book tag: {m.book_tag}" if plan.book_version else ""))
+    print(f"  risk model: {plan.model_version} ({state})")
+    if plan.book_version:
+        print(f"  books: engine_version {plan.book_version}")
+
+
+def _dry_run(settings: QuantSettings, command: str, as_of: str) -> int:
+    conn = connect(settings.db_path, read_only=True)
+    try:
+        planner = plan_optimize if command == "optimize" else plan_build_risk_model
+        _print_plan(planner(settings, as_of=as_of, conn=conn))
+    except VersionError as exc:
+        print(f"{command}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    return 0
+
+
+def _run_versions(settings: QuantSettings) -> int:
+    conn = connect(settings.db_path, read_only=True)
+    try:
+        report = versions_report(conn, settings)
+    finally:
+        conn.close()
+    print(report)
+    return 0
 
 
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
@@ -222,6 +334,9 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             date_to=date_to,
             allow_no_dividends=args.allow_no_dividends,
         )
+    except VersionError as exc:
+        print(f"build-returns: {exc}", file=sys.stderr)
+        return 1
     except DividendsNotReady as exc:
         print(
             f"build-returns: refusing to build a total-return series -- {exc}.\n"
@@ -233,7 +348,15 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
     print(
         f"build-returns [{rep.engine_version}]: {rep.assets} assets, "
         f"{rep.rows_written} new rows, {rep.assets_with_dividends} with dividends"
+        + (f", corporate actions from {rep.corpact_engine}" if rep.corpact_engine else "")
     )
+    if rep.corpact_engine and rep.assets and not rep.rows_written:
+        print(
+            f"  NOTE: no new rows -- {rep.engine_version} is append-only, so rows already stored "
+            f"there were kept; a different corporate-action choice only takes effect under a "
+            f"new return engine version",
+            file=sys.stderr,
+        )
     if rep.dividends_guard_bypassed is not None:
         print(
             f"  WARNING: --allow-no-dividends overrode the dividends guard "
@@ -244,6 +367,26 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
     return 0
 
 
+def _prepare(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> int | tuple[QuantSettings, str]:
+    """Settings and the analysis date -- or an exit code when the command is already done:
+    a bad profile (1), ``versions``, or a ``--dry-run`` (T-093)."""
+    try:
+        settings = _settings(args)
+    except VersionError as exc:
+        print(f"{args.command}: {exc}", file=sys.stderr)
+        return 1
+    if args.command == "versions":
+        return _run_versions(settings)
+    if getattr(args, "risk_model_select", None) and getattr(args, "model_version", None):
+        parser.error("--risk-model-version and --model-version both pick the risk model; use one")
+    analysis_date = _analysis_date(parser, args)
+    if getattr(args, "dry_run", False):
+        return _dry_run(settings, args.command, analysis_date)
+    return settings, analysis_date
+
+
 def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -251,8 +394,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
     if args.command == "coverage":
         return coverage_from_args(args)
 
-    settings = _settings(args)
-    analysis_date = _analysis_date(parser, args)
+    prepared = _prepare(parser, args)
+    if isinstance(prepared, int):
+        return prepared
+    settings, analysis_date = prepared
 
     if args.command == "backfill-actions":
         return _run_backfill_actions(settings, args, _date_to(analysis_date, args))

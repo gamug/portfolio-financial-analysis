@@ -9,7 +9,7 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -221,22 +221,32 @@ def load_daily_closes(
 _ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1")
 
 
-def has_gateway_actions(conn: Database) -> bool:
-    """True when ``corporate_action`` holds at least one row from a gateway engine."""
-    marks = ", ".join("?" for _ in _ACTION_ENGINE_PRIORITY)
+def has_gateway_actions(conn: Database, engines: Sequence[str] | None = None) -> bool:
+    """True when ``corporate_action`` holds at least one row from a gateway engine
+    (*engines*, default ``_ACTION_ENGINE_PRIORITY``)."""
+    engines = tuple(engines or _ACTION_ENGINE_PRIORITY)
+    marks = ", ".join("?" for _ in engines)
     row = conn.execute(
         f"SELECT 1 FROM corporate_action WHERE engine_version IN ({marks}) LIMIT 1",  # noqa: S608
-        _ACTION_ENGINE_PRIORITY,
+        engines,
     ).fetchone()
     return row is not None
 
 
-def load_actions(
-    conn: Database, asset_id: int, action_type: str, *, start: str, end: str
+def load_actions(  # noqa: PLR0913 - the lookup key plus the window and the engine choice
+    conn: Database,
+    asset_id: int,
+    action_type: str,
+    *,
+    start: str,
+    end: str,
+    engines: Sequence[str] | None = None,
 ) -> dict[str, float]:
     """``ex_date -> value`` in ``[start, end]``, from whichever single
-    engine_version is the best available for *asset_id* (see
-    ``_ACTION_ENGINE_PRIORITY``) -- never a blend of two engines' ex-dates."""
+    engine_version is the best available for *asset_id* among *engines* (default
+    ``_ACTION_ENGINE_PRIORITY``, newest first; a ``--corpact-version`` pins one, T-093)
+    -- never a blend of two engines' ex-dates."""
+    priority = tuple(engines or _ACTION_ENGINE_PRIORITY)
     available = {
         str(r["engine_version"])
         for r in conn.execute(
@@ -245,7 +255,7 @@ def load_actions(
             (asset_id, action_type),
         )
     }
-    engine = next((e for e in _ACTION_ENGINE_PRIORITY if e in available), None)
+    engine = next((e for e in priority if e in available), None)
     if engine is None:
         return {}
     return {
@@ -747,3 +757,66 @@ def insert_frontier_points(
         n += 1
     conn.commit()
     return n
+
+
+# -- stored input versions (T-093) ------------------------------------------------------------
+#
+# One fully literal statement per input, keyed by the input's name: a table name is an
+# identifier no ``?`` can bind, and it is never interpolated (constitution Code & Git #10).
+_VERSION_STATS_SQL: dict[str, str] = {
+    "returns": (
+        "SELECT engine_version AS version, COUNT(*) AS n_rows, MIN(computed_at) AS first_at, "
+        "MAX(computed_at) AS last_at FROM quant_return_daily GROUP BY engine_version"
+    ),
+    "corpact": (
+        "SELECT engine_version AS version, COUNT(*) AS n_rows, MIN(ingested_at) AS first_at, "
+        "MAX(ingested_at) AS last_at FROM corporate_action GROUP BY engine_version"
+    ),
+    "risk_model": (
+        "SELECT model_version AS version, COUNT(*) AS n_rows, MIN(computed_at) AS first_at, "
+        "MAX(computed_at) AS last_at FROM quant_risk_model GROUP BY model_version"
+    ),
+}
+
+
+@dataclass(frozen=True)
+class VersionStat:
+    """One stored version of an input: how many rows, and when they were first/last written."""
+
+    version: str
+    n_rows: int
+    first_at: str | None
+    last_at: str | None
+
+
+def version_stats(conn: Database, input_name: str) -> list[VersionStat]:
+    """What is stored for *input_name*: ``returns``, ``corpact``, or ``risk_model`` (full
+    ``model_version`` strings, tag included). Empty when the table does not exist yet. The
+    metrics listing is :func:`kg_schema.queries.metric_version_stats` -- the one place allowed
+    to read ``fundamental_metrics`` across every version."""
+    try:
+        rows = conn.execute(_VERSION_STATS_SQL[input_name]).fetchall()
+    except DatabaseError:
+        return []
+    return [
+        VersionStat(
+            str(r["version"]),
+            int(r["n_rows"]),
+            None if r["first_at"] is None else str(r["first_at"]),
+            None if r["last_at"] is None else str(r["last_at"]),
+        )
+        for r in rows
+    ]
+
+
+def risk_model_versions_at(conn: Database, as_of: str) -> list[str]:
+    """Every ``quant_risk_model.model_version`` stored for *as_of*."""
+    try:
+        return [
+            str(r["model_version"])
+            for r in conn.execute(
+                "SELECT model_version FROM quant_risk_model WHERE as_of = ?", (as_of,)
+            )
+        ]
+    except DatabaseError:
+        return []

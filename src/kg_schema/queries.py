@@ -206,6 +206,31 @@ def metric_versions_present(conn: Database) -> dict[str, list[str]]:
     return out
 
 
+def metric_version_stats(conn: Database) -> list[tuple[str, str, int, str | None, str | None]]:
+    """``(metric_group, engine_version, rows, first computed_at, last computed_at)`` for every
+    version stored in ``fundamental_metrics`` -- the listing behind ``quant versions`` (T-093).
+    Like :func:`metric_versions_present`, it deliberately reads across versions. Empty for a
+    database with no such table."""
+    try:
+        rows = conn.execute(
+            "SELECT metric_group, engine_version, COUNT(*) AS n_rows, MIN(computed_at) AS "
+            "first_at, MAX(computed_at) AS last_at FROM fundamental_metrics "
+            "WHERE engine_version IS NOT NULL GROUP BY metric_group, engine_version"
+        ).fetchall()
+    except DatabaseError:
+        return []
+    return [
+        (
+            str(r["metric_group"]),
+            str(r["engine_version"]),
+            int(r["n_rows"]),
+            None if r["first_at"] is None else str(r["first_at"]),
+            None if r["last_at"] is None else str(r["last_at"]),
+        )
+        for r in rows
+    ]
+
+
 def _distinct_ids(db: Database, sql: str, params: tuple[object, ...]) -> set[int]:
     try:
         return {int(r[0]) for r in db.execute(sql, params)}
