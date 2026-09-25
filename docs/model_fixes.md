@@ -2082,3 +2082,10 @@ filed; only historical or backdated cycles are affected.
   task (`T-119`).
 - `SEMANTIC` scores are written by the integration repo; their `event_time` semantics are that
   repo's contract and are read unchanged.
+- **Same-day use.** `filing_date <= cycle_date` treats a filing as usable on its own filing
+  date, but EDGAR dates an after-close submission with that same day. The settled convention
+  (PR #78 review) is use from the trading day after; it lands with `T-107`'s `available_at`,
+  and these readers move to it then.
+- **Legacy shared-accession rows.** 41 pre-`T-091` accessions (13 tickers) each stand for
+  several quarterly rows stamped with the Q3 10-Q's filing date. Here that errs late (a Q1
+  row reads as public at Q3's date), never early; `T-120` re-ingests them.
