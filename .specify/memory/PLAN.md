@@ -48,9 +48,8 @@ the small-sample Phase A validation — is done, run on the 20-ticker sample ins
 `T-088`)** → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
-cleanup)** → **the low-priority path: `T-093`** (user-tunable version constraints for
-`quant`'s Markowitz runs — deferred on purpose, 2026-09-21; to be tackled late, not now)
-→ **Work item 12 (`T-100`) — the full-universe production run, last of all**.
+cleanup)** (`T-093`, the user-tunable version constraints, is done 2026-09-25; `T-101`, the
+book-duplication defect its tests found, is open) → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -1465,6 +1464,19 @@ the `corpact`/return/risk-model inputs, including an absent version erroring; pr
 flag-over-file precedence; `quant versions` output; `--dry-run` writing nothing; two runs under
 different constraints coexisting without either no-opping the other; `pytest`/`ruff`/`mypy`
 green. *Not in scope*: anything on `cycle` (`T-090`'s exact selection stays as it is there).
+**Done 2026-09-25** — see `TASKS.md`'s `T-093` entry and `docs/quant.md` "Version constraints,
+profiles and dry runs". One deliberate deviation from item 2 above: with no flag each input keeps
+its current behaviour (configured return engine, per-asset corporate-action priority, `rm-v1`)
+instead of "latest stored", so no stored run or tag shifts; `latest` is explicit.
+
+**T-101 — Re-running `optimize` duplicates books** *(found by `T-093`'s tests, 2026-09-25; open)*.
+`quant_portfolio`'s unique key `(as_of, kind, frontier_k, engine_version)` includes `frontier_k`,
+NULL for every non-frontier book; SQLite NULLs never conflict, so `insert_portfolio`'s
+`ON CONFLICT … DO UPDATE` never fires and each identical re-run inserts another copy of every book
+(verified on `master`). *Approach*: a NULL-safe key (a `COALESCE(frontier_k, -1)` unique index
+behind a gated migration, or update-then-insert on `frontier_k IS ?`), a decision on the
+duplicates already stored, and the strict `xfail` in `tests/test_quant_version_constraints.py`
+flipped to a pass. *Acceptance*: two identical `optimize` runs leave one book per objective.
 
 **T-091 — Fix 10-Q ingestion. SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining`
 fixed the route (its PR #39, "return all filings for a form+year") while this task was in
@@ -1623,10 +1635,9 @@ this document.** Their internal sequencing:
   the audit and keep their original priority — after Work items 5–9, per
   the Priority Override section.
 - **Low-priority path (2026-09-21):** `T-093` (user-tunable version constraints for `quant`'s
-  Markowitz runs) is deferred behind everything above, at the user's direction — "tackle this
-  late, not this time". It keeps its Work item 11 home and ID (IDs are stable) but has no place
-  in the current order; `T-088` and `T-089` do not wait on it (`T-090`'s `--metrics-version`
-  already gives `T-088` the version selection it needs).
+  Markowitz runs) was deferred behind everything above; **done 2026-09-25** at the user's
+  request. Its tests found **`T-101`** (re-running `optimize` duplicates books), open in Work
+  item 11.
 - **Work item 12 (`T-100`, the full-universe production run) runs last of all** — after
   every other task in `TASKS.md`, including the low-priority path and any task added later.
 

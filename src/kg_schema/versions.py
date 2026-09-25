@@ -33,9 +33,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final, cast
 
 from portfolio_common.db import Database
 
@@ -201,3 +201,210 @@ def manifest_tag(manifest: Mapping[str, object]) -> str:
     them updates in place, while different inputs give a different one."""
     canonical = json.dumps(manifest, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+
+
+# -- version constraints (T-093) -------------------------------------------------------------
+#
+# T-090's selection is exact: one version, or ``GROUP=VERSION`` pairs. A **constraint** also
+# accepts a minimum (``>=metrics-v2``), an exclusion (``!=metrics-v1``) and comma-separated
+# combinations of them; it resolves to the *highest* stored version that satisfies every
+# clause. ``latest`` (or no text at all) means "the newest stored". A bare version and
+# ``=version`` are the same exact clause, so every T-090 form keeps its meaning.
+#
+# The grammar lives here, next to the ordering rule it relies on; which inputs accept it is
+# the consumer's decision (``quant`` does; ``cycle`` keeps T-090's exact selection).
+
+_CLAUSE_RE = re.compile(r"^(?P<op>>=|!=|=)?\s*(?P<version>\S+)$")
+_GROUP_CLAUSE_RE = re.compile(r"^(?P<group>[a-z_]+)\s*(?P<rest>(?:>=|!=|=).*)$")
+LATEST: Final[str] = "latest"
+
+
+@dataclass(frozen=True)
+class Clause:
+    """One comparison: ``op`` is ``=``, ``>=`` or ``!=``."""
+
+    op: str
+    version: str
+
+    def __str__(self) -> str:
+        return f"{self.op}{self.version}"
+
+
+@dataclass(frozen=True)
+class Constraint:
+    """A conjunction of clauses; no clauses means ``latest``."""
+
+    clauses: tuple[Clause, ...] = ()
+
+    @property
+    def is_latest(self) -> bool:
+        return not self.clauses
+
+    def __str__(self) -> str:
+        return ",".join(str(c) for c in self.clauses) or LATEST
+
+    def rejection(self, version: str, key: VersionKey) -> str | None:
+        """Why *version* fails this constraint (the first failing clause), or ``None``."""
+        for clause in self.clauses:
+            if clause.op == "=" and version != clause.version:
+                return f"is not {clause.version}"
+            if clause.op == "!=" and version == clause.version:
+                return f"is excluded by !={clause.version}"
+            if clause.op == ">=" and key(version) < key(clause.version):
+                return f"is older than {clause.version}"
+        return None
+
+
+VersionKey = Callable[[str], Any]
+
+
+def parse_constraint(text: str | None, *, key: VersionKey = version_key) -> Constraint:
+    """``">=metrics-v1,!=metrics-v3"`` as a :class:`Constraint`; ``None``/empty/``latest`` is
+    the empty (newest-stored) constraint. Every version is validated by *key* now, so a typo
+    fails before any query."""
+    if text is None or not text.strip() or text.strip() == LATEST:
+        return Constraint()
+    clauses: list[Clause] = []
+    for part in (p.strip() for p in text.split(",")):
+        clauses.extend(_parse_clause(part, text, key))
+    return Constraint(tuple(clauses))
+
+
+def _parse_clause(part: str, text: str, key: VersionKey) -> list[Clause]:
+    if not part:
+        raise VersionError(f"empty clause in {text!r}")
+    if part == LATEST:
+        return []
+    match = _CLAUSE_RE.match(part)
+    if match is None:
+        raise VersionError(f"cannot parse clause {part!r} in {text!r}")
+    version = match.group("version")
+    key(version)
+    return [Clause(match.group("op") or "=", version)]
+
+
+def pick_version(
+    stored: Sequence[str], constraint: Constraint, *, key: VersionKey, what: str
+) -> str:
+    """The highest of *stored* (oldest-first) satisfying *constraint*; a :class:`VersionError`
+    naming why each stored candidate was rejected when none does."""
+    satisfying = [v for v in stored if constraint.rejection(v, key) is None]
+    if satisfying:
+        return satisfying[-1]
+    if not stored:
+        raise VersionError(f"no {what} is stored, so {str(constraint)!r} cannot be satisfied")
+    reasons = "; ".join(f"{v} {constraint.rejection(v, key)}" for v in stored)
+    raise VersionError(f"no stored {what} satisfies {str(constraint)!r}: {reasons}")
+
+
+ALL_GROUPS: Final[str] = "*"
+
+
+def _has_operator_syntax(text: str) -> bool:
+    return any(tok in text for tok in (">=", "!=")) or any(
+        part.strip() == LATEST or part.strip().endswith(f"={LATEST}") for part in text.split(",")
+    )
+
+
+def parse_metric_constraints(
+    text: str | None,
+) -> str | dict[str, str] | dict[str, Constraint] | None:
+    """A ``--metrics-version`` text that may use constraint operators (T-093).
+
+    Text without ``>=``/``!=``/``latest`` is handed to :func:`parse_metric_selection`
+    unchanged, so every T-090 form parses -- and later resolves -- exactly as before. Otherwise
+    each comma-separated part is ``[GROUP]OP VERSION``; a part without a group continues the
+    group named before it, or applies to every group (key :data:`ALL_GROUPS`) when it comes
+    first: ``valuation>=metrics-v1,!=metrics-v3`` or ``>=metrics-v2``."""
+    if text is None or not text.strip() or not _has_operator_syntax(text):
+        return parse_metric_selection(text)
+    clauses: dict[str, list[Clause]] = {}
+    current = ALL_GROUPS
+    for raw in (p.strip() for p in text.split(",")):
+        clause_text = raw
+        group_match = _GROUP_CLAUSE_RE.match(raw)
+        if group_match is not None:
+            current = group_match.group("group")
+            if current in clauses:
+                raise VersionError(f"group {current!r} given more than once in {text!r}")
+            rest = group_match.group("rest")
+            clause_text = LATEST if rest == f"={LATEST}" else rest
+            clauses[current] = []
+        clauses.setdefault(current, []).extend(_parse_clause(clause_text, text, version_key))
+    return {group: Constraint(tuple(cs)) for group, cs in clauses.items()}
+
+
+def choose_constrained_versions(
+    present: Mapping[str, Iterable[str]],
+    selection: str | Mapping[str, str] | Mapping[str, Constraint] | None = None,
+    *,
+    groups: Sequence[str] = METRIC_GROUPS,
+) -> MetricVersions:
+    """:func:`choose_versions`, extended to :class:`Constraint` selections (pure).
+
+    A T-090 selection (``None``, a version, ``GROUP=VERSION`` pairs) goes to
+    :func:`choose_versions` unchanged. A constraint selection resolves each group the consumer
+    reads to the highest stored version satisfying its constraint (the group's own, else the
+    :data:`ALL_GROUPS` one); a group with no stored rows is skipped unless named explicitly."""
+    if (
+        selection is None
+        or isinstance(selection, str)
+        or not any(isinstance(v, Constraint) for v in selection.values())
+    ):
+        return choose_versions(present, selection, groups=groups)  # type: ignore[arg-type]
+    named = [g for g in selection if g != ALL_GROUPS]
+    unknown = [g for g in named if g not in METRIC_GROUPS]
+    if unknown:
+        raise VersionError(f"unknown metric group(s) {unknown}; known: {list(METRIC_GROUPS)}")
+    unread = [g for g in named if g not in groups]
+    if unread:
+        raise VersionError(
+            f"metric group(s) {unread} are not read by this consumer (it reads {list(groups)})"
+        )
+    resolved: dict[str, str] = {}
+    for group in groups:
+        stored = sort_versions(present.get(group, ()))
+        constraint = cast(
+            "Constraint", selection.get(group) or selection.get(ALL_GROUPS) or Constraint()
+        )
+        if not stored and group not in selection:
+            continue  # nothing stored for this group, and the user did not ask for it by name
+        resolved[group] = pick_version(
+            stored, constraint, key=version_key, what=f"metrics version for group {group!r}"
+        )
+    everywhere = selection.get(ALL_GROUPS)
+    if isinstance(everywhere, Constraint) and not everywhere.is_latest and groups and not resolved:
+        raise VersionError(
+            f"no group this consumer reads ({list(groups)}) stores a metrics version "
+            f"satisfying {str(everywhere)!r}"
+        )
+    return MetricVersions(resolved)
+
+
+def engine_version_key(family: str) -> VersionKey:
+    """The ordering of one engine's versions, ``<family>-v<N>`` by ``N``: ``qret-v2`` <
+    ``qret-v10``. A version of another family is an error, not a guess."""
+
+    def key(version: str) -> int:
+        match = _VERSION_RE.match(version)
+        if match is None or match.group("family") != family:
+            raise VersionError(f"{version!r} is not a {family} version: expected '{family}-v<N>'")
+        return int(match.group("n"))
+
+    return key
+
+
+def recognized_engine_versions(stored: Iterable[str], family: str) -> tuple[list[str], list[str]]:
+    """*stored* split into ``(recognized oldest-first, unrecognized)`` for one engine family.
+
+    Unrecognized strings are history the consumer never reads (e.g. ``corpact-v1-derived``)."""
+    key = engine_version_key(family)
+    good, other = [], []
+    for version in set(stored):
+        try:
+            key(version)
+        except VersionError:
+            other.append(version)
+        else:
+            good.append(version)
+    return sorted(good, key=key), sorted(other)

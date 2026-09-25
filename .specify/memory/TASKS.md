@@ -36,9 +36,8 @@ closed; **`T-089` is next, and last, in the fixing process.**
 Work item 7's `T-068` is done (the small-sample Phase A validation). Work item 5
 continues in parallel as an external prerequisite → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
-**9 (P2)** → **the low-priority path (2026-09-21): `T-093`**, the user-tunable version
-constraints for `quant`'s Markowitz runs, deferred on purpose — to be tackled late, not now
-(`T-091` is superseded by `T-092`) → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
+**9 (P2)** (`T-093`, the low-priority version constraints, is done 2026-09-25; its tests
+found `T-101`; `T-091` is superseded by `T-092`) → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
@@ -619,7 +618,7 @@ next, and last.
       `load_market_caps` take no as-of date, so they read the most recent filing even when it is
       dated after the run's `as_of` — a look-ahead in any historical run. `market_cap_estimates` now
       orders by `period_end` (it relied on row order).
-- [ ] **T-093** *(**DEFERRED 2026-09-21 — low-priority path**: tackled late, after Work
+- [x] **T-093** *(**DEFERRED 2026-09-21 — low-priority path**: tackled late, after Work
       item 9, not in the current run of work; nothing in Work items 7–11 depends on it)*
       *(feature; builds on `T-090`; **trimmed 2026-09-25, at the user's direction, to only
       what `T-090` doesn't already deliver** — `T-090` already gives: latest-by-default, an
@@ -640,6 +639,26 @@ next, and last.
       in the `T-090` manifest alongside the resolved versions. `quant` only (`cycle` keeps
       `T-090`'s exact selection). Additive only. Acceptance in `PLAN.md`. → `PLAN.md` Work
       item 11, `T-093`.
+      **Done 2026-09-25** (developed at the user's request, ahead of its low-priority slot).
+      `kg_schema/versions.py`: `parse_constraint`/`pick_version` (`=`/bare, `>=`, `!=`,
+      combinations, `latest`; highest satisfying stored version; per-candidate rejection
+      reasons), `parse_metric_constraints`/`choose_constrained_versions` (per-group; every T-090
+      form delegated unchanged — pinned against T-090's resolver on 80 input combinations),
+      `engine_version_key`/`recognized_engine_versions`. `quant`: `--returns-version`
+      (build-risk-model/optimize), `--risk-model-version` (optimize; exclusive with
+      `--model-version`), `--corpact-version` (build-returns), `--version-profile FILE
+      [--profile NAME]` (`quant/profiles.py`, stdlib `tomllib`, flags win), `quant versions`
+      (`quant/versions_report.py`), `--dry-run` (read-only connection, writes nothing); the
+      constraints and profile are recorded in the manifest JSON but **not** in the tag. **Decision
+      for review (deviates from the text above):** with no flag each input keeps today's behaviour
+      — the configured return engine, the per-asset corporate-action priority, the `rm-v1`
+      label — rather than "latest stored", so no existing run or tag shifts; `latest` asks for the
+      newest stored explicitly. A book from a non-default risk model folds it into a separate
+      `book_tag` (books from two risk models would otherwise collide); the default keeps T-090's
+      key. The metrics listing lives in `kg_schema.queries.metric_version_stats` (the allow-listed
+      place for cross-version reads). 29 new test functions (`tests/test_quant_version_constraints.py`,
+      121 cases with parametrization, + 1 strict xfail for `T-101`), mutation-checked four ways;
+      suite, ruff, mypy green. Docs: `docs/quant.md`, `docs/kg_schema.md`.
 - [x] **T-091** *(**SUPERSEDED 2026-09-21 by `T-092`**: `portfolio-data-mining` fixed the
       route (its PR #39, "return all filings for a form+year") while this task was still in
       review, so the upstream half is done and the consumer halves are now `T-092`. Kept
@@ -792,6 +811,18 @@ next, and last.
       band tooltips, band caption and status row, and data-mining's row (its "next for
       financial-analysis" step is done). `T-093` appears only as a low-priority plan step.
 
+- [ ] **T-101** *(found by `T-093`'s tests, 2026-09-25; not yet fixed)* Re-running `quant
+      optimize` over the same inputs **duplicates books** instead of refreshing them.
+      `quant_portfolio` is unique on `(as_of, kind, frontier_k, engine_version)`, but
+      `frontier_k` is NULL for every non-frontier book and SQLite treats NULLs as distinct, so
+      `insert_portfolio`'s `ON CONFLICT … DO UPDATE` never fires (verified on `master`: one run
+      → 2 books, a second identical run → 4). Contradicts `T-090`'s "the same inputs update in
+      place" for books (risk models are fine — no NULL in their key). **Fix** (not built): make
+      the key NULL-safe (e.g. a `COALESCE(frontier_k, -1)` unique index via a gated migration, or
+      an update-then-insert keyed with `frontier_k IS ?`), decide what to do with the duplicates
+      already stored, and flip the strict `xfail` in `tests/test_quant_version_constraints.py`.
+      → `PLAN.md` Work item 11, `T-101`.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 Added 2026-09-25, at the user's direction. Every other task in this file is either
@@ -834,8 +865,8 @@ promoted above `T-089` at the user's explicit direction, 2026-09-22 — `T-095` 
 corrected their own earlier findings: PM did not reproduce T-095's defect; APO's/PG's/BF.B's/
 STZ's original T-096 tally did not survive a precise reproduction, only WAT had a real,
 now-fixed local gap; `T-097`'s own "select/monitor" title was corrected to `select` only).
-`T-093` is on
-the low-priority path.** There is no derive fallback. Execute, with Work item 5 (external, independent prerequisite) in
+`T-093` is done
+(2026-09-25) and found `T-101`, open.** There is no derive fallback. Execute, with Work item 5 (external, independent prerequisite) in
 parallel → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
 `T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`)** → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs

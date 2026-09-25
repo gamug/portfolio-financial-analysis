@@ -30,6 +30,7 @@ from quant.db import (
     load_daily_closes,
     upsert_return_daily,
 )
+from quant.manifest import resolve_corpact_engine
 from quant.state import fail_run, finish_run, open_run
 
 
@@ -98,6 +99,9 @@ class ReturnsReport:
         self.assets_with_dividends = 0
         # Why the dividends guard would have refused, when --allow-no-dividends overrode it.
         self.dividends_guard_bypassed: str | None = None
+        # The one corporate-action engine read when --corpact-version pinned it (T-093);
+        # None = the per-asset priority, as before.
+        self.corpact_engine: str | None = None
 
 
 def run_build_returns(
@@ -120,7 +124,12 @@ def run_build_returns(
     try:
         ensure_schema(conn)
         report = ReturnsReport(settings.return_engine_version)
-        reason = dividends_not_ready_reason(conn, date_from=date_from, date_to=date_to)
+        # an unsatisfiable --corpact-version fails here, before any run row exists
+        report.corpact_engine = resolve_corpact_engine(conn, settings)
+        engines = (report.corpact_engine,) if report.corpact_engine else None
+        reason = dividends_not_ready_reason(
+            conn, date_from=date_from, date_to=date_to, engines=engines
+        )
         if reason is not None and not allow_no_dividends:
             raise DividendsNotReady(reason)
         report.dividends_guard_bypassed = reason
@@ -134,6 +143,9 @@ def run_build_returns(
                 "date_to": date_to,
                 "allow_no_dividends": allow_no_dividends,
                 "dividends_guard_bypassed": reason,
+                "corpact_version": settings.corpact_version,
+                "corpact_engine": report.corpact_engine,
+                "version_profile": settings.version_profile,
             },
             code_version=code_version(),
         )
@@ -147,8 +159,12 @@ def run_build_returns(
                 closes = load_daily_closes(conn, asset_id, start=date_from, end=date_to)
                 if not closes:
                     continue
-                dividends = load_actions(conn, asset_id, "DIVIDEND", start=date_from, end=date_to)
-                splits = load_actions(conn, asset_id, "SPLIT", start=date_from, end=date_to)
+                dividends = load_actions(
+                    conn, asset_id, "DIVIDEND", start=date_from, end=date_to, engines=engines
+                )
+                splits = load_actions(
+                    conn, asset_id, "SPLIT", start=date_from, end=date_to, engines=engines
+                )
                 rows = build_total_return_series(closes, dividends, splits)
                 report.assets += 1
                 if dividends:

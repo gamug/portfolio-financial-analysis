@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 
 import numpy as np
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 from kg_schema import connect
 from kg_schema.provenance import code_version
@@ -111,7 +111,7 @@ def run_build_risk_model(
             as_of=as_of,
             params={
                 **settings.model_dump(mode="json"),
-                "manifest": manifest.inputs,
+                "manifest": manifest.record(),
                 "manifest_tag": manifest.tag,
             },
             code_version=code_version(),
@@ -135,7 +135,7 @@ def run_build_risk_model(
                 lookback_days=settings.lookback_days,
                 min_history_days=settings.min_history_days,
                 universe_asset_ids=gate.asset_ids,
-                return_engine_version=settings.return_engine_version,
+                return_engine_version=manifest.return_engine_version,
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
@@ -160,7 +160,7 @@ def run_build_risk_model(
                     cov_shrinkage=delta,
                     ret_estimator=settings.ret_estimator,
                     periods_per_year=settings.periods_per_year,
-                    panel_engine_version=settings.return_engine_version,
+                    panel_engine_version=manifest.return_engine_version,
                     panel_spec_json=json.dumps(spec, separators=(",", ":")),
                     rf_annual=rf.annualized_rate,
                     params_json=json.dumps(settings.model_dump(mode="json"), default=str),
@@ -208,15 +208,29 @@ def _weights_json(ids: list[int], w: np.ndarray) -> str:
     )
 
 
+def _build_settings(settings: QuantSettings, manifest: QuantManifest) -> QuantSettings:
+    """The settings a risk model for *manifest* is built with: its resolved label and return
+    series, so the model lands under exactly the version ``optimize`` then reads."""
+    return settings.model_copy(
+        update={
+            "risk_model_version": manifest.risk_model_version or settings.risk_model_version,
+            "return_engine_version": manifest.return_engine_version,
+            "returns_version": None,
+        }
+    )
+
+
+def _model_version(settings: QuantSettings, manifest: QuantManifest) -> str:
+    return manifest.tagged(manifest.risk_model_version or settings.risk_model_version)
+
+
 def _resolve_model_id(
     settings: QuantSettings, as_of: str, conn: Database, run_id: int, manifest: QuantManifest
 ) -> int:
-    row = load_risk_model(
-        conn, as_of=as_of, model_version=manifest.tagged(settings.risk_model_version)
-    )
+    row = load_risk_model(conn, as_of=as_of, model_version=_model_version(settings, manifest))
     if row is not None:
         return int(row["id"])
-    build = run_build_risk_model(settings, as_of=as_of, conn=conn)
+    build = run_build_risk_model(_build_settings(settings, manifest), as_of=as_of, conn=conn)
     conn.execute("UPDATE quant_run SET status = 'running' WHERE id = ?", (run_id,))
     return build.model_id
 
@@ -243,15 +257,16 @@ def run_optimize(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
-        manifest = resolve_quant_manifest(conn, settings)  # fail on an unstored version first
+        # fail on an unsatisfiable selection first, before any run row exists
+        manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
         run_id = open_run(
             conn,
             "optimize",
             as_of=as_of,
             params={
                 **settings.model_dump(mode="json"),
-                "manifest": manifest.inputs,
-                "manifest_tag": manifest.tag,
+                "manifest": manifest.record(),
+                "manifest_tag": manifest.book_tag,
             },
             code_version=code_version(),
         )
@@ -266,7 +281,7 @@ def run_optimize(
             mu_map = load_expected_returns(conn, model_id, settings.ret_estimator)
             mu = np.array([mu_map[a] for a in ids], dtype=np.float64)
             rm = load_risk_model(
-                conn, as_of=as_of, model_version=manifest.tagged(settings.risk_model_version)
+                conn, as_of=as_of, model_version=_model_version(settings, manifest)
             )
             rf = (
                 float(rm["rf_annual"])
@@ -307,7 +322,7 @@ def run_optimize(
                         sharpe=res.sharpe,
                         rf_annual=rf,
                         n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
-                        engine_version=manifest.tagged(settings.optimizer_engine_version),
+                        engine_version=manifest.book_tagged(settings.optimizer_engine_version),
                         target_param=objective_param(name, ctx),
                         model_id=model_id,
                         quant_run_id=run_id,
@@ -357,8 +372,57 @@ def run_optimize(
             as_of=as_of,
             books=books,
             frontier_points=frontier_points,
-            manifest_tag=manifest.tag,
+            manifest_tag=manifest.book_tag,
         )
     finally:
         if owns:
             conn.close()
+
+
+# -- dry runs (T-093) ---------------------------------------------------------
+
+
+@dataclass
+class DryRunPlan:
+    """What a ``--dry-run`` would do: the resolved manifest and the rows it would key."""
+
+    command: str
+    as_of: str
+    manifest: QuantManifest
+    model_version: str
+    model_stored: bool
+    book_version: str | None = None  # optimize only
+
+
+def plan_build_risk_model(settings: QuantSettings, *, as_of: str, conn: Database) -> DryRunPlan:
+    """Resolve what ``build-risk-model`` would read and write; writes nothing."""
+    manifest = resolve_quant_manifest(conn, settings)
+    version = manifest.tagged(settings.risk_model_version)
+    return DryRunPlan(
+        "build-risk-model",
+        as_of,
+        manifest,
+        version,
+        _model_stored(conn, as_of, version),
+    )
+
+
+def plan_optimize(settings: QuantSettings, *, as_of: str, conn: Database) -> DryRunPlan:
+    """Resolve what ``optimize`` would read and write; writes nothing."""
+    manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
+    version = _model_version(settings, manifest)
+    return DryRunPlan(
+        "optimize",
+        as_of,
+        manifest,
+        version,
+        _model_stored(conn, as_of, version),
+        manifest.book_tagged(settings.optimizer_engine_version),
+    )
+
+
+def _model_stored(conn: Database, as_of: str, version: str) -> bool:
+    try:
+        return load_risk_model(conn, as_of=as_of, model_version=version) is not None
+    except DatabaseError:  # a database with no quant tables yet
+        return False

@@ -205,7 +205,8 @@ keys the outputs already use: `quant_risk_model.model_version` (`rm-v1` → `rm-
 and `quant_portfolio.engine_version` (`opt-v1` → `opt-v1+3f9a1c2b`). Because those tables
 were already unique on those columns, **no schema change** is needed, and:
 
-- the **same inputs give the same tag**, so a re-run refreshes the same rows in place;
+- the **same inputs give the same tag**, so a re-run refreshes the same risk model in place
+  (books do not yet — see "Known gaps": a NULL `frontier_k` defeats their conflict key);
 - **different inputs give a different tag**, so the run writes *parallel* rows beside the first
   instead of overwriting it (they used to be `ON CONFLICT … DO UPDATE` on a constant key);
 - `quant_expected_return` / `quant_covariance` / `quant_position` / `quant_frontier_point` hang
@@ -222,6 +223,69 @@ manifest-dependent and keeps the base version. **Note for consumers of the read 
 `v_quant_risk_model` / `v_quant_portfolio` are one row per stored model / book, so once runs at
 two manifests exist for an as-of there are two rows — filter on `manifest_json` (or the version
 string) to pick one.
+
+### Version constraints, profiles and dry runs (T-093)
+
+T-090's selection is exact. T-093 lets the user **constrain** every versioned input `quant`
+reads, and resolves each constraint strictly against what is stored:
+
+| Input | Flag | Commands | No flag (unchanged from before) |
+|---|---|---|---|
+| metric groups (`valuation`) | `--metrics-version` | `build-risk-model`, `optimize` | newest stored |
+| return series (`qret-v<N>`) | `--returns-version` | `build-risk-model`, `optimize` | the configured `return_engine_version` |
+| risk model (`rm-v<N>`) | `--risk-model-version` | `optimize` | `--model-version` (loaded, or built when missing) |
+| corporate actions (`corpact-v<N>`) | `--corpact-version` | `build-returns` | per asset, the newest gateway engine it has |
+
+**Grammar** (`kg_schema.versions.parse_constraint`): a bare version or `=version` is exact;
+`>=version` is a minimum; `!=version` excludes one; comma-separated clauses combine
+(`>=metrics-v1,!=metrics-v3`); `latest` is the newest stored. A constraint resolves to the
+**highest stored version satisfying every clause**. For `--metrics-version` a clause may name a
+group (`valuation>=metrics-v2`); a clause without one continues the group before it, or applies
+to every group when it comes first. Every T-090 form (`metrics-v1`,
+`valuation=metrics-v1,...`) parses and resolves exactly as before — pinned by
+`tests/test_quant_version_constraints.py` against T-090's own resolver. `cycle` keeps T-090's
+exact selection.
+
+**Strict, never a fallback.** An unsatisfiable constraint is an error before any run row exists
+(CLI exit 1), and it names why each stored candidate was rejected (`qret-v2 is older than
+qret-v4; qret-v3 is older than qret-v4`). A version of the wrong family (`--returns-version
+metrics-v2`) is rejected. Stored strings that are not versions `quant` reads — the pre-T-085
+`corpact-v0-approx` / `corpact-v1-derived` history — are ignored. A risk-model constraint is
+matched among the models stored for that as-of **over the same inputs** (`<label>+<tag>`); with
+none it tells you to run `build-risk-model` first.
+
+**Recorded, but keyed by the result.** The constraints as given and the profile name join the
+manifest JSON (`quant_run.params_json`, `manifest_json` on models and books) under
+`constraints` / `profile`. They are **not** part of the tag: two spellings that resolve to the
+same versions are the same inputs. A book optimized from a non-default risk model folds that
+model into its own tag (`book_tag`), so books from two risk models never overwrite each other;
+a book from the default `rm-v1` keeps T-090's key, so no stored book changed key.
+
+**Profiles.** `--version-profile FILE` loads a TOML file of named constraint sets and
+`--profile NAME` picks one (optional when the file holds exactly one); a flag on the command
+line wins over the same key in the profile. Each command uses the keys for what it reads.
+
+```toml
+[profiles.baseline]
+metrics = "metrics-v2"
+returns = "qret-v2"
+
+[profiles.pre_fix]
+metrics = "valuation=metrics-v1"
+returns = ">=qret-v1,!=qret-v3"
+risk_model = "latest"
+corpact = "corpact-v1"
+```
+
+**Tuning aids.** `python -m quant versions` lists, per input, every stored version with its row
+count and first/last write time, marking the newest and the configured one. `--dry-run` on
+`build-risk-model` / `optimize` opens the database read-only, prints the resolved manifest, the
+risk-model version it would read or build and (optimize) the book version it would write, and
+writes nothing.
+
+**The corporate-action caveat.** `quant_return_daily` is append-only per return engine, so a
+`--corpact-version` different from the one a series was built with only takes effect under a
+new return engine version; `build-returns` says so when a pinned run writes no new rows.
 
 ### `benchmark.py` / `evaluate.py` — forward comparison
 
@@ -280,6 +344,13 @@ creates them before it builds the views.
   residual upward bias. Mitigations: `quant_risk_model.panel_spec_json` freezes
   each run's exact universe + dates + sha256; never delete `price_daily` rows for a
   name that later leaves the index; backfill delisted-name prices.
+- **Re-running `optimize` duplicates books (found by T-093, not yet fixed).**
+  `quant_portfolio` is unique on `(as_of, kind, frontier_k, engine_version)`, but `frontier_k`
+  is NULL for every non-frontier book and SQLite treats NULLs as distinct, so the
+  `ON CONFLICT … DO UPDATE` never fires: a second `optimize` over the same inputs inserts a
+  second copy of each book instead of refreshing it. Risk models (no NULL in their key) are
+  unaffected. Tracked as `T-101`; pinned by a strict `xfail` in
+  `tests/test_quant_version_constraints.py`.
 - **No vendor risk-free / benchmark series** yet — a constant rf and an internal
   equal-weight benchmark are the v1 defaults; the tables + CSV loaders are in place.
 - `price_daily.event_time` / `ingested_at` are NULL for every row — a
