@@ -251,6 +251,29 @@ CREATE TABLE IF NOT EXISTS shared_executive_edge (
 CREATE INDEX IF NOT EXISTS ix_shared_exec_a ON shared_executive_edge (asset_id_a);
 CREATE INDEX IF NOT EXISTS ix_shared_exec_b ON shared_executive_edge (asset_id_b);
 
+-- T-043: the same shape and grain as shared_executive_edge, for co-occurrences that are real
+-- but not corporate executives (press, analysts, wire services). A separate table rather than
+-- a flag, so every reader of shared_executive_edge keeps meaning executives only. Written by
+-- entity_resolution once T-082 routes those pairs here.
+CREATE TABLE IF NOT EXISTS media_cooccurrence (
+    id              INTEGER PRIMARY KEY,
+    asset_id_a      INTEGER NOT NULL REFERENCES assets(id),   -- asset_id_a < asset_id_b
+    asset_id_b      INTEGER NOT NULL REFERENCES assets(id),
+    person_name     TEXT NOT NULL,
+    article_count_a INTEGER NOT NULL,
+    article_count_b INTEGER NOT NULL,
+    weight          REAL NOT NULL,
+    first_seen      TEXT,
+    last_seen       TEXT,
+    method          TEXT NOT NULL,
+    evidence_json   TEXT,
+    computed_at     TEXT NOT NULL,
+    run_id          INTEGER,
+    UNIQUE (asset_id_a, asset_id_b, person_name, method)
+);
+CREATE INDEX IF NOT EXISTS ix_media_cooc_a ON media_cooccurrence (asset_id_a);
+CREATE INDEX IF NOT EXISTS ix_media_cooc_b ON media_cooccurrence (asset_id_b);
+
 -- Per-cycle GICS-sector roll-up of members' TECHNICAL score. The per-asset
 -- deviation from this mean is written to `score_snapshot` as score_type 'SECTOR'.
 CREATE TABLE IF NOT EXISTS sector_aggregate_snapshot (

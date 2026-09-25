@@ -83,6 +83,65 @@ instead.
       resolved, or explicitly re-scoped if the comparison doesn't show an
       improvement. → fourth acceptance criterion.
 
+## Work item 5 — Upstream: `portfolio-common` v0.3.0 additive data contract (P0, external) — DONE 2026-09-25 (built in this repo; `T-044` deprecated)
+
+*(Note 2026-09-25: `kg_schema` is vendored in this repo (`src/kg_schema/`, see
+`docs/kg_schema.md`), so these additive changes land **here**, not in `portfolio-common` —
+`T-040` was built that way, and `T-044` (the upstream release-and-bump) is deprecated.)*
+
+- [x] **T-040** Add `data_quality_issue` table (`filing_id`/`asset_id` FKs,
+      `metric_name`, `rule_id`, `severity CHECK IN ('HARD','SOFT')`,
+      `value`, `created_at`, `run_id`, `UNIQUE(filing_id, metric_name,
+      rule_id)` + indexes) in `portfolio_common/kg_schema/ddl.py`. →
+      `PLAN.md` Work item 5, step 1. **Done 2026-09-25, inside `T-065`** — in this
+      repo's vendored `src/kg_schema/ddl.py` (`kg_schema` left `portfolio-common` at its
+      v1.0.0, so there is no upstream release to wait for), with the read-contract view
+      `v_data_quality_issue`. Key widened to `UNIQUE(filing_id, metric_group,
+      metric_name, metric_engine_version, rule_id, gate_version)` plus a `quarantined`
+      flag and `evidence_json`, so a verdict names the T-090 metric version it judged
+      and a future threshold change writes parallel rows — rationale in
+      `docs/model_fixes.md`'s T-065 entry.
+- [x] **T-041** Add nullable `score_snapshot.forensic_flags_json` column
+      via the existing missing-columns mechanism. → step 2. **Done 2026-09-25**: a
+      `REQUIRED_COLUMNS` entry in `src/kg_schema/ddl.py` (this repo's vendored `kg_schema`),
+      so every package's next `ensure()` adds it — additive, no `schema_version` bump, the
+      `UNIQUE(asset_id, score_type, event_time)` key untouched. m005/m006 rebuild
+      `score_snapshot` from an explicit column list, so both now carry the column (and add it
+      first when called directly) — flags written on a not-yet-migrated database survive.
+      Verified on a copy of production: column added, 497 rows kept, `schema_version` 7,
+      all views query, `quick_check` ok, second `ensure()` a no-op. Not exposed in
+      `v_score_snapshot` yet — that and writing it are `T-074`'s.
+- [x] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
+      `LEFT JOIN` `UNION`ed with a `kind='LIVE_ONLY'` branch for live
+      positions absent from every quant benchmark. → step 3. **Done 2026-09-25** in the
+      vendored `src/kg_schema/views.py` (views rebuild on every `ensure()`; no migration).
+      The benchmark branch is byte-for-byte the old view; `UNION ALL` (the branches are
+      disjoint by `kind`) adds, per as-of date that has optimized books, one row per live
+      position open that date and held in none of them (reference books `live_book`/
+      `equal_weight`/`cap_weight` don't count): `benchmark_weight` NULL, `active_weight =
+      -live_weight`. On a copy of production: APA (2026-09-22, live weight 0.10) — the one
+      live name the old view dropped — now appears as `LIVE_ONLY`; all 10 live names show,
+      their weights sum to 1.0; the 38 benchmark rows are identical. 4 tests in
+      `tests/test_quant_vs_live.py`, mutation-checked.
+- [x] **T-043** Add `media_cooccurrence` table (same shape/grain as
+      `shared_executive_edge`, different table). → step 4. **Done 2026-09-25** in the
+      vendored `src/kg_schema/ddl.py`: identical columns, key
+      `UNIQUE(asset_id_a, asset_id_b, person_name, method)` and the two per-asset indexes
+      (`ix_media_cooc_a`/`_b`); additive, no `schema_version` bump. A test pins its columns
+      to `shared_executive_edge`'s so the two cannot drift. On a copy of production: created
+      empty, the 14,172 executive edges untouched, `schema_version` 7, `quick_check` ok.
+      No writer or view yet — `T-082` writes it.
+- [ ] **T-044** *(**DEPRECATED 2026-09-25, at the user's direction — do not implement.**
+      Kept unchecked as the historical record, per this file's "mark cancelled in place,
+      don't renumber" rule. Reason: `kg_schema` left `portfolio-common` at its v1.0.0 and
+      is vendored here (`src/kg_schema/`), so `T-040`–`T-043` land in this repo and there
+      is nothing to release upstream or re-pin; `portfolio-common` stays at `v1.2.1`.
+      Each of `T-041`–`T-043` checks `ensure()` in its own tests, as `T-040` did.)*
+      Tag and release `portfolio-common` `v0.3.0`; bump this
+      repo's `pyproject.toml` (`[tool.uv.sources]`) from `v1.2.1` →
+      `v0.3.0`, regenerate `uv.lock`, `uv sync`, and re-verify `ensure()`
+      against the live `KG_FINANCIAL_DB`. → `PLAN.md` acceptance criteria.
+
 ## Work item 6 — Upstream: `portfolio-data-mining` corporate-actions endpoint (P0, external) — implementation MOVED, verification stays — CLOSED 2026-09-21
 
 **Closed (re-verified 2026-09-24)**: the implementation shipped upstream

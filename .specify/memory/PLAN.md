@@ -29,8 +29,8 @@ additive, backward-compatible upstream schema/API change first (Work items
 
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11 and 13 are **closed** (done 2026-09-25, 2026-09-20,
-2026-09-25 and 2026-09-25 — see `CHANGELOG.md`), with Work item 5 (now built in this repo's vendored `kg_schema`, `T-040` done)
-running in parallel → **Work item 8 (P1 — methodological
+2026-09-25 and 2026-09-25 — see `CHANGELOG.md`), and so is Work item 5 (built in this repo's
+vendored `kg_schema`, 2026-09-25) → **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
 cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
@@ -317,7 +317,12 @@ blocked end-to-end on the other repo's timeline.
   still flagged not-cut-over until `portfolio-nlp`'s side lands. Also update
   the two architecture artifacts per constitution AI behavior #11.
 
-## Work item 5 — Upstream: `portfolio-common` v0.3.0 additive data contract (P0, external, blocking prerequisite)
+## Work item 5 — Upstream: `portfolio-common` v0.3.0 additive data contract (P0, external, blocking prerequisite) — DONE 2026-09-25
+
+**Status: closed** — all four changes built in this repo's vendored `kg_schema`: `T-040`
+(`data_quality_issue`, inside `T-065`), `T-041` (`forensic_flags_json`), `T-042`
+(`v_quant_vs_live` `LIVE_ONLY`), `T-043` (`media_cooccurrence`); `T-044` (the release and
+re-pin) deprecated. Tasks and closure records are in `CHANGELOG.md`.
 
 **Why**: four fixes below (Work item 7's Ring-1 gates, Work item 8's
 structured `forensic_flags`, and Work item 9's `v_quant_vs_live`/
@@ -1616,8 +1621,8 @@ this document.** Their internal sequencing:
 - **Work items 10 and 11 are closed** (2026-09-20 / 2026-09-25) — the gateway-only cutover and
   its follow-ups; see `CHANGELOG.md`. Work item 7's `T-068` (the small-sample Phase A
   validation) was run inside `T-088`.
-- Work item 5 (`portfolio-common` v0.3.0) is an independent prerequisite — now local:
-  `kg_schema` is vendored here, and `T-040` was built that way (2026-09-25). (Work item 6, the `portfolio-data-mining` corporate-actions
+- Work item 5 (`portfolio-common` v0.3.0) is **closed** (2026-09-25): built locally in the
+  vendored `kg_schema`, `T-044` deprecated. (Work item 6, the `portfolio-data-mining` corporate-actions
   endpoint, is closed — see `CHANGELOG.md`.)
 - Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`), and so is
   Work item 13, which fixed what its gates found. Historical note: its
