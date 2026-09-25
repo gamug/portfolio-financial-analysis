@@ -33,12 +33,12 @@ WAT's `net_income` concept gap locally, routed APO's gap upstream, and corrected
 PG/BF.B/STZ tally) and `T-097` (the out-of-order-cycle guard — **done 2026-09-22**; scoped to
 `select` only, `monitor` was never at risk) are done. All three prioritized findings are
 closed; **`T-089` is next, and last, in the fixing process.**
-Work item 7's `T-068` is re-scoped behind `T-088`. Work item 5
+Work item 7's `T-068` is done (the small-sample Phase A validation). Work item 5
 continues in parallel as an external prerequisite → **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **the low-priority path (2026-09-21): `T-093`**, the user-tunable version
 constraints for `quant`'s Markowitz runs, deferred on purpose — to be tackled late, not now
-(`T-091` is superseded by `T-092`). See `PLAN.md`'s "🔴 Priority Override"
+(`T-091` is superseded by `T-092`) → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
@@ -273,22 +273,25 @@ only durable record.
       `T-068`. 2 new tests (`tests/test_quant_pipeline.py`); full suite
       (245, was 243), ruff, mypy all green. Full record in
       `docs/model_fixes.md`'s Q2 entry. → `PLAN.md` Work item 7, Q2.
-- [ ] **T-068** Run the audit's **Phase A** re-sequence: recompute metrics
-      (F1/F2/F4) → backfill `data_quality_issue` (T-065) + gateway dividends
-      (T-085/T-052) → re-run `cycle` (exercising T-063/T-064) → re-run the full
-      `quant` pipeline + `evaluate` (exercising T-067). → `PLAN.md` Work
-      item 7 Sequencing note. **Sequencing amended 2026-09-20**: the
-      dividend backfill and the `quant` re-run steps wait for `T-052` (upstream's
-      redeploy + the live check). `T-085` removed the derived-dividend path, so
-      there is **no `--source derive` escape hatch**: running `quant` before the
-      gateway serves would yield a price-only series — and `build-returns` is
-      `INSERT OR IGNORE` per `(asset, day, engine_version)`, so it would lock in
-      under `qret-v2`. The metrics-recompute and `cycle` steps have no such
-      dependency and are not held up. **Re-scoped 2026-09-21**: the Phase A
-      re-sequence now runs *first* on the 20-ticker sample, inside `T-088`
-      (after its purge of the malformed derived data — a same-version re-run
-      could not have replaced it); `T-068` keeps only the full-universe
-      extension, after `T-088` validates and after `T-079`.
+- [x] **T-068** *(**re-defined 2026-09-25, at the user's direction**: a small-sample
+      validation, not a full-universe run — the full universe was never this task's
+      purpose and now lives in `T-100`, Work item 12)* Run the audit's **Phase A**
+      re-sequence on a **small sample of assets**, to prove the deterministic pipeline
+      works end to end before anything runs at full scale: recompute metrics (F1/F2/F4)
+      → gateway dividends (T-085/T-052) → re-run `cycle` (exercising T-063/T-064) →
+      re-run the full `quant` pipeline + `evaluate` (exercising T-067). → `PLAN.md` Work
+      item 7 Sequencing note. **Done 2026-09-22** on the 20-ticker sample, inside
+      `T-088` (after its purge of the malformed derived data), then re-run on the same
+      sample once `T-095`/`T-096` landed, so the stored data reflects the fixed code.
+      Verified against production `KG_FINANCIAL_DB` on 2026-09-25: 11,878 `metrics-v2`
+      `fundamental_metrics` rows (20 assets); 7,481 `corpact-v1` gateway actions
+      (`quant_run` 6: 503 of 503 assets fetched, 0 errored); two `cycle select` runs
+      (2026-06-30 and 2026-09-22, 20 assets ranked each; 19 `veto`, 11
+      `portfolio_position` rows); `build-returns` (23,340 `qret-v2` rows, 20 assets) →
+      `build-risk-model` → `optimize` (4 books, 15 frontier points) → `evaluate` (41
+      `quant_benchmark_performance` rows) — `quant_run` 7–10, all `completed`. **Not part
+      of the sample run**: the Ring-1 `data_quality_issue` backfill — its table and gates
+      (`T-040`/`T-065`) aren't built yet, so it moves to `T-100`, which depends on both.
 - [x] **T-069** Add regression tests for F1/F2/F4/C1/C2 under `tests/`;
       full suite (`pytest`/`ruff`/`mypy`) green. → `PLAN.md` Work item 7
       acceptance criteria. **Audited 2026-09-15**: each fix already landed
@@ -771,6 +774,30 @@ next, and last.
       republish in place by URL. Runs last, after `T-095`/`T-096`/`T-097` are done, so its
       pass covers the whole fixing process in one go. → `PLAN.md` Work item 11, `T-089`.
 
+## Work item 12 — Final: full-universe production run (runs last of all)
+
+Added 2026-09-25, at the user's direction. Every other task in this file is either
+code, or a check on a **small sample** of assets (`T-068`, `T-088`). The full as-of
+universe runs exactly once, after **everything else** is done and verified — so a
+defect caught late never forces a second full-scale (and, with the LLM step, costly)
+re-run. **This work item is always the last one in `TASKS.md`**; a new work item is
+added above it, never below. → `PLAN.md` Work item 12.
+
+- [ ] **T-100** *(takes over `T-068`'s former full-universe scope)* Run the whole
+      pipeline over the **entire as-of S&P 500 universe** (all 503 assets, not a
+      sample) as the very last step of the repository setup: purge the sample-era
+      derived data first if a version bump requires it (same mechanism as `T-088`) →
+      `fundamental_agent run` for every asset → Ring-1 `data_quality_issue` backfill →
+      `cycle select` → `quant backfill-actions`/`build-returns`/`build-risk-model`/
+      `optimize`/`evaluate`. **Depends on every other task in `TASKS.md` — every task
+      open today and every task added later**: a task added after this one is still a
+      prerequisite of it. `T-100` stays unchecked until every other box in this file is
+      checked, or explicitly superseded/moved. **Acceptance**: `coverage` for
+      `fundamental_agent`, `pricing_agent` and `quant` (`--strict`) reports every as-of
+      universe member with core data (or an explained, recorded exception); `cycle`
+      ranks the full universe; the `quant` books and `evaluate` run clean on it; the
+      run is recorded on the `*_run` log rows with its `code_version`.
+
 ## Status
 
 **🔴 Current top priority (2026-09-08 forensic audit): Work items 5–9.**
@@ -780,8 +807,8 @@ next, and last.
 `evaluate` half only) and `T-069` (regression-coverage audit, no new tests
 needed) are **done**, 2026-09-15 (`T-063` via a corrected diagnosis, no
 code change) — see `docs/model_fixes.md`. Only `T-065` (blocked on
-`T-040`) and `T-068` (the live Phase A re-sequence — operational, needs a
-production-data-mutating run, not a code change) remain in Work item 7.
+`T-040`) remains in Work item 7; `T-068` is done (the small-sample Phase A
+validation, 2026-09-22).
 Nothing else in `T-040`–`T-084` has started. **Work item 11: `T-052`, `T-086`, `T-092`,
 `T-094`, `T-087`, `T-090`, `T-088`, `T-095`, `T-096` and `T-097` are all done (2026-09-21/22);
 `T-089` is next, and last** (found by `T-088`'s acceptance audit, `T-095`/`T-096`/`T-097`
@@ -790,12 +817,10 @@ corrected their own earlier findings: PM did not reproduce T-095's defect; APO's
 STZ's original T-096 tally did not survive a precise reproduction, only WAT had a real,
 now-fixed local gap; `T-097`'s own "select/monitor" title was corrected to `select` only).
 `T-093` is on
-the low-priority path.** `T-068` is re-scoped behind `T-088`; there is no derive
-fallback. Execute, with Work item 5 (external, independent prerequisite) in
+the low-priority path.** There is no derive fallback. Execute, with Work item 5 (external, independent prerequisite) in
 parallel → **Work item 7, `T-060`–`T-069`
 (P0, this repo's highest priority — no external dependency for
-`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`, `T-068`'s dividend
-steps needed `T-052`, now done)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
+`T-060`–`T-064`/`T-067`–`T-069`; `T-065` needs `T-040`)** → **Work item 8, `T-070`–`T-079` (P1 — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
@@ -808,3 +833,6 @@ upstream + `T-052`) and 10 (done) are closed — see `CHANGELOG.md`.
 Work items 2 and 4 are unaffected by the audit and keep their original,
 lower priority (after Work items 5–9 above): nothing in either has
 started; both are unblocked.
+
+**Work item 12 (`T-100`, the full-universe production run) runs last of all**, after
+every other task in this file — current and future.
