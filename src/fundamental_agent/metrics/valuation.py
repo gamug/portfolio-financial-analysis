@@ -60,15 +60,24 @@ def compute(
     period_key: str,
     price: ClosePrice,
     share_scale_factors: dict[str, float] | None = None,
+    ttm: dict[str, float] | None = None,
 ) -> list[MetricResult]:
     """FCF-yield family for *period_key*, valued at *price* (a period-end close).
 
     *share_scale_factors* corrects a detected share-count scale defect (see
     :func:`_share_count`) before the share count is multiplied by *price*.
+
+    *ttm* (a 10-Q's trailing-twelve-month flows, T-105): a yield divides a year of cash flow
+    by a price level, so on a 10-Q the FCF, SBC and interest behind it are the TTM values --
+    a single quarter understated every 10-Q yield about 4x. The raw single-period values stay
+    in the audit inputs; the annual-basis ones are added as ``*_ttm``.
     """
     _, fcfe = free_cash_flow(stmts, period_key)
     net_income = stmts.get("net_income", period_key)
     sbc = stmts.get("stock_based_compensation", period_key)
+    annual = _AnnualFlows(stmts, period_key, ttm or {})
+    fcfe_annual = annual.fcf()
+    sbc_annual = annual.get("stock_based_compensation")
     share_count = _share_count(stmts, period_key, share_scale_factors or {})
     shares, used_diluted = share_count.shares, share_count.used_diluted_fallback
 
@@ -81,8 +90,13 @@ def compute(
     )
     enterprise_value = _enterprise_value(market_cap, total_debt, cash)
 
-    fcff = _fcf_to_firm(stmts, period_key, fcfe)
-    sbc_adjusted_fcf = fcfe - abs(sbc) if fcfe is not None and sbc is not None else None
+    fcff = _fcf_to_firm(stmts, period_key, fcfe, stmts.get("interest_expense", period_key))
+    fcff_annual = _fcf_to_firm(stmts, period_key, fcfe_annual, annual.get("interest_expense"))
+    sbc_adjusted_fcf = (
+        fcfe_annual - abs(sbc_annual)
+        if fcfe_annual is not None and sbc_annual is not None
+        else None
+    )
 
     inputs = present(
         free_cash_flow_to_equity=fcfe,
@@ -100,15 +114,25 @@ def compute(
     inputs["shares_are_diluted_average"] = float(used_diluted)
     if share_count.scale_correction_factor is not None:
         inputs["shares_scale_correction_factor"] = share_count.scale_correction_factor
+    if annual.is_ttm:
+        inputs.update(
+            present(
+                free_cash_flow_to_equity_ttm=fcfe_annual,
+                free_cash_flow_to_firm_ttm=fcff_annual,
+                stock_based_compensation_ttm=sbc_annual,
+            )
+        )
 
     return [
         MetricResult("market_capitalization", market_cap, "usd", inputs),
         MetricResult("enterprise_value", enterprise_value, "usd", inputs),
-        MetricResult("free_cash_flow_yield", safe_div(fcfe, market_cap), "ratio", inputs),
+        MetricResult("free_cash_flow_yield", safe_div(fcfe_annual, market_cap), "ratio", inputs),
         MetricResult(
             "sbc_adjusted_fcf_yield", safe_div(sbc_adjusted_fcf, market_cap), "ratio", inputs
         ),
-        MetricResult("enterprise_fcf_yield", safe_div(fcff, enterprise_value), "ratio", inputs),
+        MetricResult(
+            "enterprise_fcf_yield", safe_div(fcff_annual, enterprise_value), "ratio", inputs
+        ),
     ]
 
 
@@ -120,11 +144,38 @@ def _enterprise_value(
     return market_cap + (total_debt or 0.0) - (cash or 0.0)
 
 
-def _fcf_to_firm(stmts: Statements, period_key: str, fcfe: float | None) -> float | None:
+class _AnnualFlows:
+    """The flows a yield needs, on an annual basis: a 10-Q's TTM values when *ttm* has any
+    (and then *only* those -- never a raw quarter beside a TTM one), else the filing's own
+    period values, which on a 10-K are already annual."""
+
+    def __init__(self, stmts: Statements, period_key: str, ttm: dict[str, float]) -> None:
+        self._stmts, self._key, self._ttm = stmts, period_key, ttm
+
+    @property
+    def is_ttm(self) -> bool:
+        return bool(self._ttm)
+
+    def get(self, item: str) -> float | None:
+        if self._ttm:
+            return self._ttm.get(item)
+        return self._stmts.get(item, self._key)
+
+    def fcf(self) -> float | None:
+        if not self._ttm:
+            return free_cash_flow(self._stmts, self._key)[1]
+        ocf, capex = self.get("operating_cash_flow"), self.get("capital_expenditure")
+        if ocf is None or capex is None:
+            return None
+        return ocf - abs(capex)
+
+
+def _fcf_to_firm(
+    stmts: Statements, period_key: str, fcfe: float | None, interest: float | None
+) -> float | None:
     """Unlevered FCF proxy: FCFE plus after-tax interest expense (no working-capital delta)."""
     if fcfe is None:
         return None
-    interest = stmts.get("interest_expense", period_key)
     if interest is None:
         return fcfe
     rate = effective_tax_rate(

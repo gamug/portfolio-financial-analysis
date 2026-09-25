@@ -19,7 +19,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 
 import kg_schema
-from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, Statements
 from kg_schema.queries import UniverseMember
 
@@ -54,7 +54,8 @@ _CROSS_ITEM_BAND = 1.25
 # ``metrics-v3`` (T-102): utilities' total operating revenue now resolves, so every
 # revenue-denominated ratio of AWK/DTE/DUK/NEE/SRE/XEL changes from NULL to a value; and
 # (T-103) the share-scale check is point in time, so e.g. MCD FY2023-2025Q2's market caps
-# are corrected. Both landed before any ``metrics-v3`` row was persisted.
+# are corrected; and (T-105) FCF yields, net debt / EBITDA and ROIC are annualized on 10-Qs.
+# All three landed before any ``metrics-v3`` row was persisted.
 FACTS_ENGINE_VERSION = "facts-v1"
 METRICS_ENGINE_VERSION = "metrics-v3"
 
@@ -452,7 +453,24 @@ _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
     "net_income": ("profitability", "return_on_assets"),
     "revenue": ("profitability", "return_on_assets"),
     "cogs": ("efficiency", "asset_turnover"),
+    # T-105: the flows behind FCF yield, net debt / EBITDA and ROIC.
+    "operating_cash_flow": ("cashflow", "free_cash_flow_margin"),
+    "capital_expenditure": ("cashflow", "free_cash_flow_margin"),
+    "operating_income": ("leverage", "net_debt_to_ebitda"),
+    "depreciation_amortization": ("leverage", "net_debt_to_ebitda"),
+    "interest_expense": ("leverage", "interest_coverage"),
+    "stock_based_compensation": ("valuation", "free_cash_flow_yield"),
 }
+
+
+@dataclass(frozen=True)
+class YTDPair:
+    """One flow's year-to-date value at this 10-Q's period end, and the same year-to-date one
+    year earlier -- both columns of the filing itself -- with that earlier period's end."""
+
+    current: float | None
+    prior: float | None
+    prior_end: str | None
 
 
 # A fiscal quarter/year end can drift from "exactly N months earlier": 52/53-week calendars
@@ -548,6 +566,69 @@ def _quarter_flow_ending(
     return total
 
 
+def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str) -> int | None:
+    """The asset's 10-K whose fiscal year ends strictly between *after* and *before* -- the
+    year a prior-year year-to-date column belongs to -- or ``None``."""
+    row = conn.execute(
+        "SELECT id FROM sec_filings WHERE asset_id = ? AND form = '10-K' "
+        "AND period_end > ? AND period_end < ? ORDER BY period_end DESC LIMIT 1",
+        (asset_id, after, before),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
+def ttm_detail(
+    conn: Database,
+    asset_id: int,
+    *,
+    period_end: str,
+    current: dict[str, float],
+    ytd: dict[str, YTDPair] | None = None,
+) -> dict[str, TTMFlow]:
+    """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
+
+    1. ``ytd`` (T-105): ``FY(prior 10-K) - YTD(last year) + YTD(this year)``. Needs only the
+       filing's own two year-to-date columns and the recorded prior 10-K, so it also covers a
+       filer whose cash-flow statement has no quarterly column at all (XOM);
+    2. ``quarters`` (F4): this quarter plus the three before it, all recorded;
+    3. ``x4``: this quarter times four -- flagged downstream as crude annualization.
+
+    A flow with none of the three (no current value, no usable year-to-date pair) is absent."""
+    out: dict[str, TTMFlow] = {}
+    for item in sorted(set(current) | set(ytd or {})):
+        pair = (ytd or {}).get(item)
+        if pair and pair.current is not None and pair.prior is not None and pair.prior_end:
+            fy_filing = _fiscal_year_between(conn, asset_id, pair.prior_end, period_end)
+            fy = _recorded_flow(conn, fy_filing, item) if fy_filing is not None else None
+            if fy is not None:
+                out[item] = TTMFlow(fy - pair.prior + pair.current, "ytd")
+                continue
+        if item in current:
+            summed = _trailing_quarters(conn, asset_id, period_end, item, current[item])
+            out[item] = (
+                TTMFlow(summed, "quarters")
+                if summed is not None
+                else TTMFlow(current[item] * 4.0, "x4")
+            )
+    return out
+
+
+def _trailing_quarters(
+    conn: Database, asset_id: int, period_end: str, item: str, value: float
+) -> float | None:
+    """*value* (this quarter) plus the three recorded quarters before it, or ``None`` when
+    any of them is missing."""
+    total = value
+    for k in (1, 2, 3):
+        flow = _quarter_flow_ending(
+            conn, asset_id, _months_before(period_end, _QUARTER_MONTHS * k), item
+        )
+        if flow is None:
+            return None
+        total += flow
+    return total
+
+
 def ttm_flows(
     conn: Database,
     asset_id: int,
@@ -568,17 +649,10 @@ def ttm_flows(
     The quarters are found by **date** relative to *period_end*, so it works for any fiscal
     calendar (T-094); it used to do arithmetic on the ``fiscal_period`` labels, which only
     line up for a December year-end."""
-    ends = [_months_before(period_end, _QUARTER_MONTHS * k) for k in (1, 2, 3)]
     out: dict[str, float] = {}
     for item, value in current.items():
-        trailing = [value]
-        for quarter_end in ends:
-            flow = _quarter_flow_ending(conn, asset_id, quarter_end, item)
-            if flow is None:
-                trailing = []
-                break
-            trailing.append(flow)
-        out[item] = sum(trailing) if trailing else value * 4.0
+        summed = _trailing_quarters(conn, asset_id, period_end, item, value)
+        out[item] = summed if summed is not None else value * 4.0
     return out
 
 

@@ -198,7 +198,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       weights — the live book at 2026-09-22 equals cycle 1's selection (10 names, weights sum
       1.0), nothing live at 2026-06-30, 0 inverted stints, run 2 `reverted`, both triggers
       installed, `quick_check` ok, all views query.
-- [ ] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
+- [x] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
       quarter's flow by a stock or a price level: FCF yield (and its enterprise and SBC
       variants) 10-Q median 0.9% vs 10-K 3.4% (×3.6–3.9 too small), `net_debt_to_ebitda`
       10.47× vs 2.62× (×4 too large; MCD ~10× on every 10-Q, 2.7× on its 10-K),
@@ -208,7 +208,17 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       existing `db.ttm_flows` path in `valuation.py`, `leverage.py` and `roic.py`; new metrics
       version (`metrics-v3` if still unpersisted in production, else the next). Methodology
       change: `docs/model_fixes.md` record. **Acceptance**: those 10-Q medians within ~1.3× of
-      10-K; F4's existing tests unchanged.
+      10-K; F4's existing tests unchanged. **Done 2026-09-25**, under `metrics-v3` (still
+      unpersisted in production). The TTM now prefers the standard identity `FY(prior 10-K) −
+      YTD(last year) + YTD(this year)` — the filing's own YTD columns, so it also covers
+      filers whose 10-Q cash flow has no quarterly column (XOM) — then F4's four quarters, then
+      ×4, and stamps each group `annualized_ttm`/`annualized_x4`. Valuation, leverage and
+      ROIC take the TTM flows (never mixing a raw quarter in); raw values stay in the inputs.
+      Recomputed over every production filing of the 20-asset sample (stored facts, read-only):
+      10-K/10-Q median ratios FCF yield 0.86, enterprise 0.95, SBC-adjusted 0.94, net debt /
+      EBITDA 0.95, ROIC 0.95 (were 3.6–3.9, 0.25, 3.5); 10-Q FCF-yield coverage 97 filings;
+      the identity used for 1,789 of 1,891 flows (94.6%), ×4 for 92; no recomputed |FCF yield| > 0.5.
+      F4's tests unchanged; +12 tests, mutation-checked. Record: `docs/model_fixes.md` T-105.
 - [ ] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
       `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
       `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
