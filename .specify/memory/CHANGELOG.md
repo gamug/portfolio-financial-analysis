@@ -652,6 +652,10 @@ next, and last.
       performance rows) and adds the NULL-safe unique index `ux_quant_portfolio_book` on
       `IFNULL(frontier_k, -1)`. Production held **no** duplicates (4 distinct books); `migrate`
       verified on a scratch copy of it (v7, index present, 4 books unchanged, all 31 views query,
-      positions/performance intact) — **production itself not migrated**. 10 new tests
+      positions/performance intact). **Production migrated 2026-09-25** (after merge, per the
+      `docs/kg_schema.md` runbook: no writers, backup
+      `financial.db.pre-t101-migrate-backup-20260925` byte-identical + `quick_check` ok, `migrate`
+      applied v7 only): `quick_check` ok, index present, the 4 books and every row count
+      unchanged, all 31 views query, `optimize --dry-run` still resolves `9d34ff69`. 10 new tests
       (`tests/test_quant_book_key.py`), `T-093`'s strict `xfail` flipped to a pass, mutation-checked
       five ways; 512 passed, ruff, mypy green. Docs: `docs/quant.md`, `docs/kg_schema.md`.
