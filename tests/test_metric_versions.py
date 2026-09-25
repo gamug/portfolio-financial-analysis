@@ -252,6 +252,7 @@ _UNFILTERED_OK = {
     "fundamental_agent/db.py": "the writer's own TTM lookup, pinned to the engine version it writes",
     "kg_schema/queries.py": "the version listing itself, and existence-only coverage checks",
     "kg_schema/migrations.py": "schema rebuilds copy the whole table",
+    "fundamental_agent/repair.py": "existence check: a stale filing with metrics of any version is refused",
 }
 _READ = re.compile(r"\b(?:FROM|JOIN)\s+fundamental_metrics\b", re.IGNORECASE)
 
