@@ -69,17 +69,19 @@ def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray
     return sigma, delta
 
 
-def _expected_returns(
+def _expected_returns(  # noqa: PLR0913 - the panel, its Σ, and where to read caps as of
     settings: QuantSettings,
     panel: ReturnPanel,
     sigma: np.ndarray,
     conn: Database,
     manifest: QuantManifest,
+    *,
+    as_of: str,
 ) -> dict[str, dict[int, float]]:
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
     js = james_stein_mean(panel.returns, periods_per_year=ppy)
-    caps_by_id = load_market_caps(conn, panel.asset_ids, manifest.metrics)
+    caps_by_id = load_market_caps(conn, panel.asset_ids, manifest.metrics, as_of=as_of)
     caps = np.array([caps_by_id.get(a, 0.0) for a in panel.asset_ids], dtype=np.float64)
     if caps.sum() <= 0:
         caps = np.ones(panel.n_assets)
@@ -139,7 +141,7 @@ def run_build_risk_model(
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
-            mu_by_model = _expected_returns(settings, panel, sigma, conn, manifest)
+            mu_by_model = _expected_returns(settings, panel, sigma, conn, manifest, as_of=as_of)
 
             spec = {
                 "asset_ids": panel.asset_ids,

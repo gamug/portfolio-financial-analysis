@@ -223,7 +223,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       TTM reads pinned to the running engine version; identity-vs-four-quarter cross-check
       recorded as a SOFT `DQ_TTM_CROSSCHECK` review (16 of 780 on the sample: AT&T's 2022
       restatement, APA's revenue, one WFC value); `scripts/verify_t105.py`. +4 tests.
-- [ ] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
+- [x] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
       `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
       `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
       cycle on date D reads filings not yet public: the filing gap averages 48.7 days (10-K)
@@ -231,6 +231,15 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       cycle can read a 2026 market cap). Key every reader on `sec_filings.filing_date <=
       cycle_date`. **Acceptance**: a regression test over a historical date proves no fact
       filed after it is reachable.
+      **Done 2026-09-25**: every fundamental reader keys on `filing_date <= cycle_date` —
+      `latest_metrics`/`data_quality` (one filing per asset), the FUNDAMENTAL score readers
+      through the score's own `filing_id` (the orchestrator's duplicate readers folded into
+      `data.latest_fundamental_rows`), `market_cap_estimates` and its `quant` mirror
+      `load_market_caps(..., as_of=)`; an undated filing is never read as public. The
+      FUNDAMENTAL normalization now updates the snapshot it read, by id. Test
+      `tests/test_point_in_time_readers.py`: a day-by-day sweep over 18 months finds no read of
+      a filing filed after the day. Production: the live 2026-09-22 cycle's reads are
+      unchanged; the (reverted) 2026-06-30 run read unfiled filings for 426/503 assets.
 - [ ] **T-107** *(P0 — needs a decision first)* Give FUNDAMENTAL scores and metrics a
       publication timestamp. All 377 FUNDAMENTAL `score_snapshot` rows and 11,878
       `fundamental_metrics` rows have `event_time = period_end`, none `filing_date`. SPEC.md
@@ -327,6 +336,13 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
       until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
       guard no longer rejects APA.
+- [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
+      for an asset with no FUNDAMENTAL score at all: the rule iterates
+      `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
+      branch is unreachable. No effect today (all 20 ranked assets are scored); on the
+      full-universe run (`T-100`) every unscored member would escape the SOFT veto. Pass every
+      universe member (`None` for the unscored). A ranking change: #12 record.
+      **Acceptance**: a universe member with no public FUNDAMENTAL score gets the SOFT veto.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

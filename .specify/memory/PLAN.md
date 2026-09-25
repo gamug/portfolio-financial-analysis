@@ -1587,7 +1587,7 @@ that reproduce today.
 |---|---|---|
 | Live book after the backdated run | **live defect** — book is the 2026-06-30 run's (weights 0.10, BF.B in, WFC's stint inverted); `T-097`'s "reverted" was wrong | `T-104` |
 | F4 on FCF yields, `net_debt_to_ebitda`, ROIC | **fixed 2026-09-25** — 10-Q medians were ×3.6–3.9, ×4, ×3.5 off the 10-K, now within 0.86–0.95 | `T-105` |
-| T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **live defect** (gap 48.7 d 10-K / 34.4 d 10-Q, max 420) | `T-106` |
+| T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **fixed 2026-09-25** — gap 48.7 d 10-K / 34.4 d 10-Q, max 420; every reader now keys on `filing_date` | `T-106` |
 | T1 parts 1/3 — `event_time = period_end` | **live** (377/377 scores, 11,878/11,878 metrics) — but SPEC defines it so: a contract decision | `T-107` |
 | Q5 — benchmark mean-of-log, all names | **live defect** (−4.34 pp/yr on the 20-asset panel) | `T-108` |
 | §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **live defect** | `T-109` |
@@ -1599,6 +1599,7 @@ that reproduce today.
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
 | `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **live methodology gap** (never reaches MCD, 0.665) | `T-116`, after `T-105` |
 | APA revenue — a breakdown figure presented as the total (PR #77 review) | **live defect** — FY2023–FY2025 resolved revenue ~2× the statement's own total | `T-117` (local guard), `T-118` (upstream) |
+| `EARNINGS_MISSING` skips unscored assets (found testing `T-106`) | **latent** — no effect on today's 20 scored names | `T-119` |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
 | `turnover_cap` inert (no `w_prev`) | refinement | noted on `T-077` |
 | Q6 — current weights used for past formations | **not reproduced** — books are keyed per formation date | — |

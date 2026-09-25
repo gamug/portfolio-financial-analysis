@@ -71,8 +71,8 @@ def two_versions(memory_quant_db: Database, quant_seed: Callable[..., Database])
     for asset in range(1, 7):
         filing_id = conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "retrieved_at) VALUES (?, '10-K', 2024, 'FY2024', '2024-12-31', "
-            "'2025-01-01T00:00:00Z') RETURNING id",
+            "filing_date, retrieved_at) VALUES (?, '10-K', 2024, 'FY2024', '2024-12-31', "
+            "'2025-01-15', '2025-01-16T00:00:00Z') RETURNING id",
             (asset,),
         ).fetchone()["id"]
         for version, cap in (("metrics-v1", 1000.0), ("metrics-v2", 1000.0 * 4**asset)):

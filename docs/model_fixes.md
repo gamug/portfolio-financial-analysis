@@ -2004,3 +2004,81 @@ Tests (+4, mutation-checked): the valuation stamp with an SBC or interest × 4; 
 engine's prior year not feeding the TTM (and the same engine's doing so); the cross-check on
 AT&T's restated shape (identity kept, review row with both values); no review within 1% or
 with only one method. `uv run pytest -q` — 605 passed.
+
+---
+
+## T-106 — `cycle` read filings before they were filed
+
+**Status**: Fixed 2026-09-25 (branch `fix/t106-point-in-time-cycle-readers`, `T-106`).
+
+### Symptom
+
+A `cycle` run on date D read, for each asset, the newest filing whose **period had ended** by
+D — not the newest one **filed** by D. In production, filings arrive 48.7 days after their
+period end on average for a 10-K and 34.4 for a 10-Q, up to 420. The FUNDAMENTAL score
+readers had the same shape (`event_time`, which is the period end), and
+`market_cap_estimates` (and `quant`'s mirror, `load_market_caps`) had no date filter at all:
+a cycle dated 2023 could read a 2026 market cap. Replayed against production, the (reverted)
+2026-06-30 selection run read an unfiled filing for **426 of 503** assets — MMM's, AOS's and
+ABT's Q2 10-Qs, for example, filed 2026-07-21 to 2026-07-30.
+
+### Root cause
+
+The readers used the period end as the time a filing became known. That is what
+`fundamental_metrics.event_time` and FUNDAMENTAL `score_snapshot.event_time` hold (what the
+value is *about* — SPEC.md's definition, revisited by `T-107`), and `sec_filings.filing_date`
+was never consulted outside `fundamental_agent`'s own ingestion bound.
+
+### Theoretical/technical reference
+
+- **Point-in-time data**: "never use a fact before its original `dateFiled`" — point-in-time
+  data is "tagged with the date it actually became public, not just the date it describes"
+  (StockFit, *Point-in-Time Data: Essential for Backtesting*,
+  https://developer.stockfit.io/blog/point-in-time-data-backtesting, verified 2026-09-25).
+- The repo's own contract, SPEC.md FR-012 (a run as of D uses nothing dated after D), whose
+  acceptance now names the reads as well as the writes.
+
+### Fix
+
+Every fundamental reader keys on `sec_filings.filing_date <= cycle_date`:
+
+- `cycle.data.latest_metrics` and `data_quality` pick **one** filing per asset (newest period
+  end among the filed ones, ties by filing date then id) — the same filing for both.
+- `cycle.data.latest_fundamental_rows` (new) picks each asset's newest FUNDAMENTAL snapshot
+  through its own `filing_id`; `last_fundamental_dates`, `latest_fundamental_score` and the
+  orchestrator (which had two private copies of the old query) read it.
+- `cycle.data.market_cap_estimates(conn, cycle_date, ...)` and
+  `quant.db.load_market_caps(..., as_of=)` filter the same way.
+- A filing with no `filing_date` cannot be shown to be public and is never read (production
+  has none; the gateway can omit it).
+
+### Design decisions
+
+- **Availability from the filing, not a new column.** Adding `available_at` to scores and
+  metrics is `T-107`'s decision; every row already links to its filing, which carries the
+  date, so this fix needs no schema change and holds under either choice there.
+- **Undated means unknown.** Treating a NULL `filing_date` as public would reopen the leak for
+  exactly the rows whose provenance is weakest.
+- **FUNDAMENTAL normalization by id.** The normalize step updated every FUNDAMENTAL row of an
+  asset that shared the raw score — older snapshots included. It now updates the snapshot it
+  read, by id.
+
+### Verification
+
+`tests/test_point_in_time_readers.py` (9 tests, each reader's filter mutation-checked): a
+filing whose period ended but is not yet filed is unreachable by every reader, readable on
+its filing date; a late filer (421 days) keeps its prior filing; a day-by-day sweep over 18
+months finds no value from a filing filed after the day; undated filings and filing-less
+scores are skipped; a whole selection cycle dated before the seed's filing date normalizes
+no FUNDAMENTAL score and cannot fire LEVERAGE_EXTREME on the unfiled leverage, while the day
+after it does both. Production, read-only: the live 2026-09-22 cycle's reads are unchanged
+(0/503 assets change filing, 0/20 scores, 0/20 market caps) — everything it read had been
+filed; only historical or backdated cycles are affected.
+
+### Residual scope, deliberately deferred
+
+- `EARNINGS_MISSING` never fires for an asset with no FUNDAMENTAL score at all (it iterates
+  only the scored assets) — found while writing these tests; a ranking change, so its own
+  task (`T-119`).
+- `SEMANTIC` scores are written by the integration repo; their `event_time` semantics are that
+  repo's contract and are read unchanged.
