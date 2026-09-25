@@ -184,7 +184,15 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       (today it `UPDATE`s the weight in place, so the previous weight is lost and a revert
       cannot restore it). Correct `T-097`'s CHANGELOG record. **Acceptance**: the live book
       equals cycle 1's selection and weights; no stint with `valid_to < valid_from`; a
-      re-weight leaves the old weight in history.
+      re-weight leaves the old weight in history. **Code done 2026-09-25**: `sync_positions`
+      re-weights as close + new stint (same-date re-run in place) and refuses to end a stint
+      opened after the cycle date even with `--allow-backdated`; `kg_schema` triggers reject
+      `valid_to < valid_from` on insert/update; `cycle undo-run --cycle-run N [--apply]`
+      (`cycle/repair.py`) reverts a backdated run. On a copy of production, undoing run 2
+      voids BF.B, reopens WFC, restores nine weights: the live book at 2026-09-22 equals
+      cycle 1's selection (10 names, targets 0.1167/0.075), 0 inverted stints, run 2
+      `reverted`, `quick_check` ok. `T-097`'s CHANGELOG record corrected. **Open**: applying
+      the repair to production (awaiting approval).
 - [ ] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
       quarter's flow by a stock or a price level: FCF yield (and its enterprise and SBC
       variants) 10-Q median 0.9% vs 10-K 3.4% (×3.6–3.9 too small), `net_debt_to_ebitda`

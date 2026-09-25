@@ -231,7 +231,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
-| `portfolio_position` | position stints | `UNIQUE(asset_id, valid_from)` |
+| `portfolio_position` | position stints; triggers reject `valid_to < valid_from` (T-104) | `UNIQUE(asset_id, valid_from)` |
 | `cycle_run` / `cycle_checkpoint` | orchestrator provenance + resume | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` |
 | `cycle_ranking` | the ranked cohort of a cycle | `UNIQUE(cycle_run_id, asset_id)` |
 | `price_observation` | derived per-day price analytics | `UNIQUE(asset_id, obs_date, engine_version)` |

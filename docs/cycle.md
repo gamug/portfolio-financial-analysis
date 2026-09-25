@@ -124,7 +124,19 @@ dropped. Pure derivation — nothing fetched.
 lapsed ones — never delete), `hard_vetoed_as_of(conn, cutoff)` / `active_soft_vetoes`
 (the T-1 filter: `cycle_date ≤ cutoff`, `cleared_at IS NULL`), `write_ranking`
 (replaces `cycle_ranking` for the run), `sync_positions` (open new / close vanished
-`portfolio_position` stints — history immutable — reweight incumbents).
+`portfolio_position` stints — history immutable; a re-weighted incumbent gets a new stint from
+the cycle date and its old one closes there, so every weight stays on record — only a re-run on
+the stint's own start date updates in place (T-104); refuses to end a stint opened after the
+cycle date, even with `--allow-backdated`). The database itself (a `kg_schema` trigger) rejects
+any stint with `valid_to < valid_from`.
+
+### `repair.py` — `plan_undo(conn, cycle_run_id)` / `apply_undo(conn, plan)` (T-104)
+
+Reverts a backdated `select` run's writes to the live book: voids the stints it opened at its
+date (`valid_to = valid_from`, kept on record), reopens the newer stints it closed early, and
+restores every still-open stint's weight to its own opening run's `cycle_ranking.target_weight`;
+marks the run `reverted`, all in one transaction. Refused (`NotBackdated`) for a run that was not
+dated before the rest of the book.
 
 ### `construction.py` — `target_weights(cands, *, top_n, scheme, max_name_weight, max_sector_weight)`
 
@@ -175,7 +187,9 @@ whatever FUNDAMENTAL `score_snapshot` rows `fundamental_agent run` already wrote
 
 ### `cli.py`
 
-`select` / `monitor` / `backfill`. `--dry-run` on `select` sets `top_n = 0` so
+`select` / `monitor` / `backfill` / `undo-run --cycle-run N [--apply]` (T-104: prints what
+reverting that backdated run would change; writes only with `--apply`; needs no model settings).
+`--dry-run` on `select` sets `top_n = 0` so
 `rank` / `cycle_ranking` run but no positions are touched. `--metrics-version` (T-090; a version
 like `metrics-v1`, or `GROUP=VERSION` pairs) chooses which `fundamental_metrics` engine version
 the cycle reads — default the newest stored per group. The resolved manifest and its tag are

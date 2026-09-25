@@ -10,6 +10,9 @@ from portfolio_common.db import Database
 from cycle.rules.base import VetoHit
 from cycle.scores.sector import SectorAggregate
 
+# Weights closer than this are the same weight (float noise, not a re-weight).
+WEIGHT_EPS = 1e-9
+
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
@@ -221,17 +224,36 @@ def sync_positions(
     *,
     cycle_run_id: int,
 ) -> tuple[int, int]:
-    """Open positions for new targets, close vanished ones (history is immutable)."""
+    """Open positions for new targets, close vanished ones (history is immutable).
+
+    A held name whose weight changes gets a new stint from *cycle_date* (the old one closes
+    there) rather than an in-place update, so every weight the book ever held stays on record
+    (T-104: the in-place update is what made a backdated run impossible to undo). Only a
+    re-run on the stint's own start date updates it in place -- it is the same book, recomputed.
+    """
     open_rows = {
-        int(r["asset_id"]): int(r["id"])
-        for r in conn.execute("SELECT id, asset_id FROM portfolio_position WHERE valid_to IS NULL")
+        int(r["asset_id"]): r
+        for r in conn.execute(
+            "SELECT id, asset_id, valid_from, weight, cost_basis FROM portfolio_position "
+            "WHERE valid_to IS NULL"
+        )
     }
     now_target = set(targets)
+    newer = sorted(
+        str(r["valid_from"]) for r in open_rows.values() if str(r["valid_from"]) > cycle_date
+    )
+    if newer:
+        # Even with --allow-backdated: closing or re-weighting these would end a stint before
+        # it started (T-104) -- the database refuses that too, this just says why.
+        raise OutOfOrderCycle(
+            f"cycle_date {cycle_date} would end positions opened later ({newer[-1]}); a "
+            "historical replay must not write the live book"
+        )
     opened = closed = 0
     for aid in set(open_rows) - now_target:
         conn.execute(
             "UPDATE portfolio_position SET valid_to = ? WHERE id = ?",
-            (cycle_date, open_rows[aid]),
+            (cycle_date, int(open_rows[aid]["id"])),
         )
         closed += 1
     for aid in now_target - set(open_rows):
@@ -244,11 +266,27 @@ def sync_positions(
             (aid, cycle_date, targets[aid], closes.get(aid), cycle_run_id, cycle_run_id),
         )
         opened += 1
-    # reweight incumbents that stay
+    # reweight incumbents that stay: a new stint, the old one closed (same-date re-run: in place)
     for aid in now_target & set(open_rows):
+        row = open_rows[aid]
+        if row["weight"] is not None and abs(float(row["weight"]) - targets[aid]) <= WEIGHT_EPS:
+            continue
+        if str(row["valid_from"]) == cycle_date:
+            conn.execute(
+                "UPDATE portfolio_position SET weight = ? WHERE id = ?", (targets[aid], row["id"])
+            )
+            continue
         conn.execute(
-            "UPDATE portfolio_position SET weight = ? WHERE id = ?",
-            (targets[aid], open_rows[aid]),
+            "UPDATE portfolio_position SET valid_to = ? WHERE id = ?", (cycle_date, row["id"])
+        )
+        conn.execute(
+            """
+            INSERT INTO portfolio_position
+                (asset_id, valid_from, valid_to, weight, cost_basis, opened_by_cycle, run_id)
+            VALUES (?, ?, NULL, ?, ?, ?, ?)
+            """,
+            # the holding continues: its cost basis carries over, only the weight changes
+            (aid, cycle_date, targets[aid], row["cost_basis"], cycle_run_id, cycle_run_id),
         )
     conn.commit()
     return opened, closed

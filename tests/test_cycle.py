@@ -408,9 +408,25 @@ def test_select_refuses_to_write_a_backdated_book(cycle_seed: Database) -> None:
     assert step_status == "failed"
 
 
-def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database) -> None:
+def test_allow_backdated_cannot_end_newer_open_positions(cycle_seed: Database) -> None:
+    """T-104: the override passes T-097's guard, but closing or re-weighting a stint opened
+    after the run's date would end it before it started -- refused before any write."""
     conn = cycle_seed
     run_selection(_settings(conn), "2026-06-30", conn=conn)
+    before = [dict(r) for r in conn.execute("SELECT * FROM portfolio_position ORDER BY id")]
+
+    backdated = _settings(conn).model_copy(update={"allow_backdated_positions": True})
+    with pytest.raises(OutOfOrderCycle, match="would end positions opened later"):
+        run_selection(backdated, "2026-05-01", conn=conn)
+    assert [dict(r) for r in conn.execute("SELECT * FROM portfolio_position ORDER BY id")] == before
+
+
+def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database) -> None:
+    """With no newer stint still open, the override writes and records why it was needed."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    conn.execute("UPDATE portfolio_position SET valid_to = '2026-07-15'")  # the book was closed
+    conn.commit()
 
     backdated = _settings(conn).model_copy(update={"allow_backdated_positions": True})
     report = run_selection(backdated, "2026-05-01", conn=conn)
