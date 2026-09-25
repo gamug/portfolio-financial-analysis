@@ -285,8 +285,8 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
         )
         fid = conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', '2025-12-31', '2026-02-01T00:00:00Z') "
-            "RETURNING id",
+            "filing_date, retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', '2025-12-31', "
+            "'2026-02-01', '2026-02-01T00:00:00Z') RETURNING id",
             (i,),
         ).fetchone()["id"]
         for grp, name, val in [
@@ -304,9 +304,9 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
             )
         conn.execute(
             "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
-            "event_time, computed_at, model, run_kind) VALUES (?, 'FUNDAMENTAL', ?, ?, "
-            "'2025-12-31', '2026-02-01T00:00:00Z', 'seed', 'analysis')",
-            (i, 80 - 8 * i, 80 - 8 * i),
+            "event_time, computed_at, model, run_kind, filing_id) VALUES (?, 'FUNDAMENTAL', ?, ?, "
+            "'2025-12-31', '2026-02-01T00:00:00Z', 'seed', 'analysis', ?)",
+            (i, 80 - 8 * i, 80 - 8 * i, fid),
         )
         for d in range(1, 121):
             conn.execute(

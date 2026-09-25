@@ -321,11 +321,11 @@ def upsert_return_daily(
 
 
 def load_market_caps(
-    conn: Database, asset_ids: list[int], versions: MetricVersions
+    conn: Database, asset_ids: list[int], versions: MetricVersions, *, as_of: str
 ) -> dict[int, float]:
     """``asset_id -> market cap`` parsed from ``fundamental_metrics.inputs_json``
-    (latest per asset) of the *versions* the run resolved (T-090); mirrors
-    ``cycle.data.market_cap_estimates``. Missing -> absent."""
+    (latest per asset whose filing was public by *as_of*, T-106) of the *versions* the run
+    resolved (T-090); mirrors ``cycle.data.market_cap_estimates``. Missing -> absent."""
     out: dict[int, float] = {}
     try:
         rows = conn.execute(
@@ -334,9 +334,10 @@ def load_market_caps(
             FROM fundamental_metrics m JOIN sec_filings sf ON sf.id = m.filing_id
             WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
               AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
-            ORDER BY sf.period_end
+              AND sf.filing_date IS NOT NULL AND sf.filing_date <= ?
+            ORDER BY sf.period_end, sf.filing_date, sf.id
             """,
-            (versions.json_param(),),
+            (versions.json_param(), as_of),
         ).fetchall()
     except DatabaseError:
         return out

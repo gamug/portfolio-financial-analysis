@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.db import Database, Row
+from portfolio_common.db import Database
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -183,7 +183,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
         # -- valorization
         def _valorization() -> dict:
-            mcap = data.market_cap_estimates(conn, metrics, versions)
+            mcap = data.market_cap_estimates(conn, cycle_date, metrics, versions)
             rows = {}
             for a in asset_ids:
                 m = dict(metrics.get(a, {}))
@@ -238,17 +238,19 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     conn, stype, cycle_date, {aids[i]: norm[i] for i in range(len(aids))}
                 )
                 done[stype] = len(aids)
-            # FUNDAMENTAL is normalized against each asset's latest filing snapshot
-            frows = _latest_fundamental_rows(conn, cycle_date)
+            # FUNDAMENTAL is normalized against each asset's latest *public* filing snapshot
+            # (T-106), and the value lands on that snapshot row alone -- by id, not on every
+            # row of the asset that happens to share its raw score.
+            frows = [
+                r
+                for r in data.latest_fundamental_rows(conn, cycle_date)
+                if r["raw_value"] is not None
+            ]
             if frows:
                 fn = normalized_scores([float(r["raw_value"]) for r in frows])
                 conn.executemany(
-                    "UPDATE score_snapshot SET normalized_score = ? "
-                    "WHERE score_type = 'FUNDAMENTAL' AND asset_id = ? AND raw_value = ?",
-                    [
-                        (fn[i], int(frows[i]["asset_id"]), float(frows[i]["raw_value"]))
-                        for i in range(len(frows))
-                    ],
+                    "UPDATE score_snapshot SET normalized_score = ? WHERE id = ?",
+                    [(fn[i], int(frows[i]["id"])) for i in range(len(frows))],
                 )
                 conn.commit()
                 done["FUNDAMENTAL"] = len(frows)
@@ -314,7 +316,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             hard = writers.hard_vetoed_as_of(conn, cutoff)
             soft = writers.active_soft_vetoes(conn, cutoff)
             per_type = {
-                "FUNDAMENTAL": _norm_map(conn, "FUNDAMENTAL", cycle_date, latest=True),
+                "FUNDAMENTAL": {
+                    int(r["asset_id"]): r["normalized_score"]
+                    for r in data.latest_fundamental_rows(conn, cycle_date)
+                },
                 "TECHNICAL": _norm_map(conn, "TECHNICAL", cycle_date),
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),
@@ -397,41 +402,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 # -- small query helpers ------------------------------------------------
 
 
-def _latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
-    return conn.execute(
-        """
-        SELECT s.asset_id, s.raw_value
-        FROM score_snapshot s
-        JOIN (SELECT asset_id, MAX(event_time) AS et FROM score_snapshot
-              WHERE score_type='FUNDAMENTAL' AND event_time <= ? GROUP BY asset_id) l
-          ON l.asset_id = s.asset_id AND l.et = s.event_time
-        WHERE s.score_type='FUNDAMENTAL'
-        """,
-        (cycle_date,),
+def _norm_map(conn: Database, stype: str, cycle_date: str) -> dict[int, float | None]:
+    rows = conn.execute(
+        "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type=? AND event_time=?",
+        (stype, cycle_date),
     ).fetchall()
-
-
-def _norm_map(
-    conn: Database, stype: str, cycle_date: str, *, latest: bool = False
-) -> dict[int, float | None]:
-    if latest:
-        rows = conn.execute(
-            """
-            SELECT s.asset_id, s.normalized_score
-            FROM score_snapshot s
-            JOIN (SELECT asset_id, MAX(event_time) AS et FROM score_snapshot
-                  WHERE score_type=? AND event_time <= ? GROUP BY asset_id) l
-              ON l.asset_id = s.asset_id AND l.et = s.event_time
-            WHERE s.score_type=?
-            """,
-            (stype, cycle_date, stype),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT asset_id, normalized_score FROM score_snapshot "
-            "WHERE score_type=? AND event_time=?",
-            (stype, cycle_date),
-        ).fetchall()
     return {int(r["asset_id"]): r["normalized_score"] for r in rows}
 
 

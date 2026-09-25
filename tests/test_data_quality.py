@@ -189,8 +189,9 @@ def _filing(conn: Database, asset_id: int, ticker: str, period_end: str = "2025-
     return int(
         conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "retrieved_at) VALUES (?, '10-K', ?, ?, ?, '2026-01-01T00:00:00Z') RETURNING id",
-            (asset_id, int(period_end[:4]), f"FY{period_end[:4]}", period_end),
+            "filing_date, retrieved_at) VALUES (?, '10-K', ?, ?, ?, date(?, '+45 days'), "
+            "'2026-01-01T00:00:00Z') RETURNING id",
+            (asset_id, int(period_end[:4]), f"FY{period_end[:4]}", period_end, period_end),
         ).fetchone()[0]
     )
 

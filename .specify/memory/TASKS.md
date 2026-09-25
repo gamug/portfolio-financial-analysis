@@ -223,7 +223,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       TTM reads pinned to the running engine version; identity-vs-four-quarter cross-check
       recorded as a SOFT `DQ_TTM_CROSSCHECK` review (16 of 780 on the sample: AT&T's 2022
       restatement, APA's revenue, one WFC value); `scripts/verify_t105.py`. +4 tests.
-- [ ] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
+- [x] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
       `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
       `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
       cycle on date D reads filings not yet public: the filing gap averages 48.7 days (10-K)
@@ -231,17 +231,39 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       cycle can read a 2026 market cap). Key every reader on `sec_filings.filing_date <=
       cycle_date`. **Acceptance**: a regression test over a historical date proves no fact
       filed after it is reachable.
-- [ ] **T-107** *(P0 — needs a decision first)* Give FUNDAMENTAL scores and metrics a
-      publication timestamp. All 377 FUNDAMENTAL `score_snapshot` rows and 11,878
+      **Done 2026-09-25**: every fundamental reader keys on `filing_date <= cycle_date` —
+      `latest_metrics`/`data_quality` (one filing per asset), the FUNDAMENTAL score readers
+      through the score's own `filing_id` (the orchestrator's duplicate readers folded into
+      `data.latest_fundamental_rows`), `market_cap_estimates` and its `quant` mirror
+      `load_market_caps(..., as_of=)`; an undated filing is never read as public. The
+      FUNDAMENTAL normalization now updates the snapshot it read, by id. Test
+      `tests/test_point_in_time_readers.py`: a day-by-day sweep over 18 months finds no read of
+      a filing filed after the day. Production: the live 2026-09-22 cycle's reads are
+      unchanged; the (reverted) 2026-06-30 run read unfiled filings for 426/503 assets.
+- [ ] **T-107** *(P0 — **decided 2026-09-25: option (b)**, PR #78 review; after `T-120`)*
+      Give FUNDAMENTAL scores and metrics a publication timestamp. All 377 FUNDAMENTAL `score_snapshot` rows and 11,878
       `fundamental_metrics` rows have `event_time = period_end`, none `filing_date`. SPEC.md
       defines FUNDAMENTAL `event_time` as the period end ("what the score is about"), so the
       choice is either (a) re-key `event_time` to `filing_date`, as the audit proposes (a
       contract change for every `v_score_snapshot` reader and the `UNIQUE(asset_id,
       score_type, event_time)` key), or (b) keep `event_time` and add an explicit nullable
       availability column (`available_at` = `filing_date`), leaving the contract intact.
-      Recommendation: (b). Deterministic backfill either way. **Acceptance**: every
-      FUNDAMENTAL score and metric row carries its filing date as the time it became known;
-      SPEC.md updated.
+      Recommendation: (b). Deterministic backfill either way.
+      **Decision (b)** — keep `event_time` as the period end and add `available_at`. Option (a)
+      would put the filing date in `UNIQUE(asset_id, score_type, event_time)`: the reviewer's
+      full-universe DB has 46 (asset, filing date) pairs with more than one FUNDAMENTAL score,
+      which would collide and be silently dropped (production today: 42 (asset, filing date)
+      pairs with more than one filing, none scored twice yet). Scope:
+      - `available_at` on FUNDAMENTAL `score_snapshot` rows and on `fundamental_metrics`,
+        backfilled from `sec_filings.filing_date`, and **required non-null** for those rows
+        (a test or trigger), so "nullable" cannot become "silently missing".
+      - Convention: a filing is usable from the **trading day after** its filing date (EDGAR
+        dates an after-close submission with the same day). `available_at` holds that day,
+        and `T-106`'s `filing_date <= cycle_date` readers move to it.
+      - A test that no as-of reader filters FUNDAMENTAL scores or metrics by `event_time`.
+      **Acceptance**: every FUNDAMENTAL score and metric row carries a non-null `available_at`
+      (the trading day after its filing date); every as-of reader filters on it; SPEC.md
+      updated.
 - [ ] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
       cross-sectional **mean of log returns**, not `ln(1 + mean simple return)`, so it is lower
       every day by about half the cross-sectional variance: on today's 20-asset panel it
@@ -327,6 +349,30 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
       until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
       guard no longer rejects APA.
+- [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
+      for an asset with no FUNDAMENTAL score at all: the rule iterates
+      `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
+      branch is unreachable. No effect today (all 20 ranked assets are scored); on the
+      full-universe run (`T-100`) every unscored member would escape the check. **Decision
+      (PR #78 review): an unscored asset is ineligible, not penalized** — no SOFT veto. A
+      selection change: #12 record.
+      **Acceptance**: a universe member with no public FUNDAMENTAL score is ineligible for
+      selection in the same cycle it is detected (not through the T-1 veto lag); it stays in
+      the ranking, marked with the reason in `veto_rules_json`, and is listed in the cycle's
+      output; if more than 5% of the universe is unscored, the selection cycle stops with an
+      error instead of building a portfolio.
+- [ ] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* Re-ingest the
+      legacy pre-`T-091` quarterly rows. Before `T-092` fixed the gateway, one Q3 10-Q per
+      year was stored as Q1, Q2 and Q3 rows sharing its accession number and filing date —
+      e.g. ALLE 2022: three 10-Qs, accession `0001579241-22-000063`, all filed 2022-10-27.
+      Production has 41 such accessions over 13 tickers (AEP, ALLE, AXON, BNY, CSX, DAL, ETR,
+      FIS, HPQ, NOC, PNR, REGN, TT; the reviewer counted 15 on the full-universe DB); none has
+      metrics yet. Under `T-106` such a Q1/Q2 row reads as public only at Q3's date (late,
+      never early), but `T-107` would backfill that wrong date into `available_at`. Re-ingest
+      them, make `T-100` unable to resume past them, and add an invariant (test or trigger):
+      no two `sec_filings` rows of the same asset share an accession number.
+      **Acceptance**: 0 shared accessions per asset in production; the invariant refuses a new
+      one; the re-ingested quarters carry their own accession numbers and filing dates.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

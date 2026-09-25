@@ -1587,8 +1587,9 @@ that reproduce today.
 |---|---|---|
 | Live book after the backdated run | **live defect** — book is the 2026-06-30 run's (weights 0.10, BF.B in, WFC's stint inverted); `T-097`'s "reverted" was wrong | `T-104` |
 | F4 on FCF yields, `net_debt_to_ebitda`, ROIC | **fixed 2026-09-25** — 10-Q medians were ×3.6–3.9, ×4, ×3.5 off the 10-K, now within 0.86–0.95 | `T-105` |
-| T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **live defect** (gap 48.7 d 10-K / 34.4 d 10-Q, max 420) | `T-106` |
-| T1 parts 1/3 — `event_time = period_end` | **live** (377/377 scores, 11,878/11,878 metrics) — but SPEC defines it so: a contract decision | `T-107` |
+| T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **fixed 2026-09-25** — gap 48.7 d 10-K / 34.4 d 10-Q, max 420; every reader now keys on `filing_date` | `T-106` |
+| T1 parts 1/3 — `event_time = period_end` | **live** (377/377 scores, 11,878/11,878 metrics) — **decided (b)** 2026-09-25: keep `event_time`, add non-null `available_at` = the trading day after filing | `T-107`, after `T-120` |
+| Legacy pre-`T-091` quarters sharing the Q3 10-Q's accession and date (PR #78 review) | **live** — 41 accessions, 13 tickers; would poison `T-107`'s backfill | `T-120` |
 | Q5 — benchmark mean-of-log, all names | **live defect** (−4.34 pp/yr on the 20-asset panel) | `T-108` |
 | §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **live defect** | `T-109` |
 | T2/T3/T7 — as-of past the price spine, orphan observations | **live** (runs dated 2026-09-21/22 vs prices to 2026-08-27; 503 orphan rows) | `T-110` |
@@ -1599,6 +1600,7 @@ that reproduce today.
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
 | `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **live methodology gap** (never reaches MCD, 0.665) | `T-116`, after `T-105` |
 | APA revenue — a breakdown figure presented as the total (PR #77 review) | **live defect** — FY2023–FY2025 resolved revenue ~2× the statement's own total | `T-117` (local guard), `T-118` (upstream) |
+| `EARNINGS_MISSING` skips unscored assets (found testing `T-106`) | **latent** — no effect on today's 20 scored names; decided: unscored = ineligible same-cycle, stop above 5% unscored | `T-119` |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
 | `turnover_cap` inert (no `w_prev`) | refinement | noted on `T-077` |
 | Q6 — current weights used for past formations | **not reproduced** — books are keyed per formation date | — |
@@ -1610,7 +1612,7 @@ that reproduce today.
 | `dei` cover-page share count; survivorship change log | upstream / data acquisition | not added |
 
 **Sequencing**: P0 first (`T-104` is operational and independent; `T-105` before `T-116` and
-before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` together; `T-108`/
+before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` together, `T-120` before `T-107`'s backfill; `T-108`/
 `T-109` before any `evaluate` result is read). `T-113` must land before `T-079`. Methodology
 changes (`T-105`, `T-108`, `T-109`, `T-116`) each get their constitution AI behavior #12
 record.
