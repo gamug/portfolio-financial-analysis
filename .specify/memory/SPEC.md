@@ -268,6 +268,7 @@ are not owned by any single package.
 | `cycle_run` / `cycle_checkpoint` | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` | orchestrator provenance + resume | `cycle` |
 | `sector_aggregate_snapshot` | `UNIQUE(sector_id, cycle_date, metric_type)` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `cycle` |
 | `shared_executive_edge` | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` | `sharedExecutiveWith` candidate | `entity_resolution build` |
+| `media_cooccurrence` | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` | `shared_executive_edge`'s shape for non-executive (press/analyst) co-occurrence (T-043) | `entity_resolution build` (once T-082 lands) |
 | `universe_membership` | `UNIQUE(asset_id, universe, valid_from)` | **frozen** — superseded by `universe.db` | not on any write path |
 | `universe_coverage` | `UNIQUE(as_of, universe, symbol)` | per-member core-data coverage for a dated universe | `coverage` command |
 | `corporate_action` | `UNIQUE(asset_id, action_type, ex_date, engine_version)` | dividends/splits (pricing gateway only; legacy XBRL-derived rows remain as history, unread) | `quant backfill-actions` |

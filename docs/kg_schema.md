@@ -237,6 +237,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `price_observation` | derived per-day price analytics | `UNIQUE(asset_id, obs_date, engine_version)` |
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |
 | `shared_executive_edge` | `sharedExecutiveWith` candidates | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
+| `media_cooccurrence` | the same shape for press / analyst co-occurrences, kept apart from executive edges (T-043; written once T-082 lands) | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
 | `sector_aggregate_snapshot` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `UNIQUE(sector_id, cycle_date, metric_type)` |
 | `corporate_action` | dividends / splits (the pricing gateway only; legacy derived rows are unread history) | `UNIQUE(asset_id, action_type, ex_date, engine_version)` |
 | `quant_return_daily` | total-return daily series (dividends folded in) | `UNIQUE(asset_id, obs_date, engine_version)` |

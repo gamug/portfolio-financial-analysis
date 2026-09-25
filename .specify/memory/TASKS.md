@@ -12,11 +12,11 @@ see constitution AI behavior #13. This file carries only open work items.
 Task IDs are stable, same rule as `SPEC.md`'s `FR-0xx`/`NR-0xx`: don't
 renumber; mark a cancelled/superseded task in place instead.
 
-**🔴 Priority override (2026-09-08 forensic audit)**: Work items 5–9 below
-(`T-040`–`T-084`) are the current top priority — a direct audit against
+**🔴 Priority override (2026-09-08 forensic audit)**: Work items 8 and 9 below
+(`T-070`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. (Closed Work items 1, 3, 6, 7, 10, 11 and 13 are in `CHANGELOG.md`.)
-Work item 5 continues in parallel (now local, see its note) → **8 (P1, supersedes Work item
+open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11 and 13 are in `CHANGELOG.md`.)
+→ **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all**. See `PLAN.md`'s "🔴 Priority Override"
 section for the full rationale — the source audit markdowns
@@ -82,59 +82,6 @@ only durable record.
       ready, still flagged not-cut-over pending `portfolio-nlp`. Also
       update the two architecture artifacts per constitution AI behavior
       #11 — reconcile, never rename.
-
-## Work item 5 — Upstream: `portfolio-common` v0.3.0 additive data contract (P0, external)
-
-*(Note 2026-09-25: `kg_schema` is vendored in this repo (`src/kg_schema/`, see
-`docs/kg_schema.md`), so these additive changes land **here**, not in `portfolio-common` —
-`T-040` was built that way, and `T-044` (the upstream release-and-bump) is deprecated.)*
-
-- [x] **T-040** Add `data_quality_issue` table (`filing_id`/`asset_id` FKs,
-      `metric_name`, `rule_id`, `severity CHECK IN ('HARD','SOFT')`,
-      `value`, `created_at`, `run_id`, `UNIQUE(filing_id, metric_name,
-      rule_id)` + indexes) in `portfolio_common/kg_schema/ddl.py`. →
-      `PLAN.md` Work item 5, step 1. **Done 2026-09-25, inside `T-065`** — in this
-      repo's vendored `src/kg_schema/ddl.py` (`kg_schema` left `portfolio-common` at its
-      v1.0.0, so there is no upstream release to wait for), with the read-contract view
-      `v_data_quality_issue`. Key widened to `UNIQUE(filing_id, metric_group,
-      metric_name, metric_engine_version, rule_id, gate_version)` plus a `quarantined`
-      flag and `evidence_json`, so a verdict names the T-090 metric version it judged
-      and a future threshold change writes parallel rows — rationale in
-      `docs/model_fixes.md`'s T-065 entry.
-- [x] **T-041** Add nullable `score_snapshot.forensic_flags_json` column
-      via the existing missing-columns mechanism. → step 2. **Done 2026-09-25**: a
-      `REQUIRED_COLUMNS` entry in `src/kg_schema/ddl.py` (this repo's vendored `kg_schema`),
-      so every package's next `ensure()` adds it — additive, no `schema_version` bump, the
-      `UNIQUE(asset_id, score_type, event_time)` key untouched. m005/m006 rebuild
-      `score_snapshot` from an explicit column list, so both now carry the column (and add it
-      first when called directly) — flags written on a not-yet-migrated database survive.
-      Verified on a copy of production: column added, 497 rows kept, `schema_version` 7,
-      all views query, `quick_check` ok, second `ensure()` a no-op. Not exposed in
-      `v_score_snapshot` yet — that and writing it are `T-074`'s.
-- [x] **T-042** Rewrite `v_quant_vs_live` as the existing benchmark-side
-      `LEFT JOIN` `UNION`ed with a `kind='LIVE_ONLY'` branch for live
-      positions absent from every quant benchmark. → step 3. **Done 2026-09-25** in the
-      vendored `src/kg_schema/views.py` (views rebuild on every `ensure()`; no migration).
-      The benchmark branch is byte-for-byte the old view; `UNION ALL` (the branches are
-      disjoint by `kind`) adds, per as-of date that has optimized books, one row per live
-      position open that date and held in none of them (reference books `live_book`/
-      `equal_weight`/`cap_weight` don't count): `benchmark_weight` NULL, `active_weight =
-      -live_weight`. On a copy of production: APA (2026-09-22, live weight 0.10) — the one
-      live name the old view dropped — now appears as `LIVE_ONLY`; all 10 live names show,
-      their weights sum to 1.0; the 38 benchmark rows are identical. 4 tests in
-      `tests/test_quant_vs_live.py`, mutation-checked.
-- [ ] **T-043** Add `media_cooccurrence` table (same shape/grain as
-      `shared_executive_edge`, different table). → step 4.
-- [ ] **T-044** *(**DEPRECATED 2026-09-25, at the user's direction — do not implement.**
-      Kept unchecked as the historical record, per this file's "mark cancelled in place,
-      don't renumber" rule. Reason: `kg_schema` left `portfolio-common` at its v1.0.0 and
-      is vendored here (`src/kg_schema/`), so `T-040`–`T-043` land in this repo and there
-      is nothing to release upstream or re-pin; `portfolio-common` stays at `v1.2.1`.
-      Each of `T-041`–`T-043` checks `ensure()` in its own tests, as `T-040` did.)*
-      Tag and release `portfolio-common` `v0.3.0`; bump this
-      repo's `pyproject.toml` (`[tool.uv.sources]`) from `v1.2.1` →
-      `v0.3.0`, regenerate `uv.lock`, `uv sync`, and re-verify `ensure()`
-      against the live `KG_FINANCIAL_DB`. → `PLAN.md` acceptance criteria.
 
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
@@ -233,10 +180,9 @@ added above it, never below. → `PLAN.md` Work item 12.
 
 ## Status
 
-**🔴 Current top priority (2026-09-08 forensic audit): Work items 5, 8 and 9.**
-Work items 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. `T-040` (Work
-item 5) is done; `T-041`–`T-084` have not started. Execute, with Work item 5 (now local) in
-parallel → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+**🔴 Current top priority (2026-09-08 forensic audit): Work items 8 and 9.**
+Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. `T-070`–`T-084` have
+not started. Execute **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
@@ -244,12 +190,12 @@ re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 transfer independent of any task here)**.
 
 Work items 1 (done), 3 (superseded by `T-077` — do not implement), 6 (done
-upstream + `T-052`), 7 (done 2026-09-25), 10 (done), 11 (done 2026-09-25) and 13 (done
-2026-09-25) are closed — see
+upstream + `T-052`), 5 (done 2026-09-25, `T-044` deprecated), 7 (done 2026-09-25), 10 (done),
+11 (done 2026-09-25) and 13 (done 2026-09-25) are closed — see
 `CHANGELOG.md`.
 
 Work items 2 and 4 are unaffected by the audit and keep their original,
-lower priority (after Work items 5–9 above): nothing in either has
+lower priority (after Work items 8 and 9 above): nothing in either has
 started; both are unblocked.
 
 **Work item 12 (`T-100`, the full-universe production run) runs last of all**, after
