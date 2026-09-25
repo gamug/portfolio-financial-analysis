@@ -266,6 +266,18 @@ REGISTRY: dict[str, LineItem] = {
     # is a same-filing, no-history-needed scale/tagging-defect signal (see
     # fundamental_agent.db.detect_share_scale_factors, docs/model_fixes.md F1).
     "eps_diluted": LineItem("eps_diluted", _INCOME, concepts=("us-gaap_EarningsPerShareDiluted",)),
+    # EPS's own numerator: net income *available to common*, i.e. after preferred
+    # dividends. Only the share-scale EPS cross-check reads it (T-103): with preferred
+    # dividends, plain net income / EPS is not a share count (ALL 2023Q3: net income
+    # -$5M, available to common -$41M).
+    "net_income_to_common": LineItem(
+        "net_income_to_common",
+        _INCOME,
+        concepts=(
+            "us-gaap_NetIncomeLossAvailableToCommonStockholdersDiluted",
+            "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+        ),
+    ),
     "total_assets": LineItem("total_assets", _BALANCE, concepts=("us-gaap_Assets",)),
     "current_assets": LineItem("current_assets", _BALANCE, concepts=("us-gaap_AssetsCurrent",)),
     "total_liabilities": LineItem("total_liabilities", _BALANCE, concepts=("us-gaap_Liabilities",)),

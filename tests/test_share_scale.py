@@ -355,3 +355,231 @@ def test_overlapping_history_excludes_the_filing_itself(memory_db: Database) -> 
     )
 
     assert history == {}
+
+
+# -- T-103: history is point in time -------------------------------------------------------------
+
+
+def _mcd_run(conn: Database) -> tuple[int, int, Statements]:
+    """MCD's real shape (docs/model_fixes.md, T-103): FY2022 reported in whole shares; FY2023
+    and FY2024 both report diluted shares in millions, and FY2024 -- filed a year *later* --
+    restates FY2023 with the same defect. Returns (asset, FY2023 filing, its statements)."""
+    db.sync_universe(conn, [_company("MCD")])
+    asset_id = int(db.load_universe(conn)[0]["id"])
+    _seed_filing(
+        conn,
+        asset_id,
+        "FY2022",
+        {"2021-12-31 (FY)": 751_800_000.0, "2022-12-31 (FY)": 741_300_000.0},
+    )
+    fy2023, stmts = _seed_filing_with_eps(
+        conn,
+        asset_id,
+        "FY2023",
+        diluted_shares={"2022-12-31 (FY)": 741.3, "2023-12-31 (FY)": 732.3},
+        net_income={"2022-12-31 (FY)": 6_177_400_000.0, "2023-12-31 (FY)": 8_468_800_000.0},
+        eps_diluted={"2022-12-31 (FY)": 8.33, "2023-12-31 (FY)": 11.56},
+    )
+    _seed_filing(  # filed 2025-03-01: after FY2023's 2024-03-01
+        conn, asset_id, "FY2024", {"2023-12-31 (FY)": 732.3, "2024-12-31 (FY)": 721.9}
+    )
+    return asset_id, fy2023, stmts
+
+
+def test_a_later_filing_s_mis_scaled_restatement_does_not_veto_the_correction(
+    memory_db: Database,
+) -> None:
+    """Before T-103 the FY2024 filing's 732.3 for FY2023 was read as first-hand proof that
+    FY2023 was clean, overriding both the FY2022 history and the EPS signal (1e6)."""
+    asset_id, fy2023, stmts = _mcd_run(memory_db)
+    factors = db.detect_share_scale_factors(
+        memory_db, asset_id, stmts, "2023-12-31 (FY)", exclude_filing_id=fy2023
+    )
+    assert factors == {"diluted_shares": 1_000_000.0}
+
+
+def test_overlapping_history_only_reads_filings_filed_before_this_one(
+    memory_db: Database,
+) -> None:
+    asset_id, fy2023, _ = _mcd_run(memory_db)
+    history = db.overlapping_history(
+        memory_db,
+        asset_id,
+        (_DILUTED_CONCEPT,),
+        ["2021-12-31 (FY)", "2022-12-31 (FY)", "2023-12-31 (FY)"],
+        exclude_filing_id=fy2023,
+    )
+    assert history == {"2021-12-31 (FY)": 751_800_000.0, "2022-12-31 (FY)": 741_300_000.0}
+
+
+def test_an_undated_filing_keeps_the_undated_behaviour_and_undated_history_is_skipped(
+    memory_db: Database,
+) -> None:
+    asset_id, fy2023, _ = _mcd_run(memory_db)
+    keys = ["2023-12-31 (FY)"]
+    memory_db.execute("UPDATE sec_filings SET filing_date = NULL WHERE id = ?", (fy2023,))
+    # the current filing has no date: every other filing counts, as before T-103
+    assert db.overlapping_history(
+        memory_db, asset_id, (_DILUTED_CONCEPT,), keys, exclude_filing_id=fy2023
+    ) == {"2023-12-31 (FY)": 732.3}
+    # a dated current filing never counts an undated one: it cannot be proven earlier
+    memory_db.execute("UPDATE sec_filings SET filing_date = '2024-03-01' WHERE id = ?", (fy2023,))
+    memory_db.execute("UPDATE sec_filings SET filing_date = NULL WHERE fiscal_period = 'FY2022'")
+    assert (
+        db.overlapping_history(
+            memory_db, asset_id, (_DILUTED_CONCEPT,), ["2022-12-31 (FY)"], exclude_filing_id=fy2023
+        )
+        == {}
+    )
+
+
+# -- T-103: the EPS signal's guards and the cross-item check -------------------------------------
+
+
+def _row(concept: str, **periods: float) -> dict[str, Any]:
+    return {"concept": concept, "label": concept, "abstract": False, "dimension": False, **periods}
+
+
+def _one_filing(  # noqa: PLR0913 - one filing's share facts, all keyword-only
+    conn: Database,
+    ticker: str,
+    fiscal_year: int,
+    *,
+    diluted: float | None = None,
+    outstanding: float | None = None,
+    net_income: float | None = None,
+    to_common: float | None = None,
+    eps: float | None = None,
+) -> tuple[int, int, Statements]:
+    """A 10-K whose own period is FY*fiscal_year*, carrying only the facts given."""
+    db.sync_universe(conn, [_company(ticker)])
+    asset_id = int(conn.execute("SELECT id FROM assets WHERE ticker = ?", (ticker,)).fetchone()[0])
+    key, instant = f"{fiscal_year}-12-31 (FY)", f"{fiscal_year}-12-31"
+    income = [
+        _row(concept, **{key: value})
+        for concept, value in (
+            (_DILUTED_CONCEPT, diluted),
+            ("us-gaap_NetIncomeLoss", net_income),
+            ("us-gaap_NetIncomeLossAvailableToCommonStockholdersDiluted", to_common),
+            ("us-gaap_EarningsPerShareDiluted", eps),
+        )
+        if value is not None
+    ]
+    balance = (
+        [_row("us-gaap_CommonStockSharesOutstanding", **{instant: outstanding})]
+        if outstanding is not None
+        else []
+    )
+    filing_id = db.upsert_filing(
+        conn,
+        FilingKey(asset_id, "10-K", fiscal_year, f"FY{fiscal_year}"),
+        FilingMeta(filing_date=f"{fiscal_year + 1}-03-01", period_end=instant),
+    )
+    stmts = Statements.from_payload(
+        {"income_statement": income, "balance_sheet": balance, "cash_flow": []}
+    )
+    db.append_financial_facts(conn, filing_id, iter_facts(stmts))
+    return asset_id, filing_id, stmts
+
+
+def _factors(conn: Database, asset_id: int, filing_id: int, stmts: Statements, year: int) -> Any:
+    return db.detect_share_scale_factors(
+        conn, asset_id, stmts, f"{year}-12-31 (FY)", exclude_filing_id=filing_id
+    )
+
+
+def test_eps_is_net_income_available_to_common_over_shares(memory_db: Database) -> None:
+    """ALL 2023Q3's shape: preferred dividends ($36M) sit between net income and the -$41M
+    available to common that EPS (-$0.16) divides. Plain net income / EPS gave ALL 25M shares
+    against 261.8M -- a false x0.1; available to common gives 256M, which agrees."""
+    args = _one_filing(
+        memory_db, "ALL", 2023, diluted=261_800_000.0, net_income=-4e6, to_common=-41e6, eps=-0.16
+    )
+    assert _factors(memory_db, *args, 2023) == {}
+
+
+def test_a_cent_sized_eps_is_not_used(memory_db: Database) -> None:
+    """MCHP FY2025's shape: -$0.5M / -$0.01 = 50M against 537.3M looks like x0.1, but the
+    EPS is rounded to the cent -- its own error is far beyond the tolerance."""
+    args = _one_filing(memory_db, "MCHP", 2025, diluted=537_300_000.0, net_income=-5e5, eps=-0.01)
+    assert _factors(memory_db, *args, 2025) == {}
+
+
+def test_an_eps_that_is_itself_mis_scaled_is_not_used(memory_db: Database) -> None:
+    """HAL 2022Q3's shape: EPS $0.60 tagged as 600,000, so net income / EPS = 907 shares."""
+    args = _one_filing(memory_db, "HAL", 2022, diluted=910_000_000.0, net_income=544e6, eps=6e5)
+    assert _factors(memory_db, *args, 2022) == {}
+
+
+def test_outstanding_is_corrected_against_an_eps_confirmed_diluted_count(
+    memory_db: Database,
+) -> None:
+    """RTX FY2021's shape: outstanding tagged in thousands (1,708,065), diluted 1,508.5M
+    confirmed by EPS -- the old code only caught it by reading a *later* filing."""
+    args = _one_filing(
+        memory_db,
+        "RTX",
+        2021,
+        diluted=1_508_500_000.0,
+        outstanding=1_708_065.0,
+        net_income=3_864_000_000.0,
+        eps=2.56,
+    )
+    assert _factors(memory_db, *args, 2021) == {"shares_outstanding": 1_000.0}
+
+
+def test_a_clean_outstanding_is_not_corrected_from_a_mis_scaled_earlier_filing(
+    memory_db: Database,
+) -> None:
+    """RTX FY2022's shape: the only earlier report of 2021-12-31 is FY2021's defective
+    1,708,065, which alone would say x0.001 -- the EPS-confirmed diluted count says the
+    current 1,711M is right."""
+    _one_filing(memory_db, "RTX", 2021, outstanding=1_708_065.0)
+    asset_id, filing_id, _ = _one_filing(
+        memory_db,
+        "RTX",
+        2022,
+        diluted=1_485_900_000.0,
+        net_income=5_197_000_000.0,
+        eps=3.50,
+    )
+    payload = {
+        "income_statement": [
+            _row(_DILUTED_CONCEPT, **{"2022-12-31 (FY)": 1_485_900_000.0}),
+            _row("us-gaap_NetIncomeLoss", **{"2022-12-31 (FY)": 5_197_000_000.0}),
+            _row("us-gaap_EarningsPerShareDiluted", **{"2022-12-31 (FY)": 3.50}),
+        ],
+        "balance_sheet": [
+            _row(
+                "us-gaap_CommonStockSharesOutstanding",
+                **{"2022-12-31": 1_710_960_000.0, "2021-12-31": 1_708_065_000.0},
+            )
+        ],
+        "cash_flow": [],
+    }
+    stmts = Statements.from_payload(payload)
+    db.append_financial_facts(memory_db, filing_id, iter_facts(stmts))
+    assert _factors(memory_db, asset_id, filing_id, stmts, 2022) == {}
+
+
+def test_a_different_share_concept_is_not_snapped_to_another_decade(memory_db: Database) -> None:
+    """NVR's shape: 20.6M shares *issued* against ~3.5M diluted is a 5.9x gap -- another
+    concept, not a scale defect -- so the cross-item check has no opinion."""
+    args = _one_filing(
+        memory_db,
+        "NVR",
+        2022,
+        diluted=3_508_524.0,
+        outstanding=20_555_330.0,
+        net_income=1_725_600_000.0,
+        eps=491.82,
+    )
+    assert _factors(memory_db, *args, 2022) == {}
+
+
+def test_magnitude_offset() -> None:
+    assert db._magnitude_offset(1_708_065.0, 1_508_500_000.0) == 1_000.0
+    assert db._magnitude_offset(1_710_960_000.0, 1_485_900_000.0) == 1.0
+    assert db._magnitude_offset(20_555_330.0, 3_508_524.0) is None  # 5.9x: between decades
+    assert db._magnitude_offset(None, 1.0) is None
+    assert db._magnitude_offset(0.0, 1.0) is None
