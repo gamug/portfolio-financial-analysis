@@ -154,6 +154,11 @@ def _run_repair(args: argparse.Namespace) -> int:
             print(
                 f"  {verb:<24} {s.fiscal_period} (filing {s.filing_id}, {s.facts} facts, "
                 f"{s.sections} sections) -> {r.accession} filed {r.filing_date}"
+                + (
+                    f", period end {s.period_end} -> {r.period_end}"
+                    if r.period_end != s.period_end
+                    else ""
+                )
             )
         for s in o.unresolved:
             state = "dropped" if o.dropped else "unresolved, left as is"

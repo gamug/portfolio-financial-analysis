@@ -28,7 +28,7 @@ from kg_schema import connect
 SHARED = Q2_OCT.accession_number
 
 
-def _legacy(conn: Database) -> dict[str, int]:
+def _legacy(conn: Database, q1_end: str = "2023-05-31") -> dict[str, int]:
     """STZ's Q2 10-Q stored the pre-T-091 way: a Q1 row and a Q2 row, both carrying its
     accession, filing date and payload (written with the new triggers dropped)."""
     db.ensure_schema(conn)
@@ -37,7 +37,7 @@ def _legacy(conn: Database) -> dict[str, int]:
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'STZ')")
     stmts = Statements.from_payload(_stz_q2_payload())
     ids = {}
-    for fp, pe in (("2023Q1", "2023-05-31"), ("2023Q2", "2023-08-31")):
+    for fp, pe in (("2023Q1", q1_end), ("2023Q2", "2023-08-31")):
         fid = db.upsert_filing(
             conn,
             db.FilingKey(1, "10-Q", 2023, fp),
@@ -203,6 +203,25 @@ def test_apply_replaces_the_stale_quarter_with_its_own_filing(
         == q2_facts
     )
     assert repair.shared_groups(conn) == []  # idempotent: nothing left to repair
+
+
+def test_a_stale_row_with_a_borrowed_period_end_is_matched_by_fiscal_period(
+    memory_db: Database,
+) -> None:
+    """NOC's shape in production: the stale "2023Q2" row was dated 2023-04-25, a stray
+    "(Q2)" column of the Q3 10-Q, while its own Q2 10-Q ends 2023-06-30. Here the stale Q1
+    row is dated 2023-04-25; STZ's own Q1 ends 2023-05-31."""
+    conn = memory_db
+    _legacy(conn, q1_end="2023-04-25")
+    (outcome,) = repair.repair(conn, _gateway(), apply=True)
+    assert [(r.stale.period_end, r.period_end) for r in outcome.replaced] == [
+        ("2023-04-25", "2023-05-31")
+    ]
+    row = conn.execute(
+        "SELECT period_end, accession_number FROM sec_filings WHERE fiscal_period = '2023Q1'"
+    ).fetchone()
+    assert (row["period_end"], row["accession_number"]) == ("2023-05-31", Q1_JUN.accession_number)
+    assert db.shared_accession_filings(conn) == []
 
 
 def test_a_gateway_outage_leaves_the_group_as_it_was(
