@@ -240,7 +240,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `tests/test_point_in_time_readers.py`: a day-by-day sweep over 18 months finds no read of
       a filing filed after the day. Production: the live 2026-09-22 cycle's reads are
       unchanged; the (reverted) 2026-06-30 run read unfiled filings for 426/503 assets.
-- [ ] **T-107** *(P0 — **decided 2026-09-25: option (b)**, PR #78 review; after `T-120`)*
+- [x] **T-107** *(P0 — **decided 2026-09-25: option (b)**, PR #78 review; after `T-120`)* — **DONE 2026-09-26**
       Give FUNDAMENTAL scores and metrics a publication timestamp. All 377 FUNDAMENTAL `score_snapshot` rows and 11,878
       `fundamental_metrics` rows have `event_time = period_end`, none `filing_date`. SPEC.md
       defines FUNDAMENTAL `event_time` as the period end ("what the score is about"), so the
@@ -264,7 +264,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       **Acceptance**: every FUNDAMENTAL score and metric row carries a non-null `available_at`
       (the trading day after its filing date); every as-of reader filters on it; SPEC.md
       updated.
-      **Code done 2026-09-26 (PR pending); production `migrate` (m008) pending approval.**
+      **Code done 2026-09-26 (PR #82); production `migrate` (m008) applied 2026-09-26.**
       `available_at` is stored on `sec_filings` too, since the filing pickers and the
       data-quality verdicts key on the filing; metrics and FUNDAMENTAL scores copy it.
       `kg_schema.trading_calendar` is a rule-based NYSE calendar, identical to production's
@@ -279,6 +279,16 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       run: 5,076 filings / 11,878 metrics / 377 scores filled, 0 NULL, 0 mismatches,
       `quick_check` ok; the live 2026-09-22 cycle's reads are unchanged. Record:
       `docs/model_fixes.md` "T-107".
+      **Production, 2026-09-26** (at the user's direction; 4 min 15 s): backup
+      `financial.db.pre-t107-migrate-backup-20260926` (md5 `6a3bb9ffc697532cfbe60e9a98753c0d`,
+      `quick_check` ok, schema v7). After: schema v8; 5,076 filings, 11,878 metrics and 377
+      FUNDAMENTAL scores carry `available_at`, 0 NULL, 0 differing from their filing, none on
+      or before its filing date; gaps 1 day ×3,912, 2 ×18, 3 ×1,002, 4 ×144; all 5,057 values up
+      to the price spine's end are spine sessions; the 7 guards in place; `v_score_snapshot` /
+      `v_sec_filing` expose the column; facts (1,206,001), scores (497), sections (11,526)
+      unchanged; `quick_check` ok, FK clean; `availability.missing` empty, so `cycle` and
+      `quant` run. The live 2026-09-22 cycle reads the same 20 scores and 16 market caps as
+      before.
 - [ ] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
       cross-sectional **mean of log returns**, not `ln(1 + mean simple return)`, so it is lower
       every day by about half the cross-sectional variance: on today's 20-asset panel it
