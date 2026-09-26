@@ -25,7 +25,7 @@ from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
-from kg_schema import connect
+from kg_schema import availability, connect
 from kg_schema.provenance import code_version
 from kg_schema.versions import (
     DATA_QUALITY_GATE_VERSION,
@@ -94,6 +94,9 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
     ensure_schema(conn)
+    # Every fundamental read below keys on `available_at` (T-107): refuse to run on rows that
+    # predate its backfill rather than read none of them.
+    availability.require(conn)
     # Resolve the metric versions this run reads (T-090) and refuse to resume an earlier run of
     # the same (type, date) that was built on different ones -- before touching that run.
     versions = resolve_metric_versions(conn, parse_metric_selection(settings.metrics_version))

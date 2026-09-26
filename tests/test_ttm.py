@@ -19,6 +19,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db
@@ -56,7 +57,7 @@ def _seed_quarter(
     filing_id = db.upsert_filing(
         conn,
         FilingKey(asset_id, "10-Q", year, fiscal_period),
-        FilingMeta(period_end=period_end),
+        FilingMeta(filing_date=filed_after(period_end), period_end=period_end),
     )
     _record_flow_metrics(conn, filing_id, flows)
 
@@ -68,7 +69,7 @@ def _seed_fy(
     filing_id = db.upsert_filing(
         conn,
         FilingKey(asset_id, "10-K", int(fiscal_period[2:]), fiscal_period),
-        FilingMeta(period_end=period_end),
+        FilingMeta(filing_date=filed_after(period_end), period_end=period_end),
     )
     _record_flow_metrics(conn, filing_id, flows)
 

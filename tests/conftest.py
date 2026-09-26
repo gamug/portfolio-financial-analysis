@@ -16,6 +16,7 @@ from portfolio_common.db import Database
 
 from fundamental_agent import db
 from fundamental_agent.statements import Statements
+from kg_schema.trading_calendar import available_from
 from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
@@ -129,6 +130,64 @@ def _memory_database() -> Database:
     conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
+
+
+def filed_after(period_end: str, days: int = 45) -> str:
+    """A realistic filing date for a period ending *period_end*."""
+    return (date.fromisoformat(period_end) + timedelta(days=days)).isoformat()
+
+
+def seed_filing(  # noqa: PLR0913 - one filing row, every column a test may pin
+    conn: Database,
+    asset_id: int,
+    *,
+    period_end: str,
+    filing_date: str,
+    form: str = "10-K",
+    fiscal_period: str | None = None,
+) -> int:
+    """Insert one dated ``sec_filings`` row with its ``available_at`` (T-107); returns its id."""
+    fp = fiscal_period or f"FY{period_end[:4]}"
+    return int(
+        conn.execute(
+            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+            "filing_date, available_at, retrieved_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'now') "
+            "RETURNING id",
+            (
+                asset_id,
+                form,
+                int(period_end[:4]),
+                fp,
+                period_end,
+                filing_date,
+                available_from(filing_date),
+            ),
+        ).fetchone()[0]
+    )
+
+
+def seed_fundamental_score(  # noqa: PLR0913 - one scored filing, every column a test may pin
+    conn: Database,
+    asset_id: int,
+    raw_value: float,
+    *,
+    event_time: str,
+    filing_date: str | None = None,
+    normalized_score: float | None = None,
+) -> int:
+    """Insert a FUNDAMENTAL ``score_snapshot`` row on a filing of its own (T-107: every such row
+    carries its filing's ``available_at``). *filing_date* defaults to 45 days after the period
+    end. Returns the score's id."""
+    filed = filing_date or filed_after(event_time)
+    fid = seed_filing(conn, asset_id, period_end=event_time, filing_date=filed)
+    return int(
+        conn.execute(
+            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
+            "event_time, computed_at, model, run_kind, filing_id, available_at) "
+            "VALUES (?, 'FUNDAMENTAL', ?, ?, ?, 'now', 'seed', 'analysis', ?, ?) RETURNING id",
+            (asset_id, raw_value, normalized_score, event_time, fid, available_from(filed)),
+        ).fetchone()[0]
+    )
 
 
 @pytest.fixture
@@ -285,8 +344,8 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
         )
         fid = conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "filing_date, retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', '2025-12-31', "
-            "'2026-02-01', '2026-02-01T00:00:00Z') RETURNING id",
+            "filing_date, available_at, retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', "
+            "'2025-12-31', '2026-01-30', '2026-02-02', '2026-02-01T00:00:00Z') RETURNING id",
             (i,),
         ).fetchone()["id"]
         for grp, name, val in [
@@ -298,14 +357,15 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
         ]:
             conn.execute(
                 "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, "
-                "unit, computed_at, engine_version, event_time) "
-                "VALUES (?, ?, ?, ?, 'x', '2026-02-01T00:00:00Z', 'metrics-v1', '2025-12-31')",
+                "unit, computed_at, engine_version, event_time, available_at) VALUES "
+                "(?, ?, ?, ?, 'x', '2026-02-01T00:00:00Z', 'metrics-v1', '2025-12-31', '2026-02-02')",
                 (fid, grp, name, val),
             )
         conn.execute(
             "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
-            "event_time, computed_at, model, run_kind, filing_id) VALUES (?, 'FUNDAMENTAL', ?, ?, "
-            "'2025-12-31', '2026-02-01T00:00:00Z', 'seed', 'analysis', ?)",
+            "event_time, computed_at, model, run_kind, filing_id, available_at) VALUES "
+            "(?, 'FUNDAMENTAL', ?, ?, '2025-12-31', '2026-02-01T00:00:00Z', 'seed', 'analysis', ?, "
+            "'2026-02-02')",
             (i, 80 - 8 * i, 80 - 8 * i, fid),
         )
         for d in range(1, 121):

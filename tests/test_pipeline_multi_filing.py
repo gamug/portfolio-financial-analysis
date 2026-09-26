@@ -295,3 +295,22 @@ def test_the_pre_pr39_object_payload_fails_loudly_instead_of_crashing_the_run(
     edgar = _Edgar({}, {}, listing_raises=EdgarError("returned dict, expected a list"))
     report = _run(monkeypatch, tmp_path, edgar)
     assert report.failed == 1 and "expected a list" in report.errors[0]
+
+
+def test_an_undated_filing_is_skipped_and_the_run_carries_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-107: a filing the gateway lists with no date can never be shown usable, so it is not
+    fetched, scored or stored -- the database would refuse its metrics anyway."""
+    undated = FilingRef("10-Q", None, Q1_JUN.accession_number)
+    edgar = _Edgar(
+        {("10-Q", 2023): [Q2_OCT, undated]},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+    )
+    report = _run(monkeypatch, tmp_path, edgar)
+    assert (report.completed, report.skipped, report.failed) == (1, 1, 0)
+    assert edgar.financials_calls == [Q2_OCT.accession_number]
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    assert conn.execute("SELECT fiscal_period, available_at FROM sec_filings").fetchall() == [
+        ("2023Q2", "2023-10-06")  # filed Thursday 2023-10-05
+    ]

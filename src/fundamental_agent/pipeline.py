@@ -305,6 +305,8 @@ def _process_filing(
     as_of = engine.params.analysis_date
     if ref.filing_date and ref.filing_date > as_of:
         return 0, 1  # no lookahead: this filing was filed after the analysis date
+    if not ref.filing_date:
+        return 0, 1  # T-107: an undated filing is never usable -- no metrics, no score
     if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
         return 0, 1  # already ingested and scored by an earlier run
 

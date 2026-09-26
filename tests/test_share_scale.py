@@ -417,14 +417,23 @@ def test_an_undated_filing_keeps_the_undated_behaviour_and_undated_history_is_sk
 ) -> None:
     asset_id, fy2023, _ = _mcd_run(memory_db)
     keys = ["2023-12-31 (FY)"]
-    memory_db.execute("UPDATE sec_filings SET filing_date = NULL WHERE id = ?", (fy2023,))
+    memory_db.execute(
+        "UPDATE sec_filings SET filing_date = NULL, available_at = NULL WHERE id = ?", (fy2023,)
+    )
     # the current filing has no date: every other filing counts, as before T-103
     assert db.overlapping_history(
         memory_db, asset_id, (_DILUTED_CONCEPT,), keys, exclude_filing_id=fy2023
     ) == {"2023-12-31 (FY)": 732.3}
     # a dated current filing never counts an undated one: it cannot be proven earlier
-    memory_db.execute("UPDATE sec_filings SET filing_date = '2024-03-01' WHERE id = ?", (fy2023,))
-    memory_db.execute("UPDATE sec_filings SET filing_date = NULL WHERE fiscal_period = 'FY2022'")
+    memory_db.execute(
+        "UPDATE sec_filings SET filing_date = '2024-03-01', available_at = '2024-03-04' "
+        "WHERE id = ?",
+        (fy2023,),
+    )
+    memory_db.execute(
+        "UPDATE sec_filings SET filing_date = NULL, available_at = NULL "
+        "WHERE fiscal_period = 'FY2022'"
+    )
     assert (
         db.overlapping_history(
             memory_db, asset_id, (_DILUTED_CONCEPT,), ["2022-12-31 (FY)"], exclude_filing_id=fy2023

@@ -565,9 +565,10 @@ def _add_metrics_v2(conn: Database) -> None:
     kg_schema.apply_migrations(conn)  # the migrated key is what lets versions coexist
     conn.execute(
         "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-        "computed_at, engine_version, event_time) "
+        "computed_at, engine_version, event_time, available_at) "
         "SELECT filing_id, metric_group, metric_name, value * 2, unit, computed_at, "
-        "'metrics-v2', event_time FROM fundamental_metrics WHERE engine_version = 'metrics-v1'"
+        "'metrics-v2', event_time, available_at FROM fundamental_metrics "
+        "WHERE engine_version = 'metrics-v1'"
     )
     conn.commit()
 

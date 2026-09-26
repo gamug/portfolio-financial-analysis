@@ -10,6 +10,7 @@ import json
 from typing import Any
 
 import pytest
+from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db, quality
@@ -33,7 +34,9 @@ def _record(  # noqa: PLR0913, PLR0917 - one recorded metric row, all fields exp
     conn: Database, form: str, period: str, period_end: str, group: str, name: str, inputs: Any
 ) -> None:
     fid = db.upsert_filing(
-        conn, FilingKey(1, form, int(period_end[:4]), period), FilingMeta(period_end=period_end)
+        conn,
+        FilingKey(1, form, int(period_end[:4]), period),
+        FilingMeta(filing_date=filed_after(period_end), period_end=period_end),
     )
     db.record_metrics(conn, fid, [(group, MetricResult(name, None, "r", dict(inputs)))])
 
@@ -311,7 +314,9 @@ def test_a_prior_year_recorded_only_by_an_older_engine_does_not_feed_the_ttm(
     differently, so its FY2024 and its quarters must not mix into this engine's TTM."""
     _asset(memory_db)
     fid = db.upsert_filing(
-        memory_db, FilingKey(1, "10-K", 2024, "FY2024"), FilingMeta(period_end="2024-12-31")
+        memory_db,
+        FilingKey(1, "10-K", 2024, "FY2024"),
+        FilingMeta(filing_date=filed_after("2024-12-31"), period_end="2024-12-31"),
     )
     db.record_metrics(
         memory_db,
@@ -350,7 +355,9 @@ def _att(conn: Database) -> int:
     ):
         _record(conn, "10-Q", label, end, "efficiency", "asset_turnover", {"cogs": cogs})
     fid = db.upsert_filing(
-        conn, FilingKey(1, "10-Q", 2023, "2023Q1"), FilingMeta(period_end="2023-03-31")
+        conn,
+        FilingKey(1, "10-Q", 2023, "2023Q1"),
+        FilingMeta(filing_date=filed_after("2023-03-31"), period_end="2023-03-31"),
     )
     return fid
 

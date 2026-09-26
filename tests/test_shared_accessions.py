@@ -263,9 +263,9 @@ def test_a_stale_row_with_derived_data_is_refused(
     conn, ids = legacy
     conn.execute(
         "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-        "computed_at, engine_version) VALUES (?, 'profitability', 'net_margin', 0.1, 'x', "
-        "'now', 'metrics-v2')",
-        (ids["2023Q1"],),
+        "computed_at, engine_version, available_at) VALUES (?, 'profitability', 'net_margin', "
+        "0.1, 'x', 'now', 'metrics-v2', (SELECT available_at FROM sec_filings WHERE id = ?))",
+        (ids["2023Q1"], ids["2023Q1"]),
     )
     conn.commit()
     with pytest.raises(repair.RepairRefused, match=r"STZ 2023Q1 .*1 metrics"):

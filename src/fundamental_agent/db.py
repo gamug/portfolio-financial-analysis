@@ -22,6 +22,7 @@ import kg_schema
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, Statements
 from kg_schema.queries import UniverseMember
+from kg_schema.trading_calendar import available_from
 
 # Candidate XBRL scale/decimals-tagging defects: a filer (or, per SEC OSD staff
 # guidance, the tagging tool it used) reports a share count off by an exact
@@ -333,11 +334,12 @@ def upsert_filing(
 ) -> int:
     conn.execute(
         """
-        INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period,
-                                 filing_date, accession_number, period_end, retrieved_at, run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date,
+                                 available_at, accession_number, period_end, retrieved_at, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, form, fiscal_period) DO UPDATE SET
             filing_date      = excluded.filing_date,
+            available_at     = excluded.available_at,
             accession_number = excluded.accession_number,
             period_end       = excluded.period_end,
             retrieved_at     = excluded.retrieved_at,
@@ -349,6 +351,7 @@ def upsert_filing(
             key.fiscal_year,
             key.fiscal_period,
             meta.filing_date,
+            available_from(meta.filing_date),  # T-107: the trading day after
             meta.accession_number,
             meta.period_end,
             _now(),
@@ -894,6 +897,14 @@ def detect_share_scale_factors(
     return result
 
 
+def filing_available_at(conn: Database, filing_id: int | None) -> str | None:
+    """The filing's ``available_at`` (T-107), which its metrics and FUNDAMENTAL score copy."""
+    if filing_id is None:
+        return None
+    row = conn.execute("SELECT available_at FROM sec_filings WHERE id = ?", (filing_id,)).fetchone()
+    return None if row is None else row["available_at"]
+
+
 def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
     conn: Database,
     filing_id: int,
@@ -907,6 +918,7 @@ def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
     ``(filing_id, group, name, engine_version)``. Recomputing with the same
     *engine_version* is a no-op; a new version writes a parallel row."""
     now = _now()
+    available_at = filing_available_at(conn, filing_id)
     has_versioned = "engine_version" in conn.table_columns("fundamental_metrics")
     base = [
         (
@@ -925,10 +937,10 @@ def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
             """
             INSERT OR IGNORE INTO fundamental_metrics
                 (filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at,
-                 engine_version, event_time, run_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 engine_version, event_time, run_id, available_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            [(*row, engine_version, event_time or now, run_id) for row in base],
+            [(*row, engine_version, event_time or now, run_id, available_at) for row in base],
         )
     else:  # pragma: no cover - only before kg_schema.ensure has run
         conn.executemany(
@@ -1065,8 +1077,8 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
         INSERT INTO score_snapshot
             (asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, filing_id, rating, narrative, strengths_json, risks_json,
-             run_kind, run_id)
-        VALUES (?, 'FUNDAMENTAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'analysis', ?)
+             run_kind, run_id, available_at)
+        VALUES (?, 'FUNDAMENTAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'analysis', ?, ?)
         ON CONFLICT (asset_id, score_type, event_time) DO NOTHING
         """,
         (
@@ -1083,6 +1095,7 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
             json.dumps(list(row.strengths)),
             json.dumps(list(row.risks)),
             run_id,
+            filing_available_at(conn, row.filing_id),
         ),
     )
     conn.commit()

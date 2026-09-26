@@ -9,7 +9,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from conftest import _QUANT_EXTRA_DDL
+from conftest import _QUANT_EXTRA_DDL, seed_fundamental_score
 from portfolio_common.db import Database
 
 from kg_schema.cli import run_coverage
@@ -49,12 +49,8 @@ def _seed_member(
         ]
     )
     if fundamental:
-        conn.execute(
-            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
-            "event_time, computed_at, model, run_kind) VALUES (?, 'FUNDAMENTAL', 1, 1, "
-            "'2024-01-01', '2024-02-01T00:00:00Z', 'seed', 'analysis')",
-            (aid,),
-        )
+        # period 2023-09-30, filed 2023-11-14 -> usable 2023-11-15 (T-107)
+        seed_fundamental_score(conn, aid, 1.0, event_time="2023-09-30", normalized_score=1.0)
     if price:
         conn.execute(
             "INSERT INTO price_daily (asset_id, date, close) VALUES (?, '2024-01-02', 100.0)",

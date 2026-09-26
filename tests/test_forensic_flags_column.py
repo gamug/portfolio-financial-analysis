@@ -8,6 +8,7 @@ import json
 import sqlite3
 
 import pytest
+from conftest import seed_filing, seed_fundamental_score
 from portfolio_common.db import Database
 
 import kg_schema
@@ -46,6 +47,9 @@ def _floor_4() -> Database:
                                   accession_number TEXT, period_end TEXT,
                                   retrieved_at TEXT NOT NULL);
         INSERT INTO assets (id, ticker) VALUES (1, 'AAPL');
+        INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, filing_date,
+                                 period_end, retrieved_at)
+        VALUES (1, 1, '10-Q', 2023, '2023Q3', '2023-11-03', '2023-09-30', 'now');
         CREATE TABLE score_snapshot (
             id INTEGER PRIMARY KEY,
             asset_id INTEGER NOT NULL REFERENCES assets(id),
@@ -57,8 +61,9 @@ def _floor_4() -> Database:
             rating TEXT, narrative TEXT, strengths_json TEXT, risks_json TEXT,
             UNIQUE (asset_id, score_type, event_time)
         );
-        INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at)
-        VALUES (1, 'FUNDAMENTAL', 72.0, '2023-09-30', '2024-01-02T00:00:00Z');
+        INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at,
+                                    filing_id)
+        VALUES (1, 'FUNDAMENTAL', 72.0, '2023-09-30', '2024-01-02T00:00:00Z', 1);
         """
     )
     queries.ensure(conn)
@@ -72,23 +77,22 @@ def test_ensure_adds_the_column_nullable_and_is_idempotent(memory_db: Database) 
     kg_schema.ensure(conn)  # a second run adds nothing and does not fail
     assert "forensic_flags_json" in conn.table_columns("score_snapshot")
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAPL')")
-    conn.execute(
-        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
-        "VALUES (1, 'FUNDAMENTAL', 70.0, '2025-12-31', 'now')"
-    )  # nullable: existing writers need no change
+    seed_fundamental_score(conn, 1, 70.0, event_time="2025-12-31")  # nullable: not written
     assert conn.execute("SELECT forensic_flags_json FROM score_snapshot").fetchone()[0] is None
 
 
 def test_the_snapshot_key_is_unchanged(memory_db: Database) -> None:
     conn = memory_db
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAPL')")
+    fid = seed_filing(conn, 1, period_end="2025-12-31", filing_date="2026-02-20")
     insert = (
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at, "
-        "forensic_flags_json) VALUES (1, 'FUNDAMENTAL', 70.0, '2025-12-31', 'now', ?)"
+        "forensic_flags_json, filing_id, available_at) "
+        "VALUES (1, 'FUNDAMENTAL', 70.0, '2025-12-31', 'now', ?, ?, '2026-02-23')"
     )
-    conn.execute(insert, (FLAGS,))
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(insert, (None,))
+    conn.execute(insert, (FLAGS, fid))
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
+        conn.execute(insert, (None, fid))
 
 
 def test_flags_written_before_migrating_survive_the_score_snapshot_rebuilds() -> None:

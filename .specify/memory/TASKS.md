@@ -264,6 +264,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       **Acceptance**: every FUNDAMENTAL score and metric row carries a non-null `available_at`
       (the trading day after its filing date); every as-of reader filters on it; SPEC.md
       updated.
+      **Code done 2026-09-26 (PR pending); production `migrate` (m008) pending approval.**
+      `available_at` is stored on `sec_filings` too, since the filing pickers and the
+      data-quality verdicts key on the filing; metrics and FUNDAMENTAL scores copy it.
+      `kg_schema.trading_calendar` is a rule-based NYSE calendar, identical to production's
+      1,167-session price spine and the NYSE's 2022–2028 lists. Triggers require the value
+      (a metric or FUNDAMENTAL score of an undated filing, or with no filing, is refused) and
+      carry a re-dated filing's rows along. `m008` backfills and refuses to leave a gap.
+      `cycle`/`quant` refuse to run until it has (`availability.require`). The pipeline skips
+      undated filings. Readers: `latest_metrics`, `data_quality`, `latest_fundamental_rows`,
+      `market_cap_estimates`, `load_market_caps`, `coverage`. Tests
+      `tests/test_available_at.py`, `tests/test_trading_calendar.py`, plus the point-in-time
+      readers now requiring the next session; 12 mutations all caught. Production-copy dry
+      run: 5,076 filings / 11,878 metrics / 377 scores filled, 0 NULL, 0 mismatches,
+      `quick_check` ok; the live 2026-09-22 cycle's reads are unchanged. Record:
+      `docs/model_fixes.md` "T-107".
 - [ ] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
       cross-sectional **mean of log returns**, not `ln(1 + mean simple return)`, so it is lower
       every day by about half the cross-sectional variance: on today's 20-asset panel it

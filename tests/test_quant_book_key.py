@@ -228,10 +228,9 @@ def test_m007_skips_a_database_without_quant_tables() -> None:
 
 
 def test_m007_is_registered_and_advances_the_floor(memory_quant_db: Database) -> None:
-    assert MIGRATIONS[-1][0] == 7
-    assert MIGRATIONS[-1][2] is _m007_quant_portfolio_null_safe_key
+    assert (7, _m007_quant_portfolio_null_safe_key) in {(v, fn) for v, _d, fn in MIGRATIONS}
     ensure(memory_quant_db, run_migrations=True)
-    assert queries.current_version(memory_quant_db) == 7
+    assert queries.current_version(memory_quant_db) >= 7
     names = {
         r[0]
         for r in memory_quant_db.execute(

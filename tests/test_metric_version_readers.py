@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import filed_after
 from portfolio_common.db import Database
 
 from cycle import data as cycle_data
 from kg_schema import apply_migrations
+from kg_schema.trading_calendar import available_from
 from kg_schema.versions import MetricVersions, resolve_metric_versions
 from quant.db import load_market_caps
 
@@ -21,9 +23,17 @@ from quant.db import load_market_caps
 def _add_filing(conn: Database, filing_id: int, asset_id: int, period_end: str) -> None:
     conn.execute(
         "INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, period_end, "
-        "filing_date, retrieved_at) VALUES (?, ?, '10-K', ?, ?, ?, date(?, '+45 days'), "
+        "filing_date, available_at, retrieved_at) VALUES (?, ?, '10-K', ?, ?, ?, ?, ?, "
         "'2026-01-01T00:00:00Z')",
-        (filing_id, asset_id, int(period_end[:4]), f"FY{period_end[:4]}", period_end, period_end),
+        (
+            filing_id,
+            asset_id,
+            int(period_end[:4]),
+            f"FY{period_end[:4]}",
+            period_end,
+            filed_after(period_end),
+            available_from(filed_after(period_end)),
+        ),
     )
 
 
@@ -35,9 +45,9 @@ def _add_metric(  # noqa: PLR0913, PLR0917 - one metric row's identity
     )
     conn.execute(
         "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-        "inputs_json, computed_at, engine_version) VALUES (?, ?, ?, ?, 'x', ?, "
-        "'2026-01-01T00:00:00Z', ?)",
-        (filing_id, group, name, value, inputs, version),
+        "inputs_json, computed_at, engine_version, available_at) VALUES (?, ?, ?, ?, 'x', ?, "
+        "'2026-01-01T00:00:00Z', ?, (SELECT available_at FROM sec_filings WHERE id = ?))",
+        (filing_id, group, name, value, inputs, version, filing_id),
     )
 
 

@@ -3,6 +3,7 @@ from any older copy."""
 
 from __future__ import annotations
 
+from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db
@@ -15,7 +16,9 @@ from kg_schema.versions import resolve_metric_versions, version_key
 def _filing(conn: Database) -> int:
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
     return db.upsert_filing(
-        conn, FilingKey(1, "10-K", 2025, "FY2025"), FilingMeta(period_end="2025-12-31")
+        conn,
+        FilingKey(1, "10-K", 2025, "FY2025"),
+        FilingMeta(filing_date=filed_after("2025-12-31"), period_end="2025-12-31"),
     )
 
 

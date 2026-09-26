@@ -24,6 +24,9 @@ Projection semantics
 ``v_score_snapshot``      one row per (asset, score_type, event_time). ``event_time`` is
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / VALORIZATION, and the article-day for SEMANTIC.
+                          ``available_at`` (FUNDAMENTAL only, T-107) is when the row became
+                          usable: the first NYSE trading day after the filing date -- the
+                          column an as-of reader filters on, never ``event_time``.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
                           FROZEN: the agents no longer write ``universe_membership``
                           (the universe is read point-in-time from ``universe.db``).
@@ -109,7 +112,7 @@ VIEWS: dict[str, str] = {
         SELECT s.id, a.ticker, s.asset_id, s.score_type, s.raw_value, s.normalized_score,
                s.event_time, s.computed_at, s.model, s.inputs_json, s.filing_id,
                s.rating, s.narrative, s.strengths_json, s.risks_json,
-               s.run_id, s.run_kind
+               s.run_id, s.run_kind, s.available_at
         FROM score_snapshot s JOIN assets a ON a.id = s.asset_id
     """,
     "v_universe_membership": """
@@ -183,7 +186,7 @@ VIEWS: dict[str, str] = {
     "v_sec_filing": """
         CREATE VIEW v_sec_filing AS
         SELECT f.id, a.ticker, f.asset_id, f.form, f.fiscal_year, f.fiscal_period,
-               f.filing_date, f.accession_number, f.period_end, f.retrieved_at
+               f.filing_date, f.accession_number, f.period_end, f.retrieved_at, f.available_at
         FROM sec_filings f JOIN assets a ON a.id = f.asset_id
     """,
     "v_sec_filing_section": """

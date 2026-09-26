@@ -22,6 +22,7 @@ from collections.abc import Callable
 
 from portfolio_common.db import Database
 
+from . import availability as _availability
 from . import queries as _queries
 from .ddl import REQUIRED_COLUMNS
 
@@ -390,6 +391,34 @@ def _m007_quant_portfolio_null_safe_key(db: Database) -> None:
     )
 
 
+# -- m008: available_at backfilled (T-107) ------------------------------------
+
+
+def _m008_available_at(db: Database) -> None:
+    """Give every dated filing, and every metric and FUNDAMENTAL score, its ``available_at``
+    (the first NYSE trading day after the filing date), and put the guards in place.
+
+    The columns and triggers are (re)created first: ``ensure()`` adds them before migrating,
+    but the m002/m003/m005/m006 rebuilds of an older database drop both. Refuses -- the
+    migration rolls back -- if a metric or FUNDAMENTAL score is left without one (its filing
+    has no date), since as-of readers would skip it silently."""
+    if not _table_exists(db, "sec_filings"):
+        return
+    for table in ("sec_filings", "fundamental_metrics", "score_snapshot"):
+        # a no-op for a table that does not exist
+        db.ensure_columns(table, {"available_at": REQUIRED_COLUMNS[table]["available_at"]})
+    _availability.ensure_triggers(db)
+    _availability.backfill(db)
+    gaps = _availability.missing(db)
+    if gaps:
+        db.rollback()
+        detail = ", ".join(f"{t}: {n}" for t, n in gaps.items())
+        raise _availability.AvailabilityMissing(
+            f"m008: rows left without available_at ({detail}) -- their filing has no "
+            "filing_date; fix or remove them first"
+        )
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -410,6 +439,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "quant_portfolio: duplicate books merged, NULL-safe unique book key (T-101)",
         _m007_quant_portfolio_null_safe_key,
     ),
+    (
+        8,
+        "available_at on sec_filings / fundamental_metrics / FUNDAMENTAL scores, backfilled "
+        "and guarded (T-107)",
+        _m008_available_at,
+    ),
 ]
 
 
@@ -417,12 +452,19 @@ def apply_migrations(db: Database) -> list[int]:
     """Run every migration whose version exceeds the recorded floor. Returns applied ids."""
     _queries.ensure(db)
     at = _queries.current_version(db)
+    pending = [(ver, desc, fn) for ver, desc, fn in MIGRATIONS if ver > at]
+    if not pending:
+        return []
+    # The T-107 guards come off for the rebuilds and go back on afterwards (m008 re-creates
+    # them; this covers a later migration too).
+    _availability.drop_triggers(db)
     applied: list[int] = []
-    for ver, desc, fn in MIGRATIONS:
-        if ver <= at:
-            continue
-        fn(db)
-        _queries.record(db, ver, desc)
-        db.commit()
-        applied.append(ver)
+    try:
+        for ver, desc, fn in pending:
+            fn(db)
+            _queries.record(db, ver, desc)
+            db.commit()
+            applied.append(ver)
+    finally:
+        _availability.ensure_triggers(db)
     return applied

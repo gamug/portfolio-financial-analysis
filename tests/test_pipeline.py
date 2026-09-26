@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from conftest import write_universe_db
+from conftest import filed_after, write_universe_db
 from portfolio_common.db import Database
 
 from fundamental_agent import db, pipeline
@@ -120,14 +120,16 @@ def test_ttm_flows_reads_the_prior_quarters_by_the_targets_period_end(
         fid = db.upsert_filing(
             memory_db,
             FilingKey(asset_id, "10-Q", 2024, label),
-            FilingMeta(period_end=end),
+            FilingMeta(filing_date=filed_after(end), period_end=end),
         )
         inputs = {"net_income": ni, "revenue": 1.0}
         db.record_metrics(
             memory_db, fid, [("profitability", MetricResult("return_on_assets", None, "r", inputs))]
         )
     fid = db.upsert_filing(
-        memory_db, FilingKey(asset_id, "10-Q", 2023, "2023Q1"), FilingMeta(period_end="2023-12-31")
+        memory_db,
+        FilingKey(asset_id, "10-Q", 2023, "2023Q1"),
+        FilingMeta(filing_date=filed_after("2023-12-31"), period_end="2023-12-31"),
     )
     db.record_metrics(
         memory_db,

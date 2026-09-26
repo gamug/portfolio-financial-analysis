@@ -174,14 +174,15 @@ def _seed_metric_versions(conn: Database) -> None:
     conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
     conn.execute(
         "INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, period_end, "
-        "retrieved_at) VALUES (1, 1, '10-K', 2025, 'FY2025', '2025-12-31', '2026-01-01T00:00:00Z')"
+        "filing_date, available_at, retrieved_at) VALUES (1, 1, '10-K', 2025, 'FY2025', "
+        "'2025-12-31', '2026-02-20', '2026-02-23', '2026-01-01T00:00:00Z')"
     )
     for group, name in (("valuation", "market_capitalization"), ("profitability", "net_margin")):
         for version, value in (("metrics-v1", 1.0), ("metrics-v2", 2.0)):
             conn.execute(
                 "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, "
-                "unit, computed_at, engine_version) VALUES (1, ?, ?, ?, 'x', "
-                "'2026-01-01T00:00:00Z', ?)",
+                "unit, computed_at, engine_version, available_at) VALUES (1, ?, ?, ?, 'x', "
+                "'2026-01-01T00:00:00Z', ?, '2026-02-23')",
                 (group, name, value, version),
             )
     conn.commit()
@@ -228,12 +229,13 @@ def test_versions_with_a_null_engine_version_are_ignored(memory_db: Database) ->
     memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
     memory_db.execute(
         "INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, period_end, "
-        "retrieved_at) VALUES (1, 1, '10-K', 2025, 'FY2025', '2025-12-31', '2026-01-01T00:00:00Z')"
+        "filing_date, available_at, retrieved_at) VALUES (1, 1, '10-K', 2025, 'FY2025', "
+        "'2025-12-31', '2026-02-20', '2026-02-23', '2026-01-01T00:00:00Z')"
     )
     memory_db.execute(
         "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-        "computed_at, engine_version) VALUES (1, 'leverage', 'debt_to_equity', 9.0, 'x', "
-        "'2026-01-01T00:00:00Z', NULL)"
+        "computed_at, engine_version, available_at) VALUES (1, 'leverage', 'debt_to_equity', "
+        "9.0, 'x', '2026-01-01T00:00:00Z', NULL, '2026-02-23')"
     )
     memory_db.commit()
     assert queries.metric_versions_present(memory_db) == {}
@@ -253,6 +255,7 @@ _UNFILTERED_OK = {
     "kg_schema/queries.py": "the version listing itself, and existence-only coverage checks",
     "kg_schema/migrations.py": "schema rebuilds copy the whole table",
     "fundamental_agent/repair.py": "existence check: a stale filing with metrics of any version is refused",
+    "kg_schema/availability.py": "available_at backfill and completeness counts cover every version",
 }
 _READ = re.compile(r"\b(?:FROM|JOIN)\s+fundamental_metrics\b", re.IGNORECASE)
 

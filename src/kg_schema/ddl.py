@@ -501,15 +501,21 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "event_time": "TEXT",
         "engine_version": "TEXT",
         "run_id": "INTEGER",
+        "available_at": "TEXT",  # T-107: its filing's
     },
     "sec_filings": {
         "run_id": "INTEGER",
+        # T-107: the first NYSE trading day after `filing_date` -- when the filing is usable
+        # (`kg_schema.trading_calendar.available_from`). Copied onto the filing's metrics and
+        # FUNDAMENTAL scores; guarded by `AVAILABILITY_TRIGGERS`.
+        "available_at": "TEXT",
     },
     # T-041: the fundamental synthesis's structured forensic flags (Work item 8, T-074) --
     # a JSON object of four booleans (data_error_suspected, negative_equity_buyback,
     # value_destroyer_sub_wacc, severe_sbc_dilution). NULL until T-074 writes it.
     "score_snapshot": {
         "forensic_flags_json": "TEXT",
+        "available_at": "TEXT",  # T-107: FUNDAMENTAL rows only -- the scored filing's
     },
     "price_window": {
         "event_time": "TEXT",
@@ -546,3 +552,59 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "code_version": "TEXT",  # `cycle_date` is this table's as-of
     },
 }
+
+
+# ---------------------------------------------------------------------------
+# T-107: publication-time guards. Created by `kg_schema.ensure` (and migration m008) once
+# `sec_filings`, `fundamental_metrics` and `score_snapshot` all exist with `available_at`.
+# ---------------------------------------------------------------------------
+
+AVAILABILITY_TABLES = ("sec_filings", "fundamental_metrics", "score_snapshot")
+
+AVAILABILITY_TRIGGERS = """
+-- A dated filing is usable from a trading day 1-7 days after its filing date (the longest
+-- NYSE gap since 2000 is 9/11's); an undated one never is. Which day exactly -- weekends and
+-- holidays skipped -- is `kg_schema.trading_calendar.available_from`'s, which every writer uses.
+CREATE TRIGGER IF NOT EXISTS trg_sf_available_insert BEFORE INSERT ON sec_filings
+WHEN (NEW.filing_date IS NULL AND NEW.available_at IS NOT NULL)
+  OR (NEW.filing_date IS NOT NULL AND (NEW.available_at IS NULL
+      OR NEW.available_at <= NEW.filing_date
+      OR NEW.available_at > date(NEW.filing_date, '+7 days')))
+BEGIN SELECT RAISE(ABORT, 'sec_filings: available_at must be the trading day after filing_date'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sf_available_update
+BEFORE UPDATE OF filing_date, available_at ON sec_filings
+WHEN (NEW.filing_date IS NULL AND NEW.available_at IS NOT NULL)
+  OR (NEW.filing_date IS NOT NULL AND (NEW.available_at IS NULL
+      OR NEW.available_at <= NEW.filing_date
+      OR NEW.available_at > date(NEW.filing_date, '+7 days')))
+BEGIN SELECT RAISE(ABORT, 'sec_filings: available_at must be the trading day after filing_date'); END;
+-- A re-dated filing carries its metrics and FUNDAMENTAL scores along.
+CREATE TRIGGER IF NOT EXISTS trg_sf_available_cascade
+AFTER UPDATE OF available_at ON sec_filings
+WHEN NEW.available_at IS NOT OLD.available_at
+BEGIN
+    UPDATE fundamental_metrics SET available_at = NEW.available_at WHERE filing_id = NEW.id;
+    UPDATE score_snapshot SET available_at = NEW.available_at
+    WHERE filing_id = NEW.id AND score_type = 'FUNDAMENTAL';
+END;
+-- Every metric and FUNDAMENTAL score carries its filing's non-null `available_at`: a row of
+-- an undated filing, or with no filing, is refused rather than silently unreadable.
+CREATE TRIGGER IF NOT EXISTS trg_fm_available_insert BEFORE INSERT ON fundamental_metrics
+WHEN NEW.available_at IS NULL OR NEW.available_at IS NOT
+    (SELECT f.available_at FROM sec_filings f WHERE f.id = NEW.filing_id)
+BEGIN SELECT RAISE(ABORT, 'fundamental_metrics: available_at must be its filing''s'); END;
+CREATE TRIGGER IF NOT EXISTS trg_fm_available_update
+BEFORE UPDATE OF filing_id, available_at ON fundamental_metrics
+WHEN NEW.available_at IS NULL OR NEW.available_at IS NOT
+    (SELECT f.available_at FROM sec_filings f WHERE f.id = NEW.filing_id)
+BEGIN SELECT RAISE(ABORT, 'fundamental_metrics: available_at must be its filing''s'); END;
+CREATE TRIGGER IF NOT EXISTS trg_ss_available_insert BEFORE INSERT ON score_snapshot
+WHEN NEW.score_type = 'FUNDAMENTAL' AND (NEW.available_at IS NULL OR NEW.available_at IS NOT
+    (SELECT f.available_at FROM sec_filings f WHERE f.id = NEW.filing_id))
+BEGIN SELECT RAISE(ABORT, 'score_snapshot: a FUNDAMENTAL row''s available_at must be its filing''s'); END;
+CREATE TRIGGER IF NOT EXISTS trg_ss_available_update
+BEFORE UPDATE OF score_type, filing_id, available_at ON score_snapshot
+WHEN NEW.score_type = 'FUNDAMENTAL' AND (NEW.available_at IS NULL OR NEW.available_at IS NOT
+    (SELECT f.available_at FROM sec_filings f WHERE f.id = NEW.filing_id))
+BEGIN SELECT RAISE(ABORT, 'score_snapshot: a FUNDAMENTAL row''s available_at must be its filing''s'); END;
+"""
