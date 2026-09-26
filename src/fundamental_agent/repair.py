@@ -11,7 +11,8 @@ that are the Q3 payload's, versioned under the Q3 accession.
 The repair, per shared accession:
 
 1. **Find** each stale quarter's own 10-Q on the gateway (which lists every 10-Q since T-092):
-   the filing, other than the shared one, whose own period ends on the stale row's period end.
+   the filing, other than the shared one, whose own fiscal period is the stale row's. Its
+   period end replaces the stale row's, which can be wrong too.
 2. **Replace**, in one transaction: delete the stale rows (their facts and sections cascade)
    and write each replacement's filing row and facts -- as ``run`` would have, but without
    metrics or a score, which the stale rows never had either (the full recompute, ``T-100``,
@@ -88,6 +89,7 @@ class Replacement:
     accession: str
     filing_date: str | None
     fiscal_year: int
+    period_end: str  # the filing's own period end -- the stale row's may be wrong
     stmts: Statements
 
 
@@ -174,8 +176,12 @@ def shared_groups(conn: Database) -> list[SharedGroup]:
 def find_replacements(edgar: Gateway, group: SharedGroup) -> GroupOutcome:
     """Look up each stale quarter's own filing on the gateway (read-only)."""
     outcome = GroupOutcome(group)
-    wanted = {s.period_end: s for s in group.stale}
-    years = sorted({int(p[:4]) for p in wanted} | {int(p[:4]) + 1 for p in wanted})
+    # Matched on the fiscal period -- the row's key -- not the period end: a stale row's
+    # period end can itself be borrowed from a stray payload column (NOC's "2023Q2" row was
+    # dated 2023-04-25, a "(Q2)" column of the Q3 10-Q; its own Q2 ends 2023-06-30).
+    wanted = {s.fiscal_period: s for s in group.stale}
+    ends = [s.period_end for s in group.stale]
+    years = sorted({int(p[:4]) for p in ends} | {int(p[:4]) + 1 for p in ends})
     found: dict[str, Replacement] = {}
     for candidate in normalize_ticker(group.ticker):
         for year in years:
@@ -194,17 +200,14 @@ def find_replacements(edgar: Gateway, group: SharedGroup) -> GroupOutcome:
                 stmts = Statements.from_payload(payload)
                 task = _YearTask(group.asset_id, group.ticker, group.ticker, group.form, year)
                 for target in _targets(stmts, task):
-                    stale = wanted.get(target.period.date)
-                    if (
-                        stale is not None
-                        and target.fiscal_period == stale.fiscal_period
-                        and stale.period_end not in found
-                    ):
-                        found[stale.period_end] = Replacement(
+                    stale = wanted.get(target.fiscal_period)
+                    if stale is not None and stale.fiscal_period not in found:
+                        found[stale.fiscal_period] = Replacement(
                             stale,
                             ref.accession_number,
                             ref.filing_date,
                             target.period.year,
+                            target.period.date,
                             stmts,
                         )
         if found:
@@ -230,7 +233,7 @@ def apply_group(conn: Database, outcome: GroupOutcome, *, drop_unresolved: bool 
                 FilingMeta(
                     filing_date=rep.filing_date,
                     accession_number=rep.accession,
-                    period_end=rep.stale.period_end,
+                    period_end=rep.period_end,
                 ),
                 commit=False,
             )
@@ -239,7 +242,7 @@ def apply_group(conn: Database, outcome: GroupOutcome, *, drop_unresolved: bool 
                 filing_id,
                 iter_facts(rep.stmts),
                 filing_version=rep.accession,
-                event_time=rep.stale.period_end,
+                event_time=rep.period_end,
                 commit=False,
             )
     outcome.applied = True

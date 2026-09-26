@@ -387,6 +387,15 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       sections, nothing refused; exercised end to end on a production copy (0 shared left,
       metrics and scores untouched, no FK violations). Test `tests/test_shared_accessions.py`
       (real STZ 10-Qs).
+      **2026-09-26, gateway back**: the dry run on a production copy found 65 of 67 stale
+      quarters; NOC's 2023Q2 and 2024Q2 stale rows carried a period end borrowed from a stray
+      "(Q2)" column of the Q3 10-Q (2023-04-25, 2024-05-01), so matching on the period end
+      missed their own Q2 10-Qs (ending 06-30). Stale quarters are now matched on the fiscal
+      period (the row's key) and take the replacement's own period end. Re-run on the copy:
+      67 of 67 found and applied — 0 shared accessions, facts −15,960 borrowed / +13,341 own,
+      93 borrowed sections gone, metrics and scores untouched, FK clean. Production backup
+      `financial.db.pre-t120-repair-backup-20260926` (md5 `2a2743dff02f3d53892056a4388803e1`,
+      `quick_check` ok); the production apply awaits approval.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
