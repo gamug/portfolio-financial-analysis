@@ -2233,10 +2233,12 @@ about half the cross-sectional variance each day (for +10 % and −10 %: 0 % aga
 - **`bench-v2`**: each day's return is `mean(expm1(tr_log_return))` over the panel names
   with a return that day (a name missing a day is left out of that day's mean, not counted
   as 0 %). `log_return = log1p(mean)`, and the level compounds `(1 + r)`.
-- **The panel is the books' gate**: `quant.universe.settings_gate(conn, settings, as_of=)`,
-  the one function `build-risk-model` and the benchmark now share, evaluated as of the
-  window's start (`evaluate --from`, or `benchmark --from`, now required). `evaluate`
-  records the version and the panel on its `quant_run` row.
+- **The panel is the investable universe**: `quant.universe.benchmark_gate(conn, settings,
+  as_of=)`, the same liquidity/history knobs `build-risk-model`'s `settings_gate` uses, but
+  never a book's own hard-veto exclusion -- a veto is inside the strategy being graded, so it
+  can't also shrink the yardstick it's graded against. Evaluated as of the window's start
+  (`evaluate --from`, or `benchmark --from`, now required). `evaluate` records the version and
+  the panel on its `quant_run` row.
 - **Graded against what was built**: `evaluate` reads the benchmark version it just built
   (or, for an external series, the newest loaded version), not whatever `v_benchmark_series`
   shows. It writes `perf-v2`; `perf-v1` rows stay under their version, and
@@ -2269,10 +2271,43 @@ about half the cross-sectional variance each day (for +10 % and −10 %: 0 % aga
 - 9 mutations (log mean restored, panel ignored, missing day as 0 %, external overwritten,
   perf version not bumped, view unfiltered, CSV order unchecked, view read instead of the
   built version, benchmark panel not the books' gate): all caught.
-- **Production copy** (`quant evaluate`, dry run): the benchmark is rebuilt over the 20
-  names gated as of 2026-06-30. Over the live book's window (2026-07-01 to 08-27) it returns
-  7.43 % against bench-v1's 6.63 %, and the live book's summed daily active return moves
-  from −6.16 % to −6.91 %. The view shows the 41 `perf-v2` rows only.
+- **Production copy** (`quant evaluate`, dry run, pre-correction): the benchmark was rebuilt
+  over the 20 names gated as of 2026-06-30, still under a book's own hard-veto exclusion at
+  that point. Superseded below.
+
+### Post-merge correction: a human reviewer caught three real gaps
+
+@eldova1702 approved (688 tests, ruff/format/mypy clean, bench-v2 independently reproduced to
+1e-15) but flagged three issues before any production `quant evaluate`, all confirmed and
+addressed the same day (2026-09-26):
+
+1. **The benchmark panel was still gated by the strategy's own hard veto.** `_benchmark`
+   (`quant/evaluate.py`) and the `benchmark` CLI command both called `settings_gate`, which
+   applies `settings.exclude_hard_vetoed` (default `True`) -- the same veto filter a book is
+   built under. That puts the veto inside the yardstick, so it can never show up as active
+   return: on the 20-name production panel that dropped 3 names at T-1. **Fix**: a new
+   `quant.universe.benchmark_gate` -- `settings_gate`'s knobs with `exclude_hard_vetoed`
+   forced `False` -- is what `_benchmark` and the `benchmark` command build the panel from;
+   `settings_gate` (still veto-aware) stays what `build-risk-model` and `persist` build a
+   book from. New tests: `test_benchmark_gate_keeps_a_hard_vetoed_name_a_book_would_drop`
+   (`tests/test_quant_gate.py`) and
+   `test_evaluate_s_benchmark_panel_keeps_a_hard_vetoed_name_a_book_would_drop`
+   (`tests/test_benchmark.py`).
+2. **The dry run's "live book" was a stale snapshot.** `quant_portfolio` id 4 (as-of
+   2026-06-30, `BF.B = 0.10`) is a T-104 leftover from a reverted run, not the current live
+   book; the −6.16 % → −6.91 % comparison built on it has no meaning and is withdrawn above.
+   That snapshot and its 41 `perf-v1`/`perf-v2` rows must be voided before any production
+   `quant evaluate` -- an operational step against the production database, outside what this
+   PR's code changes.
+3. **Active return should be reported compounded, not summed daily.** Summing
+   `active_return` across days is not the compounded gap between the book's and the
+   benchmark's cumulative returns; it was the wrong statistic even before finding 2 made the
+   underlying book moot. A corrected dry-run figure needs a re-run against a current
+   production copy, over the real live book, with the benchmark now built by
+   `benchmark_gate` -- deferred to that re-run rather than restated here without one.
+
+Full suite after the correction: see `Verification` above for the count; the new gate/evaluate
+tests are additions on top of it.
 
 ### Residual scope, deliberately deferred
 
@@ -2281,3 +2316,6 @@ about half the cross-sectional variance each day (for +10 % and −10 %: 0 % aga
   yet (`T-110`).
 - No external series is loaded yet; obtaining a cap-weighted total-return file is a
   data-acquisition step.
+- A fresh production dry run (correct panel, real live book, compounded active return) is
+  needed before `quant evaluate` runs against production; the stale `quant_portfolio` id 4
+  snapshot and its 41 perf rows must be voided first (post-merge correction, above).

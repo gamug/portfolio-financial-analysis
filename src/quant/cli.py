@@ -35,7 +35,7 @@ from quant.persist import (
 )
 from quant.profiles import load_profile
 from quant.returns import run_build_returns
-from quant.universe import settings_gate
+from quant.universe import benchmark_gate
 from quant.versions_report import versions_report
 
 _TODAY_HELP = "date, YYYY-MM-DD"
@@ -399,7 +399,7 @@ def _run_benchmark(settings: QuantSettings, args: argparse.Namespace, date_to: s
     conn = connect(settings.db_path)
     try:
         ensure_schema(conn)
-        gate = settings_gate(conn, settings, as_of=args.date_from)
+        gate = benchmark_gate(conn, settings, as_of=args.date_from)
         if not gate.asset_ids:
             print(
                 f"benchmark: the universe gate is empty as of {args.date_from} (each name needs "

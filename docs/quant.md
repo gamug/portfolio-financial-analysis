@@ -123,10 +123,12 @@ technical/veto path onto quant's rows.
 `liquidity_data_gate` keeps a name iff it (a) is an index member as of the date,
 (b) has ≥ `min_history_days` return observations, (c) clears a median
 dollar-volume floor, and (optionally) (d) is not under a T-1 HARD veto. It reads
-**no** `score_snapshot` / `cycle_ranking` / blended score, so the benchmark stays
-an independent control (pinned by `tests/test_quant_gate.py`: adding or removing
-score rows does not change the gate output). Set `exclude_hard_vetoed=False` for a
-fully self-contained gate.
+**no** `score_snapshot` / `cycle_ranking` / blended score, so the gate stays an
+independent control (pinned by `tests/test_quant_gate.py`: adding or removing
+score rows does not change the gate output). `settings_gate` applies it with
+*settings*' own `exclude_hard_vetoed` (default `True`) for a book; `benchmark_gate`
+(T-108) forces `exclude_hard_vetoed=False` for the benchmark's panel, since a
+book's own veto exclusion must never also shrink the yardstick it's graded against.
 
 ### `panel.py` — the return matrix
 
@@ -293,8 +295,11 @@ new return engine version; `build-returns` says so when a pinned run writes no n
 
 `build_internal_benchmark(conn, asset_ids=…)` synthesizes `SP500_EW_INTERNAL`
 (`bench-v2`, T-108): an equal-weight, daily-rebalanced index over the **gated panel**,
-the names `quant.universe.settings_gate` admits as of the window's start. That is the
-same gate, with the same settings, that every book is built from. Each day's return is
+the names `quant.universe.benchmark_gate` admits as of the window's start. That is the
+same liquidity/history gate, with the same settings, that every book is built from --
+but never a book's own hard-veto exclusion (`exclude_hard_vetoed` forced `False`), since
+the benchmark is the investable universe, not the strategy's own filtered picture of it;
+a veto can't also shrink the yardstick the strategy is graded against. Each day's return is
 the mean of the panel's **simple** total returns (`expm1(tr_log_return)`); a name with no
 row that day is left out of that day's mean. The level compounds `(1 + r)`, and
 `log_return = log1p(r)`. `bench-v1` averaged *log* returns over every name with a row,

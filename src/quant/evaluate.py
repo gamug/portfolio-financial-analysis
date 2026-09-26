@@ -1,9 +1,11 @@
 """Forward evaluation: each persisted book's realized return vs a benchmark and vs the live
 ``portfolio_position`` book.
 
-The benchmark is the internal equal-weight index over the gated panel as of the window's
-start (``SP500_EW_INTERNAL``, rebuilt on every run, T-108), or an external series already
-loaded with ``quant load-benchmark`` (e.g. ``SPY_TR``), read -- never overwritten -- here.
+The benchmark is the internal equal-weight index over the investable universe gated as of the
+window's start (``SP500_EW_INTERNAL``, rebuilt on every run, T-108) -- never a book's own
+hard-veto exclusions, so a veto can't show up as alpha against the yardstick it's graded
+against -- or an external series already loaded with ``quant load-benchmark`` (e.g.
+``SPY_TR``), read -- never overwritten -- here.
 
 Weights are frozen at the book's as-of date; realized daily return is the
 weighted simple total return of the held names. The live cycle book is snapshotted
@@ -36,7 +38,7 @@ from quant.db import (
     upsert_benchmark_performance,
 )
 from quant.state import fail_run, finish_run, open_run
-from quant.universe import settings_gate
+from quant.universe import benchmark_gate
 
 # perf-v2 (T-108): active returns against bench-v2 (or a loaded external series); perf-v1's
 # were against bench-v1's mean-of-log index, so they stay as written, under their version.
@@ -117,10 +119,11 @@ def _benchmark(
     conn: Database, settings: QuantSettings, benchmark: str, *, date_from: str, date_to: str
 ) -> tuple[int, str, list[int]]:
     """``(rows built, version to read, panel)`` for *benchmark* over the window. The internal
-    index is rebuilt over the gate as of *date_from* -- the names a book built that day could
-    hold; an external series must already be loaded and is only read."""
+    index is rebuilt over the investable universe as of *date_from* -- the same liquidity and
+    history gate a book is built from, but never a book's own hard-veto exclusions (T-108); an
+    external series must already be loaded and is only read."""
     if benchmark == INTERNAL_EW:
-        gate = settings_gate(conn, settings, as_of=date_from)
+        gate = benchmark_gate(conn, settings, as_of=date_from)
         if not gate.asset_ids:
             raise ValueError(f"the benchmark's universe gate is empty as of {date_from}")
         rows = build_internal_benchmark(

@@ -1,8 +1,11 @@
 """The benchmarks the optimized books are graded against.
 
 ``SP500_EW_INTERNAL`` is an equal-weight, daily-rebalanced index over the **gated panel** --
-the names :func:`quant.universe.liquidity_data_gate` admits as of the window's start, the
-same gate every book is built from -- on the same total-return basis, with no vendor
+the names :func:`quant.universe.liquidity_data_gate` admits as of the window's start, on the
+same liquidity and history knobs a book is built from, but never a book's own hard-veto
+exclusions (:func:`quant.universe.benchmark_gate`, T-108): the benchmark is the investable
+universe, not the strategy's own filtered picture of it, so a veto can never show up as alpha
+against the yardstick it's graded against -- on the same total-return basis, with no vendor
 dependency. Each day it returns the mean of the panel's **simple** total returns, and its level
 compounds ``(1 + r)`` (T-108). ``bench-v1`` averaged *log* returns over every name with a row,
 which is the geometric, not the arithmetic, mean: lower by about half the cross-sectional

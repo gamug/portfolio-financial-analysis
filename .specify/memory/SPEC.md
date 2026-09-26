@@ -276,7 +276,7 @@ are not owned by any single package.
 | `risk_free_rate` / `benchmark_series` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` | rf curve + benchmark index | `quant` |
 | `quant_risk_model` / `quant_expected_return` / `quant_covariance` | `UNIQUE(as_of, model_version)` / … | Markowitz μ / Σ per as-of model; `model_version` carries the run's input-manifest tag (T-090) | `quant build-risk-model` |
 | `quant_portfolio` / `quant_position` / `quant_frontier_point` | `UNIQUE(as_of, kind, frontier_k, engine_version)` / … | optimized benchmark books + frontier | `quant optimize` |
-| `quant_benchmark_performance` | `UNIQUE(portfolio_id, date, engine_version)` | forward realized/active return of a frozen book, against `SP500_EW_INTERNAL` (`bench-v2`: the mean of simple returns over the books' own gated panel, T-108) or a loaded external series | `quant evaluate` |
+| `quant_benchmark_performance` | `UNIQUE(portfolio_id, date, engine_version)` | forward realized/active return of a frozen book, against `SP500_EW_INTERNAL` (`bench-v2`: the mean of simple returns over the same liquidity/history gated panel, but never a book's own hard-veto exclusion, T-108) or a loaded external series | `quant evaluate` |
 | `analysis_run` / `analysis_run_error`, `pricing_run` / `pricing_run_error`, `quant_run`, `cycle_run` | run PK | `run_id`, `as_of`, `code_version`, params, status | every agent |
 
 **Read-contract `v_*` views** (documented in `src/kg_schema/views.py`) are

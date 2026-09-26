@@ -105,8 +105,8 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
 
 
 def settings_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> GateResult:
-    """:func:`liquidity_data_gate` with *settings*' knobs -- the one gate the risk model's
-    books and the internal benchmark's panel both come from (T-108)."""
+    """:func:`liquidity_data_gate` with *settings*' knobs -- the gate the risk model's books
+    are built from, including *settings*' own choice of ``exclude_hard_vetoed``."""
     return liquidity_data_gate(
         conn,
         as_of=as_of,
@@ -115,5 +115,22 @@ def settings_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> Gat
         min_dollar_volume=settings.liquidity_min_dollar_volume,
         liquidity_lookback_days=settings.liquidity_lookback_days,
         exclude_hard_vetoed=settings.exclude_hard_vetoed,
+        universe_db_path=settings.universe_db_path,
+    )
+
+
+def benchmark_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> GateResult:
+    """:func:`liquidity_data_gate` with *settings*' knobs, but never the hard veto: the
+    benchmark's panel is the investable universe, not a book's own filtered picture of it, so
+    a book's hard-veto exclusions can never show up as alpha against the yardstick it's graded
+    against (T-108)."""
+    return liquidity_data_gate(
+        conn,
+        as_of=as_of,
+        universe=settings.universe,
+        min_history_days=settings.min_history_days,
+        min_dollar_volume=settings.liquidity_min_dollar_volume,
+        liquidity_lookback_days=settings.liquidity_lookback_days,
+        exclude_hard_vetoed=False,
         universe_db_path=settings.universe_db_path,
     )

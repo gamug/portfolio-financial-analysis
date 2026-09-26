@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from portfolio_common.db import Database
 
-from quant.universe import liquidity_data_gate
+from quant.config import QuantSettings
+from quant.universe import benchmark_gate, liquidity_data_gate, settings_gate
 
 
 def test_gate_drops_illiquid_short_and_vetoed(
@@ -61,3 +63,32 @@ def test_gate_is_independent_of_score_snapshot(
     conn.commit()
     after = liquidity_data_gate(conn, as_of=as_of, min_history_days=200, min_dollar_volume=0.0)
     assert after.asset_ids == before.asset_ids
+
+
+def test_benchmark_gate_keeps_a_hard_vetoed_name_a_book_would_drop(
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
+) -> None:
+    """The benchmark is the investable universe, not a book's own filtered picture of it: a
+    book's hard-veto exclusions can't show up as alpha against the yardstick it's graded
+    against (T-108)."""
+    conn = quant_seed(memory_quant_db, n_assets=5, n_days=260, with_dividends=False)
+    as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]
+    conn.execute(
+        "INSERT INTO rule_catalog (rule_id, description, severity, created_at) "
+        "VALUES ('R1', 'x', 'HARD', '2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date) "
+        "VALUES (4, 'R1', 'HARD', ?, ?)",
+        (as_of, "2024-06-01"),
+    )
+    conn.commit()
+    settings = QuantSettings(
+        db_path=Path(":memory:"), min_history_days=200, liquidity_min_dollar_volume=0.0
+    )
+    book_gate = settings_gate(conn, settings, as_of=as_of)
+    bench_gate = benchmark_gate(conn, settings, as_of=as_of)
+    assert book_gate.dropped[4] == "hard_veto"
+    assert 4 not in book_gate.asset_ids
+    assert 4 in bench_gate.asset_ids
+    assert 4 not in bench_gate.dropped

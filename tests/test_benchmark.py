@@ -26,6 +26,7 @@ from quant.config import QuantSettings
 from quant.evaluate import PERF_ENGINE_VERSION, run_evaluate
 from quant.persist import run_optimize
 from quant.returns import run_build_returns
+from quant.universe import settings_gate
 
 DAYS = ["2025-03-03", "2025-03-04", "2025-03-05", "2025-03-06", "2025-03-07"]
 # Daily simple total returns. Asset 3 has no row on 03-05; asset 9 is outside the panel.
@@ -273,6 +274,30 @@ def test_evaluate_grades_books_against_the_gated_panel_under_new_versions(
     ):
         assert r["benchmark_return"] == pytest.approx(bench[r["date"]], abs=1e-12)
         assert r["active_return"] == pytest.approx(r["realized_return"] - bench[r["date"]])
+
+
+def test_evaluate_s_benchmark_panel_keeps_a_hard_vetoed_name_a_book_would_drop(
+    booked: tuple[Database, str, str],
+) -> None:
+    """The benchmark's panel is the investable universe, not a book's own filtered picture of
+    it: asset 1 stays in ``ev.panel`` even though a book built the same day would drop it
+    (T-108)."""
+    conn, as_of, end = booked
+    conn.execute(
+        "INSERT INTO rule_catalog (rule_id, description, severity, created_at) "
+        "VALUES ('R1', 'x', 'HARD', '2024-01-01')"
+    )
+    conn.execute(
+        "INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date) "
+        "VALUES (1, 'R1', 'HARD', ?, ?)",
+        (as_of, "2024-06-01"),
+    )
+    conn.commit()
+    book_gate = settings_gate(conn, _settings(), as_of=as_of)
+    assert 1 not in book_gate.asset_ids  # a book built today would drop the vetoed name
+
+    ev = run_evaluate(_settings(), date_from=as_of, date_to=end, conn=conn)
+    assert 1 in ev.panel
 
 
 def test_evaluate_reads_a_loaded_external_series_and_never_overwrites_it(
