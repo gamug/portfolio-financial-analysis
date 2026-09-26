@@ -361,7 +361,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       the ranking, marked with the reason in `veto_rules_json`, and is listed in the cycle's
       output; if more than 5% of the universe is unscored, the selection cycle stops with an
       error instead of building a portfolio.
-- [ ] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* Re-ingest the
+- [x] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* — **DONE 2026-09-26** Re-ingest the
       legacy pre-`T-091` quarterly rows. Before `T-092` fixed the gateway, one Q3 10-Q per
       year was stored as Q1, Q2 and Q3 rows sharing its accession number and filing date —
       e.g. ALLE 2022: three 10-Qs, accession `0001579241-22-000063`, all filed 2022-10-27.
@@ -395,7 +395,14 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       67 of 67 found and applied — 0 shared accessions, facts −15,960 borrowed / +13,341 own,
       93 borrowed sections gone, metrics and scores untouched, FK clean. Production backup
       `financial.db.pre-t120-repair-backup-20260926` (md5 `2a2743dff02f3d53892056a4388803e1`,
-      `quick_check` ok); the production apply awaits approval.
+      `quick_check` ok).
+      **Production applied 2026-09-26** (PRs #79, #80; at the user's direction, 2 min 15 s):
+      41 shared accessions, 67 quarters replaced, 0 unresolved. Verified: 0 shared accessions;
+      `financial_facts` 1,208,620 → 1,206,001; `sec_filing_section` 11,619 → 11,526;
+      `fundamental_metrics` (11,878) and `score_snapshot` (497) unchanged; FK check clean;
+      `quick_check` ok — identical to the copy. NOC 2023Q2/2024Q2 now end 06-30 (filed
+      2023-07-27, 2024-07-25); ALLE 2022 reads as three 10-Qs filed 04-26, 07-28, 10-27.
+      The replaced quarters' own narrative sections are not fetched yet (`run --sections`).
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

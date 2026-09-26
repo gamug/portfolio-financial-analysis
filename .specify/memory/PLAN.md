@@ -1589,7 +1589,7 @@ that reproduce today.
 | F4 on FCF yields, `net_debt_to_ebitda`, ROIC | **fixed 2026-09-25** — 10-Q medians were ×3.6–3.9, ×4, ×3.5 off the 10-K, now within 0.86–0.95 | `T-105` |
 | T1 parts 2/4, B3 — `cycle` loaders keyed on period end; market cap undated | **fixed 2026-09-25** — gap 48.7 d 10-K / 34.4 d 10-Q, max 420; every reader now keys on `filing_date` | `T-106` |
 | T1 parts 1/3 — `event_time = period_end` | **live** (377/377 scores, 11,878/11,878 metrics) — **decided (b)** 2026-09-25: keep `event_time`, add non-null `available_at` = the trading day after filing | `T-107`, after `T-120` |
-| Legacy pre-`T-091` quarters sharing the Q3 10-Q's accession and date (PR #78 review) | **live** — 41 accessions, 13 tickers; would poison `T-107`'s backfill. Repair command, invariant and `run` preflight built 2026-09-25; production repair waits for the gateway's SEC access | `T-120` |
+| Legacy pre-`T-091` quarters sharing the Q3 10-Q's accession and date (PR #78 review) | **fixed 2026-09-26** — 41 accessions, 13 tickers, 67 quarters re-ingested with their own accessions and filing dates; 0 shared left in production; triggers and the `run` preflight refuse new ones | `T-120` (done) |
 | Q5 — benchmark mean-of-log, all names | **live defect** (−4.34 pp/yr on the 20-asset panel) | `T-108` |
 | §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **live defect** | `T-109` |
 | T2/T3/T7 — as-of past the price spine, orphan observations | **live** (runs dated 2026-09-21/22 vs prices to 2026-08-27; 503 orphan rows) | `T-110` |
