@@ -109,6 +109,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     conn = connect(settings.db_path)
     try:
         db.ensure_schema(conn)
+        _refuse_shared_accessions(conn)
         members = _load_members(settings, params.analysis_date)
         db.sync_universe(conn, members)
         symbols = [m.symbol for m in members]
@@ -264,6 +265,26 @@ def _list_filings(engine: _Engine, task: _YearTask) -> tuple[str, list[FilingRef
     if company_found:
         raise EdgarNotFoundError(f"no {task.form} filing for {task.ticker} in {task.year}")
     raise EdgarError(f"no EDGAR match for {task.ticker!r}") from last
+
+
+class SharedAccessionsError(RuntimeError):
+    """The database still holds legacy rows that share one filing's accession (T-120)."""
+
+
+def _refuse_shared_accessions(conn: Database) -> None:
+    """Refuse to run over legacy pre-T-091 rows: several quarters stored from one 10-Q,
+    sharing its accession, filing date and facts. A run would re-key such a row to its own
+    accession in place and append the real facts beside the borrowed ones -- one filing
+    reading two filings' numbers. ``repair-accessions`` replaces them first."""
+    rows = db.shared_accession_filings(conn)
+    if rows:
+        accessions = {(r["asset_id"], r["accession_number"]) for r in rows}
+        tickers = sorted({str(r["ticker"]) for r in rows})
+        raise SharedAccessionsError(
+            f"{len(rows)} filing rows share {len(accessions)} accession numbers "
+            f"({', '.join(tickers)}) -- legacy pre-T-091 quarters; run "
+            "`python -m fundamental_agent repair-accessions --apply` first (T-120)"
+        )
 
 
 def _select_filings(task: _YearTask, refs: Sequence[FilingRef]) -> list[FilingRef]:

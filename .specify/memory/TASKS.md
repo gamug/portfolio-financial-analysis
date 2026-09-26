@@ -373,6 +373,20 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       no two `sec_filings` rows of the same asset share an accession number.
       **Acceptance**: 0 shared accessions per asset in production; the invariant refuses a new
       one; the re-ingested quarters carry their own accession numbers and filing dates.
+      **Code done 2026-09-25 (PR pending); production repair pending** — the gateway cannot
+      reach SEC today (`Temporary failure in name resolution`). `fundamental_agent
+      repair-accessions [--apply] [--drop-unresolved]` (`repair.py`): per shared accession it
+      keeps the row for the filing's own (latest) period, finds each stale quarter's own 10-Q
+      on the gateway, and only then deletes the stale rows (facts and sections cascade) and
+      writes the replacement filing and facts in one transaction — a group whose replacement
+      is not found is left as it was, so a gateway outage is safe to re-run; a stale row with
+      derived data is refused. Triggers `trg_sf_accession_insert/update` refuse a second row
+      of an asset with the same accession; `run` refuses to start while any remain
+      (`SharedAccessionsError`), which is what stops `T-100` resuming past them. Production
+      plan (read-only): 41 accessions, 13 tickers, 67 stale rows, 15,960 facts, 93 borrowed
+      sections, nothing refused; exercised end to end on a production copy (0 shared left,
+      metrics and scores untouched, no FK violations). Test `tests/test_shared_accessions.py`
+      (real STZ 10-Qs).
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

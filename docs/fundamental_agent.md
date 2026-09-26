@@ -11,6 +11,7 @@ immutable `score_snapshot` row (`score_type='FUNDAMENTAL'`) per
 uv run python -m fundamental_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
     [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections]
 uv run python -m fundamental_agent quality [--metrics-version metrics-v3]  # Ring-1 DQ gates (backfill)
+uv run python -m fundamental_agent repair-accessions [--apply] [--drop-unresolved]  # T-120
 uv run python -m fundamental_agent migrate        # shared-schema migrations
 ```
 
@@ -161,11 +162,12 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 | `sync_universe(conn, members)` | upserts `assets` / `sectors` from `UniverseMember`s (identity write path only; no `universe_membership` write) |
 | `load_universe(conn, *, tickers=None, symbols=None, limit=None)` | asset rows restricted to the point-in-time `symbols` (and optional `tickers`) |
 | `start_run(conn, *, params, as_of=None, code_version=None)` | `analysis_run` row with the run's as-of + code tag |
-| `upsert_filing(…, *, run_id=None)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)` |
+| `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`. Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
 | `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end |
 | `completed_units(conn)` | `(ticker, form, fiscal_period)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume |
+| `shared_accession_filings(conn)` | filing rows whose accession another row of the same asset carries — the legacy pre-T-091 shape (T-120) |
 | `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"` (v2 = block-aware flatten + title-only headings + filer-CIK paths) |
 | `filings_with_sections(conn)` | resume set for `--sections` |
 
@@ -201,6 +203,21 @@ four recorded quarters; then quarter × 4. Each annualizing group's audit inputs
 `annualized_ttm = 1` or `annualized_x4 = 1` (crude, excludable). Raw single-period values always
 stay in the inputs — later filings read them back.
 
+### `repair.py` — legacy shared-accession quarters (T-120)
+
+Before T-091/T-092 one 10-Q per year was stored as a row per quarter column of its payload,
+all carrying its accession, filing date and facts. `shared_groups(conn)` lists each shared
+accession, the row for the filing's own (latest) period (kept) and the stale rows (refusing,
+with `RepairRefused`, any stale row that metrics, a score, a data-quality verdict or a legacy
+snapshot were computed from); `find_replacements(gateway, group)` fetches each stale
+quarter's own 10-Q (the filing whose `_targets` period and fiscal period match);
+`apply_group` deletes the stale rows (facts and sections cascade) and writes the
+replacements' filing rows and facts in one transaction — no metrics or score, which the
+stale rows never had. A group is only touched once every replacement is found (or with
+`drop_unresolved`); a gateway error leaves it as it was. `run` refuses to start while any
+shared accession remains (`pipeline.SharedAccessionsError`), since it would re-key a stale
+row in place and append the real facts beside the borrowed ones.
+
 ### `quality.py` — Ring-1 data-quality gates (`DQ_*`, T-065)
 
 Seven deterministic, LLM-free checks over a filing's **stored** metrics (value +
@@ -218,7 +235,9 @@ production-copy verification: `docs/model_fixes.md`, T-065.
 ### `cli.py`
 
 `run` subcommand (flags above), `quality` (the gate backfill over every stored filing; no LLM
-variables needed; exit 1 if no metrics are stored for `--metrics-version`) and `migrate` →
+variables needed; exit 1 if no metrics are stored for `--metrics-version`),
+`repair-accessions` (dry run unless `--apply`; gateway only, no LLM variables; exit 1 while
+any accession is left unresolved) and `migrate` →
 `kg_schema.cli.run_migrate`.
 
 ## Gotchas

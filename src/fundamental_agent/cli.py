@@ -1,14 +1,17 @@
-"""Command-line entry point: ``python -m fundamental_agent run|quality|migrate|coverage``."""
+"""Command-line entry point: ``python -m fundamental_agent
+run|quality|repair-accessions|migrate|coverage``."""
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from fundamental_agent import db, quality
-from fundamental_agent.config import Settings
+from fundamental_agent import db, quality, repair
+from fundamental_agent.config import DEFAULT_EDGAR_BASE_URL, Settings
+from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args, resolve_db_path, run_migrate
@@ -71,6 +74,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="gate only this stored metrics engine version (default: every version stored)",
     )
 
+    repair_cmd = sub.add_parser(
+        "repair-accessions",
+        help="replace legacy quarters that share one 10-Q's accession (T-120; dry run by default)",
+    )
+    repair_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    repair_cmd.add_argument(
+        "--apply", action="store_true", help="write the repair (default: report the plan only)"
+    )
+    repair_cmd.add_argument(
+        "--drop-unresolved",
+        action="store_true",
+        help="with --apply, also delete stale rows whose own filing the gateway cannot find",
+    )
+
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
@@ -108,6 +125,50 @@ def _run_quality(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_repair(args: argparse.Namespace) -> int:
+    # Gateway only, no LLM: no Settings.load().
+    conn = connect(resolve_db_path(args.db))
+    try:
+        db.ensure_schema(conn)
+        try:
+            groups = repair.shared_groups(conn)
+        except repair.RepairRefused as exc:
+            print(f"refused: {exc}", file=sys.stderr)
+            return 1
+        if not groups:
+            print("no shared accession numbers: nothing to repair")
+            return 0
+        base_url = os.environ.get("EDGAR_BASE_URL", DEFAULT_EDGAR_BASE_URL)
+        with EdgarClient(base_url) as edgar:
+            outcomes = repair.repair(
+                conn, edgar, apply=args.apply, drop_unresolved=args.drop_unresolved, groups=groups
+            )
+    finally:
+        conn.close()
+    verb = "replaced" if args.apply else "would replace (dry run)"
+    for o in outcomes:
+        g = o.group
+        print(f"{g.ticker} {g.accession} (filed {g.filing_date}): keep {g.keep_period}")
+        for r in o.replaced:
+            s = r.stale
+            print(
+                f"  {verb:<24} {s.fiscal_period} (filing {s.filing_id}, {s.facts} facts, "
+                f"{s.sections} sections) -> {r.accession} filed {r.filing_date}"
+            )
+        for s in o.unresolved:
+            state = "dropped" if o.dropped else "unresolved, left as is"
+            print(f"  {state:<24} {s.fiscal_period} (filing {s.filing_id})")
+        if o.error:
+            print(f"  ! gateway: {o.error}", file=sys.stderr)
+    pending = sum(1 for o in outcomes if o.unresolved and not o.dropped)
+    print(
+        f"\n{len(outcomes)} shared accessions; "
+        f"{sum(len(o.replaced) for o in outcomes)} quarters {'replaced' if args.apply else 'found'}; "
+        f"{pending} accessions left unresolved"
+    )
+    return 1 if pending else 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
@@ -116,6 +177,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return coverage_from_args(args)
     if args.command == "quality":
         return _run_quality(args)
+    if args.command == "repair-accessions":
+        return _run_repair(args)
     settings = Settings.load()
     updates: dict[str, Path] = {}
     if args.db:

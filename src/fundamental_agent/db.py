@@ -136,6 +136,27 @@ CREATE TABLE IF NOT EXISTS sec_filings (
     UNIQUE (asset_id, form, fiscal_period)
 );
 
+-- One filing is one row (T-120): an accession number reports one period, so no two rows of
+-- an asset may share it. Before T-091 one Q3 10-Q per year was stored as Q1, Q2 and Q3 rows
+-- with its accession and filing date; `fundamental_agent repair-accessions` removes those.
+-- Existing rows are not checked here (a trigger never is); `run` refuses to start while any
+-- remain (`shared_accession_filings`).
+CREATE TRIGGER IF NOT EXISTS trg_sf_accession_insert BEFORE INSERT ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o
+    WHERE o.asset_id = NEW.asset_id AND o.accession_number = NEW.accession_number
+      AND NOT (o.form = NEW.form AND o.fiscal_period = NEW.fiscal_period)
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sf_accession_update
+BEFORE UPDATE OF asset_id, accession_number ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o
+    WHERE o.asset_id = NEW.asset_id AND o.accession_number = NEW.accession_number
+      AND o.id <> NEW.id
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;
+
 CREATE TABLE IF NOT EXISTS financial_facts (
     id               INTEGER PRIMARY KEY,
     filing_id        INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
@@ -303,7 +324,12 @@ def load_universe(
 
 
 def upsert_filing(
-    conn: Database, key: FilingKey, meta: FilingMeta, *, run_id: int | None = None
+    conn: Database,
+    key: FilingKey,
+    meta: FilingMeta,
+    *,
+    run_id: int | None = None,
+    commit: bool = True,
 ) -> int:
     conn.execute(
         """
@@ -333,7 +359,8 @@ def upsert_filing(
         "SELECT id FROM sec_filings WHERE asset_id = ? AND form = ? AND fiscal_period = ?",
         (key.asset_id, key.form, key.fiscal_period),
     ).fetchone()
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(row["id"])
 
 
@@ -345,6 +372,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
     filing_version: str = FACTS_ENGINE_VERSION,
     event_time: str | None = None,
     run_id: int | None = None,
+    commit: bool = True,
 ) -> int:
     """Append facts for *filing_id* -- never delete. Re-runs of the same
     *filing_version* collide on the unique key and are ignored; a restatement under
@@ -387,7 +415,8 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
             """,
             [r[:7] for r in rows],
         )
-    conn.commit()
+    if commit:
+        conn.commit()
     return len(rows)
 
 
@@ -973,6 +1002,27 @@ def insert_filing_sections(  # noqa: PLR0913 - keyword-only provenance fields
 def filings_with_sections(conn: Database) -> set[int]:
     """``filing_id`` values that already have at least one extracted section."""
     return {int(r[0]) for r in conn.execute("SELECT DISTINCT filing_id FROM sec_filing_section")}
+
+
+def shared_accession_filings(conn: Database) -> list[Row]:
+    """Every filing row whose accession number another row of the same asset also carries
+    -- the legacy pre-T-091 shape (T-120). Oldest period first within each accession."""
+    return list(
+        conn.execute(
+            """
+            SELECT f.id, f.asset_id, a.ticker, f.form, f.fiscal_year, f.fiscal_period,
+                   f.period_end, f.filing_date, f.accession_number
+            FROM sec_filings f
+            JOIN assets a ON a.id = f.asset_id
+            JOIN (
+                SELECT asset_id, accession_number FROM sec_filings
+                WHERE accession_number IS NOT NULL
+                GROUP BY asset_id, accession_number HAVING COUNT(*) > 1
+            ) s ON s.asset_id = f.asset_id AND s.accession_number = f.accession_number
+            ORDER BY a.ticker, f.accession_number, f.period_end, f.id
+            """
+        )
+    )
 
 
 # -- snapshots & resume -------------------------------------------------
