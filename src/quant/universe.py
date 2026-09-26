@@ -16,6 +16,7 @@ from pathlib import Path
 
 from portfolio_common.db import Database
 
+from quant.config import QuantSettings
 from quant.db import hard_vetoed_as_of, load_universe_asset_ids
 
 
@@ -101,3 +102,18 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
             continue
         kept.append(aid)
     return GateResult(asset_ids=sorted(kept), dropped=dropped)
+
+
+def settings_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> GateResult:
+    """:func:`liquidity_data_gate` with *settings*' knobs -- the one gate the risk model's
+    books and the internal benchmark's panel both come from (T-108)."""
+    return liquidity_data_gate(
+        conn,
+        as_of=as_of,
+        universe=settings.universe,
+        min_history_days=settings.min_history_days,
+        min_dollar_volume=settings.liquidity_min_dollar_volume,
+        liquidity_lookback_days=settings.liquidity_lookback_days,
+        exclude_hard_vetoed=settings.exclude_hard_vetoed,
+        universe_db_path=settings.universe_db_path,
+    )

@@ -1,4 +1,4 @@
-"""``python -m quant {backfill-actions,build-returns,build-risk-model,optimize,benchmark,evaluate,versions}``.
+"""``python -m quant {backfill-actions,build-returns,build-risk-model,optimize,benchmark,load-benchmark,evaluate,versions}``.
 
 Subcommands are filled in milestone by milestone; an unimplemented one prints a
 notice and exits 0.
@@ -17,7 +17,12 @@ from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
 from quant.actions import DividendsNotReady, GatewayUnavailable, backfill_corporate_actions
-from quant.benchmark import build_internal_benchmark
+from quant.benchmark import (
+    INTERNAL_EW,
+    BenchmarkCsvError,
+    build_internal_benchmark,
+    load_benchmark_csv,
+)
 from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
@@ -30,6 +35,7 @@ from quant.persist import (
 )
 from quant.profiles import load_profile
 from quant.returns import run_build_returns
+from quant.universe import settings_gate
 from quant.versions_report import versions_report
 
 _TODAY_HELP = "date, YYYY-MM-DD"
@@ -154,10 +160,28 @@ def build_parser() -> argparse.ArgumentParser:
     _add_build_risk_model_parser(sub)
     _add_optimize_parser(sub)
 
-    bm = sub.add_parser("benchmark", help="build the internal equal-weight benchmark series")
+    bm = sub.add_parser(
+        "benchmark",
+        help="build the internal equal-weight benchmark over the universe gate as of --from",
+    )
     _add_common(bm)
-    bm.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    bm.add_argument(
+        "--from",
+        dest="date_from",
+        required=True,
+        help=f"{_TODAY_HELP}: the window's start, and the date its panel is gated as of",
+    )
     bm.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
+
+    lb = sub.add_parser(
+        "load-benchmark",
+        help="load an external total-return series (e.g. SPY_TR) from a CSV",
+    )
+    _add_common(lb)
+    lb.add_argument(
+        "--csv", required=True, type=Path, help="CSV with 'date' and 'total_return_level' columns"
+    )
+    lb.add_argument("--benchmark", required=True, help="series name, e.g. SPY_TR")
 
     ev = sub.add_parser("evaluate", help="forward realized returns: each book vs the live book")
     _add_common(ev)
@@ -167,7 +191,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"{_TODAY_HELP} (default: the earliest optimized book's as-of)",
     )
     ev.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
-    ev.add_argument("--benchmark", default="SP500_EW_INTERNAL")
+    ev.add_argument(
+        "--benchmark",
+        default=INTERNAL_EW,
+        help=f"{INTERNAL_EW} (rebuilt over the gated panel) or a series loaded with load-benchmark",
+    )
 
     vs = sub.add_parser(
         "versions", help="list the stored versions of every input quant can be constrained on"
@@ -367,6 +395,49 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
     return 0
 
 
+def _run_benchmark(settings: QuantSettings, args: argparse.Namespace, date_to: str) -> int:
+    conn = connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        gate = settings_gate(conn, settings, as_of=args.date_from)
+        if not gate.asset_ids:
+            print(
+                f"benchmark: the universe gate is empty as of {args.date_from} (each name needs "
+                f"{settings.min_history_days} days of returns by then) -- pick a later --from",
+                file=sys.stderr,
+            )
+            return 1
+        n = build_internal_benchmark(
+            conn,
+            asset_ids=gate.asset_ids,
+            date_from=args.date_from,
+            date_to=date_to,
+            return_engine_version=settings.return_engine_version,
+            engine_version=settings.benchmark_engine_version,
+        )
+    finally:
+        conn.close()
+    print(
+        f"benchmark {INTERNAL_EW} [{settings.benchmark_engine_version}]: {n} rows over "
+        f"{len(gate.asset_ids)} gated names as of {args.date_from}"
+    )
+    return 0
+
+
+def _run_load_benchmark(settings: QuantSettings, args: argparse.Namespace) -> int:
+    conn = connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        n = load_benchmark_csv(conn, args.csv, benchmark=args.benchmark)
+    except (BenchmarkCsvError, ValueError) as exc:
+        print(f"load-benchmark: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+    print(f"load-benchmark {args.benchmark}: {n} rows from {args.csv}")
+    return 0
+
+
 def _prepare(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> int | tuple[QuantSettings, str]:
@@ -412,20 +483,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return _run_optimize(settings, analysis_date)
 
     if args.command == "benchmark":
-        conn = connect(settings.db_path)
-        try:
-            ensure_schema(conn)
-            n = build_internal_benchmark(
-                conn,
-                date_from=args.date_from,
-                date_to=_date_to(analysis_date, args),
-                return_engine_version=settings.return_engine_version,
-                engine_version=settings.benchmark_engine_version,
-            )
-        finally:
-            conn.close()
-        print(f"benchmark SP500_EW_INTERNAL: {n} rows")
-        return 0
+        return _run_benchmark(settings, args, _date_to(analysis_date, args))
+
+    if args.command == "load-benchmark":
+        return _run_load_benchmark(settings, args)
 
     if args.command == "evaluate":
         date_to = _date_to(analysis_date, args)

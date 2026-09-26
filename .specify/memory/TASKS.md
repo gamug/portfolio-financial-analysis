@@ -298,6 +298,15 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       inherits the bias. New `bench-v2`; a loader for an external cap-weighted total-return
       series (the series itself is a data-acquisition step). **Acceptance**: the recomputed
       index matches an independent equal-weight calculation to 1e-9.
+      **Code done 2026-09-26 (PR pending); production re-evaluation pending approval.**
+      `bench-v2`: the mean of simple returns over the books' own gate as of the window's start
+      (`universe.settings_gate`, shared with `build-risk-model`), compounded `(1 + r)`.
+      `evaluate` grades against the version it built, writes `perf-v2`, records version and
+      panel on its run, and only reads an external series (`quant load-benchmark`,
+      `csv-v1`). `v_quant_benchmark_performance` shows the latest version per (book, date).
+      Tests `tests/test_benchmark.py` (21; the 1e-9 acceptance included); 9 mutations
+      caught. Production copy: benchmark 7.43 % vs v1's 6.63 % over the live book's window;
+      summed daily active return −6.16 % → −6.91 %. Record: `docs/model_fixes.md` "T-108".
 - [ ] **T-109** *(P0)* One expected-return convention across `quant`. `risk.equilibrium_returns`
       computes `rf + λΣw`, but `persist.py` never passes `rf`, so the stored `equilibrium` μ
       (the default, used by production's risk model) is an *excess* return, while `hist_mean`

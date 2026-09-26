@@ -685,12 +685,13 @@ def load_forward_simple_returns(
 def upsert_benchmark_series(
     conn: Database,
     benchmark: str,
-    rows: list[tuple[str, float, float]],
+    rows: list[tuple[str, float | None, float]],
     *,
     engine_version: str,
     source: str,
 ) -> int:
-    """*rows*: (obs_date, log_return, total_return_level)."""
+    """*rows*: (obs_date, log_return, total_return_level); a series' first day has no
+    return."""
     now = _now()
     n = 0
     for obs_date, lr, trl in rows:
@@ -709,16 +710,39 @@ def upsert_benchmark_series(
 
 
 def load_benchmark_returns(
-    conn: Database, benchmark: str, *, after: str, until: str
+    conn: Database, benchmark: str, *, after: str, until: str, engine_version: str | None = None
 ) -> dict[str, float]:
-    return {
-        str(r["obs_date"]): float(np.expm1(float(r["log_return"])))
-        for r in conn.execute(
+    """Daily simple returns of *benchmark* in ``(after, until]``: of *engine_version* when
+    given (what the caller just built, T-108), else the view's latest per day."""
+    if engine_version is not None:
+        rows = conn.execute(
+            "SELECT obs_date, log_return FROM benchmark_series "
+            "WHERE benchmark = ? AND engine_version = ? AND obs_date > ? AND obs_date <= ? "
+            "AND log_return IS NOT NULL",
+            (benchmark, engine_version, after, until),
+        )
+    else:
+        rows = conn.execute(
             "SELECT obs_date, log_return FROM v_benchmark_series "
             "WHERE benchmark = ? AND obs_date > ? AND obs_date <= ? AND log_return IS NOT NULL",
             (benchmark, after, until),
         )
-    }
+    return {str(r["obs_date"]): float(np.expm1(float(r["log_return"]))) for r in rows}
+
+
+def benchmark_engine_versions(
+    conn: Database, benchmark: str, *, after: str, until: str
+) -> list[str]:
+    """The stored versions of *benchmark* with a return in ``(after, until]``, newest first."""
+    return [
+        str(r["engine_version"])
+        for r in conn.execute(
+            "SELECT engine_version, MAX(ingested_at) AS at FROM benchmark_series "
+            "WHERE benchmark = ? AND obs_date > ? AND obs_date <= ? AND log_return IS NOT NULL "
+            "GROUP BY engine_version ORDER BY at DESC, engine_version DESC",
+            (benchmark, after, until),
+        )
+    ]
 
 
 def upsert_benchmark_performance(

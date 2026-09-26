@@ -41,7 +41,7 @@ from quant.risk import (
     sample_covariance,
 )
 from quant.state import fail_run, finish_run, open_run
-from quant.universe import liquidity_data_gate
+from quant.universe import settings_gate
 
 _W_EPS = 1e-6  # sparsify: drop near-zero weights from the stored book
 
@@ -119,16 +119,7 @@ def run_build_risk_model(
             code_version=code_version(),
         )
         try:
-            gate = liquidity_data_gate(
-                conn,
-                as_of=as_of,
-                universe=settings.universe,
-                min_history_days=settings.min_history_days,
-                min_dollar_volume=settings.liquidity_min_dollar_volume,
-                liquidity_lookback_days=settings.liquidity_lookback_days,
-                exclude_hard_vetoed=settings.exclude_hard_vetoed,
-                universe_db_path=settings.universe_db_path,
-            )
+            gate = settings_gate(conn, settings, as_of=as_of)
             if not gate.asset_ids:
                 raise RuntimeError(f"universe gate is empty as of {as_of}")  # noqa: TRY301
             panel = build_return_panel(

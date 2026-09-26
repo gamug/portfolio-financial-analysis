@@ -91,7 +91,9 @@ class QuantSettings(BaseModel):
     return_engine_version: str = "qret-v2"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"
-    benchmark_engine_version: str = "bench-v1"
+    # bench-v2 (T-108): the mean of *simple* returns over the gated panel, compounded (1 + r);
+    # bench-v1 averaged log returns over every name with a row.
+    benchmark_engine_version: str = "bench-v2"
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> QuantSettings:

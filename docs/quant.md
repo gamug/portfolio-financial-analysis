@@ -21,8 +21,9 @@ uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
                                 [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
-uv run python -m quant benchmark --from 2026-08-27 --analysis-date TODAY
-uv run python -m quant evaluate  [--from 2026-06-01] --analysis-date TODAY [--benchmark SP500_EW_INTERNAL]
+uv run python -m quant benchmark --from 2026-06-30 --analysis-date TODAY     # --from required: the panel is gated as of it
+uv run python -m quant load-benchmark --csv spy_tr.csv --benchmark SPY_TR      # columns: date,total_return_level
+uv run python -m quant evaluate  [--from 2026-06-01] --analysis-date TODAY [--benchmark SP500_EW_INTERNAL|SPY_TR]
 ```
 
 `evaluate`'s `--from` defaults to the earliest persisted `quant_portfolio.as_of`
@@ -290,15 +291,31 @@ new return engine version; `build-returns` says so when a pinned run writes no n
 
 ### `benchmark.py` / `evaluate.py` — forward comparison
 
-`build_internal_benchmark` synthesizes `SP500_EW_INTERNAL`, an equal-weight,
-daily-rebalanced index over the gated universe from the same total-return panel —
-a self-consistent yardstick (same names, same return basis, no vendor
-dependency). A real SPX / SPY_TR series loads into `benchmark_series` from a CSV
-later.
+`build_internal_benchmark(conn, asset_ids=…)` synthesizes `SP500_EW_INTERNAL`
+(`bench-v2`, T-108): an equal-weight, daily-rebalanced index over the **gated panel**,
+the names `quant.universe.settings_gate` admits as of the window's start. That is the
+same gate, with the same settings, that every book is built from. Each day's return is
+the mean of the panel's **simple** total returns (`expm1(tr_log_return)`); a name with no
+row that day is left out of that day's mean. The level compounds `(1 + r)`, and
+`log_return = log1p(r)`. `bench-v1` averaged *log* returns over every name with a row,
+which gives the geometric mean, lower by about half the cross-sectional variance each day.
+On production's 20-name panel it compounded at 5.98 %/yr against a true equal weight of
+10.32 %.
 
-`run_evaluate` freezes each persisted book's weights at its as-of date, walks
+`load_benchmark_csv` (`quant load-benchmark`) loads an external total-return series,
+such as a cap-weighted `SPY_TR`, from a CSV with `date` and `total_return_level`
+columns, as `csv-v1`. It refuses anything but ISO dates in strictly increasing order
+and positive levels. Obtaining the file is a data-acquisition step outside this repo.
+
+`run_evaluate` rebuilds `SP500_EW_INTERNAL` over the gate as of `--from`, or, for
+any other `--benchmark`, reads a loaded series and never overwrites it (refusing
+when none is loaded for the window). It records the benchmark version and panel on
+the `quant_run` row. It freezes each persisted book's weights at its as-of date, walks
 forward trading days, computes the weighted simple total return, compounds it,
-subtracts the benchmark return, and writes `quant_benchmark_performance`. The live
+subtracts the return of the benchmark version it just built or chose, and writes
+`quant_benchmark_performance` under `perf-v2`. `perf-v1` rows, graded against
+`bench-v1`, stay stored under their version, and `v_quant_benchmark_performance` shows the
+latest version per (book, date). The live
 `cycle` book (`portfolio_position`) is snapshotted into
 `quant_portfolio(kind='live_book')` so `v_quant_vs_live` and
 `v_quant_benchmark_performance` make the system-vs-base-case comparison a single
