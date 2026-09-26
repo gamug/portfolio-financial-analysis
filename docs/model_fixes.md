@@ -2190,3 +2190,7 @@ the calendar day of the SEC's acceptance, not the first session that could act o
   filings, 2 for 18, 3 for 1,002, 4 for 144. Every `available_at` up to the spine's end is a
   spine session (5,057 of 5,057). `quick_check` ok, FK clean. The live 2026-09-22 cycle's
   score reads are unchanged (0/20 differ; also 0 at 2026-06-30, 2025-06-30 and 2024-12-31).
+- **Production, applied 2026-09-26** (`migrate`, 4 min 15 s, after a verified backup): results
+  identical to the copy. Schema v8; 0 rows without `available_at`; 0 copies differing from
+  their filing; `quick_check` ok, FK clean. The live cycle reads the same 20 scores and 16
+  market caps.
