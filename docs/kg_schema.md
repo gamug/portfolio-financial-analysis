@@ -48,11 +48,15 @@ The single entrypoint. Sequence:
 2. `db.executescript(ADDITIVE_DDL)` — all `CREATE TABLE/INDEX IF NOT EXISTS`.
 3. `_add_missing_columns(db)` — for each `REQUIRED_COLUMNS` entry, `ALTER TABLE …
    ADD COLUMN` if absent (nullable only). **No `schema_version` bump.**
-4. `views.ensure_views(db)` — drop + recreate every `v_*` view.
-5. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
+4. `availability.ensure_triggers(db)` — the `T-107` `available_at` guards
+   (`ddl.AVAILABILITY_TRIGGERS`), once `sec_filings`, `fundamental_metrics` and
+   `score_snapshot` all carry the column. They check only rows written from then on;
+   existing rows are filled by `m008`.
+5. `views.ensure_views(db)` — drop + recreate every `v_*` view.
+6. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
 
-Steps 1–4 are safe to run against the shared production DB at any time,
-concurrently with the other packages. Step 5 runs **only** via `python -m
+Steps 1–5 are safe to run against the shared production DB at any time,
+concurrently with the other packages. Step 6 runs **only** via `python -m
 <agent> migrate`.
 
 ### `ddl.py` — `ADDITIVE_DDL`, `REQUIRED_COLUMNS`
@@ -162,6 +166,7 @@ are present / it hasn't already run).
 | m005 | rebuild `score_snapshot` with its `score_type` CHECK widened to admit `'SECTOR'` (guard: skipped when the CHECK already lists it); drops + recreates `v_score_snapshot` and the `fundamental_snapshot` compat view around the swap |
 | m006 | rename `score_snapshot.score_type` `'QUANTITATIVE'` → `'VALORIZATION'` everywhere it is persisted: the CHECK, the stored rows, and the score-type keys inside `cycle_run.params_json` / `cycle_ranking.components_json` |
 | m007 | `quant_portfolio` book key made NULL-safe (`T-101`): per duplicate `(as_of, kind, IFNULL(frontier_k, -1), engine_version)` group keep the oldest id (it holds the positions), refresh it with the newest copy's metadata, move `quant_frontier_point` references onto it, drop the newer copies with their positions and forward-performance rows; then `CREATE UNIQUE INDEX ux_quant_portfolio_book` on that NULL-safe key |
+| m008 | `available_at` (`T-107`): re-adds the column to `sec_filings` / `fundamental_metrics` / `score_snapshot` (older rebuilds drop it), backfills each dated filing with the first NYSE trading day after its `filing_date` (`kg_schema.trading_calendar.available_from`) and copies it onto the filing's metrics and FUNDAMENTAL scores, then restores the `AVAILABILITY_TRIGGERS` guards. Refuses (rolls back) if a metric or FUNDAMENTAL score is left without one. `apply_migrations` drops those guards while any migration runs and restores them afterwards |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -254,7 +259,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 - **Shared-DB migration runbook:** quiesce all writers → `cp financial.db{,.bak}` →
   `python -m fundamental_agent migrate` once → check `SELECT * FROM schema_version`
   → resume. `-wal` / `-shm` files may exist even though this code forces rollback
-  journal; standardise journal mode across writers before running m002–m007.
+  journal; standardise journal mode across writers before running m002–m008.
 - **Never drop the `fundamental_snapshot` compat view** until every external
   consumer has moved to `v_score_snapshot`.
 - **`Database` is not a `sqlite3.Connection` subclass** (composition, not

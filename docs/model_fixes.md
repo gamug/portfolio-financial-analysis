@@ -2085,7 +2085,108 @@ filed; only historical or backdated cycles are affected.
 - **Same-day use.** `filing_date <= cycle_date` treats a filing as usable on its own filing
   date, but EDGAR dates an after-close submission with that same day. The settled convention
   (PR #78 review) is use from the trading day after; it lands with `T-107`'s `available_at`,
-  and these readers move to it then.
+  and these readers move to it then. **Done 2026-09-26** (`T-107` below).
 - **Legacy shared-accession rows.** 41 pre-`T-091` accessions (13 tickers) each stand for
   several quarterly rows stamped with the Q3 10-Q's filing date. Here that errs late (a Q1
   row reads as public at Q3's date), never early; `T-120` re-ingests them.
+
+## T-107 — fundamentals had no publication timestamp; same-day use of a filing
+
+**Status**: Fixed 2026-09-26 (branch `fix/t107-available-at`, `T-107`; decided option (b) in
+the PR #78 review).
+
+### Symptom
+
+All 377 FUNDAMENTAL `score_snapshot` rows and all 11,878 `fundamental_metrics` rows carried
+only `event_time`, which is the period end. `T-106` made the as-of readers find availability
+through each row's filing (`filing_date <= cycle_date`), but (1) nothing stored on the rows
+themselves said when they became usable, so every new reader had to know to join the filing,
+and (2) `filing_date <= D` counts a filing as usable **on** its filing date. EDGAR dates any
+submission accepted by 17:30 ET with that day, and the NYSE closes at 16:00 ET, so an
+after-close earnings 10-Q dated D was usable by a cycle dated D, before any session had
+traded on it.
+
+### Root cause
+
+SPEC.md defines a FUNDAMENTAL row's `event_time` as what the value is *about*; availability
+was never modelled as its own column. The `T-106` fix used the filing date directly, which is
+the calendar day of the SEC's acceptance, not the first session that could act on it.
+
+### Theoretical/technical reference
+
+- **17 CFR 232.13(a)(1)–(2)** (Regulation S-T, *Date of filing*): "the business day on which a
+  filing is received by the Commission shall be the date of filing", and "all filings
+  submitted by direct transmission commencing on or before 5:30 p.m. Eastern Standard Time or
+  Eastern Daylight Saving Time ... shall be deemed filed on the same business day"
+  (https://www.law.cornell.edu/cfr/text/17/232.13, verified 2026-09-26).
+- **NYSE hours and holidays**: core session "9:30 a.m. to 4:00 p.m. ET"; the 2026–2027 holiday
+  list, and "Because the holiday falls on Saturday, January 1, 2028, no New Year's Day holiday
+  is observed" (https://www.nyse.com/markets/hours-calendars, verified 2026-09-26).
+- Point-in-time data, as cited under `T-106` (StockFit): a fact is usable from when it became
+  public, not from the date it describes.
+
+### Fix
+
+- **`available_at`** on `sec_filings` (the first NYSE trading day strictly after
+  `filing_date`), copied onto the filing's `fundamental_metrics` rows and FUNDAMENTAL
+  `score_snapshot` rows. `event_time` keeps its meaning and the
+  `UNIQUE(asset_id, score_type, event_time)` key is unchanged. `v_score_snapshot` and
+  `v_sec_filing` expose the column.
+- **`kg_schema.trading_calendar`**: a rule-based NYSE calendar (weekends; the regular holidays
+  with their observance rules, New Year's on a Saturday not moved back; Juneteenth from 2022;
+  the unscheduled closures since 2000). `available_from(filing_date)` is the only way the
+  value is computed.
+- **Writers**: `upsert_filing` stamps the filing; `record_metrics` and `insert_snapshot` copy
+  the filing's value. The pipeline skips a filing the gateway lists with no date: it can never
+  be shown to be usable.
+- **Database guards** (`kg_schema.ddl.AVAILABILITY_TRIGGERS`): a dated filing must carry an
+  `available_at` 1–7 days after its filing date, an undated one none; a metric or FUNDAMENTAL
+  score must carry its filing's value and never NULL (so a row with no filing, or of an
+  undated filing, is refused); re-dating a filing carries its rows along.
+- **Backfill**: migration `m008` fills every row and puts the guards back after the older
+  table rebuilds. It refuses, and rolls back, if a metric or FUNDAMENTAL score would be left
+  without a value. `apply_migrations` drops the guards while rebuilds run, because SQLite
+  refuses a rebuild's `RENAME` while a trigger names a table that is momentarily gone.
+- **Readers**: `cycle.data.latest_metrics`, `data_quality`, `latest_fundamental_rows`,
+  `market_cap_estimates`, `quant.db.load_market_caps` and the `coverage` fundamental/metric
+  checks all filter `available_at <= D`. `cycle` and `quant` first call
+  `kg_schema.availability.require`, which refuses to run on a database with rows the backfill
+  has not reached, rather than read none of them.
+
+### Design decisions
+
+- **Option (b), keep `event_time`** (PR #78 review): option (a), re-keying `event_time` to the
+  filing date, would put the filing date into the unique key. The reviewer's full-universe
+  database has 46 (asset, filing date) pairs with more than one FUNDAMENTAL score, which would
+  collide and be dropped silently.
+- **On the filing as well as its rows.** The decision named scores and metrics. The filing
+  pickers (`latest_metrics`, `data_quality`) choose a *filing*, and data-quality verdicts have
+  no copy of their own, so the value lives on `sec_filings` too, and triggers keep the copies
+  equal to it.
+- **Refuse, don't default.** A NULL `available_at` is refused, never read as "known". An
+  un-backfilled database stops `cycle` and `quant` with the command to run, rather than letting
+  them read nothing.
+- **A calendar in code, not a table.** No dependency needed. It is checked date by date
+  against production's 1,167-session price spine (2022-01-03 to 2026-08-27: identical sets)
+  and against the NYSE's published lists for 2022–2028.
+
+### Verification
+
+- `tests/test_available_at.py`: writers, guards, cascade, `m008` backfill and refusal, the
+  `cycle`/`quant` guard, and a source scan that no SQL literal filters FUNDAMENTAL scores or
+  metrics by `event_time`, and no as-of consumer compares `filing_date`/`period_end` to a date.
+- `tests/test_trading_calendar.py`: the published holidays for 2022–2028, the spine's session
+  count, and edge cases (weekends, Presidents' Day, the Carter closure, holidays observed on a
+  Friday, the post-9/11 gap).
+- `tests/test_point_in_time_readers.py` now requires use from the next session: a Friday
+  filing is unreadable on Friday and over the weekend, readable Monday. A filing made the
+  Friday before Presidents' Day is readable Tuesday. The 27-month sweep asserts every value
+  comes from a filing filed strictly before the day and usable by then.
+- 12 mutations (each reader back to `event_time`/`filing_date`, either guard removed,
+  same-day availability, a holiday dropped, the cascade removed, the score backfill skipped,
+  the trigger drop removed, the undated-filing skip removed): all caught.
+- **Production copy** (`m008` dry run, 17 s): 5,076 filings, 11,878 metrics and 377 FUNDAMENTAL
+  scores backfilled, 0 NULL, 0 copies differing from their filing. Gaps: 1 day for 3,912
+  filings, 2 for 18, 3 for 1,002, 4 for 144. Every `available_at` up to the spine's end is a
+  spine session (5,057 of 5,057). `quick_check` ok, FK clean. The live 2026-09-22 cycle's
+  score reads are unchanged (0/20 differ; also 0 at 2026-06-30, 2025-06-30 and 2024-12-31).

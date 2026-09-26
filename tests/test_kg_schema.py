@@ -60,8 +60,8 @@ def _legacy_conn() -> Database:
     conn.execute("INSERT INTO assets (ticker, company_name) VALUES ('MSFT', 'Microsoft')")
     conn.execute(
         "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-        "accession_number, retrieved_at) VALUES (1, '10-K', 2023, 'FY2023', '2023-09-30', "
-        "'0000320193-23-000106', '2024-01-01T00:00:00Z')"
+        "filing_date, accession_number, retrieved_at) VALUES (1, '10-K', 2023, 'FY2023', "
+        "'2023-09-30', '2023-11-03', '0000320193-23-000106', '2024-01-01T00:00:00Z')"
     )
     conn.execute(
         "INSERT INTO financial_facts (filing_id, statement, concept, period_key, value) "
@@ -109,7 +109,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert queries.current_version(conn) == 7
+    assert queries.current_version(conn) == 8
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
@@ -177,8 +177,9 @@ def test_m005_widens_score_type_check_and_keeps_rows_and_view() -> None:
                                   accession_number TEXT, period_end TEXT,
                                   retrieved_at TEXT NOT NULL);
         INSERT INTO assets (id, ticker) VALUES (1, 'AAPL');
-        INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, retrieved_at)
-        VALUES (1, 1, '10-K', 2023, 'FY2023', '2024-01-01T00:00:00Z');
+        INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, filing_date,
+                                 retrieved_at)
+        VALUES (1, 1, '10-K', 2023, 'FY2023', '2023-11-03', '2024-01-01T00:00:00Z');
         CREATE TABLE score_snapshot (
             id INTEGER PRIMARY KEY,
             asset_id INTEGER NOT NULL REFERENCES assets(id),

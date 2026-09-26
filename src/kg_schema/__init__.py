@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from portfolio_common.db import Database
 
+from . import availability as _availability
 from . import queries as _queries
 from .db import connect, connect_ro
 from .ddl import ADDITIVE_DDL, REQUIRED_COLUMNS
@@ -78,6 +79,7 @@ def ensure(db: Database, *, run_migrations: bool = False) -> list[int]:
     db.create_schema(ADDITIVE_DDL)
     db.commit()
     _add_missing_columns(db)
+    _availability.ensure_triggers(db)
     ensure_views(db)
     if run_migrations:
         applied = apply_migrations(db)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from fundamental_agent.cli import main as fundamental_main
 from fundamental_agent.metrics import compute_group
 from fundamental_agent.quality import Issue, StoredMetric, evaluate, gate_all, gate_version
 from kg_schema import connect
+from kg_schema.trading_calendar import available_from
 from kg_schema.versions import MetricVersions
 
 FCF = ("valuation", "free_cash_flow_yield")
@@ -189,9 +191,16 @@ def _filing(conn: Database, asset_id: int, ticker: str, period_end: str = "2025-
     return int(
         conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "filing_date, retrieved_at) VALUES (?, '10-K', ?, ?, ?, date(?, '+45 days'), "
+            "filing_date, available_at, retrieved_at) VALUES (?, '10-K', ?, ?, ?, ?, ?, "
             "'2026-01-01T00:00:00Z') RETURNING id",
-            (asset_id, int(period_end[:4]), f"FY{period_end[:4]}", period_end, period_end),
+            (
+                asset_id,
+                int(period_end[:4]),
+                f"FY{period_end[:4]}",
+                period_end,
+                filed := (date.fromisoformat(period_end) + timedelta(days=45)).isoformat(),
+                available_from(filed),
+            ),
         ).fetchone()[0]
     )
 
@@ -200,9 +209,18 @@ def _store(conn: Database, filing_id: int, version: str, **values: Any) -> None:
     for (group, name), stored in _fm(**values).items():
         conn.execute(
             "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-            "inputs_json, computed_at, engine_version, event_time) VALUES "
-            "(?, ?, ?, ?, 'x', ?, '2026-01-01T00:00:00Z', ?, '2025-12-31')",
-            (filing_id, group, name, stored.value, json.dumps(dict(stored.inputs)), version),
+            "inputs_json, computed_at, engine_version, event_time, available_at) VALUES "
+            "(?, ?, ?, ?, 'x', ?, '2026-01-01T00:00:00Z', ?, '2025-12-31', "
+            "(SELECT available_at FROM sec_filings WHERE id = ?))",
+            (
+                filing_id,
+                group,
+                name,
+                stored.value,
+                json.dumps(dict(stored.inputs)),
+                version,
+                filing_id,
+            ),
         )
     conn.commit()
 

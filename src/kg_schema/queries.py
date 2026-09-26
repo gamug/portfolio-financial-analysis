@@ -253,14 +253,13 @@ def check_coverage(
     fundamental_ids = _distinct_ids(
         fin_db,
         "SELECT DISTINCT asset_id FROM score_snapshot "
-        "WHERE score_type = 'FUNDAMENTAL' AND event_time <= ?",
+        "WHERE score_type = 'FUNDAMENTAL' AND available_at <= ?",
         (as_of,),
     )
     metric_ids = _distinct_ids(
         fin_db,
         "SELECT DISTINCT f.asset_id FROM fundamental_metrics m "
-        "JOIN sec_filings f ON f.id = m.filing_id "
-        "WHERE f.period_end IS NOT NULL AND f.period_end <= ?",
+        "JOIN sec_filings f ON f.id = m.filing_id WHERE m.available_at <= ?",
         (as_of,),
     )
     price_ids = _distinct_ids(

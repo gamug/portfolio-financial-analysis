@@ -45,7 +45,7 @@ CREATE TABLE fundamental_metrics (
     filing_id INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
     metric_group TEXT NOT NULL, metric_name TEXT NOT NULL, value REAL, unit TEXT,
     inputs_json TEXT, computed_at TEXT NOT NULL, engine_version TEXT NOT NULL,
-    event_time TEXT, run_id INTEGER,
+    event_time TEXT, run_id INTEGER, available_at TEXT,
     UNIQUE (filing_id, metric_group, metric_name, engine_version)
 )
 """
@@ -87,8 +87,8 @@ def db(memory_quant_db: Database, quant_seed: Callable[..., Database]) -> Databa
     for asset in range(1, 7):
         filing_id = conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
-            "retrieved_at) VALUES (?, '10-K', 2024, 'FY2024', '2024-12-31', "
-            "'2025-01-01T00:00:00Z') RETURNING id",
+            "filing_date, available_at, retrieved_at) VALUES (?, '10-K', 2024, 'FY2024', "
+            "'2024-12-31', '2025-02-14', '2025-02-18', '2025-01-01T00:00:00Z') RETURNING id",
             (asset,),
         ).fetchone()["id"]
         for version, cap in (
@@ -98,8 +98,9 @@ def db(memory_quant_db: Database, quant_seed: Callable[..., Database]) -> Databa
         ):
             conn.execute(
                 "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, "
-                "unit, inputs_json, computed_at, engine_version) VALUES "
-                "(?, 'valuation', 'market_capitalization', ?, 'usd', ?, '2025-01-01T00:00:00Z', ?)",
+                "unit, inputs_json, computed_at, engine_version, available_at) VALUES "
+                "(?, 'valuation', 'market_capitalization', ?, 'usd', ?, '2025-01-01T00:00:00Z', ?, "
+                "'2025-02-18')",
                 (filing_id, cap, json.dumps({"market_capitalization": cap}), version),
             )
     conn.commit()

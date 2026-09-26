@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from conftest import seed_fundamental_score
 from fastapi.testclient import TestClient
 from portfolio_common.db import Database
 
@@ -35,12 +36,7 @@ def _seed_fin(path: Path) -> None:
         "INSERT INTO analysis_run (started_at, status, as_of, code_version, params_json) "
         "VALUES ('2024-07-01T00:00:00Z', 'completed', '2024-06-30', 'abc1234', '{}')"
     )
-    conn.execute(
-        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
-        "event_time, computed_at, model, run_kind) VALUES (?, 'FUNDAMENTAL', 71.0, 0.7, "
-        "'2024-03-31', '2024-04-15T00:00:00Z', 'seed', 'analysis')",
-        (aid,),
-    )
+    seed_fundamental_score(conn, aid, 71.0, event_time="2024-03-31", normalized_score=0.7)
     conn.execute(
         "INSERT INTO portfolio_position (asset_id, valid_from, valid_to, weight) "
         "VALUES (?, '2024-06-30', NULL, 0.05)",

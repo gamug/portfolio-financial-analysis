@@ -57,19 +57,21 @@ two. It runs *before* `open_cycle`, which would otherwise flip the earlier run b
 `active_universe(conn, universe, cycle_date, universe_db_path=None)` — reads
 `universe.db` point-in-time (`members_asof` → `resolve_asset_ids`) and returns the
 matching `assets` rows; raises loudly if `universe.db` yields nothing or nothing
-resolves. `latest_metrics(conn, date, versions)` (the newest filing *public* by the date —
-`filing_date ≤ date`, T-106 — keyed `"group.name"`), `latest_price_observation`,
-`latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot whose filing was public
-by the date; `last_fundamental_dates` and `latest_fundamental_score` read it),
+resolves. `latest_metrics(conn, date, versions)` (the newest filing *usable* on the date —
+`available_at ≤ date`, T-106/T-107 — keyed `"group.name"`), `latest_price_observation`,
+`latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot usable on the date; `last_fundamental_dates` and `latest_fundamental_score` read it),
 `latest_semantic_score`, `market_cap_estimates(conn, date, metrics, versions)` (reads the
 stored `valuation.market_capitalization` metric inputs; the most recent filing per asset
-public by the date wins), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
+usable on the date wins), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
 `data_quality_issue` verdicts on the same latest filing, for the run's metric versions and the
 current gate version — `quarantined` keys, `hard` issues, `negative_equity` assets; `apply()`
-blanks quarantined values). **Point in time (T-106)**: a filing's period end is not when it
-became known — production's 10-Ks were filed 48.7 days after it on average, up to 420 — so
-every fundamental reader keys on `sec_filings.filing_date`, and a filing with none is never
-treated as public. Both metric readers take the `MetricVersions` the run resolved
+blanks quarantined values). **Point in time (T-106, T-107)**: a filing's period end is not when it
+became known — production's 10-Ks were filed 48.7 days after it on average, up to 420 — and
+neither is its filing date, which EDGAR gives to an after-close submission too. Every
+fundamental reader keys on `available_at`, the first NYSE trading day after the filing date
+(`kg_schema.trading_calendar`), stored on the filing and copied onto its metrics and
+FUNDAMENTAL scores; a filing with no date has none and is never read. A run refuses to start
+(`kg_schema.availability.require`) while rows predate the `m008` backfill. Both metric readers take the `MetricVersions` the run resolved
 (`kg_schema.versions`, T-090) and read **only** those engine versions — they used to join
 `fundamental_metrics` unfiltered and let row order pick among versions.
 

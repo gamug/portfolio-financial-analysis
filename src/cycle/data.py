@@ -52,18 +52,19 @@ def active_universe(
 def latest_metrics(
     conn: Database, cycle_date: str, versions: MetricVersions
 ) -> dict[int, dict[str, float | None]]:
-    """asset_id -> {"group.name": value} from each asset's newest filing *public* by
-    *cycle_date* (``filing_date <= cycle_date``, T-106 -- never one whose period merely ended
-    by then), read from the metrics engine *versions* the run resolved (T-090) -- never every
-    version. A filing with no ``filing_date`` cannot be shown to be public and is skipped."""
+    """asset_id -> {"group.name": value} from each asset's newest filing *usable* on
+    *cycle_date* (``available_at <= cycle_date``, the first trading day after its filing date,
+    T-106/T-107 -- never one whose period merely ended by then, nor one filed that very day),
+    read from the metrics engine *versions* the run resolved (T-090) -- never every version. A
+    filing with no ``filing_date`` has no ``available_at`` and is skipped."""
     rows = conn.execute(
         """
         WITH known AS (
             SELECT f.id, ROW_NUMBER() OVER (
-                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.filing_date DESC, f.id DESC
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
             ) AS rn
             FROM sec_filings f
-            WHERE f.period_end IS NOT NULL AND f.filing_date IS NOT NULL AND f.filing_date <= ?
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
         SELECT f.asset_id, m.metric_group, m.metric_name, m.value
         FROM fundamental_metrics m
@@ -105,17 +106,17 @@ class DataQuality:
 
 
 def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> DataQuality:
-    """The quarantines and HARD issues recorded against each asset's latest *public* filing
-    (the same filing :func:`latest_metrics` reads, T-106), for the metric *versions* the run resolved and the
+    """The quarantines and HARD issues recorded against each asset's latest *usable* filing
+    (the same filing :func:`latest_metrics` reads, T-106/T-107), for the metric *versions* the run resolved and the
     current gate version only. A SOFT, unquarantined issue is a review item and is skipped."""
     rows = conn.execute(
         """
         WITH known AS (
             SELECT f.id, ROW_NUMBER() OVER (
-                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.filing_date DESC, f.id DESC
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
             ) AS rn
             FROM sec_filings f
-            WHERE f.period_end IS NOT NULL AND f.filing_date IS NOT NULL AND f.filing_date <= ?
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
         SELECT f.asset_id, d.metric_group, d.metric_name, d.rule_id, d.severity,
                d.quarantined, d.value
@@ -160,11 +161,10 @@ def latest_price_observation(conn: Database, cycle_date: str) -> dict[int, dict[
 
 
 def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
-    """Each asset's newest FUNDAMENTAL snapshot whose filing was public by *cycle_date*
+    """Each asset's newest FUNDAMENTAL snapshot usable on *cycle_date*
     (``id, asset_id, event_time, raw_value, normalized_score``). A FUNDAMENTAL row's
-    ``event_time`` is its period end -- what the score is *about* -- not when it became known,
-    so availability is read off the filing it scores (T-106). A row with no filing, or a
-    filing with no ``filing_date``, cannot be shown to be public and is skipped."""
+    ``event_time`` is its period end -- what the score is *about* -- not when it became known;
+    that is its ``available_at``, the first trading day after its filing's date (T-107)."""
     return conn.execute(
         """
         WITH known AS (
@@ -173,9 +173,8 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
                        PARTITION BY s.asset_id ORDER BY s.event_time DESC, s.id DESC
                    ) AS rn
             FROM score_snapshot s
-            JOIN sec_filings f ON f.id = s.filing_id
             WHERE s.score_type = 'FUNDAMENTAL'
-              AND f.filing_date IS NOT NULL AND f.filing_date <= ?
+              AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
         SELECT id, asset_id, event_time, raw_value, normalized_score FROM known WHERE rn = 1
         ORDER BY asset_id
@@ -185,7 +184,7 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
 
 
 def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score public by *cycle_date*."""
+    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
 
 
@@ -217,16 +216,16 @@ def market_cap_estimates(
     versions: MetricVersions,
 ) -> dict[int, float | None]:
     """Read market cap straight off the stored valuation metric inputs of the resolved
-    *versions* (T-090), when present; the most recent filing per asset *public by
-    cycle_date* wins (T-106 -- a 2023 cycle must not read a 2026 market cap)."""
+    *versions* (T-090), when present; the most recent filing per asset *usable on
+    cycle_date* wins (T-106/T-107 -- a 2023 cycle must not read a 2026 market cap)."""
     rows = conn.execute(
         """
         SELECT f.asset_id, m.inputs_json
         FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
         WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
           AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
-          AND f.filing_date IS NOT NULL AND f.filing_date <= ?
-        ORDER BY f.period_end, f.filing_date, f.id
+          AND m.available_at IS NOT NULL AND m.available_at <= ?
+        ORDER BY f.period_end, m.available_at, f.id
         """,
         (versions.json_param(), cycle_date),
     ).fetchall()
