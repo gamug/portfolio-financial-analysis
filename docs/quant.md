@@ -182,17 +182,20 @@ for reports.
 | `risk_parity` | equal risk contribution (Spinu 2013: `minimize 0.5 wᵀΣw − Σ log wᵢ`, then normalize); μ-free, more diversified than `min_var`. A water-fill cap keeps it inside `max_name_weight` if that binds (it does not on a ~500-name book). |
 | `tangency` | y-space transform `minimize yᵀΣy s.t. (μ−rf)ᵀy = 1, y ≥ 0`, `w = y/Σy`; falls back to a frontier scan when there is no long-only tangency or a turnover cap is set |
 | `target_vol` | SOCP `maximize μᵀw s.t. wᵀΣw ≤ target_vol²`; falls back to `min_var` (`status = vol_infeasible`) when the target is below the min-var vol. `target_vol` defaults to 1.25× the min-var vol when unset |
-| `frontier` | k-point sweep from the min-var return to the max feasible return; if μ has no cross-sectional signal the frontier collapses to the min-var point and k copies of it are returned |
+| `frontier` | k-point sweep from the min-var return to the max feasible return; if μ has no cross-sectional signal the frontier collapses and one point — the min-var portfolio, `status = "degenerate"` — represents it, not k copies mislabelled `optimal` as if a real sweep had run (T-112) |
 
 **Why the frontier can collapse.** `μ` estimated from ~5 y of daily returns has a
 standard error (~`σ/√T` ≈ 11 pp/name) far larger than the true spread in expected
 returns, so `james_stein` shrinks it nearly flat. A near-constant `μ` makes every
-portfolio's expected return ≈ the same, so `tangency` and every frontier point
-reduce to the global minimum-variance portfolio. This is the estimator refusing
-to bet on noise, not a bug — and it is why `min_var` (which never touches `μ`) is
-the headline. The `equilibrium` default sidesteps it: equilibrium `μ` has real
-dispersion by construction, so the frontier fans out and `tangency` becomes a
-capped cap-weight tilt. `risk_parity` and `min_var` are unaffected either way.
+portfolio's expected return ≈ the same, so `tangency` and the frontier both
+reduce to the global minimum-variance portfolio — `efficient_frontier` detects
+this (no feasible return range above `r_min`) and returns that one point, marked
+`degenerate`, rather than a `k`-point sweep that never actually happened (T-112).
+This is the estimator refusing to bet on noise, not a bug — and it is why
+`min_var` (which never touches `μ`) is the headline. The `equilibrium` default
+sidesteps it: equilibrium `μ` has real dispersion by construction, so the
+frontier fans out and `tangency` becomes a capped cap-weight tilt. `risk_parity`
+and `min_var` are unaffected either way.
 
 Shared hard constraints: fully invested (`Σw = 1`), long only (`w ≥ 0`), per-name
 box (`w ≤ max_name_weight`), per-GICS-sector caps (`Σ_{i∈s} wᵢ ≤ max_sector_weight`
