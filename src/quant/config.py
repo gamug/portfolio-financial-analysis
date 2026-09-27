@@ -53,6 +53,11 @@ class QuantSettings(BaseModel):
     liquidity_min_dollar_volume: float = 5_000_000.0
     liquidity_lookback_days: int = 21
     exclude_hard_vetoed: bool = True
+    # T-110: build-risk-model refuses an --analysis-date/--as-of past price_daily's last
+    # stored date (the price spine) -- proceeding would silently build a model claiming to
+    # be "as of" a date the price data doesn't actually reach yet. Meant for a deliberate
+    # run ahead of the spine (e.g. testing), not routine use.
+    allow_stale_prices: bool = False
 
     # --- return panel / risk model ---
     lookback_days: int = 756

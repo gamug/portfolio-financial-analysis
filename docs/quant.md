@@ -17,10 +17,12 @@ uv run python -m quant backfill-actions [--from 2022-01-01] [--analysis-date TOD
 uv run python -m quant build-returns    [--from 2022-01-01] [--analysis-date TODAY]
 uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
+                                        [--allow-stale-prices]  # override the price-spine guard, T-110
 uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
                                 [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
+                                [--allow-stale-prices]
 uv run python -m quant benchmark --from 2026-06-30 --analysis-date TODAY     # --from required: the panel is gated as of it
 uv run python -m quant load-benchmark --csv spy_tr.csv --benchmark SPY_TR      # columns: date,total_return_level
 uv run python -m quant evaluate  [--from 2026-06-01] --analysis-date TODAY [--benchmark SP500_EW_INTERNAL|SPY_TR]
@@ -39,6 +41,13 @@ Every subcommand takes `--analysis-date YYYY-MM-DD` (default: today). For
 alias; disagreeing values error). For the `--from`/`--to` subcommands it is the
 range upper bound — `--to` is clamped to it and `quant_run.as_of` is stamped with it.
 Every `quant_run` records `code_version`.
+
+`build-risk-model`/`optimize` refuse an as-of past `price_daily`'s last stored date (the
+price spine) — proceeding would silently build a model that claims to be "as of" a date the
+price data doesn't actually reach yet (T-110) — unless `--allow-stale-prices`, which records
+why on the run (`quant_run.params_json`, and a CLI `WARNING`). `optimize` inherits the check
+whenever it auto-builds a risk model; reusing an already-stored one performs no fresh price
+read, so it isn't re-checked.
 
 `QuantSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` is optional (the
 point-in-time universe reads — `load_universe_asset_ids` / `load_assets` /

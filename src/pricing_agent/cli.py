@@ -46,7 +46,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_cmd.add_argument(
         "--observations",
         action="store_true",
-        help="also derive per-day price analytics (ATR, rolling vol, drawdown) to price_observation",
+        help="also derive per-day price analytics (ATR, rolling vol, drawdown) to "
+        "price_observation; needs --store-daily (T-110), since an observation is an "
+        "analytic over a specific stored price_daily bar",
     )
     run_cmd.add_argument(
         "--fresh", action="store_true", help="recompute windows even if already stored"
@@ -73,11 +75,18 @@ def _split(value: str | None) -> list[str] | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
     if args.command == "coverage":
         return coverage_from_args(args)
+    if args.observations and not args.store_daily:
+        parser.error(
+            "--observations needs --store-daily: price_observation rows are per-day "
+            "analytics over a specific price_daily bar, and writing them without also "
+            "storing that bar leaves an orphan observation date (T-110)"
+        )
     settings = Settings.load()
     updates: dict[str, Path] = {}
     if args.db:

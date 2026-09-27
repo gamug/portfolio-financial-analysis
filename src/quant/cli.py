@@ -13,6 +13,7 @@ from pathlib import Path
 
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
+from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -58,6 +59,12 @@ _CORPACT_VERSION_HELP = (
     "pin one corporate-action engine (corpact-v1, >=corpact-v1, latest) instead of the "
     "per-asset priority. The series is append-only per return engine, so a different choice "
     "only takes effect under a new return engine version"
+)
+_ALLOW_STALE_PRICES_HELP = (
+    "override the price-spine guard (T-110) and build/optimize at a --analysis-date/--as-of "
+    "past price_daily's last stored date -- the model would silently read prices weeks stale "
+    "while claiming to be as of a later date; for a deliberate run ahead of the spine, not "
+    "routine use"
 )
 
 
@@ -105,6 +112,7 @@ def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.Argume
     rm.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     rm.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
+    rm.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     _add_profile(rm)
     _add_dry_run(rm)
 
@@ -129,6 +137,7 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
+    op.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     _add_profile(op)
     _add_dry_run(op)
 
@@ -245,6 +254,8 @@ def _settings(args: argparse.Namespace) -> QuantSettings:
     objectives = getattr(args, "objectives", None)
     if objectives:
         updates["objectives"] = [o.strip() for o in objectives.split(",") if o.strip()]
+    if getattr(args, "allow_stale_prices", False):
+        updates["allow_stale_prices"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -301,7 +312,7 @@ def _run_versions(settings: QuantSettings) -> int:
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
     try:
         res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
-    except VersionError as exc:
+    except (VersionError, StaleAsOf) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
     shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
@@ -310,13 +321,19 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
         f"cov={res.cov_estimator} (shrink {shr}), {res.cov_rows} cov rows, "
         f"manifest {res.manifest_tag}"
     )
+    if res.stale_prices_bypassed is not None:
+        print(
+            f"  WARNING: --allow-stale-prices overrode the price-spine guard "
+            f"({res.stale_prices_bypassed})",
+            file=sys.stderr,
+        )
     return 0
 
 
 def _run_optimize(settings: QuantSettings, as_of: str) -> int:
     try:
         opt = run_optimize(settings, as_of=as_of)
-    except VersionError as exc:
+    except (VersionError, StaleAsOf) as exc:
         print(f"optimize: {exc}", file=sys.stderr)
         return 1
     books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())
@@ -324,6 +341,12 @@ def _run_optimize(settings: QuantSettings, as_of: str) -> int:
         f"optimize @ {opt.as_of} (model {opt.model_id}): books [{books}], "
         f"{opt.frontier_points} frontier points, manifest {opt.manifest_tag}"
     )
+    if opt.stale_prices_bypassed is not None:
+        print(
+            f"  WARNING: --allow-stale-prices overrode the price-spine guard "
+            f"({opt.stale_prices_bypassed})",
+            file=sys.stderr,
+        )
     return 0
 
 

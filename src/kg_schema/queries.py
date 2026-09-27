@@ -238,6 +238,34 @@ def _distinct_ids(db: Database, sql: str, params: tuple[object, ...]) -> set[int
         return set()
 
 
+class StaleAsOf(RuntimeError):
+    """A ``quant``/``cycle`` ``as_of`` is past the price spine's last stored date (T-110)."""
+
+
+def last_price_date(conn: Database) -> str | None:
+    """The most recent date ``price_daily`` actually holds a bar for -- the price spine's
+    right edge. ``None`` if ``price_daily`` has no rows yet (or doesn't exist in this DB)."""
+    try:
+        row = conn.execute("SELECT MAX(date) AS d FROM price_daily").fetchone()
+    except DatabaseError:
+        return None
+    return str(row["d"]) if row and row["d"] is not None else None
+
+
+def stale_as_of_reason(conn: Database, as_of: str) -> str | None:
+    """Why *as_of* is past the price spine's last stored date (T-110) -- or ``None`` when
+    it's safe to proceed. A run dated past what prices actually exist for reads/analyzes
+    data that is, at best, weeks stale while claiming to be "as of" a later date.
+
+    ``None`` is also returned when ``price_daily`` has no rows at all: a completely empty
+    spine is a different problem (no price data whatsoever) than a stale *as_of*, and
+    surfaces on its own via the gate/panel/universe checks each caller already has."""
+    last = last_price_date(conn)
+    if last is None or as_of <= last:
+        return None
+    return f"{as_of} is past price_daily's last stored date ({last})"
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,
@@ -419,15 +447,18 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
 
 __all__ = [
     "SUPPORTED_UNIVERSE",
+    "StaleAsOf",
     "UniverseMember",
     "check_coverage",
     "connect_ro",
     "current_version",
     "ensure",
+    "last_price_date",
     "members_asof",
     "persist_coverage",
     "reconcile",
     "record",
     "resolve_asset_ids",
+    "stale_as_of_reason",
     "symbols_asof",
 ]
