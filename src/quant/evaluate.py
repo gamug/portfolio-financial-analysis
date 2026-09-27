@@ -1,5 +1,11 @@
-"""Forward evaluation: each persisted book's realized return vs the internal
-benchmark and vs the live ``portfolio_position`` book.
+"""Forward evaluation: each persisted book's realized return vs a benchmark and vs the live
+``portfolio_position`` book.
+
+The benchmark is the internal equal-weight index over the investable universe gated as of the
+window's start (``SP500_EW_INTERNAL``, rebuilt on every run, T-108) -- never a book's own
+hard-veto exclusions, so a veto can't show up as alpha against the yardstick it's graded
+against -- or an external series already loaded with ``quant load-benchmark`` (e.g.
+``SPY_TR``), read -- never overwritten -- here.
 
 Weights are frozen at the book's as-of date; realized daily return is the
 weighted simple total return of the held names. The live cycle book is snapshotted
@@ -9,6 +15,7 @@ single join (``v_quant_vs_live`` / ``v_quant_benchmark_performance``).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from portfolio_common.db import Database
@@ -19,6 +26,7 @@ from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
+    benchmark_engine_versions,
     earliest_portfolio_as_of,
     ensure_schema,
     insert_portfolio,
@@ -30,14 +38,19 @@ from quant.db import (
     upsert_benchmark_performance,
 )
 from quant.state import fail_run, finish_run, open_run
+from quant.universe import benchmark_gate
 
-PERF_ENGINE_VERSION = "perf-v1"
+# perf-v2 (T-108): active returns against bench-v2 (or a loaded external series); perf-v1's
+# were against bench-v1's mean-of-log index, so they stay as written, under their version.
+PERF_ENGINE_VERSION = "perf-v2"
 
 
 @dataclass
 class EvaluateResult:
     date_from: str  # the resolved value, even when the caller omitted --from
-    benchmark_rows: int
+    benchmark_rows: int  # rows (re)built; 0 for a loaded external series
+    benchmark_version: str
+    panel: list[int]  # the internal benchmark's gated panel; empty for an external series
     books_evaluated: int
     perf_rows: int
     live_book_id: int | None
@@ -50,6 +63,7 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     *,
     date_to: str,
     benchmark: str,
+    benchmark_version: str,
     return_engine_version: str,
 ) -> int:
     weights = load_book_weights(conn, portfolio_id)
@@ -58,7 +72,9 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     fwd = load_forward_simple_returns(
         conn, list(weights), after=as_of, until=date_to, engine_version=return_engine_version
     )
-    bench = load_benchmark_returns(conn, benchmark, after=as_of, until=date_to)
+    bench = load_benchmark_returns(
+        conn, benchmark, after=as_of, until=date_to, engine_version=benchmark_version
+    )
     cumulative = 1.0
     rows: list[tuple[str, float, float, str | None, float | None, float | None]] = []
     for d in sorted(fwd):
@@ -99,6 +115,36 @@ def _snapshot_live_book(
     return pid
 
 
+def _benchmark(
+    conn: Database, settings: QuantSettings, benchmark: str, *, date_from: str, date_to: str
+) -> tuple[int, str, list[int]]:
+    """``(rows built, version to read, panel)`` for *benchmark* over the window. The internal
+    index is rebuilt over the investable universe as of *date_from* -- the same liquidity and
+    history gate a book is built from, but never a book's own hard-veto exclusions (T-108); an
+    external series must already be loaded and is only read."""
+    if benchmark == INTERNAL_EW:
+        gate = benchmark_gate(conn, settings, as_of=date_from)
+        if not gate.asset_ids:
+            raise ValueError(f"the benchmark's universe gate is empty as of {date_from}")
+        rows = build_internal_benchmark(
+            conn,
+            asset_ids=gate.asset_ids,
+            date_from=date_from,
+            date_to=date_to,
+            return_engine_version=settings.return_engine_version,
+            engine_version=settings.benchmark_engine_version,
+            benchmark=benchmark,
+        )
+        return rows, settings.benchmark_engine_version, gate.asset_ids
+    versions = benchmark_engine_versions(conn, benchmark, after=date_from, until=date_to)
+    if not versions:
+        raise ValueError(
+            f"no {benchmark} returns stored in ({date_from}, {date_to}] -- load the series "
+            "with 'quant load-benchmark' first"
+        )
+    return 0, versions[0], []
+
+
 def run_evaluate(
     settings: QuantSettings,
     *,
@@ -137,14 +183,15 @@ def run_evaluate(
             code_version=code_version(),
         )
         try:
-            bench_rows = build_internal_benchmark(
-                conn,
-                date_from=date_from,
-                date_to=date_to,
-                return_engine_version=settings.return_engine_version,
-                engine_version=settings.benchmark_engine_version,
-                benchmark=benchmark,
+            bench_rows, bench_version, panel = _benchmark(
+                conn, settings, benchmark, date_from=date_from, date_to=date_to
             )
+            conn.execute(
+                "UPDATE quant_run SET params_json = json_set(params_json, "
+                "'$.benchmark_version', ?, '$.benchmark_panel', json(?)) WHERE id = ?",
+                (bench_version, json.dumps(panel), run_id),
+            )
+            conn.commit()
             live_id = _snapshot_live_book(conn, settings, date_from, run_id)
 
             books = conn.execute(
@@ -160,6 +207,7 @@ def run_evaluate(
                     str(b["as_of"]),
                     date_to=date_to,
                     benchmark=benchmark,
+                    benchmark_version=bench_version,
                     return_engine_version=settings.return_engine_version,
                 )
                 perf_rows += added
@@ -171,6 +219,8 @@ def run_evaluate(
         return EvaluateResult(
             date_from=date_from,
             benchmark_rows=bench_rows,
+            benchmark_version=bench_version,
+            panel=panel,
             books_evaluated=evaluated,
             perf_rows=perf_rows,
             live_book_id=live_id,

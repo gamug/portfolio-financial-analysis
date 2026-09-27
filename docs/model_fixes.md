@@ -2194,3 +2194,128 @@ the calendar day of the SEC's acceptance, not the first session that could act o
   identical to the copy. Schema v8; 0 rows without `available_at`; 0 copies differing from
   their filing; `quick_check` ok, FK clean. The live cycle reads the same 20 scores and 16
   market caps.
+
+## T-108 — the internal benchmark compounded the mean of log returns over every name
+
+**Status**: Fixed 2026-09-26 (branch `fix/t108-benchmark-simple-mean`, `T-108`).
+
+### Symptom
+
+`SP500_EW_INTERNAL` (`bench-v1`), the yardstick every book's `active_return` is measured
+against, compounded the cross-sectional **mean of log returns**. On production's 20-name
+panel over 2022-01-04 to 2026-08-27, that formula gives 5.98 %/yr against 10.32 %/yr for a
+true daily-rebalanced equal weight: −4.34 pp/yr (the audit measured −6.98 pp/yr on the full
+universe). The series actually stored was staler still, built before the current return
+series, and compounds at 1.24 %/yr. The index also averaged every name with a row that day,
+not the gated panel the books are drawn from. `evaluate --benchmark X` for any X rebuilt
+the internal index **under the name X**, so a loaded external series would have been
+overwritten.
+
+### Root cause
+
+A portfolio's return is the weighted average of its constituents' *simple* returns. The mean
+of log returns is the log of their *geometric* mean, which by Jensen's inequality is lower by
+about half the cross-sectional variance each day (for +10 % and −10 %: 0 % against
+−0.50 %/day). Log returns add up across *time*, not across *assets*.
+
+### Theoretical/technical reference
+
+- "Portfolio return is the proportion-weighted combination of the constituent assets'
+  returns" (Wikipedia, *Modern portfolio theory*, "Risk and expected return",
+  https://en.wikipedia.org/wiki/Modern_portfolio_theory, verified 2026-09-26). The returns
+  combined there are simple returns.
+- "Logarithmic returns are time-additive" (Wikipedia, *Rate of return*,
+  https://en.wikipedia.org/wiki/Rate_of_return, verified 2026-09-26): additivity across
+  periods, which is why the per-name series is stored as logs, and nothing more.
+
+### Fix
+
+- **`bench-v2`**: each day's return is `mean(expm1(tr_log_return))` over the panel names
+  with a return that day (a name missing a day is left out of that day's mean, not counted
+  as 0 %). `log_return = log1p(mean)`, and the level compounds `(1 + r)`.
+- **The panel is the investable universe**: `quant.universe.benchmark_gate(conn, settings,
+  as_of=)`, the same liquidity/history knobs `build-risk-model`'s `settings_gate` uses, but
+  never a book's own hard-veto exclusion -- a veto is inside the strategy being graded, so it
+  can't also shrink the yardstick it's graded against. Evaluated as of the window's start
+  (`evaluate --from`, or `benchmark --from`, now required). `evaluate` records the version and
+  the panel on its `quant_run` row.
+- **Graded against what was built**: `evaluate` reads the benchmark version it just built
+  (or, for an external series, the newest loaded version), not whatever `v_benchmark_series`
+  shows. It writes `perf-v2`; `perf-v1` rows stay under their version, and
+  `v_quant_benchmark_performance` shows the latest version per (book, date).
+- **External series**: `quant load-benchmark --csv FILE --benchmark NAME` loads a
+  total-return level series (`date,total_return_level`) as `csv-v1`, refusing unsorted,
+  duplicate, non-ISO or non-positive rows. `evaluate` only reads such a series, and refuses
+  when none is loaded for the window.
+
+### Design decisions
+
+- **Gate as of the window's start.** A book is frozen at its as-of date over the names the
+  gate admitted then, so the fair comparison holds the same names. Gating each day would let
+  names enter on information the book never had.
+- **Missing name-days are renormalized**, the usual equal-weight index convention. How a
+  *book* treats a missing asset-day is `T-111`'s question.
+- **New versions, nothing overwritten**: `bench-v1` and `perf-v1` stay readable under their
+  versions for comparison.
+
+### Verification
+
+- `tests/test_benchmark.py` (21 tests). The T-108 acceptance: the index matches an
+  independent value-based equal-weight calculation (1/n stakes, rebalanced daily) to 1e-9,
+  level and return, day by day. Also covered: missing-day renormalization; names outside the
+  panel ignored; +10 %/−10 % stays flat where v1 reports −2.5 % in five days; empty panel
+  refused; CSV loading and every malformed case; `evaluate` over the gated panel (a member
+  with short history left out), under `perf-v2` and against the version it built even when
+  the view prefers a stale one; external series read and never overwritten; the view
+  showing one row per book and day; both commands.
+- 9 mutations (log mean restored, panel ignored, missing day as 0 %, external overwritten,
+  perf version not bumped, view unfiltered, CSV order unchecked, view read instead of the
+  built version, benchmark panel not the books' gate): all caught.
+- **Production copy** (`quant evaluate`, dry run, pre-correction): the benchmark was rebuilt
+  over the 20 names gated as of 2026-06-30, still under a book's own hard-veto exclusion at
+  that point. Superseded below.
+
+### Post-merge correction: a human reviewer caught three real gaps
+
+@eldova1702 approved (688 tests, ruff/format/mypy clean, bench-v2 independently reproduced to
+1e-15) but flagged three issues before any production `quant evaluate`, all confirmed and
+addressed the same day (2026-09-26):
+
+1. **The benchmark panel was still gated by the strategy's own hard veto.** `_benchmark`
+   (`quant/evaluate.py`) and the `benchmark` CLI command both called `settings_gate`, which
+   applies `settings.exclude_hard_vetoed` (default `True`) -- the same veto filter a book is
+   built under. That puts the veto inside the yardstick, so it can never show up as active
+   return: on the 20-name production panel that dropped 3 names at T-1. **Fix**: a new
+   `quant.universe.benchmark_gate` -- `settings_gate`'s knobs with `exclude_hard_vetoed`
+   forced `False` -- is what `_benchmark` and the `benchmark` command build the panel from;
+   `settings_gate` (still veto-aware) stays what `build-risk-model` and `persist` build a
+   book from. New tests: `test_benchmark_gate_keeps_a_hard_vetoed_name_a_book_would_drop`
+   (`tests/test_quant_gate.py`) and
+   `test_evaluate_s_benchmark_panel_keeps_a_hard_vetoed_name_a_book_would_drop`
+   (`tests/test_benchmark.py`).
+2. **The dry run's "live book" was a stale snapshot.** `quant_portfolio` id 4 (as-of
+   2026-06-30, `BF.B = 0.10`) is a T-104 leftover from a reverted run, not the current live
+   book; the −6.16 % → −6.91 % comparison built on it has no meaning and is withdrawn above.
+   That snapshot and its 41 `perf-v1`/`perf-v2` rows must be voided before any production
+   `quant evaluate` -- an operational step against the production database, outside what this
+   PR's code changes.
+3. **Active return should be reported compounded, not summed daily.** Summing
+   `active_return` across days is not the compounded gap between the book's and the
+   benchmark's cumulative returns; it was the wrong statistic even before finding 2 made the
+   underlying book moot. A corrected dry-run figure needs a re-run against a current
+   production copy, over the real live book, with the benchmark now built by
+   `benchmark_gate` -- deferred to that re-run rather than restated here without one.
+
+Full suite after the correction: see `Verification` above for the count; the new gate/evaluate
+tests are additions on top of it.
+
+### Residual scope, deliberately deferred
+
+- Books with a later as-of inside one `evaluate` window are graded against the panel gated
+  at the window's start. The three production books dated 2026-09-22 have no forward prices
+  yet (`T-110`).
+- No external series is loaded yet; obtaining a cap-weighted total-return file is a
+  data-acquisition step.
+- A fresh production dry run (correct panel, real live book, compounded active return) is
+  needed before `quant evaluate` runs against production; the stale `quant_portfolio` id 4
+  snapshot and its 41 perf rows must be voided first (post-merge correction, above).

@@ -93,7 +93,9 @@ Projection semantics
                           ``v_portfolio_position``).
 ``v_quant_frontier_point`` the efficient-frontier sweep per risk model.
 ``v_quant_benchmark_performance`` forward realized daily / cumulative return of a frozen
-                          book, and its active return vs the internal benchmark.
+                          book, and its active return vs the benchmark; the latest
+                          ``engine_version`` per (book, date) -- ``perf-v1`` rows (graded
+                          against ``bench-v1``) stay stored under their version (T-108).
 ``v_quant_vs_live``       per-name weight of every optimized book beside the live
                           ``portfolio_position`` book as of the same date (active weight).
                           Plus (T-042) one ``kind = 'LIVE_ONLY'`` row per live position held
@@ -369,6 +371,11 @@ VIEWS: dict[str, str] = {
                bp.engine_version, bp.computed_at
         FROM quant_benchmark_performance bp
         JOIN quant_portfolio qp ON qp.id = bp.portfolio_id
+        WHERE bp.engine_version = (
+            SELECT bp2.engine_version FROM quant_benchmark_performance bp2
+            WHERE bp2.portfolio_id = bp.portfolio_id AND bp2.date = bp.date
+            ORDER BY bp2.computed_at DESC, bp2.id DESC LIMIT 1
+        )
     """,
     "v_quant_vs_live": """
         CREATE VIEW v_quant_vs_live AS
