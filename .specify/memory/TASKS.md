@@ -463,12 +463,27 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       714); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-012 and `docs/quant.md`/
       `docs/cycle.md`/`docs/fundamental_agent.md`/`docs/kg_schema.md` updated. Record:
       `docs/model_fixes.md` "T-114".
-- [ ] **T-115** *(P1)* `cycle backfill` cannot replay history: it calls the live
+- [x] **T-115** *(P1)* `cycle backfill` cannot replay history: it calls the live
       `run_selection`, which mutates `portfolio_position` — since `T-097` it is refused as
       soon as a newer live book exists, and it has no override — and the checkpoint guard skips
       any already-completed (type, date) with no force option. Route replay positions to a
       separate simulated-book table and add a force/re-run flag. **Acceptance**: a full replay
       leaves the live book untouched and can be re-run after a fix.
+      **Done 2026-09-27.** New `portfolio_position_replay` table (`kg_schema.ddl`) — same shape
+      and T-104 triggers as `portfolio_position`, never read by or refused for conflicting with
+      it; `cycle_run.cycle_type` gains `'REPLAY'`. New `cycle/replay.py`:
+      `out_of_order_replay_reason`/`sync_replay_positions` (the live guard/writer's own shape,
+      against the replay table) and `reset_replay_range(conn, date_from, date_to)` (`--force`'s
+      implementation — drops/reopens the range's replay stints and drops its `cycle_run` rows so
+      every step re-executes, untouched outside the range). `cycle.orchestrator.run_replay` is
+      `backfill`'s new entrypoint (`cycle_type='REPLAY'`, same step sequence as `run_selection`);
+      the `positions` step branches on `cycle_type` to call the replay path instead of
+      `writers.sync_positions`, with no `--allow-backdated`-style override (nothing to override
+      once `--force` resets the range up front). `cycle/cli.py`'s `backfill` now calls
+      `run_replay`; new `--force` flag calls `reset_replay_range` once before the date loop.
+      8 new tests in `tests/test_cycle.py`. Full suite 747 passed (was 739); ruff, format, mypy,
+      pre-commit clean. `docs/cycle.md`, `docs/kg_schema.md`, `SPEC.md`'s schema table updated.
+      Record: `docs/model_fixes.md` "T-115".
 - [ ] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
       (`LEVERAGE_EXTREME` negative-equity branch, `DQ_NEG_EQUITY`'s HARD condition). Both use
       `debt_to_assets > 0.8` or `interest_coverage < 1.5`; the audit shows the first never
@@ -631,9 +646,9 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112`, `T-113` and `T-114` are done too (2026-09-27); `T-070`–`T-084` and
-`T-115`–`T-116` have not started. Execute
-**Work item 14**'s remaining P1 tasks (`T-115`–`T-116`; `T-116` after
+`T-111`, `T-112`, `T-113`, `T-114` and `T-115` are done too (2026-09-27); `T-070`–`T-084` and
+`T-116` have not started. Execute
+**Work item 14**'s remaining P1 task (`T-116`, after
 `T-105`) → `T-121`/`T-122`/`T-123`/`T-124` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

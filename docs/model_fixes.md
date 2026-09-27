@@ -3039,3 +3039,111 @@ before merge):
   production corrections those runs' *other* defects need; being dirty was a symptom pointing
   at them, not a defect requiring its own separate cleanup once the runs it flagged are
   otherwise corrected or accepted).
+
+## T-115 — `cycle backfill` could not replay history without risking the live book
+
+**Status**: Fixed 2026-09-27 (`T-115`).
+
+### Symptom
+
+`cycle backfill --from D1 --to D2` called the same live `run_selection` a real `cycle select`
+uses, looping it over the date range. Flagged as residual scope by `T-097`'s own entry above
+("`cycle backfill` ... has no `--allow-backdated` flag of its own and will hit the same
+`OutOfOrderCycle` refusal, with no way to override it from that path"): the moment the live
+`portfolio_position` book already held an entry dated later than the range being backfilled —
+true of almost any real historical replay, since backfill exists precisely to recompute *past*
+dates against an already-running production book — every one of `sync_positions`'s two guards
+(`out_of_order_reason`'s pre-check, and its own unconditional "would end positions opened
+later" invariant) refused the run, with no override on that path. Separately, `cycle_run` is
+unique per `(cycle_type, cycle_date)`; a `backfill` invocation covering a date already
+completed (by an earlier `backfill` attempt, or by a real `select`) silently resumed that same
+row and skipped every checkpointed step — including `"positions"` — so re-running backfill
+after fixing a bug in an upstream stage never actually recomputed the dates it needed to.
+
+### Root cause
+
+`backfill` was never given its own write path or its own run-log identity — it reused
+`SELECTION`'s exactly, which is correct for computing scores/vetoes/ranking (there is only one
+right answer for a given date and metrics version) but wrong for positions specifically: a
+historical replay's positions are a simulation, not the one production book every other repo
+reads as ground truth, and conflating the two made the live book's own out-of-order protection
+(`T-097`) an unintended obstacle to replaying history at all.
+
+### Fix
+
+- `kg_schema.ddl`: new `portfolio_position_replay` table — the same columns, `UNIQUE
+  (asset_id, valid_from)` key, and T-104 valid_to-before-valid_from triggers as
+  `portfolio_position`, but written only by a replay. `cycle_run.cycle_type` gains a third
+  value, `'REPLAY'`, alongside `'SELECTION'`/`'MONITORING'`.
+- `src/cycle/replay.py` (new): `out_of_order_replay_reason` / `sync_replay_positions` — the
+  same shape as `writers.out_of_order_reason` / `writers.sync_positions`, against
+  `portfolio_position_replay` instead of `portfolio_position`, kept as their own literal-SQL
+  functions rather than a table-name-parameterized version of the live ones (Code & Git #10:
+  an identifier a `?` placeholder can't bind must never be built from a variable, even one
+  this module fully controls — an automated SAST scanner flags the pattern itself). Also
+  `reset_replay_range(conn, date_from, date_to)`: `--force`'s implementation — deletes any
+  replay stint opened inside the range (the redo decides whether it ever existed), reopens
+  any it closed inside the range (the redo decides when, if ever, it closes again), and drops
+  the range's `cycle_run` rows (cascading to their checkpoints/ranking) so every step
+  re-executes instead of being skipped as already `"done"` — all left untouched outside the
+  range.
+- `src/cycle/orchestrator.py`: a new public entrypoint, `run_replay` (same step sequence as
+  `run_selection`, `cycle_type='REPLAY'`); the `"positions"` step branches on `cycle_type` —
+  `REPLAY` checks `out_of_order_replay_reason`/calls `sync_replay_positions`, with **no**
+  `--allow-backdated`-style override (there is nothing to override: `--force` resets the
+  requested range up front instead, so a normal, in-range replay write is never out of order
+  to begin with); anything else keeps `T-097`'s existing live-book path unchanged.
+- `src/cycle/cli.py`: `backfill` now calls `run_replay`, not `run_selection`; new `--force`
+  flag calls `reset_replay_range` once, before the date loop, over the requested
+  `--from`/`--to` (printing that it did, the same convention as the other bypass `WARNING`s).
+
+### Design decisions
+
+- **One replay table, not a per-batch/per-experiment one.** T-115's acceptance criterion is a
+  single "a full replay" that "can be re-run after a fix," not concurrent independent replay
+  experiments over overlapping ranges — `portfolio_position_replay` mirrors
+  `portfolio_position`'s own single-continuous-timeline shape exactly (one implicit book,
+  the same way there is one implicit live book), rather than adding a `cycle_replay_batch`
+  table and threading a batch id through every row, which nothing here actually needs yet.
+- **`--force` resets a date range, not the whole table.** Scoping the wipe to exactly
+  `--from`/`--to` means a replay of one window doesn't discard a separately-replayed,
+  non-overlapping window — cheap to guarantee (two `DELETE`/`UPDATE ... WHERE valid_from
+  BETWEEN`) and strictly safer than an unconditional truncate, at no extra complexity.
+- **The out-of-order guard still exists for the replay book, without an override flag of its
+  own.** A *forced* range is always internally consistent (reset, then replayed strictly
+  forward) so it never trips; the guard exists only to catch a genuinely new, never-before-
+  replayed date that happens to be older than the replay book's current latest — a real
+  footgun (an unrelated later `backfill` call landing before an earlier historical range you
+  never got around to), not a case that needs its own bypass: the fix is to `--force` a wide
+  enough range, not to write around the inconsistency it would otherwise create.
+
+### Verification
+
+- 8 new tests in `tests/test_cycle.py`: the pure `out_of_order_replay_reason` function (no
+  rows → safe; newer/same date → safe; older date → a reason naming both dates and
+  `--force`); a replay writes only `portfolio_position_replay` (the live book stays at 0
+  rows) under `cycle_run.cycle_type = 'REPLAY'`; a replay at a date older than an
+  *already-established live* book succeeds (proving isolation from `T-097`, which the old
+  backfill-via-`run_selection` path did not have); resuming the same replay date a second
+  time skips `"positions"` and does not duplicate rows; a genuinely new, older replay date is
+  refused (`OutOfOrderCycle`, naming `--force`) with the replay book left exactly as before;
+  `reset_replay_range` lets a completed date recompute (`"positions"` runs again, not
+  skipped) and leaves every other date's stints untouched; the `--force` flag exists only on
+  `backfill`'s parser.
+- `uv run pytest -q` — 747 passed (was 739; +8). `ruff check` / `ruff format --check` /
+  `uv run mypy` / `pre-commit` — all green.
+- `docs/cycle.md` and `docs/kg_schema.md` updated with `portfolio_position_replay`, the
+  `REPLAY` cycle type, and `--force`.
+
+### Residual scope, deliberately deferred
+
+- **No repair tool for the replay book.** `cycle/repair.py`'s `plan_undo`/`apply_undo` (T-104)
+  only ever address the live `portfolio_position`; `portfolio_position_replay` needs none of
+  that machinery today because `--force`/`reset_replay_range` already gives it a full,
+  intentional reset path the live book deliberately does not have (the live book must never
+  be bulk-reset; a replay book is meant to be).
+- **`quant`'s analogous multi-book design (`quant_portfolio`/`quant_position`, keyed by
+  `portfolio_id`) was not adopted here**, even though it would let several replay experiments
+  coexist — flagged in Design decisions above as unneeded for this task's acceptance
+  criterion, not overlooked; a future task that actually wants concurrent replay experiments
+  should reach for that shape rather than re-deriving it.

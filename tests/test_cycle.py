@@ -15,7 +15,8 @@ from cycle.cli import build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
-from cycle.orchestrator import run_monitoring, run_selection
+from cycle.orchestrator import run_monitoring, run_replay, run_selection
+from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
@@ -442,6 +443,146 @@ def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database
     # the guard's own MAX(valid_from) read still reflects the later, now-closed positions --
     # a closed position's valid_from still marks a date this book has already moved past.
     assert out_of_order_reason(conn, "2026-04-01") is not None
+
+
+# -- T-115: cycle backfill replays into its own book, isolated from the live one --------
+
+
+def test_out_of_order_replay_reason_pure_function(memory_db: Database) -> None:
+    assert (
+        out_of_order_replay_reason(memory_db, "2020-01-01") is None
+    )  # no rows -- nothing to guard
+    memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
+    memory_db.execute(
+        "INSERT INTO portfolio_position_replay (asset_id, valid_from, valid_to, weight, "
+        "opened_by_cycle) VALUES (1, '2026-06-30', NULL, 0.5, 1)"
+    )
+    memory_db.commit()
+    assert out_of_order_replay_reason(memory_db, "2026-07-01") is None  # newer -- fine
+    assert out_of_order_replay_reason(memory_db, "2026-06-30") is None  # same date -- fine
+    reason = out_of_order_replay_reason(memory_db, "2026-05-01")
+    assert reason is not None
+    assert "2026-05-01" in reason and "2026-06-30" in reason and "--force" in reason
+
+
+def test_replay_writes_the_replay_book_not_the_live_one(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    report = run_replay(_settings(conn), "2026-05-01", conn=conn)
+
+    assert report.cycle_type == "REPLAY"
+    assert "positions" in report.steps_run
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == 3
+    run_row = conn.execute(
+        "SELECT cycle_type, status FROM cycle_run WHERE cycle_date = '2026-05-01'"
+    ).fetchone()
+    assert (run_row["cycle_type"], run_row["status"]) == ("REPLAY", "completed")
+
+
+def test_replay_never_conflicts_with_an_existing_live_book(cycle_seed: Database) -> None:
+    """The old backfill, which called the live `run_selection`, would have been refused by
+    T-097 the moment a newer live entry existed. A replay is refused only against its own
+    (isolated) book, so it can freely replay a date earlier than the live book's latest."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-07-31", conn=conn)  # the live book's latest so far
+
+    report = run_replay(_settings(conn), "2026-05-01", conn=conn)  # older than the live book
+
+    assert "positions" in report.steps_run
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == 3
+    # the live book itself is untouched by the replay
+    live = conn.execute(
+        "SELECT COUNT(*) FROM portfolio_position WHERE valid_to IS NULL"
+    ).fetchone()[0]
+    assert live == 3
+
+
+def test_replay_resumes_without_duplicating(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    run_replay(_settings(conn), "2026-05-01", conn=conn)
+    before = conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0]
+
+    again = run_replay(_settings(conn), "2026-05-01", conn=conn)
+
+    assert "positions" in again.steps_skipped
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == before
+
+
+def test_replay_refuses_a_new_older_date_without_force(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    run_replay(_settings(conn), "2026-06-01", conn=conn)  # the replay book's latest so far
+
+    with pytest.raises(OutOfOrderCycle, match="--force"):
+        run_replay(_settings(conn), "2026-05-01", conn=conn)  # new, never-replayed, older date
+
+    # refused before any write -- the replay book is exactly as the first run left it
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == 3
+
+
+def test_reset_replay_range_lets_a_completed_date_be_recomputed(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    run_replay(_settings(conn), "2026-05-01", conn=conn)
+
+    reset_replay_range(conn, "2026-05-01", "2026-05-01")
+    again = run_replay(_settings(conn), "2026-05-01", conn=conn)
+
+    assert "positions" in again.steps_run  # recomputed, not skipped as already done
+    assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == 3
+
+
+def test_reset_replay_range_leaves_positions_outside_the_range_untouched(
+    cycle_seed: Database,
+) -> None:
+    conn = cycle_seed
+    run_replay(_settings(conn), "2026-05-01", conn=conn)
+    run_replay(_settings(conn), "2026-06-01", conn=conn)
+    later = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-06-01' ORDER BY id"
+        )
+    ]
+    assert later  # the later date's stints exist to begin with
+
+    reset_replay_range(conn, "2026-05-01", "2026-05-01")
+
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM portfolio_position_replay WHERE valid_from = '2026-05-01'"
+        ).fetchone()[0]
+        == 0
+    )
+    still_there = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-06-01' ORDER BY id"
+        )
+    ]
+    assert still_there == later
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = '2026-05-01'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = '2026-06-01'"
+        ).fetchone()[0]
+        == 1
+    )
+
+
+def test_force_flag_exists_on_backfill_only() -> None:
+    parser = build_parser()
+    assert (
+        parser.parse_args(["backfill", "--from", "2026-01-01", "--to", "2026-02-01"]).force is False
+    )
+    assert parser.parse_args(
+        ["backfill", "--from", "2026-01-01", "--to", "2026-02-01", "--force"]
+    ).force
+    for command in ("select", "monitor"):
+        assert not hasattr(parser.parse_args([command]), "force")
 
 
 # -- T-110: the price-spine guard ---------------------------------

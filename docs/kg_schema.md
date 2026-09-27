@@ -246,8 +246,9 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule hits, cleared not deleted | `UNIQUE(asset_id, rule_id, cycle_date)` |
-| `portfolio_position` | position stints; triggers reject `valid_to < valid_from` (T-104) | `UNIQUE(asset_id, valid_from)` |
-| `cycle_run` / `cycle_checkpoint` | orchestrator provenance + resume | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` |
+| `portfolio_position` | the live position stints; triggers reject `valid_to < valid_from` (T-104) | `UNIQUE(asset_id, valid_from)` |
+| `portfolio_position_replay` | `cycle backfill`'s simulated book -- same shape/triggers as `portfolio_position`, never read by or refused for conflicting with it (T-115) | `UNIQUE(asset_id, valid_from)` |
+| `cycle_run` / `cycle_checkpoint` | orchestrator provenance + resume; `cycle_type` is `'SELECTION'`\|`'MONITORING'`\|`'ENTITY_RESOLUTION'`\|`'REPLAY'` | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` |
 | `cycle_ranking` | the ranked cohort of a cycle | `UNIQUE(cycle_run_id, asset_id)` |
 | `price_observation` | derived per-day price analytics | `UNIQUE(asset_id, obs_date, engine_version)` |
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |

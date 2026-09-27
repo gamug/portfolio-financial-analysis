@@ -11,8 +11,9 @@ from pathlib import Path
 from cycle.config import CycleSettings
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
-from cycle.orchestrator import CycleReport, run_monitoring, run_selection
+from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
 from cycle.repair import NotBackdated, apply_undo, plan_undo
+from cycle.replay import reset_replay_range
 from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
@@ -42,6 +43,12 @@ _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even though the "
     "working tree has uncommitted changes -- results would come from code HEAD alone can't "
     "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
+)
+_FORCE_HELP = (
+    "reset the replay book (T-115) for --from..--to before replaying it: deletes/reopens "
+    "portfolio_position_replay stints and cycle_run rows in that range, so already-completed "
+    "dates are recomputed instead of skipped by the checkpoint guard -- for redoing a "
+    "backfill after a code fix, not routine use"
 )
 
 
@@ -79,7 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     undo.add_argument("--db", help="override KG_FINANCIAL_DB path")
     undo.add_argument("--apply", action="store_true", help="write the repair (default: print it)")
 
-    bf = sub.add_parser("backfill", help="run selection cycles across a date range")
+    bf = sub.add_parser(
+        "backfill",
+        help="replay selection cycles across a date range into an isolated simulated "
+        "book (T-115) -- never the live portfolio_position",
+    )
     bf.add_argument("--from", dest="date_from", required=True)
     bf.add_argument("--to", dest="date_to", required=True)
     bf.add_argument("--step-days", type=int, default=7)
@@ -87,6 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    bf.add_argument("--force", action="store_true", help=_FORCE_HELP)
     return parser
 
 
@@ -205,11 +217,19 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         _print_bypass_warnings(r)
         return 0
-    # backfill
+    # backfill (T-115: replays into portfolio_position_replay, never the live book)
+    if args.force:
+        conn = connect(resolve_db_path(args.db))
+        try:
+            ensure_schema(conn)
+            reset_replay_range(conn, args.date_from, args.date_to)
+        finally:
+            conn.close()
+        print(f"  --force: reset the replay book for {args.date_from}..{args.date_to}")
     d = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to)
     while d <= end:
-        r = run_selection(settings, d.isoformat(), fundamental_hook=hook)
+        r = run_replay(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
         _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)

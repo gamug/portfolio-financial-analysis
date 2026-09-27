@@ -153,9 +153,33 @@ BEFORE UPDATE OF valid_from, valid_to ON portfolio_position
 WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
 BEGIN SELECT RAISE(ABORT, 'portfolio_position: valid_to before valid_from'); END;
 
+-- T-115: `cycle backfill`'s simulated book. Same shape and same T-104 stint-immutability
+-- rules as `portfolio_position`, but a separate table so a historical replay never mutates
+-- (or is refused for conflicting with) the one production book every other repo reads as
+-- ground truth. `cycle_run.cycle_type = 'REPLAY'` is the run-log side of the same isolation.
+CREATE TABLE IF NOT EXISTS portfolio_position_replay (
+    id              INTEGER PRIMARY KEY,
+    asset_id        INTEGER NOT NULL REFERENCES assets(id),
+    valid_from      TEXT NOT NULL,
+    valid_to        TEXT,
+    weight          REAL,
+    cost_basis      REAL,
+    opened_by_cycle INTEGER,
+    run_id          INTEGER,
+    UNIQUE (asset_id, valid_from)
+);
+CREATE INDEX IF NOT EXISTS ix_ppr_open ON portfolio_position_replay (asset_id) WHERE valid_to IS NULL;
+CREATE TRIGGER IF NOT EXISTS trg_ppr_range_insert BEFORE INSERT ON portfolio_position_replay
+WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
+BEGIN SELECT RAISE(ABORT, 'portfolio_position_replay: valid_to before valid_from'); END;
+CREATE TRIGGER IF NOT EXISTS trg_ppr_range_update
+BEFORE UPDATE OF valid_from, valid_to ON portfolio_position_replay
+WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
+BEGIN SELECT RAISE(ABORT, 'portfolio_position_replay: valid_to before valid_from'); END;
+
 CREATE TABLE IF NOT EXISTS cycle_run (
     id           INTEGER PRIMARY KEY,
-    cycle_type   TEXT NOT NULL,                -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'
+    cycle_type   TEXT NOT NULL,                -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'|'REPLAY'
     cycle_date   TEXT NOT NULL,
     started_at   TEXT NOT NULL,
     finished_at  TEXT,

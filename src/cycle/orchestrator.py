@@ -20,6 +20,7 @@ from cycle import data, writers
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.db import ensure_schema
+from cycle.replay import out_of_order_replay_reason, sync_replay_positions
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
@@ -408,14 +409,25 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     max_name_weight=settings.max_name_weight,
                     max_sector_weight=settings.max_sector_weight,
                 )
-                reason = out_of_order_reason(conn, cycle_date)
-                if reason is not None and not settings.allow_backdated_positions:
-                    raise OutOfOrderCycle(reason)  # noqa: TRY301
-                report.backdated_guard_bypassed = reason
                 closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
-                opened, closed = writers.sync_positions(
-                    conn, cycle_date, weights, closes, cycle_run_id=run_id
-                )
+                if cycle_type == "REPLAY":
+                    # T-115: a replay never touches, and is never refused for conflicting
+                    # with, the live book -- `cycle backfill --force` resets its own
+                    # (isolated) book's date range up front instead.
+                    reason = out_of_order_replay_reason(conn, cycle_date)
+                    if reason is not None:
+                        raise OutOfOrderCycle(reason)  # noqa: TRY301
+                    opened, closed = sync_replay_positions(
+                        conn, cycle_date, weights, closes, cycle_run_id=run_id
+                    )
+                else:
+                    reason = out_of_order_reason(conn, cycle_date)
+                    if reason is not None and not settings.allow_backdated_positions:
+                        raise OutOfOrderCycle(reason)  # noqa: TRY301
+                    report.backdated_guard_bypassed = reason
+                    opened, closed = writers.sync_positions(
+                        conn, cycle_date, weights, closes, cycle_run_id=run_id
+                    )
                 # reflect selection back into cycle_ranking
                 for r in rows:
                     r["selected"] = int(r["asset_id"]) in weights
@@ -506,6 +518,34 @@ def run_monitoring(
             "MONITORING",
             cycle_date,
             _MONITORING_STEPS,
+            conn=conn,
+            fundamental_hook=fundamental_hook,
+        )
+    finally:
+        if owned:
+            conn.close()
+
+
+def run_replay(
+    settings: CycleSettings,
+    cycle_date: str,
+    *,
+    conn: Database | None = None,
+    fundamental_hook: FundamentalHook | None = None,
+) -> CycleReport:
+    """``cycle backfill``'s entrypoint (T-115): the same step sequence and checkpointing as
+    :func:`run_selection`, but ``cycle_type='REPLAY'`` keeps its ``cycle_run``/
+    ``cycle_checkpoint`` rows and its positions (``portfolio_position_replay``, via
+    ``cycle.replay``) entirely separate from a live ``select`` run at the same date."""
+    owned = conn is None
+    if conn is None:
+        conn = connect(settings.db_path)
+    try:
+        return _run(
+            settings,
+            "REPLAY",
+            cycle_date,
+            _SELECTION_STEPS,
             conn=conn,
             fundamental_hook=fundamental_hook,
         )
