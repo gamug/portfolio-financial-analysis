@@ -16,7 +16,12 @@ from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
 from fundamental_agent import db, quality
-from fundamental_agent.agents import FilingContext, FundamentalAnalyst, build_model
+from fundamental_agent.agents import (
+    FALLBACK_MODEL_LABEL,
+    FilingContext,
+    FundamentalAnalyst,
+    build_model,
+)
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
 from fundamental_agent.edgar_client import (
@@ -533,12 +538,18 @@ def _analyze_one(
             narrative=assessment.narrative,
             strengths=assessment.strengths,
             risks=assessment.risks,
-            model=engine.analyst.model_name,
+            # T-113: a fallback row is labelled as such, never under the LLM's own model_id --
+            # 1 of production's 377 FUNDAMENTAL scores was previously indistinguishable from
+            # real model output this way.
+            model=FALLBACK_MODEL_LABEL if result.used_fallback else engine.analyst.model_name,
             metrics=result.flat_metrics,
             event_time=target.period.date,
+            prompt_hash=result.prompt_hash,
         ),
         run_id=run_id,
     )
+    if result.used_fallback:
+        db.bump_run_counter(engine.conn, run_id, "fallback_units")
 
 
 def _params_dict(params: RunParams) -> _Payload:

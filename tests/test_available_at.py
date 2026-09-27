@@ -38,6 +38,7 @@ def _snapshot(asset_id: int, filing_id: int) -> SnapshotRow:
         model="rule-based",
         metrics={},
         event_time="2025-12-31",
+        prompt_hash="test-hash",
     )
 
 

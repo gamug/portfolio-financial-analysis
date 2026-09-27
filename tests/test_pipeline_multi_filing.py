@@ -155,6 +155,8 @@ class _StubAnalyst:
             assessment=assessment,
             metrics=pairs,
             flat_metrics={f"{g}.{r.name}": r.value for g, r in pairs},
+            used_fallback=False,
+            prompt_hash="stub-hash",
         )
 
 

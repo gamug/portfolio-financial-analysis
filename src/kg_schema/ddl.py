@@ -516,6 +516,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     "score_snapshot": {
         "forensic_flags_json": "TEXT",
         "available_at": "TEXT",  # T-107: FUNDAMENTAL rows only -- the scored filing's
+        # T-113: sha256 of the LLM interaction (or, on fallback, the failed attempt) that
+        # produced this row -- FUNDAMENTAL only; NULL for every other score_type.
+        "prompt_hash": "TEXT",
     },
     "price_window": {
         "event_time": "TEXT",
@@ -532,6 +535,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     "analysis_run": {
         "as_of": "TEXT",
         "code_version": "TEXT",
+        # T-113: how many of this run's FUNDAMENTAL scores fell back to the rule-based
+        # synthesis (the LLM's JSON verdict never came back parseable).
+        "fallback_units": "INTEGER NOT NULL DEFAULT 0",
     },
     "pricing_run": {
         "as_of": "TEXT",

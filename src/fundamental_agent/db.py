@@ -96,6 +96,7 @@ class SnapshotRow:
     model: str
     metrics: dict[str, float | None]
     event_time: str  # the filing's period-end -- what the score is *about*
+    prompt_hash: str  # T-113: sha256 of the LLM interaction that produced (or failed into) this
 
 
 @dataclass(frozen=True)
@@ -232,6 +233,9 @@ _COUNTER_UPDATE_SQL = {
     "completed_units": "UPDATE analysis_run SET completed_units = completed_units + 1 WHERE id = ?",
     "skipped_units": "UPDATE analysis_run SET skipped_units = skipped_units + 1 WHERE id = ?",
     "failed_units": "UPDATE analysis_run SET failed_units = failed_units + 1 WHERE id = ?",
+    # T-113: how many of this run's scores fell back to the rule-based synthesis
+    # (the LLM's JSON verdict never came back parseable), additive on `analysis_run`.
+    "fallback_units": "UPDATE analysis_run SET fallback_units = fallback_units + 1 WHERE id = ?",
 }
 
 
@@ -1077,8 +1081,8 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
         INSERT INTO score_snapshot
             (asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, filing_id, rating, narrative, strengths_json, risks_json,
-             run_kind, run_id, available_at)
-        VALUES (?, 'FUNDAMENTAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'analysis', ?, ?)
+             run_kind, run_id, available_at, prompt_hash)
+        VALUES (?, 'FUNDAMENTAL', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'analysis', ?, ?, ?)
         ON CONFLICT (asset_id, score_type, event_time) DO NOTHING
         """,
         (
@@ -1096,6 +1100,7 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
             json.dumps(list(row.risks)),
             run_id,
             filing_available_at(conn, row.filing_id),
+            row.prompt_hash,
         ),
     )
     conn.commit()

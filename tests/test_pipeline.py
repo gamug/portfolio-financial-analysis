@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,7 +13,12 @@ from conftest import filed_after, write_universe_db
 from portfolio_common.db import Database
 
 from fundamental_agent import db, pipeline
-from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
+from fundamental_agent.agents import (
+    FALLBACK_MODEL_LABEL,
+    AnalysisResult,
+    FilingContext,
+    FundamentalAssessment,
+)
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.edgar_client import FilingRef
@@ -211,7 +217,16 @@ class _StubAnalyst:
             assessment=assessment,
             metrics=pairs,
             flat_metrics={f"{g}.{r.name}": r.value for g, r in pairs},
+            used_fallback=False,
+            prompt_hash="stub-hash",
         )
+
+
+class _FallbackStubAnalyst(_StubAnalyst):
+    """T-113: the LLM's JSON verdict never came back parseable -- every filing falls back."""
+
+    def analyze(self, ctx: FilingContext) -> AnalysisResult:
+        return replace(super().analyze(ctx), used_fallback=True, prompt_hash="fallback-hash")
 
 
 @pytest.fixture
@@ -299,3 +314,32 @@ def test_run_gates_every_filing_it_analyses(
     assert {c[0] for c in calls} == {db.METRICS_ENGINE_VERSION}
     assert {c[2] for c in calls} == {report.run_id}
     assert all(c[1] is not None for c in calls)
+
+
+def test_run_labels_a_fallback_score_and_records_it_on_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T-113: a rule-based fallback score must never be stored under the LLM's own model_id
+    (1 of production's 377 FUNDAMENTAL scores was, before this fix) -- and every score,
+    fallback or not, carries a prompt_hash; the run's own fallback_units counter tracks how
+    many of its scores fell back."""
+    monkeypatch.setattr(pipeline, "EdgarClient", _FakeEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _FallbackStubAnalyst)
+
+    settings = _settings(tmp_path)
+    report = pipeline.run(settings, RunParams(forms=["10-K"], since_year=2023, until_year=2023))
+    assert report.completed == 2
+
+    conn = sqlite3.connect(settings.db_path)
+    rows = conn.execute(
+        "SELECT model, prompt_hash FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+    ).fetchall()
+    assert len(rows) == 2
+    assert all(model == FALLBACK_MODEL_LABEL for model, _ in rows)
+    assert all(prompt_hash == "fallback-hash" for _, prompt_hash in rows)
+
+    fallback_units = conn.execute(
+        "SELECT fallback_units FROM analysis_run WHERE id = ?", (report.run_id,)
+    ).fetchone()[0]
+    assert fallback_units == 2

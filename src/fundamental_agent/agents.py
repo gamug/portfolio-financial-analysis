@@ -7,6 +7,7 @@ for a given filing, then a synthesis step turns the readings into a scored asses
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -180,21 +181,65 @@ class AnalysisResult:
     assessment: FundamentalAssessment
     metrics: list[tuple[str, MetricResult]]  # (group, result), value may be None
     flat_metrics: dict[str, float | None]  # "group.name" -> value
+    # T-113: the LLM's own JSON verdict never came back parseable -- assessment is the
+    # deterministic, rule-based fallback, not model output.
+    used_fallback: bool
+    # T-113: sha256 identifying the *prompt version* that produced this score -- constant
+    # across every filing scored under the same code/skills/model config, and changing only
+    # when a prompt, skill SOP, or model config actually changes (PR #91 review). See
+    # `_prompt_version_hash`.
+    prompt_hash: str
+
+
+# T-113 (PR #91 review): temperature=0/seed=0 reduce run-to-run variance -- no LLM provider
+# guarantees deterministic output at temperature 0, so this is not a claim of reproducibility.
+_TEMPERATURE = 0
+_SEED = 0
+_MAX_TOKENS = 1500
 
 
 def build_model(settings: Settings) -> OpenAIModel:
-    """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint."""
+    """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint.
+
+    T-113: ``temperature = 0`` (was ``0.2``, an unexplained source of run-to-run variance);
+    ``seed`` is the standard OpenAI-schema field for a deterministic sample -- passed
+    optimistically (forwarded verbatim to the client, never validated against a strict
+    schema), honoured or silently ignored depending on whether the configured endpoint's
+    backend supports it (unverified against the live DeepSeek endpoint -- this environment's
+    network egress policy blocks reaching it; confirm before `T-079`)."""
     return OpenAIModel(
         client_args={"api_key": settings.llm_api_key, "base_url": settings.llm_url},
         model_id=settings.llm_model,
-        params={"temperature": 0.2, "max_tokens": 1500},
+        params={"temperature": _TEMPERATURE, "seed": _SEED, "max_tokens": _MAX_TOKENS},
     )
+
+
+def _prompt_version_hash(model_name: str) -> str:
+    """sha256 of everything that determines what gets sent to the LLM for *every* filing:
+    the prompt templates themselves and the model config -- not any one filing's own
+    transcript (T-113, PR #91 review: a per-filing hash is unique per row, unverifiable
+    since the transcript itself isn't stored, and can't group scores by the prompt version
+    that produced them, which is what `T-079` needs to separate scores from before/after a
+    prompt edit). Constant across every filing scored under the same code/skills/model
+    config; changes only when a prompt, a skill SOP file, or the model config changes."""
+    payload = {
+        "master_prompt": MASTER_PROMPT,
+        "specialist_prompts": {g: _specialist_system_prompt(g) for g in _SPECIALIST_GROUPS},
+        "synthesis_prompt": _SYNTHESIS_PROMPT,
+        "repair_prompt": _REPAIR_PROMPT,
+        "model_id": model_name,
+        "temperature": _TEMPERATURE,
+        "seed": _SEED,
+        "max_tokens": _MAX_TOKENS,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
     def __init__(self, model: OpenAIModel, model_name: str) -> None:
+        self.prompt_hash = _prompt_version_hash(model_name)
         self._model = model
         self.model_name = model_name
 
@@ -212,8 +257,14 @@ class FundamentalAnalyst:
         )
         orchestrator(_brief(ctx, by_group))
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
-        assessment = _synthesize(orchestrator, flat)
-        return AnalysisResult(assessment=assessment, metrics=computed, flat_metrics=flat)
+        synthesis = _synthesize(orchestrator, flat)
+        return AnalysisResult(
+            assessment=synthesis.assessment,
+            metrics=computed,
+            flat_metrics=flat,
+            used_fallback=synthesis.used_fallback,
+            prompt_hash=self.prompt_hash,
+        )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
         out: list[tuple[str, MetricResult]] = []
@@ -276,9 +327,18 @@ def _round(value: Any) -> Any:
     return round(value, 4) if isinstance(value, float) else value
 
 
-def _synthesize(
-    orchestrator: Agent, flat_metrics: dict[str, float | None]
-) -> FundamentalAssessment:
+@dataclass(frozen=True)
+class _Synthesis:
+    assessment: FundamentalAssessment
+    used_fallback: bool
+
+
+# T-113: distinct from any real LLM's own model_id, so a fallback row is never mistaken for
+# that model's output in score_snapshot.model.
+FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
+
+
+def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _Synthesis:
     """Ask the orchestrator for a JSON verdict; fall back to a rule-based score.
 
     DeepSeek does not currently accept OpenAI ``response_format`` json-schema, so we
@@ -291,8 +351,8 @@ def _synthesize(
             break
         parsed = _coerce(reply)
         if parsed is not None:
-            return parsed
-    return _fallback_assessment(flat_metrics)
+            return _Synthesis(parsed, used_fallback=False)
+    return _Synthesis(_fallback_assessment(flat_metrics), used_fallback=True)
 
 
 def _coerce(text: str) -> FundamentalAssessment | None:
