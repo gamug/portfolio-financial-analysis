@@ -375,11 +375,12 @@ def efficient_frontier(  # noqa: PLR0913 - keyword-only optimizer knobs
     r_min = lo.expected_return if lo.expected_return is not None else float(mu.min())
     r_max = _max_feasible_return(mu, sig, constraints, solver)
     if r_max is None or r_max <= r_min + 1e-9:
-        # mu carries no cross-sectional signal under the constraints -- the frontier
-        # collapses to the min-variance point. Return k copies of it, all 'optimal'.
+        # mu carries no cross-sectional signal under the constraints (T-112): there is no
+        # feasible return range to sweep, so one point -- the min-variance portfolio, marked
+        # 'degenerate' -- represents the whole "frontier", not k identical copies of it
+        # mislabelled 'optimal' as if a real k-point sweep had actually run.
         return [
-            FrontierPoint(i, r_min, r_min, lo.expected_vol, lo.sharpe, "optimal", lo.weights)
-            for i in range(k)
+            FrontierPoint(0, r_min, r_min, lo.expected_vol, lo.sharpe, "degenerate", lo.weights)
         ]
     targets = np.linspace(r_min, r_max, k)
 

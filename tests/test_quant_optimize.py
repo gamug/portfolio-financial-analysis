@@ -67,11 +67,13 @@ def test_efficient_frontier_is_monotone() -> None:
 
 def test_frontier_collapses_on_flat_mu_but_spans_on_dispersed_mu() -> None:
     sig = _spd(8, seed=4)
-    # flat mu -> every point is the min-variance portfolio
+    # flat mu -> no feasible return range to sweep: one point, marked degenerate (T-112)
     flat = np.full(8, 0.08)
+    lo = min_variance(sig, constraints=_UNCAPPED)
     flat_pts = efficient_frontier(flat, sig, k=6, constraints=_UNCAPPED)
-    flat_vols = [p.expected_vol for p in flat_pts]
-    assert max(flat_vols) - min(flat_vols) < 1e-6
+    assert len(flat_pts) == 1
+    assert flat_pts[0].status == "degenerate"
+    assert flat_pts[0].expected_vol == pytest.approx(lo.expected_vol, abs=1e-6)
 
     # equilibrium mu has cross-sectional dispersion -> the frontier fans out
     eq = equilibrium_returns(sig, np.arange(1, 9, dtype=float), risk_aversion=3.0)

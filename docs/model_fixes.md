@@ -2702,3 +2702,67 @@ FISV and MNST) -- it is a consistency fix there, not a live discrepancy.
   `evaluate.py` test, plus one new `benchmark.py` test).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
 - `SPEC.md` FR-010 and `docs/quant.md` updated to state both cases.
+
+## T-112 — a collapsed efficient frontier returned `k` identical copies of the min-variance point, all labelled `optimal`
+
+**Status**: Fixed 2026-09-27 (`T-112`).
+
+### Symptom
+
+`optimize.efficient_frontier`'s `k`-point sweep needs a feasible return range above the
+min-variance portfolio's own return to sweep over; when `mu` carries no cross-sectional signal
+under the constraints (the common case for `james_stein` over ~5y of daily data, per
+`docs/quant.md`'s "why the frontier can collapse"), that range collapses (`r_max` is `None` or
+`<= r_min`). The code handled this by returning `k` copies of the min-variance point, every one
+of them stamped `status = "optimal"` -- indistinguishable, to any caller reading
+`quant_frontier_point`, from `k` genuinely distinct optimizer solves that happened to converge
+to the same point.
+
+### Root cause
+
+`"optimal"` is the solver's own convergence verdict (`prob.status`, `_OK = ("optimal",
+"optimal_inaccurate")`) for a problem it actually solved. The collapse path never calls the
+solver `k` times at all -- it short-circuits before the `target_return_portfolio` loop -- so
+labelling its output `"optimal"` overstates what happened: a reader has no way to tell a real,
+sharp frontier of `k` distinct optimal solves from `k` copies of one point, printed because
+there was nothing to sweep.
+
+### Fix
+
+```python
+if r_max is None or r_max <= r_min + 1e-9:
+    return [FrontierPoint(0, r_min, r_min, lo.expected_vol, lo.sharpe, "degenerate", lo.weights)]
+```
+
+One point, not `k`, carrying the min-variance portfolio's own values and a `status` that says
+plainly what happened: the frontier is degenerate, not that a sweep ran and every point tied.
+`insert_frontier_points` (`db.py`) already deletes any previously-stored `quant_frontier_point`
+row with `k >=` the new point count before inserting (`DELETE ... WHERE model_id = ? AND k >=
+?`), so a book that later re-optimizes into a *non*-degenerate frontier is not left with stale
+higher-`k` rows from an earlier degenerate run -- no schema or persistence change needed.
+
+### Design decisions
+
+- **`"degenerate"` is a plain, additive status value, not a new column.** Every existing
+  reader that filters `status in ("optimal", "optimal_inaccurate")` -- `evaluate`'s and the
+  API's read paths, and this repo's own tests -- already treats any other status as "not a
+  point to trust for shape/Sharpe comparisons," so a caller filtering for real frontier points
+  now correctly gets zero of them on a degenerate run rather than `k` decoys, with no other
+  code change required.
+- **One point, not zero.** The min-variance portfolio is still a real, usable result (it is
+  `min_var`'s own headline book); returning it once, clearly labelled, keeps a caller that
+  wants "the frontier's one representative point regardless of shape" able to read it off
+  `quant_frontier_point` without a special no-rows case to handle.
+
+### Verification
+
+- Updated test: `tests/test_quant_optimize.py::test_frontier_collapses_on_flat_mu_but_spans_on_dispersed_mu`
+  now asserts `len(flat_pts) == 1` and `flat_pts[0].status == "degenerate"` on a flat `mu`
+  (confirmed to fail against the pre-fix code: `6 == 1` false, and every one of the 6 stamped
+  `"optimal"`).
+- `uv run pytest -q` -- 710 passed (test count unchanged: the existing test was strengthened,
+  not added to); `test_optimize_persists_one_book_per_objective`'s non-degenerate,
+  dispersed-`mu` frontier (`res.frontier_points == 5`) is unaffected.
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
+- `docs/quant.md` updated (the `frontier` objective's own row and "why the frontier can
+  collapse" section) to describe the one-point, `degenerate`-labelled result.
