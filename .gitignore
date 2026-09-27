@@ -1,3 +1,7 @@
+# macOS Finder metadata (T-114 PR #92 review: an untracked .DS_Store under src/ or
+# skills/ would otherwise make code_version() dirty on every run).
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
