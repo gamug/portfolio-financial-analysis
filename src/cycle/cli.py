@@ -18,6 +18,7 @@ from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
+from kg_schema.env import DB_ENV_VAR, database_path
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
@@ -45,10 +46,18 @@ _ALLOW_DIRTY_HELP = (
     "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
 )
 _FORCE_HELP = (
-    "reset the replay book (T-115) for --from..--to before replaying it: deletes/reopens "
-    "portfolio_position_replay stints and cycle_run rows in that range, so already-completed "
-    "dates are recomputed instead of skipped by the checkpoint guard -- for redoing a "
-    "backfill after a code fix, not routine use"
+    "reset the replay book (T-115) from --from through its end before replaying: deletes/"
+    "reopens portfolio_position_replay stints and cycle_run rows on or after --from, with no "
+    "upper bound -- a replay is path-dependent, so leaving a later stint in place would trip "
+    "the out-of-order-replay guard against it; for redoing a backfill after a code fix, not "
+    "routine use"
+)
+_BACKFILL_DB_HELP = (
+    "path to a throwaway copy of the database -- required. backfill's REPLAY steps write "
+    "score_snapshot / veto / sector_aggregate_snapshot / cycle_ranking, all still shared with "
+    "the live system even though `positions` itself is isolated (portfolio_position_replay); "
+    f"refused against the production database ({DB_ENV_VAR}). Copy it first, e.g. "
+    f'cp "${DB_ENV_VAR}" /tmp/backfill.db, then pass --db /tmp/backfill.db'
 )
 
 
@@ -94,7 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--from", dest="date_from", required=True)
     bf.add_argument("--to", dest="date_to", required=True)
     bf.add_argument("--step-days", type=int, default=7)
-    bf.add_argument("--db")
+    bf.add_argument("--db", help=_BACKFILL_DB_HELP)
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
@@ -120,6 +129,27 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
     if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
     return s.model_copy(update=updates) if updates else s
+
+
+def _refuse_production_backfill(args: argparse.Namespace) -> str | None:
+    """T-115 review: only the ``positions`` step is isolated (``portfolio_position_replay``)
+    -- every other REPLAY step (score_snapshot, veto, sector_aggregate_snapshot,
+    cycle_ranking) writes the same shared tables the live cycle and quant's universe gate
+    read. The only full isolation is a separate database, so ``--db`` is mandatory and is
+    refused outright when it resolves to the configured production path."""
+    prod = database_path(None)  # env only, ignoring args.db, to name the production path
+    if not args.db:
+        return (
+            f"refuses to run without --db (see --help); it never touches the production "
+            f"database ({DB_ENV_VAR}) even for a copy's sake -- copy it yourself first"
+        )
+    resolved = str(Path(args.db).expanduser())
+    if prod and resolved == str(Path(prod).expanduser()):
+        return (
+            f"refuses to run against the production database ({DB_ENV_VAR}); copy it first "
+            "and pass --db pointing at the copy"
+        )
+    return None
 
 
 def _resolve_cycle_date(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str:
@@ -218,14 +248,18 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         _print_bypass_warnings(r)
         return 0
     # backfill (T-115: replays into portfolio_position_replay, never the live book)
+    refusal = _refuse_production_backfill(args)
+    if refusal is not None:
+        print(f"cycle backfill: {refusal}", file=sys.stderr)
+        return 1
     if args.force:
         conn = connect(resolve_db_path(args.db))
         try:
             ensure_schema(conn)
-            reset_replay_range(conn, args.date_from, args.date_to)
+            reset_replay_range(conn, args.date_from)
         finally:
             conn.close()
-        print(f"  --force: reset the replay book for {args.date_from}..{args.date_to}")
+        print(f"  --force: reset the replay book from {args.date_from} onward")
     d = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to)
     while d <= end:

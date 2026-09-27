@@ -3042,7 +3042,7 @@ before merge):
 
 ## T-115 — `cycle backfill` could not replay history without risking the live book
 
-**Status**: Fixed 2026-09-27 (`T-115`).
+**Status**: Fixed 2026-09-27 (`T-115`); PR #94 review follow-up fixed same day.
 
 ### Symptom
 
@@ -3081,12 +3081,13 @@ reads as ground truth, and conflating the two made the live book's own out-of-or
   functions rather than a table-name-parameterized version of the live ones (Code & Git #10:
   an identifier a `?` placeholder can't bind must never be built from a variable, even one
   this module fully controls — an automated SAST scanner flags the pattern itself). Also
-  `reset_replay_range(conn, date_from, date_to)`: `--force`'s implementation — deletes any
-  replay stint opened inside the range (the redo decides whether it ever existed), reopens
-  any it closed inside the range (the redo decides when, if ever, it closes again), and drops
-  the range's `cycle_run` rows (cascading to their checkpoints/ranking) so every step
-  re-executes instead of being skipped as already `"done"` — all left untouched outside the
-  range.
+  `reset_replay_range(conn, date_from)`: `--force`'s implementation — deletes any replay
+  stint opened on or after `date_from` (the redo decides whether it ever existed), reopens
+  any it closed on or after `date_from` (the redo decides when, if ever, it closes again),
+  and drops every `cycle_run` row on or after `date_from` (cascading to their
+  checkpoints/ranking) so every step re-executes instead of being skipped as already
+  `"done"` — nothing *before* `date_from` is touched. (Originally bounded at `date_to` too;
+  corrected by the PR #94 review below.)
 - `src/cycle/orchestrator.py`: a new public entrypoint, `run_replay` (same step sequence as
   `run_selection`, `cycle_type='REPLAY'`); the `"positions"` step branches on `cycle_type` —
   `REPLAY` checks `out_of_order_replay_reason`/calls `sync_replay_positions`, with **no**
@@ -3105,10 +3106,14 @@ reads as ground truth, and conflating the two made the live book's own out-of-or
   `portfolio_position`'s own single-continuous-timeline shape exactly (one implicit book,
   the same way there is one implicit live book), rather than adding a `cycle_replay_batch`
   table and threading a batch id through every row, which nothing here actually needs yet.
-- **`--force` resets a date range, not the whole table.** Scoping the wipe to exactly
-  `--from`/`--to` means a replay of one window doesn't discard a separately-replayed,
-  non-overlapping window — cheap to guarantee (two `DELETE`/`UPDATE ... WHERE valid_from
-  BETWEEN`) and strictly safer than an unconditional truncate, at no extra complexity.
+- **`--force` resets `date_from` onward, not the whole table, and not a bounded
+  `date_from..date_to` range either (PR #94 review).** The first pass scoped the wipe to
+  exactly `--from`/`--to`, on the reasoning that a replay of one window shouldn't discard a
+  separately-replayed, non-overlapping one — true, but a replay is path-dependent: a stint
+  past `--to` still constrains whether `--from` can redo cleanly, so leaving it in place left
+  the book internally inconsistent (see PR #94 review follow-up below). An open-ended `>=
+  date_from` reset is still strictly safer than an unconditional truncate (nothing before
+  `date_from` is ever touched), at no extra complexity.
 - **The out-of-order guard still exists for the replay book, without an override flag of its
   own.** A *forced* range is always internally consistent (reset, then replayed strictly
   forward) so it never trips; the guard exists only to catch a genuinely new, never-before-
@@ -3128,12 +3133,50 @@ reads as ground truth, and conflating the two made the live book's own out-of-or
   time skips `"positions"` and does not duplicate rows; a genuinely new, older replay date is
   refused (`OutOfOrderCycle`, naming `--force`) with the replay book left exactly as before;
   `reset_replay_range` lets a completed date recompute (`"positions"` runs again, not
-  skipped) and leaves every other date's stints untouched; the `--force` flag exists only on
+  skipped) and leaves every earlier date's stints untouched; the `--force` flag exists only on
   `backfill`'s parser.
-- `uv run pytest -q` — 747 passed (was 739; +8). `ruff check` / `ruff format --check` /
-  `uv run mypy` / `pre-commit` — all green.
+- PR #94 review follow-up: `tests/test_cycle.py` (+4): `reset_replay_range` resets a stint
+  past `--to` too, so redoing `--from` no longer trips the out-of-order-replay guard
+  (reproduces the reviewer's exact scenario); a bare `reset_replay_range(conn, date_from)`
+  still leaves every stint before `date_from` untouched; `backfill` refuses without `--db`;
+  `backfill` refuses when `--db` resolves to `KG_FINANCIAL_DB`'s configured path; `backfill`
+  runs normally against an explicit, non-production `--db`.
+- `uv run pytest -q` — 751 passed (was 739 before T-115; 747 after the first pass; +4 from
+  the review follow-up). `ruff check` / `ruff format --check` / `uv run mypy` — all green.
 - `docs/cycle.md` and `docs/kg_schema.md` updated with `portfolio_position_replay`, the
   `REPLAY` cycle type, and `--force`.
+
+### PR #94 review follow-up
+
+`@eldova1702` found two real bugs and one unrelated pre-existing gap worth its own task (all
+fixed/recorded in this same PR, before merge):
+
+1. **The replay was not isolated from the live system.** Only the `"positions"` step reads/
+   writes an isolated table; every other step (`score_snapshot`, `veto`,
+   `sector_aggregate_snapshot`, `cycle_ranking`) wrote the *same* shared tables a live
+   `select`/`monitor` and `quant`'s universe gate read. Reproduced: after
+   `run_replay("2026-06-30")`, `quant.db.hard_vetoed_as_of("2026-06-30")` picked up the
+   replay's own veto rows, and a subsequent live `run_selection("2026-07-01")` ranked an
+   asset vetoed that would not otherwise be. Per-table isolation for every step `backfill`
+   touches is a much larger change than this task's scope; the reviewer's proposed "simplest
+   full isolation" — a separate database — is what shipped instead. `--db` is now mandatory
+   on `backfill` and refused outright when it resolves to the configured production path
+   (`KG_FINANCIAL_DB`, `kg_schema.env.database_path`); `cycle/cli.py`'s new
+   `_refuse_production_backfill` performs both checks (missing `--db`; `--db` equal to the
+   resolved production path) before anything else runs, and `--help` documents "copy the
+   database first."
+2. **`--force` did not reset far enough.** See the `reset_replay_range`/Design-decisions
+   corrections above — a stint past `--to` was left in place, so redoing `--from` after a
+   `--force` immediately tripped `out_of_order_replay_reason` against it, with the requested
+   range now half-deleted. Fixed by dropping `date_to` from `reset_replay_range` entirely: it
+   resets from `date_from` onward, unconditionally.
+3. **New task recorded, not implemented here (out of this PR's scope):** `T-125` — vetoes are
+   written as per-date events (`write_vetoes` clears only `cycle_date = ?`, the run's own
+   date), not stints, so a HARD veto never actually clears once raised and a SOFT rule that
+   holds across several weekly cycles is penalized once per cycle it held, not once while
+   held. Added to `.specify/memory/TASKS.md` as P0, blocking any `backfill` run and the next
+   live `select` — a correctness bug in the live system today, `backfill`'s database-copy
+   fix does not touch it (a copy of a wrong book is still wrong).
 
 ### Residual scope, deliberately deferred
 

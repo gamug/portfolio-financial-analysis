@@ -108,27 +108,35 @@ def sync_replay_positions(
     return opened, closed
 
 
-def reset_replay_range(conn: Database, date_from: str, date_to: str) -> None:
-    """``cycle backfill --force``: wipe this date range's prior replay state so it can be
-    fully recomputed, without touching anything outside it.
+def reset_replay_range(conn: Database, date_from: str) -> None:
+    """``cycle backfill --force``: wipe replay state from *date_from* through the end of the
+    book, so it can be fully recomputed, without touching anything before it.
 
-    A stint opened inside the range is deleted outright (the redo decides whether it ever
-    existed); one closed inside the range is reopened (the redo decides when, if ever, it
-    closes again); a stint wholly outside the range -- opened before *date_from* and never
-    touched inside it -- is left alone. Also drops the range's ``cycle_run`` rows (cascading
-    to their ``cycle_checkpoint``/``cycle_ranking`` rows), so every step in the range
-    re-executes rather than being skipped as already ``done``.
+    A replay is path-dependent (T-115 review): a stint at some later date only has the shape
+    it does because of every stint that preceded it. Resetting a bounded ``date_from..date_to``
+    range and leaving a stint past *date_to* in place -- e.g. a later backfill run, or a prior
+    partial one that reached further -- leaves the replay book's latest ``valid_from`` past
+    *date_from* again, so redoing *date_from* immediately trips :func:`out_of_order_replay_reason`
+    against a stint this same reset was supposed to clear the way for, half-deleted. There is no
+    *date_to*: every stint and REPLAY ``cycle_run`` on or after *date_from* resets, unconditionally.
+
+    A stint opened on or after *date_from* is deleted outright (the redo decides whether it ever
+    existed); one closed on or after *date_from* is reopened (the redo decides when, if ever, it
+    closes again); a stint wholly before *date_from* is left alone. Also drops every REPLAY
+    ``cycle_run`` on or after *date_from* (cascading to its ``cycle_checkpoint``/``cycle_ranking``
+    rows), so every step from *date_from* on re-executes rather than being skipped as already
+    ``done``.
     """
     conn.execute(
-        "DELETE FROM portfolio_position_replay WHERE valid_from BETWEEN ? AND ?",
-        (date_from, date_to),
+        "DELETE FROM portfolio_position_replay WHERE valid_from >= ?",
+        (date_from,),
     )
     conn.execute(
-        "UPDATE portfolio_position_replay SET valid_to = NULL WHERE valid_to BETWEEN ? AND ?",
-        (date_from, date_to),
+        "UPDATE portfolio_position_replay SET valid_to = NULL WHERE valid_to >= ?",
+        (date_from,),
     )
     conn.execute(
-        "DELETE FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date BETWEEN ? AND ?",
-        (date_from, date_to),
+        "DELETE FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date >= ?",
+        (date_from,),
     )
     conn.commit()

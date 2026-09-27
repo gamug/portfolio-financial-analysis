@@ -473,17 +473,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       and T-104 triggers as `portfolio_position`, never read by or refused for conflicting with
       it; `cycle_run.cycle_type` gains `'REPLAY'`. New `cycle/replay.py`:
       `out_of_order_replay_reason`/`sync_replay_positions` (the live guard/writer's own shape,
-      against the replay table) and `reset_replay_range(conn, date_from, date_to)` (`--force`'s
-      implementation — drops/reopens the range's replay stints and drops its `cycle_run` rows so
-      every step re-executes, untouched outside the range). `cycle.orchestrator.run_replay` is
-      `backfill`'s new entrypoint (`cycle_type='REPLAY'`, same step sequence as `run_selection`);
-      the `positions` step branches on `cycle_type` to call the replay path instead of
-      `writers.sync_positions`, with no `--allow-backdated`-style override (nothing to override
-      once `--force` resets the range up front). `cycle/cli.py`'s `backfill` now calls
-      `run_replay`; new `--force` flag calls `reset_replay_range` once before the date loop.
-      8 new tests in `tests/test_cycle.py`. Full suite 747 passed (was 739); ruff, format, mypy,
-      pre-commit clean. `docs/cycle.md`, `docs/kg_schema.md`, `SPEC.md`'s schema table updated.
-      Record: `docs/model_fixes.md` "T-115".
+      against the replay table) and `reset_replay_range(conn, date_from)` (`--force`'s
+      implementation — drops/reopens every replay stint and `cycle_run` row on or after
+      `date_from`, unconditionally, never touching an earlier date). `cycle.orchestrator.run_replay`
+      is `backfill`'s new entrypoint (`cycle_type='REPLAY'`, same step sequence as
+      `run_selection`); the `positions` step branches on `cycle_type` to call the replay path
+      instead of `writers.sync_positions`, with no `--allow-backdated`-style override (nothing
+      to override once `--force` resets from the range's start up front). `cycle/cli.py`'s
+      `backfill` now calls `run_replay`; new `--force` flag calls `reset_replay_range` once
+      before the date loop; `--db` is now mandatory and refused when it resolves to the
+      configured production path (PR #94 review — every step but `positions` still writes the
+      shared database, so only a whole separate copy is truly isolated).
+      12 new tests in `tests/test_cycle.py` (8 + 4 from the review follow-up). Full suite 751
+      passed (was 739); ruff, format, mypy clean. `docs/cycle.md`, `docs/kg_schema.md`,
+      `SPEC.md`'s schema table updated. PR #94 review also opened `T-125` (veto lifecycle,
+      P0, unrelated pre-existing gap — not fixed here). Record: `docs/model_fixes.md` "T-115".
 - [ ] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
       (`LEVERAGE_EXTREME` negative-equity branch, `DQ_NEG_EQUITY`'s HARD condition). Both use
       `debt_to_assets > 0.8` or `interest_coverage < 1.5`; the audit shows the first never
@@ -611,6 +615,40 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       longer exists to hash retroactively; that is expected, not a defect to correct.
       **Acceptance**: zero production `score_snapshot[FUNDAMENTAL]` rows with `model` equal to
       a real configured model id whose score actually came from `_fallback_assessment`.
+- [ ] **T-125** *(P0 — added 2026-09-27 from PR #94's review; before any `cycle backfill` run
+      and before the next live `cycle select`)* Veto lifecycle: a veto is a stint, not a
+      per-date event. Today `writers.write_vetoes` clears only rows `WHERE cycle_date = ?` (the
+      run's own date), and `hard_vetoed_as_of` / `active_soft_vetoes` /
+      `quant.db.hard_vetoed_as_of` read every uncleared row `<= cutoff`. As a result (all
+      reproduced): a HARD veto is permanent once raised, even with the condition false on 3
+      later cycles; the same SOFT rule counts once per cycle it held (4 weekly cycles = -60,
+      not -15); production (`financial-2.db`) still carries WAT's HARD `NEGATIVE_FCF` from the
+      reverted 2026-06-30 run as active, and 7 names carry the same SOFT rule on two dates.
+      **Fix**: (a) schema — `veto` holds stints: `raised_on`, `cleared_on` (cycle dates, not
+      wall-clock), `last_seen_on`, `severity`, `evidence_json`, `run_id`, at most one open
+      stint per `(asset_id, rule_id)` (partial unique index `WHERE cleared_on IS NULL`);
+      `detected_at`/`cleared_at` stay as wall-clock metadata only. (b) three-state evaluation —
+      each rule returns its hits and the set of assets it could evaluate; an open stint closes
+      only for an asset that was evaluated and not hit; an asset the rule could not evaluate
+      (missing data) keeps its open stint and never opens a new one. (c) transitions at cycle
+      date N: hit + no open stint → open (`raised_on = N`); hit + open stint →
+      `last_seen_on = N`; evaluated, not hit, open stint → `cleared_on = N`; a rule disabled in
+      `rule_catalog` → its open stints close at N. (d) one point-in-time predicate in
+      `kg_schema`, used by both `cycle` (HARD filter, SOFT penalty) and `quant` (universe
+      gate): active at cutoff C ⇔ `raised_on <= C AND (cleared_on IS NULL OR cleared_on > C)`,
+      C = N-1 (T-1 lag for both raising and clearing). (e) SOFT penalty =
+      `soft_veto_penalty × count(distinct active SOFT rules)`. (f) idempotent re-run:
+      re-running date N first undoes N's own transitions (deletes stints raised on N, reopens
+      stints cleared on N), then re-applies them; a live veto evaluation at a date older than
+      the latest transition is refused, the same rule as `T-097`. (g) replay — `reset_replay_range`
+      (`T-115`'s `--force`) also undoes veto transitions on or after `--from` in the replay
+      database. (h) migration — collapse existing per-date rows into stints using the
+      completed veto-step dates already recorded in `cycle_checkpoint`.
+      **Acceptance**: a HARD veto clears the first cycle its condition is false and the asset
+      was evaluated (not permanent); a SOFT rule penalizes once while its stint stays open, not
+      once per cycle it holds; re-running a past date is idempotent; `cycle backfill --force`
+      resets veto transitions the same way `T-115` resets positions. Changes live behavior
+      (`SPEC.md` FR-006) — its own PR, separate from any other in-flight work.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -646,9 +684,11 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112`, `T-113`, `T-114` and `T-115` are done too (2026-09-27); `T-070`–`T-084` and
-`T-116` have not started. Execute
-**Work item 14**'s remaining P1 task (`T-116`, after
+`T-111`, `T-112`, `T-113`, `T-114` and `T-115` are done too (2026-09-27); `T-070`–`T-084`,
+`T-116` and `T-125` (added 2026-09-27, from PR #94's review — P0, blocks any `cycle backfill`
+run and the next live `cycle select`) have not started. Execute
+**Work item 14**'s remaining P0 task (`T-125`, veto lifecycle) → its remaining P1 task
+(`T-116`, after
 `T-105`) → `T-121`/`T-122`/`T-123`/`T-124` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

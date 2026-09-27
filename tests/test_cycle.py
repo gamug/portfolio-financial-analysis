@@ -15,7 +15,7 @@ from cycle.cli import build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
-from cycle.orchestrator import run_monitoring, run_replay, run_selection
+from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
@@ -523,53 +523,74 @@ def test_reset_replay_range_lets_a_completed_date_be_recomputed(cycle_seed: Data
     conn = cycle_seed
     run_replay(_settings(conn), "2026-05-01", conn=conn)
 
-    reset_replay_range(conn, "2026-05-01", "2026-05-01")
+    reset_replay_range(conn, "2026-05-01")
     again = run_replay(_settings(conn), "2026-05-01", conn=conn)
 
     assert "positions" in again.steps_run  # recomputed, not skipped as already done
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == 3
 
 
-def test_reset_replay_range_leaves_positions_outside_the_range_untouched(
-    cycle_seed: Database,
-) -> None:
+def test_reset_replay_range_leaves_earlier_positions_untouched(cycle_seed: Database) -> None:
     conn = cycle_seed
     run_replay(_settings(conn), "2026-05-01", conn=conn)
-    run_replay(_settings(conn), "2026-06-01", conn=conn)
-    later = [
+    earlier = [
         dict(r)
         for r in conn.execute(
-            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-06-01' ORDER BY id"
+            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-05-01' ORDER BY id"
         )
     ]
-    assert later  # the later date's stints exist to begin with
+    assert earlier  # the earlier date's stints exist to begin with
+    run_replay(_settings(conn), "2026-06-01", conn=conn)
 
-    reset_replay_range(conn, "2026-05-01", "2026-05-01")
+    reset_replay_range(conn, "2026-06-01")
 
     assert (
         conn.execute(
-            "SELECT COUNT(*) FROM portfolio_position_replay WHERE valid_from = '2026-05-01'"
+            "SELECT COUNT(*) FROM portfolio_position_replay WHERE valid_from = '2026-06-01'"
         ).fetchone()[0]
         == 0
     )
     still_there = [
         dict(r)
         for r in conn.execute(
-            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-06-01' ORDER BY id"
+            "SELECT * FROM portfolio_position_replay WHERE valid_from = '2026-05-01' ORDER BY id"
         )
     ]
-    assert still_there == later
+    assert still_there == earlier
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = '2026-05-01'"
         ).fetchone()[0]
-        == 0
+        == 1
     )
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = '2026-06-01'"
         ).fetchone()[0]
-        == 1
+        == 0
+    )
+
+
+def test_reset_replay_range_resets_through_the_end_of_the_book(cycle_seed: Database) -> None:
+    """T-115 review: a replay is path-dependent -- a stint past --to must reset too, or
+    redoing --from immediately trips the out-of-order-replay guard against it, half-deleted."""
+    conn = cycle_seed
+    run_replay(_settings(conn), "2026-06-30", conn=conn)
+    run_replay(_settings(conn), "2026-07-08", conn=conn)  # past the --to a bounded reset would use
+
+    reset_replay_range(conn, "2026-06-30")
+    again = run_replay(_settings(conn), "2026-06-30", conn=conn)  # must not raise OutOfOrderCycle
+
+    assert "positions" in again.steps_run
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = '2026-07-08'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert (
+        conn.execute("SELECT MAX(valid_from) FROM portfolio_position_replay").fetchone()[0]
+        == "2026-06-30"
     )
 
 
@@ -583,6 +604,62 @@ def test_force_flag_exists_on_backfill_only() -> None:
     ).force
     for command in ("select", "monitor"):
         assert not hasattr(parser.parse_args([command]), "force")
+
+
+def test_backfill_refuses_without_db(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-115 review: only `positions` is isolated -- every other REPLAY step still writes the
+    shared database, so --db is mandatory (a copy), never inferred from KG_FINANCIAL_DB."""
+    monkeypatch.delenv("KG_FINANCIAL_DB", raising=False)
+    monkeypatch.delenv("KG_FINANTIAL_DB", raising=False)
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+
+    assert cycle_main(["backfill", "--from", "2026-01-01", "--to", "2026-01-01"]) == 1
+    assert "--db" in capsys.readouterr().err
+
+
+def test_backfill_refuses_the_production_database_path(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    prod = tmp_path / "prod.db"
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(prod))
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+
+    assert (
+        cycle_main(["backfill", "--from", "2026-01-01", "--to", "2026-01-01", "--db", str(prod)])
+        == 1
+    )
+    assert "production database" in capsys.readouterr().err
+
+
+def test_backfill_runs_against_an_explicit_non_production_db(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    prod = tmp_path / "prod.db"
+    copy = tmp_path / "copy.db"
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(prod))
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "cycle.cli.run_replay",
+        lambda _settings, d, **_k: calls.append(d) or CycleReport(1, "REPLAY", d, selected=0),
+    )
+
+    assert (
+        cycle_main(["backfill", "--from", "2026-01-01", "--to", "2026-01-01", "--db", str(copy)])
+        == 0
+    )
+    assert calls == ["2026-01-01"]
 
 
 # -- T-110: the price-spine guard ---------------------------------
