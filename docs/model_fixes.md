@@ -2356,6 +2356,28 @@ own unit tests (`tests/test_quant_lw.py`) call it directly with no `rf`, which i
 way to test that pure function in isolation; the bug was entirely in the one caller that
 should have supplied `rf` and didn't.
 
+### Theoretical/technical reference
+
+- **The Sharpe ratio is (total portfolio return minus the risk-free rate) divided by
+  volatility** (Sharpe, W.F., "Mutual Fund Performance," *Journal of Business*, 1966; the
+  "reward-to-variability ratio") -- the numerator's minuend is the portfolio's own total
+  return, and `rf` is subtracted exactly once to get the excess return the ratio is built on.
+  `optimize.py::_stats`'s `sharpe = (ret - rf) / vol` already matches this construction; the
+  defect was that `ret` (`mu @ w`) was silently an excess return already for the `equilibrium`
+  estimator, so this formula's single subtraction became a second one.
+- **The reverse-optimized ("equilibrium") return in Black-Litterman is a total return**, not
+  an excess return: `Pi = rf + delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global
+  Portfolio Optimization," *Financial Analysts Journal*, 1992) -- `delta * Sigma @ w_mkt` alone
+  is the market's *implied excess* return over `rf`, consistent with CAPM's own total-return
+  form `E[R_i] = rf + beta_i * (E[R_m] - rf)`. `risk.equilibrium_returns`'s own docstring
+  already states this exact formula; the bug was that its one caller left `rf` at the
+  function's `0.0` default instead of supplying it.
+  (Live re-verification of both citations against an external source was attempted but this
+  environment's network egress policy blocks the reference domains reached for this pass;
+  both are standard, textbook formulas, not a contested or novel claim, and the fix's
+  correctness does not depend on the citation alone -- it is also proven by the two regression
+  tests below, which fail on the pre-fix code and pass on the fix.)
+
 ### Fix
 
 `persist.py::_expected_returns` takes `rf: float` and passes it through:
