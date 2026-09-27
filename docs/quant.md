@@ -329,7 +329,13 @@ when none is loaded for the window). It records the benchmark version and panel 
 the `quant_run` row. It freezes each persisted book's weights at its as-of date, walks
 forward trading days, computes the weighted simple total return, compounds it,
 subtracts the return of the benchmark version it just built or chose, and writes
-`quant_benchmark_performance` under `perf-v2`. `perf-v1` rows, graded against
+`quant_benchmark_performance` under `perf-v2`. A held name missing one day's forward return
+but present again later (a `price_daily` gap — its move is folded into the return of the day
+it reappears, since the return engine bridges the gap from the last available close) counts
+as a 0% that day with its weight kept, not renormalized away; only a name with no later return
+at all (delisted, or its series ends) is dropped, with the remaining names' weights
+renormalized from that day on (T-111; `build_internal_benchmark` applies the same rule).
+`perf-v1` rows, graded against
 `bench-v1`, stay stored under their version, and `v_quant_benchmark_performance` shows the
 latest version per (book, date). The live
 `cycle` book (`portfolio_position`) is snapshotted into

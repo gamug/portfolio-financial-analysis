@@ -374,11 +374,26 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       matching `risk.equilibrium_returns` docstring. Full suite 707 passed after the fix.
       **Merged via PR #87.** Cleaning the production orphan rows themselves is a separate,
       deferred production action — see `T-123`.
-- [ ] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
+- [x] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
       (`fwd[d].get(a, 0.0)`), dragging the book toward zero in proportion to missing names.
       Renormalize the day's weights over names that have a return. (Transaction costs belong
       to `T-077`.) **Acceptance**: a book with one name missing a day earns the other names'
       renormalized return.
+      **Done 2026-09-27; corrected 2026-09-27 (PR #89 review, `@eldova1702`).** The first cut
+      renormalized *every* missing asset-day, which review found double counts a genuine
+      one-day `price_daily` gap: the return engine bridges the gap by computing the next
+      available day's return from the last available close, so that next return already
+      contains the gap day's move -- renormalizing the gap day imputes an extra return on top.
+      Corrected: `_evaluate_book` (and `benchmark.build_internal_benchmark`, for the same
+      convention) now tracks each name's `last_seen` date in the window; a name missing *today*
+      but with a later return stays a "survivor" contributing 0% today, weight kept (its move
+      lands, once, on the day it reappears); only a name with no later return at all (delisted,
+      series ends) is dropped and the remaining weights renormalized, from that day on. Tests:
+      `tests/test_quant_pipeline.py::test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap`,
+      `tests/test_quant_pipeline.py::test_evaluate_renormalizes_from_a_names_permanent_end_of_data`,
+      and the matching pair in `tests/test_benchmark.py`. Full suite 710 passed (was 707); ruff,
+      format, mypy, pre-commit clean. `SPEC.md` FR-010 and `docs/quant.md` updated. Record:
+      `docs/model_fixes.md` "T-111".
 - [ ] **T-112** *(P1)* `optimize.efficient_frontier` returns *k* identical copies of the
       min-variance point, all labelled `optimal`, when the feasible return range collapses.
       Return that one point with an explicit `degenerate` status. **Acceptance**: a collapsed
@@ -553,8 +568,9 @@ too; **`T-121`/`T-122`/`T-123` (added 2026-09-27) track the production actions t
 and `T-110` itself surfaced — voiding the stale `T-104` live-book snapshot, re-persisting
 `T-108`/`T-109`'s fixes, and cleaning `T-110`'s own production orphan rows — and are held
 pending explicit user direction, the same as every other production write in this file
-(`T-104`, `T-107`, `T-120`).** `T-070`–`T-084` and `T-111`–`T-116` have not started. Execute
-**Work item 14**'s remaining P1 tasks (`T-111`–`T-116`; `T-113` before `T-079`; `T-116` after
+(`T-104`, `T-107`, `T-120`).** `T-111` is done too (2026-09-27); `T-070`–`T-084` and
+`T-112`–`T-116` have not started. Execute
+**Work item 14**'s remaining P1 tasks (`T-112`–`T-116`; `T-113` before `T-079`; `T-116` after
 `T-105`) → `T-121`/`T-122`/`T-123` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

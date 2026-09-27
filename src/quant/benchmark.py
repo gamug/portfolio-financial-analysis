@@ -48,28 +48,36 @@ def build_internal_benchmark(  # noqa: PLR0913 - keyword-only knobs with default
 ) -> int:
     """Equal-weight, daily-rebalanced index over *asset_ids* (the gated panel).
 
-    Day *t*'s return is the mean of ``expm1(tr_log_return)`` over the panel names with a
-    return that day (a name with none that day is left out of that day's mean, not counted
-    as 0%); the stored ``log_return`` is ``log1p`` of it and the level compounds
-    ``(1 + r)`` from 1.0."""
+    Day *t*'s return is the mean of ``expm1(tr_log_return)`` over the panel names still
+    "alive" that day -- present that day, or with a later return anywhere in the window (a
+    one-day price-data gap contributes 0% that day, since its move is folded into the return
+    of the day it next reappears, T-111) -- while a name with no later return at all (gone for
+    good) is dropped from the panel and the divisor from that day on, the same convention
+    ``evaluate.py``'s book-level return uses. The stored ``log_return`` is ``log1p`` of the
+    mean and the level compounds ``(1 + r)`` from 1.0."""
     if not asset_ids:
         raise ValueError("the benchmark panel is empty")
     ids = sorted({int(a) for a in asset_ids})
     rows = conn.execute(
-        "SELECT obs_date, tr_log_return FROM quant_return_daily "  # noqa: S608 - placeholders only
+        "SELECT asset_id, obs_date, tr_log_return FROM quant_return_daily "  # noqa: S608
         "WHERE engine_version = ? AND obs_date >= ? AND obs_date <= ? "
         f"AND tr_log_return IS NOT NULL AND asset_id IN {in_clause(ids)} "
         "ORDER BY obs_date",
         (return_engine_version, date_from, date_to, *ids),
     ).fetchall()
-    by_day: dict[str, list[float]] = {}
+    by_day: dict[str, dict[int, float]] = {}
+    last_seen: dict[int, str] = {}
     for r in rows:
-        by_day.setdefault(str(r["obs_date"]), []).append(math.expm1(float(r["tr_log_return"])))
+        day = str(r["obs_date"])
+        aid = int(r["asset_id"])
+        by_day.setdefault(day, {})[aid] = math.expm1(float(r["tr_log_return"]))
+        if aid not in last_seen or day > last_seen[aid]:
+            last_seen[aid] = day
     level = 1.0
     out: list[tuple[str, float | None, float]] = []
     for day in sorted(by_day):
-        simple = by_day[day]
-        mean = math.fsum(simple) / len(simple)
+        survivors = [a for a in ids if last_seen.get(a, "") >= day]
+        mean = math.fsum(by_day[day].get(a, 0.0) for a in survivors) / len(survivors)
         level *= 1.0 + mean
         out.append((day, math.log1p(mean), level))
     return upsert_benchmark_series(

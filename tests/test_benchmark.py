@@ -66,16 +66,24 @@ def _series(conn: Database, version: str = "bench-v2") -> list[tuple[str, float,
 
 
 def _independent_equal_weight(panel: list[int]) -> list[tuple[str, float]]:
-    """An independent calculation: hold 1/n of the value in each panel name that trades that
-    day, rebalance daily; the index is the running product of (1 + average simple return)."""
+    """An independent calculation: hold 1/n of the value in each panel name still *alive* that
+    day -- present today, or with a later return anywhere in the window (a one-day gap
+    contributes 0% that day, T-111) -- dropped, and the divisor shrunk, only once it has no
+    later return at all; rebalance daily; the index is the running product of
+    (1 + average simple return)."""
+    last_seen: dict[int, int] = {
+        a: seen
+        for a in panel
+        for seen in [max((i for i, r in enumerate(SIMPLE[a]) if r is not None), default=-1)]
+    }
     level, out = 1.0, []
     for i, day in enumerate(DAYS):
-        todays = [SIMPLE[a][i] for a in panel if SIMPLE[a][i] is not None]
+        alive = [a for a in panel if last_seen[a] >= i]
         value_in, value_out = 0.0, 0.0
-        for r in todays:
-            stake = level / len(todays)
+        for a in alive:
+            stake = level / len(alive)
             value_in += stake
-            value_out += stake * (1.0 + float(r or 0.0))
+            value_out += stake * (1.0 + float(SIMPLE[a][i] or 0.0))
         level *= value_out / value_in
         out.append((day, level))
     return out
@@ -100,13 +108,38 @@ def test_the_index_matches_an_independent_equal_weight_calculation(
         prev = want_level
 
 
-def test_a_name_missing_a_day_is_left_out_of_that_day_not_counted_as_zero(
+def test_a_name_missing_one_day_but_alive_later_counts_as_zero_that_day(
     memory_quant_db: Database,
 ) -> None:
+    """T-111 (PR #89 review): asset 3 is missing only on 03-05 and has real returns again on
+    03-06/03-07, so it's still "alive" -- it contributes 0% that day, weighted equally with
+    the other two panel names (not excluded and the divisor shrunk to 2), the same convention
+    ``evaluate.py``'s book-level return uses for a one-day price-data gap."""
     _returns(memory_quant_db, SIMPLE)
     build_internal_benchmark(memory_quant_db, asset_ids=PANEL, date_from=DAYS[0], date_to=DAYS[-1])
     day3 = _series(memory_quant_db)[2]
+    assert math.expm1(day3[1]) == pytest.approx((0.02 - 0.03 + 0.0) / 3, abs=1e-12)
+
+
+def test_a_name_with_no_later_return_is_dropped_and_the_panel_renormalized(
+    memory_quant_db: Database,
+) -> None:
+    """T-111 (PR #89 review): unlike a one-day gap that later reappears, a name whose return
+    series simply ends mid-window (e.g. delisted) is genuinely gone -- it's dropped from the
+    panel and the divisor renormalized over the survivors, from that day on."""
+    gone_after_day_two: dict[int, list[float | None]] = {
+        1: [0.10, -0.05, 0.02, 0.031, -0.012],
+        2: [-0.10, 0.04, -0.03, 0.007, 0.025],
+        5: [0.03, 0.01, None, None, None],
+    }
+    panel = [1, 2, 5]
+    _returns(memory_quant_db, gone_after_day_two)
+    build_internal_benchmark(memory_quant_db, asset_ids=panel, date_from=DAYS[0], date_to=DAYS[-1])
+    series = _series(memory_quant_db)
+    day3 = series[2]  # asset 5 has no later return at all -> dropped, panel of 2 from here on
     assert math.expm1(day3[1]) == pytest.approx((0.02 - 0.03) / 2, abs=1e-12)
+    day4 = series[3]
+    assert math.expm1(day4[1]) == pytest.approx((0.031 + 0.007) / 2, abs=1e-12)
 
 
 def test_names_outside_the_gated_panel_are_ignored(memory_quant_db: Database) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
@@ -11,10 +12,25 @@ import pytest
 from portfolio_common.db import Database
 
 from kg_schema import queries
+from pricing_agent import db as pricing_db
+from quant import db as quant_db
 from quant.config import QuantSettings
+from quant.db import load_book_weights, load_forward_simple_returns
 from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
+
+
+def _new_quant_db() -> Database:
+    """An independent, empty quant-schema DB -- for tests that need two separately
+    seeded/mutated databases to compare against each other (T-111's gap-vs-no-gap check)."""
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    conn.execute("PRAGMA foreign_keys = ON")
+    pricing_db.ensure_schema(conn)
+    quant_db.ensure_schema(conn)
+    return conn
 
 
 def _settings(**over: object) -> QuantSettings:
@@ -186,6 +202,135 @@ def test_evaluate_defaults_from_to_earliest_optimized_book(seeded: Database) -> 
 
     assert ev.date_from == as_of
     assert ev.perf_rows > 0
+
+
+def test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap(
+    quant_seed: Callable[..., Database],
+) -> None:
+    """T-111 (PR #89 review, `@eldova1702`): a one-day `price_daily` gap for the largest
+    holding must not be renormalized away that day -- ``returns.build_total_return_series``
+    computes the next day's return from the last *available* close, so the gap day's move is
+    already folded into the return of the day the name reappears. Two identically-seeded DBs
+    (fixed seed => identical prices): one untouched, one with a single `price_daily` bar
+    removed and `quant_return_daily` rebuilt around it. Their evaluated cumulative returns
+    over the same forward window must agree within 1e-4 -- the earlier "renormalize on every
+    missing day" attempt did not (it imputes the other names' average return for the gap day,
+    then the gap-spanning return the following day counts the same price move again)."""
+    true_conn = _new_quant_db()
+    quant_seed(true_conn, n_assets=6, n_days=280, with_dividends=False)
+    gap_conn = _new_quant_db()
+    quant_seed(gap_conn, n_assets=6, n_days=280, with_dividends=False)
+
+    s = _settings(objectives=["min_var"])
+    run_build_returns(
+        s, date_from="2000-01-01", date_to="2100-01-01", conn=true_conn, allow_no_dividends=True
+    )
+    run_build_returns(
+        s, date_from="2000-01-01", date_to="2100-01-01", conn=gap_conn, allow_no_dividends=True
+    )
+
+    dates = [
+        r[0]
+        for r in true_conn.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    gap_date = dates[-24]  # a forward trading day, well clear of as_of's own history window
+
+    run_optimize(s, as_of=as_of, conn=true_conn)
+    run_optimize(s, as_of=as_of, conn=gap_conn)
+
+    pid = true_conn.execute("SELECT id FROM quant_portfolio WHERE kind = 'min_var'").fetchone()[0]
+    weights = load_book_weights(true_conn, pid)
+    gap_asset = max(weights, key=lambda a: weights[a])  # "the largest holding" (review repro)
+
+    # remove one price bar for gap_asset in the gapped DB. quant_return_daily is INSERT OR
+    # IGNORE per (asset, day, engine_version) -- it "locks in" once built (T-086) -- so its own
+    # existing rows for gap_asset must be cleared too, or the already-built row for gap_date
+    # would just be silently kept and the rebuild below would be a no-op. This is the only
+    # difference between the two DBs; `as_of` is before `gap_date`, so the risk model/optimize
+    # weights themselves are identical in both.
+    gap_conn.execute(
+        "DELETE FROM price_daily WHERE asset_id = ? AND date = ?", (gap_asset, gap_date)
+    )
+    gap_conn.execute(
+        "DELETE FROM quant_return_daily WHERE asset_id = ? AND engine_version = ?",
+        (gap_asset, s.return_engine_version),
+    )
+    gap_conn.commit()
+    run_build_returns(
+        s, date_from="2000-01-01", date_to="2100-01-01", conn=gap_conn, allow_no_dividends=True
+    )
+    assert (
+        gap_conn.execute(
+            "SELECT COUNT(*) FROM quant_return_daily WHERE asset_id = ? AND obs_date = ?",
+            (gap_asset, gap_date),
+        ).fetchone()[0]
+        == 0
+    )  # the gap took effect: no row at all for gap_date after the rebuild
+
+    run_evaluate(s, date_from=as_of, date_to=end, conn=true_conn)
+    run_evaluate(s, date_from=as_of, date_to=end, conn=gap_conn)
+
+    def _final_cumulative(conn: Database) -> float:
+        return float(
+            conn.execute(
+                "SELECT cumulative_return FROM v_quant_benchmark_performance p "
+                "JOIN quant_portfolio qp ON qp.id = p.portfolio_id "
+                "WHERE qp.kind = 'min_var' ORDER BY p.date DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+
+    assert _final_cumulative(gap_conn) == pytest.approx(_final_cumulative(true_conn), abs=1e-4)
+
+
+def test_evaluate_renormalizes_from_a_names_permanent_end_of_data(seeded: Database) -> None:
+    """T-111 (PR #89 review): unlike a one-day gap that later reappears, a name with **no**
+    later return anywhere in the window -- its return series simply ends mid-window, e.g.
+    delisted -- is genuinely gone: it is dropped and the remaining names' weights renormalized,
+    from that day on, rather than left as dead weight silently dragging the book toward zero."""
+    dates = [
+        r[0]
+        for r in seeded.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    end_date = dates[-15]  # the delisted name's last trading day within the forward window
+    s = _settings(objectives=["min_var"])
+    run_optimize(s, as_of=as_of, conn=seeded)
+
+    pid = seeded.execute("SELECT id FROM quant_portfolio WHERE kind = 'min_var'").fetchone()[0]
+    weights = load_book_weights(seeded, pid)
+    delisted = next(a for a in weights if weights[a] > 0)
+
+    # end delisted's return series at end_date: no rows at all afterward
+    seeded.execute(
+        "DELETE FROM quant_return_daily WHERE asset_id = ? AND obs_date > ? AND engine_version = ?",
+        (delisted, end_date, s.return_engine_version),
+    )
+    seeded.commit()
+
+    fwd = load_forward_simple_returns(
+        seeded, list(weights), after=as_of, until=end, engine_version=s.return_engine_version
+    )
+    after_date = min(d for d in fwd if d > end_date)
+    survivors = {a: w for a, w in weights.items() if a != delisted}
+    expected = sum(w * fwd[after_date][a] for a, w in survivors.items()) / sum(survivors.values())
+
+    run_evaluate(s, date_from=as_of, date_to=end, conn=seeded)
+
+    realized = seeded.execute(
+        "SELECT realized_return FROM v_quant_benchmark_performance p "
+        "JOIN quant_portfolio qp ON qp.id = p.portfolio_id "
+        "WHERE qp.kind = 'min_var' AND p.date = ?",
+        (after_date,),
+    ).fetchone()[0]
+
+    assert realized == pytest.approx(expected, abs=1e-9)
 
 
 def test_evaluate_raises_when_no_from_given_and_no_books_persisted(
