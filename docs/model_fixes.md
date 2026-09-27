@@ -2586,3 +2586,74 @@ stored price is data pretending to rest on a foundation that isn't there.
   is offered on it too (unlike `T-097`'s `--allow-backdated`, which `backfill` deliberately
   does not carry), since a historical backfill legitimately may need to run past the
   spine's current edge.
+
+## T-111 — a missing asset-day in `evaluate` counted as a 0% return, dragging the book toward zero
+
+**Status**: Fixed 2026-09-27 (`T-111`).
+
+### Symptom
+
+`_evaluate_book`'s per-day realized return was `sum(w * fwd[d].get(a, 0.0) for a, w in
+weights.items())`: a held name with no forward-return row for day `d` (a data gap -- a missed
+fetch, a pricing-source outage, a not-yet-arrived candle -- not a permanent delisting, which
+would instead leave the name out of every `fwd[d]` from that point on) contributed `w * 0.0`
+to the sum while its weight `w` was still spent, exactly as if that name had earned a genuine
+0% that day. The more of the book's weight fell on names missing that day, the further the
+reported return was dragged toward zero relative to what the names actually still priced that
+day, in fact, earned.
+
+### Root cause
+
+`weights` (the book's frozen, as-of positions) and `fwd[d]` (the names with an actual forward
+return recorded for day `d`) are two different sets whenever any name has a data gap on `d`;
+`.get(a, 0.0)` conflated "no return recorded" with "recorded a 0% return" without renormalizing
+the day's weights over the names that were actually present. This is the single-asset,
+single-day analogue of `FR-010`'s already-handled *whole-date* case (`_evaluate_book`'s own
+`for d in sorted(fwd)` loop already skips a date with no `fwd[d]` entry at all, matching FR-010's
+"a date lacking forward data is skipped, not fabricated") -- the missing case was a date that
+*is* in `fwd` but where not every held name has a row in `fwd[d]`.
+
+### Fix
+
+```python
+present = {a: w for a, w in weights.items() if a in fwd[d]}
+total_present = sum(present.values())
+realized = (
+    sum(w * fwd[d][a] for a, w in present.items()) / total_present if total_present > 0 else 0.0
+)
+```
+
+Every held name missing day `d`'s return is dropped from that day's calculation, and the
+remaining names' weights are renormalized (divided by their own sum, not the book's full
+weight) before being applied to their own returns -- the day's realized return becomes what
+the names actually priced that day earned, not diluted by the names that weren't. A day where
+*every* held name is missing (`total_present == 0`) realizes 0%, the same neutral fallback the
+whole-date-skip path already implies for a day that cannot be scored either way.
+
+### Design decisions
+
+- **Renormalize per day, not once over the whole window.** A name's data gaps need not be
+  contiguous or permanent; recomputing `present`/`total_present` fresh for every `d` handles a
+  name that drops out for one day and comes back the next exactly like one that drops out for
+  the whole remaining window, with no special-casing between the two.
+- **This is `evaluate`'s own concern, not `optimize`'s.** The book's stored weights are left
+  untouched -- they still describe what was actually bought at `as_of`; only the *forward
+  scoring* of a day with a partial data gap is renormalized, so a re-`evaluate` of the same
+  book after a data gap is backfilled reproduces the pre-gap numbers exactly (nothing about the
+  persisted book changed in the meantime).
+- **Transaction costs are out of scope here (`T-077`).** Renormalizing a day's weights is a
+  scoring correction for data that was always meant to be there; it is not a rebalancing event
+  and charges no cost, unlike a genuine turnover.
+
+### Verification
+
+- New test: `tests/test_quant_pipeline.py::test_evaluate_renormalizes_over_names_with_a_return_on_a_missing_asset_day`
+  -- seeds a book, deletes one asset's `quant_return_daily` row for one forward day (simulating
+  a data gap), and asserts the day's `realized_return` equals the remaining names' return
+  renormalized over their own weights, not the pre-fix diluted value (`w_missing * 0.0` folded
+  in): the test fails on the pre-fix code (`0.01022` obtained vs. `0.01173` expected) and passes
+  on the fix.
+- `uv run pytest -q` -- 708 passed (was 707; +1 new test).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
+- `SPEC.md` FR-010 updated to state the per-name renormalization alongside its existing
+  whole-date-skip clause.

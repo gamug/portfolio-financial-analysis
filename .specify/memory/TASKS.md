@@ -374,11 +374,19 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       matching `risk.equilibrium_returns` docstring. Full suite 707 passed after the fix.
       **Merged via PR #87.** Cleaning the production orphan rows themselves is a separate,
       deferred production action — see `T-123`.
-- [ ] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
+- [x] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
       (`fwd[d].get(a, 0.0)`), dragging the book toward zero in proportion to missing names.
       Renormalize the day's weights over names that have a return. (Transaction costs belong
       to `T-077`.) **Acceptance**: a book with one name missing a day earns the other names'
       renormalized return.
+      **Done 2026-09-27.** `_evaluate_book` now computes `present = {a: w for a, w in
+      weights.items() if a in fwd[d]}` and divides by `sum(present.values())` instead of
+      `.get(a, 0.0)`-diluting over the book's full weight; a day where every held name is
+      missing realizes 0%, the same neutral fallback the existing whole-date-skip path already
+      implies. Test: `tests/test_quant_pipeline.py::test_evaluate_renormalizes_over_names_with_a_return_on_a_missing_asset_day`
+      (fails on the pre-fix code, passes on the fix). Full suite 708 passed (was 707); ruff,
+      format, mypy, pre-commit clean. `SPEC.md` FR-010 and `docs/quant.md` updated. Record:
+      `docs/model_fixes.md` "T-111".
 - [ ] **T-112** *(P1)* `optimize.efficient_frontier` returns *k* identical copies of the
       min-variance point, all labelled `optimal`, when the feasible return range collapses.
       Return that one point with an explicit `degenerate` status. **Acceptance**: a collapsed
@@ -553,8 +561,9 @@ too; **`T-121`/`T-122`/`T-123` (added 2026-09-27) track the production actions t
 and `T-110` itself surfaced — voiding the stale `T-104` live-book snapshot, re-persisting
 `T-108`/`T-109`'s fixes, and cleaning `T-110`'s own production orphan rows — and are held
 pending explicit user direction, the same as every other production write in this file
-(`T-104`, `T-107`, `T-120`).** `T-070`–`T-084` and `T-111`–`T-116` have not started. Execute
-**Work item 14**'s remaining P1 tasks (`T-111`–`T-116`; `T-113` before `T-079`; `T-116` after
+(`T-104`, `T-107`, `T-120`).** `T-111` is done too (2026-09-27); `T-070`–`T-084` and
+`T-112`–`T-116` have not started. Execute
+**Work item 14**'s remaining P1 tasks (`T-112`–`T-116`; `T-113` before `T-079`; `T-116` after
 `T-105`) → `T-121`/`T-122`/`T-123` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

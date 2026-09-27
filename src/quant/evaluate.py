@@ -78,7 +78,16 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     cumulative = 1.0
     rows: list[tuple[str, float, float, str | None, float | None, float | None]] = []
     for d in sorted(fwd):
-        realized = sum(w * fwd[d].get(a, 0.0) for a, w in weights.items())
+        # T-111: a name missing *that day*'s forward return (a data gap, not a permanent
+        # delisting) must not count as a 0% return dragging the book toward zero in proportion
+        # to its weight -- renormalize over the names that do have a return that day instead.
+        present = {a: w for a, w in weights.items() if a in fwd[d]}
+        total_present = sum(present.values())
+        realized = (
+            sum(w * fwd[d][a] for a, w in present.items()) / total_present
+            if total_present > 0
+            else 0.0
+        )
         cumulative *= 1.0 + realized
         br = bench.get(d)
         active = None if br is None else realized - br

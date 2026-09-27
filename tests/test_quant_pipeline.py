@@ -12,6 +12,7 @@ from portfolio_common.db import Database
 
 from kg_schema import queries
 from quant.config import QuantSettings
+from quant.db import load_book_weights, load_forward_simple_returns
 from quant.evaluate import run_evaluate
 from quant.persist import run_build_risk_model, run_optimize
 from quant.returns import run_build_returns
@@ -186,6 +187,56 @@ def test_evaluate_defaults_from_to_earliest_optimized_book(seeded: Database) -> 
 
     assert ev.date_from == as_of
     assert ev.perf_rows > 0
+
+
+def test_evaluate_renormalizes_over_names_with_a_return_on_a_missing_asset_day(
+    seeded: Database,
+) -> None:
+    """T-111: a name missing *one day*'s forward return (a data gap, not a delisting) must not
+    count as a 0% return dragging the book toward zero in proportion to its weight -- the day's
+    realized return is the other names' return, renormalized over their own weights."""
+    dates = [
+        r[0]
+        for r in seeded.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    gap_date = dates[-24]  # the first forward trading day
+    s = _settings(objectives=["min_var"])
+    run_optimize(s, as_of=as_of, conn=seeded)
+
+    pid = seeded.execute("SELECT id FROM quant_portfolio WHERE kind = 'min_var'").fetchone()[0]
+    weights = load_book_weights(seeded, pid)
+    gap_asset = next(a for a in weights if weights[a] > 0)
+
+    # simulate a one-day data gap for gap_asset: no return row at all that day
+    seeded.execute(
+        "DELETE FROM quant_return_daily WHERE asset_id = ? AND obs_date = ? AND engine_version = ?",
+        (gap_asset, gap_date, s.return_engine_version),
+    )
+    seeded.commit()
+
+    fwd = load_forward_simple_returns(
+        seeded, list(weights), after=as_of, until=end, engine_version=s.return_engine_version
+    )
+    assert gap_asset not in fwd[gap_date]  # the gap took effect
+    present = {a: w for a, w in weights.items() if a in fwd[gap_date]}
+    expected = sum(w * fwd[gap_date][a] for a, w in present.items()) / sum(present.values())
+    diluted = sum(w * fwd[gap_date].get(a, 0.0) for a, w in weights.items())  # the pre-fix bug
+
+    run_evaluate(s, date_from=as_of, date_to=end, conn=seeded)
+
+    realized = seeded.execute(
+        "SELECT realized_return FROM v_quant_benchmark_performance p "
+        "JOIN quant_portfolio qp ON qp.id = p.portfolio_id "
+        "WHERE qp.kind = 'min_var' AND p.date = ?",
+        (gap_date,),
+    ).fetchone()[0]
+
+    assert realized == pytest.approx(expected, abs=1e-9)
+    assert realized != pytest.approx(diluted, abs=1e-9)
 
 
 def test_evaluate_raises_when_no_from_given_and_no_books_persisted(
