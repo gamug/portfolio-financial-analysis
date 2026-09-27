@@ -75,17 +75,29 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     bench = load_benchmark_returns(
         conn, benchmark, after=as_of, until=date_to, engine_version=benchmark_version
     )
+    # T-111: a name missing *one day*'s forward return because of a gap in price_daily still
+    # gets that day's price move folded into the return of the day it next reappears --
+    # returns.build_total_return_series computes that return from the last *available* close,
+    # so the gap day itself correctly contributes 0% while the name's weight stays in the book
+    # (renormalizing it away here would double count the same price move once as an imputed
+    # gap-day return and again in the real, gap-spanning return that follows). Only a name with
+    # no later return anywhere in the window -- delisted, or its series simply ends -- is
+    # actually gone: it is dropped and the remaining weights renormalized, from that day on
+    # (proceeds reinvested in whatever survives).
+    last_seen: dict[int, str] = {}
+    for d, day_map in fwd.items():
+        for a in day_map:
+            if a not in last_seen or d > last_seen[a]:
+                last_seen[a] = d
+
     cumulative = 1.0
     rows: list[tuple[str, float, float, str | None, float | None, float | None]] = []
     for d in sorted(fwd):
-        # T-111: a name missing *that day*'s forward return (a data gap, not a permanent
-        # delisting) must not count as a 0% return dragging the book toward zero in proportion
-        # to its weight -- renormalize over the names that do have a return that day instead.
-        present = {a: w for a, w in weights.items() if a in fwd[d]}
-        total_present = sum(present.values())
+        survivors = {a: w for a, w in weights.items() if last_seen.get(a, "") >= d}
+        total_survivors = sum(survivors.values())
         realized = (
-            sum(w * fwd[d][a] for a, w in present.items()) / total_present
-            if total_present > 0
+            sum(w * fwd[d].get(a, 0.0) for a, w in survivors.items()) / total_survivors
+            if total_survivors > 0
             else 0.0
         )
         cumulative *= 1.0 + realized

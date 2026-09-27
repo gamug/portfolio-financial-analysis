@@ -379,12 +379,19 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       Renormalize the day's weights over names that have a return. (Transaction costs belong
       to `T-077`.) **Acceptance**: a book with one name missing a day earns the other names'
       renormalized return.
-      **Done 2026-09-27.** `_evaluate_book` now computes `present = {a: w for a, w in
-      weights.items() if a in fwd[d]}` and divides by `sum(present.values())` instead of
-      `.get(a, 0.0)`-diluting over the book's full weight; a day where every held name is
-      missing realizes 0%, the same neutral fallback the existing whole-date-skip path already
-      implies. Test: `tests/test_quant_pipeline.py::test_evaluate_renormalizes_over_names_with_a_return_on_a_missing_asset_day`
-      (fails on the pre-fix code, passes on the fix). Full suite 708 passed (was 707); ruff,
+      **Done 2026-09-27; corrected 2026-09-27 (PR #89 review, `@eldova1702`).** The first cut
+      renormalized *every* missing asset-day, which review found double counts a genuine
+      one-day `price_daily` gap: the return engine bridges the gap by computing the next
+      available day's return from the last available close, so that next return already
+      contains the gap day's move -- renormalizing the gap day imputes an extra return on top.
+      Corrected: `_evaluate_book` (and `benchmark.build_internal_benchmark`, for the same
+      convention) now tracks each name's `last_seen` date in the window; a name missing *today*
+      but with a later return stays a "survivor" contributing 0% today, weight kept (its move
+      lands, once, on the day it reappears); only a name with no later return at all (delisted,
+      series ends) is dropped and the remaining weights renormalized, from that day on. Tests:
+      `tests/test_quant_pipeline.py::test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap`,
+      `tests/test_quant_pipeline.py::test_evaluate_renormalizes_from_a_names_permanent_end_of_data`,
+      and the matching pair in `tests/test_benchmark.py`. Full suite 710 passed (was 707); ruff,
       format, mypy, pre-commit clean. `SPEC.md` FR-010 and `docs/quant.md` updated. Record:
       `docs/model_fixes.md` "T-111".
 - [ ] **T-112** *(P1)* `optimize.efficient_frontier` returns *k* identical copies of the

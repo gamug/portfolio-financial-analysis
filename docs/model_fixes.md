@@ -2606,54 +2606,99 @@ day, in fact, earned.
 
 `weights` (the book's frozen, as-of positions) and `fwd[d]` (the names with an actual forward
 return recorded for day `d`) are two different sets whenever any name has a data gap on `d`;
-`.get(a, 0.0)` conflated "no return recorded" with "recorded a 0% return" without renormalizing
-the day's weights over the names that were actually present. This is the single-asset,
-single-day analogue of `FR-010`'s already-handled *whole-date* case (`_evaluate_book`'s own
-`for d in sorted(fwd)` loop already skips a date with no `fwd[d]` entry at all, matching FR-010's
-"a date lacking forward data is skipped, not fabricated") -- the missing case was a date that
-*is* in `fwd` but where not every held name has a row in `fwd[d]`.
+`.get(a, 0.0)` conflated "no return recorded" with "recorded a 0% return" without accounting
+for the missing name at all. This is the single-asset, single-day analogue of `FR-010`'s
+already-handled *whole-date* case (`_evaluate_book`'s own `for d in sorted(fwd)` loop already
+skips a date with no `fwd[d]` entry at all, matching FR-010's "a date lacking forward data is
+skipped, not fabricated") -- the missing case was a date that *is* in `fwd` but where not every
+held name has a row in `fwd[d]`.
+
+### Initial fix was itself wrong (PR #89 review, `@eldova1702`)
+
+The first attempt renormalized *every* missing asset-day: drop the missing name from that
+day's weights and divide the rest by their own sum. Review on PR #89 found this double counts
+a genuine one-day price-data gap. `quant_return_daily` only ever has a missing asset-day
+because `price_daily` is missing that day's bar for that asset; `returns.build_total_return_series`
+computes the *next* available day's return from the last available close (`prev_c =
+closes[i - 1][1]`), so that next return already contains the gap day's full price move,
+compounded in. Renormalizing the gap day imputes the other names' average return for the
+missing name on the gap day itself, and then the gap-spanning return the following day counts
+that same name's real move a second time. Reproduced against the test fixtures: deleting the
+largest holding's (31%) price bar for one day and rebuilding returns gave a 24-day cumulative
+book return of 0.6316% with no gap at all (true), 0.6353% under the original, unfixed bug
+(close -- the bug's dilution happens to be small here), and 0.7851% under the renormalize-every-
+missing-day "fix" (the double count, materially wrong). A held name that is missing forever
+after some day -- delisted, or its return series just ends -- is a genuinely different case
+with no such following bridge return to double count against, and renormalizing away *that*
+name's weight, from the day its data ends onward, is correct.
 
 ### Fix
 
 ```python
-present = {a: w for a, w in weights.items() if a in fwd[d]}
-total_present = sum(present.values())
-realized = (
-    sum(w * fwd[d][a] for a, w in present.items()) / total_present if total_present > 0 else 0.0
-)
+last_seen: dict[int, str] = {}
+for d, day_map in fwd.items():
+    for a in day_map:
+        if a not in last_seen or d > last_seen[a]:
+            last_seen[a] = d
+...
+for d in sorted(fwd):
+    survivors = {a: w for a, w in weights.items() if last_seen.get(a, "") >= d}
+    total_survivors = sum(survivors.values())
+    realized = (
+        sum(w * fwd[d].get(a, 0.0) for a, w in survivors.items()) / total_survivors
+        if total_survivors > 0
+        else 0.0
+    )
 ```
 
-Every held name missing day `d`'s return is dropped from that day's calculation, and the
-remaining names' weights are renormalized (divided by their own sum, not the book's full
-weight) before being applied to their own returns -- the day's realized return becomes what
-the names actually priced that day earned, not diluted by the names that weren't. A day where
-*every* held name is missing (`total_present == 0`) realizes 0%, the same neutral fallback the
-whole-date-skip path already implies for a day that cannot be scored either way.
+Two cases, distinguished by whether a name has *any later* return in the window:
+
+- **Alive but gapped today** (`last_seen[a] >= d`, but `a` missing from `fwd[d]`): the name
+  stays a "survivor" -- its weight counts in `total_survivors` -- but contributes `0.0` for
+  `d` specifically (via `.get(a, 0.0)`), because its real move for `d` is already folded into
+  whatever day it next reappears. This is exactly the original, pre-T-111 formula, just scoped
+  to survivors instead of the book's full (possibly already-shrunk) weights.
+- **Genuinely gone as of today** (`last_seen.get(a, "") < d`, including a name that never
+  appears in `fwd` at all, whose `last_seen.get(a, "")` is `""`, less than every real date):
+  dropped from both the numerator and `total_survivors`, from `d` on -- its capital is
+  reinvested across whatever survives, not left as dead weight dragging the book toward zero
+  forever.
+
+`build_internal_benchmark` (`benchmark.py`) gets the identical `last_seen`/survivors treatment,
+so the book and its benchmark share one convention; the review's own estimate is this changes
+the benchmark by under 0.001% on production data (two internal one-day gaps in 2022-2026,
+FISV and MNST) -- it is a consistency fix there, not a live discrepancy.
 
 ### Design decisions
 
-- **Renormalize per day, not once over the whole window.** A name's data gaps need not be
-  contiguous or permanent; recomputing `present`/`total_present` fresh for every `d` handles a
-  name that drops out for one day and comes back the next exactly like one that drops out for
-  the whole remaining window, with no special-casing between the two.
-- **This is `evaluate`'s own concern, not `optimize`'s.** The book's stored weights are left
-  untouched -- they still describe what was actually bought at `as_of`; only the *forward
-  scoring* of a day with a partial data gap is renormalized, so a re-`evaluate` of the same
-  book after a data gap is backfilled reproduces the pre-gap numbers exactly (nothing about the
-  persisted book changed in the meantime).
-- **Transaction costs are out of scope here (`T-077`).** Renormalizing a day's weights is a
-  scoring correction for data that was always meant to be there; it is not a rebalancing event
-  and charges no cost, unlike a genuine turnover.
+- **`last_seen` is computed once per book/panel, not re-derived per day.** It only depends on
+  which dates a name has *any* row for in the whole window, which doesn't change as the day
+  loop advances; computing it once up front, then indexing by `d` inside the loop, avoids
+  re-scanning `fwd` on every iteration.
+- **This is `evaluate`'s (and the benchmark's) own concern, not `optimize`'s.** The book's
+  stored weights are left untouched -- they still describe what was actually bought at
+  `as_of`; only the forward *scoring* of a gap or an ended series is adjusted, so re-evaluating
+  the same book after a data gap is backfilled reproduces the same numbers (nothing about the
+  persisted book or the backfilled gap day's contribution to any *other* day changes).
+- **Transaction costs are out of scope here (`T-077`).** Reinvesting a permanently-gone name's
+  capital across the survivors is a scoring convention for what "the book's return" means once
+  a name is gone, not a rebalancing event; it charges no cost, unlike a genuine turnover.
 
 ### Verification
 
-- New test: `tests/test_quant_pipeline.py::test_evaluate_renormalizes_over_names_with_a_return_on_a_missing_asset_day`
-  -- seeds a book, deletes one asset's `quant_return_daily` row for one forward day (simulating
-  a data gap), and asserts the day's `realized_return` equals the remaining names' return
-  renormalized over their own weights, not the pre-fix diluted value (`w_missing * 0.0` folded
-  in): the test fails on the pre-fix code (`0.01022` obtained vs. `0.01173` expected) and passes
-  on the fix.
-- `uv run pytest -q` -- 708 passed (was 707; +1 new test).
+- New tests: `tests/test_quant_pipeline.py::test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap`
+  (two identically-seeded DBs, one with a single `price_daily` bar removed and
+  `quant_return_daily` rebuilt around it; their evaluated cumulative returns over the same
+  window must agree within `1e-4` -- fails against the renormalize-every-day "fix" (obtained
+  `0.00897` vs. expected `0.00609`) and passes against the corrected one) and
+  `tests/test_quant_pipeline.py::test_evaluate_renormalizes_from_a_names_permanent_end_of_data`
+  (ends one name's return series mid-window and asserts the day after is the survivors'
+  renormalized return -- fails against the original, pre-T-111 code, which never renormalizes
+  at all). `tests/test_benchmark.py` gets the matching pair for `build_internal_benchmark`:
+  `test_a_name_missing_one_day_but_alive_later_counts_as_zero_that_day` (renamed and its
+  expectation corrected from the old "excluded, panel of 2" behavior to "alive, panel of 3,
+  contributes 0%") and `test_a_name_with_no_later_return_is_dropped_and_the_panel_renormalized`.
+- `uv run pytest -q` -- 710 passed (was 707; +3 net new tests: the two replaced the one wrong
+  `evaluate.py` test, plus one new `benchmark.py` test).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
-- `SPEC.md` FR-010 updated to state the per-name renormalization alongside its existing
-  whole-date-skip clause.
+- `SPEC.md` FR-010 and `docs/quant.md` updated to state both cases.
