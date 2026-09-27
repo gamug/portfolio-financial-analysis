@@ -650,10 +650,12 @@ def test_backfill_runs_against_an_explicit_non_production_db(
     )
     monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
     calls: list[str] = []
-    monkeypatch.setattr(
-        "cycle.cli.run_replay",
-        lambda _settings, d, **_k: calls.append(d) or CycleReport(1, "REPLAY", d, selected=0),
-    )
+
+    def _stub_run_replay(_settings: CycleSettings, d: str, **_k: object) -> CycleReport:
+        calls.append(d)
+        return CycleReport(1, "REPLAY", d, selected=0)
+
+    monkeypatch.setattr("cycle.cli.run_replay", _stub_run_replay)
 
     assert (
         cycle_main(["backfill", "--from", "2026-01-01", "--to", "2026-01-01", "--db", str(copy)])
