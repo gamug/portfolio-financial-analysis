@@ -11,12 +11,13 @@ from pathlib import Path
 from cycle.config import CycleSettings
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
-from cycle.orchestrator import run_monitoring, run_selection
+from cycle.orchestrator import CycleReport, run_monitoring, run_selection
 from cycle.repair import NotBackdated, apply_undo, plan_undo
 from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
+from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
@@ -36,6 +37,11 @@ _ALLOW_STALE_PRICES_HELP = (
     "override the price-spine guard (T-110) and run at a --analysis-date past price_daily's "
     "last stored date -- TECHNICAL/veto would silently score against prices that are, at "
     "best, weeks stale; for a deliberate run ahead of the spine, not routine use"
+)
+_ALLOW_DIRTY_HELP = (
+    "override the clean-tree guard (T-114) and write this run's code_version even though the "
+    "working tree has uncommitted changes -- results would come from code HEAD alone can't "
+    "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
 )
 
 
@@ -58,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
         p.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
+        p.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
         if name == "select":
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
@@ -79,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--db")
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
+    bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     return parser
 
 
@@ -97,6 +105,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["allow_backdated_positions"] = True
     if getattr(args, "allow_stale_prices", False):
         updates["allow_stale_prices"] = True
+    if getattr(args, "allow_dirty", False):
+        updates["allow_dirty"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -113,7 +123,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(parser, args)
-    except (VersionError, ManifestMismatch, OutOfOrderCycle, NotBackdated, StaleAsOf) as exc:
+    except (
+        VersionError,
+        ManifestMismatch,
+        OutOfOrderCycle,
+        NotBackdated,
+        StaleAsOf,
+        DirtyTree,
+    ) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1
 
@@ -141,6 +158,26 @@ def _undo_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_bypass_warnings(r: CycleReport) -> None:
+    if r.stale_price_bypassed is not None:
+        print(
+            f"  WARNING: --allow-stale-prices overrode the price-spine guard "
+            f"({r.stale_price_bypassed})",
+            file=sys.stderr,
+        )
+    if r.backdated_guard_bypassed is not None:
+        print(
+            f"  WARNING: --allow-backdated overrode the out-of-order-cycle guard "
+            f"({r.backdated_guard_bypassed})",
+            file=sys.stderr,
+        )
+    if r.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard ({r.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
+
+
 def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.command == "undo-run":  # needs no model settings
         return _undo_run(args)
@@ -154,12 +191,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed "
             f"(manifest {r.manifest_tag})"
         )
-        if r.stale_price_bypassed is not None:
-            print(
-                f"  WARNING: --allow-stale-prices overrode the price-spine guard "
-                f"({r.stale_price_bypassed})",
-                file=sys.stderr,
-            )
+        _print_bypass_warnings(r)
         return 0
     if args.command == "select":
         cycle_date = _resolve_cycle_date(parser, args)
@@ -171,18 +203,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
-        if r.stale_price_bypassed is not None:
-            print(
-                f"  WARNING: --allow-stale-prices overrode the price-spine guard "
-                f"({r.stale_price_bypassed})",
-                file=sys.stderr,
-            )
-        if r.backdated_guard_bypassed is not None:
-            print(
-                f"  WARNING: --allow-backdated overrode the out-of-order-cycle guard "
-                f"({r.backdated_guard_bypassed})",
-                file=sys.stderr,
-            )
+        _print_bypass_warnings(r)
         return 0
     # backfill
     d = date.fromisoformat(args.date_from)
@@ -190,6 +211,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     while d <= end:
         r = run_selection(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
+        _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)
     return 0
 

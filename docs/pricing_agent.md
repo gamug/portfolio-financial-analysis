@@ -7,7 +7,8 @@ per-day `price_observation` analytics).
 
 ```bash
 uv run python -m pricing_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
-    [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh]
+    [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
+    [--allow-dirty]
 uv run python -m pricing_agent migrate
 ```
 
@@ -24,6 +25,11 @@ specific stored `price_daily` bar, and `_store` builds both from the same fetche
 `candles` in one call, so writing observations without also storing the matching daily
 bars would leave an orphan observation date — no `price_daily` row for a day
 `price_observation` claims to analyze.
+
+`run` refuses to write its `pricing_run` row at all when `code_version()` is dirty
+(an uncommitted change under `src/`, `skills/`, `pyproject.toml`, or `uv.lock` — see
+`docs/kg_schema.md`), unless `--allow-dirty`, which records why on
+`pricing_run.params_json` and prints a CLI `WARNING` (T-114).
 
 ## Configuration (`config.py`)
 

@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from portfolio_common.db import Database
 
 from kg_schema import connect
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from quant.benchmark import INTERNAL_EW, build_internal_benchmark
 from quant.config import QuantSettings
 from quant.db import (
@@ -54,6 +54,7 @@ class EvaluateResult:
     books_evaluated: int
     perf_rows: int
     live_book_id: int | None
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
@@ -191,6 +192,8 @@ def run_evaluate(
                     "no --from given and no quant_portfolio rows exist yet -- "
                     "run 'quant optimize' first, or pass --from explicitly"
                 )
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
         run_id = open_run(
             conn,
             "evaluate",
@@ -200,10 +203,16 @@ def run_evaluate(
                 "date_from": date_from,
                 "date_to": date_to,
                 "benchmark": benchmark,
+                "dirty_tree_bypassed": dirty_reason,
             },
-            code_version=code_version(),
+            code_version=cv,
         )
         try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
             bench_rows, bench_version, panel = _benchmark(
                 conn, settings, benchmark, date_from=date_from, date_to=date_to
             )
@@ -245,6 +254,7 @@ def run_evaluate(
             books_evaluated=evaluated,
             perf_rows=perf_rows,
             live_book_id=live_id,
+            dirty_tree_bypassed=dirty_reason,
         )
     finally:
         if owns:

@@ -19,6 +19,11 @@ class Settings(BaseModel):
     universe_db_path: Path = Field(
         default_factory=lambda: Path(universe_database_path()).expanduser()
     )
+    # T-114: a run refuses to write a cycle_run row when code_version() is dirty
+    # (uncommitted changes) -- its results would come from code HEAD alone can't
+    # reproduce. Meant for a deliberate run from a work-in-progress checkout, not
+    # routine use.
+    allow_dirty: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:

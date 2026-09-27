@@ -7,13 +7,19 @@ news of multiple issuers.
 
 ```bash
 uv run python -m entity_resolution build [--analysis-date 2021-06-30] [--min-weight 3] \
-    [--max-tickers 15] [--min-articles 3] [--news-db /path/to/urls.db] [--universe-db PATH]
+    [--max-tickers 15] [--min-articles 3] [--news-db /path/to/urls.db] [--universe-db PATH] \
+    [--allow-dirty]
 ```
 
 `--analysis-date` (optional, default: today) is the `cycle_run.cycle_date`
 (with `cycle_run.code_version`), selects the universe from `universe.db` as of that
 date, and drops any news whose `discovered_urls.pub_date` is after it **or NULL**
 (strict no-lookahead — undated news cannot be date-verified).
+
+`build` refuses to write its `cycle_run` row at all when `code_version()` is dirty
+(an uncommitted change under `src/`, `skills/`, `pyproject.toml`, or `uv.lock` — see
+`docs/kg_schema.md`), unless `--allow-dirty`, which records why on
+`cycle_run.params_json` and prints a CLI `WARNING` (T-114).
 
 ## Configuration (`config.py`)
 

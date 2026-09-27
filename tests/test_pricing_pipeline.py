@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 from conftest import write_universe_db
 
+from kg_schema.provenance import DirtyTree
 from pricing_agent import cli, pipeline
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import RunParams
@@ -164,3 +166,36 @@ def test_the_cli_refuses_observations_without_store_daily(
         cli.main(["run", "--observations"])
     assert exc.value.code == 2
     assert "--store-daily" in capsys.readouterr().err
+
+
+# -- clean-tree guard (T-114) --------------------------------------------
+
+
+def test_run_refuses_a_dirty_code_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(tmp_path)
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        pipeline.run(settings, RunParams())
+
+    # refused right after ensure_schema, before the universe is even loaded
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM pricing_run").fetchone()[0] == 0
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_allow_dirty_overrides_the_guard_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path).model_copy(update={"allow_dirty": True})
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    report = pipeline.run(settings, RunParams(start_date="2022-01-01", end_date="2023-12-31"))
+
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
+    conn = sqlite3.connect(settings.db_path)
+    params = json.loads(
+        conn.execute("SELECT params_json FROM pricing_run ORDER BY id DESC LIMIT 1").fetchone()[0]
+    )
+    assert params["dirty_tree_bypassed"] == report.dirty_tree_bypassed

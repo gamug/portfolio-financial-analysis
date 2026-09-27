@@ -13,6 +13,7 @@ from pathlib import Path
 
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
+from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
@@ -66,6 +67,11 @@ _ALLOW_STALE_PRICES_HELP = (
     "while claiming to be as of a later date; for a deliberate run ahead of the spine, not "
     "routine use"
 )
+_ALLOW_DIRTY_HELP = (
+    "override the clean-tree guard (T-114) and write this run's code_version even though the "
+    "working tree has uncommitted changes -- results would come from code HEAD alone can't "
+    "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
+)
 
 
 def _add_profile(sub: argparse.ArgumentParser) -> None:
@@ -113,6 +119,7 @@ def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.Argume
     rm.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
     rm.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
+    rm.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     _add_profile(rm)
     _add_dry_run(rm)
 
@@ -138,6 +145,7 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
     op.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
+    op.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     _add_profile(op)
     _add_dry_run(op)
 
@@ -152,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(ba)
     ba.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
     ba.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
+    ba.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     br = sub.add_parser("build-returns", help="derive the total-return daily series")
     _add_common(br)
@@ -164,6 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
         "series is price-only and locks in under the return engine version (T-086)",
     )
     br.add_argument("--corpact-version", dest="corpact_version", help=_CORPACT_VERSION_HELP)
+    br.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     _add_profile(br)
 
     _add_build_risk_model_parser(sub)
@@ -205,6 +215,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=INTERNAL_EW,
         help=f"{INTERNAL_EW} (rebuilt over the gated panel) or a series loaded with load-benchmark",
     )
+    ev.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     vs = sub.add_parser(
         "versions", help="list the stored versions of every input quant can be constrained on"
@@ -256,6 +267,8 @@ def _settings(args: argparse.Namespace) -> QuantSettings:
         updates["objectives"] = [o.strip() for o in objectives.split(",") if o.strip()]
     if getattr(args, "allow_stale_prices", False):
         updates["allow_stale_prices"] = True
+    if getattr(args, "allow_dirty", False):
+        updates["allow_dirty"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -312,7 +325,7 @@ def _run_versions(settings: QuantSettings) -> int:
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
     try:
         res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
-    except (VersionError, StaleAsOf) as exc:
+    except (VersionError, StaleAsOf, DirtyTree) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
     shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
@@ -327,13 +340,18 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
             f"({res.stale_prices_bypassed})",
             file=sys.stderr,
         )
+    if res.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard ({res.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
     return 0
 
 
 def _run_optimize(settings: QuantSettings, as_of: str) -> int:
     try:
         opt = run_optimize(settings, as_of=as_of)
-    except (VersionError, StaleAsOf) as exc:
+    except (VersionError, StaleAsOf, DirtyTree) as exc:
         print(f"optimize: {exc}", file=sys.stderr)
         return 1
     books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())
@@ -345,6 +363,11 @@ def _run_optimize(settings: QuantSettings, as_of: str) -> int:
         print(
             f"  WARNING: --allow-stale-prices overrode the price-spine guard "
             f"({opt.stale_prices_bypassed})",
+            file=sys.stderr,
+        )
+    if opt.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard ({opt.dirty_tree_bypassed})",
             file=sys.stderr,
         )
     return 0
@@ -362,6 +385,12 @@ def _print_actions_report(report: ActionsReport) -> None:
             f"written; first: {report.errors[0]}",
             file=sys.stderr,
         )
+    if report.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard "
+            f"({report.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
 
 
 def _run_backfill_actions(settings: QuantSettings, args: argparse.Namespace, date_to: str) -> int:
@@ -369,7 +398,7 @@ def _run_backfill_actions(settings: QuantSettings, args: argparse.Namespace, dat
     it left any asset without data (the dividend series would be incomplete)."""
     try:
         report = backfill_corporate_actions(settings, date_from=args.date_from, date_to=date_to)
-    except GatewayUnavailable as exc:
+    except (GatewayUnavailable, DirtyTree) as exc:
         print(f"backfill-actions: {exc}", file=sys.stderr)
         return 1
     _print_actions_report(report)
@@ -385,7 +414,7 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             date_to=date_to,
             allow_no_dividends=args.allow_no_dividends,
         )
-    except VersionError as exc:
+    except (VersionError, DirtyTree) as exc:
         print(f"build-returns: {exc}", file=sys.stderr)
         return 1
     except DividendsNotReady as exc:
@@ -413,6 +442,35 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             f"  WARNING: --allow-no-dividends overrode the dividends guard "
             f"({rep.dividends_guard_bypassed}); the series is price-only where dividends are "
             f"missing and is locked in under {rep.engine_version}",
+            file=sys.stderr,
+        )
+    if rep.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard ({rep.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _run_evaluate(settings: QuantSettings, args: argparse.Namespace, date_to: str) -> int:
+    try:
+        ev = run_evaluate(
+            settings,
+            date_from=args.date_from,
+            date_to=date_to,
+            benchmark=args.benchmark,
+        )
+    except (ValueError, DirtyTree) as exc:
+        print(f"evaluate: {exc}", file=sys.stderr)
+        return 1
+    print(
+        f"evaluate {ev.date_from}..{date_to}: {ev.benchmark_rows} "
+        f"benchmark rows, {ev.books_evaluated} books, {ev.perf_rows} perf rows"
+        + (f", live_book #{ev.live_book_id}" if ev.live_book_id else "")
+    )
+    if ev.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard ({ev.dirty_tree_bypassed})",
             file=sys.stderr,
         )
     return 0
@@ -512,19 +570,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
         return _run_load_benchmark(settings, args)
 
     if args.command == "evaluate":
-        date_to = _date_to(analysis_date, args)
-        ev = run_evaluate(
-            settings,
-            date_from=args.date_from,
-            date_to=date_to,
-            benchmark=args.benchmark,
-        )
-        print(
-            f"evaluate {ev.date_from}..{date_to}: {ev.benchmark_rows} "
-            f"benchmark rows, {ev.books_evaluated} books, {ev.perf_rows} perf rows"
-            + (f", live_book #{ev.live_book_id}" if ev.live_book_id else "")
-        )
-        return 0
+        return _run_evaluate(settings, args, _date_to(analysis_date, args))
 
     print(f"quant {args.command}: not yet implemented")
     return 0

@@ -17,7 +17,7 @@ uv run python -m quant backfill-actions [--from 2022-01-01] [--analysis-date TOD
 uv run python -m quant build-returns    [--from 2022-01-01] [--analysis-date TODAY]
 uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
-                                        [--allow-stale-prices]  # override the price-spine guard, T-110
+                                        [--allow-stale-prices] [--allow-dirty]  # T-110 / T-114 guard overrides
 uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
@@ -50,6 +50,11 @@ why on the run (`quant_run.params_json`, and a CLI `WARNING`). `optimize` checks
 or has to build one — since a stored model may itself have been built past the spine under
 `--allow-stale-prices`, and a later `optimize` at that same stale date must still be recorded
 as such, not silently waved through by the reuse lookup (PR #87 review finding).
+
+Every subcommand also refuses to write its `quant_run` row at all when its own
+`code_version()` is dirty (uncommitted changes) — its results would come from code `HEAD`
+alone can't reproduce (T-114) — unless `--allow-dirty`, which records why on the run and a
+CLI `WARNING`, the same convention as `--allow-stale-prices`.
 
 `QuantSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` is optional (the
 point-in-time universe reads — `load_universe_asset_ids` / `load_assets` /

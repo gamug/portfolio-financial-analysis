@@ -37,7 +37,7 @@ from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
 from kg_schema import connect, rundate
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 
 DEFAULT_FORMS = ("10-K", "10-Q")
@@ -76,6 +76,7 @@ class RunReport:
     skipped: int = 0
     failed: int = 0
     errors: list[str] = field(default_factory=list)
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 @dataclass(frozen=True)
@@ -127,14 +128,22 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
+        # T-114: refuse before any run row exists when this run's own code_version() is dirty
+        # (uncommitted changes) -- its results would come from code HEAD alone can't reproduce.
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        if dirty_reason is not None and not settings.allow_dirty:
+            raise DirtyTree(
+                f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
+            )
         run_id = db.start_run(
             conn,
-            params=_params_dict(params),
+            params={**_params_dict(params), "dirty_tree_bypassed": dirty_reason},
             as_of=params.analysis_date,
-            code_version=code_version(),
+            code_version=cv,
         )
         db.update_run_plan(conn, run_id, universe_size=len(assets), planned_units=len(tasks))
-        report = RunReport(run_id=run_id, planned=len(tasks))
+        report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
 
         analyst = FundamentalAnalyst(build_model(settings), settings.llm_model)
         with EdgarClient(settings.edgar_base_url) as edgar:

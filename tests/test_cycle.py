@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from portfolio_common.db import Database
 
+import cycle.orchestrator as cycle_orchestrator
 import kg_schema
 from cycle.cli import build_parser
 from cycle.cli import main as cycle_main
@@ -20,6 +21,7 @@ from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
+from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from kg_schema.versions import VersionError
 from pricing_agent import db as pricing_db
@@ -500,6 +502,46 @@ def test_allow_stale_prices_overrides_the_price_spine_guard_and_records_it(
     assert "2026-06-30" in report.stale_price_bypassed
 
 
+# -- T-114: the clean-tree guard -----------------------------------------------------------
+
+
+def test_select_refuses_a_dirty_code_version(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = cycle_seed
+    monkeypatch.setattr(cycle_orchestrator, "code_version", lambda: "deadbee-dirty")
+    before = conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0]
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
+
+    # refused before any cycle_run row is written, like the price-spine/manifest prechecks
+    assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == before
+
+
+def test_monitor_also_refuses_a_dirty_code_version(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = cycle_seed
+    monkeypatch.setattr(cycle_orchestrator, "code_version", lambda: "deadbee-dirty")
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        run_monitoring(_settings(conn), "2026-06-30", conn=conn)
+
+
+def test_allow_dirty_overrides_the_clean_tree_guard_and_records_it(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = cycle_seed
+    monkeypatch.setattr(cycle_orchestrator, "code_version", lambda: "deadbee-dirty")
+    settings = _settings(conn).model_copy(update={"allow_dirty": True})
+
+    report = run_selection(settings, "2026-06-30", conn=conn)
+
+    assert "positions" in report.steps_run
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
+
+
 def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: Database) -> None:
     conn = cycle_seed
     seed_catalog(conn)
@@ -701,6 +743,20 @@ def test_an_unstored_metrics_version_fails_before_a_run_is_created(cycle_seed: D
     with pytest.raises(VersionError, match="metrics-v9"):
         run_selection(bad, "2026-06-30", conn=conn)
     assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == 0
+
+
+def test_allow_dirty_flag_exists_on_select_monitor_and_backfill() -> None:
+    parser = build_parser()
+    for command in ("select", "monitor"):
+        assert parser.parse_args([command]).allow_dirty is False
+        assert parser.parse_args([command, "--allow-dirty"]).allow_dirty is True
+    assert (
+        parser.parse_args(["backfill", "--from", "2026-01-01", "--to", "2026-02-01"]).allow_dirty
+        is False
+    )
+    assert parser.parse_args(
+        ["backfill", "--from", "2026-01-01", "--to", "2026-02-01", "--allow-dirty"]
+    ).allow_dirty
 
 
 def test_the_cycle_flag_exists_and_the_cli_exits_1_on_a_refusal(

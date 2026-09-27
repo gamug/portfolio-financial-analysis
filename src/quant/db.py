@@ -87,6 +87,7 @@ class ActionsReport:
     splits: int = 0
     inserted: int = 0
     errors: list[str] = field(default_factory=list)
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 def upsert_corporate_actions(

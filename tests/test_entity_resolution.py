@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import write_universe_db
 from portfolio_common.db import Database
 
 from entity_resolution import db as er_db
+from entity_resolution import pipeline
+from entity_resolution.config import Settings
 from entity_resolution.cooccurrence import build_edges
 from entity_resolution.denylist import is_denied
 from entity_resolution.normalize import canonical
+from entity_resolution.pipeline import RunParams
 from kg_schema import connect_ro
+from kg_schema.provenance import DirtyTree
 
 # urls.db subset: only the tables/indexes the accessor is allowed to touch.
 _NEWS_SCHEMA = """
@@ -158,3 +164,56 @@ def test_replace_edges_is_method_versioned(memory_db: Database, news_db: Databas
         "SELECT ticker_a, ticker_b, person_count, total_weight FROM v_shared_executive_edge"
     ).fetchall()
     assert [tuple(r) for r in rows] == [("AAA", "BBB", 1, 3.0)]
+
+
+# -- pipeline / clean-tree guard (T-114) ---------------------------------
+
+
+def test_run_refuses_a_dirty_code_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = Settings(
+        db_path=tmp_path / "kg.db",
+        news_db_path=tmp_path / "missing_urls.db",
+        universe_db_path=tmp_path / "missing_universe.db",
+    )
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        pipeline.run(settings, RunParams())
+
+    # refused right after ensure_schema, before either read-only DB is even opened
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == 0
+
+
+def test_allow_dirty_overrides_the_guard_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news_path = tmp_path / "urls.db"
+    _build_news_db(news_path)
+    universe_path = write_universe_db(
+        tmp_path / "universe.db",
+        [(t, "2020-01-01", None) for t in ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]],
+    )
+    settings = Settings(
+        db_path=tmp_path / "kg.db", news_db_path=news_path, universe_db_path=universe_path
+    ).model_copy(update={"allow_dirty": True})
+    # entity_resolution reads pre-existing asset ids (owned by pricing_agent/fundamental_agent
+    # in production); ensure_schema() itself creates only the shared kg_schema tables.
+    seed = sqlite3.connect(settings.db_path)
+    seed.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE)")
+    seed.commit()
+    seed.close()
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    report = pipeline.run(settings, RunParams(min_weight=3.0, max_tickers=5, min_articles=3))
+
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
+    conn = sqlite3.connect(settings.db_path)
+    params = json.loads(
+        conn.execute(
+            "SELECT params_json FROM cycle_run WHERE cycle_type = 'ENTITY_RESOLUTION' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+    )
+    assert params["dirty_tree_bypassed"] == report.dirty_tree_bypassed

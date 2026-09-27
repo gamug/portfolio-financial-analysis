@@ -2883,3 +2883,159 @@ the fixed prompt templates + model config) as described above.
   not independently recoverable from the row itself.
 - **Confirming the live DeepSeek endpoint actually accepts (or ignores) `seed`** is left as an
   explicit step before `T-079` begins, per review -- this environment cannot reach it.
+
+## T-114 — a dirty working tree could silently write production runs (`cycle`, `quant`, `fundamental_agent`, `entity_resolution`, `pricing_agent`)
+
+**Status**: Fixed 2026-09-27 (`T-114`); extended 2026-09-27 per PR #92 review
+(`@eldova1702`): two more run writers guarded, and "dirty" rescoped to the paths that
+actually change a run's results.
+
+### Symptom
+
+Production run-log rows (`analysis_run`, `quant_run`, `cycle_run`) carry `code_version`
+`359797e-dirty`: `kg_schema.provenance.code_version()` already appends `-dirty` when `git
+status --porcelain` reports anything uncommitted, so the *fact* that a run's code diverged
+from `HEAD` was always recorded -- but nothing ever *acted* on that fact. A run from a
+work-in-progress checkout wrote its `analysis_run`/`quant_run`/`cycle_run` row exactly like a
+clean one; the only way to notice was to separately query for the `-dirty` suffix after the
+fact, by which point the results (scores, risk models, books, positions) were already
+persisted and, in `quant`/`cycle`'s case, already fed into anything reading the *next* run's
+inputs.
+
+### Root cause
+
+`code_version()` computes and returns a *descriptive* tag; no caller ever compared it against
+anything or refused on its behalf. This is the same shape of gap `T-097`/`T-086`/`T-110` each
+closed for their own guard (an out-of-order cycle date, missing dividends, a stale price
+spine): a fact was recorded but not enforced, so a production run could still write over it
+silently.
+
+### Fix
+
+- `kg_schema.provenance`: new `DirtyTree(RuntimeError)` and `dirty_tree_reason(version=None)`
+  -- `None` if *version* (default: `code_version()` itself) doesn't end in `-dirty`, else a
+  message naming it. A fallback tag (`pkg-*`/`unknown`, no git repo at all) never ends in
+  `-dirty` and is never refused over.
+  ```python
+  def dirty_tree_reason(version: str | None = None) -> str | None:
+      v = version if version is not None else code_version()
+      if not v.endswith("-dirty"):
+          return None
+      return f"code_version {v} is from an uncommitted (dirty) working tree"
+  ```
+- `fundamental_agent.pipeline.run`, `quant.persist.run_build_risk_model`/`run_optimize`,
+  `quant.returns.run_build_returns`, `quant.actions.backfill_corporate_actions`,
+  `quant.evaluate.run_evaluate`, and `cycle.orchestrator._run` (shared by `select`/`monitor`/
+  `backfill`) each compute `dirty_tree_reason(code_version())` and raise `DirtyTree` unless
+  `settings.allow_dirty`, mirroring exactly where each package's own T-110/T-097/T-086 guard
+  already raises in that same function (before the run row exists for `cycle`; inside the
+  inner `try`, right after `open_run`, for `quant`; before `start_run` for
+  `fundamental_agent`) -- so a refusal is either never logged (cycle-style) or logged and
+  immediately marked `"failed"` (quant/fundamental_agent-style), consistent with how each
+  package already handles its other guards.
+- `--allow-dirty` added to every affected CLI subcommand (`quant build-risk-model`/`optimize`/
+  `evaluate`/`build-returns`/`backfill-actions`; `cycle select`/`monitor`/`backfill`;
+  `fundamental_agent run`), recording the bypass reason on the run's `params_json` and
+  surfacing a CLI `WARNING`, the same convention as `--allow-stale-prices`/
+  `--allow-no-dividends`/`--allow-backdated`.
+- New result fields carrying the bypass reason through to the CLI: `RiskModelResult`/
+  `OptimizeRunResult`/`EvaluateResult`.`dirty_tree_bypassed` and `ActionsReport`/
+  `ReturnsReport`.`dirty_tree_bypassed` (`quant`); `CycleReport.dirty_tree_bypassed` (`cycle`);
+  `RunReport.dirty_tree_bypassed` (`fundamental_agent`, not yet CLI-printed -- this package's
+  CLI doesn't surface any of its other run-level bypass reasons either, e.g. `T-113`'s
+  `fallback_units`, so none is added here for consistency within the package).
+
+### PR #92 review follow-up
+
+`@eldova1702` found the first pass incomplete on two counts (both fixed in the same PR,
+before merge):
+
+1. **Two more run writers stamped `code_version()` with no guard at all.**
+   `entity_resolution.pipeline._open_cycle` (the `sharedExecutiveWith` edges the
+   knowledge-graph repo reads) and `pricing_agent.pipeline.run` (`price_observation`
+   analytics that feed `TECHNICAL` scoring, veto evaluation, and the quant gate) were
+   missed by the original sweep -- both packages predate this task and neither had an
+   existing guard convention to extend, which is likely why they were overlooked when the
+   other six call sites were being enumerated. Fixed identically to the other six: each
+   computes `dirty_tree_reason(code_version())` right after its own `ensure_schema` call
+   and raises `DirtyTree` unless `settings.allow_dirty`, before any row is written (no
+   partial `cycle_run`/`pricing_run` row on refusal, matching `cycle`'s convention since
+   neither writer had one of its own to match). `--allow-dirty` added to `entity_resolution
+   build` and `pricing_agent run`; both now print the same CLI `WARNING` on an override.
+2. **"Dirty" meant *any* uncommitted file in the checkout, not just one that changes a
+   run's results.** `_git_version` called plain `git status --porcelain`, which counts
+   every untracked file -- an empty scratch note, a local review doc, a stray `.DS_Store`
+   -- turning `af2a710` into `af2a710-dirty` and refusing every run until it was removed or
+   `--allow-dirty` was passed on every single run, which defeats the guard's point (a real
+   uncommitted *code* change should refuse; a stray untracked file should not). Verified
+   directly: adding one empty untracked file at the repo root reproduced the false
+   `-dirty` tag before this fix. Rescoped to `git status --porcelain -- src skills
+   pyproject.toml uv.lock` (`kg_schema.provenance._DIRTY_SCOPE`) -- the source tree, the
+   ratio-skill markdown a prompt can cite, and the two files that pin the resolved
+   dependency set. An untracked file *inside* one of those paths (a new, not-yet-committed
+   `skills/<ratio>/SKILL.md`) still counts as dirty; only files outside the scope are
+   exempt. Applied inside `_git_version` itself, so the recorded `code_version` tag and
+   every `dirty_tree_reason` check derived from it agree by construction -- there is no
+   second, separately-maintained scope to drift out of sync.
+
+### Design decisions
+
+- **Hermetic tests must not depend on the ambient git state (NR-006).** `code_version()`
+  reads *this actual checkout's* live `git status`, and is `functools.lru_cache`d for the
+  whole process -- during active development the working tree legitimately has uncommitted
+  changes (this very fix's own commits, before they land), which must not make the test suite
+  spuriously refuse in every test that exercises one of these six driver functions.
+  `tests/conftest.py` gained a session-scoped autouse fixture that primes `code_version()`'s
+  cache with one clean, deterministic value (patching `_git_version`/`_package_version` only
+  long enough to prime it, not for the whole session), so ambient repo dirtiness never leaks
+  into unrelated tests; `tests/test_provenance.py`'s own tests of `code_version()` itself
+  clear the cache and patch `subprocess.run` per test, unaffected by this priming. A test that
+  specifically exercises one of the six *guards* monkeypatches that driver module's own
+  imported `code_version` name (e.g. `quant.persist.code_version`) to a dirty value for that
+  one test.
+- **One shared `dirty_tree_reason`, six call sites, not a shared "open a run" choke point.**
+  `quant.state.open_run` and `cycle.state.open_cycle` are deliberately separate, undecorated
+  DB helpers (see `quant/state.py`'s own docstring: importing `cycle` into `quant` would pull
+  the optimizer's numeric dependencies onto `cycle`'s import path); the guard belongs to each
+  *driver* function's own settings-aware call, the same place T-110's price-spine check and
+  T-086's dividends check already live.
+- **`evaluate`'s CLI dispatch didn't have any exception handling before this fix** (a
+  `ValueError` -- e.g. "no --from given and no quant_portfolio rows exist yet" -- propagated
+  as a raw traceback). Adding the `DirtyTree` catch needed a real `try`/`except` there
+  regardless, so `ValueError` is now caught alongside it (`quant.cli._run_evaluate`,
+  extracted from an inline `main()` block) -- a small, natural improvement bundled with the
+  guard it was already necessary to add, not separate scope.
+
+### Verification
+
+- New tests: `tests/test_provenance.py` (+4: `dirty_tree_reason` for a clean/dirty explicit
+  version, defaulting to `code_version()`, and a fallback tag never counting as dirty).
+  `tests/test_quant_risk_model.py` (+3: `build-risk-model`/`optimize` refuse a dirty version;
+  the override records the reason on both the result and `params_json`).
+  `tests/test_quant_pipeline.py` (+1: `evaluate` refuses/overrides). `tests/test_quant_dividends_guard.py`
+  (+2: `build-returns` refuses/overrides; the `--allow-dirty` flag exists on all five quant
+  subcommands). `tests/test_quant_actions.py` (+1: `backfill-actions` refuses/overrides).
+  `tests/test_cycle.py` (+4: `select`/`monitor` both refuse; the override records the reason;
+  the flag exists on `select`/`monitor`/`backfill`). `tests/test_pipeline.py` (+3:
+  `fundamental_agent run` refuses/overrides; the flag exists).
+- PR #92 review follow-up: `tests/test_entity_resolution.py` (+2: `build` refuses a dirty
+  version before either read-only DB is opened; the override records the reason on both the
+  result and `cycle_run.params_json`). `tests/test_pricing_pipeline.py` (+2: `run` refuses/
+  overrides the same way). `tests/test_provenance.py` (+3, against a real throwaway git repo
+  rather than a mocked `subprocess.run`, so the actual pathspec is what's under test: an
+  untracked file outside `src`/`skills`/`pyproject.toml`/`uv.lock` stays clean; a tracked-file
+  edit under `src/` and an untracked file under `skills/` both still count as dirty).
+- `uv run pytest -q` -- 739 passed (was 732; +7: +2 `entity_resolution`, +2 `pricing_agent`,
+  +3 provenance scoping).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
+- `SPEC.md` FR-012 updated; `docs/quant.md`, `docs/cycle.md`, `docs/fundamental_agent.md`,
+  `docs/kg_schema.md` updated with the new flag(s) and the scoped dirty-tree contract.
+
+### Residual scope, deliberately deferred
+
+- **No existing production run is retroactively annotated.** This fix only changes what a
+  *future* run does; the already-`-dirty` historical rows this task's own audit found are a
+  separate, already-tracked concern (`T-121`/`T-122`/`T-123`/`T-124` cover the specific
+  production corrections those runs' *other* defects need; being dirty was a symptom pointing
+  at them, not a defect requiring its own separate cleanup once the runs it flagged are
+  otherwise corrected or accepted).

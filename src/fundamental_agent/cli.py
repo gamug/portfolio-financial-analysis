@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also fetch each filing's primary document and extract MD&A / risk-factor text",
     )
+    run_cmd.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="override the clean-tree guard (T-114) and write this run's code_version even "
+        "though the working tree has uncommitted changes -- results would come from code "
+        "HEAD alone can't reproduce; for a deliberate run from a work-in-progress checkout, "
+        "not routine use",
+    )
 
     quality_cmd = sub.add_parser(
         "quality",
@@ -185,11 +193,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "repair-accessions":
         return _run_repair(args)
     settings = Settings.load()
-    updates: dict[str, Path] = {}
+    updates: dict[str, object] = {}
     if args.db:
         updates["db_path"] = Path(args.db)
     if args.universe_db:
         updates["universe_db_path"] = Path(args.universe_db)
+    if args.allow_dirty:
+        updates["allow_dirty"] = True
     if updates:
         settings = settings.model_copy(update=updates)
 

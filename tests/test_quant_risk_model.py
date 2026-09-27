@@ -11,6 +11,8 @@ import numpy as np
 import pytest
 from portfolio_common.db import Database
 
+import quant.persist as quant_persist
+from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from quant.config import QuantSettings
 from quant.db import load_covariance, load_expected_returns
@@ -246,6 +248,61 @@ def test_optimize_re_checks_staleness_even_when_reusing_a_stored_model(
 
     with pytest.raises(StaleAsOf):
         run_optimize(settings, as_of=stale_as_of, conn=conn)
+
+
+def test_build_risk_model_refuses_a_dirty_code_version(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn)
+    as_of = conn.execute("SELECT MAX(obs_date) FROM quant_return_daily").fetchone()[0]
+    monkeypatch.setattr(quant_persist, "code_version", lambda: "deadbee-dirty")
+    before = conn.execute("SELECT COUNT(*) FROM quant_run").fetchone()[0]
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        run_build_risk_model(settings, as_of=as_of, conn=conn)
+
+    row = conn.execute(
+        "SELECT status FROM quant_run WHERE command = 'build-risk-model' ORDER BY id DESC"
+    ).fetchone()
+    assert row["status"] == "failed"
+    assert conn.execute("SELECT COUNT(*) FROM quant_run").fetchone()[0] == before + 1
+
+
+def test_allow_dirty_overrides_the_guard_and_records_it(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn)
+    as_of = conn.execute("SELECT MAX(obs_date) FROM quant_return_daily").fetchone()[0]
+    monkeypatch.setattr(quant_persist, "code_version", lambda: "deadbee-dirty")
+
+    res = run_build_risk_model(
+        settings.model_copy(update={"allow_dirty": True}), as_of=as_of, conn=conn
+    )
+
+    assert res.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in res.dirty_tree_bypassed
+    params = json.loads(
+        conn.execute(
+            "SELECT params_json FROM quant_run WHERE command = 'build-risk-model' ORDER BY id DESC"
+        ).fetchone()[0]
+    )
+    assert params["dirty_tree_bypassed"] == res.dirty_tree_bypassed
+
+
+def test_optimize_also_refuses_a_dirty_code_version(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn).model_copy(
+        update={"objectives": ["min_var"], "max_name_weight": None, "max_sector_weight": None}
+    )
+    as_of = conn.execute("SELECT MAX(obs_date) FROM quant_return_daily").fetchone()[0]
+    monkeypatch.setattr(quant_persist, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree):
+        run_optimize(settings, as_of=as_of, conn=conn)
 
 
 def test_no_store_cov_skips_the_matrix(

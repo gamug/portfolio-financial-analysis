@@ -58,6 +58,10 @@ class QuantSettings(BaseModel):
     # be "as of" a date the price data doesn't actually reach yet. Meant for a deliberate
     # run ahead of the spine (e.g. testing), not routine use.
     allow_stale_prices: bool = False
+    # T-114: every quant command refuses to write a run whose own code_version() is dirty
+    # (uncommitted changes) -- its results would come from code HEAD alone can't reproduce.
+    # Meant for a deliberate run from a work-in-progress checkout, not routine use.
+    allow_dirty: bool = False
 
     # --- return panel / risk model ---
     lookback_days: int = 756

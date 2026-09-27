@@ -9,7 +9,7 @@ immutable `score_snapshot` row (`score_type='FUNDAMENTAL'`) per
 
 ```bash
 uv run python -m fundamental_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
-    [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections]
+    [--forms 10-K] [--since-year 2023] [--fresh] [--universe-db PATH] [--sections] [--allow-dirty]
 uv run python -m fundamental_agent quality [--metrics-version metrics-v3]  # Ring-1 DQ gates (backfill)
 uv run python -m fundamental_agent repair-accessions [--apply] [--drop-unresolved]  # T-120
 uv run python -m fundamental_agent migrate        # shared-schema migrations
@@ -23,6 +23,10 @@ capped at its year. It is written to `analysis_run.as_of` alongside
 `sec_filings` / `financial_facts` / `fundamental_metrics` / `score_snapshot` /
 `sec_filing_section` row the run writes carries its `run_id`. `--refresh-universe`
 is a deprecated no-op (membership is synced from `universe.db` every run).
+
+`run` refuses to write its `analysis_run` row at all when its own `code_version()` is dirty
+(uncommitted changes) — its results would come from code `HEAD` alone can't reproduce
+(T-114) — unless `--allow-dirty`, which records why on `analysis_run.params_json`.
 
 ## Configuration (`config.py`)
 

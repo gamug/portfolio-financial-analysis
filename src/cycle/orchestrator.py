@@ -26,7 +26,7 @@ from cycle.scores.normalize import normalized_scores
 from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import StaleAsOf, stale_as_of_reason
 from kg_schema.versions import (
     DATA_QUALITY_GATE_VERSION,
@@ -68,6 +68,8 @@ class CycleReport:
     # Why the price-spine guard (T-110) would have refused, when --allow-stale-prices
     # overrode it. Set for either cycle type -- both read prices for TECHNICAL/veto.
     stale_price_bypassed: str | None = None
+    # Why the clean-tree guard (T-114) would have refused, when --allow-dirty overrode it.
+    dirty_tree_bypassed: str | None = None
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -120,6 +122,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead of the "
             "price spine"
         )
+    # T-114: refuse when this run's own code_version() is dirty (uncommitted changes) --
+    # its results would come from code HEAD alone can't reproduce.
+    cv = code_version()
+    dirty_reason = dirty_tree_reason(cv)
+    if dirty_reason is not None and not settings.allow_dirty:
+        raise DirtyTree(
+            f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
+        )
     run_id = open_cycle(
         conn,
         cycle_type,
@@ -129,12 +139,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "manifest": manifest,
             "manifest_tag": tag,
             "stale_as_of_bypassed": stale_reason,
+            "dirty_tree_bypassed": dirty_reason,
         },
-        code_version=code_version(),
+        code_version=cv,
     )
     already = done_steps(conn, run_id)
     report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
     report.stale_price_bypassed = stale_reason
+    report.dirty_tree_bypassed = dirty_reason
 
     universe_rows = data.active_universe(
         conn, settings.universe, cycle_date, settings.universe_db_path
