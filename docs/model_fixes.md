@@ -2419,6 +2419,18 @@ correct; only the wiring between them was not.
   `equilibrium` mu never included `rf` at all.
 - `uv run pytest -q` -- 692 passed (was 690; +2 new tests).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` -- all green.
+- **Independent reproduction** (PR #85 review, `@eldova1702`): on a copy of `financial-2.db`,
+  692 tests pass, ruff/format/mypy clean, and both new tests independently confirmed to fail
+  on the pre-fix code.
+- **The fix moves real weights, not just reported stats.** Recomputed from the stored
+  (pre-fix) risk model: under the old excess-return μ, 15 of the production panel's 20 names
+  had `mu < rf`, so `tangency` wrongly concentrated into the other 7 (a name's excess return
+  looking negative merely because `rf` was never added back in is not a real signal to
+  concentrate away from). Post-fix, 66% of `tangency`'s weight moves and its Sharpe goes
+  0.038 -> 0.325. `min_var`, `target_vol` and `frontier` weights are unaffected (their
+  optimization doesn't depend on `mu`'s level, only `tangency`'s does). This sharpens why the
+  pending production re-run (below) isn't optional bookkeeping: any `tangency` result read
+  from production before that re-run is the wrong book, not just a mis-reported one.
 
 ### Residual scope, deliberately deferred
 
@@ -2427,7 +2439,8 @@ correct; only the wiring between them was not.
   "equilibrium"`, the default). Re-persisting corrected values for the live universe requires
   re-running `quant build-risk-model`/`optimize` against production -- outside a code-review
   pass's authority to run unprompted; a follow-up operational step, like F1/F2/F4's own
-  deferred production re-runs.
+  deferred production re-runs. **`tangency` in particular must not be read from production
+  until that re-run happens** -- its weights, not only its reported stats, are wrong today.
 - `T-077`'s Carhart estimator is not implemented by this fix -- its own formula already plans
   to add `rf`, so no separate correction is expected when it lands, but that remains to be
   verified against real code once written, not assumed.
