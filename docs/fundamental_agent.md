@@ -105,17 +105,27 @@ specialist per group, then a synthesis step. Each specialist spins up its own
 `fcf_margin`, `interest_coverage_ratio`, `roic`, `cagr`,
 `free_cash_flow_yield`) or a short inline brief. DeepSeek rejects OpenAI
 `response_format` json-schema, so synthesis parses a JSON-text reply with a
-rule-based fallback score. `build_model` sets `temperature=0`/`seed=0` for a
-reproducible score given the same inputs (T-113; `seed` is forwarded verbatim,
-honoured or silently ignored depending on the endpoint). A fallback score is
+rule-based fallback score. `build_model` sets `temperature=0`/`seed=0` to reduce
+run-to-run variance (T-113 -- no LLM provider guarantees deterministic output at
+temperature 0, so this is not a claim of reproducibility; `seed` is forwarded
+verbatim, honoured or silently ignored depending on the endpoint, unverified
+against the live DeepSeek endpoint since this environment's network egress
+policy blocks reaching it -- confirm before `T-079`). A fallback score is
 persisted under `model = agents.FALLBACK_MODEL_LABEL`, never the LLM's own
 `model_id` (T-113: distinguishable in `score_snapshot`); every score, fallback or
-not, carries a `prompt_hash` -- sha256 of the orchestrator's full message history
-(system prompt, every specialist round-trip, and the synthesis/repair attempt) at
-the point the final reply was accepted or, on fallback, every attempt had failed.
-`analysis_run.fallback_units` counts how many of a run's scores fell back. Module
-constants `FACTS_ENGINE_VERSION`, `METRICS_ENGINE_VERSION` (also in `db.py`) key
-the immutable rows.
+not, carries a `prompt_hash` -- `FundamentalAnalyst.prompt_hash`
+(`agents._prompt_version_hash`), a sha256 of every prompt template
+(`MASTER_PROMPT`, every specialist's system prompt, the synthesis/repair
+prompts) plus the model config, computed once when the analyst is built and
+reused for every filing it scores. It is **not** a per-filing transcript hash
+(rejected on review: unverifiable, since the transcript itself isn't stored,
+and useless for grouping scores by the prompt version that produced them) --
+two filings scored in the same run share one `prompt_hash`, and it changes
+only when a prompt, a skill SOP file, or the model config actually changes,
+which is what `T-079` needs to separate scores from before/after a prompt
+edit. `analysis_run.fallback_units` counts how many of a run's scores fell
+back. Module constants `FACTS_ENGINE_VERSION`, `METRICS_ENGINE_VERSION` (also
+in `db.py`) key the immutable rows.
 
 ### `pricing.py` — the one cross-module link
 

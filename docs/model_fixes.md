@@ -2781,8 +2781,9 @@ model's own id -- so a fallback row was stored as if the model had produced it: 
 production's 377 FUNDAMENTAL scores is a fallback labelled `deepseek-chat`, indistinguishable
 from the other 376 without independently re-deriving the score from its inputs. Separately,
 `build_model` called the LLM at `temperature = 0.2` with no seed (an unexplained source of
-run-to-run drift for a score meant to be reproducible given the same filing), and no score
-recorded which prompt/interaction actually produced it.
+run-to-run variance), and no score recorded which *prompt version* actually produced it -- the
+audit plan's own wording, and what `T-079` needs to separate scores written before/after the
+`T-073`/`T-074`/`T-076` prompt edits.
 
 ### Root cause
 
@@ -2798,21 +2799,40 @@ asked, whether or not that model's own reply is what ended up stored.
   forwarded verbatim by Strands' `OpenAIModel` into the underlying client call rather than
   validated against a strict schema, so passing it is safe regardless of whether the
   configured endpoint's backend actually honours it.
-- `_synthesize` now returns a small `_Synthesis(assessment, used_fallback, prompt_hash)`
-  instead of a bare `FundamentalAssessment`; `used_fallback` is `True` only on the
-  `_fallback_assessment` return path. `prompt_hash` is `sha256(json.dumps(orchestrator.messages,
-  sort_keys=True))` -- the *whole* per-filing message history (system prompt, every specialist
-  tool round-trip, the synthesis/repair attempt), not a hash of the fixed `_SYNTHESIS_PROMPT`
-  template text alone, which would be near-constant across every filing and worthless as
-  provenance.
-- `AnalysisResult` carries both fields through to `pipeline.py::_analyze_one`, which sets
-  `SnapshotRow.model = FALLBACK_MODEL_LABEL` ("`rule-based-fallback-v1`", never a real model's
-  own id) when `used_fallback`, else `engine.analyst.model_name` as before; `SnapshotRow` and
-  `insert_snapshot` gained `prompt_hash`, written on every row, fallback or not.
-  `db.bump_run_counter(..., "fallback_units")` fires once per fallback row.
+- `_synthesize` now returns a small `_Synthesis(assessment, used_fallback)` instead of a bare
+  `FundamentalAssessment`; `used_fallback` is `True` only on the `_fallback_assessment` return
+  path.
+- New `_prompt_version_hash(model_name)`: `sha256` of a canonical JSON payload of
+  `MASTER_PROMPT`, every specialist's system prompt (`_specialist_system_prompt(g)` for `g` in
+  `_SPECIALIST_GROUPS` -- 5 of 9 read a `skills/<name>/SKILL.md` file, so an SOP edit is
+  captured too), `_SYNTHESIS_PROMPT`, `_REPAIR_PROMPT`, and the model config
+  (`model_name`/`temperature`/`seed`/`max_tokens`). `FundamentalAnalyst.__init__` computes this
+  **once**, as `self.prompt_hash`, and `analyze()` stamps that same value on every
+  `AnalysisResult` it returns -- one hash per analyst instance (one per run), not one per
+  filing.
+- `pipeline.py::_analyze_one` sets `SnapshotRow.model = FALLBACK_MODEL_LABEL`
+  ("`rule-based-fallback-v1`", never a real model's own id) when `result.used_fallback`, else
+  `engine.analyst.model_name` as before; `SnapshotRow.prompt_hash = result.prompt_hash`,
+  written on every row, fallback or not. `db.bump_run_counter(..., "fallback_units")` fires
+  once per fallback row.
 - New columns, both nullable/additive (`kg_schema.ddl.REQUIRED_COLUMNS`, safe against the
   shared production DB per constitution AI behavior #12/FR-011): `score_snapshot.prompt_hash`
   (`TEXT`) and `analysis_run.fallback_units` (`INTEGER NOT NULL DEFAULT 0`).
+
+### First cut was itself wrong (PR #91 review, `@eldova1702`)
+
+The first attempt computed `prompt_hash` **per filing**, as a sha256 of the orchestrator's
+full message history (system prompt, every specialist round-trip, the synthesis/repair
+attempt) at the point the reply was accepted or every attempt had failed. Review found this
+answers the wrong question: the transcript is never itself stored, so the hash can never be
+independently verified against anything; it is unique per row by construction (every filing's
+specialist readings differ), so it cannot group scores by *which prompt version* produced
+them -- exactly what `T-079` needs, to tell a score written before the `T-073`/`T-074`/`T-076`
+prompt edits apart from one written after. A value that stays constant across filings and
+changes only when a prompt actually changes was the intended behavior all along (the audit
+plan's own wording: "`prompt_version` appears nowhere in `src/`"). Corrected by moving the hash
+from per-filing (`_synthesize`, over `orchestrator.messages`) to per-analyst (`__init__`, over
+the fixed prompt templates + model config) as described above.
 
 ### Design decisions
 
@@ -2822,34 +2842,44 @@ asked, whether or not that model's own reply is what ended up stored.
   reader that groups/filters by `model` correct with no further change -- a `model = 'deepseek-
   chat'` filter now genuinely means "the configured model's own output," not "the configured
   model, or maybe the fallback that ran instead of it."
-- **Hash the full message history, not the prompt template.** `_SYNTHESIS_PROMPT`/
-  `_REPAIR_PROMPT` are fixed strings shared by every filing; hashing them alone would produce
-  the same 1-2 hash values for literally every score ever written -- technically "a prompt
-  hash" but useless for the provenance the task asks for. Hashing `orchestrator.messages`
-  instead captures what was actually specific to this filing: the computed metrics brief, each
-  specialist's numbers and reply, and the final instruction -- so two filings' hashes actually
-  differ, and a re-run against unchanged inputs reproduces the same hash.
-- **`seed` is opportunistic, not verified live.** This environment's network egress policy
-  blocks reaching the configured LLM endpoint directly from a test/session; `seed` is a
-  standard, well-known OpenAI chat-completions field the openai-python client (which Strands'
-  `OpenAIModel` wraps) accepts without validating it against a fixed allowed-keys schema, so
-  including it is safe (no client-side error) whether or not DeepSeek's backend actually uses
-  it. `temperature = 0` alone already removes the larger, unconditional source of drift.
+- **One hash per analyst (effectively per run), not per filing.** Computing
+  `_prompt_version_hash` once in `__init__` and reusing it for every `analyze()` call is both
+  the semantically correct behavior (see above) and cheaper than re-hashing per filing.
+- **`temperature=0`/`seed=0` reduce variance; they are not a reproducibility guarantee.** No
+  LLM provider guarantees deterministic output at temperature 0 (review: docs must not claim
+  otherwise). `seed` is opportunistic and not verified live -- this environment's network
+  egress policy blocks reaching the configured LLM endpoint directly from a test/session;
+  `seed` is a standard, well-known OpenAI chat-completions field the openai-python client
+  (which Strands' `OpenAIModel` wraps) accepts without validating it against a fixed
+  allowed-keys schema, so including it is safe (no client-side error) whether or not DeepSeek's
+  backend actually uses it. Confirming it live against the real endpoint is left as a step
+  before `T-079` begins.
 
 ### Verification
 
-- New test: `tests/test_pipeline.py::test_run_labels_a_fallback_score_and_records_it_on_the_run`
-  -- a stub analyst that always falls back; asserts every written `score_snapshot.model ==
-  FALLBACK_MODEL_LABEL`, every row's `prompt_hash` is the stubbed hash, and
-  `analysis_run.fallback_units` equals the number of filings processed.
-- `uv run pytest -q` -- 711 passed (was 710; +1 new test).
+- New tests: `tests/test_agents.py` -- `test_two_filings_in_one_run_share_the_same_prompt_hash`,
+  `test_changing_one_specialist_prompt_changes_the_hash` (monkeypatches an inline specialist
+  prompt), `test_changing_the_model_id_changes_the_hash`. `tests/test_pipeline.py`'s existing
+  `test_run_labels_a_fallback_score_and_records_it_on_the_run` -- a stub analyst that always
+  falls back; asserts every written `score_snapshot.model == FALLBACK_MODEL_LABEL`, every row's
+  `prompt_hash` is the stubbed hash, and `analysis_run.fallback_units` equals the number of
+  filings processed.
+- `uv run pytest -q` -- 714 passed (was 710 before this fix; +3 net new tests, all in
+  `tests/test_agents.py` -- `test_pipeline.py`'s fallback test was already counted at 711 in
+  the first, review-corrected cut).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
 - `SPEC.md` FR-002 and the `score_snapshot` table row updated; `docs/fundamental_agent.md`
-  updated (the `agents.py` section and `insert_snapshot`'s row).
+  updated (the `agents.py` section and `insert_snapshot`'s row) to describe the per-run,
+  prompt-version hash and the "reduces variance" (not "reproducible") wording.
 
 ### Residual scope, deliberately deferred
 
 - **The one existing production fallback row (and any others already written) keeps its old
   `model = 'deepseek-chat'` label and a `NULL prompt_hash`.** This fix only changes what a
-  *future* run writes; relabeling or backfilling historical rows is a production data
-  correction, not a code change, and is not in this fix's scope.
+  *future* run writes; relabeling historical rows is a production data correction, not a code
+  change -- tracked as `T-124`, gated on the user's explicit direction like every other
+  production write in this file. `prompt_hash` stays `NULL` for any row written before this
+  fix regardless: the original prompt templates/model config in effect when it was written are
+  not independently recoverable from the row itself.
+- **Confirming the live DeepSeek endpoint actually accepts (or ignores) `seed`** is left as an
+  explicit step before `T-079` begins, per review -- this environment cannot reach it.

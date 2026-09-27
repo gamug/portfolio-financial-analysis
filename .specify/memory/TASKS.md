@@ -414,19 +414,30 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       stamp a prompt hash per score, and record the fallback count on `analysis_run`.
       **Acceptance**: fallbacks are distinguishable from model output in `score_snapshot`;
       every new score carries its prompt hash.
-      **Done 2026-09-27.** `build_model` sets `temperature=0`/`seed=0` (forwarded verbatim by
-      Strands' `OpenAIModel`, safe whether or not the endpoint honours `seed`). `_synthesize`
-      now returns `_Synthesis(assessment, used_fallback, prompt_hash)`; `prompt_hash` is a
-      sha256 of the orchestrator's *whole* per-filing message history, not the fixed prompt
-      template (which would hash near-identically for every filing). `pipeline.py` sets
-      `SnapshotRow.model = agents.FALLBACK_MODEL_LABEL` ("`rule-based-fallback-v1`") when
-      `used_fallback`, never the real model's own id, and bumps a new
-      `analysis_run.fallback_units` counter. New additive columns:
-      `score_snapshot.prompt_hash` (TEXT), `analysis_run.fallback_units` (INTEGER DEFAULT 0).
-      Test: `tests/test_pipeline.py::test_run_labels_a_fallback_score_and_records_it_on_the_run`.
-      Full suite 711 passed (was 710); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-002
+      **Done 2026-09-27; corrected 2026-09-27 (PR #91 review, `@eldova1702`).** `build_model`
+      sets `temperature=0`/`seed=0` (forwarded verbatim by Strands' `OpenAIModel`, safe whether
+      or not the endpoint honours `seed`; docs say "reduces variance," not "reproducible" --
+      no provider guarantees determinism at `temperature=0`). The first cut computed
+      `prompt_hash` per filing, as a sha256 of the orchestrator's whole message history; review
+      found this unverifiable (the transcript itself isn't stored) and unable to group scores
+      by the prompt version that produced them (what `T-079` needs, to separate scores from
+      before/after the `T-073`/`T-074`/`T-076` prompt edits) -- a per-filing hash is unique by
+      construction. Corrected: new `_prompt_version_hash(model_name)` hashes `MASTER_PROMPT`,
+      every specialist prompt, the synthesis/repair prompts, and the model config; computed
+      **once** in `FundamentalAnalyst.__init__` and reused for every filing that analyst
+      scores, so two filings in one run share one hash and it changes only when a prompt/SOP/
+      model config actually changes. `pipeline.py` sets `SnapshotRow.model =
+      agents.FALLBACK_MODEL_LABEL` ("`rule-based-fallback-v1`") when `used_fallback`, never the
+      real model's own id, and bumps a new `analysis_run.fallback_units` counter. New additive
+      columns: `score_snapshot.prompt_hash` (TEXT), `analysis_run.fallback_units` (INTEGER
+      DEFAULT 0). Tests: `tests/test_agents.py` (two filings share a hash; changing a
+      specialist prompt or the model id changes it) and
+      `tests/test_pipeline.py::test_run_labels_a_fallback_score_and_records_it_on_the_run`.
+      Full suite 714 passed (was 710); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-002
       and `docs/fundamental_agent.md` updated. Record: `docs/model_fixes.md` "T-113".
-      **The one existing production fallback row keeps its stale `model` label and a NULL
+      **Confirming the live DeepSeek endpoint actually accepts `seed` is left as an explicit
+      step before `T-079` begins (this environment's network egress policy blocks reaching
+      it).** **The one existing production fallback row keeps its stale `model` label and a NULL
       `prompt_hash` until relabeled — see `T-124`.**
 - [ ] **T-114** *(P1)* Clean-tree provenance. Production runs carry `code_version`
       `359797e-dirty` (cycle, quant, analysis runs): results come from uncommitted code. Refuse

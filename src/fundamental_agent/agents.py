@@ -184,33 +184,62 @@ class AnalysisResult:
     # T-113: the LLM's own JSON verdict never came back parseable -- assessment is the
     # deterministic, rule-based fallback, not model output.
     used_fallback: bool
-    # T-113: sha256 of the orchestrator's full message history (system + specialist tool
-    # round-trips + synthesis prompt) at the point the final reply was accepted, or -- on
-    # fallback -- at the point every attempt had failed. Per-filing, not a near-constant hash
-    # of the fixed prompt template alone, so a score can be traced back to exactly what was
-    # sent and returned.
+    # T-113: sha256 identifying the *prompt version* that produced this score -- constant
+    # across every filing scored under the same code/skills/model config, and changing only
+    # when a prompt, skill SOP, or model config actually changes (PR #91 review). See
+    # `_prompt_version_hash`.
     prompt_hash: str
+
+
+# T-113 (PR #91 review): temperature=0/seed=0 reduce run-to-run variance -- no LLM provider
+# guarantees deterministic output at temperature 0, so this is not a claim of reproducibility.
+_TEMPERATURE = 0
+_SEED = 0
+_MAX_TOKENS = 1500
 
 
 def build_model(settings: Settings) -> OpenAIModel:
     """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint.
 
-    T-113: ``temperature = 0`` for a reproducible score given the same inputs (was ``0.2``,
-    an unexplained source of run-to-run drift); ``seed`` is the standard OpenAI-schema field
-    for a deterministic sample -- passed optimistically (forwarded verbatim to the client,
-    never validated against a strict schema), honoured or silently ignored depending on
-    whether the configured endpoint's backend supports it."""
+    T-113: ``temperature = 0`` (was ``0.2``, an unexplained source of run-to-run variance);
+    ``seed`` is the standard OpenAI-schema field for a deterministic sample -- passed
+    optimistically (forwarded verbatim to the client, never validated against a strict
+    schema), honoured or silently ignored depending on whether the configured endpoint's
+    backend supports it (unverified against the live DeepSeek endpoint -- this environment's
+    network egress policy blocks reaching it; confirm before `T-079`)."""
     return OpenAIModel(
         client_args={"api_key": settings.llm_api_key, "base_url": settings.llm_url},
         model_id=settings.llm_model,
-        params={"temperature": 0, "seed": 0, "max_tokens": 1500},
+        params={"temperature": _TEMPERATURE, "seed": _SEED, "max_tokens": _MAX_TOKENS},
     )
+
+
+def _prompt_version_hash(model_name: str) -> str:
+    """sha256 of everything that determines what gets sent to the LLM for *every* filing:
+    the prompt templates themselves and the model config -- not any one filing's own
+    transcript (T-113, PR #91 review: a per-filing hash is unique per row, unverifiable
+    since the transcript itself isn't stored, and can't group scores by the prompt version
+    that produced them, which is what `T-079` needs to separate scores from before/after a
+    prompt edit). Constant across every filing scored under the same code/skills/model
+    config; changes only when a prompt, a skill SOP file, or the model config changes."""
+    payload = {
+        "master_prompt": MASTER_PROMPT,
+        "specialist_prompts": {g: _specialist_system_prompt(g) for g in _SPECIALIST_GROUPS},
+        "synthesis_prompt": _SYNTHESIS_PROMPT,
+        "repair_prompt": _REPAIR_PROMPT,
+        "model_id": model_name,
+        "temperature": _TEMPERATURE,
+        "seed": _SEED,
+        "max_tokens": _MAX_TOKENS,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
     def __init__(self, model: OpenAIModel, model_name: str) -> None:
+        self.prompt_hash = _prompt_version_hash(model_name)
         self._model = model
         self.model_name = model_name
 
@@ -234,7 +263,7 @@ class FundamentalAnalyst:
             metrics=computed,
             flat_metrics=flat,
             used_fallback=synthesis.used_fallback,
-            prompt_hash=synthesis.prompt_hash,
+            prompt_hash=self.prompt_hash,
         )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
@@ -302,22 +331,11 @@ def _round(value: Any) -> Any:
 class _Synthesis:
     assessment: FundamentalAssessment
     used_fallback: bool
-    prompt_hash: str
 
 
 # T-113: distinct from any real LLM's own model_id, so a fallback row is never mistaken for
 # that model's output in score_snapshot.model.
 FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
-
-
-def _prompt_hash(orchestrator: Agent) -> str:
-    """sha256 of the orchestrator's full message history so far -- system prompt, every
-    specialist tool round-trip, and the synthesis/repair attempt(s) -- not just the fixed
-    instruction template, so two filings with different specialist readings hash differently
-    even though they share the same literal ``_SYNTHESIS_PROMPT`` text."""
-    return hashlib.sha256(
-        json.dumps(orchestrator.messages, default=str, sort_keys=True).encode()
-    ).hexdigest()
 
 
 def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _Synthesis:
@@ -333,12 +351,8 @@ def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _
             break
         parsed = _coerce(reply)
         if parsed is not None:
-            return _Synthesis(parsed, used_fallback=False, prompt_hash=_prompt_hash(orchestrator))
-    return _Synthesis(
-        _fallback_assessment(flat_metrics),
-        used_fallback=True,
-        prompt_hash=_prompt_hash(orchestrator),
-    )
+            return _Synthesis(parsed, used_fallback=False)
+    return _Synthesis(_fallback_assessment(flat_metrics), used_fallback=True)
 
 
 def _coerce(text: str) -> FundamentalAssessment | None:
