@@ -111,6 +111,7 @@ def test_snapshot_is_append_only_and_drives_resume(memory_db: Database) -> None:
             model="deepseek-chat",
             metrics={"profitability.net_margin": 0.25},
             event_time="2023-09-30",
+            prompt_hash="test-hash",
         )
 
     db.insert_snapshot(memory_db, snap(80.0))

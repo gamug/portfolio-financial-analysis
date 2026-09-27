@@ -407,13 +407,27 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       pre-fix code: 6 points, all `"optimal"`). Full suite 710 passed (test count unchanged,
       existing test strengthened); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-009 and
       `docs/quant.md` updated. Record: `docs/model_fixes.md` "T-112".
-- [ ] **T-113** *(P1 — before `T-079`)* LLM score provenance. The rule-based fallback score is
+- [x] **T-113** *(P1 — before `T-079`)* LLM score provenance. The rule-based fallback score is
       stored under the model's own name (1 of production's 377 FUNDAMENTAL scores is a fallback
       labelled `deepseek-chat`); `temperature` is 0.2 with no seed; no prompt hash is recorded.
       Label fallback rows as such, set `temperature = 0` (and a seed if the API honours one),
       stamp a prompt hash per score, and record the fallback count on `analysis_run`.
       **Acceptance**: fallbacks are distinguishable from model output in `score_snapshot`;
       every new score carries its prompt hash.
+      **Done 2026-09-27.** `build_model` sets `temperature=0`/`seed=0` (forwarded verbatim by
+      Strands' `OpenAIModel`, safe whether or not the endpoint honours `seed`). `_synthesize`
+      now returns `_Synthesis(assessment, used_fallback, prompt_hash)`; `prompt_hash` is a
+      sha256 of the orchestrator's *whole* per-filing message history, not the fixed prompt
+      template (which would hash near-identically for every filing). `pipeline.py` sets
+      `SnapshotRow.model = agents.FALLBACK_MODEL_LABEL` ("`rule-based-fallback-v1`") when
+      `used_fallback`, never the real model's own id, and bumps a new
+      `analysis_run.fallback_units` counter. New additive columns:
+      `score_snapshot.prompt_hash` (TEXT), `analysis_run.fallback_units` (INTEGER DEFAULT 0).
+      Test: `tests/test_pipeline.py::test_run_labels_a_fallback_score_and_records_it_on_the_run`.
+      Full suite 711 passed (was 710); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-002
+      and `docs/fundamental_agent.md` updated. Record: `docs/model_fixes.md` "T-113".
+      **The one existing production fallback row keeps its stale `model` label and a NULL
+      `prompt_hash` until relabeled — see `T-124`.**
 - [ ] **T-114** *(P1)* Clean-tree provenance. Production runs carry `code_version`
       `359797e-dirty` (cycle, quant, analysis runs): results come from uncommitted code. Refuse
       production writes from a dirty checkout unless `--allow-dirty` is passed (and recorded).
@@ -543,6 +557,14 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       **Acceptance**: zero `price_observation` rows without a same-day `price_daily` row; each
       flagged `quant_run`/`cycle_run` is either re-run within the price spine or explicitly
       annotated as a known-stale historical run, not left silently ambiguous.
+- [ ] **T-124** *(P1 — after `T-113`'s code fix; production DB action, at the user's direction
+      only)* Relabel the one production `score_snapshot[FUNDAMENTAL]` row `T-113` found stored
+      under `model = 'deepseek-chat'` but actually a rule-based fallback, to
+      `agents.FALLBACK_MODEL_LABEL`. `prompt_hash` stays `NULL` for this and every other
+      pre-fix row — the original LLM interaction (or failed attempt) that produced them no
+      longer exists to hash retroactively; that is expected, not a defect to correct.
+      **Acceptance**: zero production `score_snapshot[FUNDAMENTAL]` rows with `model` equal to
+      a real configured model id whose score actually came from `_fallback_assessment`.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -573,14 +595,15 @@ added above it, never below. → `PLAN.md` Work item 12.
 **🔴 Current top priority: Work item 14 (second forensic audit, P0 first), then Work items 8
 and 9.** Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. Work item 14's
 code-level P0 tasks (`T-104`–`T-109`) are all done, and `T-110`'s price-spine guard is done
-too; **`T-121`/`T-122`/`T-123` (added 2026-09-27) track the production actions their reviews
-and `T-110` itself surfaced — voiding the stale `T-104` live-book snapshot, re-persisting
-`T-108`/`T-109`'s fixes, and cleaning `T-110`'s own production orphan rows — and are held
-pending explicit user direction, the same as every other production write in this file
-(`T-104`, `T-107`, `T-120`).** `T-111` and `T-112` are done too (2026-09-27); `T-070`–`T-084`
-and `T-113`–`T-116` have not started. Execute
-**Work item 14**'s remaining P1 tasks (`T-113`–`T-116`; `T-113` before `T-079`; `T-116` after
-`T-105`) → `T-121`/`T-122`/`T-123` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+too; **`T-121`/`T-122`/`T-123`/`T-124` (added 2026-09-27) track the production actions their
+reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` live-book snapshot,
+re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
+relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
+direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
+`T-111`, `T-112` and `T-113` are done too (2026-09-27); `T-070`–`T-084` and `T-114`–`T-116`
+have not started. Execute
+**Work item 14**'s remaining P1 tasks (`T-114`–`T-116`; `T-116` after
+`T-105`) → `T-121`/`T-122`/`T-123`/`T-124` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

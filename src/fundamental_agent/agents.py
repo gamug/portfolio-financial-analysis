@@ -7,6 +7,7 @@ for a given filing, then a synthesis step turns the readings into a scored asses
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -180,14 +181,29 @@ class AnalysisResult:
     assessment: FundamentalAssessment
     metrics: list[tuple[str, MetricResult]]  # (group, result), value may be None
     flat_metrics: dict[str, float | None]  # "group.name" -> value
+    # T-113: the LLM's own JSON verdict never came back parseable -- assessment is the
+    # deterministic, rule-based fallback, not model output.
+    used_fallback: bool
+    # T-113: sha256 of the orchestrator's full message history (system + specialist tool
+    # round-trips + synthesis prompt) at the point the final reply was accepted, or -- on
+    # fallback -- at the point every attempt had failed. Per-filing, not a near-constant hash
+    # of the fixed prompt template alone, so a score can be traced back to exactly what was
+    # sent and returned.
+    prompt_hash: str
 
 
 def build_model(settings: Settings) -> OpenAIModel:
-    """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint."""
+    """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint.
+
+    T-113: ``temperature = 0`` for a reproducible score given the same inputs (was ``0.2``,
+    an unexplained source of run-to-run drift); ``seed`` is the standard OpenAI-schema field
+    for a deterministic sample -- passed optimistically (forwarded verbatim to the client,
+    never validated against a strict schema), honoured or silently ignored depending on
+    whether the configured endpoint's backend supports it."""
     return OpenAIModel(
         client_args={"api_key": settings.llm_api_key, "base_url": settings.llm_url},
         model_id=settings.llm_model,
-        params={"temperature": 0.2, "max_tokens": 1500},
+        params={"temperature": 0, "seed": 0, "max_tokens": 1500},
     )
 
 
@@ -212,8 +228,14 @@ class FundamentalAnalyst:
         )
         orchestrator(_brief(ctx, by_group))
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
-        assessment = _synthesize(orchestrator, flat)
-        return AnalysisResult(assessment=assessment, metrics=computed, flat_metrics=flat)
+        synthesis = _synthesize(orchestrator, flat)
+        return AnalysisResult(
+            assessment=synthesis.assessment,
+            metrics=computed,
+            flat_metrics=flat,
+            used_fallback=synthesis.used_fallback,
+            prompt_hash=synthesis.prompt_hash,
+        )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
         out: list[tuple[str, MetricResult]] = []
@@ -276,9 +298,29 @@ def _round(value: Any) -> Any:
     return round(value, 4) if isinstance(value, float) else value
 
 
-def _synthesize(
-    orchestrator: Agent, flat_metrics: dict[str, float | None]
-) -> FundamentalAssessment:
+@dataclass(frozen=True)
+class _Synthesis:
+    assessment: FundamentalAssessment
+    used_fallback: bool
+    prompt_hash: str
+
+
+# T-113: distinct from any real LLM's own model_id, so a fallback row is never mistaken for
+# that model's output in score_snapshot.model.
+FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
+
+
+def _prompt_hash(orchestrator: Agent) -> str:
+    """sha256 of the orchestrator's full message history so far -- system prompt, every
+    specialist tool round-trip, and the synthesis/repair attempt(s) -- not just the fixed
+    instruction template, so two filings with different specialist readings hash differently
+    even though they share the same literal ``_SYNTHESIS_PROMPT`` text."""
+    return hashlib.sha256(
+        json.dumps(orchestrator.messages, default=str, sort_keys=True).encode()
+    ).hexdigest()
+
+
+def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _Synthesis:
     """Ask the orchestrator for a JSON verdict; fall back to a rule-based score.
 
     DeepSeek does not currently accept OpenAI ``response_format`` json-schema, so we
@@ -291,8 +333,12 @@ def _synthesize(
             break
         parsed = _coerce(reply)
         if parsed is not None:
-            return parsed
-    return _fallback_assessment(flat_metrics)
+            return _Synthesis(parsed, used_fallback=False, prompt_hash=_prompt_hash(orchestrator))
+    return _Synthesis(
+        _fallback_assessment(flat_metrics),
+        used_fallback=True,
+        prompt_hash=_prompt_hash(orchestrator),
+    )
 
 
 def _coerce(text: str) -> FundamentalAssessment | None:

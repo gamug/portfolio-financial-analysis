@@ -105,8 +105,17 @@ specialist per group, then a synthesis step. Each specialist spins up its own
 `fcf_margin`, `interest_coverage_ratio`, `roic`, `cagr`,
 `free_cash_flow_yield`) or a short inline brief. DeepSeek rejects OpenAI
 `response_format` json-schema, so synthesis parses a JSON-text reply with a
-rule-based fallback score. Module constants `FACTS_ENGINE_VERSION`,
-`METRICS_ENGINE_VERSION` (also in `db.py`) key the immutable rows.
+rule-based fallback score. `build_model` sets `temperature=0`/`seed=0` for a
+reproducible score given the same inputs (T-113; `seed` is forwarded verbatim,
+honoured or silently ignored depending on the endpoint). A fallback score is
+persisted under `model = agents.FALLBACK_MODEL_LABEL`, never the LLM's own
+`model_id` (T-113: distinguishable in `score_snapshot`); every score, fallback or
+not, carries a `prompt_hash` -- sha256 of the orchestrator's full message history
+(system prompt, every specialist round-trip, and the synthesis/repair attempt) at
+the point the final reply was accepted or, on fallback, every attempt had failed.
+`analysis_run.fallback_units` counts how many of a run's scores fell back. Module
+constants `FACTS_ENGINE_VERSION`, `METRICS_ENGINE_VERSION` (also in `db.py`) key
+the immutable rows.
 
 ### `pricing.py` — the one cross-module link
 
@@ -165,7 +174,7 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 | `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`. Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
 | `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
-| `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end |
+| `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end and `prompt_hash` (T-113) |
 | `completed_units(conn)` | `(ticker, form, fiscal_period)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume |
 | `shared_accession_filings(conn)` | filing rows whose accession another row of the same asset carries — the legacy pre-T-091 shape (T-120) |
 | `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"` (v2 = block-aware flatten + title-only headings + filer-CIK paths) |
