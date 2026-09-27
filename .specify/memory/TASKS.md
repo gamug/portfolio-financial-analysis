@@ -289,7 +289,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       unchanged; `quick_check` ok, FK clean; `availability.missing` empty, so `cycle` and
       `quant` run. The live 2026-09-22 cycle reads the same 20 scores and 16 market caps as
       before.
-- [ ] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
+- [x] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
       cross-sectional **mean of log returns**, not `ln(1 + mean simple return)`, so it is lower
       every day by about half the cross-sectional variance: on today's 20-asset panel it
       compounds at 5.98%/yr against a true equal weight of 10.32% (−4.34 pp/yr; the audit
@@ -462,6 +462,27 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `quick_check` ok — identical to the copy. NOC 2023Q2/2024Q2 now end 06-30 (filed
       2023-07-27, 2024-07-25); ALLE 2022 reads as three 10-Qs filed 04-26, 07-28, 10-27.
       The replaced quarters' own narrative sections are not fetched yet (`run --sections`).
+- [ ] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* Void
+      the stale live-book snapshot `T-108`'s and `T-109`'s reviews both flagged: `quant_portfolio`
+      id 4 (`as_of` 2026-06-30, `BF.B` weight 0.10) is a `T-104` leftover from the reverted
+      2026-06-30 run, not the current live book, and its 41 `perf-v1`/`perf-v2` rows in
+      `quant_benchmark_performance` are graded against it. Any dry run or `evaluate` reading that
+      snapshot (as `T-108`'s pre-correction PR body did) produces meaningless active-return
+      figures. **Acceptance**: `quant_portfolio` id 4 and its 41 dependent
+      `quant_benchmark_performance` rows are voided (not merely ignored) on production; a
+      post-void `quick_check` is clean.
+- [ ] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)*
+      Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk model and benchmark
+      series built before those fixes landed still carries the pre-fix numbers: the benchmark's
+      geometric mean-of-log-returns index over a hard-veto-filtered panel (`T-108`), and an
+      excess-return `equilibrium` μ that understates every book's `expected_return`/`sharpe`
+      whenever `ret_estimator = "equilibrium"` (the default) — `tangency`'s weights themselves,
+      not only its reported stats, are wrong today (PR #85 review: 66% of its weight moves,
+      Sharpe 0.038 → 0.325, once μ is corrected). **Acceptance**: a fresh production
+      `build-risk-model` → `optimize` → `evaluate` run over the current live book and universe,
+      with `T-121` already applied; the dry-run figures in `docs/model_fixes.md`'s `T-108`/
+      `T-109` entries are replaced with real post-fix production numbers, and any `tangency`
+      book read afterward reflects the corrected μ.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -491,10 +512,13 @@ added above it, never below. → `PLAN.md` Work item 12.
 
 **🔴 Current top priority: Work item 14 (second forensic audit, P0 first), then Work items 8
 and 9.** Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. Work item 14's
-P0 tasks (`T-104`–`T-109`) are all code-done; `T-108`/`T-109` still need a production
-`build-risk-model`/`optimize`/`evaluate` re-run before their fixes take effect live. `T-070`–
-`T-084` and `T-110`–`T-116` have not started. Execute **Work item 14**'s remaining P1 tasks
-(`T-110`–`T-116`; `T-113` before `T-079`; `T-116` after `T-105`) → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+code-level P0 tasks (`T-104`–`T-109`) are all done; **`T-121`/`T-122` (added 2026-09-27) track
+the two production actions their reviews surfaced — voiding the stale `T-104` live-book
+snapshot, then re-persisting `T-108`/`T-109`'s fixes — and are held pending explicit
+user direction, the same as every other production write in this file (`T-104`, `T-107`,
+`T-120`).** `T-070`–`T-084` and `T-110`–`T-116` have not started. Execute **Work item 14**'s
+remaining P1 tasks (`T-110`–`T-116`; `T-113` before `T-079`; `T-116` after `T-105`) →
+`T-121`/`T-122` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
