@@ -3135,14 +3135,18 @@ reads as ground truth, and conflating the two made the live book's own out-of-or
   `reset_replay_range` lets a completed date recompute (`"positions"` runs again, not
   skipped) and leaves every earlier date's stints untouched; the `--force` flag exists only on
   `backfill`'s parser.
-- PR #94 review follow-up: `tests/test_cycle.py` (+4): `reset_replay_range` resets a stint
-  past `--to` too, so redoing `--from` no longer trips the out-of-order-replay guard
-  (reproduces the reviewer's exact scenario); a bare `reset_replay_range(conn, date_from)`
-  still leaves every stint before `date_from` untouched; `backfill` refuses without `--db`;
-  `backfill` refuses when `--db` resolves to `KG_FINANCIAL_DB`'s configured path; `backfill`
-  runs normally against an explicit, non-production `--db`.
-- `uv run pytest -q` — 751 passed (was 739 before T-115; 747 after the first pass; +4 from
-  the review follow-up). `ruff check` / `ruff format --check` / `uv run mypy` — all green.
+- PR #94 review follow-up (first round): `tests/test_cycle.py` (+4): `reset_replay_range`
+  resets a stint past `--to` too, so redoing `--from` no longer trips the out-of-order-replay
+  guard (reproduces the reviewer's exact scenario); a bare `reset_replay_range(conn,
+  date_from)` still leaves every stint before `date_from` untouched; `backfill` refuses
+  without `--db`; `backfill` refuses when `--db` resolves to `KG_FINANCIAL_DB`'s configured
+  path; `backfill` runs normally against an explicit, non-production `--db`.
+- PR #94 review follow-up (second round): `tests/test_cycle.py` (+2): `backfill` refuses a
+  relative path to the production database (`--db data/financial.db`, run from its directory)
+  and a symlink to it, not just its literal configured string.
+- `uv run pytest -q` — 753 passed (was 739 before T-115; 747 after the first pass; 751 after
+  the first review round; +2 from the second). `ruff check` / `ruff format --check` /
+  `uv run mypy` — all green.
 - `docs/cycle.md` and `docs/kg_schema.md` updated with `portfolio_position_replay`, the
   `REPLAY` cycle type, and `--force`.
 
@@ -3177,6 +3181,18 @@ fixed/recorded in this same PR, before merge):
    held. Added to `.specify/memory/TASKS.md` as P0, blocking any `backfill` run and the next
    live `select` — a correctness bug in the live system today, `backfill`'s database-copy
    fix does not touch it (a copy of a wrong book is still wrong).
+
+Second round, on the fix for (1) above: `_refuse_production_backfill` compared `--db` and the
+resolved `KG_FINANCIAL_DB` path as plain strings, so a relative alias (`--db
+data/financial.db` from the production directory), a `..`-laden path, or a symlink to the
+production file all compared unequal to its canonical path and were accepted — exactly the
+cases the check exists to catch, now that a separate database is `backfill`'s only isolation
+boundary. Fixed with a new `_same_database(a, b)` helper: `os.path.samefile` (inode
+comparison) when both paths exist, falling back to comparing each side's `.resolve()`d
+(symlink-following) absolute path when one doesn't exist yet (a throwaway copy not yet
+created, or a typo'd production path — still worth naming correctly, even though there is
+nothing on disk to `samefile` against). 2 new tests: a relative path and a symlink to the
+production file are both refused.
 
 ### Residual scope, deliberately deferred
 

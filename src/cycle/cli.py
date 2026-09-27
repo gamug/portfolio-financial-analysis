@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from datetime import date, timedelta
@@ -131,20 +132,37 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
     return s.model_copy(update=updates) if updates else s
 
 
+def _same_database(a: str, b: str) -> bool:
+    """True when *a* and *b* name the same file on disk.
+
+    A string/path comparison alone (the first pass) let a relative path, a `..`-laden one, or
+    a symlink all name the production database while comparing unequal to its canonical path
+    (T-115 review) -- exactly the cases ``--db`` is meant to catch, since a separate database
+    is now the only isolation boundary ``backfill`` has. ``os.path.samefile`` compares the
+    actual inode when both paths exist (so it sees through a symlink or a relative alias);
+    when one doesn't exist yet (a throwaway copy not yet created, or a typo'd production path),
+    it falls back to comparing each side's resolved, symlink-following absolute path.
+    """
+    pa, pb = Path(a).expanduser(), Path(b).expanduser()
+    try:
+        return os.path.samefile(pa, pb)
+    except OSError:
+        return pa.resolve() == pb.resolve()
+
+
 def _refuse_production_backfill(args: argparse.Namespace) -> str | None:
     """T-115 review: only the ``positions`` step is isolated (``portfolio_position_replay``)
     -- every other REPLAY step (score_snapshot, veto, sector_aggregate_snapshot,
     cycle_ranking) writes the same shared tables the live cycle and quant's universe gate
     read. The only full isolation is a separate database, so ``--db`` is mandatory and is
-    refused outright when it resolves to the configured production path."""
+    refused outright when it names the configured production path."""
     prod = database_path(None)  # env only, ignoring args.db, to name the production path
     if not args.db:
         return (
             f"refuses to run without --db (see --help); it never touches the production "
             f"database ({DB_ENV_VAR}) even for a copy's sake -- copy it yourself first"
         )
-    resolved = str(Path(args.db).expanduser())
-    if prod and resolved == str(Path(prod).expanduser()):
+    if prod and _same_database(args.db, prod):
         return (
             f"refuses to run against the production database ({DB_ENV_VAR}); copy it first "
             "and pass --db pointing at the copy"

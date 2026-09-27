@@ -664,6 +664,58 @@ def test_backfill_runs_against_an_explicit_non_production_db(
     assert calls == ["2026-01-01"]
 
 
+def test_backfill_refuses_a_relative_path_to_the_production_database(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """T-115 review: a plain string comparison let ``--db data/financial.db`` slip past a
+    refusal keyed on the full ``KG_FINANCIAL_DB`` path -- ``os.path.samefile`` catches it."""
+    prod = tmp_path / "data" / "financial.db"
+    prod.parent.mkdir()
+    prod.touch()
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(prod))
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+    monkeypatch.chdir(tmp_path)
+
+    assert (
+        cycle_main(
+            [
+                "backfill",
+                "--from",
+                "2026-01-01",
+                "--to",
+                "2026-01-01",
+                "--db",
+                "data/financial.db",
+            ]
+        )
+        == 1
+    )
+    assert "production database" in capsys.readouterr().err
+
+
+def test_backfill_refuses_a_symlink_to_the_production_database(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    prod = tmp_path / "prod.db"
+    prod.touch()
+    link = tmp_path / "link.db"
+    link.symlink_to(prod)
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(prod))
+    monkeypatch.setattr(
+        "cycle.cli.CycleSettings.load", lambda: CycleSettings(db_path=Path(":memory:"))
+    )
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
+
+    assert (
+        cycle_main(["backfill", "--from", "2026-01-01", "--to", "2026-01-01", "--db", str(link)])
+        == 1
+    )
+    assert "production database" in capsys.readouterr().err
+
+
 # -- T-110: the price-spine guard ---------------------------------
 
 

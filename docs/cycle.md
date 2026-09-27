@@ -27,8 +27,11 @@ by, or refused for conflicting with, the live book. Every other step (`score_sna
 `veto`, `sector_aggregate_snapshot`, `cycle_ranking`) writes the *same shared tables* the live
 `select`/`monitor` and `quant`'s universe gate read — a replayed date's veto rows, for
 instance, are indistinguishable from a live cycle's own (T-115 review). `--db` is therefore
-**mandatory** and refused outright when it resolves to the configured production database
-(`KG_FINANCIAL_DB`): run `backfill` only against a throwaway copy (`cp "$KG_FINANCIAL_DB"
+**mandatory** and refused outright when it names the configured production database
+(`KG_FINANCIAL_DB`) — by actual file, not string: `_same_database` (`cycle/cli.py`) uses
+`os.path.samefile` when both paths exist, so a relative alias (`--db data/financial.db`) or a
+symlink to the production file is refused exactly like the canonical path itself (T-115
+review). Run `backfill` only against a throwaway copy (`cp "$KG_FINANCIAL_DB"
 /tmp/backfill.db` first), never the live one.
 
 Re-running `backfill` over an already-completed date resumes/skips it as usual

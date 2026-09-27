@@ -482,10 +482,12 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       to override once `--force` resets from the range's start up front). `cycle/cli.py`'s
       `backfill` now calls `run_replay`; new `--force` flag calls `reset_replay_range` once
       before the date loop; `--db` is now mandatory and refused when it resolves to the
-      configured production path (PR #94 review — every step but `positions` still writes the
-      shared database, so only a whole separate copy is truly isolated).
-      12 new tests in `tests/test_cycle.py` (8 + 4 from the review follow-up). Full suite 751
-      passed (was 739); ruff, format, mypy clean. `docs/cycle.md`, `docs/kg_schema.md`,
+      configured production path by actual file (`os.path.samefile`, falling back to a
+      resolved-path comparison), not a literal string match — a relative alias or a symlink to
+      it is refused too (PR #94 review, second round; every step but `positions` still writes
+      the shared database, so only a whole separate copy is truly isolated).
+      14 new tests in `tests/test_cycle.py` (8 + 4 + 2 across two review rounds). Full suite
+      753 passed (was 739); ruff, format, mypy clean. `docs/cycle.md`, `docs/kg_schema.md`,
       `SPEC.md`'s schema table updated. PR #94 review also opened `T-125` (veto lifecycle,
       P0, unrelated pre-existing gap — not fixed here). Record: `docs/model_fixes.md` "T-115".
 - [ ] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
