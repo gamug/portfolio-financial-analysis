@@ -385,6 +385,22 @@ uv run pre-commit run --all-files            # all of the above hooks, plus hygi
     the user closes with the PR's full URL (one per repo when the effort
     spans several), so it can be opened for review directly — never just
     "PR opened" or a bare number.
+12. **Verify the checked-out branch is actually fresh *before* editing a
+    single file for a new task — never assume whatever is checked out is
+    safe to build on.** Before starting development on a new task/fix
+    (item 3), check the current branch's real state: is it `master` itself
+    (about to be branched from), or does it already carry an open PR that
+    is a deliberate continuation of the work about to happen? If neither —
+    if it's a leftover branch whose PR already merged, or one that has
+    fallen behind `origin/master` — create the new branch off up-to-date
+    `origin/master` first, then start editing. Discovering this after work
+    has already begun means salvaging the diff (`git diff` to a patch,
+    discard, rebranch, reapply) instead of a five-second check up front —
+    a real cost in wasted tool calls and tokens, not just tidiness. This
+    happened for real during T-114's development: work began on
+    `fix/t113-llm-score-provenance`, already merged as PR #91, before the
+    mistake was caught partway through and the diff had to be transplanted
+    onto a correct branch.
 
 ## Governance
 
@@ -404,9 +420,18 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.3.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-24
+**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-27
 
 **Amendment log**:
+- 1.4.0 (2026-09-27) — MINOR: new principle, Code & Git #12, requiring the
+  checked-out branch's freshness to be verified *before* any file is edited
+  for a new task, not discovered after the fact — a leftover, already-merged
+  branch (or one stale against `origin/master`) must be replaced with a
+  fresh branch off `origin/master` first. Introduced after T-114's own
+  development started on `fix/t113-llm-score-provenance` (already merged as
+  PR #91) and had to be salvaged mid-task by saving the diff, rebranching,
+  and reapplying it — an avoidable, token-costly recovery this rule is
+  meant to prevent going forward.
 - 1.0.2 (2026-09-12) — PATCH: corrected the skills-doc path from
   `skills/skills/<ratio-name>/SKILL.md` to the actual, working
   `skills/<ratio-name>/SKILL.md` (verified against
