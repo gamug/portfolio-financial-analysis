@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from datetime import date, timedelta
@@ -11,12 +12,14 @@ from pathlib import Path
 from cycle.config import CycleSettings
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
-from cycle.orchestrator import CycleReport, run_monitoring, run_selection
+from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
 from cycle.repair import NotBackdated, apply_undo, plan_undo
+from cycle.replay import reset_replay_range
 from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
+from kg_schema.env import DB_ENV_VAR, database_path
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
@@ -42,6 +45,20 @@ _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even though the "
     "working tree has uncommitted changes -- results would come from code HEAD alone can't "
     "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
+)
+_FORCE_HELP = (
+    "reset the replay book (T-115) from --from through its end before replaying: deletes/"
+    "reopens portfolio_position_replay stints and cycle_run rows on or after --from, with no "
+    "upper bound -- a replay is path-dependent, so leaving a later stint in place would trip "
+    "the out-of-order-replay guard against it; for redoing a backfill after a code fix, not "
+    "routine use"
+)
+_BACKFILL_DB_HELP = (
+    "path to a throwaway copy of the database -- required. backfill's REPLAY steps write "
+    "score_snapshot / veto / sector_aggregate_snapshot / cycle_ranking, all still shared with "
+    "the live system even though `positions` itself is isolated (portfolio_position_replay); "
+    f"refused against the production database ({DB_ENV_VAR}). Copy it first, e.g. "
+    f'cp "${DB_ENV_VAR}" /tmp/backfill.db, then pass --db /tmp/backfill.db'
 )
 
 
@@ -79,14 +96,19 @@ def build_parser() -> argparse.ArgumentParser:
     undo.add_argument("--db", help="override KG_FINANCIAL_DB path")
     undo.add_argument("--apply", action="store_true", help="write the repair (default: print it)")
 
-    bf = sub.add_parser("backfill", help="run selection cycles across a date range")
+    bf = sub.add_parser(
+        "backfill",
+        help="replay selection cycles across a date range into an isolated simulated "
+        "book (T-115) -- never the live portfolio_position",
+    )
     bf.add_argument("--from", dest="date_from", required=True)
     bf.add_argument("--to", dest="date_to", required=True)
     bf.add_argument("--step-days", type=int, default=7)
-    bf.add_argument("--db")
+    bf.add_argument("--db", help=_BACKFILL_DB_HELP)
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    bf.add_argument("--force", action="store_true", help=_FORCE_HELP)
     return parser
 
 
@@ -108,6 +130,44 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
     if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
     return s.model_copy(update=updates) if updates else s
+
+
+def _same_database(a: str, b: str) -> bool:
+    """True when *a* and *b* name the same file on disk.
+
+    A string/path comparison alone (the first pass) let a relative path, a `..`-laden one, or
+    a symlink all name the production database while comparing unequal to its canonical path
+    (T-115 review) -- exactly the cases ``--db`` is meant to catch, since a separate database
+    is now the only isolation boundary ``backfill`` has. ``os.path.samefile`` compares the
+    actual inode when both paths exist (so it sees through a symlink or a relative alias);
+    when one doesn't exist yet (a throwaway copy not yet created, or a typo'd production path),
+    it falls back to comparing each side's resolved, symlink-following absolute path.
+    """
+    pa, pb = Path(a).expanduser(), Path(b).expanduser()
+    try:
+        return os.path.samefile(pa, pb)
+    except OSError:
+        return pa.resolve() == pb.resolve()
+
+
+def _refuse_production_backfill(args: argparse.Namespace) -> str | None:
+    """T-115 review: only the ``positions`` step is isolated (``portfolio_position_replay``)
+    -- every other REPLAY step (score_snapshot, veto, sector_aggregate_snapshot,
+    cycle_ranking) writes the same shared tables the live cycle and quant's universe gate
+    read. The only full isolation is a separate database, so ``--db`` is mandatory and is
+    refused outright when it names the configured production path."""
+    prod = database_path(None)  # env only, ignoring args.db, to name the production path
+    if not args.db:
+        return (
+            f"refuses to run without --db (see --help); it never touches the production "
+            f"database ({DB_ENV_VAR}) even for a copy's sake -- copy it yourself first"
+        )
+    if prod and _same_database(args.db, prod):
+        return (
+            f"refuses to run against the production database ({DB_ENV_VAR}); copy it first "
+            "and pass --db pointing at the copy"
+        )
+    return None
 
 
 def _resolve_cycle_date(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str:
@@ -205,11 +265,23 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         )
         _print_bypass_warnings(r)
         return 0
-    # backfill
+    # backfill (T-115: replays into portfolio_position_replay, never the live book)
+    refusal = _refuse_production_backfill(args)
+    if refusal is not None:
+        print(f"cycle backfill: {refusal}", file=sys.stderr)
+        return 1
+    if args.force:
+        conn = connect(resolve_db_path(args.db))
+        try:
+            ensure_schema(conn)
+            reset_replay_range(conn, args.date_from)
+        finally:
+            conn.close()
+        print(f"  --force: reset the replay book from {args.date_from} onward")
     d = date.fromisoformat(args.date_from)
     end = date.fromisoformat(args.date_to)
     while d <= end:
-        r = run_selection(settings, d.isoformat(), fundamental_hook=hook)
+        r = run_replay(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
         _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)

@@ -10,7 +10,7 @@ the universe, and (for a selection cycle) writes `portfolio_position` targets an
 ```bash
 uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices] [--allow-dirty]
 uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices] [--allow-dirty]
-uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --step-days 7 [--allow-stale-prices] [--allow-dirty]
+uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --db /tmp/backfill.db --step-days 7 [--allow-stale-prices] [--allow-dirty] [--force]
 ```
 
 `--analysis-date` is the canonical name for the cycle date; `--date` is kept as an
@@ -18,6 +18,33 @@ alias (passing both with different values is a CLI error), and both default to
 today. It is the `cycle_run.cycle_date`; `cycle_run.code_version` records the git
 tag. `backfill` uses `--from`/`--to` (each stepped date is its own as-of) and
 rejects `--analysis-date`.
+
+`backfill` replays selection cycles through `run_replay`, `cycle_run.cycle_type = 'REPLAY'`
+— a distinct run-log identity from a live `select`/`monitor` at the same date. Only the
+`positions` step is isolated: it lands in `portfolio_position_replay` (`cycle/replay.py`), a
+table with `portfolio_position`'s own shape and T-104 stint-immutability triggers, never read
+by, or refused for conflicting with, the live book. Every other step (`score_snapshot`,
+`veto`, `sector_aggregate_snapshot`, `cycle_ranking`) writes the *same shared tables* the live
+`select`/`monitor` and `quant`'s universe gate read — a replayed date's veto rows, for
+instance, are indistinguishable from a live cycle's own (T-115 review). `--db` is therefore
+**mandatory** and refused outright when it names the configured production database
+(`KG_FINANCIAL_DB`) — by actual file, not string: `_same_database` (`cycle/cli.py`) uses
+`os.path.samefile` when both paths exist, so a relative alias (`--db data/financial.db`) or a
+symlink to the production file is refused exactly like the canonical path itself (T-115
+review). Run `backfill` only against a throwaway copy (`cp "$KG_FINANCIAL_DB"
+/tmp/backfill.db` first), never the live one.
+
+Re-running `backfill` over an already-completed date resumes/skips it as usual
+(`cycle_checkpoint`); pass `--force` to reset the replay book from `--from` onward first
+instead — every replay stint and `cycle_run` row on or after `--from` is dropped/reopened, with
+**no** upper bound at `--to`. A replay is path-dependent: leaving a later stint in place (from a
+prior, further-reaching backfill) would immediately trip the out-of-order-replay guard against
+it the moment `--from` redoes, half-deleted (T-115 review). Nothing *before* `--from` is
+touched.
+
+See T-125 (`.specify/memory/TASKS.md`) for a related, separate gap: `veto` rows today are
+per-date events, not stints, so even a fully isolated replay database inherits the live
+system's own miscounted HARD/SOFT veto durations.
 
 Both cycle types refuse a `cycle_date` past `price_daily`'s last stored date (the price
 spine) — TECHNICAL/veto read prices, so a stale as-of would silently score against data
@@ -146,6 +173,20 @@ the cycle date and its old one closes there, so every weight stays on record —
 the stint's own start date updates in place (T-104); refuses to end a stint opened after the
 cycle date, even with `--allow-backdated`). The database itself (a `kg_schema` trigger) rejects
 any stint with `valid_to < valid_from`.
+
+### `replay.py` — `backfill`'s isolated position book (T-115)
+
+`out_of_order_replay_reason` / `sync_replay_positions`: the same shape as
+`writers.out_of_order_reason` / `writers.sync_positions`, against `portfolio_position_replay`
+instead of the live `portfolio_position` — kept as their own literal-SQL functions (Code & Git
+#10) rather than a table-name-parameterized version of the live ones. `reset_replay_range(conn,
+date_from)` is `--force`'s implementation: drops every replay stint opened on or after
+`date_from`, reopens every one it closed on or after `date_from`, and drops every `cycle_run`
+row on or after `date_from` (cascading to their checkpoints/ranking) — with no upper bound,
+since a stint past the caller's `--to` still shapes whether `date_from` redoes cleanly. Nothing
+*before* `date_from` is touched. Positions are the only step this module (or any per-table
+isolation) covers — see the CLI section above for why `--db` (a whole separate database) is
+mandatory for everything else `backfill` writes.
 
 ### `repair.py` — `plan_undo(conn, cycle_run_id)` / `apply_undo(conn, plan)` (T-104)
 

@@ -264,8 +264,9 @@ are not owned by any single package.
 | `data_quality_issue` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` | Ring-1 `DQ_*` gate hit: `severity` (HARD → `cycle` `DATA_QUALITY` veto), `quarantined` (metric read as NULL), gated value | `fundamental_agent` (per filing + `quality` backfill) |
 | `veto` | `UNIQUE(asset_id, rule_id, cycle_date)` | `severity` (HARD/SOFT), `cleared_at` (cleared, never deleted) | `cycle` |
 | `portfolio_position` | `UNIQUE(asset_id, valid_from)` | position stints, weight | `cycle select` |
+| `portfolio_position_replay` | `UNIQUE(asset_id, valid_from)` | `portfolio_position`'s own shape, isolated from it (T-115) | `cycle backfill` |
 | `cycle_ranking` | `UNIQUE(cycle_run_id, asset_id)` | ranked cohort of a cycle | `cycle` |
-| `cycle_run` / `cycle_checkpoint` | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` | orchestrator provenance + resume | `cycle` |
+| `cycle_run` / `cycle_checkpoint` | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` | orchestrator provenance + resume; `cycle_type` incl. `'REPLAY'` (`cycle backfill`, T-115) | `cycle` |
 | `sector_aggregate_snapshot` | `UNIQUE(sector_id, cycle_date, metric_type)` | per-cycle GICS-sector roll-up of members' TECHNICAL score | `cycle` |
 | `shared_executive_edge` | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` | `sharedExecutiveWith` candidate | `entity_resolution build` |
 | `media_cooccurrence` | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` | `shared_executive_edge`'s shape for non-executive (press/analyst) co-occurrence (T-043) | `entity_resolution build` (once T-082 lands) |
