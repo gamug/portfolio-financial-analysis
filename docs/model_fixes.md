@@ -2365,18 +2365,17 @@ should have supplied `rf` and didn't.
   `optimize.py::_stats`'s `sharpe = (ret - rf) / vol` already matches this construction; the
   defect was that `ret` (`mu @ w`) was silently an excess return already for the `equilibrium`
   estimator, so this formula's single subtraction became a second one.
-- **The reverse-optimized ("equilibrium") return in Black-Litterman is a total return**, not
-  an excess return: `Pi = rf + delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global
-  Portfolio Optimization," *Financial Analysts Journal*, 1992) -- `delta * Sigma @ w_mkt` alone
-  is the market's *implied excess* return over `rf`, consistent with CAPM's own total-return
-  form `E[R_i] = rf + beta_i * (E[R_m] - rf)`. `risk.equilibrium_returns`'s own docstring
-  already states this exact formula; the bug was that its one caller left `rf` at the
-  function's `0.0` default instead of supplying it.
-  (Live re-verification of both citations against an external source was attempted but this
-  environment's network egress policy blocks the reference domains reached for this pass;
-  both are standard, textbook formulas, not a contested or novel claim, and the fix's
-  correctness does not depend on the citation alone -- it is also proven by the two regression
-  tests below, which fail on the pre-fix code and pass on the fix.)
+- **Black-Litterman's equilibrium return Π is an excess return; `quant` stores the total
+  return `rf + Π`.** Reverse optimization gives the market's implied excess equilibrium
+  return `Pi = delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global Portfolio
+  Optimization," *Financial Analysts Journal*, 1992; He, G. and Litterman, R., "The
+  Intuition Behind Black-Litterman Model Portfolios," Goldman Sachs, 1999). Because
+  `hist_mean`/`james_stein` are total returns and `optimize.py::_stats` subtracts `rf`
+  once, `quant` stores the equilibrium estimator as the total return
+  `mu_eq = rf + delta * Sigma @ w_mkt`, the same form as CAPM's
+  `E[R_i] = rf + beta_i * (E[R_m] - rf)`. The bug was that `persist.py`, the one caller of
+  `risk.equilibrium_returns`, left `rf` at the function's `0.0` default, so the stored value
+  was Π alone.
 
 ### Fix
 
@@ -2534,25 +2533,37 @@ stored price is data pretending to rest on a foundation that isn't there.
   `--store-daily` needed) -- gating it the same way would break that documented, legitimate
   use and wasn't what the symptom's own acceptance criterion ("zero orphan **observation**
   dates") asked for.
-- **Reusing an existing risk model doesn't re-check staleness.** `optimize`'s model-reuse
-  path (`_resolve_model_id` finding a stored model for the exact requested `as_of`) performs
-  no fresh price read -- the risk, if any, was already realized (or not) when that model was
-  originally built and is a data-audit question for the models already in production
-  (`T-121`/`T-122`), not something a reuse-only lookup can newly introduce.
+- **`optimize` checks staleness itself, independently of whether it reuses or builds the
+  risk model.** The first cut of this fix only checked inside `_resolve_model_id`'s build
+  path, on the reasoning that a reused model's price read had already happened (or not) when
+  that model was originally built. Review on PR #87 (`@eldova1702`) found the gap: reusing a
+  risk model built earlier with `--allow-stale-prices` let a later `optimize` at the same
+  stale `as_of` -- without the flag -- rewrite the books silently, with `stale_prices_bypassed`
+  `None` and no `stale_as_of_bypassed` key in that `optimize` run's own `params_json`. That
+  fails T-110's own acceptance criterion (a run past the price cutoff is recorded as such) for
+  every `optimize` invocation that happens to land on an already-built stale model, and it
+  would just as easily silently rebuild `tangency` from a pre-T-109 `equilibrium` mu if an old
+  model were reused. `run_optimize` now computes `stale_as_of_reason(conn, as_of)` and applies
+  the same refuse-unless-`allow_stale_prices` gate before calling `_resolve_model_id` at all,
+  and records the reason on its own `quant_run.params_json` and `OptimizeRunResult` every time
+  -- `_resolve_model_id` no longer reports a bypass reason of its own, since the check it used
+  to perform only on the build path is now `run_optimize`'s, unconditionally.
 
 ### Verification
 
 - New tests: `tests/test_kg_schema.py` (+2, the shared helper: no rows/no table -> `None`;
   a stale vs. safe `as_of` against a seeded `price_daily` row). `tests/test_quant_risk_model.py`
-  (+5: refuses a stale `as_of` with a `quant_run` row recorded `"failed"`; an `as_of` at or
+  (+6: refuses a stale `as_of` with a `quant_run` row recorded `"failed"`; an `as_of` at or
   before the spine is unaffected; the override records the reason on both the result and
   `params_json`; `optimize` refuses when it must auto-build; `optimize` propagates the bypass
-  reason when it does). `tests/test_cycle.py` (+4: `select` and `monitor` both refuse a stale
-  cycle date with no `cycle_run` row written on refusal; an `as_of` at the spine is safe; the
-  override records the reason on the report). `tests/test_pricing_pipeline.py` (+3:
-  `--observations` alone is refused at both the pipeline and CLI layers; together with
-  `--store-daily`, every `price_observation` date has a matching `price_daily` date).
-- `uv run pytest -q` -- 706 passed (was 692; +14 new tests).
+  reason when it does; `optimize` still refuses when it reuses a risk model that was itself
+  only built via `--allow-stale-prices`, the PR #87 review finding above). `tests/test_cycle.py`
+  (+4: `select` and `monitor` both refuse a stale cycle date with no `cycle_run` row written on
+  refusal; an `as_of` at the spine is safe; the override records the reason on the report).
+  `tests/test_pricing_pipeline.py` (+3: `--observations` alone is refused at both the pipeline
+  and CLI layers; together with `--store-daily`, every `price_observation` date has a matching
+  `price_daily` date).
+- `uv run pytest -q` -- 707 passed (was 692; +15 new tests).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
 
 ### Residual scope, deliberately deferred

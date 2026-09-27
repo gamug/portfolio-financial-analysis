@@ -209,7 +209,7 @@ class OptimizeRunResult:
     books: dict[str, int]  # kind -> quant_portfolio.id
     frontier_points: int
     manifest_tag: str = ""
-    stale_prices_bypassed: str | None = None  # T-110: set only when this call built the model
+    stale_prices_bypassed: str | None = None  # T-110: set whenever this as_of is past the spine
 
 
 def _weights_json(ids: list[int], w: np.ndarray) -> str:
@@ -237,16 +237,16 @@ def _model_version(settings: QuantSettings, manifest: QuantManifest) -> str:
 
 def _resolve_model_id(
     settings: QuantSettings, as_of: str, conn: Database, run_id: int, manifest: QuantManifest
-) -> tuple[int, str | None]:
-    """``(model_id, stale_prices_bypassed)`` -- the reason is only ever set when this call
-    itself builds the model (T-110); reusing an already-stored one performs no fresh price
-    read, so there is nothing new to flag."""
+) -> int:
+    """Reuse an already-stored risk model for *as_of*, or build one. The staleness check
+    against the price spine is ``run_optimize``'s own responsibility (T-110): it applies
+    whether or not a fresh model is built here, so it is not this function's concern."""
     row = load_risk_model(conn, as_of=as_of, model_version=_model_version(settings, manifest))
     if row is not None:
-        return int(row["id"]), None
+        return int(row["id"])
     build = run_build_risk_model(_build_settings(settings, manifest), as_of=as_of, conn=conn)
     conn.execute("UPDATE quant_run SET status = 'running' WHERE id = ?", (run_id,))
-    return build.model_id, build.stale_prices_bypassed
+    return build.model_id
 
 
 def _target_vol(
@@ -273,6 +273,7 @@ def run_optimize(
         ensure_schema(conn)
         # fail on an unsatisfiable selection first, before any run row exists
         manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
+        stale_reason = stale_as_of_reason(conn, as_of)
         run_id = open_run(
             conn,
             "optimize",
@@ -281,13 +282,17 @@ def run_optimize(
                 **settings.model_dump(mode="json"),
                 "manifest": manifest.record(),
                 "manifest_tag": manifest.book_tag,
+                "stale_as_of_bypassed": stale_reason,
             },
             code_version=code_version(),
         )
         try:
-            model_id, stale_prices_bypassed = _resolve_model_id(
-                settings, as_of, conn, run_id, manifest
-            )
+            if stale_reason is not None and not settings.allow_stale_prices:
+                raise StaleAsOf(  # noqa: TRY301
+                    f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
+                    "of the price spine"
+                )
+            model_id = _resolve_model_id(settings, as_of, conn, run_id, manifest)
             ids, sigma = load_covariance(conn, model_id)
             if not ids:
                 raise RuntimeError(  # noqa: TRY301
@@ -389,7 +394,7 @@ def run_optimize(
             books=books,
             frontier_points=frontier_points,
             manifest_tag=manifest.book_tag,
-            stale_prices_bypassed=stale_prices_bypassed,
+            stale_prices_bypassed=stale_reason,
         )
     finally:
         if owns:

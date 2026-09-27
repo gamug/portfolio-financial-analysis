@@ -45,9 +45,11 @@ Every `quant_run` records `code_version`.
 `build-risk-model`/`optimize` refuse an as-of past `price_daily`'s last stored date (the
 price spine) — proceeding would silently build a model that claims to be "as of" a date the
 price data doesn't actually reach yet (T-110) — unless `--allow-stale-prices`, which records
-why on the run (`quant_run.params_json`, and a CLI `WARNING`). `optimize` inherits the check
-whenever it auto-builds a risk model; reusing an already-stored one performs no fresh price
-read, so it isn't re-checked.
+why on the run (`quant_run.params_json`, and a CLI `WARNING`). `optimize` checks its own
+`as_of` against the spine unconditionally — whether it reuses an already-stored risk model
+or has to build one — since a stored model may itself have been built past the spine under
+`--allow-stale-prices`, and a later `optimize` at that same stale date must still be recorded
+as such, not silently waved through by the reuse lookup (PR #87 review finding).
 
 `QuantSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` is optional (the
 point-in-time universe reads — `load_universe_asset_ids` / `load_assets` /

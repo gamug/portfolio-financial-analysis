@@ -228,6 +228,26 @@ def test_optimize_propagates_the_bypass_reason_when_it_auto_builds(
     assert opt.stale_prices_bypassed is not None
 
 
+def test_optimize_re_checks_staleness_even_when_reusing_a_stored_model(
+    memory_quant_db: Database, quant_seed: Callable[..., Database]
+) -> None:
+    """T-110 follow-up (PR #87 review): a stale risk model built once with
+    ``--allow-stale-prices`` must not let a later ``optimize`` at the same stale ``as_of``
+    slip through unchecked just because it reuses that stored model instead of building one --
+    the guard is ``optimize``'s own, not only triggered by ``_resolve_model_id``'s build path."""
+    conn = quant_seed(memory_quant_db, n_assets=6, n_days=300, with_dividends=False)
+    settings = _prep(conn).model_copy(
+        update={"objectives": ["min_var"], "max_name_weight": None, "max_sector_weight": None}
+    )
+    stale_as_of, _ = _stale_as_of(conn)
+    run_build_risk_model(
+        settings.model_copy(update={"allow_stale_prices": True}), as_of=stale_as_of, conn=conn
+    )
+
+    with pytest.raises(StaleAsOf):
+        run_optimize(settings, as_of=stale_as_of, conn=conn)
+
+
 def test_no_store_cov_skips_the_matrix(
     memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
