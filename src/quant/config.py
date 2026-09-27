@@ -59,9 +59,11 @@ class QuantSettings(BaseModel):
     periods_per_year: int = 252
     cov_estimator: str = "ledoit_wolf_cc"  # ledoit_wolf_cc | ledoit_wolf_diag | sample
     # mu for the return-aware objectives (tangency / target_vol / frontier) and for the
-    # expected-return / Sharpe reported on every book. `equilibrium` (Pi = delta*Sigma*w_mkt)
-    # carries real cross-sectional dispersion with near-zero estimation noise; `james_stein`
-    # over ~5y of daily data shrinks mu almost flat, which collapses the frontier onto min_var.
+    # expected-return / Sharpe reported on every book. All three estimators are total returns
+    # (T-109): `equilibrium` is `rf + delta*Sigma*w_mkt`, not the excess `delta*Sigma*w_mkt`
+    # alone -- it carries real cross-sectional dispersion with near-zero estimation noise;
+    # `james_stein` over ~5y of daily data shrinks mu almost flat, which collapses the frontier
+    # onto min_var.
     ret_estimator: str = "equilibrium"  # equilibrium | james_stein | hist_mean
     equilibrium_risk_aversion: float = 2.5
     risk_free_rate: float = 0.045

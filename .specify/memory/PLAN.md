@@ -1591,7 +1591,7 @@ that reproduce today.
 | T1 parts 1/3 — `event_time = period_end` | **fixed 2026-09-26** — `available_at` (the next NYSE session after filing) on filings, metrics and FUNDAMENTAL scores, guarded by triggers; every as-of reader keys on it. Production backfilled (`m008`, schema v8): 0 rows without it | `T-107` (done) |
 | Legacy pre-`T-091` quarters sharing the Q3 10-Q's accession and date (PR #78 review) | **fixed 2026-09-26** — 41 accessions, 13 tickers, 67 quarters re-ingested with their own accessions and filing dates; 0 shared left in production; triggers and the `run` preflight refuse new ones | `T-120` (done) |
 | Q5 — benchmark mean-of-log, all names | **fix built 2026-09-26** — `bench-v2`: mean of simple returns over the investable universe (never a book's own hard-veto exclusion, per review); `perf-v2`; external-series loader. Production re-evaluation pending, incl. voiding the stale `T-104` live-book snapshot first | `T-108` |
-| §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **live defect** | `T-109` |
+| §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **fixed 2026-09-27** — `persist.py` now passes `rf` into `equilibrium_returns`; total-return convention across all three estimators. Production re-persist pending | `T-109` |
 | T2/T3/T7 — as-of past the price spine, orphan observations | **live** (runs dated 2026-09-21/22 vs prices to 2026-08-27; 503 orphan rows) | `T-110` |
 | Q6 — missing asset-day = 0% | **live defect** | `T-111` |
 | Q4 — frontier returns *k* identical "optimal" points | **live** (documented, but mislabelled) | `T-112` |

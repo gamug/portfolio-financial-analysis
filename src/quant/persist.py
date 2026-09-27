@@ -77,7 +77,12 @@ def _expected_returns(  # noqa: PLR0913 - the panel, its Σ, and where to read c
     manifest: QuantManifest,
     *,
     as_of: str,
+    rf: float,
 ) -> dict[str, dict[int, float]]:
+    """All three estimators are total returns (T-109): ``hist_mean``/``james_stein`` are means
+    of the panel's own total-return series, so ``equilibrium`` must add back *rf* -- otherwise
+    it stores the excess return ``lambda*Sigma*w_mkt`` alone, and every downstream Sharpe/
+    tangency (which subtracts *rf* once, expecting a total-return mu) would subtract it twice."""
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
     js = james_stein_mean(panel.returns, periods_per_year=ppy)
@@ -85,7 +90,7 @@ def _expected_returns(  # noqa: PLR0913 - the panel, its Σ, and where to read c
     caps = np.array([caps_by_id.get(a, 0.0) for a in panel.asset_ids], dtype=np.float64)
     if caps.sum() <= 0:
         caps = np.ones(panel.n_assets)
-    eq = equilibrium_returns(sigma, caps, risk_aversion=settings.equilibrium_risk_aversion)
+    eq = equilibrium_returns(sigma, caps, risk_aversion=settings.equilibrium_risk_aversion, rf=rf)
     return {
         "hist_mean": dict(zip(panel.asset_ids, hist.tolist(), strict=True)),
         "james_stein": dict(zip(panel.asset_ids, js.tolist(), strict=True)),
@@ -132,7 +137,9 @@ def run_build_risk_model(
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
-            mu_by_model = _expected_returns(settings, panel, sigma, conn, manifest, as_of=as_of)
+            mu_by_model = _expected_returns(
+                settings, panel, sigma, conn, manifest, as_of=as_of, rf=rf.annualized_rate
+            )
 
             spec = {
                 "asset_ids": panel.asset_ids,

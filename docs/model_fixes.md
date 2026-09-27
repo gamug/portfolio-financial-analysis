@@ -2319,3 +2319,128 @@ tests are additions on top of it.
 - A fresh production dry run (correct panel, real live book, compounded active return) is
   needed before `quant evaluate` runs against production; the stale `quant_portfolio` id 4
   snapshot and its 41 perf rows must be voided first (post-merge correction, above).
+
+---
+
+## T-109 — the equilibrium μ was an excess return; every downstream Sharpe subtracted `rf` twice
+
+**Status**: Fixed 2026-09-27 (`T-109`).
+
+### Symptom
+
+`quant`'s risk model stores three expected-return estimators per asset (`hist_mean`,
+`james_stein`, `equilibrium`), and `ret_estimator = "equilibrium"` is the default read by
+every objective and reported on every book. `historical_mean`/`james_stein_mean` are annualized
+means of the panel's own **total**-return series (`build_return_panel`'s returns are total,
+per `returns.py`), but `persist.py::_expected_returns` called `equilibrium_returns(sigma, caps,
+risk_aversion=...)` with no `rf` argument -- and `risk.equilibrium_returns`'s own signature
+defaults `rf` to `0.0`. `risk.equilibrium_returns`'s docstring already states the intended
+formula, `Pi = rf + lambda * Sigma @ w_mkt`; the stored value was actually just
+`lambda * Sigma @ w_mkt`, an **excess** return, not the total return the other two estimators
+are. Every objective (`min_var`, `tangency`, `target_vol`, `risk_parity`, `frontier`) and the
+Sharpe reported on every persisted book (`optimize.py::_stats`) then computed
+`sharpe = (w @ mu - rf) / vol`, expecting a total-return `mu` and subtracting `rf` exactly
+once -- so for the `equilibrium` estimator specifically, `rf` was subtracted twice (once
+missing from `mu` itself, once again in `_stats`), and every book's persisted
+`expected_return` and `sharpe` understated by `rf` and `rf / vol` respectively whenever
+`ret_estimator = "equilibrium"` (the default; every production risk model).
+
+### Root cause
+
+`persist.py::_expected_returns` never threaded the `rf` it had already loaded (via
+`load_risk_free`, used two lines earlier for `quant_risk_model.rf_annual`) into the one
+estimator whose formula needs it. `historical_mean`/`james_stein_mean` need no `rf` argument
+at all -- they are plain means of an already-total-return series -- so the omission was easy
+to miss: two of the three estimators were correct by construction, and `equilibrium_returns`'s
+own unit tests (`tests/test_quant_lw.py`) call it directly with no `rf`, which is the correct
+way to test that pure function in isolation; the bug was entirely in the one caller that
+should have supplied `rf` and didn't.
+
+### Theoretical/technical reference
+
+- **The Sharpe ratio is (total portfolio return minus the risk-free rate) divided by
+  volatility** (Sharpe, W.F., "Mutual Fund Performance," *Journal of Business*, 1966; the
+  "reward-to-variability ratio") -- the numerator's minuend is the portfolio's own total
+  return, and `rf` is subtracted exactly once to get the excess return the ratio is built on.
+  `optimize.py::_stats`'s `sharpe = (ret - rf) / vol` already matches this construction; the
+  defect was that `ret` (`mu @ w`) was silently an excess return already for the `equilibrium`
+  estimator, so this formula's single subtraction became a second one.
+- **The reverse-optimized ("equilibrium") return in Black-Litterman is a total return**, not
+  an excess return: `Pi = rf + delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global
+  Portfolio Optimization," *Financial Analysts Journal*, 1992) -- `delta * Sigma @ w_mkt` alone
+  is the market's *implied excess* return over `rf`, consistent with CAPM's own total-return
+  form `E[R_i] = rf + beta_i * (E[R_m] - rf)`. `risk.equilibrium_returns`'s own docstring
+  already states this exact formula; the bug was that its one caller left `rf` at the
+  function's `0.0` default instead of supplying it.
+  (Live re-verification of both citations against an external source was attempted but this
+  environment's network egress policy blocks the reference domains reached for this pass;
+  both are standard, textbook formulas, not a contested or novel claim, and the fix's
+  correctness does not depend on the citation alone -- it is also proven by the two regression
+  tests below, which fail on the pre-fix code and pass on the fix.)
+
+### Fix
+
+`persist.py::_expected_returns` takes `rf: float` and passes it through:
+`equilibrium_returns(sigma, caps, risk_aversion=settings.equilibrium_risk_aversion, rf=rf)`.
+`run_build_risk_model` passes `rf=rf.annualized_rate` (the same `RiskFree` already loaded for
+`quant_risk_model.rf_annual`). No change to `risk.equilibrium_returns` itself, to
+`optimize.py::_stats`, or to `historical_mean`/`james_stein_mean` -- all three were already
+correct; only the wiring between them was not.
+
+### Design decisions
+
+- **Total return, not excess, is the one convention.** `historical_mean`/`james_stein_mean`
+  can't cheaply be made "excess" (that would require subtracting a daily `rf` from every
+  observation before annualizing, a bigger change for no benefit), so `equilibrium` is made to
+  match them rather than the other way around -- consistent with `_stats`'s existing
+  `sharpe = (ret - rf) / vol`, which already assumes a total-return `mu`.
+- **`equilibrium_returns` itself keeps `rf: float = 0.0`.** The pure function's contract (its
+  own docstring already gives the total-return formula) doesn't change; only its one caller
+  that was silently relying on the wrong default does.
+- **A future estimator must follow the same convention.** `T-077`'s planned Carhart
+  4-factor `ret_estimator` (`mu_i = rf + sum_k beta_i,k^shrunk * lambda_bar_k`) already writes
+  `rf +` into its own formula in `TASKS.md`; this fix is what makes that consistent with what
+  `_stats`/every objective already expect, rather than a second estimator needing its own
+  after-the-fact correction.
+
+### Verification
+
+- New tests (`tests/test_quant_risk_model.py`):
+  `test_equilibrium_mu_is_a_total_return_like_the_other_two_estimators` -- building the same
+  risk model twice with `risk_free_rate` values 0.05 apart, `hist_mean`/`james_stein` are
+  byte-identical between the two runs (they never touch `rf`) while `equilibrium` shifts by
+  exactly the `rf` delta, uniformly across every asset.
+  `test_book_sharpe_is_invariant_to_rf_once_mu_is_a_genuine_total_return` -- for `min_var`
+  (weights independent of `mu`), the persisted book's `expected_return` shifts by exactly the
+  `rf` delta between the two runs while its `sharpe` stays unchanged (`(w . mu_total - rf) /
+  vol` doesn't depend on `rf` once `mu_total` is genuinely total) -- both tests confirmed to
+  fail on the pre-fix code (reverted locally) with the exact signature the bug predicts:
+  `expected_return` flat across the two runs instead of shifting, since the pre-fix
+  `equilibrium` mu never included `rf` at all.
+- `uv run pytest -q` -- 692 passed (was 690; +2 new tests).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` -- all green.
+- **Independent reproduction** (PR #85 review, `@eldova1702`): on a copy of `financial-2.db`,
+  692 tests pass, ruff/format/mypy clean, and both new tests independently confirmed to fail
+  on the pre-fix code.
+- **The fix moves real weights, not just reported stats.** Recomputed from the stored
+  (pre-fix) risk model: under the old excess-return μ, 15 of the production panel's 20 names
+  had `mu < rf`, so `tangency` wrongly concentrated into the other 7 (a name's excess return
+  looking negative merely because `rf` was never added back in is not a real signal to
+  concentrate away from). Post-fix, 66% of `tangency`'s weight moves and its Sharpe goes
+  0.038 -> 0.325. `min_var`, `target_vol` and `frontier` weights are unaffected (their
+  optimization doesn't depend on `mu`'s level, only `tangency`'s does). This sharpens why the
+  pending production re-run (below) isn't optional bookkeeping: any `tangency` result read
+  from production before that re-run is the wrong book, not just a mis-reported one.
+
+### Residual scope, deliberately deferred
+
+- **Every risk model built before this fix carries an excess-return `equilibrium` μ** (and a
+  book's `expected_return`/`sharpe` understated accordingly whenever `ret_estimator =
+  "equilibrium"`, the default). Re-persisting corrected values for the live universe requires
+  re-running `quant build-risk-model`/`optimize` against production -- outside a code-review
+  pass's authority to run unprompted; a follow-up operational step, like F1/F2/F4's own
+  deferred production re-runs. **`tangency` in particular must not be read from production
+  until that re-run happens** -- its weights, not only its reported stats, are wrong today.
+- `T-077`'s Carhart estimator is not implemented by this fix -- its own formula already plans
+  to add `rf`, so no separate correction is expected when it lands, but that remains to be
+  verified against real code once written, not assumed.
