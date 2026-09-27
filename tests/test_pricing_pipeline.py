@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from conftest import write_universe_db
 
-from pricing_agent import pipeline
+from pricing_agent import cli, pipeline
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import RunParams
 from pricing_agent.pricing_client import Candle, DailyPrices
@@ -121,3 +121,46 @@ def test_store_daily_flag_persists_bars(tmp_path: Path) -> None:
     )
     conn = sqlite3.connect(settings.db_path)
     assert conn.execute("SELECT COUNT(*) FROM price_daily").fetchone()[0] == len(_series())
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_observations_without_store_daily_is_refused(tmp_path: Path) -> None:
+    """T-110: an observation is an analytic over a specific stored price_daily bar --
+    writing it without also storing that bar leaves an orphan observation date."""
+    settings = _settings(tmp_path)
+    with pytest.raises(ValueError, match="store_daily"):
+        pipeline.run(
+            settings,
+            RunParams(start_date="2022-01-01", end_date="2023-12-31", observations=True),
+        )
+    # refused before opening the DB at all -- no pricing_run row, nothing written
+    assert not settings.db_path.exists()
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_observations_together_with_store_daily_leaves_no_orphan(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    pipeline.run(
+        settings,
+        RunParams(
+            start_date="2022-01-01",
+            end_date="2023-12-31",
+            store_daily=True,
+            observations=True,
+            limit=1,
+        ),
+    )
+    conn = sqlite3.connect(settings.db_path)
+    daily_dates = {r[0] for r in conn.execute("SELECT date FROM price_daily")}
+    obs_dates = {r[0] for r in conn.execute("SELECT obs_date FROM price_observation")}
+    assert obs_dates <= daily_dates
+    assert obs_dates  # the fixture's series is non-empty, so this isn't vacuous
+
+
+def test_the_cli_refuses_observations_without_store_daily(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["run", "--observations"])
+    assert exc.value.code == 2
+    assert "--store-daily" in capsys.readouterr().err

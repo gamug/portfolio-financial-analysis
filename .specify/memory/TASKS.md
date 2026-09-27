@@ -339,7 +339,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       an excess-return `equilibrium` μ; re-persisting corrected values for the live universe
       needs a production `build-risk-model`/`optimize` re-run — pending, same as F1/F2/F4's own
       deferred production re-runs.**
-- [ ] **T-110** *(P1)* Validate as-of dates against the price spine. Production `quant_run`s
+- [x] **T-110** *(P1)* Validate as-of dates against the price spine. Production `quant_run`s
       7–10 and both `cycle_run`s are dated 2026-09-21/22 while `price_daily` ends 2026-08-27;
       `price_observation` has 503 rows at 2026-08-28 (no `price_daily` bar that day) and all
       503 `price_window` "full" rows of one run end 2026-08-28 — a run with `--observations`
@@ -348,6 +348,23 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `pricing_agent` never write observations or windows past `price_daily`'s last date;
       clean the orphan rows. **Acceptance**: zero orphan observation dates; a run past the
       price cutoff is recorded as such.
+      **Code done 2026-09-27.** Shared `kg_schema.queries.stale_as_of_reason`/`last_price_date`
+      (`MAX(date) FROM price_daily`, tolerant of a missing table). `quant`'s
+      `build-risk-model`/`optimize` and `cycle`'s `select`/`monitor`/`backfill` all refuse a
+      stale as-of via the new `StaleAsOf`, unless `--allow-stale-prices`, which records the
+      bypass reason on the run (`params_json`, `RiskModelResult`/`OptimizeRunResult`/
+      `CycleReport`) for the CLI's `WARNING`. `pricing_agent`'s `--observations` now requires
+      `--store-daily` (refused at the CLI and again in `pipeline.run` itself), closing the
+      orphan-observation-date root cause going forward — `price_window` itself is left
+      ungated, since it's documented as pricing_agent's standalone base product, and the
+      acceptance criterion only asked for zero orphan *observation* dates. `evaluate`/
+      `benchmark` are deliberately not guarded (already degrade gracefully on missing forward
+      data, FR-010); `optimize`'s model-reuse path doesn't re-check (no fresh price read
+      happens there). Tests: `tests/test_kg_schema.py` (+2), `tests/test_quant_risk_model.py`
+      (+5), `tests/test_cycle.py` (+4), `tests/test_pricing_pipeline.py` (+3). Full suite 706
+      passed (was 692); ruff, format, mypy, pre-commit clean. Record: `docs/model_fixes.md`
+      "T-110". **Cleaning the production orphan rows themselves is a separate, deferred
+      production action — see `T-123`.**
 - [ ] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
       (`fwd[d].get(a, 0.0)`), dragging the book toward zero in proportion to missing names.
       Renormalize the day's weights over names that have a return. (Transaction costs belong
@@ -483,6 +500,16 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       with `T-121` already applied; the dry-run figures in `docs/model_fixes.md`'s `T-108`/
       `T-109` entries are replaced with real post-fix production numbers, and any `tangency`
       book read afterward reflects the corrected μ.
+- [ ] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
+      only)* Clean the production orphan rows `T-110` found: 503 `price_observation` rows dated
+      2026-08-28 with no matching `price_daily` bar, and whichever of `quant_run`s 7–10 and the
+      two `cycle_run`s were built at an as-of past the price spine then in effect (each now
+      individually assessed — a run may simply need re-recording as stale-as-of rather than
+      voided, if its own inputs were otherwise fine). The going-forward guard (`T-110`, code
+      done) prevents a recurrence; this is the one-time cleanup of what already exists.
+      **Acceptance**: zero `price_observation` rows without a same-day `price_daily` row; each
+      flagged `quant_run`/`cycle_run` is either re-run within the price spine or explicitly
+      annotated as a known-stale historical run, not left silently ambiguous.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -512,13 +539,14 @@ added above it, never below. → `PLAN.md` Work item 12.
 
 **🔴 Current top priority: Work item 14 (second forensic audit, P0 first), then Work items 8
 and 9.** Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. Work item 14's
-code-level P0 tasks (`T-104`–`T-109`) are all done; **`T-121`/`T-122` (added 2026-09-27) track
-the two production actions their reviews surfaced — voiding the stale `T-104` live-book
-snapshot, then re-persisting `T-108`/`T-109`'s fixes — and are held pending explicit
-user direction, the same as every other production write in this file (`T-104`, `T-107`,
-`T-120`).** `T-070`–`T-084` and `T-110`–`T-116` have not started. Execute **Work item 14**'s
-remaining P1 tasks (`T-110`–`T-116`; `T-113` before `T-079`; `T-116` after `T-105`) →
-`T-121`/`T-122` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+code-level P0 tasks (`T-104`–`T-109`) are all done, and `T-110`'s price-spine guard is done
+too; **`T-121`/`T-122`/`T-123` (added 2026-09-27) track the production actions their reviews
+and `T-110` itself surfaced — voiding the stale `T-104` live-book snapshot, re-persisting
+`T-108`/`T-109`'s fixes, and cleaning `T-110`'s own production orphan rows — and are held
+pending explicit user direction, the same as every other production write in this file
+(`T-104`, `T-107`, `T-120`).** `T-070`–`T-084` and `T-111`–`T-116` have not started. Execute
+**Work item 14**'s remaining P1 tasks (`T-111`–`T-116`; `T-113` before `T-079`; `T-116` after
+`T-105`) → `T-121`/`T-122`/`T-123` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

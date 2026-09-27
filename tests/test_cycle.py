@@ -20,7 +20,9 @@ from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
+from kg_schema.queries import StaleAsOf
 from kg_schema.versions import VersionError
+from pricing_agent import db as pricing_db
 
 # -- normalize ----------------------------------------------------------
 
@@ -438,6 +440,64 @@ def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database
     # the guard's own MAX(valid_from) read still reflects the later, now-closed positions --
     # a closed position's valid_from still marks a date this book has already moved past.
     assert out_of_order_reason(conn, "2026-04-01") is not None
+
+
+# -- T-110: the price-spine guard ---------------------------------
+
+
+def _seed_price_daily(conn: Database, as_of: str) -> None:
+    """``price_daily`` is pricing_agent's own table; ``cycle_seed`` only seeds
+    ``price_observation``. In production the two packages share one DB, so
+    ``price_daily`` already exists by the time a cycle runs -- create it here too."""
+    pricing_db.ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO price_daily (asset_id, date, open, high, low, close, volume) "
+        "VALUES (1, ?, 100, 101, 99, 100, 1000000)",
+        (as_of,),
+    )
+    conn.commit()
+
+
+def test_select_refuses_a_cycle_date_past_the_price_spine(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    _seed_price_daily(conn, "2026-06-30")
+    before = conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0]
+
+    with pytest.raises(StaleAsOf, match=r"2026-07-01.*2026-06-30"):
+        run_selection(_settings(conn), "2026-07-01", conn=conn)
+
+    # refused before any cycle_run row is written, like the manifest-mismatch precheck
+    assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == before
+
+
+def test_monitor_also_refuses_a_stale_cycle_date(cycle_seed: Database) -> None:
+    """Both cycle types read prices for TECHNICAL/veto, so both are guarded."""
+    conn = cycle_seed
+    _seed_price_daily(conn, "2026-06-30")
+    with pytest.raises(StaleAsOf, match="past price_daily's last stored date"):
+        run_monitoring(_settings(conn), "2026-07-01", conn=conn)
+
+
+def test_a_cycle_date_at_or_before_the_price_spine_is_safe(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    _seed_price_daily(conn, "2026-06-30")
+    report = run_selection(_settings(conn), "2026-06-30", conn=conn)  # equal -- fine
+    assert report.stale_price_bypassed is None
+
+
+def test_allow_stale_prices_overrides_the_price_spine_guard_and_records_it(
+    cycle_seed: Database,
+) -> None:
+    conn = cycle_seed
+    _seed_price_daily(conn, "2026-06-30")
+    settings = _settings(conn).model_copy(update={"allow_stale_prices": True})
+
+    report = run_selection(settings, "2026-07-01", conn=conn)
+
+    assert "positions" in report.steps_run
+    assert report.stale_price_bypassed is not None
+    assert "2026-07-01" in report.stale_price_bypassed
+    assert "2026-06-30" in report.stale_price_bypassed
 
 
 def test_t_minus_1_hard_veto_excludes_asset(cycle_seed: Database) -> None:

@@ -2365,18 +2365,17 @@ should have supplied `rf` and didn't.
   `optimize.py::_stats`'s `sharpe = (ret - rf) / vol` already matches this construction; the
   defect was that `ret` (`mu @ w`) was silently an excess return already for the `equilibrium`
   estimator, so this formula's single subtraction became a second one.
-- **The reverse-optimized ("equilibrium") return in Black-Litterman is a total return**, not
-  an excess return: `Pi = rf + delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global
-  Portfolio Optimization," *Financial Analysts Journal*, 1992) -- `delta * Sigma @ w_mkt` alone
-  is the market's *implied excess* return over `rf`, consistent with CAPM's own total-return
-  form `E[R_i] = rf + beta_i * (E[R_m] - rf)`. `risk.equilibrium_returns`'s own docstring
-  already states this exact formula; the bug was that its one caller left `rf` at the
-  function's `0.0` default instead of supplying it.
-  (Live re-verification of both citations against an external source was attempted but this
-  environment's network egress policy blocks the reference domains reached for this pass;
-  both are standard, textbook formulas, not a contested or novel claim, and the fix's
-  correctness does not depend on the citation alone -- it is also proven by the two regression
-  tests below, which fail on the pre-fix code and pass on the fix.)
+- **Black-Litterman's equilibrium return Π is an excess return; `quant` stores the total
+  return `rf + Π`.** Reverse optimization gives the market's implied excess equilibrium
+  return `Pi = delta * Sigma @ w_mkt` (Black, F. and Litterman, R., "Global Portfolio
+  Optimization," *Financial Analysts Journal*, 1992; He, G. and Litterman, R., "The
+  Intuition Behind Black-Litterman Model Portfolios," Goldman Sachs, 1999). Because
+  `hist_mean`/`james_stein` are total returns and `optimize.py::_stats` subtracts `rf`
+  once, `quant` stores the equilibrium estimator as the total return
+  `mu_eq = rf + delta * Sigma @ w_mkt`, the same form as CAPM's
+  `E[R_i] = rf + beta_i * (E[R_m] - rf)`. The bug was that `persist.py`, the one caller of
+  `risk.equilibrium_returns`, left `rf` at the function's `0.0` default, so the stored value
+  was Π alone.
 
 ### Fix
 
@@ -2444,3 +2443,146 @@ correct; only the wiring between them was not.
 - `T-077`'s Carhart estimator is not implemented by this fix -- its own formula already plans
   to add `rf`, so no separate correction is expected when it lands, but that remains to be
   verified against real code once written, not assumed.
+
+---
+
+## T-110 — `quant`/`cycle` accepted an as-of past the price spine; `pricing_agent` could orphan `price_observation` rows
+
+**Status**: Fixed 2026-09-27 (`T-110`).
+
+### Symptom
+
+Production `quant_run`s 7-10 and both `cycle_run`s are dated 2026-09-21/22 while
+`price_daily` ends 2026-08-27 -- neither package noticed or recorded that its `--analysis-date`
+was three-plus weeks past the last price actually stored, and proceeded as if "as of
+2026-09-22" meant something for prices that stop three weeks earlier. Separately,
+`price_observation` has 503 rows dated 2026-08-28 with no corresponding `price_daily` bar
+that day, and one run's 503 `price_window` "full" rows also end 2026-08-28: a
+`pricing_agent run --observations` invocation without `--store-daily` fetched fresher
+candles than any earlier run had persisted to `price_daily`, and wrote per-day analytics
+for a bar that was never stored anywhere.
+
+### Root cause
+
+Two independent gaps, both a missing check rather than a wrong formula:
+
+- **No package that takes `--analysis-date` ever compared it against what price data
+  actually exists.** `build-risk-model`/`optimize` (`quant`) and `select`/`monitor` (`cycle`)
+  all read prices (directly, or via `quant_return_daily`/`price_observation`) up to their
+  requested as-of, but silently used whatever was available below it -- a run dated weeks
+  past the price spine is indistinguishable, in its own output, from one dated the day
+  prices actually stop.
+- **`pricing_agent._store` builds `price_window`/`price_observation` from the day's freshly
+  *fetched* candles, not from what `price_daily` already holds.** `--store-daily` and
+  `--observations` are independent opt-in flags (`pipeline.py`); when `--observations` is
+  passed without `--store-daily`, the observation rows reference whatever the gateway
+  returned that call, regardless of whether an earlier (or no) run ever persisted a matching
+  `price_daily` bar for those same days.
+
+### Theoretical/technical reference
+
+This is the constitution's own no-lookahead contract (AI behavior #4: "a stage that writes
+something dated after its own `--analysis-date` is a bug, not an edge case") and `SPEC.md`
+FR-012's as-of guarantee, applied to a case neither had an explicit check for: *reading*
+stale data under a fresh-looking as-of is the same "what did we believe as of D" guarantee
+broken from the other side -- D itself was never validated against what the run could
+actually see. `price_observation`'s own contract (`docs/pricing_agent.md`: "derived **per-day**
+price analytics") is a referential one -- a per-day analytic that outlives the day's own
+stored price is data pretending to rest on a foundation that isn't there.
+
+### Fix
+
+- **`kg_schema.queries`**: `last_price_date(conn) -> str | None` (`MAX(date) FROM
+  price_daily`, tolerant of a database with no such table) and
+  `stale_as_of_reason(conn, as_of) -> str | None` (`None` when `as_of <= last_price_date`, or
+  when there is no stored price at all -- a different problem, caught elsewhere). Shared by
+  both packages rather than duplicated.
+- **`quant`**: `run_build_risk_model` checks `stale_as_of_reason` right after opening its
+  `quant_run` row (so a refusal is still recorded, `"failed"`, with
+  `stale_as_of_bypassed` in `params_json`) and raises `kg_schema.queries.StaleAsOf` unless
+  `QuantSettings.allow_stale_prices` is set; `optimize` inherits this whenever it auto-builds
+  a model (reusing an already-stored one performs no fresh price read, so nothing new to
+  flag there). `--allow-stale-prices` on `build-risk-model`/`optimize`; the bypass reason
+  is surfaced as a CLI `WARNING` and on `RiskModelResult`/`OptimizeRunResult`.
+- **`cycle`**: `_run` checks `stale_as_of_reason` right after `check_manifest` (before
+  `open_cycle`, the same pre-flight shape) and raises `StaleAsOf` unless
+  `CycleSettings.allow_stale_prices` is set; both `select` and `monitor` are guarded (both
+  read prices for TECHNICAL/veto), plus `backfill`. `--allow-stale-prices` on all three;
+  the bypass reason lands in `cycle_run.params_json` and on `CycleReport.stale_price_bypassed`
+  for the CLI's `WARNING`.
+- **`pricing_agent`**: `--observations` now requires `--store-daily`, refused at the CLI
+  (`parser.error`) and again in `pipeline.run` itself (a plain `ValueError`, so a
+  programmatic caller is protected too, not just the CLI). `price_daily` and
+  `price_observation` are now always written from the identical fetched `candles` in the
+  same call, so they can never disagree on which days exist.
+
+### Design decisions
+
+- **`price_daily` is the one spine, for both packages.** `cycle` actually reads
+  `price_observation`, not `price_daily`, for TECHNICAL scoring -- but after this fix the two
+  are always populated together (`--observations` requires `--store-daily`), and `price_daily`
+  is what the task's own evidence and `pricing_agent.md` call "the price spine," so both
+  guards check the same table rather than inventing a second, `price_observation`-based
+  notion of freshness.
+- **Refuse, don't merely warn, by default.** `--allow-stale-prices` follows T-097's/T-086's
+  own precedent (`--allow-backdated`, `--allow-no-dividends`): a silent warning is easy to
+  miss in a batch run's output; a refusal forces a conscious choice, and the override still
+  records why for the audit trail.
+- **`price_window` itself is not gated by `price_daily`.** Unlike `price_observation`,
+  `price_window` is documented as pricing_agent's base product, usable standalone (no
+  `--store-daily` needed) -- gating it the same way would break that documented, legitimate
+  use and wasn't what the symptom's own acceptance criterion ("zero orphan **observation**
+  dates") asked for.
+- **`optimize` checks staleness itself, independently of whether it reuses or builds the
+  risk model.** The first cut of this fix only checked inside `_resolve_model_id`'s build
+  path, on the reasoning that a reused model's price read had already happened (or not) when
+  that model was originally built. Review on PR #87 (`@eldova1702`) found the gap: reusing a
+  risk model built earlier with `--allow-stale-prices` let a later `optimize` at the same
+  stale `as_of` -- without the flag -- rewrite the books silently, with `stale_prices_bypassed`
+  `None` and no `stale_as_of_bypassed` key in that `optimize` run's own `params_json`. That
+  fails T-110's own acceptance criterion (a run past the price cutoff is recorded as such) for
+  every `optimize` invocation that happens to land on an already-built stale model, and it
+  would just as easily silently rebuild `tangency` from a pre-T-109 `equilibrium` mu if an old
+  model were reused. `run_optimize` now computes `stale_as_of_reason(conn, as_of)` and applies
+  the same refuse-unless-`allow_stale_prices` gate before calling `_resolve_model_id` at all,
+  and records the reason on its own `quant_run.params_json` and `OptimizeRunResult` every time
+  -- `_resolve_model_id` no longer reports a bypass reason of its own, since the check it used
+  to perform only on the build path is now `run_optimize`'s, unconditionally.
+
+### Verification
+
+- New tests: `tests/test_kg_schema.py` (+2, the shared helper: no rows/no table -> `None`;
+  a stale vs. safe `as_of` against a seeded `price_daily` row). `tests/test_quant_risk_model.py`
+  (+6: refuses a stale `as_of` with a `quant_run` row recorded `"failed"`; an `as_of` at or
+  before the spine is unaffected; the override records the reason on both the result and
+  `params_json`; `optimize` refuses when it must auto-build; `optimize` propagates the bypass
+  reason when it does; `optimize` still refuses when it reuses a risk model that was itself
+  only built via `--allow-stale-prices`, the PR #87 review finding above). `tests/test_cycle.py`
+  (+4: `select` and `monitor` both refuse a stale cycle date with no `cycle_run` row written on
+  refusal; an `as_of` at the spine is safe; the override records the reason on the report).
+  `tests/test_pricing_pipeline.py` (+3: `--observations` alone is refused at both the pipeline
+  and CLI layers; together with `--store-daily`, every `price_observation` date has a matching
+  `price_daily` date).
+- `uv run pytest -q` -- 707 passed (was 692; +15 new tests).
+- `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
+
+### Residual scope, deliberately deferred
+
+- **Cleaning the production orphan rows themselves** (the 503 orphan `price_observation`
+  rows at 2026-08-28, and whatever of `quant_run`s 7-10 / the two `cycle_run`s should be
+  re-run or annotated now that the guard exists) is a production database action, not a code
+  change -- tracked as `T-123` (added alongside this fix), gated on the user's explicit
+  direction like every other production write in this file (`T-104`, `T-107`, `T-120`,
+  `T-121`/`T-122`).
+- **`evaluate`/`benchmark` are not guarded by this fix.** Both already degrade gracefully
+  under missing forward data (FR-010: "a date lacking forward data is skipped, not
+  fabricated"; `benchmark`'s own empty-gate refusal), which is a different, already-handled
+  failure mode from `build-risk-model`/`optimize` silently *building* a model that looks
+  fresh but isn't. Flagged, not built: if a future finding shows either command needs the
+  same explicit `StaleAsOf` guard, it is a small, separate addition (`stale_as_of_reason` is
+  already shared and ready to call).
+- **`cycle backfill` behaves like `select`/`monitor`, not specially.** Its own loop can now
+  raise `StaleAsOf` mid-range if the `--to` date runs past the price spine; `--allow-stale-prices`
+  is offered on it too (unlike `T-097`'s `--allow-backdated`, which `backfill` deliberately
+  does not carry), since a historical backfill legitimately may need to run past the
+  spine's current edge.

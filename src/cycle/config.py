@@ -42,6 +42,11 @@ class CycleSettings(BaseModel):
     # deliberate historical backfill/validation run, not routine use; MONITORING never reaches
     # the positions step, so this has no effect there.
     allow_backdated_positions: bool = False
+    # T-110: a cycle refuses a --analysis-date/--date past price_daily's last stored date
+    # (the price spine) -- proceeding would score TECHNICAL/veto against prices that are, at
+    # best, weeks stale while the cycle claims to be as of a later date. Meant for a
+    # deliberate run ahead of the spine, not routine use.
+    allow_stale_prices: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

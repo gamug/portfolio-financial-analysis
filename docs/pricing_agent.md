@@ -18,6 +18,13 @@ stamped on `pricing_run.as_of` with `pricing_run.code_version`; `price_window` /
 `price_daily` / `price_observation` rows carry the `run_id`. `--refresh-universe`
 is a deprecated no-op.
 
+`--observations` requires `--store-daily` (refused at the CLI and again in
+`pipeline.run` itself, T-110): a `price_observation` row is a per-day analytic over a
+specific stored `price_daily` bar, and `_store` builds both from the same fetched
+`candles` in one call, so writing observations without also storing the matching daily
+bars would leave an orphan observation date — no `price_daily` row for a day
+`price_observation` claims to analyze.
+
 ## Configuration (`config.py`)
 
 Only `KG_FINANCIAL_DB` is required. Optional `KG_UNIVERSE_DB` (default

@@ -119,7 +119,8 @@ def james_stein_mean(returns: Mat, *, annualize: bool = True, periods_per_year: 
 def equilibrium_returns(
     sigma: Mat, cap_weights: Vec, *, risk_aversion: float, rf: float = 0.0
 ) -> Vec:
-    """Reverse-optimized (Black-Litterman prior) returns: ``Pi = rf + lambda * Sigma * w_mkt``.
+    """Reverse-optimized (Black-Litterman prior) returns: ``rf + Pi``, where
+    ``Pi = lambda * Sigma * w_mkt`` (the implied excess return).
     *sigma* is expected annualized; *cap_weights* need not be normalized."""
     w = np.asarray(cap_weights, dtype=np.float64)
     total = w.sum()

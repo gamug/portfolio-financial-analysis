@@ -1594,7 +1594,7 @@ that reproduce today.
 | §4.5 — equilibrium μ excess vs. total, `rf` subtracted twice | **fixed 2026-09-27** — `persist.py` now passes `rf` into `equilibrium_returns`; total-return convention across all three estimators. Production re-persist pending | `T-109` |
 | Stale live-book snapshot (`quant_portfolio` id 4, `T-104` leftover) still readable | **live, flagged by `T-108`/`T-109`'s reviews** — a dry run or `evaluate` against it produces meaningless active-return figures; must be voided before `T-122` | `T-121` (before `T-122`; production action, at the user's direction) |
 | `T-108`/`T-109` fixes not yet live in production | **pending** — every stored risk model/benchmark series predates both fixes; `tangency`'s weights (not just its stats) are wrong until re-persisted (PR #85 review: 66% of its weight moves, Sharpe 0.038 → 0.325) | `T-122` (after `T-121`; production action, at the user's direction) |
-| T2/T3/T7 — as-of past the price spine, orphan observations | **live** (runs dated 2026-09-21/22 vs prices to 2026-08-27; 503 orphan rows) | `T-110` |
+| T2/T3/T7 — as-of past the price spine, orphan observations | **fixed 2026-09-27** — shared `stale_as_of_reason` guard refuses a stale `quant`/`cycle` as-of (`--allow-stale-prices` override, recorded); `pricing_agent --observations` now requires `--store-daily`. Cleaning the existing production orphans is `T-123` | `T-110` |
 | Q6 — missing asset-day = 0% | **live defect** | `T-111` |
 | Q4 — frontier returns *k* identical "optimal" points | **live** (documented, but mislabelled) | `T-112` |
 | §4.3.2 — LLM reproducibility | **live** (fallback labelled as the model: 1/377; temperature 0.2; no prompt hash) | `T-113` (before `T-079`) |
@@ -1616,10 +1616,11 @@ that reproduce today.
 **Sequencing**: P0 first (`T-104` is operational and independent; `T-105` before `T-116` and
 before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` together, `T-120` before `T-107`'s backfill; `T-108`/
 `T-109` before any `evaluate` result is read). `T-113` must land before `T-079`. Methodology
-changes (`T-105`, `T-108`, `T-109`, `T-116`) each get their constitution AI behavior #12
-record. `T-121` (void the stale live-book snapshot) then `T-122` (re-persist `T-108`/`T-109`
-to production) are the two production actions those fixes' code landed but did not itself
-perform — held pending explicit user direction, not blocking any other task in this file.
+changes (`T-105`, `T-108`, `T-109`, `T-110`, `T-116`) each get their constitution AI behavior
+#12 record. `T-121` (void the stale live-book snapshot) then `T-122` (re-persist `T-108`/
+`T-109` to production), and `T-123` (clean `T-110`'s production orphan rows), are the
+production actions those fixes' code landed but did not itself perform — held pending
+explicit user direction, not blocking any other task in this file.
 
 **Acceptance criteria**: each task's own (in `TASKS.md`), plus: the live book equals the
 latest cycle's selection; no `cycle` reader can reach a fact filed after the cycle date; 10-Q

@@ -495,3 +495,36 @@ def test_universe_membership_lifecycle() -> None:
         "ORDER BY valid_from"
     ).fetchall()
     assert [tuple(r) for r in msft] == [("2026-01-01", "2026-04-01"), ("2026-07-01", None)]
+
+
+# -- T-110: the price-spine guard's shared helper ----------------------------
+
+
+def test_last_price_date_and_stale_as_of_reason(memory_quant_db: Database) -> None:
+    conn = memory_quant_db
+    assert queries.last_price_date(conn) is None  # no rows yet -- nothing to guard
+    assert queries.stale_as_of_reason(conn, "2026-01-01") is None
+
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
+    conn.execute(
+        "INSERT INTO price_daily (asset_id, date, open, high, low, close, volume) "
+        "VALUES (1, '2026-06-30', 100, 101, 99, 100, 1000000)"
+    )
+    conn.commit()
+
+    assert queries.last_price_date(conn) == "2026-06-30"
+    assert queries.stale_as_of_reason(conn, "2026-06-29") is None  # earlier -- safe
+    assert queries.stale_as_of_reason(conn, "2026-06-30") is None  # equal -- safe
+    reason = queries.stale_as_of_reason(conn, "2026-07-01")
+    assert reason is not None
+    assert "2026-07-01" in reason
+    assert "2026-06-30" in reason
+
+
+def test_last_price_date_tolerates_a_database_with_no_price_daily_table(
+    memory_db: Database,
+) -> None:
+    """A DB that never ran pricing_agent (e.g. cycle's own test schema) has no price_daily
+    table at all -- a different problem than a stale as_of, so this stays silent (T-110)."""
+    assert queries.last_price_date(memory_db) is None
+    assert queries.stale_as_of_reason(memory_db, "2026-01-01") is None

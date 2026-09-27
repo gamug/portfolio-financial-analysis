@@ -82,6 +82,12 @@ class _Engine:
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
+    if params.observations and not params.store_daily:
+        raise ValueError(
+            "observations needs store_daily: price_observation rows are per-day analytics "
+            "over a specific price_daily bar, and writing them without also storing that bar "
+            "leaves an orphan observation date (T-110)"
+        )
     conn = connect(settings.db_path)
     try:
         db.ensure_schema(conn)

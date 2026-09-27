@@ -17,6 +17,7 @@ from cycle.state import ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
+from kg_schema.queries import StaleAsOf
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -30,6 +31,11 @@ _ALLOW_BACKDATED_HELP = (
     "override the out-of-order-cycle guard (T-097) and write the live portfolio_position book "
     "at a --analysis-date older than one already written -- never allowed to end a position "
     "opened after that date (T-104); for a deliberate historical run, not routine use"
+)
+_ALLOW_STALE_PRICES_HELP = (
+    "override the price-spine guard (T-110) and run at a --analysis-date past price_daily's "
+    "last stored date -- TECHNICAL/veto would silently score against prices that are, at "
+    "best, weeks stale; for a deliberate run ahead of the spine, not routine use"
 )
 
 
@@ -51,6 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
         p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
+        p.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
         if name == "select":
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
@@ -71,6 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--step-days", type=int, default=7)
     bf.add_argument("--db")
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
+    bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     return parser
 
 
@@ -87,6 +95,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["metrics_version"] = args.metrics_version
     if getattr(args, "allow_backdated", False):
         updates["allow_backdated_positions"] = True
+    if getattr(args, "allow_stale_prices", False):
+        updates["allow_stale_prices"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -103,7 +113,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return _dispatch(parser, args)
-    except (VersionError, ManifestMismatch, OutOfOrderCycle, NotBackdated) as exc:
+    except (VersionError, ManifestMismatch, OutOfOrderCycle, NotBackdated, StaleAsOf) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1
 
@@ -144,6 +154,12 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed "
             f"(manifest {r.manifest_tag})"
         )
+        if r.stale_price_bypassed is not None:
+            print(
+                f"  WARNING: --allow-stale-prices overrode the price-spine guard "
+                f"({r.stale_price_bypassed})",
+                file=sys.stderr,
+            )
         return 0
     if args.command == "select":
         cycle_date = _resolve_cycle_date(parser, args)
@@ -155,6 +171,12 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
+        if r.stale_price_bypassed is not None:
+            print(
+                f"  WARNING: --allow-stale-prices overrode the price-spine guard "
+                f"({r.stale_price_bypassed})",
+                file=sys.stderr,
+            )
         if r.backdated_guard_bypassed is not None:
             print(
                 f"  WARNING: --allow-backdated overrode the out-of-order-cycle guard "

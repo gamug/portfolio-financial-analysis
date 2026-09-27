@@ -8,9 +8,9 @@ the universe, and (for a selection cycle) writes `portfolio_position` targets an
 `cycle_ranking`.
 
 ```bash
-uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run]
-uv run python -m cycle monitor --analysis-date 2026-07-31
-uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --step-days 7
+uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices]
+uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices]
+uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --step-days 7 [--allow-stale-prices]
 ```
 
 `--analysis-date` is the canonical name for the cycle date; `--date` is kept as an
@@ -18,6 +18,11 @@ alias (passing both with different values is a CLI error), and both default to
 today. It is the `cycle_run.cycle_date`; `cycle_run.code_version` records the git
 tag. `backfill` uses `--from`/`--to` (each stepped date is its own as-of) and
 rejects `--analysis-date`.
+
+Both cycle types refuse a `cycle_date` past `price_daily`'s last stored date (the price
+spine) — TECHNICAL/veto read prices, so a stale as-of would silently score against data
+that is, at best, weeks old (T-110) — unless `--allow-stale-prices`, which records why on
+`cycle_run.params_json` and prints a CLI `WARNING`.
 
 Runs as a **checkpointed topological runner** — `cycle_checkpoint` (relational),
 not the framework, is the source of truth for resume. A Strands
