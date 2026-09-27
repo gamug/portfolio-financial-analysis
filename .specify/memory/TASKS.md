@@ -359,12 +359,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       ungated, since it's documented as pricing_agent's standalone base product, and the
       acceptance criterion only asked for zero orphan *observation* dates. `evaluate`/
       `benchmark` are deliberately not guarded (already degrade gracefully on missing forward
-      data, FR-010); `optimize`'s model-reuse path doesn't re-check (no fresh price read
-      happens there). Tests: `tests/test_kg_schema.py` (+2), `tests/test_quant_risk_model.py`
+      data, FR-010). Tests: `tests/test_kg_schema.py` (+2), `tests/test_quant_risk_model.py`
       (+5), `tests/test_cycle.py` (+4), `tests/test_pricing_pipeline.py` (+3). Full suite 706
       passed (was 692); ruff, format, mypy, pre-commit clean. Record: `docs/model_fixes.md`
-      "T-110". **Cleaning the production orphan rows themselves is a separate, deferred
-      production action — see `T-123`.**
+      "T-110".
+      **PR #87 review (`@eldova1702`) found `optimize`'s model-reuse path skipped the check
+      entirely** (a stale model built once under `--allow-stale-prices` let a later `optimize`
+      at that same stale as-of reuse it unchecked, with no `stale_as_of_bypassed` recorded on
+      that `optimize` run) — fixed 2026-09-27 by having `run_optimize` compute and gate on
+      `stale_as_of_reason` itself, unconditionally, before resolving the model either way;
+      regression test added (`test_optimize_re_checks_staleness_even_when_reusing_a_stored_model`).
+      Same review also corrected the T-109 Black-Litterman citation in `docs/model_fixes.md`
+      (Π is the implied excess return; `quant` stores the total return `rf + Π`) and the
+      matching `risk.equilibrium_returns` docstring. Full suite 707 passed after the fix.
+      **Merged via PR #87.** Cleaning the production orphan rows themselves is a separate,
+      deferred production action — see `T-123`.
 - [ ] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
       (`fwd[d].get(a, 0.0)`), dragging the book toward zero in proportion to missing names.
       Renormalize the day's weights over names that have a return. (Transaction costs belong
