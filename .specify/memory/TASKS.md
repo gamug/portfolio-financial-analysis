@@ -314,13 +314,31 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       41 perf rows, then re-run the dry run against a current production copy with the
       corrected panel, before any production `quant evaluate`. Record: `docs/model_fixes.md`
       "T-108".
-- [ ] **T-109** *(P0)* One expected-return convention across `quant`. `risk.equilibrium_returns`
+- [x] **T-109** *(P0)* One expected-return convention across `quant`. `risk.equilibrium_returns`
       computes `rf + λΣw`, but `persist.py` never passes `rf`, so the stored `equilibrium` μ
       (the default, used by production's risk model) is an *excess* return, while `hist_mean`
       and `james_stein` are total returns — and `max_sharpe`/tangency and every Sharpe subtract
       `rf` again. Pick one convention (total), apply it to every estimator and to `T-077`'s
       Carhart projection. **Acceptance**: a test pins μ as total for all three estimators;
       tangency/Sharpe subtract `rf` exactly once.
+      **Code done 2026-09-27.** Convention: total return, matching `hist_mean`/`james_stein`
+      (already means of the panel's total-return series) rather than making those excess.
+      `persist.py::_expected_returns` now threads the `rf` it already loads (for
+      `quant_risk_model.rf_annual`) into `equilibrium_returns(..., rf=rf)`; no change to
+      `equilibrium_returns` itself (its docstring already gave the total-return formula) or to
+      `optimize.py::_stats` (already subtracts `rf` exactly once, given a total-return μ) —
+      only the wiring between them was wrong. `T-077`'s Carhart estimator (not yet
+      implemented) already plans `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k`, consistent with this
+      fix. Tests `tests/test_quant_risk_model.py` (+2): building the same risk model at two
+      `risk_free_rate`s 0.05 apart, `hist_mean`/`james_stein` are unchanged while `equilibrium`
+      shifts by exactly 0.05 uniformly; a `min_var` book's `expected_return` shifts by the same
+      0.05 while its `sharpe` stays invariant (rf-independent once μ is genuinely total) — both
+      confirmed to fail on the pre-fix code with the bug's exact signature (`expected_return`
+      flat instead of shifting). Full suite 692 passed (was 690); ruff, format, mypy clean.
+      Record: `docs/model_fixes.md` "T-109". **Every risk model built before this fix carries
+      an excess-return `equilibrium` μ; re-persisting corrected values for the live universe
+      needs a production `build-risk-model`/`optimize` re-run — pending, same as F1/F2/F4's own
+      deferred production re-runs.**
 - [ ] **T-110** *(P1)* Validate as-of dates against the price spine. Production `quant_run`s
       7–10 and both `cycle_run`s are dated 2026-09-21/22 while `price_daily` ends 2026-08-27;
       `price_observation` has 503 rows at 2026-08-28 (no `price_daily` bar that day) and all
@@ -472,9 +490,11 @@ added above it, never below. → `PLAN.md` Work item 12.
 ## Status
 
 **🔴 Current top priority: Work item 14 (second forensic audit, P0 first), then Work items 8
-and 9.** Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. `T-070`–`T-084`
-and `T-104`–`T-116` have not started. Execute **Work item 14** (`T-104`–`T-109` P0; `T-107`
-needs a design decision; `T-113` before `T-079`; `T-116` after `T-105`) → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+and 9.** Work items 5, 7 and 13 are closed (2026-09-25) — see `CHANGELOG.md`. Work item 14's
+P0 tasks (`T-104`–`T-109`) are all code-done; `T-108`/`T-109` still need a production
+`build-risk-model`/`optimize`/`evaluate` re-run before their fixes take effect live. `T-070`–
+`T-084` and `T-110`–`T-116` have not started. Execute **Work item 14**'s remaining P1 tasks
+(`T-110`–`T-116`; `T-113` before `T-079`; `T-116` after `T-105`) → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
