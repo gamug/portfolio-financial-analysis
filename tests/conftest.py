@@ -16,11 +16,35 @@ from portfolio_common.db import Database
 
 from fundamental_agent import db
 from fundamental_agent.statements import Statements
+from kg_schema import provenance
 from kg_schema.trading_calendar import available_from
 from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _clean_code_version() -> Any:
+    """T-114: ``code_version()`` reads *this actual checkout's* live git status and is
+    ``lru_cache``d process-wide -- during active development the working tree legitimately
+    has uncommitted changes, which must not make the hermetic test suite (NR-006) spuriously
+    trip the new clean-tree guard everywhere `run_build_risk_model`/`run_optimize`/etc. are
+    exercised without deliberately opting into `--allow-dirty`. Primes the cache with one
+    clean, deterministic value, then immediately undoes the patch (not wrapped around
+    `yield`) -- `tests/test_provenance.py` clears the cache itself per test and patches
+    `subprocess.run` directly to test the real function, which this must not interfere with.
+    A test that specifically exercises the dirty-tree *guard* (not `code_version` itself)
+    monkeypatches the driver module's own `code_version` name instead (its own import
+    binding, unaffected by any patch on `kg_schema.provenance` after import time)."""
+    provenance.code_version.cache_clear()
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(provenance, "_git_version", lambda: "testclean")
+        mp.setattr(provenance, "_package_version", lambda: None)
+        provenance.code_version()  # prime the lru_cache; the patch is undone right after
+    yield
+    provenance.code_version.cache_clear()
+
 
 _UNIVERSE_DDL = """
 CREATE TABLE universe_membership (

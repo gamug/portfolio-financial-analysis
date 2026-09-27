@@ -47,6 +47,10 @@ class CycleSettings(BaseModel):
     # best, weeks stale while the cycle claims to be as of a later date. Meant for a
     # deliberate run ahead of the spine, not routine use.
     allow_stale_prices: bool = False
+    # T-114: a cycle refuses to write its run row when code_version() is dirty (uncommitted
+    # changes) -- its results would come from code HEAD alone can't reproduce. Meant for a
+    # deliberate run from a work-in-progress checkout, not routine use.
+    allow_dirty: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

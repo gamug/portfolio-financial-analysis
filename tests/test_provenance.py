@@ -45,3 +45,33 @@ def test_falls_back_when_git_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     provenance.code_version.cache_clear()
     monkeypatch.setattr(provenance, "_package_version", lambda: None)
     assert provenance.code_version() == "unknown"
+
+
+def test_dirty_tree_reason_is_none_for_a_clean_version() -> None:
+    assert provenance.dirty_tree_reason("abc1234") is None
+
+
+def test_dirty_tree_reason_names_the_dirty_version() -> None:
+    reason = provenance.dirty_tree_reason("abc1234-dirty")
+    assert reason is not None
+    assert "abc1234-dirty" in reason
+
+
+def test_dirty_tree_reason_defaults_to_code_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "run", _fake_run(dirty=True))
+    assert provenance.dirty_tree_reason() is not None
+    provenance.code_version.cache_clear()
+    monkeypatch.setattr(subprocess, "run", _fake_run(dirty=False))
+    assert provenance.dirty_tree_reason() is None
+
+
+def test_a_fallback_tag_is_never_treated_as_dirty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``pkg-*``/``unknown`` never end in ``-dirty`` -- a database with no git repo at all
+    (an installed package) must not be refused over a guard that can't apply to it."""
+
+    def boom(*_a: Any, **_k: Any) -> None:
+        raise FileNotFoundError
+
+    monkeypatch.setattr(subprocess, "run", boom)
+    monkeypatch.setattr(provenance, "_package_version", lambda: None)
+    assert provenance.dirty_tree_reason() is None

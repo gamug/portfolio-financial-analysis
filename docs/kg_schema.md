@@ -27,6 +27,9 @@ It also holds the shared run seams every agent uses: `env.universe_database_path
 `symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
 `--analysis-date` argparse type + default-to-today), and `provenance.code_version`
 (git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
+`provenance.dirty_tree_reason(version=None)` turns that `-dirty` suffix into a guard:
+`None` if clean, else a reason naming it; `DirtyTree` is the exception `fundamental_agent`/
+`quant`/`cycle` each raise unless `--allow-dirty` (T-114).
 
 ## Files
 

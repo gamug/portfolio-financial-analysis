@@ -28,6 +28,10 @@ class Settings(BaseModel):
     llm_model: str
     llm_url: str
     edgar_base_url: str = DEFAULT_EDGAR_BASE_URL
+    # T-114: a run refuses to write analysis_run/score_snapshot rows when code_version() is
+    # dirty (uncommitted changes) -- its results would come from code HEAD alone can't
+    # reproduce. Meant for a deliberate run from a work-in-progress checkout, not routine use.
+    allow_dirty: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:

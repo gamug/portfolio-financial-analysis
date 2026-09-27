@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 from portfolio_common.db import Database
 
+import quant.evaluate as quant_evaluate
 from kg_schema import queries
+from kg_schema.provenance import DirtyTree
 from pricing_agent import db as pricing_db
 from quant import db as quant_db
 from quant.config import QuantSettings
@@ -202,6 +204,31 @@ def test_evaluate_defaults_from_to_earliest_optimized_book(seeded: Database) -> 
 
     assert ev.date_from == as_of
     assert ev.perf_rows > 0
+
+
+def test_evaluate_refuses_a_dirty_code_version(
+    seeded: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    dates = [
+        r[0]
+        for r in seeded.execute(
+            "SELECT DISTINCT obs_date FROM quant_return_daily ORDER BY obs_date"
+        )
+    ]
+    as_of = dates[-25]
+    end = dates[-1]
+    s = _settings(objectives=["min_var"])
+    run_optimize(s, as_of=as_of, conn=seeded)
+    monkeypatch.setattr(quant_evaluate, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        run_evaluate(s, date_from=as_of, date_to=end, conn=seeded)
+
+    ev = run_evaluate(
+        s.model_copy(update={"allow_dirty": True}), date_from=as_of, date_to=end, conn=seeded
+    )
+    assert ev.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in ev.dirty_tree_bypassed
 
 
 def test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap(

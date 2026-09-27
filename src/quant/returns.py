@@ -19,7 +19,7 @@ import math
 from portfolio_common.db import Database
 
 from kg_schema import connect
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from quant.actions import DividendsNotReady, dividends_not_ready_reason
 from quant.config import QuantSettings
 from quant.db import (
@@ -102,6 +102,8 @@ class ReturnsReport:
         # The one corporate-action engine read when --corpact-version pinned it (T-093);
         # None = the per-asset priority, as before.
         self.corpact_engine: str | None = None
+        # T-114: why, if --allow-dirty overrode the clean-tree guard.
+        self.dirty_tree_bypassed: str | None = None
 
 
 def run_build_returns(
@@ -133,6 +135,13 @@ def run_build_returns(
         if reason is not None and not allow_no_dividends:
             raise DividendsNotReady(reason)
         report.dividends_guard_bypassed = reason
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        if dirty_reason is not None and not settings.allow_dirty:
+            raise DirtyTree(
+                f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
+            )
+        report.dirty_tree_bypassed = dirty_reason
         run_id = open_run(
             conn,
             "build-returns",
@@ -146,8 +155,9 @@ def run_build_returns(
                 "corpact_version": settings.corpact_version,
                 "corpact_engine": report.corpact_engine,
                 "version_profile": settings.version_profile,
+                "dirty_tree_bypassed": dirty_reason,
             },
-            code_version=code_version(),
+            code_version=cv,
         )
         try:
             for asset_id, _ticker in load_assets(

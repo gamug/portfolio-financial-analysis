@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from portfolio_common.db import Database
 
 from kg_schema import connect
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from quant.config import QuantSettings
 from quant.db import (
     ActionsReport,
@@ -122,6 +122,7 @@ def _run_params(
         "assets_fetched": report.assets_fetched,
         "assets_errored": len(report.errors),
         "errors": report.errors[:_MAX_ERROR_MESSAGES],
+        "dirty_tree_bypassed": report.dirty_tree_bypassed,
     }
 
 
@@ -195,6 +196,9 @@ def backfill_corporate_actions(
         )
         report = ActionsReport(engine_version=settings.corpact_engine_version)
         max_failures = settings.gateway_max_consecutive_failures
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        report.dirty_tree_bypassed = dirty_reason
         run_id = open_run(
             conn,
             "backfill-actions",
@@ -202,11 +206,16 @@ def backfill_corporate_actions(
             params=_run_params(
                 report, date_from=date_from, date_to=date_to, max_failures=max_failures
             ),
-            code_version=code_version(),
+            code_version=cv,
         )
         owns_client = client is None
         client = client or QuantPricingClient(settings.pricing_base_url)
         try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
             _fetch_all(
                 conn,
                 client,

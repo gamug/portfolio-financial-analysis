@@ -18,6 +18,8 @@ import httpx
 import pytest
 from portfolio_common.db import Database
 
+import quant.returns as quant_returns
+from kg_schema.provenance import DirtyTree
 from quant.actions import (
     DividendsNotReady,
     backfill_corporate_actions,
@@ -150,6 +152,27 @@ def test_a_clean_covering_backfill_lets_the_build_through(
     assert _return_rows(conn) > 0
 
 
+def test_build_returns_refuses_a_dirty_code_version(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = _price_only_db(memory_quant_db, quant_seed)
+    _record_backfill(conn)
+    _add_gateway_row(conn)
+    monkeypatch.setattr(quant_returns, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        _build(conn)
+
+    report = run_build_returns(
+        _settings().model_copy(update={"allow_dirty": True}),
+        date_from=_WINDOW["date_from"],
+        date_to=_WINDOW["date_to"],
+        conn=conn,
+    )
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
+
+
 def test_a_later_failed_run_does_not_undo_an_earlier_clean_one(
     memory_quant_db: Database, quant_seed: Callable[..., Database]
 ) -> None:
@@ -259,6 +282,19 @@ def test_the_flag_exists_and_defaults_off() -> None:
     parser = build_parser()
     assert parser.parse_args(["build-returns"]).allow_no_dividends is False
     assert parser.parse_args(["build-returns", "--allow-no-dividends"]).allow_no_dividends is True
+
+
+def test_allow_dirty_flag_exists_on_every_run_writing_subcommand() -> None:
+    parser = build_parser()
+    for command in (
+        "backfill-actions",
+        "build-returns",
+        "build-risk-model",
+        "optimize",
+        "evaluate",
+    ):
+        assert parser.parse_args([command]).allow_dirty is False
+        assert parser.parse_args([command, "--allow-dirty"]).allow_dirty is True
 
 
 def test_the_cli_exits_1_with_a_remedy_when_the_guard_refuses(

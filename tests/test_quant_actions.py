@@ -21,6 +21,7 @@ import pytest
 from portfolio_common.db import Database
 
 import quant.actions
+from kg_schema.provenance import DirtyTree
 from quant.actions import GatewayUnavailable, backfill_corporate_actions
 from quant.cli import _run_backfill_actions, build_parser
 from quant.config import QuantSettings
@@ -160,6 +161,23 @@ def test_gateway_run_writes_corpact_v1_rows_and_completes(
 
     again = backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
     assert again.inserted == 0  # INSERT OR IGNORE on the versioned key
+
+
+def test_backfill_actions_refuses_a_dirty_code_version(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conn = quant_seed(memory_quant_db, n_assets=4, n_days=260, with_dividends=False)
+    client, _http, _seen = _gateway()
+    monkeypatch.setattr(quant.actions, "code_version", lambda: "deadbee-dirty")
+
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
+
+    report = backfill_corporate_actions(
+        _settings(allow_dirty=True), conn=conn, client=client, **_WINDOW
+    )
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
 
 
 def test_a_dotted_ticker_reaches_the_gateway_in_the_yfinance_spelling(

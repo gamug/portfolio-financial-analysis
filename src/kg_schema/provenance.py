@@ -51,3 +51,20 @@ def _package_version() -> str | None:
 def code_version() -> str:
     """Short tag for the running code. Cached for the process lifetime."""
     return _git_version() or _package_version() or "unknown"
+
+
+class DirtyTree(RuntimeError):
+    """A production run's ``code_version()`` traces to an uncommitted (dirty) working tree,
+    without an explicit override (T-114): its results come from code that ``HEAD`` alone
+    cannot reproduce."""
+
+
+def dirty_tree_reason(version: str | None = None) -> str | None:
+    """Why a run should refuse to start, or ``None`` if the tree is clean. *version*
+    defaults to :func:`code_version` itself, which already appends ``-dirty`` when ``git
+    status --porcelain`` reports anything uncommitted; a fallback tag (no git repo, e.g. an
+    installed package) never ends in ``-dirty`` and is never refused over."""
+    v = version if version is not None else code_version()
+    if not v.endswith("-dirty"):
+        return None
+    return f"code_version {v} is from an uncommitted (dirty) working tree"

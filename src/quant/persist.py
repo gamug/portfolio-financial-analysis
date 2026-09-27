@@ -9,7 +9,7 @@ import numpy as np
 from portfolio_common.db import Database, DatabaseError
 
 from kg_schema import connect
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import StaleAsOf, stale_as_of_reason
 from quant.config import QuantSettings
 from quant.db import (
@@ -58,6 +58,7 @@ class RiskModelResult:
     stored_cov: bool
     manifest_tag: str = ""
     stale_prices_bypassed: str | None = None  # T-110: why, if --allow-stale-prices overrode it
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray, float | None]:
@@ -115,6 +116,8 @@ def run_build_risk_model(
         # is a user error and should fail before any run row is written.
         manifest = resolve_quant_manifest(conn, settings)
         stale_reason = stale_as_of_reason(conn, as_of)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
         run_id = open_run(
             conn,
             "build-risk-model",
@@ -124,10 +127,16 @@ def run_build_risk_model(
                 "manifest": manifest.record(),
                 "manifest_tag": manifest.tag,
                 "stale_as_of_bypassed": stale_reason,
+                "dirty_tree_bypassed": dirty_reason,
             },
-            code_version=code_version(),
+            code_version=cv,
         )
         try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
             if stale_reason is not None and not settings.allow_stale_prices:
                 raise StaleAsOf(  # noqa: TRY301
                     f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
@@ -193,6 +202,7 @@ def run_build_risk_model(
             stored_cov=store_cov,
             manifest_tag=manifest.tag,
             stale_prices_bypassed=stale_reason,
+            dirty_tree_bypassed=dirty_reason,
         )
     finally:
         if owns:
@@ -210,6 +220,7 @@ class OptimizeRunResult:
     frontier_points: int
     manifest_tag: str = ""
     stale_prices_bypassed: str | None = None  # T-110: set whenever this as_of is past the spine
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 def _weights_json(ids: list[int], w: np.ndarray) -> str:
@@ -274,6 +285,8 @@ def run_optimize(
         # fail on an unsatisfiable selection first, before any run row exists
         manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
         stale_reason = stale_as_of_reason(conn, as_of)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
         run_id = open_run(
             conn,
             "optimize",
@@ -283,10 +296,16 @@ def run_optimize(
                 "manifest": manifest.record(),
                 "manifest_tag": manifest.book_tag,
                 "stale_as_of_bypassed": stale_reason,
+                "dirty_tree_bypassed": dirty_reason,
             },
-            code_version=code_version(),
+            code_version=cv,
         )
         try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
             if stale_reason is not None and not settings.allow_stale_prices:
                 raise StaleAsOf(  # noqa: TRY301
                     f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
@@ -395,6 +414,7 @@ def run_optimize(
             frontier_points=frontier_points,
             manifest_tag=manifest.book_tag,
             stale_prices_bypassed=stale_reason,
+            dirty_tree_bypassed=dirty_reason,
         )
     finally:
         if owns:

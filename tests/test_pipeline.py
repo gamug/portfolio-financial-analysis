@@ -12,6 +12,7 @@ import pytest
 from conftest import filed_after, write_universe_db
 from portfolio_common.db import Database
 
+from fundamental_agent import cli as fundamental_cli
 from fundamental_agent import db, pipeline
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
@@ -34,6 +35,7 @@ from fundamental_agent.pipeline import (
     _YearTask,
 )
 from fundamental_agent.statements import Statements
+from kg_schema.provenance import DirtyTree
 from kg_schema.queries import UniverseMember
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -343,3 +345,45 @@ def test_run_labels_a_fallback_score_and_records_it_on_the_run(
         "SELECT fallback_units FROM analysis_run WHERE id = ?", (report.run_id,)
     ).fetchone()[0]
     assert fallback_units == 2
+
+
+def test_run_refuses_a_dirty_code_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline, "EdgarClient", _FakeEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    settings = _settings(tmp_path)
+    with pytest.raises(DirtyTree, match="deadbee-dirty"):
+        pipeline.run(settings, RunParams(forms=["10-K"], since_year=2023, until_year=2023))
+
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM analysis_run").fetchone()[0] == 0
+
+
+def test_allow_dirty_overrides_the_guard_and_records_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(pipeline, "EdgarClient", _FakeEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
+    monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
+
+    settings = _settings(tmp_path).model_copy(update={"allow_dirty": True})
+    report = pipeline.run(settings, RunParams(forms=["10-K"], since_year=2023, until_year=2023))
+
+    assert report.dirty_tree_bypassed is not None
+    assert "deadbee-dirty" in report.dirty_tree_bypassed
+    conn = sqlite3.connect(settings.db_path)
+    params = json.loads(
+        conn.execute(
+            "SELECT params_json FROM analysis_run WHERE id = ?", (report.run_id,)
+        ).fetchone()[0]
+    )
+    assert params["dirty_tree_bypassed"] == report.dirty_tree_bypassed
+
+
+def test_allow_dirty_flag_exists_on_run() -> None:
+    parser = fundamental_cli.build_parser()
+    assert parser.parse_args(["run"]).allow_dirty is False
+    assert parser.parse_args(["run", "--allow-dirty"]).allow_dirty is True

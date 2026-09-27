@@ -439,10 +439,30 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       step before `T-079` begins (this environment's network egress policy blocks reaching
       it).** **The one existing production fallback row keeps its stale `model` label and a NULL
       `prompt_hash` until relabeled — see `T-124`.**
-- [ ] **T-114** *(P1)* Clean-tree provenance. Production runs carry `code_version`
+- [x] **T-114** *(P1)* Clean-tree provenance. Production runs carry `code_version`
       `359797e-dirty` (cycle, quant, analysis runs): results come from uncommitted code. Refuse
       production writes from a dirty checkout unless `--allow-dirty` is passed (and recorded).
       **Acceptance**: a dirty checkout cannot write a run without the explicit override.
+      **Done 2026-09-27.** New `kg_schema.provenance.dirty_tree_reason(version=None)`/
+      `DirtyTree`: `None` if `code_version()` doesn't end in `-dirty`, else a reason naming
+      it. Wired into every run-writing driver across all three packages the audit named --
+      `fundamental_agent.pipeline.run`, `quant.persist.run_build_risk_model`/`run_optimize`,
+      `quant.returns.run_build_returns`, `quant.actions.backfill_corporate_actions`,
+      `quant.evaluate.run_evaluate`, `cycle.orchestrator._run` (shared by
+      `select`/`monitor`/`backfill`) -- each raising `DirtyTree` unless
+      `settings.allow_dirty`, at the same point in that function its own T-110/T-097/T-086
+      guard already raises. `--allow-dirty` added to every affected CLI subcommand, recording
+      the bypass reason on the run's `params_json` and a CLI `WARNING`. Test suite hardening:
+      `tests/conftest.py` gained a session-scoped fixture pinning `code_version()` to a
+      clean, deterministic value (hermetic per NR-006 -- the ambient repo legitimately has
+      uncommitted changes during active development, which must not spuriously trip the new
+      guard in every unrelated test). Tests: `tests/test_provenance.py` (+4),
+      `tests/test_quant_risk_model.py` (+3), `tests/test_quant_pipeline.py` (+1),
+      `tests/test_quant_dividends_guard.py` (+2), `tests/test_quant_actions.py` (+1),
+      `tests/test_cycle.py` (+4), `tests/test_pipeline.py` (+3). Full suite 732 passed (was
+      714); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-012 and `docs/quant.md`/
+      `docs/cycle.md`/`docs/fundamental_agent.md`/`docs/kg_schema.md` updated. Record:
+      `docs/model_fixes.md` "T-114".
 - [ ] **T-115** *(P1)* `cycle backfill` cannot replay history: it calls the live
       `run_selection`, which mutates `portfolio_position` — since `T-097` it is refused as
       soon as a newer live book exists, and it has no override — and the checkpoint guard skips
@@ -611,9 +631,9 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112` and `T-113` are done too (2026-09-27); `T-070`–`T-084` and `T-114`–`T-116`
-have not started. Execute
-**Work item 14**'s remaining P1 tasks (`T-114`–`T-116`; `T-116` after
+`T-111`, `T-112`, `T-113` and `T-114` are done too (2026-09-27); `T-070`–`T-084` and
+`T-115`–`T-116` have not started. Execute
+**Work item 14**'s remaining P1 tasks (`T-115`–`T-116`; `T-116` after
 `T-105`) → `T-121`/`T-122`/`T-123`/`T-124` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
