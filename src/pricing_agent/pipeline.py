@@ -18,7 +18,7 @@ from portfolio_common.db import Database
 from tqdm import tqdm
 
 from kg_schema import connect, rundate
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 from pricing_agent import db
 from pricing_agent.config import Settings
@@ -64,6 +64,7 @@ class RunReport:
     skipped: int = 0
     failed: int = 0
     errors: list[str] = field(default_factory=list)
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,12 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     conn = connect(settings.db_path)
     try:
         db.ensure_schema(conn)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        if dirty_reason is not None and not settings.allow_dirty:
+            raise DirtyTree(
+                f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
+            )
         members = _load_members(settings, params.analysis_date)
         db.sync_universe(conn, members)
         symbols = [m.symbol for m in members]
@@ -107,12 +114,12 @@ def run(settings: Settings, params: RunParams) -> RunReport:
 
             run_id = db.start_run(
                 conn,
-                params_json=_params_json(params),
+                params_json=_params_json(params, dirty_reason),
                 as_of=params.analysis_date,
-                code_version=code_version(),
+                code_version=cv,
             )
             db.update_run_plan(conn, run_id, universe_size=len(assets), planned_units=len(tasks))
-            report = RunReport(run_id=run_id, planned=len(tasks))
+            report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
             engine = _Engine(conn, client, params, report, completed)
 
             bar = tqdm(tasks, desc="s&p 500 pricing", unit="ticker")
@@ -221,7 +228,7 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
         )
 
 
-def _params_json(params: RunParams) -> str:
+def _params_json(params: RunParams, dirty_reason: str | None) -> str:
     return json.dumps(
         {
             "analysis_date": params.analysis_date,
@@ -233,5 +240,6 @@ def _params_json(params: RunParams) -> str:
             "store_daily": params.store_daily,
             "observations": params.observations,
             "fresh": params.fresh,
+            "dirty_tree_bypassed": dirty_reason,
         }
     )

@@ -27,9 +27,16 @@ It also holds the shared run seams every agent uses: `env.universe_database_path
 `symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
 `--analysis-date` argparse type + default-to-today), and `provenance.code_version`
 (git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
+"Dirty" is scoped, not "any uncommitted file in the checkout": `_git_version` runs
+`git status --porcelain -- src skills pyproject.toml uv.lock` (`_DIRTY_SCOPE`), so an
+untracked file outside those paths (a scratch note, a local review doc) leaves
+`code_version` clean, while an uncommitted change under any of them — tracked or not —
+still marks it `-dirty` (T-114, PR #92 review; the tag and every guard derived from it
+agree by construction, since both read the same scoped `git status`).
 `provenance.dirty_tree_reason(version=None)` turns that `-dirty` suffix into a guard:
 `None` if clean, else a reason naming it; `DirtyTree` is the exception `fundamental_agent`/
-`quant`/`cycle` each raise unless `--allow-dirty` (T-114).
+`quant`/`cycle`/`entity_resolution`/`pricing_agent` each raise unless `--allow-dirty`
+(T-114).
 
 ## Files
 

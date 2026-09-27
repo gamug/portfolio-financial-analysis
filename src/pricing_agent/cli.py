@@ -13,6 +13,13 @@ from kg_schema.rundate import resolve as resolve_analysis_date
 from pricing_agent.config import Settings
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
 
+_ALLOW_DIRTY_HELP = (
+    "override the clean-tree guard (T-114) and write this run's code_version even "
+    "though the working tree has uncommitted changes -- results would come from code "
+    "HEAD alone can't reproduce; for a deliberate run from a work-in-progress checkout, "
+    "not routine use"
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -58,6 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="deprecated no-op (the universe is always read fresh from universe.db)",
     )
+    run_cmd.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
@@ -88,11 +96,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "storing that bar leaves an orphan observation date (T-110)"
         )
     settings = Settings.load()
-    updates: dict[str, Path] = {}
+    updates: dict[str, object] = {}
     if args.db:
         updates["db_path"] = Path(args.db)
     if args.universe_db:
         updates["universe_db_path"] = Path(args.universe_db)
+    if args.allow_dirty:
+        updates["allow_dirty"] = True
     if updates:
         settings = settings.model_copy(update=updates)
 
@@ -115,6 +125,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{report.skipped} skipped, {report.failed} failed "
         f"(of {report.planned} tickers)"
     )
+    if report.dirty_tree_bypassed is not None:
+        print(
+            f"  WARNING: --allow-dirty overrode the clean-tree guard "
+            f"({report.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
     for line in report.errors[:20]:
         print(f"  ! {line}", file=sys.stderr)
     return 1 if report.failed and not report.completed else 0

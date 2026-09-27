@@ -13,7 +13,7 @@ from entity_resolution.config import Settings
 from entity_resolution.cooccurrence import MIN_WEIGHT_DEFAULT, build_edges
 from entity_resolution.denylist import MAX_TICKERS_DEFAULT, MIN_ARTICLES_DEFAULT
 from kg_schema import connect, connect_ro, rundate
-from kg_schema.provenance import code_version
+from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import symbols_asof
 
 
@@ -30,11 +30,13 @@ class RunReport:
     cycle_run_id: int
     tickers: int
     edges: int
+    dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
-def _open_cycle(conn: Database, params: RunParams) -> int:
+def _open_cycle(conn: Database, params: RunParams, *, cv: str, dirty_reason: str | None) -> int:
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     cycle_date = params.analysis_date
+    params_json = json.dumps({**vars(params), "dirty_tree_bypassed": dirty_reason})
     cur = conn.execute(
         """
         INSERT INTO cycle_run
@@ -44,7 +46,7 @@ def _open_cycle(conn: Database, params: RunParams) -> int:
             status = 'running', params_json = excluded.params_json,
             code_version = excluded.code_version
         """,
-        (cycle_date, now, json.dumps(vars(params)), code_version()),
+        (cycle_date, now, params_json, cv),
     )
     conn.commit()
     if cur.lastrowid:
@@ -60,12 +62,18 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     conn = connect(settings.db_path)
     try:
         er_db.ensure_schema(conn)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        if dirty_reason is not None and not settings.allow_dirty:
+            raise DirtyTree(
+                f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
+            )
         uconn = connect_ro(settings.universe_db_path)
         try:
             tickers = symbols_asof(uconn, params.analysis_date)
         finally:
             uconn.close()
-        run_id = _open_cycle(conn, params)
+        run_id = _open_cycle(conn, params, cv=cv, dirty_reason=dirty_reason)
         news = connect_ro(settings.news_db_path)
         try:
             edges = build_edges(
@@ -84,6 +92,11 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             (datetime.now(tz=UTC).isoformat(timespec="seconds"), run_id),
         )
         conn.commit()
-        return RunReport(cycle_run_id=run_id, tickers=len(tickers), edges=written)
+        return RunReport(
+            cycle_run_id=run_id,
+            tickers=len(tickers),
+            edges=written,
+            dirty_tree_bypassed=dirty_reason,
+        )
     finally:
         conn.close()

@@ -28,6 +28,11 @@ class Settings(BaseModel):
         default_factory=lambda: Path(universe_database_path()).expanduser()
     )
     pricing_base_url: str = DEFAULT_PRICING_BASE_URL
+    # T-114: a run refuses to write a pricing_run row when code_version() is dirty
+    # (uncommitted changes) -- its results would come from code HEAD alone can't
+    # reproduce. Meant for a deliberate run from a work-in-progress checkout, not
+    # routine use.
+    allow_dirty: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:

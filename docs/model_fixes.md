@@ -2884,9 +2884,11 @@ the fixed prompt templates + model config) as described above.
 - **Confirming the live DeepSeek endpoint actually accepts (or ignores) `seed`** is left as an
   explicit step before `T-079` begins, per review -- this environment cannot reach it.
 
-## T-114 — a dirty working tree could silently write production runs (`cycle`, `quant`, `fundamental_agent`)
+## T-114 — a dirty working tree could silently write production runs (`cycle`, `quant`, `fundamental_agent`, `entity_resolution`, `pricing_agent`)
 
-**Status**: Fixed 2026-09-27 (`T-114`).
+**Status**: Fixed 2026-09-27 (`T-114`); extended 2026-09-27 per PR #92 review
+(`@eldova1702`): two more run writers guarded, and "dirty" rescoped to the paths that
+actually change a run's results.
 
 ### Symptom
 
@@ -2943,6 +2945,39 @@ silently.
   CLI doesn't surface any of its other run-level bypass reasons either, e.g. `T-113`'s
   `fallback_units`, so none is added here for consistency within the package).
 
+### PR #92 review follow-up
+
+`@eldova1702` found the first pass incomplete on two counts (both fixed in the same PR,
+before merge):
+
+1. **Two more run writers stamped `code_version()` with no guard at all.**
+   `entity_resolution.pipeline._open_cycle` (the `sharedExecutiveWith` edges the
+   knowledge-graph repo reads) and `pricing_agent.pipeline.run` (`price_observation`
+   analytics that feed `TECHNICAL` scoring, veto evaluation, and the quant gate) were
+   missed by the original sweep -- both packages predate this task and neither had an
+   existing guard convention to extend, which is likely why they were overlooked when the
+   other six call sites were being enumerated. Fixed identically to the other six: each
+   computes `dirty_tree_reason(code_version())` right after its own `ensure_schema` call
+   and raises `DirtyTree` unless `settings.allow_dirty`, before any row is written (no
+   partial `cycle_run`/`pricing_run` row on refusal, matching `cycle`'s convention since
+   neither writer had one of its own to match). `--allow-dirty` added to `entity_resolution
+   build` and `pricing_agent run`; both now print the same CLI `WARNING` on an override.
+2. **"Dirty" meant *any* uncommitted file in the checkout, not just one that changes a
+   run's results.** `_git_version` called plain `git status --porcelain`, which counts
+   every untracked file -- an empty scratch note, a local review doc, a stray `.DS_Store`
+   -- turning `af2a710` into `af2a710-dirty` and refusing every run until it was removed or
+   `--allow-dirty` was passed on every single run, which defeats the guard's point (a real
+   uncommitted *code* change should refuse; a stray untracked file should not). Verified
+   directly: adding one empty untracked file at the repo root reproduced the false
+   `-dirty` tag before this fix. Rescoped to `git status --porcelain -- src skills
+   pyproject.toml uv.lock` (`kg_schema.provenance._DIRTY_SCOPE`) -- the source tree, the
+   ratio-skill markdown a prompt can cite, and the two files that pin the resolved
+   dependency set. An untracked file *inside* one of those paths (a new, not-yet-committed
+   `skills/<ratio>/SKILL.md`) still counts as dirty; only files outside the scope are
+   exempt. Applied inside `_git_version` itself, so the recorded `code_version` tag and
+   every `dirty_tree_reason` check derived from it agree by construction -- there is no
+   second, separately-maintained scope to drift out of sync.
+
 ### Design decisions
 
 - **Hermetic tests must not depend on the ambient git state (NR-006).** `code_version()`
@@ -2983,10 +3018,18 @@ silently.
   `tests/test_cycle.py` (+4: `select`/`monitor` both refuse; the override records the reason;
   the flag exists on `select`/`monitor`/`backfill`). `tests/test_pipeline.py` (+3:
   `fundamental_agent run` refuses/overrides; the flag exists).
-- `uv run pytest -q` -- 732 passed (was 714; +18 new tests).
+- PR #92 review follow-up: `tests/test_entity_resolution.py` (+2: `build` refuses a dirty
+  version before either read-only DB is opened; the override records the reason on both the
+  result and `cycle_run.params_json`). `tests/test_pricing_pipeline.py` (+2: `run` refuses/
+  overrides the same way). `tests/test_provenance.py` (+3, against a real throwaway git repo
+  rather than a mocked `subprocess.run`, so the actual pathspec is what's under test: an
+  untracked file outside `src`/`skills`/`pyproject.toml`/`uv.lock` stays clean; a tracked-file
+  edit under `src/` and an untracked file under `skills/` both still count as dirty).
+- `uv run pytest -q` -- 739 passed (was 732; +7: +2 `entity_resolution`, +2 `pricing_agent`,
+  +3 provenance scoping).
 - `uv run ruff check` / `ruff format --check` / `uv run mypy` / `pre-commit` -- all green.
-- `SPEC.md` FR-012 updated; `docs/quant.md`, `docs/cycle.md`, `docs/fundamental_agent.md`
-  updated with the new flag and contract.
+- `SPEC.md` FR-012 updated; `docs/quant.md`, `docs/cycle.md`, `docs/fundamental_agent.md`,
+  `docs/kg_schema.md` updated with the new flag(s) and the scoped dirty-tree contract.
 
 ### Residual scope, deliberately deferred
 
