@@ -585,6 +585,25 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
       until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
       guard no longer rejects APA.
+      **Root cause traced and code done upstream 2026-09-28** (`portfolio-data-mining` PR #44,
+      `gamug/portfolio-data-mining@fix/t118-sec-edgar-revenue-total-contradiction`): live-traced
+      to `edgartools==5.44.1`'s `xbrl.statements.income_statement().to_dataframe()` — the only
+      source `get_financials` reads income-statement rows from — which returns a wrong,
+      non-dimensional `us-gaap_Revenues` row alongside the *correct* figure a few rows later as
+      a genuinely dimensional "Oil and gas" product-axis row (`dimension: True`) that this
+      repo's own `Statements._rows_for` filters out by design, so it never reaches here at all.
+      Confirmed against `data.sec.gov`'s `companyconcept` API: APA has never filed a real
+      `us-gaap:Revenues` fact at all (`404 NoSuchKey`) — not a filer-side defect either.
+      New `sec_edgar.agent.correct_revenue_totals`, ported from this repo's own
+      `Statements._label_total_correction` (`T-117`), applied to `get_financials`'
+      `income_statement` before it's returned. Live-verified there (no mocking) against every
+      available APA 10-K (FY2021-FY2025) and every 2024 10-Q: resolves to the exact `T-117`
+      acceptance figures (FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M), FY2021/FY2022
+      correctly untouched. +8 tests (242 total there); ruff/format/mypy/pre-commit clean.
+      **Still open**: PR #44 merging, the `sec_edgar` service redeploying, and — once
+      redeployed — re-verifying here that `T-117`'s local guard finds nothing left to correct
+      on APA (this task's own acceptance criterion), the same operational pattern as Work item
+      6's `T-052` handoff.
 - [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
       for an asset with no FUNDAMENTAL score at all: the rule iterates
       `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
