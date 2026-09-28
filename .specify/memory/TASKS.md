@@ -585,14 +585,22 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
       until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
       guard no longer rejects APA.
-      **Root cause traced and code done upstream 2026-09-28** (`portfolio-data-mining` PR #44,
-      `gamug/portfolio-data-mining@fix/t118-sec-edgar-revenue-total-contradiction`): live-traced
-      to `edgartools==5.44.1`'s `xbrl.statements.income_statement().to_dataframe()` — the only
-      source `get_financials` reads income-statement rows from — which returns a wrong,
-      non-dimensional `us-gaap_Revenues` row alongside the *correct* figure a few rows later as
-      a genuinely dimensional "Oil and gas" product-axis row (`dimension: True`) that this
-      repo's own `Statements._rows_for` filters out by design, so it never reaches here at all.
-      Confirmed against `data.sec.gov`'s `companyconcept` API: APA has never filed a real
+      **Code done upstream 2026-09-28** (`portfolio-data-mining` PR #44,
+      `gamug/portfolio-data-mining@fix/t118-sec-edgar-revenue-total-contradiction`): the wrong,
+      non-dimensional `us-gaap_Revenues` row comes from `edgartools==5.44.1`'s
+      `xbrl.statements.income_statement().to_dataframe()` — the only source `get_financials`
+      reads income-statement rows from, confirmed live. The same dataframe also carries a
+      dimensional "Oil and gas" product-axis row (`dimension: True`) whose value matches the
+      fix's own independently-derived correction to the dollar for every year `T-117` actually
+      corrects (FY2022 $11,075M, FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M) and is close
+      to (within $3M of) `T-095`'s separate, pre-existing FY2021 fallback figure — a strong,
+      numerically-corroborating **observation**, not the fix's mechanism
+      and not asserted as confirmed: this repo's own `Statements._rows_for` filters out every
+      dimensional row by design, and the exact upstream pathway (which footnote/context that
+      row and the wrong non-dimensional one are each drawn from) is not traced — the fix here
+      never reads or depends on that row's value at all, only on `apa_RevenuesAndOther`'s own
+      label-matched contradiction (the same structural mechanism `T-117` uses). Confirmed
+      against `data.sec.gov`'s `companyconcept` API: APA has never filed a real
       `us-gaap:Revenues` fact at all (`404 NoSuchKey`) — not a filer-side defect either.
       New `sec_edgar.agent.correct_revenue_totals`, ported from this repo's own
       `Statements._label_total_correction` (`T-117`), applied to `get_financials`'
