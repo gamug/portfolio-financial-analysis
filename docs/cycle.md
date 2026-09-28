@@ -8,9 +8,9 @@ the universe, and (for a selection cycle) writes `portfolio_position` targets an
 `cycle_ranking`.
 
 ```bash
-uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices] [--allow-dirty]
-uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices] [--allow-dirty]
-uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --db /tmp/backfill.db --step-days 7 [--allow-stale-prices] [--allow-dirty] [--force]
+uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate]
+uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate]
+uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --db /tmp/backfill.db --step-days 7 [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate] [--force]
 ```
 
 `--analysis-date` is the canonical name for the cycle date; `--date` is kept as an
@@ -55,6 +55,15 @@ Every cycle also refuses to write its `cycle_run` row at all when its own `code_
 is dirty (uncommitted changes) — its results would come from code `HEAD` alone can't
 reproduce (T-114) — unless `--allow-dirty`, which records why on the run and a CLI
 `WARNING`, the same convention as `--allow-stale-prices`.
+
+Every cycle also refuses to run when `data_quality_issue` holds rows under an older Ring-1
+gate version than the current one but none under it yet (`kg_schema.queries.
+stale_gate_version_reason`, T-116, PR #95 review) — a gate-methodology bump (e.g. `dq-v1` ->
+`dq-v2`) landed without its one-time re-gate (`python -m fundamental_agent quality`) having
+run, which would otherwise leave every quarantine and HARD `DQ_*`/`DATA_QUALITY` veto silently
+reading as clean — unless `--allow-stale-dq-gate`, same recording convention as the other two
+guards. Safe (no refusal) when `data_quality_issue` has no rows at all — Ring-1 simply hasn't
+run yet, a bootstrap situation, not a version regression.
 
 Runs as a **checkpointed topological runner** — `cycle_checkpoint` (relational),
 not the framework, is the source of truth for resume. A Strands
@@ -216,7 +225,7 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
 - **metrics** (before any step) — `latest_metrics` with the Ring-1 quarantine applied
   (`data_quality().apply`): a quarantined metric reads as NULL in every score and rule; its
   market cap too. A negative-equity name keeps the worst leverage rank in VALORIZATION (C2).
-  The manifest records `"quality": "dq-v1"`.
+  The manifest records `"quality": "dq-v2"`.
 - **fundamental** — delegates to `fundamental_hook`; with no hook it just reports
   the count of existing FUNDAMENTAL scores.
 - **semantic_read** — a no-op that records a checkpoint noting the aggregation runs

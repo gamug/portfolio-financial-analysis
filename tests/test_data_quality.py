@@ -35,6 +35,7 @@ OCF = ("cashflow", "operating_cash_flow_margin")
 MCAP = ("valuation", "market_capitalization")
 DTE = ("leverage", "debt_to_equity")
 DTA = ("leverage", "debt_to_assets")
+NDTE = ("leverage", "net_debt_to_ebitda")
 COV = ("leverage", "interest_coverage")
 ROE = ("profitability", "return_on_equity")
 
@@ -48,6 +49,10 @@ def _fm(**values: Any) -> dict[tuple[str, str], StoredMetric]:
         "equity": 50.0,
         "total_assets": 200.0,
         "operating_cash_flow": 20.0,
+        "total_debt": 100.0,
+        "cash": 20.0,
+        "operating_income": 15.0,
+        "depreciation_amortization": 5.0,
     }
     metric_values: dict[tuple[str, str], float | None] = {
         FCF: 0.05,
@@ -56,6 +61,7 @@ def _fm(**values: Any) -> dict[tuple[str, str], StoredMetric]:
         MCAP: 400.0,
         DTE: 1.0,
         DTA: 0.3,
+        NDTE: 2.0,
         COV: 8.0,
         ROE: 0.2,
         ("profitability", "gross_margin"): 0.4,
@@ -144,20 +150,57 @@ def test_mcap_scale_needs_positive_total_assets(assets: float | None) -> None:
 
 
 @pytest.mark.parametrize(
-    ("dta", "cov", "severity"),
+    ("ndte", "cov", "severity"),
     [
-        (0.81, 8.0, "HARD"),
-        (0.3, 1.49, "HARD"),
-        (0.8, 1.5, "SOFT"),  # both limits are strict
+        (5.01, 8.0, "HARD"),
+        (2.0, 1.49, "HARD"),
+        (5.0, 1.5, "SOFT"),  # both limits are strict
         (None, None, "SOFT"),
     ],
 )
 def test_negative_equity_quarantines_de_and_roe_hard_only_when_distressed(
-    dta: float | None, cov: float | None, severity: str
+    ndte: float | None, cov: float | None, severity: str
 ) -> None:
-    issues = evaluate(_fm(equity=-10.0, debt_to_assets=dta, interest_coverage=cov))
+    issues = evaluate(_fm(equity=-10.0, net_debt_to_ebitda=ndte, interest_coverage=cov))
     assert _rules(issues) == {("DQ_NEG_EQUITY", severity, True)}
     assert {i.metric for i in issues} == {DTE, ROE}
+
+
+def test_negative_ebitda_with_positive_net_debt_is_hard_despite_a_negative_ratio() -> None:
+    """T-116 (PR #95 review): net_debt_to_ebitda = net_debt / ebitda goes *negative* when
+    EBITDA itself is negative -- the most distressed profile, not a healthy one (real data:
+    WAT 10-Q 2026-04-04, EBITDA -$11M, net debt $4.4B, ratio -399). Reconstructed straight from
+    the stored inputs, not trusted from the ratio's sign alone."""
+    issues = evaluate(
+        _fm(
+            equity=-10.0,
+            net_debt_to_ebitda=-399.0,
+            interest_coverage=None,
+            operating_income=-11.0,
+            depreciation_amortization=0.0,
+            total_debt=4400.0,
+            cash=0.0,
+        )
+    )
+    assert _rules(issues) == {("DQ_NEG_EQUITY", "HARD", True)}
+
+
+def test_negative_ebitda_with_net_cash_stays_undistressed_by_that_signal_alone() -> None:
+    """The same negative ratio, but for the opposite, healthy reason (net cash exceeds debt,
+    HUM 10-Q 2023-03-31 shape): ebitda <= 0 alone, with no positive net debt, is not itself
+    HARD -- distinguished by reconstructing net debt too, not just EBITDA's sign."""
+    issues = evaluate(
+        _fm(
+            equity=-10.0,
+            net_debt_to_ebitda=-1.1,
+            interest_coverage=8.0,
+            operating_income=-2.0,
+            depreciation_amortization=0.0,
+            total_debt=10.0,
+            cash=50.0,
+        )
+    )
+    assert _rules(issues) == {("DQ_NEG_EQUITY", "SOFT", True)}
 
 
 def test_zero_equity_is_negative_equity_and_positive_or_missing_is_not() -> None:
@@ -243,7 +286,9 @@ def test_gating_records_one_row_per_metric_and_is_idempotent(memory_db: Database
     first = gate_version(conn, "metrics-v1", run_id=7)
     assert (first.filings, first.inserted) == (1, 1)
     assert first.filings_by_rule == {"DQ_MARGIN": 1} and first.hard_by_rule == {"DQ_MARGIN": 1}
-    assert _issues(conn) == [(fid, "net_margin", "metrics-v1", "DQ_MARGIN", "HARD", 1, "dq-v1")]
+    assert _issues(conn) == [
+        (fid, "net_margin", "metrics-v1", "DQ_MARGIN", "HARD", 1, quality.GATE_VERSION)
+    ]
     row = conn.execute("SELECT asset_id, value, run_id FROM data_quality_issue").fetchone()
     assert (row["asset_id"], row["value"], row["run_id"]) == (1, 9.0, 7)
     again = gate_version(conn, "metrics-v1")
@@ -278,7 +323,7 @@ def test_one_filing_can_be_gated_alone(memory_db: Database) -> None:
 def test_the_table_checks_severity_and_the_view_names_the_filing(memory_db: Database) -> None:
     conn = memory_db
     fid = _filing(conn, 1, "AAA")
-    _store(conn, fid, "metrics-v1", equity=-5.0, debt_to_assets=0.9)
+    _store(conn, fid, "metrics-v1", equity=-5.0, net_debt_to_ebitda=5.01)
     gate_version(conn, "metrics-v1")
     rows = conn.execute(
         "SELECT ticker, form, fiscal_period, metric_name, severity FROM v_data_quality_issue "
@@ -328,7 +373,7 @@ def _issue(  # noqa: PLR0913 - one hand-written row
     *,
     quarantined: int = 1,
     version: str = "metrics-v1",
-    gate: str = "dq-v1",
+    gate: str = quality.GATE_VERSION,
 ) -> None:
     conn.execute(
         "INSERT INTO data_quality_issue (filing_id, asset_id, metric_group, metric_name, "

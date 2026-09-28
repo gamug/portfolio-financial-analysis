@@ -528,3 +528,51 @@ def test_last_price_date_tolerates_a_database_with_no_price_daily_table(
     table at all -- a different problem than a stale as_of, so this stays silent (T-110)."""
     assert queries.last_price_date(memory_db) is None
     assert queries.stale_as_of_reason(memory_db, "2026-01-01") is None
+
+
+# -- T-116 (PR #95 review): the Ring-1 gate-version guard's shared helper ----------------------
+
+
+def _dq_issue(conn: Database, gate_version: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO assets (id, ticker) VALUES (1, 'AAA')")
+    row = conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()
+    fid = (
+        row[0]
+        if row is not None
+        else conn.execute(
+            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+            "filing_date, available_at, retrieved_at) VALUES (1, '10-K', 2025, 'FY2025', "
+            "'2025-12-31', '2026-01-30', '2026-02-02', '2026-02-01T00:00:00Z') RETURNING id"
+        ).fetchone()[0]
+    )
+    conn.execute(
+        "INSERT INTO data_quality_issue (filing_id, asset_id, metric_group, metric_name, "
+        "metric_engine_version, rule_id, severity, quarantined, gate_version, created_at) "
+        "VALUES (?, 1, 'leverage', 'debt_to_equity', 'metrics-v1', 'DQ_NEG_EQUITY', 'SOFT', 1, "
+        "?, '2026-01-01T00:00:00Z')",
+        (fid, gate_version),
+    )
+    conn.commit()
+
+
+def test_stale_gate_version_reason_is_none_with_no_issues_at_all(memory_db: Database) -> None:
+    """Ring-1 has simply never run -- a bootstrap situation, not a version regression."""
+    assert queries.stale_gate_version_reason(memory_db, "dq-v2") is None
+
+
+def test_stale_gate_version_reason_is_none_once_the_current_version_has_rows(
+    memory_db: Database,
+) -> None:
+    _dq_issue(memory_db, "dq-v1")
+    _dq_issue(memory_db, "dq-v2")
+    assert queries.stale_gate_version_reason(memory_db, "dq-v2") is None
+
+
+def test_stale_gate_version_reason_names_the_older_version_left_behind(
+    memory_db: Database,
+) -> None:
+    _dq_issue(memory_db, "dq-v1")
+    reason = queries.stale_gate_version_reason(memory_db, "dq-v2")
+    assert reason is not None
+    assert "dq-v1" in reason
+    assert "dq-v2" in reason

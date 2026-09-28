@@ -23,8 +23,8 @@ from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema.provenance import DirtyTree
-from kg_schema.queries import StaleAsOf
-from kg_schema.versions import VersionError
+from kg_schema.queries import StaleAsOf, StaleGateVersion
+from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
 from pricing_agent import db as pricing_db
 
 # -- normalize ----------------------------------------------------------
@@ -191,20 +191,20 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     assert (2, "EARNINGS_MISSING", "SOFT") in hits
 
 
-def test_leverage_rule_hard_vetoes_negative_equity_with_high_debt_to_assets(
+def test_leverage_rule_hard_vetoes_negative_equity_with_high_net_debt_to_ebitda(
     memory_db: Database,
 ) -> None:
-    """C2 (docs/model_fixes.md): MCD-shaped negative book equity -- a
+    """T-116 (docs/model_fixes.md): SBAC-shaped negative book equity -- a
     negative debt_to_equity would trivially evade a plain `> 3.0` check, but
-    a high debt_to_assets still triggers the veto."""
+    a high net_debt_to_ebitda still triggers the veto."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -38.96,
-                "leverage.debt_to_assets": 0.95,
-                "leverage.interest_coverage": 8.0,
+                "leverage.debt_to_equity": -2.75,
+                "leverage.net_debt_to_ebitda": 7.35,
+                "leverage.interest_coverage": None,
             },
         },
         price_obs={},
@@ -221,7 +221,7 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_high_debt_to_assets(
 def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
     memory_db: Database,
 ) -> None:
-    """Proves debt_to_assets and interest_coverage are each independently
+    """Proves net_debt_to_ebitda and interest_coverage are each independently
     sufficient (an OR, not an AND)."""
     seed_catalog(memory_db)
     ctx = RuleContext(
@@ -229,7 +229,7 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
         metrics={
             1: {
                 "leverage.debt_to_equity": -10.0,
-                "leverage.debt_to_assets": 0.3,  # healthy
+                "leverage.net_debt_to_ebitda": 2.0,  # healthy
                 "leverage.interest_coverage": 1.0,  # < 1.5
             },
         },
@@ -247,16 +247,16 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
 def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     memory_db: Database,
 ) -> None:
-    """Not "any negative equity = HARD": healthy debt_to_assets/
-    interest_coverage, including exactly at the calibrated thresholds
-    (strict inequalities, not >=/<=), doesn't veto."""
+    """Not "any negative equity = HARD": MCD-shaped negative equity -- a
+    healthy net_debt_to_ebitda/interest_coverage, including exactly at the
+    calibrated thresholds (strict inequalities, not >=/<=), doesn't veto."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
                 "leverage.debt_to_equity": -5.0,
-                "leverage.debt_to_assets": 0.8,  # exactly at threshold, not >
+                "leverage.net_debt_to_ebitda": 5.0,  # exactly at threshold, not >
                 "leverage.interest_coverage": 1.5,  # exactly at threshold, not <
             },
         },
@@ -271,12 +271,12 @@ def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
-def test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_not_veto(
+def test_leverage_rule_negative_equity_with_no_corroborating_metrics_soft_vetoes(
     memory_db: Database,
 ) -> None:
-    """Accepted limitation: if both debt_to_assets and interest_coverage are
-    missing, a negative debt_to_equity alone doesn't trigger the veto --
-    same missing-data handling as every other rule in this catalog."""
+    """T-116: if both net_debt_to_ebitda and interest_coverage are missing, a
+    negative debt_to_equity can't be verified either way -- routed to SOFT
+    review, not silently passed (the pre-T-116 gap)."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
@@ -289,7 +289,60 @@ def test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_not_ve
         for r in enabled_rules(memory_db)
         for h in r.evaluate(ctx)
     ]  # type: ignore[attr-defined]
-    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+    assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
+    assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
+
+
+def test_leverage_rule_treats_a_negative_net_debt_to_ebitda_as_unresolved_not_healthy(
+    memory_db: Database,
+) -> None:
+    """T-116 (PR #95 review): the rule only ever sees the already-divided ratio, never the raw
+    EBITDA/net debt it came from, so it cannot tell a genuine net-cash position (negative
+    ratio, healthy) apart from negative EBITDA with positive net debt (negative ratio, the most
+    distressed profile of all, WAT-shaped). A negative ratio is therefore unresolved, falling
+    back to interest_coverage alone -- SOFT review here, since neither is truly available."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={
+            1: {"leverage.debt_to_equity": -5.0, "leverage.net_debt_to_ebitda": -399.0},
+        },
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
+    assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
+
+
+def test_leverage_rule_a_negative_net_debt_to_ebitda_still_hard_vetoes_via_interest_coverage(
+    memory_db: Database,
+) -> None:
+    """The negative ratio contributes nothing either way, but interest_coverage is a
+    well-defined signal on its own and still fires."""
+    seed_catalog(memory_db)
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={
+            1: {
+                "leverage.debt_to_equity": -5.0,
+                "leverage.net_debt_to_ebitda": -399.0,
+                "leverage.interest_coverage": 1.0,
+            },
+        },
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+    )
+    hits = [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)
+        for h in r.evaluate(ctx)
+    ]  # type: ignore[attr-defined]
+    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
 
 
 def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Database) -> None:
@@ -774,6 +827,72 @@ def test_allow_stale_prices_overrides_the_price_spine_guard_and_records_it(
     assert "2026-06-30" in report.stale_price_bypassed
 
 
+# -- T-116 (PR #95 review): the Ring-1 gate-version guard -----------------------------------
+
+
+def _dq_issue(conn: Database, filing_id: int, asset_id: int, gate_version: str) -> None:
+    conn.execute(
+        "INSERT INTO data_quality_issue (filing_id, asset_id, metric_group, metric_name, "
+        "metric_engine_version, rule_id, severity, quarantined, gate_version, created_at) "
+        "VALUES (?, ?, 'leverage', 'debt_to_equity', 'metrics-v1', 'DQ_NEG_EQUITY', 'SOFT', 1, "
+        "?, '2026-01-01T00:00:00Z')",
+        (filing_id, asset_id, gate_version),
+    )
+    conn.commit()
+
+
+def test_select_refuses_when_the_gate_only_has_an_older_version_s_rows(
+    cycle_seed: Database,
+) -> None:
+    conn = cycle_seed
+    fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _dq_issue(conn, fid, 1, "dq-v1")
+    before = conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0]
+
+    with pytest.raises(StaleGateVersion, match=r"dq-v1.*dq-v2"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
+
+    # refused before any cycle_run row is written, like the other prechecks
+    assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == before
+
+
+def test_monitor_also_refuses_a_stale_gate_version(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _dq_issue(conn, fid, 1, "dq-v1")
+    with pytest.raises(StaleGateVersion):
+        run_monitoring(_settings(conn), "2026-06-30", conn=conn)
+
+
+def test_no_data_quality_rows_at_all_is_safe(cycle_seed: Database) -> None:
+    """Ring-1 never having run is a bootstrap situation, not a version regression."""
+    conn = cycle_seed
+    report = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    assert report.stale_dq_gate_bypassed is None
+
+
+def test_rows_already_under_the_current_gate_version_are_safe(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _dq_issue(conn, fid, 1, "dq-v1")
+    _dq_issue(conn, fid, 1, DATA_QUALITY_GATE_VERSION)
+    report = run_selection(_settings(conn), "2026-06-30", conn=conn)
+    assert report.stale_dq_gate_bypassed is None
+
+
+def test_allow_stale_dq_gate_overrides_the_guard_and_records_it(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _dq_issue(conn, fid, 1, "dq-v1")
+    settings = _settings(conn).model_copy(update={"allow_stale_dq_gate": True})
+
+    report = run_selection(settings, "2026-06-30", conn=conn)
+
+    assert "positions" in report.steps_run
+    assert report.stale_dq_gate_bypassed is not None
+    assert "dq-v1" in report.stale_dq_gate_bypassed
+
+
 # -- T-114: the clean-tree guard -----------------------------------------------------------
 
 
@@ -961,7 +1080,7 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
             "profitability": "metrics-v1",
             "valuation": "metrics-v1",
         },
-        "quality": "dq-v1",  # the Ring-1 gate version it read quarantines under (T-065)
+        "quality": "dq-v2",  # the Ring-1 gate version it read quarantines under (T-065/T-116)
     }
 
 

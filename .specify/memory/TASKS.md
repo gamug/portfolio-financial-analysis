@@ -490,7 +490,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       753 passed (was 739); ruff, format, mypy clean. `docs/cycle.md`, `docs/kg_schema.md`,
       `SPEC.md`'s schema table updated. PR #94 review also opened `T-125` (veto lifecycle,
       P0, unrelated pre-existing gap — not fixed here). Record: `docs/model_fixes.md` "T-115".
-- [ ] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
+- [x] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
       (`LEVERAGE_EXTREME` negative-equity branch, `DQ_NEG_EQUITY`'s HARD condition). Both use
       `debt_to_assets > 0.8` or `interest_coverage < 1.5`; the audit shows the first never
       reaches the buyback cohort (MCD 0.665) and proposes the standard credit pair
@@ -498,6 +498,42 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `net_debt_to_ebitda` is only usable once `T-105` annualizes it. Methodology change:
       `docs/model_fixes.md` record. **Acceptance**: thresholds calibrated on annualized data;
       NULL-on-both never passes silently.
+      **Done 2026-09-28.** Both gates now read `net_debt_to_ebitda > 5.0` (S&P Global Ratings'
+      "Corporate Methodology" "highly leveraged" band, cited) in place of `debt_to_assets >
+      0.8`; `interest_coverage < 1.5` unchanged. Recomputed over all 41 negative-equity filings
+      in the 20-asset production sample (MCD 19, SBAC 19, APA 2, APO 1; annualized
+      `net_debt_to_ebitda` via T-105's TTM method): MCD 2.53x-2.96x (spared, unchanged), SBAC
+      6.91x-8.16x (HARD, unchanged) — the new metric reclassifies nothing in-sample, closing
+      the gap for a future name `debt_to_assets` would have missed for the wrong reason.
+      `_LeverageRule`'s NULL-on-both case (APA, APO: neither metric resolvable) now emits a
+      SOFT `VetoHit` instead of silently dropping the hit entirely; `DQ_NEG_EQUITY` already
+      handled this correctly (unchanged). `DATA_QUALITY_GATE_VERSION` bumped `dq-v1` -> `dq-v2`
+      (append-only re-gate, T-065's own convention for a threshold change). Tests:
+      `tests/test_cycle.py` (4 leverage-rule tests updated/replaced),
+      `tests/test_data_quality.py` (2 tests updated). Full suite 753 passed (unchanged count —
+      existing coverage reparametrized, not net-new); ruff, format, mypy clean. Record:
+      `docs/model_fixes.md` "T-116". **Production re-gate under `dq-v2`** (a `python -m
+      fundamental_agent quality` re-run) **is deferred, pending explicit user direction** — the
+      same category as every other pending production action in this file.
+      **PR #95 review (`@eldova1702`) found two real bugs, fixed 2026-09-28**: (1) bumping to
+      `dq-v2` alone would have silently zeroed every quarantine/HARD issue until the production
+      re-gate ran — new `kg_schema.queries.StaleGateVersion`/`stale_gate_version_reason` refuses
+      `cycle select`/`monitor`/`backfill` when `data_quality_issue` holds an older gate version
+      but none under the current one, unless `--allow-stale-dq-gate` (`CycleSettings.
+      allow_stale_dq_gate`); (2) `net_debt_to_ebitda` reads negative EBITDA with positive net
+      debt (the most distressed profile) as healthy, since the ratio itself goes negative —
+      reproduced on real stored data (WAT 10-Q 2026-04-04, ratio -399.36). `_neg_equity`
+      (`fundamental_agent`) now reconstructs EBITDA/net debt from the same raw inputs the ratio
+      was divided from; `_LeverageRule` (`cycle`, no raw inputs available) treats a negative
+      ratio as unresolved, not healthy, falling back to `interest_coverage`. Neither fix
+      reclassifies any of the 41 in-sample filings (0 have the EBITDA<=0-with-debt shape today;
+      forward-looking correctness fixes). Also corrected two docs claims: this entry's
+      "APA/APO now surface a SOFT review hit" does not hold on the live path (`DQ_NEG_EQUITY`
+      quarantines `debt_to_equity` before `_LeverageRule` ever sees it; `_LeverageRule`'s branch
+      is a backstop for filings Ring-1 hasn't gated yet), and the S&P `>5.0x` citation is noted
+      as a limitation (its band is on lease/pension-adjusted debt; this screen's is plain
+      balance-sheet debt minus cash, more lenient for lease-heavy names). +12 tests (765 total).
+      Record: `docs/model_fixes.md` "T-116", "PR #95 review".
 
 - [ ] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
       breakdown figure presented as the company total. APA never filed a consolidated
@@ -686,12 +722,12 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112`, `T-113`, `T-114` and `T-115` are done too (2026-09-27); `T-070`–`T-084`,
-`T-116` and `T-125` (added 2026-09-27, from PR #94's review — P0, blocks any `cycle backfill`
-run and the next live `cycle select`) have not started. Execute
-**Work item 14**'s remaining P0 task (`T-125`, veto lifecycle) → its remaining P1 task
-(`T-116`, after
-`T-105`) → `T-121`/`T-122`/`T-123`/`T-124` whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+`T-111`, `T-112`, `T-113`, `T-114`, `T-115` and `T-116` are done too (`T-116` 2026-09-28); a
+production `dq-v2` re-gate for `T-116` is deferred pending user direction, the same as
+`T-121`–`T-124`. `T-070`–`T-084` and `T-125` (added 2026-09-27, from PR #94's review — P0,
+blocks any `cycle backfill` run and the next live `cycle select`) have not started. Execute
+**Work item 14**'s remaining P0 task (`T-125`, veto lifecycle) → `T-121`/`T-122`/`T-123`/`T-124`
+whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

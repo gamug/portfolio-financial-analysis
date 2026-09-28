@@ -44,23 +44,41 @@ class _ThresholdRule:
 @dataclass
 class _LeverageRule:
     """LEVERAGE_EXTREME, with a negative-book-equity guard (C2,
-    docs/model_fixes.md): a plain ``debt_to_equity > threshold`` check lets a
-    negative-equity firm's *negative* ratio (large buyback-driven negative
-    equity -- MCD, SBUX, PM, ...) trivially evade the veto, even though it's
-    actually maximally leveraged. ``leverage.py::_total_debt`` sums only
-    non-negative balance-sheet items, so a negative ratio here is itself
-    reliable evidence of non-positive book equity -- no separate ``equity``
-    metric is needed. When that happens, gate on ``debt_to_assets``/
-    ``interest_coverage`` instead; thresholds reuse PLAN.md's Ring-1
-    ``DQ_NEG_EQUITY`` calibration (342 filings verified) rather than
-    inventing new, unverified numbers.
+    docs/model_fixes.md; recalibrated T-116): a plain ``debt_to_equity >
+    threshold`` check lets a negative-equity firm's *negative* ratio (large
+    buyback-driven negative equity -- MCD, SBUX, PM, ...) trivially evade the
+    veto, even though it's actually maximally leveraged.
+    ``leverage.py::_total_debt`` sums only non-negative balance-sheet items,
+    so a negative ratio here is itself reliable evidence of non-positive
+    book equity -- no separate ``equity`` metric is needed. When that
+    happens, gate on the standard credit pair, ``net_debt_to_ebitda``/
+    ``interest_coverage``, instead: ``debt_to_assets`` (C2's original guard)
+    is a balance-sheet solvency ratio, not a leverage-capacity one, and on
+    real production data it stays inert for a buyback-heavy but genuinely
+    investment-grade name (MCD: 0.665-0.72 across 22 filings, never near the
+    0.8 guard) while telling you nothing about debt-service capacity.
+    ``net_debt_to_ebitda`` -- debt relative to cash-flow-generating capacity
+    -- is what corporate credit analysis actually keys leverage bands on
+    (S&P Global Ratings, "Corporate Methodology," 2013: >5.0x is the
+    "highly leveraged" band); paired with ``interest_coverage`` (debt-
+    service capacity), thresholds reuse PLAN.md's Ring-1 ``DQ_NEG_EQUITY``
+    calibration, recomputed under T-105's now-annualized
+    ``net_debt_to_ebitda`` (docs/model_fixes.md, T-116) rather than
+    inventing new, unverified numbers. A negative-equity asset with neither
+    metric available is routed to SOFT review, not silently passed. A
+    *negative* ``net_debt_to_ebitda`` is itself ambiguous -- it can mean a
+    genuine net-cash position (healthy) or negative EBITDA with positive net
+    debt (the most distressed profile of all), and this rule sees only the
+    already-divided ratio, never the raw EBITDA/net-debt it came from -- so
+    it is treated as unresolved (PR #95 review), falling back to
+    ``interest_coverage`` alone, the same as a missing value.
     """
 
     RULE_ID = "LEVERAGE_EXTREME"
     SEVERITY = "HARD"
     DESCRIPTION = "debt/equity above the threshold, or negative book equity with a high debt burden"
     debt_to_equity_threshold: float = 3.0
-    neg_equity_debt_to_assets_threshold: float = 0.8
+    neg_equity_net_debt_to_ebitda_threshold: float = 5.0
     neg_equity_interest_coverage_threshold: float = 1.5
 
     @property
@@ -69,7 +87,7 @@ class _LeverageRule:
             "metric": "leverage.debt_to_equity",
             "op": ">",
             "threshold": self.debt_to_equity_threshold,
-            "neg_equity_debt_to_assets_threshold": self.neg_equity_debt_to_assets_threshold,
+            "neg_equity_net_debt_to_ebitda_threshold": self.neg_equity_net_debt_to_ebitda_threshold,
             "neg_equity_interest_coverage_threshold": self.neg_equity_interest_coverage_threshold,
         }
 
@@ -82,13 +100,39 @@ class _LeverageRule:
             if dte < 0:
                 # Non-negative debt means a negative ratio implies non-positive
                 # book equity -- the plain threshold comparison below is
-                # meaningless here, so gate on debt_to_assets/interest_coverage
-                # instead (accepted limitation: no hit if both are missing).
-                dta = metrics.get("leverage.debt_to_assets")
+                # meaningless here, so gate on the standard credit pair
+                # instead. Neither metric available: can't tell, route to
+                # SOFT review rather than pass silently (T-116).
+                ndte_raw = metrics.get("leverage.net_debt_to_ebitda")
                 cov = metrics.get("leverage.interest_coverage")
-                breached = (dta is not None and dta > self.neg_equity_debt_to_assets_threshold) or (
-                    cov is not None and cov < self.neg_equity_interest_coverage_threshold
-                )
+                # T-116 (PR #95 review): net_debt_to_ebitda goes *negative* when EBITDA itself
+                # is negative, even with substantial positive net debt -- the most distressed
+                # profile, not a healthy one. Unlike fundamental_agent's DQ_NEG_EQUITY, this
+                # rule only ever sees the already-divided ratio (never the raw EBITDA/net-debt
+                # it was built from), so it cannot tell that case apart from a genuine net-cash
+                # position (also negative). A negative ratio is therefore unresolved here, not
+                # evidence of health -- it falls back to interest_coverage alone, same as if
+                # net_debt_to_ebitda were missing.
+                ndte = ndte_raw if ndte_raw is not None and ndte_raw >= 0 else None
+                if ndte is None and cov is None:
+                    hits.append(
+                        VetoHit(
+                            aid,
+                            self.RULE_ID,
+                            "SOFT",
+                            {
+                                "metric": "leverage.debt_to_equity",
+                                "value": dte,
+                                "net_debt_to_ebitda": ndte_raw,
+                                "interest_coverage": None,
+                                "reason": "negative book equity, no corroborating leverage metric",
+                            },
+                        )
+                    )
+                    continue
+                breached = (
+                    ndte is not None and ndte > self.neg_equity_net_debt_to_ebitda_threshold
+                ) or (cov is not None and cov < self.neg_equity_interest_coverage_threshold)
                 if breached:
                     hits.append(
                         VetoHit(
@@ -98,7 +142,7 @@ class _LeverageRule:
                             {
                                 "metric": "leverage.debt_to_equity",
                                 "value": dte,
-                                "debt_to_assets": dta,
+                                "net_debt_to_ebitda": ndte_raw,
                                 "interest_coverage": cov,
                             },
                         )
