@@ -585,6 +585,58 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
       until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
       guard no longer rejects APA.
+      **Code done upstream 2026-09-28** (`portfolio-data-mining` PR #44,
+      `gamug/portfolio-data-mining@fix/t118-sec-edgar-revenue-total-contradiction`).
+      **Mechanism confirmed 2026-09-28** by that PR's review (`@eldova1702`, superseding
+      the earlier, hedged "Oil and gas" corroborating-observation note): `edgartools==5.44.1`'s
+      `xbrl.statements.income_statement().to_dataframe()` — the only source `get_financials`
+      reads income-statement rows from — *synthesizes* a non-dimensional "total" row for a
+      concept by summing that concept's dimensional axis members, and double-counts whenever
+      one member is itself a parent whose value already includes its own children. APA's case
+      is exactly this: FY2023's synthesized `us-gaap_Revenues` is `8279 (parent "Oil and gas")
+      + 7385 + 894 (its two children, which already sum to 8279) = 16558`; FY2024 is
+      `9737 + 8196 + 1541 = 19474` (`8196 + 1541 = 9737`, same shape). Confirmed against
+      `data.sec.gov`'s `companyconcept` API:
+      APA has never filed a real `us-gaap:Revenues` fact at all (`404 NoSuchKey`) — not a
+      filer-side defect either. **This is a general `edgartools` synthesis defect, not an
+      APA/revenue-specific one**: a full-universe scan across the 500-company stored universe
+      (the 61 `us-gaap` concepts `fundamental_agent` reads, compared against each company's SEC
+      `companyfacts`) found 163 stored values matching no SEC-filed value at that period end
+      (e.g. SNA Q3 2024 operating income 2x, CTVA FY2021 D&A 2x, AEP Q2 2025 revenue 270.5 vs.
+      5,086.9, CEG FY2021 revenue 55,588 vs. 19,649, MNST Q3 2023 net income to common 4.7 vs.
+      452.7), and 105 (company, concept) pairs — 1,101 rows total — that were never filed
+      non-dimensionally at all, so every value for them is synthesized (e.g. APA COGS,
+      STZ/KKR diluted EPS and shares, WFC/UNH/SCHW contract revenue). New
+      `sec_edgar.agent.correct_revenue_totals`, ported from this repo's own
+      `Statements._label_total_correction` (`T-117`), applied to `get_financials`'
+      `income_statement` before it's returned — **fixes APA's revenue instance only**, not the
+      general defect. Live-verified there (no mocking) against every available APA 10-K
+      (FY2021-FY2025) and every 2024 10-Q: resolves to the exact `T-117` acceptance figures
+      (FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M), FY2021/FY2022 correctly untouched. As of
+      PR #44's latest commit, `get_financials` also returns a top-level `data["corrections"]`
+      list (`{"concept", "column", "original", "corrected", "rule": "T-118"}` per entry)
+      recording every value it corrects or drops, so a derived number never reaches this repo's
+      database looking like a filed fact. +8 tests updated (242 total there);
+      ruff/format/mypy/pre-commit clean.
+      **Still open, and stays open past PR #44's merge**: that PR explicitly does not close
+      this task. Remaining, in order: (1) PR #44 merging and the `sec_edgar` service
+      redeploying, then re-verifying here that `T-117`'s local guard finds nothing left to
+      correct on APA specifically (this task's original, narrower acceptance criterion, the
+      same operational pattern as Work item 6's `T-052` handoff); (2) the upstream general fix
+      (tracked there as `portfolio-data-mining` `T-042`, not yet started) — validating every
+      synthesized non-dimensional row against the filing's own default-context facts for that
+      concept/period, passing it through when filed, replacing it with the filed value or
+      marking it synthesized (via the same `corrections` mechanism) otherwise, then
+      re-ingesting the affected filings under a new facts version — is what this task's P1
+      priority is actually about: APA/revenue was only ever the first-discovered instance of a
+      universe-wide defect, not the whole of it; (3) *(this repo, added 2026-09-28 from PR #98's
+      review)* when re-ingesting against the redeployed `sec_edgar`, `fundamental_agent` must
+      persist `data["corrections"]` — today `Statements.from_payload` reads only the three
+      statement keys (`income_statement`/`balance_sheet`/`cash_flow`), so a derived value like
+      APA's corrected revenue would land in `financial_facts` indistinguishable from a real
+      filed fact. Needs a flag or provenance field on the affected `financial_facts` row(s)
+      recording that the value was derived/corrected, not filed as-is. Not yet designed or
+      implemented.
 - [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
       for an asset with no FUNDAMENTAL score at all: the rule iterates
       `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
