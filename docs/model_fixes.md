@@ -3604,9 +3604,9 @@ review (`@eldova1702`): `edgartools==5.44.1`'s `xbrl.statements.income_statement
 to_dataframe()` *synthesizes* a non-dimensional "total" row for a concept by summing that
 concept's dimensional axis members, and double-counts whenever one member is itself a parent
 whose value already includes its own children. APA's FY2023 case: `8279 (parent "Oil and gas")
-+ 7385 (its own children, already rolled in) + 894 (an unrelated member) = 16558`; FY2024:
-`9737 + 8196 + 1541 = 19474`. This supersedes the earlier "Oil and gas" corroborating-row
-observation with the actual arithmetic mechanism producing it.
++ 7385 + 894 (its two children, which already sum to 8279) = 16558`; FY2024:
+`9737 + 8196 + 1541 = 19474` (`8196 + 1541 = 9737`, same shape). This supersedes the earlier
+"Oil and gas" corroborating-row observation with the actual arithmetic mechanism producing it.
 
 This is confirmed **general, not APA/revenue-specific**: a full-universe scan (500 companies,
 the 61 `us-gaap` concepts `fundamental_agent` reads, compared against each company's SEC
@@ -3619,3 +3619,11 @@ for that scope, not a redundant one. The upstream general fix (`portfolio-data-m
 filing's own default-context facts and mark or replace whatever doesn't reconcile -- see
 `portfolio-data-mining`'s `TASKS.md` Work item 5 and `docs/modules/sec-edgar.md` for that
 repo's own record.
+
+**Added scope (PR #98 review, 2026-09-28):** when this repo re-ingests against the redeployed
+`sec_edgar`, `fundamental_agent` must persist upstream's new `data["corrections"]` list --
+today `Statements.from_payload` reads only the three statement keys
+(`income_statement`/`balance_sheet`/`cash_flow`), so a derived value like APA's corrected
+revenue would land in `financial_facts` indistinguishable from a real filed fact. Needs a flag
+or provenance field on the affected `financial_facts` row(s). Not yet designed or implemented;
+tracked as `T-118`'s step (3) in `TASKS.md`.

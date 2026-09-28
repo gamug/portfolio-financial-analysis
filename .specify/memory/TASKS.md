@@ -594,8 +594,9 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       concept by summing that concept's dimensional axis members, and double-counts whenever
       one member is itself a parent whose value already includes its own children. APA's case
       is exactly this: FY2023's synthesized `us-gaap_Revenues` is `8279 (parent "Oil and gas")
-      + 7385 (its own children, already rolled in) + 894 (an unrelated member) = 16558`; FY2024
-      is `9737 + 8196 + 1541 = 19474`. Confirmed against `data.sec.gov`'s `companyconcept` API:
+      + 7385 + 894 (its two children, which already sum to 8279) = 16558`; FY2024 is
+      `9737 + 8196 + 1541 = 19474` (`8196 + 1541 = 9737`, same shape). Confirmed against
+      `data.sec.gov`'s `companyconcept` API:
       APA has never filed a real `us-gaap:Revenues` fact at all (`404 NoSuchKey`) — not a
       filer-side defect either. **This is a general `edgartools` synthesis defect, not an
       APA/revenue-specific one**: a full-universe scan across the 500-company stored universe
@@ -628,7 +629,14 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       marking it synthesized (via the same `corrections` mechanism) otherwise, then
       re-ingesting the affected filings under a new facts version — is what this task's P1
       priority is actually about: APA/revenue was only ever the first-discovered instance of a
-      universe-wide defect, not the whole of it.
+      universe-wide defect, not the whole of it; (3) *(this repo, added 2026-09-28 from PR #98's
+      review)* when re-ingesting against the redeployed `sec_edgar`, `fundamental_agent` must
+      persist `data["corrections"]` — today `Statements.from_payload` reads only the three
+      statement keys (`income_statement`/`balance_sheet`/`cash_flow`), so a derived value like
+      APA's corrected revenue would land in `financial_facts` indistinguishable from a real
+      filed fact. Needs a flag or provenance field on the affected `financial_facts` row(s)
+      recording that the value was derived/corrected, not filed as-is. Not yet designed or
+      implemented.
 - [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
       for an asset with no FUNDAMENTAL score at all: the rule iterates
       `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
