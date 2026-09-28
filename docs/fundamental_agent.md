@@ -75,8 +75,12 @@ S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
 nearest-earlier instant. `REGISTRY` maps ~25 line items to US-GAAP tags with
 standard/label fallbacks. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
 `RevenuesNetOfInterestExpense` for banks, `RegulatedAndUnregulatedOperatingRevenue` for
-utilities — T-102) over summing its named components, subject to T-095's plausibility floor. `iter_facts` flattens every non-abstract numeric cell for
-`financial_facts`.
+utilities — T-102) over summing its named components, subject to T-095's too-small
+plausibility floor and T-117's too-large label-total contradiction check (a later,
+label-matched "total revenue" row in the same statement that materially disagrees — detected
+structurally, no filer's own concept ever named — corrected by subtracting the rows between
+the two, or rejected with no guess if those rows are too large to trust). `iter_facts` flattens
+every non-abstract numeric cell for `financial_facts`.
 
 ### `metrics/` — one module per group
 

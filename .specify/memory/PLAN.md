@@ -1601,7 +1601,7 @@ that reproduce today.
 | Dirty `code_version` on production runs | **live** (`359797e-dirty`) | `T-114` |
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
 | `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **fixed 2026-09-28** — both gates now key on `net_debt_to_ebitda > 5.0` (S&P's "highly leveraged" band) + `interest_coverage < 1.5`; NULL-on-both routed to SOFT, not dropped | `T-116` (done) |
-| APA revenue — a breakdown figure presented as the total (PR #77 review) | **live defect** — FY2023–FY2025 resolved revenue ~2× the statement's own total | `T-117` (local guard), `T-118` (upstream) |
+| APA revenue — a breakdown figure presented as the total (PR #77 review) | **fixed 2026-09-28** — `Statements._label_total_correction` rejects/corrects a too-large `total_concepts` match structurally; validated clean across the full 503-asset stored universe (16 flagged, all APA, all correct) | `T-117` (done, local guard), `T-118` (upstream, still open) |
 | `EARNINGS_MISSING` skips unscored assets (found testing `T-106`) | **latent** — no effect on today's 20 scored names; decided: unscored = ineligible same-cycle, stop above 5% unscored | `T-119` |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
 | `turnover_cap` inert (no `w_prev`) | refinement | noted on `T-077` |
@@ -1616,8 +1616,8 @@ that reproduce today.
 **Sequencing**: P0 first (`T-104` is operational and independent; `T-105` before `T-116` and
 before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` together, `T-120` before `T-107`'s backfill; `T-108`/
 `T-109` before any `evaluate` result is read). `T-113` must land before `T-079`. Methodology
-changes (`T-105`, `T-108`, `T-109`, `T-110`, `T-116`) each get their constitution AI behavior
-#12 record. `T-121` (void the stale live-book snapshot) then `T-122` (re-persist `T-108`/
+changes (`T-105`, `T-108`, `T-109`, `T-110`, `T-116`, `T-117`) each get their constitution AI
+behavior #12 record. `T-121` (void the stale live-book snapshot) then `T-122` (re-persist `T-108`/
 `T-109` to production), `T-123` (clean `T-110`'s production orphan rows), and `T-116`'s own
 production `dq-v2` re-gate (a `python -m fundamental_agent quality` re-run), are the
 production actions those fixes' code landed but did not itself perform — held pending

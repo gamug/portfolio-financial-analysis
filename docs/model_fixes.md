@@ -1313,6 +1313,39 @@ pass's authority to run unprompted.
   sample or the full 503-asset universe was not swept — `T-088`'s
   acceptance flagged APA specifically, not a broader pattern.
 
+### Correction (T-117, 2026-09-28): the root cause above is wrong
+
+**The "filer-side XBRL tagging defect" diagnosis above does not hold.** Re-verified directly
+against SEC's own `companyfacts`/`companyconcept` APIs (`https://data.sec.gov`, live, read-only,
+2026-09-28), independent of our own gateway: APA (CIK `0001841666`) has **never filed a
+`us-gaap:Revenues` fact at all**, in any context, dimensional or not, in its entire XBRL filing
+history — `companyconcept/CIK0001841666/us-gaap/Revenues.json` returns `404 NoSuchKey`. Its only
+two ever-used revenue-named `us-gaap` concepts are `BusinessAcquisitionsProFormaRevenue` and
+`RevenueFromContractWithCustomerIncludingAssessedTax` (`companyfacts`, 360 total `us-gaap`
+concepts scanned). The "two rows, one dimensional, one not, both $1,082,000,000" shape this
+entry originally described is therefore not something APA's real filing contains — it does not
+exist upstream, in either form. Further, APA's actual rendered FY2023 10-K income statement
+(`R3.htm`, `sec.gov/Archives/edgar/data/1841666/000178403124000003/`, "STATEMENT OF CONSOLIDATED
+OPERATIONS") has **no "Total revenues" line at all**: it opens directly with the four
+adjustment lines (derivative gains, divestiture gains, property-sale losses, other, net) and
+"Total revenues and other" — confirming `apa_RevenuesAndOther` is the *only* revenue subtotal
+APA's real statement presents.
+
+The value our own stored `financial_facts` carries under `concept = 'us-gaap_Revenues'` for APA
+is therefore not sourced from any real `us-gaap:Revenues` tag APA ever filed — it is an artifact
+introduced somewhere in the gateway's own processing (`sec_edgar`, upstream in
+`portfolio-data-mining`), most plausibly a revenue-disaggregation footnote's own internal
+subtotal (ASC 606 disclosures commonly tag a "Total" row with the generic `us-gaap:Revenues`
+concept, valid *within that footnote's own dimensional context*) read out of that context and
+presented as if it were the primary statement's consolidated total. This is the same failure
+mode T-117 (`docs/model_fixes.md`) fixes for FY2023-2025's *too-large* case (a breakdown value
+mislabeled as the total) — this entry's FY2021 *too-small* case is now understood as the other
+side of the identical upstream defect, not a separate filer-side tagging mistake. `T-118`
+tracks the upstream fix; see `T-117`'s own entry for this repo's local guard, which now handles
+both directions structurally rather than relying on this entry's original, incorrect
+"duplicate-tagging" explanation. The **fix and its verification above are unaffected** — the
+plausibility floor correctly rejects the implausible value regardless of *why* it is wrong.
+
 ---
 
 ## T-096 — 10-Q filing gaps beyond F4's expected fallback: three distinct root causes, two corrected
@@ -3434,3 +3467,132 @@ All four points confirmed and addressed the same day, two code fixes and two doc
   unaffected (`evaluate()` runs the live Python `RULES` object directly).
 - **`net_debt_to_ebitda`'s lease/pension adjustment** (point 4 above) -- not attempted here;
   the screen is more lenient than its cited band for lease-heavy names in the interim.
+
+---
+
+## T-117 — A revenue `total_concepts` tag can be implausibly *large*, not just too small
+
+**Status**: Fixed 2026-09-28 (`T-117`).
+
+### Symptom
+
+APA's `us-gaap_Revenues` ("Total revenues", F2's `total_concepts` Tier 1 match) is exactly
+~2x the income statement's own later, smaller "Total revenues and other" subtotal
+(`apa_RevenuesAndOther`) every fiscal year since FY2023 -- $16,558M/$8,192M (FY2023),
+$19,474M/$9,737M (FY2024), $17,840M/$9,220M (FY2025) -- while FY2022 is correctly
+$11,075M/$12,132M (the "and other" total properly *exceeds* revenue, as it must: "and other"
+only adds non-operating items). T-095's plausibility floor (`_total_is_plausible`) only ever
+rejects a Tier 1 total for being too *small* relative to a named `spec.concepts` component; it
+has no mechanism for a total that is too *large*, and APA tags none of `spec.concepts` for
+these years, so nothing bounds it at all -- the wrong value passes straight through.
+`net_debt_to_ebitda`'s revenue-adjacent TTM identity also flags APA's 2024Q1-Q3 quarters
+independently (`DQ_TTM_CROSSCHECK`, 11-25% gaps, `docs/model_fixes.md` T-105) -- a second,
+independent symptom of the same underlying bad revenue figure feeding the TTM computation.
+
+### Root cause
+
+Re-verified directly against SEC's own `companyfacts`/`companyconcept` APIs (live, read-only,
+2026-09-28; see T-095's Correction above for the full citation): APA has never filed a
+`us-gaap:Revenues` fact in its real XBRL history, and its actual rendered FY2023 10-K income
+statement has no "Total revenues" line at all -- only "Total revenues and other". The value our
+own gateway presents under `concept = 'us-gaap_Revenues'` is an artifact of its own upstream
+processing (`sec_edgar`, `portfolio-data-mining`; tracked as `T-118`), not a real filed fact --
+consistent with T-095's FY2021 case (now understood as the same defect's *too-small* direction,
+not a separate filer-side tagging mistake, per its Correction above). Both directions share one
+root cause: the gateway presents a breakdown/component figure as if it were the consolidated
+total, and there is no way to distinguish good from bad by magnitude alone in the too-large
+direction the way T-095's floor does for too-small.
+
+### Fix
+
+`src/fundamental_agent/statements.py`, `Statements`:
+- New `_label_total_correction(spec, column, total_value)`: after `_first_total_match` finds a
+  Tier 1 winner, scans the rest of the same statement, in document order, for a *later* row
+  whose **label** (not concept name -- no filer's own custom-taxonomy extension concept is ever
+  named) reads as a revenue total (`_LABEL_TOTAL_RE`, `r"\btotal\b.{0,40}\brevenues?\b"`,
+  excluding any label containing "cost" -- `_LABEL_TOTAL_EXCLUDE_RE`, see Design decisions) and
+  is materially smaller than the Tier 1 total (`_LABEL_TOTAL_CONTRADICTION_RATIO = 0.75`). A
+  well-formed statement's later, broader total is never smaller than an earlier, narrower one
+  labeled the same way, so finding one *is* the contradiction. When found, and every row
+  between the two totals is individually small enough to trust as an adjustment item
+  (`_BETWEEN_ROW_CEILING = 0.25` of the later total), the corrected value is the later row's
+  value less those in-between rows -- recovering "Total revenues" to the dollar for APA's
+  FY2023-FY2025 without naming `apa_RevenuesAndOther` (or any other APA concept) anywhere in
+  the code. If contradicted but the in-between rows are too large to trust, returns no guess:
+  the caller must not trust the Tier 1 total either, but this does not invent a number.
+- `get()`: Tier 1 now checks `_label_total_correction` before (and independent of)
+  `_total_is_plausible` -- a contradiction found there returns the corrected value directly; a
+  contradiction found with no safe derivation skips `_total_is_plausible` entirely (the total
+  is already known-bad) and falls through to Tier 2, same as a rejected-too-small total.
+
+### Design decisions
+
+- **Label-pattern, not concept-name, detection.** The alternative -- adding `apa_RevenuesAndOther`
+  to `total_concepts` or a new APA-specific field -- would be exactly the "tuned on APA" mistake
+  the task's acceptance criterion calls out T-095 for risking. A label regex generalizes to any
+  filer whose statement independently exhibits the same two-total shape, verified by scanning
+  every stored filing (see Verification) rather than asserted.
+- **The "cost" exclusion was not anticipated -- it was found by the full-universe scan.**
+  The first cut of `_LABEL_TOTAL_RE` (`r"\btotal\b.{0,40}\brevenue"`, no exclusion) matched
+  "Total cost of revenues" trivially (both words are substrings), firing on 6 tickers/81
+  filing-periods that were never a revenue-total defect at all: ADBE, STE, TER, TSLA, URI, XYZ
+  all use that exact COGS-line phrase. Every one of those was inspected (see Verification)
+  before the exclusion was added, not assumed benign -- exactly the "each inspected" the task's
+  acceptance criterion asks for, and the reason the mechanism is a label-pattern search with
+  guardrails rather than a bare substring match.
+- **`_LABEL_TOTAL_CONTRADICTION_RATIO = 0.75` and `_BETWEEN_ROW_CEILING = 0.25`.** Picked to
+  sit strictly between APA's real defect ratios (later/total ~0.42-0.50 for the too-large case;
+  each between-row is 2.6-3.3% of the later total across FY2023-2025) and its real correct case
+  (FY2022's later/total ~1.10, the "and other" total legitimately exceeding revenue) --
+  documented, pinned constants (`tests/test_statements.py`), not tuned to fit one number.
+- **A contradiction with no safe correction returns `None`, not the Tier 1 total.** Guessing a
+  number from an untrustworthy shape (large, uncertain in-between rows) risks a worse error
+  than a `None` a downstream `DQ_REVENUE_POS` gate already knows how to flag; T-117's mandate
+  is "reject a revenue total the statement contradicts," and rejection is itself a valid, safe
+  outcome the mechanism must support, not only correction.
+
+### Verification
+
+- `scripts/verify_t117.py` (new, mirrors `scripts/verify_t105.py`'s style): scans every stored
+  filing's own reporting period across the **full universe actually stored in production**
+  (503 assets, 5,076 filings -- not a 20-name sample) and calls
+  `_label_total_correction` directly. Result: **16 filing-periods flagged, all APA** (1 ticker),
+  all 16 safely corrected, 0 rejected-only, 0 false positives on any other of the 502 other
+  assets. Before the "cost" exclusion (Design decisions), the same scan found 81
+  filing-periods across 6 tickers (ADBE, STE, TER, TSLA, URI, XYZ), every one inspected and
+  confirmed a "Total cost of revenues" false match, none a real defect -- fixed before this
+  entry's numbers, not left in production.
+- Recomputed APA's `revenue` for all 5 stored 10-Ks against real `financial_facts`
+  (`Statements.get("revenue", ...)`, today's code): FY2021 $7,988,000,000 (T-095's existing
+  too-small path, unchanged), FY2022 $11,075,000,000 (untouched, correctly not contradicted),
+  FY2023 $8,279,000,000, FY2024 $9,737,000,000, FY2025 $8,920,000,000 -- matching this task's
+  acceptance criterion's named figures exactly, derived purely from each filing's own stored
+  facts, with no APA-specific code anywhere in `statements.py`.
+- `tests/test_statements.py` (+5): `test_revenue_rejects_a_total_far_larger_than_the_
+  statement_s_own_later_total` (APA FY2023's real shape, resolves to the exact $8,279M),
+  `test_revenue_total_label_correction_leaves_a_genuinely_larger_total_alone` (FY2022, not a
+  defect), `test_revenue_total_label_correction_ignores_cost_of_revenue_lines` (the false-
+  positive shape the full-universe scan found), `test_revenue_total_label_correction_refuses_
+  to_guess_when_between_rows_are_too_large` (contradicted-but-unsafe returns no value, not the
+  bad total). `uv run pytest -q` -- 769 passed (was 765 post-`T-116`, +5, `T-121`'s own +6
+  landing separately). `ruff check` / `ruff format --check` / `uv run mypy` -- all green.
+- `docs/model_fixes.md`'s T-095 entry corrected (see its own "Correction (T-117)" section
+  above) -- the original "filer-side XBRL tagging defect" diagnosis does not hold; re-verified
+  live against SEC's `companyfacts`/`companyconcept` APIs and APA's actual rendered financial
+  statement.
+
+### Residual scope, deliberately deferred
+
+- **Production re-persist.** `metrics-v3`'s existing full recompute (`T-100`) will pick up the
+  corrected revenue automatically; no separate production action is needed beyond that already-
+  planned re-run, since APA's metrics have not yet been persisted under `metrics-v3` in
+  production (per `T-105`'s own residual scope).
+- **`T-118`** (upstream, `portfolio-data-mining`) tracks the actual gateway fix; this entry's
+  guard stays as the local defense until it lands and `T-117`'s guard stops finding anything to
+  correct on APA.
+- **The exact upstream mechanism (which footnote/context the gateway's `us-gaap_Revenues`
+  value is actually drawn from) was not fully traced** -- SEC's `companyconcept` data for
+  `RevenueFromContractWithCustomerIncludingAssessedTax` also disagreed with what our gateway
+  stores under that concept name for APA (a second, unexplained discrepancy found during this
+  verification), suggesting the conflation is broader than the one concept this entry fixes
+  around. Left for `T-118`'s upstream investigation, not re-derived speculatively here.

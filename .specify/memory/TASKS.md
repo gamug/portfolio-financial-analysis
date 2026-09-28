@@ -535,7 +535,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       balance-sheet debt minus cash, more lenient for lease-heavy names). +12 tests (765 total).
       Record: `docs/model_fixes.md` "T-116", "PR #95 review".
 
-- [ ] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
+- [x] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
       breakdown figure presented as the company total. APA never filed a consolidated
       `us-gaap:Revenues` (per the reviewer, from SEC companyfacts — to be re-verified); the
       gateway presents a breakdown figure as the total: too small in FY2021 (T-095's case), and
@@ -554,6 +554,31 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       8,920 $M) — not "Total revenues and other", which matches only in FY2024, where the
       in-between items net to zero; the full-universe rejection count reported and inspected;
       `T-095`'s entry corrected.
+      **Done 2026-09-28.** `Statements._label_total_correction` (`statements.py`): scans the
+      same statement, document order, for a later row whose *label* (never a filer's own
+      concept name) reads as a revenue total and is materially smaller than the Tier 1
+      `total_concepts` match — a well-formed statement's later, broader total is never smaller
+      than an earlier one labeled the same way, so finding one is itself the contradiction.
+      Corrects by subtracting the rows between the two when they're individually small enough
+      to trust; refuses to guess (returns no value, not the bad total) when they're not.
+      `scripts/verify_t117.py` (new) scanned every stored filing's own period across
+      production's **full 503-asset, 5,076-filing universe** (not a sample): 16 filing-periods
+      flagged, all APA, all safely corrected, 0 false positives — after the first cut's naive
+      `r"total...revenue"` regex was itself found (by that same full-universe scan, inspected
+      one by one) to false-positive on 81 filing-periods across ADBE/STE/TER/TSLA/URI/XYZ, all
+      "Total cost of revenues" (a near-universal COGS label matching "total"/"revenue" as bare
+      substrings) — fixed with an explicit "cost" exclusion before any number here was final.
+      APA's `revenue` recomputed for all 5 stored 10-Ks: FY2021 $7,988,000,000 (T-095's
+      existing path, unchanged), FY2022 $11,075,000,000 (untouched, correctly not
+      contradicted), FY2023 $8,279,000,000, FY2024 $9,737,000,000, FY2025 $8,920,000,000 —
+      exact acceptance-criterion match, derived purely from each filing's own facts, no
+      APA-specific code. `T-095`'s diagnosis corrected in `docs/model_fixes.md` (its own
+      "Correction (T-117)" section): re-verified live against SEC's `companyfacts`/
+      `companyconcept` APIs, APA has never filed `us-gaap:Revenues` at all — its real FY2023
+      10-K income statement has no "Total revenues" line, only "Total revenues and other";
+      the original "filer-side tagging defect" explanation does not hold. Tests:
+      `tests/test_statements.py` (+5). Full suite 769 passed (was 765 post-T-116); ruff,
+      format, mypy clean. Record: `docs/model_fixes.md` "T-117", "T-095" (Correction).
 - [ ] **T-118** *(P1 — upstream, `portfolio-data-mining`; added 2026-09-25 from PR #77's
       review)* Fix the root cause of `T-117`: the EDGAR gateway (`sec_edgar`) presents
       breakdown figures as company totals. Implemented upstream (same pattern as Work item 6);
@@ -722,10 +747,12 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112`, `T-113`, `T-114`, `T-115` and `T-116` are done too (`T-116` 2026-09-28); a
-production `dq-v2` re-gate for `T-116` is deferred pending user direction, the same as
-`T-121`–`T-124`. `T-070`–`T-084` and `T-125` (added 2026-09-27, from PR #94's review — P0,
-blocks any `cycle backfill` run and the next live `cycle select`) have not started. Execute
+`T-111`, `T-112`, `T-113`, `T-114`, `T-115`, `T-116` and `T-117` are done too (`T-116`
+2026-09-28, `T-117` 2026-09-28); a production `dq-v2` re-gate for `T-116` is deferred pending
+user direction, the same as `T-121`–`T-124`. `T-118` (upstream, `portfolio-data-mining`) stays
+open — tracks the gateway fix `T-117`'s local guard stands in for — and `T-070`–`T-084` and
+`T-125` (added 2026-09-27, from PR #94's review — P0, blocks any `cycle backfill` run and the
+next live `cycle select`) have not started. Execute
 **Work item 14**'s remaining P0 task (`T-125`, veto lifecycle) → `T-121`/`T-122`/`T-123`/`T-124`
 whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
