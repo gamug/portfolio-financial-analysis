@@ -1600,7 +1600,7 @@ that reproduce today.
 | §4.3.2 — LLM reproducibility | **live** (fallback labelled as the model: 1/377; temperature 0.2; no prompt hash) | `T-113` (before `T-079`) |
 | Dirty `code_version` on production runs | **live** (`359797e-dirty`) | `T-114` |
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
-| `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **live methodology gap** (never reaches MCD, 0.665) | `T-116`, after `T-105` |
+| `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **fixed 2026-09-28** — both gates now key on `net_debt_to_ebitda > 5.0` (S&P's "highly leveraged" band) + `interest_coverage < 1.5`; NULL-on-both routed to SOFT, not dropped | `T-116` (done) |
 | APA revenue — a breakdown figure presented as the total (PR #77 review) | **live defect** — FY2023–FY2025 resolved revenue ~2× the statement's own total | `T-117` (local guard), `T-118` (upstream) |
 | `EARNINGS_MISSING` skips unscored assets (found testing `T-106`) | **latent** — no effect on today's 20 scored names; decided: unscored = ineligible same-cycle, stop above 5% unscored | `T-119` |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |
@@ -1618,7 +1618,8 @@ before the LLM re-run `T-079`, whose inputs it corrects; `T-106`/`T-107` togethe
 `T-109` before any `evaluate` result is read). `T-113` must land before `T-079`. Methodology
 changes (`T-105`, `T-108`, `T-109`, `T-110`, `T-116`) each get their constitution AI behavior
 #12 record. `T-121` (void the stale live-book snapshot) then `T-122` (re-persist `T-108`/
-`T-109` to production), and `T-123` (clean `T-110`'s production orphan rows), are the
+`T-109` to production), `T-123` (clean `T-110`'s production orphan rows), and `T-116`'s own
+production `dq-v2` re-gate (a `python -m fundamental_agent quality` re-run), are the
 production actions those fixes' code landed but did not itself perform — held pending
 explicit user direction, not blocking any other task in this file.
 

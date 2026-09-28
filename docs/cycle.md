@@ -216,7 +216,7 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
 - **metrics** (before any step) — `latest_metrics` with the Ring-1 quarantine applied
   (`data_quality().apply`): a quarantined metric reads as NULL in every score and rule; its
   market cap too. A negative-equity name keeps the worst leverage rank in VALORIZATION (C2).
-  The manifest records `"quality": "dq-v1"`.
+  The manifest records `"quality": "dq-v2"`.
 - **fundamental** — delegates to `fundamental_hook`; with no hook it just reports
   the count of existing FUNDAMENTAL scores.
 - **semantic_read** — a no-op that records a checkpoint noting the aggregation runs

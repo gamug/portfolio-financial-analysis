@@ -20,7 +20,7 @@ against production data are in ``docs/model_fixes.md``'s T-065 entry.
 | ``DQ_MARGIN_REVIEW``| ``|net_margin|`` in ``(1, 5]``                     | SOFT      | nothing     |
 | ``DQ_OCF_MARGIN``  | ``|operating_cash_flow_margin| > 3``               | HARD      | OCF margin  |
 | ``DQ_MCAP_SCALE``  | ``market_cap / total_assets`` outside ``[0.001, 100]`` | HARD  | market cap and every valuation metric built on it |
-| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | HARD if also ``debt_to_assets > 0.8`` or ``interest_coverage < 1.5``, else SOFT | D/E and ROE |
+| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | HARD if also ``net_debt_to_ebitda > 5.0`` or ``interest_coverage < 1.5``, else SOFT | D/E and ROE |
 | ``DQ_REVENUE_POS`` | ``revenue <= 0`` or missing, with net income present | HARD    | the revenue-denominated ratios |
 
 The gates read the stored rows (value + ``inputs_json``) of one metrics engine version at a
@@ -51,7 +51,7 @@ NET_MARGIN_REVIEW: Final[float] = 1.0
 OCF_MARGIN_MAX: Final[float] = 3.0
 MCAP_TO_ASSETS_MIN: Final[float] = 0.001
 MCAP_TO_ASSETS_MAX: Final[float] = 100.0
-NEG_EQUITY_DEBT_TO_ASSETS: Final[float] = 0.8
+NEG_EQUITY_NET_DEBT_TO_EBITDA: Final[float] = 5.0
 NEG_EQUITY_INTEREST_COVERAGE: Final[float] = 1.5
 
 MetricKey = tuple[str, str]  # (metric_group, metric_name)
@@ -181,12 +181,12 @@ def _neg_equity(fm: FilingMetrics) -> list[Issue]:
     equity = _input(fm, "equity")
     if equity is None or equity > 0:
         return []
-    dta = _value(fm, ("leverage", "debt_to_assets"))
+    ndte = _value(fm, ("leverage", "net_debt_to_ebitda"))
     cov = _value(fm, ("leverage", "interest_coverage"))
-    distressed = (dta is not None and dta > NEG_EQUITY_DEBT_TO_ASSETS) or (
+    distressed = (ndte is not None and ndte > NEG_EQUITY_NET_DEBT_TO_EBITDA) or (
         cov is not None and cov < NEG_EQUITY_INTEREST_COVERAGE
     )
-    evidence = {"equity": equity, "debt_to_assets": dta, "interest_coverage": cov}
+    evidence = {"equity": equity, "net_debt_to_ebitda": ndte, "interest_coverage": cov}
     return _hits(
         fm,
         _EQUITY_DENOMINATED,
@@ -243,8 +243,8 @@ GATES: Final[tuple[tuple[str, str, str, Callable[[FilingMetrics], list[Issue]]],
     (
         "DQ_NEG_EQUITY",
         "HARD/SOFT",
-        "book equity <= 0: D/E and ROE quarantined; HARD only if debt/assets > "
-        f"{NEG_EQUITY_DEBT_TO_ASSETS} or interest coverage < {NEG_EQUITY_INTEREST_COVERAGE}",
+        "book equity <= 0: D/E and ROE quarantined; HARD only if net debt/EBITDA > "
+        f"{NEG_EQUITY_NET_DEBT_TO_EBITDA} or interest coverage < {NEG_EQUITY_INTEREST_COVERAGE}",
         _neg_equity,
     ),
     (

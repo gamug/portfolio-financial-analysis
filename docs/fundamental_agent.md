@@ -248,9 +248,10 @@ Seven deterministic, LLM-free checks over a filing's **stored** metrics (value +
 `DQ_MARGIN` (`|net margin| > 5`), `DQ_MARGIN_REVIEW` (`(1, 5]`, SOFT, review only),
 `DQ_OCF_MARGIN` (`|OCF margin| > 3`), `DQ_MCAP_SCALE` (market cap / total assets outside
 `[0.001, 100]`), `DQ_NEG_EQUITY` (equity ≤ 0 — D/E and ROE quarantined; HARD only if
-debt/assets > 0.8 or interest coverage < 1.5), `DQ_REVENUE_POS` (revenue ≤ 0 or missing with
-net income reported). Each hit is one `data_quality_issue` row per gated metric, keyed by the
-metric engine version and `GATE_VERSION` (`dq-v1`), append-only (`INSERT OR IGNORE`).
+net debt/EBITDA > 5.0 or interest coverage < 1.5; recalibrated from debt/assets by T-116),
+`DQ_REVENUE_POS` (revenue ≤ 0 or missing with net income reported). Each hit is one
+`data_quality_issue` row per gated metric, keyed by the metric engine version and
+`GATE_VERSION` (`dq-v2`), append-only (`INSERT OR IGNORE`).
 `evaluate(fm)` is the pure core; `gate_version(conn, version, *, filing_id=None, run_id=None)`
 records; `gate_all(conn, *, engine_version=None)` is the backfill. Rationale and the
 production-copy verification: `docs/model_fixes.md`, T-065.

@@ -3206,3 +3206,140 @@ production file are both refused.
   coexist — flagged in Design decisions above as unneeded for this task's acceptance
   criterion, not overlooked; a future task that actually wants concurrent replay experiments
   should reach for that shape rather than re-deriving it.
+
+---
+
+## T-116 — Negative-equity distress screen recalibrated: `net_debt_to_ebitda` replaces `debt_to_assets`
+
+**Status**: Fixed 2026-09-28 (`T-116`).
+
+### Symptom
+
+`LEVERAGE_EXTREME`'s negative-equity branch (`cycle/rules/builtin.py`, C2) and
+`DQ_NEG_EQUITY`'s HARD/SOFT split (`fundamental_agent/quality.py`, T-065) both gate on
+`debt_to_assets > 0.8 OR interest_coverage < 1.5`. Recomputed against every negative-book-
+equity filing in the 20-asset production sample (`financial.db`, read-only; statements rebuilt
+from stored `financial_facts`, leverage ratios recomputed with today's code including T-105's
+TTM annualization — same method as `scripts/verify_t105.py`), `debt_to_assets` never moves:
+MCD's 19 filings (FY2021-2026Q2) sit in a narrow `[0.661, 0.719]` band, always comfortably
+under the 0.8 guard, regardless of the buyback program that pushed `debt_to_equity` from
+-7.74 to -38.97 over the same window. That MCD *should* be spared is not in question (its
+`interest_coverage`, 5.89-9.42x, and `net_debt_to_ebitda`, 2.53-2.96x, both say so) — the
+methodology gap is that `debt_to_assets` gives the right answer for the wrong reason here: it
+is a balance-sheet solvency ratio (debt against total assets), not a leverage-capacity one
+(debt against cash-flow-generating capacity), so it cannot distinguish a genuinely over-
+levered buyback name from a healthy one whose asset base happens to keep the ratio under 0.8 —
+it would stay just as inert for a name whose fundamentals actually warranted the veto, as long
+as its balance sheet shape was similar. Independently, when *both* corroborating metrics are
+missing, `_LeverageRule.evaluate()`'s `if breached:` guard means the negative-`debt_to_equity`
+signal is dropped with no `VetoHit` at all — not even a review item: APA's FY2021 10-K and
+2022Q1 10-Q (`debt_to_equity` -4.71 / -327.17) and APO's 2022Q3 10-Q (-4.54) all have neither
+`net_debt_to_ebitda` nor `interest_coverage` resolvable from the stored facts, and evaluated to
+nothing, silently, on the cycle side (`DQ_NEG_EQUITY` in `fundamental_agent` does not share
+this half of the bug — see Design decisions).
+
+### Root cause
+
+Two independent gaps in the same negative-equity branch, both pre-dating T-105 (`net_debt_to_
+ebitda` was not reliably annualized until then, so C2's original author reused
+`debt_to_assets`, the only leverage-adjacent metric already trustworthy on a 10-Q):
+
+1. `debt_to_assets` was never the right metric for a *leverage-capacity* screen — a corporate
+   credit analysis convention keys leverage on debt relative to earnings (`net_debt_to_ebitda`),
+   not debt relative to total assets. S&P Global Ratings' "Corporate Methodology" (Nov. 2013),
+   Table 16, sets its "Aggressive" debt/EBITDA band at 4x-5x and "Highly leveraged" at above
+   5x, the industry-standard reference point this fix's `5.0` threshold reuses directly.
+   `interest_coverage < 1.5` (debt-service capacity, the other half of the standard credit
+   pair) was already correctly calibrated and is unchanged.
+2. `_LeverageRule.evaluate()`'s `if breached: hits.append(...)` only ever appends a hit when
+   the OR condition is true; when both corroborating metrics are `None`, `breached` is `False`
+   by Python's short-circuit `and`/`or` semantics, so nothing is recorded — an unrecoverable
+   "can't tell" case was conflated with a verified "not distressed" one.
+
+### Fix
+
+- `src/cycle/rules/builtin.py::_LeverageRule`: `neg_equity_debt_to_assets_threshold` (0.8)
+  replaced with `neg_equity_net_debt_to_ebitda_threshold` (5.0); `evaluate()`'s negative-
+  `debt_to_equity` branch now reads `leverage.net_debt_to_ebitda` in place of
+  `leverage.debt_to_assets`, and — before the OR check — a new branch: when both
+  `net_debt_to_ebitda` and `interest_coverage` are `None`, appends a `SOFT` `VetoHit` (evidence
+  naming both as unavailable) instead of returning nothing. `interest_coverage`'s threshold
+  (1.5) and the OR-not-AND structure (either signal independently sufficient) are unchanged.
+- `src/fundamental_agent/quality.py::_neg_equity`: `NEG_EQUITY_DEBT_TO_ASSETS` (0.8) replaced
+  with `NEG_EQUITY_NET_DEBT_TO_EBITDA` (5.0); `distressed` now reads `("leverage",
+  "net_debt_to_ebitda")` in place of `("leverage", "debt_to_assets")`. No structural change
+  needed here — `_neg_equity` already always returns an `Issue` (HARD or SOFT) whenever
+  `equity <= 0`, so it never had the silent-drop half of the bug.
+- `kg_schema.versions.DATA_QUALITY_GATE_VERSION` bumped `dq-v1` -> `dq-v2`: this is a gate-
+  *methodology* change (the HARD/SOFT boundary for `DQ_NEG_EQUITY` moves), so it re-gates as a
+  parallel, append-only set of `data_quality_issue` rows exactly the way T-065's own design
+  intends ("`gate_version` makes a future threshold change a parallel set of rows") rather than
+  silently reclassifying `dq-v1`'s already-recorded verdicts in place.
+
+### Design decisions
+
+- **Threshold value: 5.0x, not re-derived from scratch.** Reusing a cited, external credit-
+  methodology band (S&P's "highly leveraged" boundary) rather than curve-fitting a number to
+  the 20-asset sample follows Code & Git/constitution AI behavior #12's citation requirement,
+  and it happens to reproduce the sample's existing HARD/SOFT split exactly (see Verification)
+  — evidence the number is doing genuine work, not just backfitted to match.
+- **`interest_coverage`'s threshold and OR structure are untouched.** The task ("the standard
+  credit pair `net_debt_to_ebitda` + `interest_coverage`") only asked to replace the balance-
+  sheet leg; `interest_coverage < 1.5` already came from the same 342-filing Ring-1 calibration
+  C2 originally cited and nothing in this pass's data contradicts it.
+- **The NULL-on-both fix is cycle-only.** `DQ_NEG_EQUITY` already emits an `Issue` unconditionally
+  once `equity <= 0` (quarantining D/E and ROE either way); only `_LeverageRule`'s veto path had
+  the "no hit at all" gap, so only it needed the new branch. The new hit is `SOFT`, not `HARD`
+  — an unresolvable case is a review item, the same severity `DQ_NEG_EQUITY` already assigns it,
+  not an assumption of distress.
+- **A gate-version bump, not an in-place reclassification.** `data_quality_issue` is append-
+  only by design (T-065); production's existing `dq-v1` rows keep recording what was true under
+  the old threshold, and a `quality` re-run writes fresh `dq-v2` rows alongside them once
+  someone runs it — consistent with every other versioned measurement table in this repo.
+
+### Verification
+
+- Recomputed over every negative-book-equity filing in the 20-asset production sample (41
+  filings, 4 tickers: MCD 19, SBAC 19, APA 2, APO 1 — matches T-065's own production backfill
+  count exactly, cross-validating this pass's read against that independently-recorded one):
+
+  | Ticker | Filings | `net_debt_to_ebitda` range | `interest_coverage` range | Before (`debt_to_assets`) | After (`net_debt_to_ebitda`) |
+  |---|---|---|---|---|---|
+  | MCD | 19 | 2.53x-2.96x | 5.89x-9.42x | SOFT (`d/a` 0.661-0.719, always < 0.8) | SOFT (both metrics healthy, always < 5.0 / > 1.5) |
+  | SBAC | 19 | 6.91x-8.16x | not resolvable | HARD (`d/a` 1.084-1.255, always > 0.8) | HARD (`net_debt_to_ebitda` always > 5.0) |
+  | APA | 2 | not resolvable | not resolvable | SOFT, `DQ_NEG_EQUITY` only — `LEVERAGE_EXTREME` dropped the hit entirely (both metrics `None`) | SOFT on both rules (the new NULL-on-both branch) |
+  | APO | 1 | not resolvable | not resolvable | SOFT, `DQ_NEG_EQUITY` only — `LEVERAGE_EXTREME` dropped the hit entirely | SOFT on both rules |
+
+  `DQ_NEG_EQUITY`'s HARD/SOFT split is unchanged in count (19 HARD / 22 SOFT, same as T-065's
+  production backfill) — the new metric reclassifies nothing in this sample, it closes the gap
+  for a future name the old ratio would have missed. `LEVERAGE_EXTREME` gains 3 `SOFT` review
+  hits (APA x2, APO x1) that previously evaluated to nothing.
+- New/changed tests: `tests/test_cycle.py` --
+  `test_leverage_rule_hard_vetoes_negative_equity_with_high_net_debt_to_ebitda` (SBAC-shaped:
+  7.35x with `interest_coverage` unavailable still trips HARD),
+  `test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage` (the OR is still
+  a genuine OR), `test_leverage_rule_spares_negative_equity_with_healthy_debt_load` (MCD-
+  shaped, including exactly-at-threshold values), and
+  `test_leverage_rule_negative_equity_with_no_corroborating_metrics_soft_vetoes` (replaces the
+  old `..._does_not_veto` test: now asserts a `SOFT` hit, not silence). `tests/test_data_quality.py`
+  -- `test_negative_equity_quarantines_de_and_roe_hard_only_when_distressed` reparametrized on
+  `net_debt_to_ebitda`; `test_the_table_checks_severity_and_the_view_names_the_filing` updated
+  to trigger HARD via the new metric.
+- `uv run pytest -q` -- 753 passed (unchanged count: existing tests reparametrized in place,
+  no net test added, since T-116 recalibrates existing coverage rather than adding a new code
+  path beyond the one NULL-on-both branch, itself covered by the reparametrized test above).
+  `ruff check` / `ruff format --check` / `uv run mypy` -- all green.
+- `docs/fundamental_agent.md`, `docs/cycle.md` updated (`DQ_NEG_EQUITY`'s threshold text,
+  `dq-v1` -> `dq-v2` in the manifest example).
+
+### Residual scope, deliberately deferred
+
+- **Production re-gate under `dq-v2`.** Production's `data_quality_issue` table still only
+  carries `dq-v1` rows; a `python -m fundamental_agent quality` re-run is needed to populate
+  `dq-v2` verdicts before `cycle` (which reads only the live `DATA_QUALITY_GATE_VERSION`) sees
+  them — the same category of pending production action as F1/F2/F4/T-108/T-109's deferred
+  re-persists, held pending explicit user direction.
+- **`rule_catalog` staleness in production**, the same residual C2 already flagged: the seeded
+  `LEVERAGE_EXTREME` row's `description`/`params_json` in production still reflect the pre-
+  T-116 threshold text until a one-time catalog `UPDATE` is run; live veto *behavior* is
+  unaffected (`evaluate()` runs the live Python `RULES` object directly).

@@ -191,20 +191,20 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     assert (2, "EARNINGS_MISSING", "SOFT") in hits
 
 
-def test_leverage_rule_hard_vetoes_negative_equity_with_high_debt_to_assets(
+def test_leverage_rule_hard_vetoes_negative_equity_with_high_net_debt_to_ebitda(
     memory_db: Database,
 ) -> None:
-    """C2 (docs/model_fixes.md): MCD-shaped negative book equity -- a
+    """T-116 (docs/model_fixes.md): SBAC-shaped negative book equity -- a
     negative debt_to_equity would trivially evade a plain `> 3.0` check, but
-    a high debt_to_assets still triggers the veto."""
+    a high net_debt_to_ebitda still triggers the veto."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -38.96,
-                "leverage.debt_to_assets": 0.95,
-                "leverage.interest_coverage": 8.0,
+                "leverage.debt_to_equity": -2.75,
+                "leverage.net_debt_to_ebitda": 7.35,
+                "leverage.interest_coverage": None,
             },
         },
         price_obs={},
@@ -221,7 +221,7 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_high_debt_to_assets(
 def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
     memory_db: Database,
 ) -> None:
-    """Proves debt_to_assets and interest_coverage are each independently
+    """Proves net_debt_to_ebitda and interest_coverage are each independently
     sufficient (an OR, not an AND)."""
     seed_catalog(memory_db)
     ctx = RuleContext(
@@ -229,7 +229,7 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
         metrics={
             1: {
                 "leverage.debt_to_equity": -10.0,
-                "leverage.debt_to_assets": 0.3,  # healthy
+                "leverage.net_debt_to_ebitda": 2.0,  # healthy
                 "leverage.interest_coverage": 1.0,  # < 1.5
             },
         },
@@ -247,16 +247,16 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
 def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     memory_db: Database,
 ) -> None:
-    """Not "any negative equity = HARD": healthy debt_to_assets/
-    interest_coverage, including exactly at the calibrated thresholds
-    (strict inequalities, not >=/<=), doesn't veto."""
+    """Not "any negative equity = HARD": MCD-shaped negative equity -- a
+    healthy net_debt_to_ebitda/interest_coverage, including exactly at the
+    calibrated thresholds (strict inequalities, not >=/<=), doesn't veto."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
                 "leverage.debt_to_equity": -5.0,
-                "leverage.debt_to_assets": 0.8,  # exactly at threshold, not >
+                "leverage.net_debt_to_ebitda": 5.0,  # exactly at threshold, not >
                 "leverage.interest_coverage": 1.5,  # exactly at threshold, not <
             },
         },
@@ -271,12 +271,12 @@ def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
-def test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_not_veto(
+def test_leverage_rule_negative_equity_with_no_corroborating_metrics_soft_vetoes(
     memory_db: Database,
 ) -> None:
-    """Accepted limitation: if both debt_to_assets and interest_coverage are
-    missing, a negative debt_to_equity alone doesn't trigger the veto --
-    same missing-data handling as every other rule in this catalog."""
+    """T-116: if both net_debt_to_ebitda and interest_coverage are missing, a
+    negative debt_to_equity can't be verified either way -- routed to SOFT
+    review, not silently passed (the pre-T-116 gap)."""
     seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
@@ -289,7 +289,8 @@ def test_leverage_rule_negative_equity_with_no_corroborating_metrics_does_not_ve
         for r in enabled_rules(memory_db)
         for h in r.evaluate(ctx)
     ]  # type: ignore[attr-defined]
-    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+    assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
+    assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
 
 
 def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Database) -> None:
@@ -961,7 +962,7 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
             "profitability": "metrics-v1",
             "valuation": "metrics-v1",
         },
-        "quality": "dq-v1",  # the Ring-1 gate version it read quarantines under (T-065)
+        "quality": "dq-v2",  # the Ring-1 gate version it read quarantines under (T-065/T-116)
     }
 
 
