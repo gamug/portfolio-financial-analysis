@@ -184,8 +184,62 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
 
 
 def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*."""
+    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*.
+
+    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset with
+    none at all is simply absent, never present with a ``None`` value (T-119): a consumer that
+    wants "no score at all" must diff its own universe against this dict's keys, not iterate its
+    values -- see ``unscored_assets``."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
+
+
+def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
+    """Universe members with no FUNDAMENTAL score row at all, not merely a stale one (T-119).
+
+    *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
+    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
+    key-membership diff against the full universe, not a value check, since an asset with zero
+    rows is never a key at all.
+
+    ``[]`` when *every* member is unscored: with no scored peer to be missing relative to, this
+    is a bootstrap/pre-season state (a cycle dated before any filing is public yet, T-106/T-107)
+    the same way ``kg_schema.queries.stale_gate_version_reason`` treats "no rows at all" as
+    safe -- not the partial coverage gap this function exists to flag."""
+    unscored = [a for a in asset_ids if a not in scored]
+    if unscored and len(unscored) >= len(asset_ids):
+        return []
+    return unscored
+
+
+class TooManyUnscored(RuntimeError):
+    """More than ``CycleSettings.unscored_max_share`` of the universe has no FUNDAMENTAL score
+    at all (T-119, PR #78 review) -- refuses to rank/select rather than silently building a
+    portfolio blind on most of the universe. An unscored asset is ineligible for selection, not
+    penalized like a stale one (``EARNINGS_MISSING``, SOFT): this is a data-completeness circuit
+    breaker on the whole run, not a per-asset veto."""
+
+
+def too_many_unscored_reason(
+    unscored: list[int], universe_size: int, max_share: float
+) -> str | None:
+    """``None`` when *unscored*'s share of *universe_size* is within *max_share*; otherwise the
+    refusal message ``TooManyUnscored`` should carry (T-119).
+
+    Safe (no refusal) when *every* universe member is unscored, the same "no rows at all is
+    safe" precedent as ``kg_schema.queries.stale_gate_version_reason``: a cycle dated before any
+    filing is public yet (T-106/T-107 -- ``tests/test_point_in_time_readers.py``'s ``test_a_
+    cycle_before_the_filings_are_public_sees_no_fundamentals``) legitimately has zero coverage
+    for the whole universe, not a partial gap this guard exists to catch -- there is nothing yet
+    to distinguish an anomalous subset from."""
+    if universe_size == 0 or not unscored or len(unscored) >= universe_size:
+        return None
+    share = len(unscored) / universe_size
+    if share <= max_share:
+        return None
+    return (
+        f"{len(unscored)}/{universe_size} universe members ({share:.1%}) have no FUNDAMENTAL "
+        f"score at all, over the {max_share:.0%} limit: asset_ids {sorted(unscored)}"
+    )
 
 
 def latest_fundamental_score(conn: Database, cycle_date: str) -> dict[int, float | None]:

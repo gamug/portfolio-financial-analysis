@@ -56,6 +56,11 @@ class CycleSettings(BaseModel):
     # landed without its one-time re-gate, which would silently zero out every quarantine and
     # HARD DQ_*/DATA_QUALITY veto. Meant for a deliberate run before re-gating, not routine use.
     allow_stale_dq_gate: bool = False
+    # T-119 (PR #78 review): a universe member with no FUNDAMENTAL score at all (not merely a
+    # stale one) is ineligible for selection the same cycle it is detected, not through the T-1
+    # veto lag -- but rank refuses outright, rather than silently building a portfolio blind on
+    # most of the universe, once more than this share has no score at all.
+    unscored_max_share: float = 0.05
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

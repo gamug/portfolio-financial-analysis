@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from cycle.config import CycleSettings
+from cycle.data import TooManyUnscored
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
@@ -201,6 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         StaleAsOf,
         StaleGateVersion,
         DirtyTree,
+        TooManyUnscored,
     ) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1

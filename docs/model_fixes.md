@@ -3627,3 +3627,119 @@ today `Statements.from_payload` reads only the three statement keys
 revenue would land in `financial_facts` indistinguishable from a real filed fact. Needs a flag
 or provenance field on the affected `financial_facts` row(s). Not yet designed or implemented;
 tracked as `T-118`'s step (3) in `TASKS.md`.
+
+## T-119 — An unscored asset silently escaped every rule check; now ineligible immediately, with a universe-wide circuit breaker
+
+**Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`).
+
+### Symptom
+
+`EARNINGS_MISSING` (`cycle/rules/builtin.py::_StaleFundamentalRule`) is meant to flag a stale
+FUNDAMENTAL score (SOFT), but its `if last is None or ...` branch checking for "no score at
+all" was unreachable: `ctx.last_fundamental` (`cycle/data.py::last_fundamental_dates`) is built
+from a SQL query that only ever includes an asset as a *key* when it has a usable FUNDAMENTAL
+score at all -- an asset with zero rows is simply absent, never present with a `None` value. No
+effect in production today (every one of the 20 ranked assets in the current small selection
+has a score); on the full-universe run (`T-100`, 503 assets) any member that had never been
+scored at all -- a new listing, a scoring failure, a gap in `fundamental_agent`'s coverage --
+would rank and could be selected with no veto, no penalty, and no record of the gap at all.
+
+### Root cause
+
+`last_fundamental_dates`/`latest_fundamental_rows` (`cycle/data.py`) are plain `SELECT`s keyed
+by `score_snapshot.asset_id` -- an asset with no row simply never appears, by SQL's own
+semantics, not a defect in the query itself. `_StaleFundamentalRule.evaluate()` iterates
+`ctx.last_fundamental.items()`, so an asset absent as a key is never visited at all; its `last
+is None` branch was written for a value the real data-access layer never actually produces,
+only for the ad-hoc test double that pre-dated this fix (`tests/test_cycle.py::test_threshold_
+and_drawdown_rules` constructs `last_fundamental={..., 2: None}` by hand).
+
+PR #78's review decision was explicit that fixing this by simply back-filling `None` for every
+unscored asset in `last_fundamental_dates` -- the seemingly obvious repair -- is the wrong
+mechanism: doing so would make `EARNINGS_MISSING` (a SOFT veto, `soft_veto_penalty` points off
+the blended score, still eligible for selection) fire for an asset with *no* fundamental history
+at all the same way it fires for one whose score has merely aged past 400 days. Those are not
+the same risk: a name with a genuinely stale filing has at least once passed through
+`fundamental_agent`'s deterministic ratio computation and LLM synthesis and can be reasoned
+about; a name with zero FUNDAMENTAL rows has never been assessed at all, and blending it in at
+a score-based discount treats "unknown" as a weak "known-and-bad," understating the actual
+uncertainty. This is a portfolio-construction data-completeness policy decision, not a ratio or
+GAAP question, so the citation here is to that review decision and to standard
+factor-portfolio-construction practice of excluding, rather than discount-scoring, a constituent
+lacking the underlying data a factor is computed from -- imputing or discount-scoring a missing
+fundamental factor is exactly the kind of silent extrapolation a decision-support tool must not
+present as equivalent to a real, computed score (constitution AI behavior #5).
+
+### Fix
+
+- `cycle/data.py`: new `unscored_assets(asset_ids, scored) -> list[int]` -- the universe's own
+  key-membership diff against `last_fundamental_dates`/`latest_fundamental_rows`'s keys, `[]`
+  when *every* member lacks a score (see Design decisions). New `TooManyUnscored(RuntimeError)`
+  and `too_many_unscored_reason(unscored, universe_size, max_share) -> str | None`.
+- `cycle/config.py`: new `CycleSettings.unscored_max_share: float = 0.05`, no `--allow-*`
+  override -- unlike T-110/T-114/T-116's guards, this isn't a "deliberate run despite a known
+  gap" case to opt into; a run that hits it needs the underlying coverage fixed, not a flag.
+- `cycle/orchestrator.py::_rank`: computes `unscored = data.unscored_assets(asset_ids,
+  per_type["FUNDAMENTAL"])` and raises `TooManyUnscored` immediately (before ranking/writing
+  anything) when `too_many_unscored_reason` returns non-`None`. Otherwise every unscored asset's
+  `cycle_ranking` row is marked `vetoed = True` with `"UNSCORED"` appended to `veto_rules` --
+  written directly in this same `rank` step's own computation, never through the `veto` table or
+  `hard_vetoed_as_of`/`active_soft_vetoes`'s T-1 cutoff, so it excludes the asset from
+  `positions` the very cycle it's detected, not the next one. `CycleReport.unscored` records the
+  count for visibility. `cli.py`'s exception tuple gets `TooManyUnscored` alongside the other
+  guards.
+- `cycle/rules/builtin.py::_StaleFundamentalRule`: docstring and `DESCRIPTION` updated to state
+  its narrower, now-actually-reachable scope precisely ("a FUNDAMENTAL score exists but has aged
+  past the lookback window") -- no behavior change, since its `if last is None` branch was
+  already correct for the shape a hand-built `RuleContext` can carry, just unreachable via the
+  real data path.
+
+### Design decisions
+
+- **Ineligible, not penalized (PR #78 review).** The two failure modes are kept structurally
+  separate rather than merged into one rule: `EARNINGS_MISSING` (SOFT, `veto` table, T-1 lag,
+  `soft_veto_penalty`) for a score that exists but is stale; the new `_rank`-level mechanism
+  (immediate, no table row, no score penalty, excluded outright) for no score at all. Reusing
+  `EARNINGS_MISSING`'s own SOFT-veto path for the latter would understate the difference between
+  "known and old" and "never assessed."
+- **Not through the T-1 lag.** Every other veto (HARD or SOFT) is detected on day *D* but only
+  takes effect ranking day *D+1* (`_t_minus_1`, `hard_vetoed_as_of`/`active_soft_vetoes`'s
+  cutoff) -- deliberately, so a same-day rule change doesn't retroactively exclude a name a prior
+  cycle already scored. That lag doesn't apply here: an asset with no score has never been
+  properly ranked at all, so there is no prior ranking decision to protect from retroactive
+  change by waiting a day.
+- **A universe-wide circuit breaker, not overridable.** `unscored_max_share` (default 0.05) has
+  no CLI flag to bypass it, unlike T-110/T-114/T-116's `--allow-*` guards -- those exist for a
+  deliberate run despite a *known*, already-understood gap (stale prices, a dirty tree, an
+  un-migrated gate version); a universe suddenly missing FUNDAMENTAL coverage on more than 5% of
+  its members is itself the anomaly to investigate, not a state to run through.
+- **Exempt when the whole universe is unscored, not just "most of it."** `unscored_assets`
+  returns `[]` -- and `too_many_unscored_reason` also independently returns `None` -- when every
+  single universe member lacks a score, the same "no rows at all is safe" precedent
+  `kg_schema.queries.stale_gate_version_reason` already established for Ring-1's own gate-version
+  guard. Found live against `tests/test_point_in_time_readers.py::test_a_cycle_before_the_
+  filings_are_public_sees_no_fundamentals`: a cycle dated before *any* filing is public yet
+  (T-106/T-107's own no-lookahead boundary) legitimately has zero FUNDAMENTAL coverage across
+  the whole universe every reporting season, for every asset simultaneously -- not a data-quality
+  gap, and refusing that cycle would defeat T-106/T-107's own point: rank and select on whatever
+  signals *are* legitimately available (TECHNICAL/VALORIZATION/SEMANTIC, renormalized) rather
+  than wait idle for FUNDAMENTAL. With no scored peer in the universe to be missing relative to,
+  there is nothing for the 5% share to be measured against.
+
+### Verification
+
+- `tests/test_cycle.py` (+6): `test_unscored_assets_diffs_universe_against_scored_keys`,
+  `test_unscored_assets_is_empty_when_the_whole_universe_lacks_a_score`,
+  `test_too_many_unscored_reason_pure_function` (pure-function unit tests);
+  `test_unscored_asset_ineligible_immediately_not_through_t1_lag` (`cycle_seed`, 5 assets, one
+  score deleted, `unscored_max_share` relaxed to 0.5 so the run completes: the affected asset's
+  `cycle_ranking` row is `vetoed = 1` with `veto_rules_json == ["UNSCORED"]` on the *same* cycle
+  date, no `veto` table row, excluded from `portfolio_position`); `test_too_many_unscored_
+  refuses_the_selection_cycle` / `test_monitor_also_refuses_too_many_unscored` (1/5 = 20%, over
+  the 5% default, both cycle types raise `TooManyUnscored`, `cycle_run.status == 'failed'`).
+- Regression: `tests/test_point_in_time_readers.py::test_a_cycle_before_the_filings_are_
+  public_sees_no_fundamentals` (all 5 assets unscored, pre-filing dates) still passes unmodified
+  -- confirms the "whole universe unscored" exemption (Design decisions) actually holds against
+  the one existing test that would otherwise have caught this fix over-firing.
+- `uv run pytest -q` -- 775 passed (was 769, +6 new here). `ruff check` / `ruff format --check`
+  / `uv run mypy` -- all clean.

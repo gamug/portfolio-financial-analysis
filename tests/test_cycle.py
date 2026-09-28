@@ -15,6 +15,7 @@ from cycle.cli import build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
+from cycle.data import TooManyUnscored, too_many_unscored_reason, unscored_assets
 from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, enabled_rules, seed_catalog
@@ -981,6 +982,78 @@ def test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle(
     ).fetchone()
     assert day2["vetoed"] == 1
     assert day2["selected"] == 0
+
+
+# -- T-119: no FUNDAMENTAL score at all -----------------------------------
+
+
+def test_unscored_assets_diffs_universe_against_scored_keys() -> None:
+    assert unscored_assets([1, 2, 3], {1: "x", 3: None}) == [2]
+
+
+def test_unscored_assets_is_empty_when_the_whole_universe_lacks_a_score() -> None:
+    """No scored peer to be missing relative to -- a bootstrap/pre-season cycle date
+    (T-106/T-107), not a coverage gap."""
+    assert unscored_assets([1, 2, 3], {}) == []
+
+
+def test_too_many_unscored_reason_pure_function() -> None:
+    assert too_many_unscored_reason([], 20, 0.05) is None
+    assert too_many_unscored_reason([1], 20, 0.05) is None  # exactly 5% -- not "more than"
+    reason = too_many_unscored_reason([1, 2], 20, 0.05)
+    assert reason is not None
+    assert "2/20" in reason
+    assert "10.0%" in reason
+
+
+def test_unscored_asset_ineligible_immediately_not_through_t1_lag(cycle_seed: Database) -> None:
+    """T-119 (PR #78 review): a universe member with *no* FUNDAMENTAL score at all -- not
+    merely a stale one -- is ineligible the same cycle it's detected, unlike a HARD veto (T-1
+    lag, see `test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle` above), and
+    is not penalized via a SOFT veto (no `veto` table row, no `soft_veto_penalty` stacking)."""
+    conn = cycle_seed
+    seed_catalog(conn)
+    conn.execute("DELETE FROM score_snapshot WHERE asset_id = 2 AND score_type = 'FUNDAMENTAL'")
+    conn.commit()
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    report = run_selection(settings, "2026-06-30", conn=conn)
+
+    assert report.unscored == 1
+    row = conn.execute(
+        "SELECT vetoed, selected, veto_rules_json FROM v_cycle_ranking WHERE ticker = 'BBB'"
+    ).fetchone()
+    assert row["vetoed"] == 1  # same cycle -- not the T-1 lag
+    assert row["selected"] == 0
+    assert json.loads(row["veto_rules_json"]) == ["UNSCORED"]
+    assert (
+        conn.execute("SELECT COUNT(*) AS n FROM veto WHERE asset_id = 2").fetchone()["n"] == 0
+    )  # no SOFT veto row -- ineligible, not penalized
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM portfolio_position WHERE asset_id = 2 AND valid_to IS NULL"
+        ).fetchone()["n"]
+        == 0
+    )
+
+
+def test_too_many_unscored_refuses_the_selection_cycle(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    seed_catalog(conn)
+    conn.execute("DELETE FROM score_snapshot WHERE asset_id = 2 AND score_type = 'FUNDAMENTAL'")
+    conn.commit()
+    with pytest.raises(TooManyUnscored, match=r"1/5.*20\.0%"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
+    run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
+    assert run_row["status"] == "failed"
+
+
+def test_monitor_also_refuses_too_many_unscored(cycle_seed: Database) -> None:
+    conn = cycle_seed
+    seed_catalog(conn)
+    conn.execute("DELETE FROM score_snapshot WHERE asset_id = 2 AND score_type = 'FUNDAMENTAL'")
+    conn.commit()
+    with pytest.raises(TooManyUnscored):
+        run_monitoring(_settings(conn), "2026-06-30", conn=conn)
 
 
 def test_monitoring_cycle_skips_positions(cycle_seed: Database) -> None:

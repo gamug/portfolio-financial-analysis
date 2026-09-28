@@ -76,7 +76,9 @@ contract.
 optional. Knobs:
 `universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / VALOR .3 / TECH
 .2 / SEM .1), `weight_scheme` (`equal` | `score_proportional` | `inverse_vol`),
-`max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts).
+`max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts),
+`unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of a partially
+covered universe with no FUNDAMENTAL score at all).
 
 ## Files
 
@@ -105,7 +107,14 @@ two. It runs *before* `open_cycle`, which would otherwise flip the earlier run b
 matching `assets` rows; raises loudly if `universe.db` yields nothing or nothing
 resolves. `latest_metrics(conn, date, versions)` (the newest filing *usable* on the date —
 `available_at ≤ date`, T-106/T-107 — keyed `"group.name"`), `latest_price_observation`,
-`latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot usable on the date; `last_fundamental_dates` and `latest_fundamental_score` read it),
+`latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot usable on the date; `last_fundamental_dates` and `latest_fundamental_score` read it — an asset with none at all is
+simply absent as a key, never present with a `None` value), `unscored_assets(asset_ids, scored)`
+(the universe's own key-membership diff against that, T-119 — `[]` when *every* member lacks a
+score, since a cycle dated before any filing is public yet, T-106/T-107, has nothing to call an
+anomalous subset relative to), `too_many_unscored_reason`/`TooManyUnscored` (refuses `rank` when
+more than `CycleSettings.unscored_max_share` of a *partially* covered universe has no score at
+all — not overridable, no `--allow-*` flag, since it isn't a "deliberate run despite a known
+gap" case the way the other guards are),
 `latest_semantic_score`, `market_cap_estimates(conn, date, metrics, versions)` (reads the
 stored `valuation.market_capitalization` metric inputs; the most recent filing per asset
 usable on the date wins), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
@@ -161,9 +170,10 @@ dropped. Pure derivation — nothing fetched.
 - `builtin.py` — `RULES`: `LEVERAGE_EXTREME` (`debt_to_equity > 3`, HARD),
   `NEGATIVE_FCF` (`free_cash_flow_margin < 0`, HARD), `LIQUIDITY_DISTRESS`
   (`current_ratio < 1`, SOFT), `PRICE_CRASH` (`max_drawdown_90d < −0.35`, SOFT),
-  `EARNINGS_MISSING` (no FUNDAMENTAL score within 400 days, SOFT), `DATA_QUALITY` (a HARD
-  Ring-1 `DQ_*` gate fired on the latest filing — read from `RuleContext.data_quality`; the
-  evidence names the gates, T-065).
+  `EARNINGS_MISSING` (a FUNDAMENTAL score *exists but has aged* past 400 days, SOFT — an asset
+  with no score at all never reaches this rule at all, see `unscored` below, T-119),
+  `DATA_QUALITY` (a HARD Ring-1 `DQ_*` gate fired on the latest filing — read from
+  `RuleContext.data_quality`; the evidence names the gates, T-065).
 - `__init__.py` — `seed_catalog(conn)` (`INSERT OR IGNORE` into `rule_catalog`,
   never overwrites), `enabled_rules(conn)`.
 - The rule catalog and the per-run blend (`score_weights` + knobs in
@@ -239,11 +249,18 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
   negative = lagging its sector). Not in the blend — a standalone observation.
 - **rank** — blended score = weighted mean of available `normalized_score`s
   (weights renormalized over present types), minus `soft_veto_penalty` per active
-  SOFT veto. T-1 HARD-veto assets are marked `vetoed` (excluded from selection).
+  SOFT veto. T-1 HARD-veto assets are marked `vetoed` (excluded from selection). An asset
+  with no FUNDAMENTAL score at all (not merely a stale one) is marked `vetoed` with an
+  `"UNSCORED"` `veto_rules` entry immediately, this same cycle — not through the T-1 lag, and
+  not a SOFT veto/`veto` table row (T-119, PR #78 review); it still appears in `cycle_ranking`,
+  just excluded from `positions`. More than `unscored_max_share` of a partially-covered universe
+  unscored refuses the whole run (`TooManyUnscored`) instead.
 - **positions** — build `Candidate`s from the non-vetoed ranked rows →
   `target_weights` → `sync_positions`; reflect selection back into `cycle_ranking`.
 
-`CycleReport` records `steps_run` / `steps_skipped`, `selected`, `vetoed`.
+`CycleReport` records `steps_run` / `steps_skipped`, `selected`, `vetoed`, `unscored` (T-119:
+universe members with no FUNDAMENTAL score at all this cycle, distinct from `vetoed`'s
+HARD-veto count).
 
 ### `fundamental_hook.py` — `make_hook(settings) -> FundamentalHook | None`
 

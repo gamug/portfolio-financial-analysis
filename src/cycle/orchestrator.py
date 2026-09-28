@@ -79,6 +79,9 @@ class CycleReport:
     # Why the Ring-1 gate-version guard (T-116) would have refused, when --allow-stale-dq-gate
     # overrode it.
     stale_dq_gate_bypassed: str | None = None
+    # Universe members with no FUNDAMENTAL score at all this cycle (T-119) -- ineligible for
+    # selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes (see `vetoed`).
+    unscored: int = 0
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -378,6 +381,18 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),
             }
+            # T-119: a universe member with no FUNDAMENTAL score at all -- distinct from
+            # EARNINGS_MISSING's stale-but-present case -- is ineligible immediately (this
+            # cycle's own ranking, not the T-1 veto lag); more than `unscored_max_share` of the
+            # universe missing entirely refuses the run outright rather than build a portfolio
+            # blind on most of it.
+            unscored = data.unscored_assets(asset_ids, per_type["FUNDAMENTAL"])
+            unscored_reason = data.too_many_unscored_reason(
+                unscored, len(asset_ids), settings.unscored_max_share
+            )
+            if unscored_reason is not None:
+                raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
+            report.unscored = len(unscored)
             scored = []
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
@@ -386,21 +401,24 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):
+                ineligible = a in unscored
                 ranked.append(
                     {
                         "asset_id": a,
                         "rank": rank,
                         "blended_score": blended,
                         "components": parts,
-                        "vetoed": a in hard,
-                        "veto_rules": soft.get(a, []) + (["HARD"] if a in hard else []),
+                        "vetoed": a in hard or ineligible,
+                        "veto_rules": soft.get(a, [])
+                        + (["HARD"] if a in hard else [])
+                        + (["UNSCORED"] if ineligible else []),
                         "selected": False,
                         "target_weight": None,
                     }
                 )
             ranked_cache["rows"] = ranked
             writers.write_ranking(conn, run_id, ranked)
-            return {"ranked": len(ranked), "hard_vetoed": len(hard)}
+            return {"ranked": len(ranked), "hard_vetoed": len(hard), "unscored": len(unscored)}
 
         _do("rank", _rank)
 

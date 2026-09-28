@@ -637,18 +637,31 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       filed fact. Needs a flag or provenance field on the affected `financial_facts` row(s)
       recording that the value was derived/corrected, not filed as-is. Not yet designed or
       implemented.
-- [ ] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* `EARNINGS_MISSING` never fires
-      for an asset with no FUNDAMENTAL score at all: the rule iterates
-      `last_fundamental_dates`, which holds only assets that have one, so its `last is None`
-      branch is unreachable. No effect today (all 20 ranked assets are scored); on the
+- [x] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* — **DONE 2026-09-29**
+      `EARNINGS_MISSING` never fires for an asset with no FUNDAMENTAL score at all: the rule
+      iterates `last_fundamental_dates`, which holds only assets that have one, so its `last is
+      None` branch is unreachable. No effect today (all 20 ranked assets are scored); on the
       full-universe run (`T-100`) every unscored member would escape the check. **Decision
       (PR #78 review): an unscored asset is ineligible, not penalized** — no SOFT veto. A
-      selection change: #12 record.
+      selection change: #12 record (`docs/model_fixes.md`, this task's own entry).
       **Acceptance**: a universe member with no public FUNDAMENTAL score is ineligible for
       selection in the same cycle it is detected (not through the T-1 veto lag); it stays in
       the ranking, marked with the reason in `veto_rules_json`, and is listed in the cycle's
       output; if more than 5% of the universe is unscored, the selection cycle stops with an
       error instead of building a portfolio.
+      New `cycle.data.unscored_assets`/`TooManyUnscored`/`too_many_unscored_reason`; new
+      `CycleSettings.unscored_max_share` (0.05, no `--allow-*` override); `orchestrator._rank`
+      raises `TooManyUnscored` over that share of a *partially*-covered universe, otherwise
+      marks each unscored asset's `cycle_ranking` row `vetoed=True` with `"UNSCORED"` in
+      `veto_rules` directly in this same step — never the `veto` table, never the T-1 cutoff, so
+      exclusion from `positions` is immediate. Exempt when the *whole* universe is unscored (a
+      cycle dated before any filing is public yet, T-106/T-107 — nothing to be an anomalous
+      subset of); verified this doesn't regress
+      `tests/test_point_in_time_readers.py::test_a_cycle_before_the_filings_are_public_sees_no_
+      fundamentals`, the one existing test that exercises exactly that state. `_StaleFundamental
+      Rule`'s scope narrowed in its own docstring to "score exists but aged," no behavior change.
+      Tests: `tests/test_cycle.py` (+6). Full suite 775 passed (was 769); ruff, format, mypy
+      clean. Record: `docs/model_fixes.md` "T-119".
 - [x] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* — **DONE 2026-09-26** Re-ingest the
       legacy pre-`T-091` quarterly rows. Before `T-092` fixed the gateway, one Q3 10-Q per
       year was stored as Q1, Q2 and Q3 rows sharing its accession number and filing date —
