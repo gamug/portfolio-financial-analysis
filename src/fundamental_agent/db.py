@@ -55,8 +55,11 @@ _CROSS_ITEM_BAND = 1.25
 # ``metrics-v3`` (T-102): utilities' total operating revenue now resolves, so every
 # revenue-denominated ratio of AWK/DTE/DUK/NEE/SRE/XEL changes from NULL to a value; and
 # (T-103) the share-scale check is point in time, so e.g. MCD FY2023-2025Q2's market caps
-# are corrected; and (T-105) FCF yields, net debt / EBITDA and ROIC are annualized on 10-Qs.
-# All three landed before any ``metrics-v3`` row was persisted.
+# are corrected; and (T-105) FCF yields, net debt / EBITDA and ROIC are annualized on 10-Qs;
+# and (T-117) a revenue ``total_concepts`` match that the statement's own later, smaller
+# "total"-labeled row contradicts is corrected or rejected, not trusted outright -- APA's
+# FY2023-2025 revenue changes from ~2x too large to the statement's own derived figure.
+# All four landed before any ``metrics-v3`` row was persisted.
 FACTS_ENGINE_VERSION = "facts-v1"
 METRICS_ENGINE_VERSION = "metrics-v3"
 
