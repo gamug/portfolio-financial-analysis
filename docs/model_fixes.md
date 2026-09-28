@@ -3596,3 +3596,26 @@ direction the way T-095's floor does for too-small.
   stores under that concept name for APA (a second, unexplained discrepancy found during this
   verification), suggesting the conflation is broader than the one concept this entry fixes
   around. Left for `T-118`'s upstream investigation, not re-derived speculatively here.
+
+### Correction (T-118 upstream finding, 2026-09-28)
+
+The upstream mechanism deferred above is now confirmed, via `portfolio-data-mining` PR #44's
+review (`@eldova1702`): `edgartools==5.44.1`'s `xbrl.statements.income_statement().
+to_dataframe()` *synthesizes* a non-dimensional "total" row for a concept by summing that
+concept's dimensional axis members, and double-counts whenever one member is itself a parent
+whose value already includes its own children. APA's FY2023 case: `8279 (parent "Oil and gas")
++ 7385 (its own children, already rolled in) + 894 (an unrelated member) = 16558`; FY2024:
+`9737 + 8196 + 1541 = 19474`. This supersedes the earlier "Oil and gas" corroborating-row
+observation with the actual arithmetic mechanism producing it.
+
+This is confirmed **general, not APA/revenue-specific**: a full-universe scan (500 companies,
+the 61 `us-gaap` concepts `fundamental_agent` reads, compared against each company's SEC
+`companyfacts`) found 163 stored values matching no SEC-filed value at that period end, and 105
+(company, concept) pairs -- 1,101 rows total -- never filed non-dimensionally at all, so every
+value for them is synthesized. `PR #44` fixes **APA's revenue instance only**; it does not close
+`T-118`, and this entry's own `T-117` local guard stays in place as the load-bearing backstop
+for that scope, not a redundant one. The upstream general fix (`portfolio-data-mining`'s own
+`T-042`, not yet started) will validate every synthesized non-dimensional row against the
+filing's own default-context facts and mark or replace whatever doesn't reconcile -- see
+`portfolio-data-mining`'s `TASKS.md` Work item 5 and `docs/modules/sec-edgar.md` for that
+repo's own record.
