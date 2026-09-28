@@ -307,6 +307,111 @@ def test_revenue_total_concepts_plausibility_floor_is_pinned(
     assert stmts.get("revenue", key) == (total if expect_total else largest_component)
 
 
+def _apa_fy2023_rows(key: str) -> list[dict[str, Any]]:
+    """APA's real FY2023 10-K income-statement shape (`financial_facts`, T-117):
+    ``us-gaap_Revenues`` "Total revenues" is a gateway-mislabeled breakdown figure, roughly
+    double the statement's own later "Total revenues and other" subtotal, less four small
+    adjustment lines between the two (derivative gains/losses, divestiture gains, losses on
+    previously sold properties, other, net)."""
+    return [
+        _income_row("us-gaap_Revenues", "Total revenues", **{key: 16_558_000_000.0}),
+        _income_row(
+            "us-gaap_GainLossOnDerivativeInstrumentsNetPretax",
+            "Derivative instrument gains (losses), net",
+            **{key: 99_000_000.0},
+        ),
+        _income_row(
+            "us-gaap_GainLossOnSaleOfBusiness",
+            "Gain on divestitures, net",
+            **{key: 8_000_000.0},
+        ),
+        _income_row(
+            "apa_LossOnPreviouslySoldProperties",
+            "Losses on previously sold Gulf of Mexico properties",
+            **{key: -212_000_000.0},
+        ),
+        _income_row("apa_OtherSalesRevenueLossesNet", "Other, net", **{key: 18_000_000.0}),
+        _income_row("apa_RevenuesAndOther", "Total revenues and other", **{key: 8_192_000_000.0}),
+        _income_row(
+            "us-gaap_OperatingLeaseExpense", "Lease operating expenses", **{key: 1_436_000_000.0}
+        ),
+    ]
+
+
+def test_revenue_rejects_a_total_far_larger_than_the_statement_s_own_later_total() -> None:
+    """T-117 (docs/model_fixes.md): APA's FY2023-2025 shape -- the mirror image of T-095's
+    too-small case. `us-gaap_Revenues` is not merely untrustworthy, it resolves to exactly
+    the derived "Total revenues" the task's acceptance criterion names ($8,279M), not the
+    mislabeled $16,558M nor the broader "Total revenues and other" ($8,192M, which still
+    includes non-operating adjustment items)."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(_revenue_payload(*_apa_fy2023_rows(key)))
+
+    assert stmts.get("revenue", key) == 8_279_000_000.0
+
+
+def test_revenue_total_label_correction_leaves_a_genuinely_larger_total_alone() -> None:
+    """A later, larger "and other" total (APA's own FY2022, not a defect: "Total revenues
+    and other" $12,132M >= "Total revenues" $11,075M, since "and other" only adds to
+    revenue) must not be treated as a contradiction -- the Tier 1 total is trusted as-is."""
+    key = "2022-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 11_075_000_000.0}),
+            _income_row(
+                "apa_RevenuesAndOther", "Total revenues and other", **{key: 12_132_000_000.0}
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 11_075_000_000.0
+
+
+def test_revenue_total_label_correction_ignores_cost_of_revenue_lines() -> None:
+    """T-117 full-universe validation (5,076 stored filings): "Total cost of revenues" --
+    a near-universal COGS-line label (ADBE, STE, TER, TSLA, URI, XYZ all use this exact
+    phrase) -- must never be mistaken for a later revenue total merely because its label
+    contains both "total" and "revenue"; every one of those was a false positive before
+    the cost-word exclusion, none a real defect."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 3_702_881_000.0}),
+            _income_row(
+                "us-gaap_CostOfGoodsAndServicesSold",
+                "Total cost of revenues (exclusive of acquired intangible assets "
+                "amortization shown separately below)",
+                **{key: 1_496_225_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 3_702_881_000.0
+
+
+def test_revenue_total_label_correction_refuses_to_guess_when_between_rows_are_too_large() -> None:
+    """When a later, smaller "total"-labeled row is found but the rows between it and the
+    Tier 1 match are not small adjustment items -- too large relative to the later total to
+    trust as a clean subtraction -- the correction must refuse to guess: no returned value,
+    not the untrustworthy Tier 1 total either."""
+    key = "2023-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 16_558_000_000.0}),
+            _income_row(
+                "us-gaap_SomeHugeUnrelatedAdjustment",
+                "Some huge unrelated adjustment",
+                **{key: 6_000_000_000.0},  # far more than 25% of the later total below
+            ),
+            _income_row(
+                "apa_RevenuesAndOther", "Total revenues and other", **{key: 8_192_000_000.0}
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) is None
+
+
 def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_exists() -> None:
     """T-096 (docs/model_fixes.md): WAT's real shape -- 14 of 18 `metrics-v2` filings in
     the 20-ticker sample tag no `us-gaap_NetIncomeLoss`/`us-gaap_ProfitLoss` row at all,

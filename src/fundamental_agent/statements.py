@@ -404,11 +404,17 @@ class Statements:
         ``us-gaap_Revenues`` = $1,082M, matching only its "Equity Method
         Investment, Nonconsolidated Investee" dimensional row, while the
         real total is $7,988M), and such a value can never be the genuine
-        aggregate. Absent a trusted match there, **Tier 2** falls back to
-        the original single-row lookup: the first ``concepts``-matching row
-        in document order (unchanged default for every item that doesn't
-        set ``sum_components``), or, when ``spec.sum_components`` is set,
-        the sum of the first row per distinct matching concept -- multiple
+        aggregate; or *unless* :meth:`_label_total_correction` finds it
+        contradicted the other way -- implausibly *large* (T-117,
+        ``docs/model_fixes.md``): a breakdown figure the gateway mislabeled
+        with the aggregate's own concept, not the consolidated total either
+        (APA FY2023-2025's shape -- ``us-gaap_Revenues`` roughly double the
+        statement's own later, smaller "Total revenues and other" line).
+        Absent a trusted match there, **Tier 2** falls back to the original
+        single-row lookup: the first ``concepts``-matching row in document
+        order (unchanged default for every item that doesn't set
+        ``sum_components``), or, when ``spec.sum_components`` is set, the
+        sum of the first row per distinct matching concept -- multiple
         co-reported streams with no separately tagged total.
         """
         spec = REGISTRY[item]
@@ -421,8 +427,12 @@ class Statements:
 
         if spec.total_concepts:
             total_value = self._first_total_match(spec, column)
-            if total_value is not None and self._total_is_plausible(spec, column, total_value):
-                return total_value
+            if total_value is not None:
+                corrected, contradicted = self._label_total_correction(spec, column, total_value)
+                if corrected is not None:
+                    return corrected
+                if not contradicted and self._total_is_plausible(spec, column, total_value):
+                    return total_value
 
         if spec.sum_components:
             return self._sum_matching_components(spec, column)
@@ -461,6 +471,78 @@ class Statements:
         if largest is None:
             return True
         return total_value >= largest * self._TOTAL_PLAUSIBILITY_FLOOR
+
+    # T-117: a later candidate must be no more than this fraction of the Tier 1 total to
+    # count as a contradiction, not rounding/immaterial noise -- APA's ratio is ~0.42-0.50
+    # (too-large case); its exact-match FY2022 (not a defect) sits at ~1.10, well above.
+    _LABEL_TOTAL_CONTRADICTION_RATIO = 0.75
+    # Each row between the two totals must be no larger than this fraction of the later,
+    # trusted total, or the derivation is too uncertain to trust -- reject rather than guess.
+    _BETWEEN_ROW_CEILING = 0.25
+    # A row's label reads as a revenue total independent of `total_concepts`'s fixed concept
+    # list -- lets a later, more-authoritative subtotal contradict an earlier match without
+    # naming any filer's own custom-taxonomy extension concept. Excludes "Total cost of
+    # revenue(s)"/"...cost of revenues, net" -- a near-universal COGS-line label that
+    # otherwise matches "total ... revenue" trivially (T-117 full-universe validation: the
+    # single false-positive shape found across every non-APA hit in the 5,076-filing stored
+    # set -- ADBE, STE, TER, TSLA, URI, XYZ, all this exact phrase, none a real total).
+    _LABEL_TOTAL_RE = re.compile(r"\btotal\b.{0,40}\brevenues?\b", re.IGNORECASE)
+    _LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcost\b", re.IGNORECASE)
+
+    def _label_total_correction(
+        self, spec: LineItem, column: str, total_value: float
+    ) -> tuple[float | None, bool]:
+        """T-117 (``docs/model_fixes.md``): a Tier 1 ``total_concepts`` match can also be
+        implausibly *large* -- a component/breakdown value the gateway mislabeled with the
+        aggregate's own concept or role, not merely too small (T-095's case, guarded by
+        :meth:`_total_is_plausible`). Detected structurally, not by filer: scan the same
+        statement, in document order, for a row *after* the Tier 1 match whose label also
+        reads as a revenue total (:data:`_LABEL_TOTAL_RE`, independent of
+        ``spec.total_concepts``'s fixed concept list) and is materially smaller
+        (:data:`_LABEL_TOTAL_CONTRADICTION_RATIO`) -- a well-formed statement's later,
+        broader total ("Total revenues *and other*") is never smaller than its own earlier
+        "Total revenues" component, so a later, smaller "total"-labeled row is only ever
+        reachable here when the *earlier* one is the wrong, inflated figure.
+
+        When found, and every row between the two is individually small enough to trust as
+        an adjustment item (:data:`_BETWEEN_ROW_CEILING`), the true total is the later row's
+        value less those in-between rows -- APA: "Total revenues and other" less derivative
+        gains, divestiture gains, property-sale losses, and other, net, recovers "Total
+        revenues" to the dollar for FY2023-FY2025 (verified, ``docs/model_fixes.md``, T-117).
+        Otherwise contradicted but not safely derivable: the caller must not trust
+        ``total_value`` either, but this returns no guess.
+
+        Returns ``(corrected_value_or_None, contradicted)``."""
+        rows = list(self._rows_for(spec))
+        winner_index = next(
+            (
+                i
+                for i, row in enumerate(rows)
+                if row.get("concept") in spec.total_concepts
+                and _numeric(row.get(column)) is not None
+            ),
+            None,
+        )
+        if winner_index is None:
+            return None, False
+        for i in range(winner_index + 1, len(rows)):
+            label = str(rows[i].get("label") or "")
+            if not self._LABEL_TOTAL_RE.search(label) or self._LABEL_TOTAL_EXCLUDE_RE.search(label):
+                continue
+            later_value = _numeric(rows[i].get(column))
+            if later_value is None or later_value <= 0:
+                continue
+            if later_value >= total_value * self._LABEL_TOTAL_CONTRADICTION_RATIO:
+                continue  # not materially smaller -- not a contradiction, keep scanning
+            between = [
+                v
+                for j in range(winner_index + 1, i)
+                if (v := _numeric(rows[j].get(column))) is not None
+            ]
+            if any(abs(v) > later_value * self._BETWEEN_ROW_CEILING for v in between):
+                return None, True  # contradicted, but too uncertain to derive
+            return later_value - sum(between), True
+        return None, False
 
     def _largest_component_value(self, spec: LineItem, column: str) -> float | None:
         """The largest single first-matching-row value among ``spec.concepts``
