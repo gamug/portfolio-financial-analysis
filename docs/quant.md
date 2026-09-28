@@ -352,6 +352,19 @@ latest version per (book, date). The live
 join. Run `optimize --as-of <cycle_date>` for each `cycle` SELECTION so the
 benchmark and the live book share as-of dates.
 
+### `repair.py` — voiding a stale `live_book` snapshot (T-121)
+
+If the live book was ever corrupted and later repaired (T-104), a `live_book` snapshot taken
+before the repair is a permanent, stale copy of the wrong book -- nothing re-derives it, and any
+`evaluate`/dry run that reads it produces meaningless active-return figures.
+`quant void-portfolio --portfolio-id N [--apply]` deletes one: `plan_void` reads the row, its
+`quant_position` stints and `quant_benchmark_performance` row count (read-only; refuses a
+`kind` other than `live_book` -- an optimized book nothing here should ever delete), and
+`apply_void` deletes it in one transaction (`quant_position`/`quant_benchmark_performance`
+cascade; `quant_frontier_point` is deleted explicitly first, since a real book's own frontier
+points must never vanish as a side effect). Dry run (print the plan) unless `--apply`, the same
+convention as `cycle undo-run`.
+
 ## Tables and views
 
 Additive `CREATE TABLE IF NOT EXISTS` in `kg_schema.ddl` — no migration, no
