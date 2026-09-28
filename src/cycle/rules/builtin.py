@@ -65,7 +65,13 @@ class _LeverageRule:
     calibration, recomputed under T-105's now-annualized
     ``net_debt_to_ebitda`` (docs/model_fixes.md, T-116) rather than
     inventing new, unverified numbers. A negative-equity asset with neither
-    metric available is routed to SOFT review, not silently passed.
+    metric available is routed to SOFT review, not silently passed. A
+    *negative* ``net_debt_to_ebitda`` is itself ambiguous -- it can mean a
+    genuine net-cash position (healthy) or negative EBITDA with positive net
+    debt (the most distressed profile of all), and this rule sees only the
+    already-divided ratio, never the raw EBITDA/net-debt it came from -- so
+    it is treated as unresolved (PR #95 review), falling back to
+    ``interest_coverage`` alone, the same as a missing value.
     """
 
     RULE_ID = "LEVERAGE_EXTREME"
@@ -97,8 +103,17 @@ class _LeverageRule:
                 # meaningless here, so gate on the standard credit pair
                 # instead. Neither metric available: can't tell, route to
                 # SOFT review rather than pass silently (T-116).
-                ndte = metrics.get("leverage.net_debt_to_ebitda")
+                ndte_raw = metrics.get("leverage.net_debt_to_ebitda")
                 cov = metrics.get("leverage.interest_coverage")
+                # T-116 (PR #95 review): net_debt_to_ebitda goes *negative* when EBITDA itself
+                # is negative, even with substantial positive net debt -- the most distressed
+                # profile, not a healthy one. Unlike fundamental_agent's DQ_NEG_EQUITY, this
+                # rule only ever sees the already-divided ratio (never the raw EBITDA/net-debt
+                # it was built from), so it cannot tell that case apart from a genuine net-cash
+                # position (also negative). A negative ratio is therefore unresolved here, not
+                # evidence of health -- it falls back to interest_coverage alone, same as if
+                # net_debt_to_ebitda were missing.
+                ndte = ndte_raw if ndte_raw is not None and ndte_raw >= 0 else None
                 if ndte is None and cov is None:
                     hits.append(
                         VetoHit(
@@ -108,7 +123,7 @@ class _LeverageRule:
                             {
                                 "metric": "leverage.debt_to_equity",
                                 "value": dte,
-                                "net_debt_to_ebitda": None,
+                                "net_debt_to_ebitda": ndte_raw,
                                 "interest_coverage": None,
                                 "reason": "negative book equity, no corroborating leverage metric",
                             },
@@ -127,7 +142,7 @@ class _LeverageRule:
                             {
                                 "metric": "leverage.debt_to_equity",
                                 "value": dte,
-                                "net_debt_to_ebitda": ndte,
+                                "net_debt_to_ebitda": ndte_raw,
                                 "interest_coverage": cov,
                             },
                         )

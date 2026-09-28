@@ -28,7 +28,12 @@ from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, op
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
-from kg_schema.queries import StaleAsOf, stale_as_of_reason
+from kg_schema.queries import (
+    StaleAsOf,
+    StaleGateVersion,
+    stale_as_of_reason,
+    stale_gate_version_reason,
+)
 from kg_schema.versions import (
     DATA_QUALITY_GATE_VERSION,
     manifest_tag,
@@ -71,6 +76,9 @@ class CycleReport:
     stale_price_bypassed: str | None = None
     # Why the clean-tree guard (T-114) would have refused, when --allow-dirty overrode it.
     dirty_tree_bypassed: str | None = None
+    # Why the Ring-1 gate-version guard (T-116) would have refused, when --allow-stale-dq-gate
+    # overrode it.
+    stale_dq_gate_bypassed: str | None = None
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -131,6 +139,15 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         raise DirtyTree(
             f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
         )
+    # T-116 (PR #95 review): refuse before reading a moment away from Ring-1's quarantines --
+    # data_quality_issue holding only an older gate version than DATA_QUALITY_GATE_VERSION
+    # means a re-gate hasn't run since a gate-methodology bump, and every quarantine/HARD
+    # DQ_*/DATA_QUALITY veto would silently vanish below, not because filings got cleaner.
+    gate_reason = stale_gate_version_reason(conn, DATA_QUALITY_GATE_VERSION)
+    if gate_reason is not None and not settings.allow_stale_dq_gate:
+        raise StaleGateVersion(
+            f"{gate_reason}; pass --allow-stale-dq-gate for a deliberate run before re-gating"
+        )
     run_id = open_cycle(
         conn,
         cycle_type,
@@ -141,6 +158,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "manifest_tag": tag,
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
+            "stale_dq_gate_bypassed": gate_reason,
         },
         code_version=cv,
     )
@@ -148,6 +166,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
     report.stale_price_bypassed = stale_reason
     report.dirty_tree_bypassed = dirty_reason
+    report.stale_dq_gate_bypassed = gate_reason
 
     universe_rows = data.active_universe(
         conn, settings.universe, cycle_date, settings.universe_db_path

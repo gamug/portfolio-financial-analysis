@@ -266,6 +266,46 @@ def stale_as_of_reason(conn: Database, as_of: str) -> str | None:
     return f"{as_of} is past price_daily's last stored date ({last})"
 
 
+class StaleGateVersion(RuntimeError):
+    """``data_quality_issue`` holds rows under an older Ring-1 gate version but none under the
+    current one -- a gate-methodology bump (T-065/T-116) landed without its re-gate (``python -m
+    fundamental_agent quality``) having run yet."""
+
+
+def stale_gate_version_reason(conn: Database, gate_version: str) -> str | None:
+    """Why reading Ring-1 quarantines/HARD issues under *gate_version* would be unsafe right
+    now -- or ``None`` when it's safe to proceed.
+
+    A consumer (``cycle``) reads only rows of the *current* ``gate_version`` (T-065's own
+    versioning: a threshold change re-gates as a parallel, append-only set of rows rather than
+    reclassifying the old ones in place). If the database already has issues recorded under an
+    *older* version but none yet under the current one, the gate bumped without its one-time
+    re-gate running -- every quarantine and every HARD ``DQ_*``/``DATA_QUALITY`` veto would
+    silently vanish, not because the underlying filings got cleaner, but because nothing has
+    judged them under the new version yet.
+
+    ``None`` is also returned when ``data_quality_issue`` has no rows at all: Ring-1 has simply
+    never run on this database, a different (bootstrap) situation the gate's own absence
+    already makes visible, not a version regression to guard against here."""
+    try:
+        current = conn.execute(
+            "SELECT COUNT(*) FROM data_quality_issue WHERE gate_version = ?", (gate_version,)
+        ).fetchone()[0]
+    except DatabaseError:  # table not created in this DB yet
+        return None
+    if current:
+        return None
+    older = {
+        str(r[0]) for r in conn.execute("SELECT DISTINCT gate_version FROM data_quality_issue")
+    }
+    if not older:
+        return None
+    return (
+        f"data_quality_issue holds rows under {', '.join(sorted(older))} but none under "
+        f"{gate_version} yet -- run `python -m fundamental_agent quality` to re-gate first"
+    )
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,

@@ -515,6 +515,25 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `docs/model_fixes.md` "T-116". **Production re-gate under `dq-v2`** (a `python -m
       fundamental_agent quality` re-run) **is deferred, pending explicit user direction** — the
       same category as every other pending production action in this file.
+      **PR #95 review (`@eldova1702`) found two real bugs, fixed 2026-09-28**: (1) bumping to
+      `dq-v2` alone would have silently zeroed every quarantine/HARD issue until the production
+      re-gate ran — new `kg_schema.queries.StaleGateVersion`/`stale_gate_version_reason` refuses
+      `cycle select`/`monitor`/`backfill` when `data_quality_issue` holds an older gate version
+      but none under the current one, unless `--allow-stale-dq-gate` (`CycleSettings.
+      allow_stale_dq_gate`); (2) `net_debt_to_ebitda` reads negative EBITDA with positive net
+      debt (the most distressed profile) as healthy, since the ratio itself goes negative —
+      reproduced on real stored data (WAT 10-Q 2026-04-04, ratio -399.36). `_neg_equity`
+      (`fundamental_agent`) now reconstructs EBITDA/net debt from the same raw inputs the ratio
+      was divided from; `_LeverageRule` (`cycle`, no raw inputs available) treats a negative
+      ratio as unresolved, not healthy, falling back to `interest_coverage`. Neither fix
+      reclassifies any of the 41 in-sample filings (0 have the EBITDA<=0-with-debt shape today;
+      forward-looking correctness fixes). Also corrected two docs claims: this entry's
+      "APA/APO now surface a SOFT review hit" does not hold on the live path (`DQ_NEG_EQUITY`
+      quarantines `debt_to_equity` before `_LeverageRule` ever sees it; `_LeverageRule`'s branch
+      is a backstop for filings Ring-1 hasn't gated yet), and the S&P `>5.0x` citation is noted
+      as a limitation (its band is on lease/pension-adjusted debt; this screen's is plain
+      balance-sheet debt minus cash, more lenient for lease-heavy names). +12 tests (765 total).
+      Record: `docs/model_fixes.md` "T-116", "PR #95 review".
 
 - [ ] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
       breakdown figure presented as the company total. APA never filed a consolidated

@@ -20,7 +20,7 @@ against production data are in ``docs/model_fixes.md``'s T-065 entry.
 | ``DQ_MARGIN_REVIEW``| ``|net_margin|`` in ``(1, 5]``                     | SOFT      | nothing     |
 | ``DQ_OCF_MARGIN``  | ``|operating_cash_flow_margin| > 3``               | HARD      | OCF margin  |
 | ``DQ_MCAP_SCALE``  | ``market_cap / total_assets`` outside ``[0.001, 100]`` | HARD  | market cap and every valuation metric built on it |
-| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | HARD if also ``net_debt_to_ebitda > 5.0`` or ``interest_coverage < 1.5``, else SOFT | D/E and ROE |
+| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | HARD if also ``net_debt_to_ebitda > 5.0``, ``ebitda <= 0`` with positive net debt, or ``interest_coverage < 1.5``, else SOFT | D/E and ROE |
 | ``DQ_REVENUE_POS`` | ``revenue <= 0`` or missing, with net income present | HARD    | the revenue-denominated ratios |
 
 The gates read the stored rows (value + ``inputs_json``) of one metrics engine version at a
@@ -85,6 +85,13 @@ _INPUT_SOURCES: Final[dict[str, tuple[MetricKey, ...]]] = {
     "total_assets": (("leverage", "debt_to_assets"), ("profitability", "return_on_assets")),
     "revenue": (("profitability", "net_margin"), ("cashflow", "operating_cash_flow_margin")),
     "net_income": (("profitability", "net_margin"), ("cashflow", "operating_cash_flow_margin")),
+    # T-116 (PR #95 review): reconstructing EBITDA/net debt directly, rather than trusting the
+    # sign of the already-divided net_debt_to_ebitda ratio -- see `_ebitda`/`_net_debt` below.
+    "total_debt": (("leverage", "net_debt_to_ebitda"), ("leverage", "debt_to_equity")),
+    "cash": (("leverage", "net_debt_to_ebitda"), ("leverage", "debt_to_equity")),
+    "operating_income": (("leverage", "net_debt_to_ebitda"), ("leverage", "interest_coverage")),
+    "depreciation_amortization": (("leverage", "net_debt_to_ebitda"),),
+    "ebitda_ttm": (("leverage", "net_debt_to_ebitda"),),
 }
 
 
@@ -177,16 +184,53 @@ def _mcap_scale(fm: FilingMetrics) -> list[Issue]:
     return _hits(fm, _MCAP_DERIVED, "DQ_MCAP_SCALE", "HARD", quarantined=True, evidence=evidence)
 
 
+def _ebitda(fm: FilingMetrics) -> float | None:
+    """TTM EBITDA on a 10-Q (already annualized, T-105); else the raw quarter/annual figure."""
+    ttm = _input(fm, "ebitda_ttm")
+    if ttm is not None:
+        return ttm
+    operating = _input(fm, "operating_income")
+    dep_amort = _input(fm, "depreciation_amortization")
+    return operating + dep_amort if operating is not None and dep_amort is not None else None
+
+
+def _net_debt(fm: FilingMetrics) -> float | None:
+    debt = _input(fm, "total_debt")
+    cash = _input(fm, "cash")
+    return debt - cash if debt is not None and cash is not None else None
+
+
 def _neg_equity(fm: FilingMetrics) -> list[Issue]:
+    """T-116 (PR #95 review): ``net_debt_to_ebitda = safe_div(net_debt, ebitda)`` goes
+    *negative* when EBITDA itself is negative, even with substantial positive net debt --
+    exactly the most distressed profile, and a plain ``> NEG_EQUITY_NET_DEBT_TO_EBITDA`` check
+    reads that negative ratio as comfortably healthy (real data: WAT 10-Q 2026-04-04,
+    EBITDA -$11M, net debt $4.4B, ratio -399). Distinguished from a genuine net-cash position
+    (HUM 10-Q 2023-03-31, ratio -1.1, healthy) by reconstructing EBITDA and net debt from the
+    same stored inputs the ratio itself was divided from, rather than trusting the ratio's sign
+    alone."""
     equity = _input(fm, "equity")
     if equity is None or equity > 0:
         return []
     ndte = _value(fm, ("leverage", "net_debt_to_ebitda"))
     cov = _value(fm, ("leverage", "interest_coverage"))
-    distressed = (ndte is not None and ndte > NEG_EQUITY_NET_DEBT_TO_EBITDA) or (
-        cov is not None and cov < NEG_EQUITY_INTEREST_COVERAGE
+    ebitda = _ebitda(fm)
+    net_debt = _net_debt(fm)
+    burning_cash_with_debt = (
+        ebitda is not None and ebitda <= 0 and net_debt is not None and net_debt > 0
     )
-    evidence = {"equity": equity, "net_debt_to_ebitda": ndte, "interest_coverage": cov}
+    distressed = (
+        burning_cash_with_debt
+        or (ndte is not None and ndte > NEG_EQUITY_NET_DEBT_TO_EBITDA)
+        or (cov is not None and cov < NEG_EQUITY_INTEREST_COVERAGE)
+    )
+    evidence = {
+        "equity": equity,
+        "net_debt_to_ebitda": ndte,
+        "interest_coverage": cov,
+        "ebitda": ebitda,
+        "net_debt": net_debt,
+    }
     return _hits(
         fm,
         _EQUITY_DENOMINATED,

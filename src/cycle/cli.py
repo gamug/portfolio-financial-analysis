@@ -21,7 +21,7 @@ from kg_schema import connect
 from kg_schema.cli import resolve_db_path
 from kg_schema.env import DB_ENV_VAR, database_path
 from kg_schema.provenance import DirtyTree
-from kg_schema.queries import StaleAsOf
+from kg_schema.queries import StaleAsOf, StaleGateVersion
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -45,6 +45,12 @@ _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even though the "
     "working tree has uncommitted changes -- results would come from code HEAD alone can't "
     "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
+)
+_ALLOW_STALE_DQ_GATE_HELP = (
+    "override the Ring-1 gate-version guard (T-116) and run even though data_quality_issue "
+    "holds rows under an older gate version than the current one -- every quarantine and HARD "
+    "DQ_*/DATA_QUALITY veto would silently read as clean, not because filings got cleaner; for "
+    "a deliberate run before re-gating, not routine use"
 )
 _FORCE_HELP = (
     "reset the replay book (T-115) from --from through its end before replaying: deletes/"
@@ -82,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
         p.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
         p.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+        p.add_argument("--allow-stale-dq-gate", action="store_true", help=_ALLOW_STALE_DQ_GATE_HELP)
         if name == "select":
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
@@ -108,6 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     bf.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    bf.add_argument("--allow-stale-dq-gate", action="store_true", help=_ALLOW_STALE_DQ_GATE_HELP)
     bf.add_argument("--force", action="store_true", help=_FORCE_HELP)
     return parser
 
@@ -129,6 +137,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["allow_stale_prices"] = True
     if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
+    if getattr(args, "allow_stale_dq_gate", False):
+        updates["allow_stale_dq_gate"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -189,6 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         OutOfOrderCycle,
         NotBackdated,
         StaleAsOf,
+        StaleGateVersion,
         DirtyTree,
     ) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
@@ -234,6 +245,12 @@ def _print_bypass_warnings(r: CycleReport) -> None:
     if r.dirty_tree_bypassed is not None:
         print(
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({r.dirty_tree_bypassed})",
+            file=sys.stderr,
+        )
+    if r.stale_dq_gate_bypassed is not None:
+        print(
+            f"  WARNING: --allow-stale-dq-gate overrode the Ring-1 gate-version guard "
+            f"({r.stale_dq_gate_bypassed})",
             file=sys.stderr,
         )
 

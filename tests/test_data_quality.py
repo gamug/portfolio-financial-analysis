@@ -49,6 +49,10 @@ def _fm(**values: Any) -> dict[tuple[str, str], StoredMetric]:
         "equity": 50.0,
         "total_assets": 200.0,
         "operating_cash_flow": 20.0,
+        "total_debt": 100.0,
+        "cash": 20.0,
+        "operating_income": 15.0,
+        "depreciation_amortization": 5.0,
     }
     metric_values: dict[tuple[str, str], float | None] = {
         FCF: 0.05,
@@ -160,6 +164,43 @@ def test_negative_equity_quarantines_de_and_roe_hard_only_when_distressed(
     issues = evaluate(_fm(equity=-10.0, net_debt_to_ebitda=ndte, interest_coverage=cov))
     assert _rules(issues) == {("DQ_NEG_EQUITY", severity, True)}
     assert {i.metric for i in issues} == {DTE, ROE}
+
+
+def test_negative_ebitda_with_positive_net_debt_is_hard_despite_a_negative_ratio() -> None:
+    """T-116 (PR #95 review): net_debt_to_ebitda = net_debt / ebitda goes *negative* when
+    EBITDA itself is negative -- the most distressed profile, not a healthy one (real data:
+    WAT 10-Q 2026-04-04, EBITDA -$11M, net debt $4.4B, ratio -399). Reconstructed straight from
+    the stored inputs, not trusted from the ratio's sign alone."""
+    issues = evaluate(
+        _fm(
+            equity=-10.0,
+            net_debt_to_ebitda=-399.0,
+            interest_coverage=None,
+            operating_income=-11.0,
+            depreciation_amortization=0.0,
+            total_debt=4400.0,
+            cash=0.0,
+        )
+    )
+    assert _rules(issues) == {("DQ_NEG_EQUITY", "HARD", True)}
+
+
+def test_negative_ebitda_with_net_cash_stays_undistressed_by_that_signal_alone() -> None:
+    """The same negative ratio, but for the opposite, healthy reason (net cash exceeds debt,
+    HUM 10-Q 2023-03-31 shape): ebitda <= 0 alone, with no positive net debt, is not itself
+    HARD -- distinguished by reconstructing net debt too, not just EBITDA's sign."""
+    issues = evaluate(
+        _fm(
+            equity=-10.0,
+            net_debt_to_ebitda=-1.1,
+            interest_coverage=8.0,
+            operating_income=-2.0,
+            depreciation_amortization=0.0,
+            total_debt=10.0,
+            cash=50.0,
+        )
+    )
+    assert _rules(issues) == {("DQ_NEG_EQUITY", "SOFT", True)}
 
 
 def test_zero_equity_is_negative_equity_and_positive_or_missing_is_not() -> None:

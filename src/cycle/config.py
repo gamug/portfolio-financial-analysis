@@ -51,6 +51,11 @@ class CycleSettings(BaseModel):
     # changes) -- its results would come from code HEAD alone can't reproduce. Meant for a
     # deliberate run from a work-in-progress checkout, not routine use.
     allow_dirty: bool = False
+    # T-116 (PR #95 review): a cycle refuses to run when data_quality_issue holds rows under an
+    # older Ring-1 gate version but none under the current one -- a gate-methodology bump
+    # landed without its one-time re-gate, which would silently zero out every quarantine and
+    # HARD DQ_*/DATA_QUALITY veto. Meant for a deliberate run before re-gating, not routine use.
+    allow_stale_dq_gate: bool = False
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:
