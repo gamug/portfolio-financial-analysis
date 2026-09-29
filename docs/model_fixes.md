@@ -2352,6 +2352,12 @@ tests are additions on top of it.
 - A fresh production dry run (correct panel, real live book, compounded active return) is
   needed before `quant evaluate` runs against production; the stale `quant_portfolio` id 4
   snapshot and its 41 perf rows must be voided first (post-merge correction, above).
+  **Update (T-122, 2026-09-29):** the void happened, but the live-book-vs-benchmark
+  comparison still can't run -- the live book's only stints ever opened are dated
+  `2026-09-22`, three weeks past `price_daily`'s own spine (`2026-08-27`), so there is no date
+  with both a live book and forward prices at once right now. A pricing-data gap, not a code
+  defect; see `T-122` (`TASKS.md`) and `T-109`'s own "Correction (T-122 production re-run)"
+  above, which did confirm this fix's numbers on real production data via `optimize` alone.
 
 ---
 
@@ -2476,6 +2482,25 @@ correct; only the wiring between them was not.
 - `T-077`'s Carhart estimator is not implemented by this fix -- its own formula already plans
   to add `rf`, so no separate correction is expected when it lands, but that remains to be
   verified against real code once written, not assumed.
+
+### Correction (T-122 production re-run, 2026-09-29)
+
+The deferred production re-run above happened, at the user's direction, after `T-121` voided
+the stale live-book snapshot. `price_daily`'s own spine caps at `2026-08-27` (T-110's own
+finding), so `build-risk-model`/`optimize` ran at `--analysis-date 2026-08-27` (the newest
+non-stale date) rather than today, over the 17-name panel `quant_return_daily`'s `qret-v2`
+series currently covers (a development-scope universe pending `T-100`'s full-universe cutover,
+unrelated to this fix). Real, non-dry-run numbers: **tangency Sharpe `0.038 -> 0.325`**
+(stale book id 2's `0.03789` -> fresh book id 5's `0.32490`), `expected_return` `0.0528 ->
+0.0890`, `expected_vol` `0.2056 -> 0.1355` -- matching this entry's own dry-run prediction
+above almost exactly. `min_var` Sharpe `-0.089 -> 0.288`, `target_vol` `0.0068 -> 0.319`.
+**The live-book-vs-benchmark forward comparison (`evaluate`, T-108's own territory) could not
+complete**: the live book's only stints ever opened are `valid_from = 2026-09-22`, three weeks
+*after* the price spine's own end, so there is no date with both a live book and forward price
+data available at once right now -- a pricing-data gap, not a code defect; see `T-122`
+(`TASKS.md`) for the full record. This fix's own correctness is confirmed either way: the
+`tangency` book's weights and reported stats, not merely a hypothetical, now demonstrably
+match the reviewer's prediction on real production data.
 
 ---
 

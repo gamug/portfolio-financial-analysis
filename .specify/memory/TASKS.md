@@ -758,6 +758,39 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       with `T-121` already applied; the dry-run figures in `docs/model_fixes.md`'s `T-108`/
       `T-109` entries are replaced with real post-fix production numbers, and any `tangency`
       book read afterward reflects the corrected μ.
+      **`build-risk-model`/`optimize` done 2026-09-29, at the user's direction, `T-121` already
+      applied**: `price_daily`'s own spine caps at `2026-08-27` (last `--store-daily` backfill,
+      T-110's own orphan-row finding — see `T-123`), so ran at `--analysis-date 2026-08-27` (the
+      newest date that is not stale) rather than today, needing no `--allow-stale-prices`
+      bypass. `quant_return_daily`'s `qret-v2` series itself only covers 20 assets (the
+      development-scope universe `T-100`'s eventual full-universe cutover will replace) — every
+      one of the current live book's 10 holdings but `MA` is inside it; `MA` (asset 303) fails
+      the risk model's own liquidity/history gate independent of this task, unrelated to T-108/
+      T-109. `build-risk-model` (model id 2, 17 assets) → `optimize --max-name-weight 0.15`
+      (matching the prior production run's own override -- the default `0.05` cap makes a
+      17-name book infeasible, `17*0.05=0.85 < 1`, unrelated to this task) produced `min_var`/
+      `tangency`/`target_vol`/15-point `frontier` books (`quant_portfolio` ids 4/5/6) with real,
+      T-109-fixed numbers: **tangency Sharpe 0.038 → 0.325** (id 2's stale `0.03789` →  id 5's
+      corrected `0.32490`), expected_return `0.0528` → `0.0890`, expected_vol `0.2056` →
+      `0.1355` — matching PR #85 review's own cited prediction almost exactly. `min_var` Sharpe
+      `-0.089` → `0.288`, `target_vol` `0.0068` → `0.319`.
+      **`evaluate` could not complete the live-book comparison**: `_snapshot_live_book` reads
+      `portfolio_position` *as of* its `date_from` -- the live book's only stints ever opened
+      are `valid_from = 2026-09-22`, three weeks *after* `price_daily`'s own spine ends
+      (`2026-08-27`), and zero `portfolio_position` rows are valid as of any earlier date (the
+      2026-06-30 cycle's positions were undone by `T-104`'s own `undo-run`). There is therefore
+      no date for which both a live book *and* forward price data exist at once right now --
+      not a code defect, a genuine, pre-existing pricing-data gap (refreshing `price_daily` past
+      2026-08-27 needs the live pricing gateway, unreachable in this environment). `evaluate
+      --analysis-date 2026-08-27 --benchmark SP500_EW_INTERNAL` ran and rebuilt one `bench-v2`
+      benchmark row (20-name gated panel) but evaluated 0 books/0 perf rows and snapshotted no
+      live book, exactly as expected given the above -- left in place as a harmless, honest
+      record of the attempt (`quant_run` id 14), not reverted.
+      **Still open**: the live-book-vs-benchmark forward comparison this task's acceptance
+      criterion asks for needs `price_daily` refreshed past `2026-09-22` first (out of this
+      task's scope -- no open task currently tracks that refresh; `T-123` only cleans existing
+      orphan rows, it doesn't extend the spine forward). `docs/model_fixes.md`'s `T-108`/`T-109`
+      dry-run figures are **not yet** replaced with real production numbers pending that.
 - [ ] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
       only)* Clean the production orphan rows `T-110` found: 503 `price_observation` rows dated
       2026-08-28 with no matching `price_daily` bar, and whichever of `quant_run`s 7–10 and the
