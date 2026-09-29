@@ -804,16 +804,60 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       genuine post-fix numbers for both `T-108` (the live book's own benchmark comparison) and
       `T-109` (tangency's corrected μ). `docs/model_fixes.md`'s `T-108`/`T-109` entries updated
       with these final numbers, replacing the dry-run figures.
-- [ ] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
-      only)* Clean the production orphan rows `T-110` found: 503 `price_observation` rows dated
-      2026-08-28 with no matching `price_daily` bar, and whichever of `quant_run`s 7–10 and the
-      two `cycle_run`s were built at an as-of past the price spine then in effect (each now
-      individually assessed — a run may simply need re-recording as stale-as-of rather than
-      voided, if its own inputs were otherwise fine). The going-forward guard (`T-110`, code
-      done) prevents a recurrence; this is the one-time cleanup of what already exists.
-      **Acceptance**: zero `price_observation` rows without a same-day `price_daily` row; each
-      flagged `quant_run`/`cycle_run` is either re-run within the price spine or explicitly
-      annotated as a known-stale historical run, not left silently ambiguous.
+- [x] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
+      only)* — **DONE 2026-09-29** Clean the production orphan rows `T-110` found: 503
+      `price_observation` rows dated 2026-08-28 with no matching `price_daily` bar, and
+      whichever of `quant_run`s 7–10 and the two `cycle_run`s were built at an as-of past the
+      price spine then in effect (each now individually assessed — a run may simply need
+      re-recording as stale-as-of rather than voided, if its own inputs were otherwise fine).
+      The going-forward guard (`T-110`, code done) prevents a recurrence; this is the one-time
+      cleanup of what already exists. **Acceptance**: zero `price_observation` rows without a
+      same-day `price_daily` row; each flagged `quant_run`/`cycle_run` is either re-run within
+      the price spine or explicitly annotated as a known-stale historical run, not left silently
+      ambiguous.
+      **Orphan rows: already zero**, a side effect of `T-122`'s own pricing refresh
+      (`pricing_agent run --store-daily --observations` together this time, unlike the original
+      `--observations`-without-`--store-daily` run that created the orphans) — verified directly
+      (`price_observation` LEFT JOIN `price_daily` on `(asset_id, date)`, zero unmatched rows),
+      no separate cleanup needed.
+      **`quant_run`s 7/10 (`build-returns`/`evaluate`) individually assessed as not applicable**:
+      T-110's stale-as-of guard was never wired into either command by design — `build-returns`
+      builds over an explicit `--from`/`--to` range, not a point-in-time universe resolution;
+      `evaluate` "deliberately not guarded (already degrade gracefully on missing forward
+      data)" per `T-110`'s own record. Neither claimed a freshness its inputs didn't have; no
+      annotation needed.
+      **`quant_run`s 8/9 (`build-risk-model`/`optimize`, as-of `2026-09-22`) and `cycle_run` 1
+      (`SELECTION`, `2026-09-22`) individually assessed as genuinely stale-as-of** (`price_daily`
+      capped at `2026-08-27` when each ran) **and retroactively annotated, not re-run**: each
+      `params_json` now carries `"stale_as_of_bypassed"` naming the as-of, the spine then in
+      effect, and that it was annotated after the fact under `T-123` rather than re-run.
+      **Precision (PR #101 review, Sourcery):** this key means something different on each
+      table, and the annotation is not "the same thing the guard would have written" on
+      `cycle_run` specifically. `quant`'s `open_run` runs *before* its `StaleAsOf` check
+      (`persist.py`), so every `quant_run` row -- refused or not -- already carries this key
+      going forward; the `quant_run` 8/9 annotation matches that existing behavior exactly.
+      `cycle`'s own check runs *before* `open_cycle` (`orchestrator.py`), so a normal refused
+      stale `select`/`monitor` never creates a `cycle_run` row at all going forward -- the key
+      only ever appears there when `--allow-stale-prices` explicitly permitted the run. `cycle_
+      run` 1's annotation is therefore a separate, one-off retroactive database write (this
+      `cycle_run` row already existed, pre-dating the guard) mimicking the shape an
+      `--allow-stale-prices`-permitted run's own `params_json` would carry, not something the
+      going-forward guard itself would ever produce for a row that didn't already exist.
+      A deliberate, lower-risk choice over re-running `cycle select` specifically, since that
+      would reopen/close live positions with real portfolio consequences, well beyond a
+      metadata cleanup task; the user can ask for a fresh `select` separately if an updated live
+      book is wanted. `quant_run` 8/9's own outputs (`quant_risk_model` id 1, `quant_portfolio`
+      ids 1-3) are additionally already superseded by `T-122`'s fresh, correctly-scoped
+      2026-09-29 re-run (`quant_risk_model` ids 2/3, `quant_portfolio` ids 4-9) -- kept, not
+      voided (`quant void-portfolio`, T-121's tool, refuses anything but `kind='live_book'` by
+      design; a real optimized book's history stays on record).
+      **`cycle_run` 2 (`SELECTION`, `2026-06-30`) assessed as not applicable**: a deliberate
+      backdated run (`cycle_date` far before any spine concern either then or now), already
+      `status='reverted'` via `T-104`'s own `undo-run` for an unrelated reason — no stale-as-of
+      claim to annotate.
+      Backed up `financial.db` first
+      (`financial.db.pre-t123-annotate-backup-20260929`). Post-write `PRAGMA quick_check` →
+      `ok`, `PRAGMA foreign_key_check` → no rows.
 - [ ] **T-124** *(P1 — after `T-113`'s code fix; production DB action, at the user's direction
       only)* Relabel the one production `score_snapshot[FUNDAMENTAL]` row `T-113` found stored
       under `model = 'deepseek-chat'` but actually a rule-based fallback, to
