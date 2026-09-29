@@ -724,6 +724,21 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       figures. **Acceptance**: `quant_portfolio` id 4 and its 41 dependent
       `quant_benchmark_performance` rows are voided (not merely ignored) on production; a
       post-void `quick_check` is clean.
+      **Code done 2026-09-28**: `quant void-portfolio --portfolio-id N [--apply]`
+      (`quant/repair.py`) — `plan_void` reads the row, its `quant_position` stints and
+      `quant_benchmark_performance` count read-only, refusing anything but `kind='live_book'`
+      (never a real optimized book); `apply_void` deletes it in one transaction
+      (`quant_position`/`quant_benchmark_performance` cascade via `ON DELETE CASCADE`;
+      `quant_frontier_point` deleted explicitly first, since it carries no cascade action and a
+      real book's frontier points must never vanish as a side effect). Dry run unless `--apply`,
+      same convention as `cycle undo-run` (T-104). Exercised end to end on a throwaway copy of
+      production (never the live file): dry run printed exactly the documented shape (id 4,
+      `as_of` 2026-06-30, `BF.B` weight 0.10, 41 performance rows); `--apply` deleted them,
+      `PRAGMA quick_check` ok, `PRAGMA foreign_key_check` clean, the other 3 `quant_portfolio`
+      rows untouched. Tests: `tests/test_quant_repair.py` (6, incl. refusing an unknown id and a
+      non-`live_book` kind). Full suite 759 passed (was 753); ruff, format, mypy clean.
+      **Production void is pending explicit user direction** — not run against
+      `KG_FINANCIAL_DB` as part of this code change.
 - [ ] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)*
       Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk model and benchmark
       series built before those fixes landed still carries the pre-fix numbers: the benchmark's

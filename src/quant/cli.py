@@ -36,6 +36,7 @@ from quant.persist import (
     run_optimize,
 )
 from quant.profiles import load_profile
+from quant.repair import NotALiveBookSnapshot, PortfolioNotFound, apply_void, plan_void
 from quant.returns import run_build_returns
 from quant.universe import benchmark_gate
 from quant.versions_report import versions_report
@@ -221,6 +222,15 @@ def build_parser() -> argparse.ArgumentParser:
         "versions", help="list the stored versions of every input quant can be constrained on"
     )
     vs.add_argument("--db", help="override KG_FINANCIAL_DB path")
+
+    vp = sub.add_parser(
+        "void-portfolio",
+        help="delete a stale live_book quant_portfolio snapshot and its dependent rows "
+        "(T-121); dry run unless --apply",
+    )
+    vp.add_argument("--portfolio-id", type=int, required=True, help="the stale quant_portfolio.id")
+    vp.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    vp.add_argument("--apply", action="store_true", help="write the deletion (default: print it)")
 
     add_coverage_parser(sub)
     return parser
@@ -519,11 +529,37 @@ def _run_load_benchmark(settings: QuantSettings, args: argparse.Namespace) -> in
     return 0
 
 
+def _run_void_portfolio(settings: QuantSettings, args: argparse.Namespace) -> int:
+    conn = connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        try:
+            plan = plan_void(conn, args.portfolio_id)
+        except (PortfolioNotFound, NotALiveBookSnapshot) as exc:
+            print(f"void-portfolio: {exc}", file=sys.stderr)
+            return 1
+        verb = "voiding" if args.apply else "would void (dry run)"
+        print(f"{verb} quant_portfolio {plan.portfolio_id} (live_book snapshot @ {plan.as_of}):")
+        for ticker, weight, valid_from, valid_to in plan.positions:
+            print(
+                f"  position {ticker} weight={weight} valid_from={valid_from} valid_to={valid_to}"
+            )
+        print(f"  {plan.performance_rows} quant_benchmark_performance row(s)")
+        if plan.frontier_points:
+            print(f"  {plan.frontier_points} quant_frontier_point row(s)")
+        if args.apply:
+            apply_void(conn, plan)
+            print(f"quant_portfolio {plan.portfolio_id} and its dependents deleted")
+    finally:
+        conn.close()
+    return 0
+
+
 def _prepare(
     parser: argparse.ArgumentParser, args: argparse.Namespace
 ) -> int | tuple[QuantSettings, str]:
     """Settings and the analysis date -- or an exit code when the command is already done:
-    a bad profile (1), ``versions``, or a ``--dry-run`` (T-093)."""
+    a bad profile (1), ``versions``, ``void-portfolio``, or a ``--dry-run`` (T-093)."""
     try:
         settings = _settings(args)
     except VersionError as exc:
@@ -531,6 +567,8 @@ def _prepare(
         return 1
     if args.command == "versions":
         return _run_versions(settings)
+    if args.command == "void-portfolio":
+        return _run_void_portfolio(settings, args)
     if getattr(args, "risk_model_select", None) and getattr(args, "model_version", None):
         parser.error("--risk-model-version and --model-version both pick the risk model; use one")
     analysis_date = _analysis_date(parser, args)
