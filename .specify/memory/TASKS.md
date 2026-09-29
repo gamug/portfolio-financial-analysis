@@ -715,7 +715,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `quick_check` ok — identical to the copy. NOC 2023Q2/2024Q2 now end 06-30 (filed
       2023-07-27, 2024-07-25); ALLE 2022 reads as three 10-Qs filed 04-26, 07-28, 10-27.
       The replaced quarters' own narrative sections are not fetched yet (`run --sections`).
-- [ ] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* Void
+- [x] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* — **DONE 2026-09-29** Void
       the stale live-book snapshot `T-108`'s and `T-109`'s reviews both flagged: `quant_portfolio`
       id 4 (`as_of` 2026-06-30, `BF.B` weight 0.10) is a `T-104` leftover from the reverted
       2026-06-30 run, not the current live book, and its 41 `perf-v1`/`perf-v2` rows in
@@ -737,8 +737,15 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `PRAGMA quick_check` ok, `PRAGMA foreign_key_check` clean, the other 3 `quant_portfolio`
       rows untouched. Tests: `tests/test_quant_repair.py` (6, incl. refusing an unknown id and a
       non-`live_book` kind). Full suite 759 passed (was 753); ruff, format, mypy clean.
-      **Production void is pending explicit user direction** — not run against
-      `KG_FINANCIAL_DB` as part of this code change.
+      **Production void applied 2026-09-29** (PR #96 merged, then run at explicit user
+      direction): `financial.db` backed up first
+      (`/workspaces/thesis/data/financial.db.pre-t121-void-backup-20260929`, the same naming
+      convention as `T-052`/`T-068`/`T-088`/`T-101`/`T-104`/`T-107`/`T-120`'s own backups). Dry
+      run against `KG_FINANCIAL_DB` matched the documented shape exactly (id 4, `as_of`
+      2026-06-30, `BF.B` weight 0.10, 41 performance rows); `--apply` deleted them. Post-void:
+      `PRAGMA quick_check` -> `ok`, `PRAGMA foreign_key_check` -> no rows, the other 3
+      `quant_portfolio` rows (ids 1-3, `min_var`/`tangency`/`target_vol`, `as_of` 2026-09-22)
+      untouched, a repeat dry run correctly reports id 4 no longer exists.
 - [ ] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)*
       Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk model and benchmark
       series built before those fixes landed still carries the pre-fix numbers: the benchmark's
