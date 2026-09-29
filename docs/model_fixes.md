@@ -2650,7 +2650,15 @@ stored price is data pretending to rest on a foundation that isn't there.
   re-run or annotated now that the guard exists) is a production database action, not a code
   change -- tracked as `T-123` (added alongside this fix), gated on the user's explicit
   direction like every other production write in this file (`T-104`, `T-107`, `T-120`,
-  `T-121`/`T-122`).
+  `T-121`/`T-122`). **Done 2026-09-29** (`T-123`, `TASKS.md`): the orphan rows turned out
+  already zero, a side effect of `T-122`'s own `--store-daily --observations` pricing refresh;
+  `quant_run`s 8/9 and `cycle_run` 1 (genuinely stale-as-of) got the retroactive
+  `stale_as_of_bypassed` annotation `T-110`'s own guard would have recorded had it existed at
+  the time, rather than being re-run -- re-running `cycle select` specifically was deliberately
+  avoided, since it would reopen/close live positions with real portfolio consequences well
+  beyond a metadata cleanup. `quant_run`s 7/10 and `cycle_run` 2 were assessed as not subject
+  to this guard by design or already handled for an unrelated reason (see `T-123`'s own record
+  for the per-run reasoning).
 - **`evaluate`/`benchmark` are not guarded by this fix.** Both already degrade gracefully
   under missing forward data (FR-010: "a date lacking forward data is skipped, not
   fabricated"; `benchmark`'s own empty-gate refusal), which is a different, already-handled
