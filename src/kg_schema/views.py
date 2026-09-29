@@ -54,7 +54,9 @@ Projection semantics
                           (``ITEM_1A_RISK_FACTORS``, ``ITEM_7_MDA``, ...), derived in SQL
                           from ``(item_number, section_type)`` -- kept identical to
                           ``fundamental_agent.sections.canonical_item_label``.
-``v_veto``                 active + cleared rule hits; ``cleared_at IS NULL`` = active.
+``v_veto``                 rule-hit stints (T-125); ``cleared_on IS NULL`` = an open (active)
+                          stint. ``raised_on``/``cleared_on``/``last_seen_on`` are cycle dates;
+                          ``detected_at``/``cleared_at`` are wall-clock metadata only.
 ``v_data_quality_issue``  one row per Ring-1 ``DQ_*`` gate hit on a filing's metric (T-065),
                           with the filing's form / period beside it. ``quarantined = 1`` =
                           consumers read the metric as NULL; HARD = a ``cycle`` DATA_QUALITY
@@ -212,8 +214,8 @@ VIEWS: dict[str, str] = {
     """,
     "v_veto": """
         CREATE VIEW v_veto AS
-        SELECT v.id, a.ticker, v.asset_id, v.rule_id, v.severity, v.detected_at,
-               v.cycle_date, v.cleared_at, v.evidence_json, v.run_id
+        SELECT v.id, a.ticker, v.asset_id, v.rule_id, v.severity, v.raised_on, v.cleared_on,
+               v.last_seen_on, v.detected_at, v.cleared_at, v.evidence_json, v.run_id
         FROM veto v JOIN assets a ON a.id = v.asset_id
     """,
     "v_data_quality_issue": """

@@ -31,9 +31,9 @@ def test_gate_drops_illiquid_short_and_vetoed(
         "VALUES ('R1', 'x', 'HARD', '2024-01-01')"
     )
     conn.execute(
-        "INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date) "
-        "VALUES (4, 'R1', 'HARD', ?, ?)",
-        (as_of, "2024-06-01"),
+        "INSERT INTO veto (asset_id, rule_id, severity, raised_on, last_seen_on, detected_at) "
+        "VALUES (4, 'R1', 'HARD', '2024-06-01', '2024-06-01', ?)",
+        (as_of,),
     )
     conn.commit()
 
@@ -78,9 +78,9 @@ def test_benchmark_gate_keeps_a_hard_vetoed_name_a_book_would_drop(
         "VALUES ('R1', 'x', 'HARD', '2024-01-01')"
     )
     conn.execute(
-        "INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date) "
-        "VALUES (4, 'R1', 'HARD', ?, ?)",
-        (as_of, "2024-06-01"),
+        "INSERT INTO veto (asset_id, rule_id, severity, raised_on, last_seen_on, detected_at) "
+        "VALUES (4, 'R1', 'HARD', '2024-06-01', '2024-06-01', ?)",
+        (as_of,),
     )
     conn.commit()
     settings = QuantSettings(

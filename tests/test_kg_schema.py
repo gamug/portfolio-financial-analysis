@@ -109,7 +109,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert queries.current_version(conn) == 8
+    assert queries.current_version(conn) == 9
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
@@ -144,6 +144,97 @@ def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
 
 def test_migrations_are_a_noop_second_time(migrated_db: Database) -> None:
     assert migrations.apply_migrations(migrated_db) == []
+
+
+def test_m009_collapses_per_date_veto_hits_into_stints() -> None:
+    """T-125: a database at floor 8 has ``veto``'s old per-(asset, rule, cycle_date) hit-event
+    shape. Asset 1/R1 was hit on 2026-06-30 and 2026-07-07 (one continuous run), missed on
+    2026-07-14 (an evaluated cycle that recorded no row for it -- the condition cleared), then
+    hit again on 2026-07-21 (a fresh re-raise, still open). The migration must collapse this
+    into exactly two stints, closing the first at the date it first went unrecorded."""
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        CREATE TABLE sectors (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE,
+                             sector_id INTEGER, sub_industry TEXT);
+        CREATE TABLE rule_catalog (
+            rule_id TEXT PRIMARY KEY, description TEXT NOT NULL, severity TEXT NOT NULL,
+            params_json TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+        );
+        CREATE TABLE cycle_run (
+            id INTEGER PRIMARY KEY, cycle_type TEXT NOT NULL, cycle_date TEXT NOT NULL,
+            started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL,
+            params_json TEXT, code_version TEXT, UNIQUE (cycle_type, cycle_date)
+        );
+        CREATE TABLE cycle_checkpoint (
+            id INTEGER PRIMARY KEY,
+            cycle_run_id INTEGER NOT NULL REFERENCES cycle_run(id) ON DELETE CASCADE,
+            step TEXT NOT NULL, status TEXT NOT NULL, detail_json TEXT,
+            updated_at TEXT NOT NULL, UNIQUE (cycle_run_id, step)
+        );
+        CREATE TABLE veto (
+            id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL REFERENCES assets(id),
+            rule_id TEXT NOT NULL REFERENCES rule_catalog(rule_id), severity TEXT NOT NULL,
+            detected_at TEXT NOT NULL, cycle_date TEXT NOT NULL, cleared_at TEXT,
+            evidence_json TEXT, run_id INTEGER,
+            UNIQUE (asset_id, rule_id, cycle_date)
+        );
+        INSERT INTO assets (id, ticker) VALUES (1, 'AAA');
+        INSERT INTO rule_catalog (rule_id, description, severity, created_at)
+            VALUES ('R1', 'x', 'HARD', '2026-01-01');
+        """
+    )
+    for i, cycle_date in enumerate(
+        ("2026-06-30", "2026-07-07", "2026-07-14", "2026-07-21"), start=1
+    ):
+        conn.execute(
+            "INSERT INTO cycle_run (id, cycle_type, cycle_date, started_at, status) "
+            "VALUES (?, 'SELECTION', ?, ?, 'completed')",
+            (i, cycle_date, cycle_date + "T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO cycle_checkpoint (cycle_run_id, step, status, updated_at) "
+            "VALUES (?, 'veto', 'done', ?)",
+            (i, cycle_date + "T00:00:00Z"),
+        )
+    for cycle_date in ("2026-06-30", "2026-07-07", "2026-07-21"):  # 07-14 has no row: it cleared
+        conn.execute(
+            "INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date) "
+            "VALUES (1, 'R1', 'HARD', ?, ?)",
+            (cycle_date + "T00:00:00Z", cycle_date),
+        )
+    queries.ensure(conn)
+    queries.record(conn, 8, "pretend floor")
+    conn.commit()
+
+    assert 9 in kg_schema.ensure(conn, run_migrations=True)
+
+    rows = conn.execute(
+        "SELECT raised_on, cleared_on, last_seen_on FROM veto WHERE asset_id = 1 ORDER BY raised_on"
+    ).fetchall()
+    assert len(rows) == 2
+    first, second = rows
+    assert (first["raised_on"], first["last_seen_on"], first["cleared_on"]) == (
+        "2026-06-30",
+        "2026-07-07",
+        "2026-07-14",
+    )
+    assert (second["raised_on"], second["last_seen_on"], second["cleared_on"]) == (
+        "2026-07-21",
+        "2026-07-21",
+        None,
+    )
+    # the point-in-time predicate agrees: cleared during the gap, active again after the re-raise
+    assert queries.hard_vetoed_as_of(conn, "2026-07-10") == {1}
+    assert queries.hard_vetoed_as_of(conn, "2026-07-15") == set()
+    assert queries.hard_vetoed_as_of(conn, "2026-07-21") == {1}
+
+    # idempotent: re-running the migration a second time is a no-op
+    assert migrations.apply_migrations(conn) == []
 
 
 def test_database_path_prefers_canonical_then_legacy(monkeypatch: pytest.MonkeyPatch) -> None:

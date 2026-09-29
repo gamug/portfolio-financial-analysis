@@ -879,8 +879,8 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `score_snapshot[FUNDAMENTAL]` rows have that narrative under any label but
       `rule-based-fallback-v1`; `PRAGMA quick_check` → `ok`, `PRAGMA foreign_key_check` → no
       rows.
-- [ ] **T-125** *(P0 — added 2026-09-27 from PR #94's review; before any `cycle backfill` run
-      and before the next live `cycle select`)* Veto lifecycle: a veto is a stint, not a
+- [x] **T-125** *(P0 — added 2026-09-27 from PR #94's review; before any `cycle backfill` run
+      and before the next live `cycle select`)* — **Code done 2026-09-29.** Veto lifecycle: a veto is a stint, not a
       per-date event. Today `writers.write_vetoes` clears only rows `WHERE cycle_date = ?` (the
       run's own date), and `hard_vetoed_as_of` / `active_soft_vetoes` /
       `quant.db.hard_vetoed_as_of` read every uncleared row `<= cutoff`. As a result (all
@@ -913,6 +913,38 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       once per cycle it holds; re-running a past date is idempotent; `cycle backfill --force`
       resets veto transitions the same way `T-115` resets positions. Changes live behavior
       (`SPEC.md` FR-006) — its own PR, separate from any other in-flight work.
+      **Done 2026-09-29.** All eight sub-items (a)-(h) implemented as specified above:
+      `veto` rebuilt to stints (`kg_schema/ddl.py`); `Rule.evaluate()` now returns a
+      `RuleResult(hits, evaluated)` (`cycle/rules/base.py`/`builtin.py`) so `write_vetoes`
+      (`cycle/writers.py`) can tell "evaluated, no longer hit" from "couldn't evaluate" per
+      rule per asset; transitions, disabled-rule closure, and the self-undo-then-reapply
+      idempotent re-run all live in `write_vetoes`; the shared point-in-time predicate
+      (`hard_vetoed_as_of`/`active_soft_vetoes`) moved to `kg_schema.queries`, replacing the
+      two independent copies in `cycle.writers` and `quant.db` (the latter now re-exports it);
+      `veto_out_of_order_reason` (new, `kg_schema.queries`) mirrors `T-097`'s guard, wired into
+      `cycle.orchestrator._run` behind a new `--allow-backdated-veto` (`select`/`monitor`);
+      `cycle.replay.reset_replay_range` (`--force`) now also deletes/reopens veto transitions
+      from `--from` onward; migration `m009` (`kg_schema/migrations.py`) collapses old
+      per-date hit rows into stints using the `"veto"` checkpoint step's own completed cycle
+      dates as the evaluation timeline. Verified against a scratch copy of
+      `data/financial-2.db` (never the tracked file): before, WAT's HARD `NEGATIVE_FCF`
+      (raised 2026-06-30, reverted-run leftover) reads active forever and 7 SOFT-vetoed names
+      would double-count at a projected next cutoff (`penalty x 2`); after `migrate`, WAT's
+      stint correctly closes `2026-09-22` (the cycle that re-evaluated it clean), the 7 names
+      collapse to one open stint each (`penalty x 1`), and `hard_vetoed_as_of` returns exactly
+      `{MA, SBAC}` at that cutoff. +9 tests (794 total; `test_cycle.py` ×8 unit-level
+      `write_vetoes`/guard/replay-reset tests, `test_kg_schema.py`'s `m009` migration test
+      reproducing the exact WAT/re-raise shape found in production); ruff, format, mypy clean.
+      Record: `docs/model_fixes.md` "T-125". `SPEC.md` FR-006 and the `veto` schema row,
+      `docs/cycle.md`, `docs/kg_schema.md`, `docs/quant.md` updated.
+      **Production `migrate` (the real `data/financial.db`'s `m009` rebuild) is deferred,
+      pending explicit user direction** — the same category as `T-121`-`T-124`.
+      **Known, accepted residual scope** (see `docs/model_fixes.md`'s "Design decisions"):
+      `veto` stays one table shared between live and REPLAY runs, not mirrored into a
+      `veto_replay` table the way `T-115` isolated `portfolio_position` — `cycle backfill`'s
+      `--db` being mandatory-and-always-a-copy (already true since `T-115`) is what actually
+      protects the live book, not per-cycle-type partitioning of veto stints, which would
+      conflict with (a)'s single global "at most one open stint" constraint.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -958,13 +990,13 @@ reviews and `T-110`/`T-113` themselves surfaced — voiding the stale `T-104` li
 re-persisting `T-108`/`T-109`'s fixes, cleaning `T-110`'s own production orphan rows, and
 relabeling `T-113`'s one mislabelled fallback score — and are held pending explicit user
 direction, the same as every other production write in this file (`T-104`, `T-107`, `T-120`).**
-`T-111`, `T-112`, `T-113`, `T-114`, `T-115`, `T-116` and `T-117` are done too (`T-116`
-2026-09-28, `T-117` 2026-09-28); a production `dq-v2` re-gate for `T-116` is deferred pending
-user direction, the same as `T-121`–`T-124`. `T-118` (upstream, `portfolio-data-mining`) stays
-open — tracks the gateway fix `T-117`'s local guard stands in for — and `T-070`–`T-084` and
-`T-125` (added 2026-09-27, from PR #94's review — P0, blocks any `cycle backfill` run and the
-next live `cycle select`) have not started. Execute
-**Work item 14**'s remaining P0 task (`T-125`, veto lifecycle) → `T-121`/`T-122`/`T-123`/`T-124`
+`T-111`, `T-112`, `T-113`, `T-114`, `T-115`, `T-116`, `T-117` and `T-125` are done too (`T-116`
+2026-09-28, `T-117` 2026-09-28, `T-125` code done 2026-09-29 — its own production `migrate` is
+deferred pending user direction, the same as the rest of this paragraph); a production `dq-v2`
+re-gate for `T-116` is deferred pending user direction, the same as `T-121`–`T-124`. `T-118`
+(upstream, `portfolio-data-mining`) stays open — tracks the gateway fix `T-117`'s local guard
+stands in for — and `T-070`–`T-084` have not started. Execute
+`T-121`/`T-122`/`T-123`/`T-124` (and `T-125`'s own deferred `migrate`)
 whenever the user directs → **Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`

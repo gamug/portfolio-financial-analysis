@@ -53,6 +53,12 @@ _ALLOW_STALE_DQ_GATE_HELP = (
     "DQ_*/DATA_QUALITY veto would silently read as clean, not because filings got cleaner; for "
     "a deliberate run before re-gating, not routine use"
 )
+_ALLOW_BACKDATED_VETO_HELP = (
+    "override the veto out-of-order guard (T-125) and write veto transitions at a "
+    "--analysis-date older than the latest one already recorded -- the shared veto stints "
+    "table, not just the live positions book; for a deliberate historical re-run, not "
+    "routine use"
+)
 _FORCE_HELP = (
     "reset the replay book (T-115) from --from through its end before replaying: deletes/"
     "reopens portfolio_position_replay stints and cycle_run rows on or after --from, with no "
@@ -90,6 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
         p.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
         p.add_argument("--allow-stale-dq-gate", action="store_true", help=_ALLOW_STALE_DQ_GATE_HELP)
+        p.add_argument(
+            "--allow-backdated-veto", action="store_true", help=_ALLOW_BACKDATED_VETO_HELP
+        )
         if name == "select":
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
@@ -140,6 +149,8 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
         updates["allow_dirty"] = True
     if getattr(args, "allow_stale_dq_gate", False):
         updates["allow_stale_dq_gate"] = True
+    if getattr(args, "allow_backdated_veto", False):
+        updates["allow_backdated_veto"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -258,6 +269,12 @@ def _print_bypass_warnings(r: CycleReport) -> None:
         print(
             f"  WARNING: --allow-stale-dq-gate overrode the Ring-1 gate-version guard "
             f"({r.stale_dq_gate_bypassed})",
+            file=sys.stderr,
+        )
+    if r.veto_backdated_bypassed is not None:
+        print(
+            f"  WARNING: --allow-backdated-veto overrode the veto out-of-order guard "
+            f"({r.veto_backdated_bypassed})",
             file=sys.stderr,
         )
 

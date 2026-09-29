@@ -306,6 +306,81 @@ def stale_gate_version_reason(conn: Database, gate_version: str) -> str | None:
     )
 
 
+# -- veto stints: one shared point-in-time predicate (T-125) ----------------------------
+#
+# `veto` holds stints (raised_on / cleared_on / last_seen_on -- cycle dates), not per-date
+# events: a stint is active at cutoff C iff `raised_on <= C AND (cleared_on IS NULL OR
+# cleared_on > C)`. Both `cycle` (the HARD filter, the SOFT penalty) and `quant` (the
+# liquidity/universe gate) read this same predicate, at C = the cycle/as-of date's T-1, so
+# there is exactly one definition of "active" rather than the two independent SQL copies
+# that predated T-125 (`cycle.writers` and `quant.db` each had their own).
+
+
+def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
+    """asset_ids with an open HARD veto stint active at *cutoff_date* -- the T-1 contagion
+    filter (a cycle/as-of on N reads cutoff N-1)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT asset_id FROM veto
+            WHERE severity = 'HARD' AND raised_on <= ? AND (cleared_on IS NULL OR cleared_on > ?)
+            """,
+            (cutoff_date, cutoff_date),
+        ).fetchall()
+    except DatabaseError:
+        return set()  # no veto table in this DB
+    return {int(r["asset_id"]) for r in rows}
+
+
+def active_soft_vetoes(conn: Database, cutoff_date: str) -> dict[int, list[str]]:
+    """asset_id -> the distinct SOFT rule_ids with an open stint active at *cutoff_date*.
+    One entry per rule the stint is still open under -- never once per cycle it has held,
+    since there is at most one open stint per (asset_id, rule_id) (T-125)."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT asset_id, rule_id FROM veto
+            WHERE severity = 'SOFT' AND raised_on <= ? AND (cleared_on IS NULL OR cleared_on > ?)
+            """,
+            (cutoff_date, cutoff_date),
+        ).fetchall()
+    except DatabaseError:
+        return {}
+    out: dict[int, list[str]] = {}
+    for r in rows:
+        out.setdefault(int(r["asset_id"]), []).append(str(r["rule_id"]))
+    return out
+
+
+def veto_out_of_order_reason(conn: Database, cycle_date: str) -> str | None:
+    """Why writing veto transitions at *cycle_date* would be out-of-order -- or ``None``
+    when it's safe (T-125 f, the same rule T-097 applies to ``portfolio_position``).
+
+    ``veto`` is not isolated between a live ``select``/``monitor`` run and a ``cycle
+    backfill`` REPLAY the way ``portfolio_position``/``portfolio_position_replay`` are
+    (T-115) -- both write the same shared stints table -- so this checks the latest
+    transition date recorded anywhere in it (``raised_on``/``cleared_on``/``last_seen_on``),
+    regardless of which run wrote it. *cycle_date* equal to that latest date is safe: that
+    is the ordinary same-date re-run, which ``write_vetoes`` makes idempotent by undoing and
+    redoing its own transitions first."""
+    try:
+        row = conn.execute(
+            """
+            SELECT MAX(d) AS latest FROM (
+                SELECT raised_on AS d FROM veto
+                UNION ALL SELECT cleared_on AS d FROM veto WHERE cleared_on IS NOT NULL
+                UNION ALL SELECT last_seen_on AS d FROM veto
+            )
+            """
+        ).fetchone()
+    except DatabaseError:
+        return None
+    latest = row["latest"] if row else None
+    if latest is None or cycle_date >= str(latest):
+        return None
+    return f"cycle_date {cycle_date} is older than the latest veto transition ({latest})"
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,

@@ -3,13 +3,13 @@
 Strands-driven selection & monitoring cycles (roadmap steps 6 & 8). Produces
 TECHNICAL / VALORIZATION / SECTOR `score_snapshot` rows (plus per-sector
 `sector_aggregate_snapshot`), normalizes the score types cross-sectionally,
-evaluates the `rule_catalog` into `veto` rows with a **T-1 contagion lag**, ranks
+evaluates the `rule_catalog` into `veto` stints with a **T-1 contagion lag**, ranks
 the universe, and (for a selection cycle) writes `portfolio_position` targets and
 `cycle_ranking`.
 
 ```bash
-uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate]
-uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate]
+uv run python -m cycle select  --analysis-date 2026-06-30 [--top-n 30] [--dry-run] [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate] [--allow-backdated-veto]
+uv run python -m cycle monitor --analysis-date 2026-07-31 [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate] [--allow-backdated-veto]
 uv run python -m cycle backfill --from 2024-01-01 --to 2026-01-01 --db /tmp/backfill.db --step-days 7 [--allow-stale-prices] [--allow-dirty] [--allow-stale-dq-gate] [--force]
 ```
 
@@ -25,8 +25,9 @@ rejects `--analysis-date`.
 table with `portfolio_position`'s own shape and T-104 stint-immutability triggers, never read
 by, or refused for conflicting with, the live book. Every other step (`score_snapshot`,
 `veto`, `sector_aggregate_snapshot`, `cycle_ranking`) writes the *same shared tables* the live
-`select`/`monitor` and `quant`'s universe gate read — a replayed date's veto rows, for
-instance, are indistinguishable from a live cycle's own (T-115 review). `--db` is therefore
+`select`/`monitor` and `quant`'s universe gate read — a replayed date's veto stints, for
+instance, are indistinguishable from a live cycle's own (T-115 review; T-125 gives `--force`
+its own veto-transition reset for exactly this reason — see below). `--db` is therefore
 **mandatory** and refused outright when it names the configured production database
 (`KG_FINANCIAL_DB`) — by actual file, not string: `_same_database` (`cycle/cli.py`) uses
 `os.path.samefile` when both paths exist, so a relative alias (`--db data/financial.db`) or a
@@ -39,12 +40,20 @@ Re-running `backfill` over an already-completed date resumes/skips it as usual
 instead — every replay stint and `cycle_run` row on or after `--from` is dropped/reopened, with
 **no** upper bound at `--to`. A replay is path-dependent: leaving a later stint in place (from a
 prior, further-reaching backfill) would immediately trip the out-of-order-replay guard against
-it the moment `--from` redoes, half-deleted (T-115 review). Nothing *before* `--from` is
-touched.
+it the moment `--from` redoes, half-deleted (T-115 review). `--force` also undoes veto
+transitions on or after `--from` the same way (T-125) — `veto` stints raised there are deleted,
+ones cleared there are reopened — since `veto` is not isolated the way `portfolio_position` is
+(above). Nothing *before* `--from` is touched.
 
-See T-125 (`.specify/memory/TASKS.md`) for a related, separate gap: `veto` rows today are
-per-date events, not stints, so even a fully isolated replay database inherits the live
-system's own miscounted HARD/SOFT veto durations.
+**Veto lifecycle (T-125).** `veto` holds stints (`raised_on`/`cleared_on`/`last_seen_on`), not
+per-cycle-date events: a HARD veto clears the first cycle its rule re-evaluates the asset and
+finds it no longer breached (rather than staying permanent once raised), and a SOFT veto held
+across many cycles is one open stint, charged `soft_veto_penalty` once, not once per cycle. A
+rule that could not evaluate an asset this cycle (missing data) leaves any open stint untouched
+— never mistaken for "cleared." `kg_schema.queries.veto_out_of_order_reason` refuses a cycle
+date older than the latest veto transition already recorded, unless `--allow-backdated-veto`
+(a REPLAY run instead resets the way past via `--force`, above, since it has no override flag of
+its own — the same reason `portfolio_position_replay` has none).
 
 Both cycle types refuse a `cycle_date` past `price_daily`'s last stored date (the price
 spine) — TECHNICAL/veto read prices, so a stale as-of would silently score against data
@@ -183,9 +192,13 @@ dropped. Pure derivation — nothing fetched.
 ### `writers.py`
 
 `write_scores` (TECH/VALOR → `score_snapshot`, upsert on the natural key),
-`apply_normalized`, `write_vetoes` (insert new hits, `UPDATE … cleared_at` for
-lapsed ones — never delete), `hard_vetoed_as_of(conn, cutoff)` / `active_soft_vetoes`
-(the T-1 filter: `cycle_date ≤ cutoff`, `cleared_at IS NULL`), `write_ranking`
+`apply_normalized`, `write_vetoes` (T-125: applies this cycle's stint transitions — open,
+extend, close, or leave an unevaluated asset's open stint untouched — self-undoing this same
+cycle date's own prior transitions first, so a re-run is idempotent; never deletes a stint).
+`hard_vetoed_as_of(conn, cutoff)` / `active_soft_vetoes` (re-exported from
+`kg_schema.queries`, the one point-in-time predicate `cycle` and `quant` both read: a stint is
+active at cutoff `C` iff `raised_on <= C AND (cleared_on IS NULL OR cleared_on > C)`).
+`write_ranking`
 (replaces `cycle_ranking` for the run), `sync_positions` (open new / close vanished
 `portfolio_position` stints — history immutable; a re-weighted incumbent gets a new stint from
 the cycle date and its old one closes there, so every weight stays on record — only a re-run on

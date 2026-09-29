@@ -20,8 +20,16 @@ from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 import kg_schema
 from kg_schema.env import universe_database_path
-from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
+
+# T-125: hard_vetoed_as_of moved to kg_schema.queries (the one shared point-in-time veto
+# predicate `cycle` and `quant` both read) -- re-exported here (see __all__ below) since
+# quant.universe imports it from this module.
+from kg_schema.queries import connect_ro, hard_vetoed_as_of, resolve_asset_ids, symbols_asof
 from kg_schema.versions import MetricVersions
+
+# hard_vetoed_as_of is otherwise unused in this module -- it is imported only to be
+# re-exported, since quant.universe imports it from quant.db (T-125).
+__all__ = ["hard_vetoed_as_of"]
 
 _ZERO_W = 1e-9  # weights this small are treated as "no position"
 _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
@@ -160,20 +168,6 @@ def load_universe_asset_ids(
             f"-- run fundamental_agent / pricing_agent for this date first"
         )
     return sorted(mapping.values())
-
-
-def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
-    """Assets with an uncleared HARD ``veto`` row dated on/before *cutoff_date*
-    (copied from ``cycle.writers`` to avoid importing ``cycle``)."""
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT asset_id FROM veto "
-            "WHERE severity = 'HARD' AND cleared_at IS NULL AND cycle_date <= ?",
-            (cutoff_date,),
-        ).fetchall()
-    except DatabaseError:
-        return set()  # no veto table in this DB
-    return {int(r["asset_id"]) for r in rows}
 
 
 def load_assets(

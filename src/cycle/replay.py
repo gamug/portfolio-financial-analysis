@@ -126,6 +126,12 @@ def reset_replay_range(conn: Database, date_from: str) -> None:
     ``cycle_run`` on or after *date_from* (cascading to its ``cycle_checkpoint``/``cycle_ranking``
     rows), so every step from *date_from* on re-executes rather than being skipped as already
     ``done``.
+
+    T-125 (g): ``veto`` is a stints table shared with live select/monitor runs, not isolated
+    the way ``portfolio_position_replay`` is -- so the same void/reopen pair applies to it too,
+    exactly mirroring the positions logic above, or a REPLAY re-run from *date_from* would
+    immediately trip :func:`kg_schema.queries.veto_out_of_order_reason` against transitions
+    this same reset was supposed to clear the way for.
     """
     conn.execute(
         "DELETE FROM portfolio_position_replay WHERE valid_from >= ?",
@@ -137,6 +143,11 @@ def reset_replay_range(conn: Database, date_from: str) -> None:
     )
     conn.execute(
         "DELETE FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date >= ?",
+        (date_from,),
+    )
+    conn.execute("DELETE FROM veto WHERE raised_on >= ?", (date_from,))
+    conn.execute(
+        "UPDATE veto SET cleared_on = NULL, cleared_at = NULL WHERE cleared_on >= ?",
         (date_from,),
     )
     conn.commit()

@@ -56,6 +56,12 @@ class CycleSettings(BaseModel):
     # landed without its one-time re-gate, which would silently zero out every quarantine and
     # HARD DQ_*/DATA_QUALITY veto. Meant for a deliberate run before re-gating, not routine use.
     allow_stale_dq_gate: bool = False
+    # T-125: a cycle refuses to write veto transitions at a cycle_date older than the latest
+    # one already recorded (the same rule as allow_backdated_positions, but against the
+    # shared `veto` stints table, which live select/monitor and REPLAY backfill runs alike
+    # write into). Meant for a deliberate historical re-run, not routine use; a REPLAY run
+    # instead resets the way past via `cycle backfill --force`.
+    allow_backdated_veto: bool = False
     # T-119 (PR #78 review): a universe member with no FUNDAMENTAL score at all (not merely a
     # stale one) is ineligible for selection the same cycle it is detected, not through the T-1
     # veto lag -- but rank refuses outright, rather than silently building a portfolio blind on

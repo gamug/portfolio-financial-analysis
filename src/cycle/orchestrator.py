@@ -21,7 +21,7 @@ from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
 from cycle.db import ensure_schema
 from cycle.replay import out_of_order_replay_reason, sync_replay_positions
-from cycle.rules import RuleContext, enabled_rules, seed_catalog
+from cycle.rules import RuleContext, disabled_rule_ids, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
@@ -33,6 +33,7 @@ from kg_schema.queries import (
     StaleGateVersion,
     stale_as_of_reason,
     stale_gate_version_reason,
+    veto_out_of_order_reason,
 )
 from kg_schema.versions import (
     DATA_QUALITY_GATE_VERSION,
@@ -79,6 +80,9 @@ class CycleReport:
     # Why the Ring-1 gate-version guard (T-116) would have refused, when --allow-stale-dq-gate
     # overrode it.
     stale_dq_gate_bypassed: str | None = None
+    # Why the veto out-of-order guard (T-125) would have refused, when --allow-backdated-veto
+    # overrode it. Set for either cycle type and for REPLAY -- `veto` is one shared table.
+    veto_backdated_bypassed: str | None = None
     # Universe members with no FUNDAMENTAL score at all this cycle (T-119) -- ineligible for
     # selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes (see `vetoed`).
     unscored: int = 0
@@ -154,6 +158,15 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         raise StaleGateVersion(
             f"{gate_reason}; pass --allow-stale-dq-gate for a deliberate run before re-gating"
         )
+    # T-125: refuse a cycle_date older than the latest veto stint transition already recorded
+    # -- `veto` is one shared table across live select/monitor and REPLAY backfill runs alike
+    # (T-097's own out-of-order rule, applied to veto instead of portfolio_position).
+    veto_backdated_reason = veto_out_of_order_reason(conn, cycle_date)
+    if veto_backdated_reason is not None and not settings.allow_backdated_veto:
+        raise OutOfOrderCycle(
+            f"{veto_backdated_reason}; pass --allow-backdated-veto for a deliberate historical "
+            "re-run, or --force (cycle backfill) to reset the replay range first"
+        )
     run_id = open_cycle(
         conn,
         cycle_type,
@@ -165,6 +178,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
+            "veto_backdated_bypassed": veto_backdated_reason,
         },
         code_version=cv,
     )
@@ -173,6 +187,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     report.stale_price_bypassed = stale_reason
     report.dirty_tree_bypassed = dirty_reason
     report.stale_dq_gate_bypassed = gate_reason
+    report.veto_backdated_bypassed = veto_backdated_reason
 
     universe_rows = data.active_universe(
         conn, settings.universe, cycle_date, settings.universe_db_path
@@ -361,8 +376,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 last_fundamental=data.last_fundamental_dates(conn, cycle_date),
                 data_quality={a: dq.hard[a] for a in asset_ids if a in dq.hard},
             )
-            hits = [h for rule in enabled_rules(conn) for h in rule.evaluate(ctx)]  # type: ignore[attr-defined]
-            opened, cleared = writers.write_vetoes(conn, cycle_date, hits, run_id=run_id)
+            # RuleResult.evaluated (T-125 b): each rule's own could-resolve set, so a missing
+            # cycle keeps a stint open instead of the writer misreading "no data" as "cleared".
+            results = [(rule.RULE_ID, rule.evaluate(ctx)) for rule in enabled_rules(conn)]
+            hits = [h for _, res in results for h in res]
+            evaluated = {rule_id: res.evaluated for rule_id, res in results}
+            opened, cleared = writers.write_vetoes(
+                conn, cycle_date, hits, evaluated, disabled_rule_ids(conn), run_id=run_id
+            )
             report.vetoed = len({h.asset_id for h in hits if h.severity == "HARD"})
             return {"opened": opened, "cleared": cleared}
 

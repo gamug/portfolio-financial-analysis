@@ -225,9 +225,11 @@ def test_a_cycle_before_the_filings_are_public_sees_no_fundamentals(cycle_seed: 
         return dict(json.loads(row["detail_json"]))
 
     def fired(day: str) -> set[str]:
+        # last_seen_on (T-125): the rule's own hit was recorded/confirmed on this exact day,
+        # whether that's when its stint opened or a later day it was still hit.
         return {
             r["rule_id"]
-            for r in conn.execute("SELECT rule_id FROM veto WHERE cycle_date = ?", (day,))
+            for r in conn.execute("SELECT rule_id FROM veto WHERE last_seen_on = ?", (day,))
         }
 
     for day in ("2026-01-20", "2026-01-30"):

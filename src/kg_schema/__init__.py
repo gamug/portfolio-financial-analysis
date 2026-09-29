@@ -73,16 +73,39 @@ def _add_missing_columns(db: Database) -> None:
     db.commit()
 
 
+def _ensure_veto_indexes(db: Database) -> None:
+    """T-125: ``veto``'s two stint indexes (``ux_veto_open``, the partial-unique one open
+    index enforces; ``ix_veto_active``) name its new ``raised_on``/``cleared_on`` columns, so
+    they cannot live inline in ``ADDITIVE_DDL`` the way a plain new table can -- on a
+    pre-T-125 database, ``CREATE TABLE IF NOT EXISTS veto`` safely no-ops against the old,
+    still-per-cycle-date shape, but an unconditional ``CREATE INDEX`` naming a column that
+    shape doesn't have would abort. Skipped until the columns actually exist (a fresh
+    database, or one that has already run ``migrate``'s ``m009``, which creates them itself).
+    """
+    if "raised_on" not in set(db.table_columns("veto")):
+        return
+    db.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_veto_open ON veto (asset_id, rule_id) "
+        "WHERE cleared_on IS NULL"
+    )
+    db.execute(
+        "CREATE INDEX IF NOT EXISTS ix_veto_active ON veto (raised_on) WHERE cleared_on IS NULL"
+    )
+    db.commit()
+
+
 def ensure(db: Database, *, run_migrations: bool = False) -> list[int]:
     """Bring *db*'s database up to the shared schema. Returns applied migration ids."""
     _queries.ensure(db)
     db.create_schema(ADDITIVE_DDL)
     db.commit()
     _add_missing_columns(db)
+    _ensure_veto_indexes(db)
     _availability.ensure_triggers(db)
     ensure_views(db)
     if run_migrations:
         applied = apply_migrations(db)
+        _ensure_veto_indexes(db)  # m009 already creates these; idempotent/defensive here too
         ensure_views(db)  # rebuilds may have changed base tables the views read
         return applied
     return []

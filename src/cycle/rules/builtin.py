@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from cycle.rules.base import Rule, RuleContext, VetoHit
+from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit
 
 
 @dataclass
@@ -22,12 +22,14 @@ class _ThresholdRule:
     def PARAMS(self) -> dict[str, Any]:
         return {"metric": self.metric, "op": self.op, "threshold": self.threshold}
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
+        evaluated = set()
         for aid, metrics in ctx.metrics.items():
             value = metrics.get(self.metric)
             if value is None:
                 continue
+            evaluated.add(aid)
             breached = value > self.threshold if self.op == ">" else value < self.threshold
             if breached:
                 hits.append(
@@ -38,7 +40,7 @@ class _ThresholdRule:
                         {"metric": self.metric, "value": value, "threshold": self.threshold},
                     )
                 )
-        return hits
+        return RuleResult(hits, frozenset(evaluated))
 
 
 @dataclass
@@ -91,12 +93,14 @@ class _LeverageRule:
             "neg_equity_interest_coverage_threshold": self.neg_equity_interest_coverage_threshold,
         }
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
+        evaluated = set()
         for aid, metrics in ctx.metrics.items():
             dte = metrics.get("leverage.debt_to_equity")
             if dte is None:
                 continue
+            evaluated.add(aid)
             if dte < 0:
                 # Non-negative debt means a negative ratio implies non-positive
                 # book equity -- the plain threshold comparison below is
@@ -161,7 +165,7 @@ class _LeverageRule:
                         },
                     )
                 )
-        return hits
+        return RuleResult(hits, frozenset(evaluated))
 
 
 @dataclass
@@ -175,13 +179,17 @@ class _DrawdownRule:
     def PARAMS(self) -> dict[str, Any]:
         return {"threshold": self.threshold}
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
+        evaluated = set()
         for aid, obs in ctx.price_obs.items():
             dd = obs.get("max_drawdown_90d")
-            if dd is not None and dd < self.threshold:
+            if dd is None:
+                continue
+            evaluated.add(aid)
+            if dd < self.threshold:
                 hits.append(VetoHit(aid, self.RULE_ID, self.SEVERITY, {"max_drawdown_90d": dd}))
-        return hits
+        return RuleResult(hits, frozenset(evaluated))
 
 
 @dataclass
@@ -202,13 +210,15 @@ class _StaleFundamentalRule:
     def PARAMS(self) -> dict[str, Any]:
         return {"max_age_days": self.max_age_days}
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
         cutoff = date.fromisoformat(ctx.cycle_date) - timedelta(days=self.max_age_days)
         hits = []
         for aid, last in ctx.last_fundamental.items():
             if last is None or date.fromisoformat(last[:10]) < cutoff:
                 hits.append(VetoHit(aid, self.RULE_ID, self.SEVERITY, {"last_fundamental": last}))
-        return hits
+        # Every key here already has a FUNDAMENTAL score (T-119) -- the rule can always
+        # render a verdict (aged out, or not) once an asset appears at all.
+        return RuleResult(hits, frozenset(ctx.last_fundamental))
 
 
 @dataclass
@@ -225,8 +235,8 @@ class _DataQualityRule:
     def PARAMS(self) -> dict[str, Any]:
         return {"source": "data_quality_issue", "severity": "HARD"}
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]:
-        return [
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = [
             VetoHit(
                 aid,
                 self.RULE_ID,
@@ -236,6 +246,12 @@ class _DataQualityRule:
             for aid, issues in sorted(ctx.data_quality.items())
             if issues and aid in ctx.metrics
         ]
+        # ctx.data_quality only carries assets with a HARD issue (the orchestrator seeds it
+        # from dq.hard alone) -- it cannot itself say "Ring-1 looked and found nothing". Ring-1
+        # runs against the same usable filing latest_metrics reads (T-106/T-107), so a non-empty
+        # ctx.metrics entry is what "this asset's latest filing was gated this cycle" means here.
+        evaluated = {aid for aid, m in ctx.metrics.items() if m}
+        return RuleResult(hits, frozenset(evaluated))
 
 
 RULES: list[Rule] = [
