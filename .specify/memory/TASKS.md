@@ -858,14 +858,27 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       Backed up `financial.db` first
       (`financial.db.pre-t123-annotate-backup-20260929`). Post-write `PRAGMA quick_check` →
       `ok`, `PRAGMA foreign_key_check` → no rows.
-- [ ] **T-124** *(P1 — after `T-113`'s code fix; production DB action, at the user's direction
-      only)* Relabel the one production `score_snapshot[FUNDAMENTAL]` row `T-113` found stored
-      under `model = 'deepseek-chat'` but actually a rule-based fallback, to
+- [x] **T-124** *(P1 — after `T-113`'s code fix; production DB action, at the user's direction
+      only)* — **DONE 2026-09-29** Relabel the one production `score_snapshot[FUNDAMENTAL]` row
+      `T-113` found stored under `model = 'deepseek-chat'` but actually a rule-based fallback, to
       `agents.FALLBACK_MODEL_LABEL`. `prompt_hash` stays `NULL` for this and every other
       pre-fix row — the original LLM interaction (or failed attempt) that produced them no
       longer exists to hash retroactively; that is expected, not a defect to correct.
       **Acceptance**: zero production `score_snapshot[FUNDAMENTAL]` rows with `model` equal to
       a real configured model id whose score actually came from `_fallback_assessment`.
+      **Identified precisely, not by inference**: `_fallback_assessment` (`agents.py`) writes a
+      fixed `narrative` ("Automated fallback: the language model could not return a usable JSON
+      verdict, so this score is derived directly from the computed ratios"), which no real LLM
+      reply ever produces verbatim — `score_snapshot` id 171 (asset 373, `PG`, `filing_id`
+      3529), of 377 total FUNDAMENTAL rows, is the sole match. Relabeled `model` from
+      `'deepseek-chat'` to `'rule-based-fallback-v1'` (`agents.FALLBACK_MODEL_LABEL`);
+      `prompt_hash` left `NULL` as expected. `fundamental_snapshot_legacy` (the frozen, pre-`m004`
+      migration table) checked and has zero rows matching that narrative -- it predates this
+      fallback row entirely, out of this task's scope, not touched. Backed up `financial.db`
+      first (`financial.db.pre-t124-relabel-backup-20260929`). Post-write: zero
+      `score_snapshot[FUNDAMENTAL]` rows have that narrative under any label but
+      `rule-based-fallback-v1`; `PRAGMA quick_check` → `ok`, `PRAGMA foreign_key_check` → no
+      rows.
 - [ ] **T-125** *(P0 — added 2026-09-27 from PR #94's review; before any `cycle backfill` run
       and before the next live `cycle select`)* Veto lifecycle: a veto is a stint, not a
       per-date event. Today `writers.write_vetoes` clears only rows `WHERE cycle_date = ?` (the
