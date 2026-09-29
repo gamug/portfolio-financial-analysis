@@ -199,16 +199,11 @@ def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
     *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
     ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
     key-membership diff against the full universe, not a value check, since an asset with zero
-    rows is never a key at all.
-
-    ``[]`` when *every* member is unscored: with no scored peer to be missing relative to, this
-    is a bootstrap/pre-season state (a cycle dated before any filing is public yet, T-106/T-107)
-    the same way ``kg_schema.queries.stale_gate_version_reason`` treats "no rows at all" as
-    safe -- not the partial coverage gap this function exists to flag."""
-    unscored = [a for a in asset_ids if a not in scored]
-    if unscored and len(unscored) >= len(asset_ids):
-        return []
-    return unscored
+    rows is never a key at all. Includes *every* asset when none is scored -- PR #78's decision
+    ("more than 5% unscored stops the cycle") applies at 100% too (PR #99 review): a cycle with
+    no FUNDAMENTAL coverage at all must refuse, not silently build a portfolio on TECHNICAL/
+    VALORIZATION alone."""
+    return [a for a in asset_ids if a not in scored]
 
 
 class TooManyUnscored(RuntimeError):
@@ -223,15 +218,11 @@ def too_many_unscored_reason(
     unscored: list[int], universe_size: int, max_share: float
 ) -> str | None:
     """``None`` when *unscored*'s share of *universe_size* is within *max_share*; otherwise the
-    refusal message ``TooManyUnscored`` should carry (T-119).
-
-    Safe (no refusal) when *every* universe member is unscored, the same "no rows at all is
-    safe" precedent as ``kg_schema.queries.stale_gate_version_reason``: a cycle dated before any
-    filing is public yet (T-106/T-107 -- ``tests/test_point_in_time_readers.py``'s ``test_a_
-    cycle_before_the_filings_are_public_sees_no_fundamentals``) legitimately has zero coverage
-    for the whole universe, not a partial gap this guard exists to catch -- there is nothing yet
-    to distinguish an anomalous subset from."""
-    if universe_size == 0 or not unscored or len(unscored) >= universe_size:
+    refusal message ``TooManyUnscored`` should carry (T-119). 100% unscored is not exempt (PR
+    #99 review) -- a cycle dated before any filing is public yet must refuse the same as any
+    other coverage gap over the threshold, not silently rank/select on TECHNICAL/VALORIZATION
+    alone."""
+    if universe_size == 0 or not unscored:
         return None
     share = len(unscored) / universe_size
     if share <= max_share:

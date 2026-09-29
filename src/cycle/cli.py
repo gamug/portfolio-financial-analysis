@@ -231,6 +231,11 @@ def _undo_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_unscored(r: CycleReport) -> None:
+    if r.unscored:
+        print(f"  {r.unscored} unscored (ineligible): {', '.join(r.unscored_tickers)}")
+
+
 def _print_bypass_warnings(r: CycleReport) -> None:
     if r.stale_price_bypassed is not None:
         print(
@@ -270,6 +275,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed "
             f"(manifest {r.manifest_tag})"
         )
+        _print_unscored(r)
         _print_bypass_warnings(r)
         return 0
     if args.command == "select":
@@ -282,6 +288,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
+        _print_unscored(r)
         _print_bypass_warnings(r)
         return 0
     # backfill (T-115: replays into portfolio_position_replay, never the live book)
@@ -302,6 +309,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     while d <= end:
         r = run_replay(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
+        _print_unscored(r)
         _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)
     return 0

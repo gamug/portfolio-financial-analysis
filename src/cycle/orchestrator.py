@@ -82,6 +82,9 @@ class CycleReport:
     # Universe members with no FUNDAMENTAL score at all this cycle (T-119) -- ineligible for
     # selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes (see `vetoed`).
     unscored: int = 0
+    # Their tickers, so the CLI can name them without a separate cycle_ranking query
+    # (PR #99 review).
+    unscored_tickers: list[str] = field(default_factory=list)
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -392,7 +395,6 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             )
             if unscored_reason is not None:
                 raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
-            report.unscored = len(unscored)
             scored = []
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
@@ -421,6 +423,18 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             return {"ranked": len(ranked), "hard_vetoed": len(hard), "unscored": len(unscored)}
 
         _do("rank", _rank)
+        # Read back from cycle_ranking, not the `unscored` local above -- it only exists when
+        # `rank` actually ran this call; a resumed run that skips an already-`done` `rank` step
+        # (T-097's own resume contract) would otherwise leave `report.unscored` at its default 0
+        # even though the persisted ranking has UNSCORED rows (PR #99 review).
+        unscored_rows = conn.execute(
+            "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
+            "json_each(r.veto_rules_json) je "
+            "WHERE r.cycle_run_id = ? AND je.value = 'UNSCORED' ORDER BY a.ticker",
+            (run_id,),
+        ).fetchall()
+        report.unscored = len(unscored_rows)
+        report.unscored_tickers = [str(row["ticker"]) for row in unscored_rows]
 
         # -- positions (SELECTION only)
         if "positions" in steps:

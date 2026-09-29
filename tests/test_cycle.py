@@ -11,7 +11,7 @@ from portfolio_common.db import Database
 
 import cycle.orchestrator as cycle_orchestrator
 import kg_schema
-from cycle.cli import build_parser
+from cycle.cli import _print_unscored, build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
 from cycle.construction import Candidate, target_weights
@@ -991,10 +991,10 @@ def test_unscored_assets_diffs_universe_against_scored_keys() -> None:
     assert unscored_assets([1, 2, 3], {1: "x", 3: None}) == [2]
 
 
-def test_unscored_assets_is_empty_when_the_whole_universe_lacks_a_score() -> None:
-    """No scored peer to be missing relative to -- a bootstrap/pre-season cycle date
-    (T-106/T-107), not a coverage gap."""
-    assert unscored_assets([1, 2, 3], {}) == []
+def test_unscored_assets_includes_every_asset_when_none_is_scored() -> None:
+    """PR #99 review: not exempt -- PR #78's decision ('more than 5% unscored stops the
+    cycle') applies at 100% too, not just a partial gap."""
+    assert unscored_assets([1, 2, 3], {}) == [1, 2, 3]
 
 
 def test_too_many_unscored_reason_pure_function() -> None:
@@ -1019,6 +1019,7 @@ def test_unscored_asset_ineligible_immediately_not_through_t1_lag(cycle_seed: Da
     report = run_selection(settings, "2026-06-30", conn=conn)
 
     assert report.unscored == 1
+    assert report.unscored_tickers == ["BBB"]
     row = conn.execute(
         "SELECT vetoed, selected, veto_rules_json FROM v_cycle_ranking WHERE ticker = 'BBB'"
     ).fetchone()
@@ -1034,6 +1035,37 @@ def test_unscored_asset_ineligible_immediately_not_through_t1_lag(cycle_seed: Da
         ).fetchone()["n"]
         == 0
     )
+
+
+def test_unscored_report_field_survives_resume(cycle_seed: Database) -> None:
+    """Sourcery (PR #99 review): report.unscored/unscored_tickers used to fall back to their
+    defaults (0, []) on a resumed run that skips the already-`done` `rank` step, even though the
+    persisted cycle_ranking still has UNSCORED rows -- now read back from cycle_ranking after
+    `_do("rank", ...)` regardless of whether that call ran or was skipped."""
+    conn = cycle_seed
+    seed_catalog(conn)
+    conn.execute("DELETE FROM score_snapshot WHERE asset_id = 2 AND score_type = 'FUNDAMENTAL'")
+    conn.commit()
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    run_selection(settings, "2026-06-30", conn=conn)
+
+    again = run_selection(settings, "2026-06-30", conn=conn)
+    assert "rank" in again.steps_skipped
+    assert again.unscored == 1
+    assert again.unscored_tickers == ["BBB"]
+
+
+def test_print_unscored_names_the_tickers(capsys: pytest.CaptureFixture[str]) -> None:
+    """PR #99 review: an excluded asset must be visible in the CLI output, not only queryable
+    from cycle_ranking."""
+    r = CycleReport(1, "SELECTION", "2026-06-30", unscored=2, unscored_tickers=["ABC", "XYZ"])
+    _print_unscored(r)
+    assert "2 unscored (ineligible): ABC, XYZ" in capsys.readouterr().out
+
+
+def test_print_unscored_silent_when_none(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_unscored(CycleReport(1, "SELECTION", "2026-06-30"))
+    assert capsys.readouterr().out == ""
 
 
 def test_too_many_unscored_refuses_the_selection_cycle(cycle_seed: Database) -> None:
@@ -1054,6 +1086,27 @@ def test_monitor_also_refuses_too_many_unscored(cycle_seed: Database) -> None:
     conn.commit()
     with pytest.raises(TooManyUnscored):
         run_monitoring(_settings(conn), "2026-06-30", conn=conn)
+
+
+def test_all_unscored_also_refuses_the_selection_cycle(cycle_seed: Database) -> None:
+    """PR #99 review: an earlier version of this fix exempted a *whole* unscored universe
+    (reasoning: a cycle dated before any filing is public yet has nothing to compare against).
+    That inverted PR #78's own decision -- 100% unscored is still "more than 5% unscored" and
+    must refuse, not silently build a portfolio on TECHNICAL/VALORIZATION alone. Reproduced live
+    against `cycle_seed`: deleting all 5 FUNDAMENTAL rows used to rank AAA/BBB/CCC on
+    TECHNICAL+VALORIZATION alone with zero UNSCORED marks and no warning."""
+    conn = cycle_seed
+    seed_catalog(conn)
+    conn.execute("DELETE FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'")
+    conn.commit()
+    with pytest.raises(TooManyUnscored, match=r"5/5.*100\.0%"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM portfolio_position WHERE valid_to IS NULL"
+        ).fetchone()["n"]
+        == 0
+    )
 
 
 def test_monitoring_cycle_skips_positions(cycle_seed: Database) -> None:

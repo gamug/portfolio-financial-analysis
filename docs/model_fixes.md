@@ -3630,7 +3630,9 @@ tracked as `T-118`'s step (3) in `TASKS.md`.
 
 ## T-119 — An unscored asset silently escaped every rule check; now ineligible immediately, with a universe-wide circuit breaker
 
-**Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`).
+**Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`); PR #99
+review (`@eldova1702`, Sourcery) found one real bug and one real design mistake, both fixed the
+same day -- see "PR #99 review" below.
 
 ### Symptom
 
@@ -3673,9 +3675,9 @@ present as equivalent to a real, computed score (constitution AI behavior #5).
 ### Fix
 
 - `cycle/data.py`: new `unscored_assets(asset_ids, scored) -> list[int]` -- the universe's own
-  key-membership diff against `last_fundamental_dates`/`latest_fundamental_rows`'s keys, `[]`
-  when *every* member lacks a score (see Design decisions). New `TooManyUnscored(RuntimeError)`
-  and `too_many_unscored_reason(unscored, universe_size, max_share) -> str | None`.
+  key-membership diff against `last_fundamental_dates`/`latest_fundamental_rows`'s keys. New
+  `TooManyUnscored(RuntimeError)` and `too_many_unscored_reason(unscored, universe_size,
+  max_share) -> str | None`.
 - `cycle/config.py`: new `CycleSettings.unscored_max_share: float = 0.05`, no `--allow-*`
   override -- unlike T-110/T-114/T-116's guards, this isn't a "deliberate run despite a known
   gap" case to opt into; a run that hits it needs the underlying coverage fixed, not a flag.
@@ -3685,9 +3687,11 @@ present as equivalent to a real, computed score (constitution AI behavior #5).
   `cycle_ranking` row is marked `vetoed = True` with `"UNSCORED"` appended to `veto_rules` --
   written directly in this same `rank` step's own computation, never through the `veto` table or
   `hard_vetoed_as_of`/`active_soft_vetoes`'s T-1 cutoff, so it excludes the asset from
-  `positions` the very cycle it's detected, not the next one. `CycleReport.unscored` records the
-  count for visibility. `cli.py`'s exception tuple gets `TooManyUnscored` alongside the other
-  guards.
+  `positions` the very cycle it's detected, not the next one. `CycleReport.unscored`/
+  `unscored_tickers` record the count and names for visibility (read back from `cycle_ranking`
+  after the `rank` step, correct on both a fresh run and a resumed one that skips it -- see "PR
+  #99 review" below). `cli.py`'s exception tuple gets `TooManyUnscored` alongside the other
+  guards, and `select`/`monitor`/`backfill` all print the unscored tickers when any exist.
 - `cycle/rules/builtin.py::_StaleFundamentalRule`: docstring and `DESCRIPTION` updated to state
   its narrower, now-actually-reachable scope precisely ("a FUNDAMENTAL score exists but has aged
   past the lookback window") -- no behavior change, since its `if last is None` branch was
@@ -3713,33 +3717,67 @@ present as equivalent to a real, computed score (constitution AI behavior #5).
   deliberate run despite a *known*, already-understood gap (stale prices, a dirty tree, an
   un-migrated gate version); a universe suddenly missing FUNDAMENTAL coverage on more than 5% of
   its members is itself the anomaly to investigate, not a state to run through.
-- **Exempt when the whole universe is unscored, not just "most of it."** `unscored_assets`
-  returns `[]` -- and `too_many_unscored_reason` also independently returns `None` -- when every
-  single universe member lacks a score, the same "no rows at all is safe" precedent
-  `kg_schema.queries.stale_gate_version_reason` already established for Ring-1's own gate-version
-  guard. Found live against `tests/test_point_in_time_readers.py::test_a_cycle_before_the_
-  filings_are_public_sees_no_fundamentals`: a cycle dated before *any* filing is public yet
-  (T-106/T-107's own no-lookahead boundary) legitimately has zero FUNDAMENTAL coverage across
-  the whole universe every reporting season, for every asset simultaneously -- not a data-quality
-  gap, and refusing that cycle would defeat T-106/T-107's own point: rank and select on whatever
-  signals *are* legitimately available (TECHNICAL/VALORIZATION/SEMANTIC, renormalized) rather
-  than wait idle for FUNDAMENTAL. With no scored peer in the universe to be missing relative to,
-  there is nothing for the 5% share to be measured against.
+
+### PR #99 review
+
+- **(blocking, `@eldova1702`) The whole-universe exemption inverted the safeguard.** The first
+  pass exempted a cycle from `TooManyUnscored` when *every* universe member lacked a FUNDAMENTAL
+  score, reasoning that a cycle dated before any filing is public yet (T-106/T-107) legitimately
+  has zero coverage and there is no scored peer to be missing relative to. Reproduced live
+  against `cycle_seed`: deleting 1 of 5 assets' FUNDAMENTAL score raised `TooManyUnscored`
+  (1/5 = 20% > 5%) as intended, but deleting all 5 ran to completion and built a portfolio on
+  TECHNICAL/VALORIZATION alone (AAA 0.639, BBB 0.333, CCC 0.027) with zero `UNSCORED` marks and
+  no warning -- silently the opposite of what the guard exists to prevent. PR #78's own decision
+  was literal: "more than 5% of the universe is unscored" -- 100% is more than 5%, and the fix's
+  invented carve-out for it was never in that decision; the "before any filing is public" case
+  is `EARNINGS_MISSING`/`T-106`/`T-107`'s territory (compute on whatever else is available), not
+  a reason to exempt *this* guard, which exists specifically to catch exactly this shape of
+  total-coverage loss regardless of its cause. **Fixed**: dropped the `len(unscored) >=
+  len(asset_ids)`/`>= universe_size` early-outs from `unscored_assets` and
+  `too_many_unscored_reason` -- both now treat 100% the same as any other share over the limit.
+  `tests/test_point_in_time_readers.py::test_a_cycle_before_the_filings_are_public_sees_no_
+  fundamentals` updated to expect `TooManyUnscored` on the two pre-filing dates (its
+  `normalize`/`veto`-step assertions still hold -- both steps run and are checkpointed before
+  `rank` raises); new `test_all_unscored_also_refuses_the_selection_cycle` (`tests/test_cycle.
+  py`) reproduces the exact scenario above and asserts zero `portfolio_position` rows result.
+- **(`@eldova1702`) List the unscored tickers in the cycle output, not just a count.**
+  `CycleReport.unscored` was a bare count; the `select`/`monitor`/`backfill` CLI summary lines
+  never printed it at all, so an excluded asset was invisible without a direct `cycle_ranking`
+  query. **Fixed**: new `CycleReport.unscored_tickers: list[str]`; `cli.py`'s new
+  `_print_unscored` prints `"N unscored (ineligible): TICKER, TICKER, ..."` after each of
+  `select`/`monitor`/`backfill`'s existing summary lines, whenever `unscored > 0`.
+- **(Sourcery, `broader_impact`) `report.unscored` misreported 0 on a resumed run.** `_rank`'s
+  own local `unscored` list only exists when that step's closure actually runs; `_do` skips an
+  already-`done` step entirely on resume (T-097's own resume contract), so a resumed run whose
+  `rank` step had already completed left `report.unscored` at its dataclass default (0) even
+  though the persisted `cycle_ranking` still carried `UNSCORED` rows. **Fixed**: `report.
+  unscored`/`unscored_tickers` are now populated by one query against `cycle_ranking` (joined to
+  `assets` for tickers, filtered by `json_each(veto_rules_json)` for `'UNSCORED'`) placed right
+  after `_do("rank", _rank)` returns -- unconditionally correct whether that call executed
+  `_rank` or skipped it, since it reads persisted state either way rather than a step-local
+  variable. New `test_unscored_report_field_survives_resume` (`tests/test_cycle.py`): a second
+  `run_selection` call over the same cycle date, with `"rank" in again.steps_skipped` asserted
+  alongside `again.unscored == 1` and the correct ticker.
 
 ### Verification
 
-- `tests/test_cycle.py` (+6): `test_unscored_assets_diffs_universe_against_scored_keys`,
-  `test_unscored_assets_is_empty_when_the_whole_universe_lacks_a_score`,
+- `tests/test_cycle.py` (+10 net across both review rounds):
+  `test_unscored_assets_diffs_universe_against_scored_keys`,
+  `test_unscored_assets_includes_every_asset_when_none_is_scored`,
   `test_too_many_unscored_reason_pure_function` (pure-function unit tests);
   `test_unscored_asset_ineligible_immediately_not_through_t1_lag` (`cycle_seed`, 5 assets, one
   score deleted, `unscored_max_share` relaxed to 0.5 so the run completes: the affected asset's
   `cycle_ranking` row is `vetoed = 1` with `veto_rules_json == ["UNSCORED"]` on the *same* cycle
-  date, no `veto` table row, excluded from `portfolio_position`); `test_too_many_unscored_
-  refuses_the_selection_cycle` / `test_monitor_also_refuses_too_many_unscored` (1/5 = 20%, over
-  the 5% default, both cycle types raise `TooManyUnscored`, `cycle_run.status == 'failed'`).
+  date, no `veto` table row, excluded from `portfolio_position`, `report.unscored_tickers ==
+  ["BBB"]`); `test_unscored_report_field_survives_resume`; `test_print_unscored_names_the_
+  tickers` / `test_print_unscored_silent_when_none`; `test_too_many_unscored_refuses_the_
+  selection_cycle` / `test_monitor_also_refuses_too_many_unscored` (1/5 = 20%, over the 5%
+  default, both cycle types raise `TooManyUnscored`, `cycle_run.status == 'failed'`);
+  `test_all_unscored_also_refuses_the_selection_cycle` (PR #99 review, above).
 - Regression: `tests/test_point_in_time_readers.py::test_a_cycle_before_the_filings_are_
-  public_sees_no_fundamentals` (all 5 assets unscored, pre-filing dates) still passes unmodified
-  -- confirms the "whole universe unscored" exemption (Design decisions) actually holds against
-  the one existing test that would otherwise have caught this fix over-firing.
-- `uv run pytest -q` -- 775 passed (was 769, +6 new here). `ruff check` / `ruff format --check`
-  / `uv run mypy` -- all clean.
+  public_sees_no_fundamentals` updated (not merely re-passing unmodified) to assert
+  `TooManyUnscored` on the two pre-filing dates, per the PR #99 correction above; its
+  `normalize`/`veto` checkpoint assertions are unaffected, since both steps complete before
+  `rank` raises.
+- `uv run pytest -q` -- 779 passed. `ruff check` / `ruff format --check` / `uv run mypy` -- all
+  clean.

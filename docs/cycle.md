@@ -77,8 +77,8 @@ optional. Knobs:
 `universe` (`"SP500"`), `top_n` (30), `score_weights` (FUND .4 / VALOR .3 / TECH
 .2 / SEM .1), `weight_scheme` (`equal` | `score_proportional` | `inverse_vol`),
 `max_name_weight` (.10), `max_sector_weight` (.30), `soft_veto_penalty` (15 pts),
-`unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of a partially
-covered universe with no FUNDAMENTAL score at all).
+`unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of the universe
+with no FUNDAMENTAL score at all, up to and including 100%, PR #99 review).
 
 ## Files
 
@@ -109,11 +109,11 @@ resolves. `latest_metrics(conn, date, versions)` (the newest filing *usable* on 
 `available_at ≤ date`, T-106/T-107 — keyed `"group.name"`), `latest_price_observation`,
 `latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot usable on the date; `last_fundamental_dates` and `latest_fundamental_score` read it — an asset with none at all is
 simply absent as a key, never present with a `None` value), `unscored_assets(asset_ids, scored)`
-(the universe's own key-membership diff against that, T-119 — `[]` when *every* member lacks a
-score, since a cycle dated before any filing is public yet, T-106/T-107, has nothing to call an
-anomalous subset relative to), `too_many_unscored_reason`/`TooManyUnscored` (refuses `rank` when
-more than `CycleSettings.unscored_max_share` of a *partially* covered universe has no score at
-all — not overridable, no `--allow-*` flag, since it isn't a "deliberate run despite a known
+(the universe's own key-membership diff against that, T-119 — includes every asset when none is
+scored at all, PR #99 review: a cycle dated before any filing is public yet, T-106/T-107, is not
+exempt), `too_many_unscored_reason`/`TooManyUnscored` (refuses `rank` when more than
+`CycleSettings.unscored_max_share` of the universe has no score at all, up to and including
+100% — not overridable, no `--allow-*` flag, since it isn't a "deliberate run despite a known
 gap" case the way the other guards are),
 `latest_semantic_score`, `market_cap_estimates(conn, date, metrics, versions)` (reads the
 stored `valuation.market_capitalization` metric inputs; the most recent filing per asset
@@ -253,14 +253,16 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
   with no FUNDAMENTAL score at all (not merely a stale one) is marked `vetoed` with an
   `"UNSCORED"` `veto_rules` entry immediately, this same cycle — not through the T-1 lag, and
   not a SOFT veto/`veto` table row (T-119, PR #78 review); it still appears in `cycle_ranking`,
-  just excluded from `positions`. More than `unscored_max_share` of a partially-covered universe
-  unscored refuses the whole run (`TooManyUnscored`) instead.
+  just excluded from `positions`. More than `unscored_max_share` of the universe unscored —
+  including 100% (PR #99 review) — refuses the whole run (`TooManyUnscored`) instead.
 - **positions** — build `Candidate`s from the non-vetoed ranked rows →
   `target_weights` → `sync_positions`; reflect selection back into `cycle_ranking`.
 
-`CycleReport` records `steps_run` / `steps_skipped`, `selected`, `vetoed`, `unscored` (T-119:
-universe members with no FUNDAMENTAL score at all this cycle, distinct from `vetoed`'s
-HARD-veto count).
+`CycleReport` records `steps_run` / `steps_skipped`, `selected`, `vetoed`, `unscored`/
+`unscored_tickers` (T-119: universe members with no FUNDAMENTAL score at all this cycle,
+distinct from `vetoed`'s HARD-veto count; printed by `select`/`monitor`/`backfill` whenever
+nonzero, PR #99 review — restored from `cycle_ranking` after `rank` runs *or* is skipped on
+resume, not a step-local variable).
 
 ### `fundamental_hook.py` — `make_hook(settings) -> FundamentalHook | None`
 

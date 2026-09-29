@@ -651,17 +651,28 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       error instead of building a portfolio.
       New `cycle.data.unscored_assets`/`TooManyUnscored`/`too_many_unscored_reason`; new
       `CycleSettings.unscored_max_share` (0.05, no `--allow-*` override); `orchestrator._rank`
-      raises `TooManyUnscored` over that share of a *partially*-covered universe, otherwise
-      marks each unscored asset's `cycle_ranking` row `vetoed=True` with `"UNSCORED"` in
-      `veto_rules` directly in this same step — never the `veto` table, never the T-1 cutoff, so
-      exclusion from `positions` is immediate. Exempt when the *whole* universe is unscored (a
-      cycle dated before any filing is public yet, T-106/T-107 — nothing to be an anomalous
-      subset of); verified this doesn't regress
-      `tests/test_point_in_time_readers.py::test_a_cycle_before_the_filings_are_public_sees_no_
-      fundamentals`, the one existing test that exercises exactly that state. `_StaleFundamental
-      Rule`'s scope narrowed in its own docstring to "score exists but aged," no behavior change.
-      Tests: `tests/test_cycle.py` (+6). Full suite 775 passed (was 769); ruff, format, mypy
-      clean. Record: `docs/model_fixes.md` "T-119".
+      raises `TooManyUnscored` over that share of the universe, otherwise marks each unscored
+      asset's `cycle_ranking` row `vetoed=True` with `"UNSCORED"` in `veto_rules` directly in
+      this same step — never the `veto` table, never the T-1 cutoff, so exclusion from
+      `positions` is immediate. `_StaleFundamentalRule`'s scope narrowed in its own docstring to
+      "score exists but aged," no behavior change.
+      **PR #99 review (`@eldova1702`, Sourcery), fixed same day**: (1) the first pass exempted a
+      *whole*-unscored universe from `TooManyUnscored` (reasoning: a cycle dated before any
+      filing is public yet, T-106/T-107, has no scored peer to be missing relative to) — this
+      inverted PR #78's own decision ("more than 5% unscored stops the cycle" includes 100%);
+      reproduced live against `cycle_seed` (deleting all 5 FUNDAMENTAL rows built a portfolio on
+      TECHNICAL/VALORIZATION alone with zero `UNSCORED` marks and no warning); dropped the
+      exemption from both functions, updated `test_a_cycle_before_the_filings_are_public_sees_
+      no_fundamentals` to expect `TooManyUnscored`, added
+      `test_all_unscored_also_refuses_the_selection_cycle`. (2) `select`/`monitor`/`backfill`
+      never printed the unscored tickers, only a count nobody saw — new `CycleReport.
+      unscored_tickers`, `cli.py`'s `_print_unscored`. (3) `report.unscored` misreported 0 on a
+      resumed run that skips an already-`done` `rank` step — now read back from `cycle_ranking`
+      (via `json_each(veto_rules_json)`) after `_do("rank", ...)` regardless of whether it ran
+      or was skipped, not a step-local variable.
+      Tests: `tests/test_cycle.py` (+10 net across both rounds), `tests/test_point_in_time_
+      readers.py` (1 updated). Full suite 779 passed; ruff, format, mypy clean. Record:
+      `docs/model_fixes.md` "T-119" (includes a "PR #99 review" section).
 - [x] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* — **DONE 2026-09-26** Re-ingest the
       legacy pre-`T-091` quarterly rows. Before `T-092` fixed the gateway, one Q3 10-Q per
       year was stored as Q1, Q2 and Q3 rows sharing its accession number and filing date —
