@@ -2970,6 +2970,11 @@ the fixed prompt templates + model config) as described above.
   production write in this file. `prompt_hash` stays `NULL` for any row written before this
   fix regardless: the original prompt templates/model config in effect when it was written are
   not independently recoverable from the row itself.
+  **Done 2026-09-29** (`T-124`, `TASKS.md`): identified precisely via `_fallback_assessment`'s
+  own fixed `narrative` string, which no real LLM reply ever produces verbatim -- exactly one
+  of the 377 production FUNDAMENTAL rows matches (`id` 171, asset `PG`). Relabeled `model` to
+  `agents.FALLBACK_MODEL_LABEL`; `prompt_hash` stays `NULL` as expected. Backed up first;
+  post-write `quick_check`/`foreign_key_check` clean.
 - **Confirming the live DeepSeek endpoint actually accepts (or ignores) `seed`** is left as an
   explicit step before `T-079` begins, per review -- this environment cannot reach it.
 
