@@ -2352,6 +2352,21 @@ tests are additions on top of it.
 - A fresh production dry run (correct panel, real live book, compounded active return) is
   needed before `quant evaluate` runs against production; the stale `quant_portfolio` id 4
   snapshot and its 41 perf rows must be voided first (post-merge correction, above).
+  **Update (T-122, 2026-09-29):** the void happened; a first re-run attempt still couldn't
+  complete the live-book comparison (`price_daily`'s spine then capped three weeks before the
+  live book's own `2026-09-22` start -- a pricing-data gap, not a code defect). After the user
+  raised the pricing gateway and a fresh `pricing_agent run --store-daily --observations`
+  extended `price_daily` through `2026-09-29`, a second, properly-scoped re-run (20-ticker
+  sample universe, `--universe-db universe_sample20.db`) completed it in full: `quant evaluate
+  --from 2026-09-22 --analysis-date 2026-09-29 --benchmark SP500_EW_INTERNAL` snapshotted the
+  real live book (`quant_portfolio` id 10, 10 positions, matching it exactly) and evaluated it
+  against the rebuilt `SP500_EW_INTERNAL` benchmark over 5 real forward trading days
+  (`2026-09-23`..`2026-09-29`): `cumulative_return -0.88%` against the benchmark, daily
+  `active_return` ranging `-0.46%` to `+0.91%` (`quant_benchmark_performance`, `perf-v2`,
+  `portfolio_id = 10`). This is the fix's own intended output -- a genuine live-book-vs-panel
+  comparison, not a stale snapshot's meaningless figures -- confirmed on real production data.
+  See `T-122` (`TASKS.md`) for the full record and `T-109`'s own correction below for the
+  `optimize`-side numbers.
 
 ---
 
@@ -2476,6 +2491,35 @@ correct; only the wiring between them was not.
 - `T-077`'s Carhart estimator is not implemented by this fix -- its own formula already plans
   to add `rf`, so no separate correction is expected when it lands, but that remains to be
   verified against real code once written, not assumed.
+
+### Correction (T-122 production re-run, 2026-09-29)
+
+The deferred production re-run above happened, at the user's direction, after `T-121` voided
+the stale live-book snapshot. `price_daily`'s own spine caps at `2026-08-27` (T-110's own
+finding), so `build-risk-model`/`optimize` ran at `--analysis-date 2026-08-27` (the newest
+non-stale date) rather than today, over the 17-name panel `quant_return_daily`'s `qret-v2`
+series currently covers (a development-scope universe pending `T-100`'s full-universe cutover,
+unrelated to this fix). Real, non-dry-run numbers: **tangency Sharpe `0.038 -> 0.325`**
+(stale book id 2's `0.03789` -> fresh book id 5's `0.32490`), `expected_return` `0.0528 ->
+0.0890`, `expected_vol` `0.2056 -> 0.1355` -- matching this entry's own dry-run prediction
+above almost exactly. `min_var` Sharpe `-0.089 -> 0.288`, `target_vol` `0.0068 -> 0.319`.
+**The live-book-vs-benchmark forward comparison (`evaluate`, T-108's own territory) could not
+complete this first pass**: the live book's only stints ever opened are `valid_from =
+2026-09-22`, three weeks *after* the price spine's own end, so there was no date with both a
+live book and forward price data available at once. A pricing-data gap, not a code defect --
+this fix's own correctness was confirmed either way, since the `tangency` book's weights and
+reported stats already demonstrably matched the reviewer's prediction on real production data.
+
+**Completed (second pass, 2026-09-29):** once the user raised the pricing gateway and a fresh
+`pricing_agent run` extended `price_daily` through `2026-09-29`, a properly-scoped re-run
+(20-ticker sample universe, `--universe-db universe_sample20.db`) produced `build-risk-model`
+model id 3 / `optimize` books ids 7-9, confirming the same fixed numbers again (tangency Sharpe
+`0.3253`, day-to-day drift from the first pass's `0.3249`, both real) and, this time,
+`quant evaluate --from 2026-09-22 --analysis-date 2026-09-29 --benchmark SP500_EW_INTERNAL`
+snapshotted the actual live book (id 10, 10 positions) and evaluated it against the
+T-108-fixed `SP500_EW_INTERNAL` benchmark over 5 real forward trading days: `cumulative_return
+-0.88%`, daily `active_return` `-0.46%` to `+0.91%`. See `T-122` (`TASKS.md`) for the full
+record.
 
 ---
 

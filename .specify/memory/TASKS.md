@@ -715,7 +715,7 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `quick_check` ok — identical to the copy. NOC 2023Q2/2024Q2 now end 06-30 (filed
       2023-07-27, 2024-07-25); ALLE 2022 reads as three 10-Qs filed 04-26, 07-28, 10-27.
       The replaced quarters' own narrative sections are not fetched yet (`run --sections`).
-- [ ] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* Void
+- [x] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* — **DONE 2026-09-29** Void
       the stale live-book snapshot `T-108`'s and `T-109`'s reviews both flagged: `quant_portfolio`
       id 4 (`as_of` 2026-06-30, `BF.B` weight 0.10) is a `T-104` leftover from the reverted
       2026-06-30 run, not the current live book, and its 41 `perf-v1`/`perf-v2` rows in
@@ -737,20 +737,73 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `PRAGMA quick_check` ok, `PRAGMA foreign_key_check` clean, the other 3 `quant_portfolio`
       rows untouched. Tests: `tests/test_quant_repair.py` (6, incl. refusing an unknown id and a
       non-`live_book` kind). Full suite 759 passed (was 753); ruff, format, mypy clean.
-      **Production void is pending explicit user direction** — not run against
-      `KG_FINANCIAL_DB` as part of this code change.
-- [ ] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)*
-      Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk model and benchmark
-      series built before those fixes landed still carries the pre-fix numbers: the benchmark's
-      geometric mean-of-log-returns index over a hard-veto-filtered panel (`T-108`), and an
-      excess-return `equilibrium` μ that understates every book's `expected_return`/`sharpe`
-      whenever `ret_estimator = "equilibrium"` (the default) — `tangency`'s weights themselves,
-      not only its reported stats, are wrong today (PR #85 review: 66% of its weight moves,
-      Sharpe 0.038 → 0.325, once μ is corrected). **Acceptance**: a fresh production
-      `build-risk-model` → `optimize` → `evaluate` run over the current live book and universe,
-      with `T-121` already applied; the dry-run figures in `docs/model_fixes.md`'s `T-108`/
-      `T-109` entries are replaced with real post-fix production numbers, and any `tangency`
-      book read afterward reflects the corrected μ.
+      **Production void applied 2026-09-29** (PR #96 merged, then run at explicit user
+      direction): `financial.db` backed up first
+      (`/workspaces/thesis/data/financial.db.pre-t121-void-backup-20260929`, the same naming
+      convention as `T-052`/`T-068`/`T-088`/`T-101`/`T-104`/`T-107`/`T-120`'s own backups). Dry
+      run against `KG_FINANCIAL_DB` matched the documented shape exactly (id 4, `as_of`
+      2026-06-30, `BF.B` weight 0.10, 41 performance rows); `--apply` deleted them. Post-void:
+      `PRAGMA quick_check` -> `ok`, `PRAGMA foreign_key_check` -> no rows, the other 3
+      `quant_portfolio` rows (ids 1-3, `min_var`/`tangency`/`target_vol`, `as_of` 2026-09-22)
+      untouched, a repeat dry run correctly reports id 4 no longer exists.
+- [x] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)* —
+      **DONE 2026-09-29** Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk
+      model and benchmark series built before those fixes landed still carries the pre-fix
+      numbers: the benchmark's geometric mean-of-log-returns index over a hard-veto-filtered
+      panel (`T-108`), and an excess-return `equilibrium` μ that understates every book's
+      `expected_return`/`sharpe` whenever `ret_estimator = "equilibrium"` (the default) —
+      `tangency`'s weights themselves, not only its reported stats, are wrong today (PR #85
+      review: 66% of its weight moves, Sharpe 0.038 → 0.325, once μ is corrected).
+      **Acceptance**: a fresh production `build-risk-model` → `optimize` → `evaluate` run over
+      the current live book and universe, with `T-121` already applied; the dry-run figures in
+      `docs/model_fixes.md`'s `T-108`/`T-109` entries are replaced with real post-fix production
+      numbers, and any `tangency` book read afterward reflects the corrected μ.
+      **Scope note**: this session's quant/cycle testing deliberately stays on the 20-ticker
+      development sample (`APA, APO, BF.B, CPT, ESS, HOOD, HUM, MA, MCD, NEE, PG, PM, PSX, SBAC,
+      STZ, T, UDR, WAT, WFC, XOM` — the same 20 `quant_return_daily`/`qret-v2` already covers),
+      not the full 503-member universe (`T-100`'s eventual full-universe cutover, not yet run).
+      A custom, checked-in `/workspaces/thesis/data/universe_sample20.db` (copied from the real
+      `universe.db`, filtered to these 20 symbols) is passed as `--universe-db` to every `quant`
+      command below, so nothing widens back to the full universe by omission.
+      **First pass (`--analysis-date 2026-08-27`) was incomplete**: `price_daily`'s spine capped
+      there at the time (T-110's own last `--store-daily` backfill), three weeks *before* the
+      live book's only stints ever opened (`valid_from = 2026-09-22`) — no date had both a live
+      book and forward price data at once, so `evaluate` could rebuild the benchmark but
+      snapshotted no live book and evaluated 0 perf rows (`quant_run` id 14, harmless, left in
+      place). `build-risk-model`/`optimize` still produced real, T-109-fixed numbers at that
+      date (model id 2; `quant_portfolio` ids 4/5/6): tangency Sharpe `0.038 → 0.325`,
+      `expected_return` `0.0528 → 0.0890`, `expected_vol` `0.2056 → 0.1355` — matching PR #85
+      review's own prediction almost exactly; `min_var` Sharpe `-0.089 → 0.288`, `target_vol`
+      `0.0068 → 0.319`.
+      **Pricing gateway raised 2026-09-29, at the user's direction**: `pricing_agent run
+      --analysis-date 2026-09-29 --start 2026-08-20 --store-daily --observations` refreshed
+      `price_daily`/`price_observation` through today. Run without `--limit`/`--tickers` by
+      mistake, so it covered the full 503-member universe rather than the 20-ticker sample
+      (`pricing_run` id 8, 503/503) — caught and corrected (this entry's own scope note, above);
+      the extra pricing coverage for the other 483 names is harmless and additive (`price_daily`/
+      `price_observation` rows only, nothing quant-side reads), left in place rather than
+      reverted, but not built on further.
+      **Second pass, properly scoped via `--universe-db universe_sample20.db`**:
+      `backfill-actions --from 2022-01-01 --to 2026-09-29` (20/20 fetched) → `build-returns
+      --from 2022-01-01` (20 assets, 440 new `qret-v2` rows) → `build-risk-model
+      --analysis-date 2026-09-29` (model id 3, 17 assets — `MA` still fails the risk model's own
+      liquidity/history gate, unrelated to T-108/T-109) → `optimize --max-name-weight 0.15`
+      (matching the first pass's own override; the default `0.05` cap makes a 17-name book
+      infeasible, `17*0.05=0.85 < 1`, unrelated to this task) → `min_var`/`tangency`/
+      `target_vol`/15-point `frontier` books (`quant_portfolio` ids 7/8/9), confirming the same
+      fixed numbers as the first pass (tangency Sharpe `0.3253`, consistent day-to-day drift
+      from `0.3249`, both real post-fix figures) → `evaluate --from 2026-09-22
+      --analysis-date 2026-09-29 --benchmark SP500_EW_INTERNAL`: **live_book #10 snapshotted (10
+      positions, matching the live book exactly) and evaluated against `SP500_EW_INTERNAL` over
+      5 real forward trading days (2026-09-23 → 2026-09-29)** — cumulative_return `-0.88%`
+      vs. the rebuilt (T-108-fixed) benchmark, daily `active_return` ranging `-0.46%` to
+      `+0.91%` (`quant_benchmark_performance`, `perf-v2`, `portfolio_id = 10`). Post-run
+      `PRAGMA quick_check` → `ok`, `PRAGMA foreign_key_check` → no rows.
+      Acceptance now fully met: a real `build-risk-model` → `optimize` → `evaluate` production
+      run over the current live book and (sample) universe, `T-121` already applied, with
+      genuine post-fix numbers for both `T-108` (the live book's own benchmark comparison) and
+      `T-109` (tangency's corrected μ). `docs/model_fixes.md`'s `T-108`/`T-109` entries updated
+      with these final numbers, replacing the dry-run figures.
 - [ ] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
       only)* Clean the production orphan rows `T-110` found: 503 `price_observation` rows dated
       2026-08-28 with no matching `price_daily` bar, and whichever of `quant_run`s 7–10 and the
@@ -812,6 +865,16 @@ universe runs exactly once, after **everything else** is done and verified — s
 defect caught late never forces a second full-scale (and, with the LLM step, costly)
 re-run. **This work item is always the last one in `TASKS.md`**; a new work item is
 added above it, never below. → `PLAN.md` Work item 12.
+
+`quant`'s own current 20-ticker sample (`APA, APO, BF.B, CPT, ESS, HOOD, HUM, MA, MCD, NEE, PG,
+PM, PSX, SBAC, STZ, T, UDR, WAT, WFC, XOM` — the same 20 `quant_return_daily`/`qret-v2` covers)
+is scoped via a checked-in `--universe-db /workspaces/thesis/data/universe_sample20.db` (copied
+from the real `universe.db`, filtered to these 20 symbols; `T-122`, 2026-09-29) — a prior
+scratchpad copy of the same idea was lost between sessions (an untracked `/tmp` path), which is
+why this one lives under the production data directory instead. Pass it explicitly to every
+`quant` command until `T-100` runs; omitting `--universe-db` defaults to the full 503-member
+universe, which `pricing_agent`/`fundamental_agent` (unaffected by this scoping) already cover
+but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope)* Run the whole
       pipeline over the **entire as-of S&P 500 universe** (all 503 assets, not a
