@@ -208,8 +208,12 @@ def test_a_cycle_before_the_filings_are_public_sees_no_fundamentals(cycle_seed: 
     """``cycle_seed``'s FY2025 10-Ks end 2025-12-31 and are filed Friday 2026-01-30. A cycle
     on 2026-01-20 used to read them (their period had ended); now it normalizes no FUNDAMENTAL
     score, and EEE's debt-to-equity of 5.5 -- not yet public -- cannot trip
-    LEVERAGE_EXTREME; nor can a cycle on the filing date itself (T-107). From the next
-    session, Monday 2026-02-02, both are back."""
+    LEVERAGE_EXTREME; nor can a cycle on the filing date itself (T-107). Both `normalize` and
+    `veto` still run and are inspectable even though the *whole* universe having no FUNDAMENTAL
+    score refuses at `rank` (T-119, PR #99 review: 100% unscored is not exempt from that guard,
+    same as any other share over the limit -- see `docs/model_fixes.md`'s T-119 entry). From the
+    next session, Monday 2026-02-02, both FUNDAMENTAL and the veto are back, and the cycle
+    completes."""
     conn = cycle_seed
 
     def normalized(day: str) -> dict[str, int]:
@@ -227,7 +231,8 @@ def test_a_cycle_before_the_filings_are_public_sees_no_fundamentals(cycle_seed: 
         }
 
     for day in ("2026-01-20", "2026-01-30"):
-        _selection(conn, day)
+        with pytest.raises(cycle_data.TooManyUnscored):
+            _selection(conn, day)
         assert "FUNDAMENTAL" not in normalized(day)
         assert "LEVERAGE_EXTREME" not in fired(day)
 

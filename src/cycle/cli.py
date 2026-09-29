@@ -10,6 +10,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from cycle.config import CycleSettings
+from cycle.data import TooManyUnscored
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
@@ -201,6 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         StaleAsOf,
         StaleGateVersion,
         DirtyTree,
+        TooManyUnscored,
     ) as exc:
         print(f"cycle {args.command}: {exc}", file=sys.stderr)
         return 1
@@ -227,6 +229,11 @@ def _undo_run(args: argparse.Namespace) -> int:
     finally:
         conn.close()
     return 0
+
+
+def _print_unscored(r: CycleReport) -> None:
+    if r.unscored:
+        print(f"  {r.unscored} unscored (ineligible): {', '.join(r.unscored_tickers)}")
 
 
 def _print_bypass_warnings(r: CycleReport) -> None:
@@ -268,6 +275,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"monitor {r.cycle_run_id} {r.cycle_date}: {r.vetoed} hard-vetoed "
             f"(manifest {r.manifest_tag})"
         )
+        _print_unscored(r)
         _print_bypass_warnings(r)
         return 0
     if args.command == "select":
@@ -280,6 +288,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
+        _print_unscored(r)
         _print_bypass_warnings(r)
         return 0
     # backfill (T-115: replays into portfolio_position_replay, never the live book)
@@ -300,6 +309,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     while d <= end:
         r = run_replay(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
+        _print_unscored(r)
         _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)
     return 0

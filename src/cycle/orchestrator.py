@@ -79,6 +79,12 @@ class CycleReport:
     # Why the Ring-1 gate-version guard (T-116) would have refused, when --allow-stale-dq-gate
     # overrode it.
     stale_dq_gate_bypassed: str | None = None
+    # Universe members with no FUNDAMENTAL score at all this cycle (T-119) -- ineligible for
+    # selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes (see `vetoed`).
+    unscored: int = 0
+    # Their tickers, so the CLI can name them without a separate cycle_ranking query
+    # (PR #99 review).
+    unscored_tickers: list[str] = field(default_factory=list)
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -378,6 +384,17 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),
             }
+            # T-119: a universe member with no FUNDAMENTAL score at all -- distinct from
+            # EARNINGS_MISSING's stale-but-present case -- is ineligible immediately (this
+            # cycle's own ranking, not the T-1 veto lag); more than `unscored_max_share` of the
+            # universe missing entirely refuses the run outright rather than build a portfolio
+            # blind on most of it.
+            unscored = data.unscored_assets(asset_ids, per_type["FUNDAMENTAL"])
+            unscored_reason = data.too_many_unscored_reason(
+                unscored, len(asset_ids), settings.unscored_max_share
+            )
+            if unscored_reason is not None:
+                raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
             scored = []
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
@@ -386,23 +403,38 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):
+                ineligible = a in unscored
                 ranked.append(
                     {
                         "asset_id": a,
                         "rank": rank,
                         "blended_score": blended,
                         "components": parts,
-                        "vetoed": a in hard,
-                        "veto_rules": soft.get(a, []) + (["HARD"] if a in hard else []),
+                        "vetoed": a in hard or ineligible,
+                        "veto_rules": soft.get(a, [])
+                        + (["HARD"] if a in hard else [])
+                        + (["UNSCORED"] if ineligible else []),
                         "selected": False,
                         "target_weight": None,
                     }
                 )
             ranked_cache["rows"] = ranked
             writers.write_ranking(conn, run_id, ranked)
-            return {"ranked": len(ranked), "hard_vetoed": len(hard)}
+            return {"ranked": len(ranked), "hard_vetoed": len(hard), "unscored": len(unscored)}
 
         _do("rank", _rank)
+        # Read back from cycle_ranking, not the `unscored` local above -- it only exists when
+        # `rank` actually ran this call; a resumed run that skips an already-`done` `rank` step
+        # (T-097's own resume contract) would otherwise leave `report.unscored` at its default 0
+        # even though the persisted ranking has UNSCORED rows (PR #99 review).
+        unscored_rows = conn.execute(
+            "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
+            "json_each(r.veto_rules_json) je "
+            "WHERE r.cycle_run_id = ? AND je.value = 'UNSCORED' ORDER BY a.ticker",
+            (run_id,),
+        ).fetchall()
+        report.unscored = len(unscored_rows)
+        report.unscored_tickers = [str(row["ticker"]) for row in unscored_rows]
 
         # -- positions (SELECTION only)
         if "positions" in steps:

@@ -186,9 +186,16 @@ class _DrawdownRule:
 
 @dataclass
 class _StaleFundamentalRule:
+    """A SOFT penalty for a FUNDAMENTAL score that *exists* but has aged out. ``ctx.
+    last_fundamental`` only ever has an asset as a key when it has a score at all (T-119:
+    ``data.last_fundamental_dates``'s own docstring) -- an asset with *no* score, ever, never
+    reaches this rule's ``for`` loop at all, and deliberately so: that case is ineligible, not
+    penalized (PR #78 review), handled directly in ``orchestrator._rank`` instead of a SOFT
+    veto here."""
+
     RULE_ID = "EARNINGS_MISSING"
     SEVERITY = "SOFT"
-    DESCRIPTION = "no FUNDAMENTAL score within the lookback window"
+    DESCRIPTION = "a FUNDAMENTAL score exists but has aged past the lookback window"
     max_age_days: int = 400
 
     @property

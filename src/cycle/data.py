@@ -184,8 +184,53 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
 
 
 def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*."""
+    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*.
+
+    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset with
+    none at all is simply absent, never present with a ``None`` value (T-119): a consumer that
+    wants "no score at all" must diff its own universe against this dict's keys, not iterate its
+    values -- see ``unscored_assets``."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
+
+
+def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
+    """Universe members with no FUNDAMENTAL score row at all, not merely a stale one (T-119).
+
+    *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
+    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
+    key-membership diff against the full universe, not a value check, since an asset with zero
+    rows is never a key at all. Includes *every* asset when none is scored -- PR #78's decision
+    ("more than 5% unscored stops the cycle") applies at 100% too (PR #99 review): a cycle with
+    no FUNDAMENTAL coverage at all must refuse, not silently build a portfolio on TECHNICAL/
+    VALORIZATION alone."""
+    return [a for a in asset_ids if a not in scored]
+
+
+class TooManyUnscored(RuntimeError):
+    """More than ``CycleSettings.unscored_max_share`` of the universe has no FUNDAMENTAL score
+    at all (T-119, PR #78 review) -- refuses to rank/select rather than silently building a
+    portfolio blind on most of the universe. An unscored asset is ineligible for selection, not
+    penalized like a stale one (``EARNINGS_MISSING``, SOFT): this is a data-completeness circuit
+    breaker on the whole run, not a per-asset veto."""
+
+
+def too_many_unscored_reason(
+    unscored: list[int], universe_size: int, max_share: float
+) -> str | None:
+    """``None`` when *unscored*'s share of *universe_size* is within *max_share*; otherwise the
+    refusal message ``TooManyUnscored`` should carry (T-119). 100% unscored is not exempt (PR
+    #99 review) -- a cycle dated before any filing is public yet must refuse the same as any
+    other coverage gap over the threshold, not silently rank/select on TECHNICAL/VALORIZATION
+    alone."""
+    if universe_size == 0 or not unscored:
+        return None
+    share = len(unscored) / universe_size
+    if share <= max_share:
+        return None
+    return (
+        f"{len(unscored)}/{universe_size} universe members ({share:.1%}) have no FUNDAMENTAL "
+        f"score at all, over the {max_share:.0%} limit: asset_ids {sorted(unscored)}"
+    )
 
 
 def latest_fundamental_score(conn: Database, cycle_date: str) -> dict[int, float | None]:
