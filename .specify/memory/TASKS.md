@@ -637,6 +637,24 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       filed fact. Needs a flag or provenance field on the affected `financial_facts` row(s)
       recording that the value was derived/corrected, not filed as-is. Not yet designed or
       implemented.
+      **Step (3) done 2026-09-30**: `Statements.corrections` (from `payload.get("corrections")`,
+      `[]` for a pre-PR-#44 gateway) + `iter_facts` tagging the matching `(concept, column)`
+      fact's `correction_rule`; new nullable `financial_facts.correction_rule` column
+      (`kg_schema.ddl.REQUIRED_COLUMNS`, additive, no migration — same mechanism as
+      `filing_version`/`run_id`); `db.append_financial_facts` persists it, gated on the column
+      existing (mirrors the existing `has_versioned` fallback). `repair.py`'s re-ingestion path
+      covered for free (already calls `iter_facts`). Tests: `tests/test_statements.py` (+2),
+      `tests/test_db.py` (+1, round-trips through a real `memory_db`). Full suite 802 passed
+      (was 799); ruff, format, mypy clean. Record: `docs/model_fixes.md`, this task's own entry
+      ("Step (3) done" subsection); `docs/fundamental_agent.md`, `docs/kg_schema.md`, `SPEC.md`
+      (`financial_facts` row) updated.
+      **Steps (1) and (2) still open — this task is not closed.** (1) needs a live call to the
+      actual redeployed `sec_edgar` gateway (`http://host.docker.internal:8000`) to confirm
+      `T-117`'s local guard now finds nothing to correct on APA; this sandbox has no network
+      path to it (`curl` to the gateway times out), so it stays gated on the user's own
+      devcontainer, the same category as `T-121`–`T-124`'s production-DB actions. (2) is the
+      upstream general defect, tracked purely in `portfolio-data-mining` as its own `T-042`
+      (not yet started there) — out of this repo's scope to implement.
 - [x] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* — **DONE 2026-09-29**
       `EARNINGS_MISSING` never fires for an asset with no FUNDAMENTAL score at all: the rule
       iterates `last_fundamental_dates`, which holds only assets that have one, so its `last is

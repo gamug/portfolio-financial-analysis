@@ -387,8 +387,16 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
     """Append facts for *filing_id* -- never delete. Re-runs of the same
     *filing_version* collide on the unique key and are ignored; a restatement under
     a new *filing_version* coexists (post-``migrate``; pre-``migrate`` the older
-    unique key still wins, which is the documented limitation)."""
-    has_versioned = "filing_version" in conn.table_columns("financial_facts")
+    unique key still wins, which is the documented limitation).
+
+    T-118: a *fact* carrying ``correction_rule`` (set by
+    :func:`fundamental_agent.statements.iter_facts` from the gateway's own
+    ``data["corrections"]``) is persisted with that rule id in the like-named
+    column, so a value the gateway derived rather than returned as filed never
+    lands in ``financial_facts`` indistinguishable from a real filed fact."""
+    columns = conn.table_columns("financial_facts")
+    has_versioned = "filing_version" in columns
+    has_correction = "correction_rule" in columns
     now = _now()
     rows = [
         (
@@ -403,10 +411,21 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
             event_time or (fact["period_key"][:10] if fact.get("period_key") else now),
             now,
             run_id,
+            fact.get("correction_rule"),
         )
         for fact in facts
     ]
-    if has_versioned:
+    if has_versioned and has_correction:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO financial_facts
+                (filing_id, statement, concept, standard_concept, label, period_key, value,
+                 filing_version, event_time, ingested_at, run_id, correction_rule)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    elif has_versioned:
         conn.executemany(
             """
             INSERT OR IGNORE INTO financial_facts
@@ -414,7 +433,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
                  filing_version, event_time, ingested_at, run_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            rows,
+            [r[:11] for r in rows],
         )
     else:  # pragma: no cover - only before kg_schema.ensure has run
         conn.executemany(

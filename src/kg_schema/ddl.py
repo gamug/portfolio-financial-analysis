@@ -532,6 +532,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "ingested_at": "TEXT",
         "filing_version": "TEXT",
         "run_id": "INTEGER",  # the analysis_run that wrote this row
+        # T-118: the gateway's own `data["corrections"]` rule id (e.g. "T-118") when this
+        # value was derived by the gateway rather than filed as-is; NULL for every filed fact.
+        "correction_rule": "TEXT",
     },
     "fundamental_metrics": {
         "event_time": "TEXT",

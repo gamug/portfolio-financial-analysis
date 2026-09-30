@@ -349,6 +349,14 @@ class Statements:
 
     raw: dict[str, list[dict[str, Any]]]
     periods: list[Period] = field(default_factory=list)
+    # T-118: the gateway's own `data["corrections"]` -- entries of
+    # `{"concept", "column", "original", "corrected", "rule"}` recording a value the
+    # gateway derived (e.g. from a synthesized-total defect) rather than returning as
+    # filed. Empty for a payload from a gateway version that predates this, or for any
+    # filing the gateway found nothing to correct in. Consumed by :func:`iter_facts` so
+    # the derived value is marked in `financial_facts`, not stored indistinguishably
+    # from a filed fact.
+    corrections: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> Statements:
@@ -362,7 +370,8 @@ class Statements:
                         if parsed is not None:
                             seen[column] = parsed
         periods = sorted(seen.values(), key=lambda p: (p.date, p.tag))
-        return cls(raw=raw, periods=periods)
+        corrections = [c for c in payload.get("corrections") or [] if isinstance(c, dict)]
+        return cls(raw=raw, periods=periods, corrections=corrections)
 
     def fy_periods(self) -> list[Period]:
         return [p for p in self.periods if p.is_fy]
@@ -654,7 +663,17 @@ class Statements:
 
 
 def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
-    """Yield one flat fact per (non-abstract, non-dimensional row, period column)."""
+    """Yield one flat fact per (non-abstract, non-dimensional row, period column).
+
+    T-118: a fact whose ``(concept, column)`` matches one of ``stmts.corrections`` --
+    the gateway's own record of a value it derived rather than returned as filed --
+    carries that entry's ``rule`` id as ``correction_rule``; every other fact gets
+    ``None``, meaning "filed as-is". Ambiguous by ``(concept, column)`` alone, not
+    also by statement, but the gateway's synthesis defects (T-118) are concept-scoped
+    (e.g. a revenue concept only ever appears on the income statement) so this never
+    matches across statements in practice.
+    """
+    corrected_rule = {(c.get("concept"), c.get("column")): c.get("rule") for c in stmts.corrections}
     for statement, rows in stmts.raw.items():
         for row in rows:
             if row.get("abstract") or row.get("dimension"):
@@ -675,6 +694,7 @@ def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
                     "label": row.get("label"),
                     "period_key": column,
                     "value": number,
+                    "correction_rule": corrected_rule.get((concept, column)),
                 }
 
 

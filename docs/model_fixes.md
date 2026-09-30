@@ -3689,6 +3689,31 @@ revenue would land in `financial_facts` indistinguishable from a real filed fact
 or provenance field on the affected `financial_facts` row(s). Not yet designed or implemented;
 tracked as `T-118`'s step (3) in `TASKS.md`.
 
+**Step (3) done, 2026-09-30.** `Statements` gained a `corrections` field (`from_payload` reads
+`payload.get("corrections") or []`, `[]` for a payload from a gateway version that predates
+PR #44 -- no error). `iter_facts` builds a `{(concept, column): rule}` lookup from it and tags
+each matching fact's dict with `correction_rule` (`None` for every fact not named in the list,
+meaning filed as-is). `financial_facts` gained a nullable `correction_rule TEXT` column
+(`kg_schema.ddl.REQUIRED_COLUMNS`, additive -- grafted onto an existing database by
+`kg_schema.ensure` the same way `filing_version`/`run_id` already are, no migration needed
+since it never existed under a different shape). `db.append_financial_facts` persists
+`fact.get("correction_rule")` into it, gated on the column actually being present (mirrors the
+existing `has_versioned` fallback for a database that predates `kg_schema.ensure`, so a
+pre-`ensure` write still degrades to the base seven columns rather than erroring).
+`repair.py`'s re-ingestion path shares this for free -- it already calls `iter_facts`.
+**Scope note**: this closes step (3) only, not the rest of `T-118` -- steps (1) (re-verifying
+`T-117`'s guard against the actual redeployed `sec_edgar`) and (2) (the upstream general
+defect, `portfolio-data-mining`'s own `T-042`, not yet started there) are unaffected. Step (1)
+specifically needs a live call to the real gateway (`http://host.docker.internal:8000`), which
+this sandbox has no network path to (confirmed: `curl` to it times out) -- it stays gated on
+the user's own devcontainer, the same category as `T-121`-`T-124`'s production-DB actions.
+Tests: `tests/test_statements.py` (+2: a payload with no `corrections` key parses to `[]`;
+`iter_facts` tags only the named `(concept, column)` cell, leaving the same concept's other
+periods and every other concept `None`), `tests/test_db.py` (+1: `append_financial_facts`
+round-trips `correction_rule` through a real `memory_db`, uncorrected fact reads back `NULL`).
+`uv run pytest -q` -- 802 passed (was 799); `ruff check` / `ruff format --check` / `uv run
+mypy` -- all clean.
+
 ## T-119 — An unscored asset silently escaped every rule check; now ineligible immediately, with a universe-wide circuit breaker
 
 **Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`); PR #99
