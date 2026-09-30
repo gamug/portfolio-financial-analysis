@@ -3714,6 +3714,67 @@ round-trips `correction_rule` through a real `memory_db`, uncorrected fact reads
 `uv run pytest -q` -- 802 passed (was 799); `ruff check` / `ruff format --check` / `uv run
 mypy` -- all clean.
 
+**Steps (1) and (2), live re-verification -- done 2026-09-30.** The user raised the
+`sec_edgar` gateway (unreachable from the sandbox as of the entry above; confirmed reachable
+now, `curl http://host.docker.internal:8000/edgar/edgar/company_info/APA` -> 200) and merged
+the upstream general fix the same day (`portfolio-data-mining` PR #45, closing its own `T-042`,
+plus PR #46 isolating its per-statement reconciliation failures).
+
+*Step (1) -- re-verified against the real, redeployed gateway (no mocking).* Pulled APA's
+10-Ks live via the real `EdgarClient`/`Statements`/`iter_facts` path:
+
+| Filing | `revenue` resolves to | Acceptance figure | `correction_rule` |
+|---|---|---|---|
+| FY2023 10-K | $8,279,000,000 | $8,279,000,000 | `T-118` |
+| FY2024 10-K | $9,737,000,000 | $9,737,000,000 | `T-118` |
+| FY2025 10-K | $8,920,000,000 | $8,920,000,000 | `T-118` |
+
+End-to-end ingestion through the real production path (`db.append_financial_facts` into a
+scratch in-memory database, never the tracked file) persists `correction_rule = 'T-118'` on
+these rows, matching `T-118` step (3)'s own design. **`T-117`'s local guard never fires on any
+of these** -- the gateway's own corrected value already arrives inside `total_concepts`'s Tier
+1 slot, above `_total_is_plausible`'s floor, with nothing later in the statement to contradict
+it -- meeting this task's original, narrower acceptance criterion exactly ("the gateway returns
+APA's statement-level totals; `T-117`'s guard no longer rejects APA").
+
+**A further finding, live and real, not a regression to fix:** APA's FY2021 and FY2022 10-Ks
+(each filing's *own* target period, not a later filing's comparative column) now resolve
+`revenue` to `None`, where `T-095`'s original 2026-09-22 fix had trusted $7,988,000,000 /
+$11,075,000,000. Traced against the live payload: both were themselves *uncaught instances of
+the same synthesis defect* `T-117`/`T-118` fixed for `us-gaap_Revenues`, just one concept over,
+on `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax` -- the exact concept `T-095`'s
+Tier 2 fallback had trusted as a clean, non-dimensional filed fact. The FY2021 10-K's own
+dimensional breakdown rows for that concept sum *exactly* to $7,988,000,000
+(`$6,501,000,000` "Oil and Gas, Exploration and Production" -- itself
+`$3,280M` US + `$2,085M` Egypt + `$1,136M` North Sea -- plus `$1,487,000,000`
+"Oil and gas, purchased"), proving it was a synthesized rollup of segment breakdowns, never a
+literally-filed non-dimensional fact -- confirmed independently against SEC's own
+`companyconcept` API (`data.sec.gov/api/xbrl/companyconcept/CIK0001841666/us-gaap/
+RevenueFromContractWithCustomerIncludingAssessedTax.json`): no FY-period value exists under
+that concept at all, only four stray zero/partial-quarter 2021 rows. `T-042`'s
+`reconcile_with_filed_facts` correctly drops it (`data["corrections"]`: `rule: "T-042"`,
+`reason: "no_filed_nondimensional_fact"`) rather than reconstructing a number -- `T-118`'s
+revenue-specific layer has no later, smaller, contradicting total row in *these* filings to
+reconstruct one from (that mechanism is what recovers FY2023-2025's revenue, not a general
+segment-sum reconstruction).
+
+This is **not a regression needing a code change here**: `fundamental_agent.quality._revenue_pos`
+already HARD-quarantines a filing with `net_income` set and `revenue` `None`
+(`DQ_REVENUE_POS`), the same safety net a genuinely-missing revenue concept has always hit.
+Recorded here so a future audit does not mistake newly-`None` FY2021/FY2022 revenue for a new
+defect -- it is the corrected, more conservative answer once the general synthesis defect is
+accounted for; the old $7,988M/$11,075M values were themselves never provably real. No
+production `financial_facts` are affected (the real database has not yet been re-ingested
+against the redeployed gateway; that re-ingestion is part of `T-100`'s eventual full-universe
+run, same as every other `metrics-v3`-era recompute).
+
+*Step (2)* is upstream's own closed task (`portfolio-data-mining` `T-042`, PR #45/#46) --
+nothing further for this repo to implement. No code, test, lint or type change accompanies this
+entry -- live-data verification only, run against a scratch in-memory database.
+
+**`T-118` is now fully done.** See `TASKS.md`'s own entry for the task-tracking record; Work
+item 14 (the second forensic audit) closes with it and moves to `CHANGELOG.md`.
+
 ## T-119 — An unscored asset silently escaped every rule check; now ineligible immediately, with a universe-wide circuit breaker
 
 **Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`); PR #99
