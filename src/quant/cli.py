@@ -14,7 +14,7 @@ from pathlib import Path
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args
 from kg_schema.provenance import DirtyTree
-from kg_schema.queries import StaleAsOf
+from kg_schema.queries import StaleAsOf, VetoSchemaStale
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -335,7 +335,7 @@ def _run_versions(settings: QuantSettings) -> int:
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
     try:
         res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
-    except (VersionError, StaleAsOf, DirtyTree) as exc:
+    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
     shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
@@ -361,7 +361,7 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
 def _run_optimize(settings: QuantSettings, as_of: str) -> int:
     try:
         opt = run_optimize(settings, as_of=as_of)
-    except (VersionError, StaleAsOf, DirtyTree) as exc:
+    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale) as exc:
         print(f"optimize: {exc}", file=sys.stderr)
         return 1
     books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())

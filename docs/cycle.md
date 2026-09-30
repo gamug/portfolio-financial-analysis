@@ -42,8 +42,11 @@ instead — every replay stint and `cycle_run` row on or after `--from` is dropp
 prior, further-reaching backfill) would immediately trip the out-of-order-replay guard against
 it the moment `--from` redoes, half-deleted (T-115 review). `--force` also undoes veto
 transitions on or after `--from` the same way (T-125) — `veto` stints raised there are deleted,
-ones cleared there are reopened — since `veto` is not isolated the way `portfolio_position` is
-(above). Nothing *before* `--from` is touched.
+ones cleared there are reopened, and a surviving stint's `last_seen_on` is rolled back to its own
+`raised_on` if a hit on or after `--from` had bumped it forward (PR #103 review: left in place,
+that `last_seen_on` is itself a transition dated on or after `--from`, so the guard `--force`
+exists to clear the way for still finds one and refuses the immediate redo) — since `veto` is not
+isolated the way `portfolio_position` is (above). Nothing *before* `--from` is touched.
 
 **Veto lifecycle (T-125).** `veto` holds stints (`raised_on`/`cleared_on`/`last_seen_on`), not
 per-cycle-date events: a HARD veto clears the first cycle its rule re-evaluates the asset and
@@ -51,9 +54,15 @@ finds it no longer breached (rather than staying permanent once raised), and a S
 across many cycles is one open stint, charged `soft_veto_penalty` once, not once per cycle. A
 rule that could not evaluate an asset this cycle (missing data) leaves any open stint untouched
 — never mistaken for "cleared." `kg_schema.queries.veto_out_of_order_reason` refuses a cycle
-date older than the latest veto transition already recorded, unless `--allow-backdated-veto`
-(a REPLAY run instead resets the way past via `--force`, above, since it has no override flag of
-its own — the same reason `portfolio_position_replay` has none).
+date older than the latest veto transition already recorded, unless `--allow-backdated-veto` —
+checked, like the positions guard, only when the `veto` step is actually about to run (not on a
+plain resume of an already-completed date), and when it does override, the step runs read-only:
+it evaluates the rules (so `vetoed`/the console output still reflect them) but never calls
+`write_vetoes`, since applying an older date's transitions would delete or roll back later,
+still-current ones instead of replaying history (PR #103 review) — `rank` already reads the
+existing stints point-in-time regardless (a REPLAY run instead resets the way past via `--force`,
+above, since it has no override flag of its own — the same reason `portfolio_position_replay`
+has none).
 
 Both cycle types refuse a `cycle_date` past `price_daily`'s last stored date (the price
 spine) — TECHNICAL/veto read prices, so a stale as-of would silently score against data

@@ -4029,3 +4029,74 @@ own veto-lifecycle gap PR #94's review identified, not a new technique.
 - **Veto is still not fully isolated between live and REPLAY runs** -- see "Design decisions"
   above. A future full isolation (a `veto_replay` table) is a larger, separate change, not
   something this task's own acceptance criteria called for.
+
+### PR #103 review follow-up (2026-09-30) -- 5 required fixes
+
+A human review of PR #103 (T-125's own PR) found five bugs in the initial implementation above;
+two overlapped with `sourcery-ai`'s inline findings on the same PR (`src/cycle/writers.py:175`,
+`src/cycle/replay.py:151`). All five are fixed here, each verified against a scratch copy of
+`/workspaces/thesis/data/financial.db` (never the tracked file; copy discarded after use) --
+schema floor 8, the same un-migrated shape (19 `veto` rows, all `cleared_at IS NULL`) the
+original T-125 verification used.
+
+1. **`--force`'s replay reset left a stale `last_seen_on` behind.**
+   `cycle.replay.reset_replay_range`'s void/reopen pair only ever touched
+   `raised_on`/`cleared_on` -- a stint raised *before* `date_from` but extended (`last_seen_on`
+   bumped forward) by a hit on or after it survived untouched, itself a transition dated on/after
+   `date_from` that immediately tripped `veto_out_of_order_reason` again on the very redo `--force`
+   exists to unblock. Fixed by also running `UPDATE veto SET last_seen_on = raised_on WHERE
+   raised_on < ? AND last_seen_on >= ?` in the same reset. `veto_out_of_order_reason` itself keeps
+   reading `last_seen_on` unchanged -- only the reset needed the fix.
+2. **The veto out-of-order guard ran too early, blocking a plain resume.** It sat at the top of
+   `cycle.orchestrator._run`, before `done_steps` was even read, so re-invoking `cycle backfill
+   --from F --to T` after it was killed refused outright at `F` even when every step there
+   (`veto` included) was already `done` and no write would happen. Moved inside the `_veto()`
+   step closure -- mirroring exactly where the T-097 positions guard already lives inside
+   `_positions()` -- so it fires only when the step is actually about to execute.
+3. **`--allow-backdated-veto` rewrote veto history instead of replaying it.** `write_vetoes` only
+   ever undoes/redoes *its own* cycle_date's rows (the idempotent-same-date-rerun design, T-125 f);
+   called at an older, already-superseded date under the override, it instead deleted the stint(s)
+   raised on the true latest date and rolled a still-open earlier stint's `last_seen_on` back --
+   reproduced case: `hard_vetoed_as_of` went from `{asset}` to `set()` for a cutoff between the
+   backdated date and the (now-deleted) later transition, i.e. an asset retroactively stopped
+   reading as vetoed. Fixed by making the override read-only: `_veto()` still evaluates the rules
+   (so `vetoed`/the CLI's hard-veto count reflect today's conditions) but returns before calling
+   `write_vetoes` whenever the guard was bypassed. `_rank` already reads existing stints
+   point-in-time through `hard_vetoed_as_of`/`active_soft_vetoes`, so ranking stays correct with
+   nothing written.
+4. **The veto predicates silently misread a pre-`migrate` database as vetoless.**
+   `hard_vetoed_as_of`/`active_soft_vetoes`/`veto_out_of_order_reason` each caught a bare
+   `DatabaseError` to handle "no `veto` table yet" -- which also swallows "`veto` exists but has
+   no `raised_on` column" (the exact state production sits in until `migrate` runs, deliberately
+   deferred by this same PR) the same way, returning an empty/`None` result instead of an error.
+   `cycle.writers.write_vetoes` had the opposite problem: no guard at all, so it crashed on the
+   same missing column with a raw `DatabaseError` traceback instead of an actionable message
+   (`sourcery-ai`'s own finding on `writers.py:175`). Both fixed by one shared helper,
+   `kg_schema.queries.require_veto_stint_columns`: `False` when `veto` doesn't exist yet (every
+   caller's existing empty default), raises the new `kg_schema.queries.VetoSchemaStale` when it
+   exists but predates `m009`, naming `migrate` as the fix -- the same pattern `StaleGateVersion`
+   already uses for a stale Ring-1 gate version. Wired into `cycle`'s and `quant`'s CLI exception
+   handlers (`cycle.cli.main`, `quant.cli._run_build_risk_model`/`_run_optimize`) alongside the
+   other guard exceptions, so it prints one line and exits 1 rather than a traceback.
+5. **`_m009_veto_stints` read a same-date-corrected row as a hit.** The pre-T-125 writer set
+   `cleared_at` on a row when a same-date re-run no longer hit that `(asset, rule)` pair (`ON
+   CONFLICT ... cleared_at = NULL` on a fresh hit, left set otherwise) -- such a row's `cycle_date`
+   was *not* a hit in that date's final, persisted verdict, but the migration's `old_rows` query
+   read every row regardless, so it would have opened or extended a stint from a veto that was
+   never actually active on that date. Fixed with a `WHERE cleared_at IS NULL` filter (the date
+   still counts as an evaluation date through `cycle_checkpoint`, so the pair still closes
+   correctly on it). **Verified count on the real (scratch) database: 0 such rows** -- this PR's
+   `m009` run against it is behaviorally unchanged (same 10 stints, same WAT `NEGATIVE_FCF` close
+   on `2026-09-22` as the original T-125 verification above); the fix only matters for a database
+   that does carry a same-date correction, none of which exist in this one.
+
+**New tests (+5, `uv run pytest -q` 799 passed, was 794):** `tests/test_cycle.py` --
+`test_veto_guard_does_not_block_resuming_an_already_completed_date` (fix 2: two `run_replay`s
+then a resume of the earlier date must not raise), `test_allow_backdated_veto_is_read_only_not_a_
+history_rewrite` (fix 3: the override runs the step but leaves `veto` byte-for-byte unchanged),
+`test_reset_replay_range_rolls_back_last_seen_on_past_date_from` (fix 1),
+`test_veto_predicates_raise_a_clear_error_against_a_pre_m009_veto_table` (fix 4: all four of
+`hard_vetoed_as_of`/`active_soft_vetoes`/`veto_out_of_order_reason`/`write_vetoes` against a
+hand-built old-shape `veto` table); `tests/test_kg_schema.py` --
+`test_m009_ignores_a_row_the_old_writer_had_already_cleared_same_date` (fix 5).
+`ruff check` / `ruff format --check` / `uv run mypy` -- all clean.

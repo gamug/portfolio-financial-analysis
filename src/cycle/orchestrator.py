@@ -158,15 +158,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         raise StaleGateVersion(
             f"{gate_reason}; pass --allow-stale-dq-gate for a deliberate run before re-gating"
         )
-    # T-125: refuse a cycle_date older than the latest veto stint transition already recorded
-    # -- `veto` is one shared table across live select/monitor and REPLAY backfill runs alike
-    # (T-097's own out-of-order rule, applied to veto instead of portfolio_position).
-    veto_backdated_reason = veto_out_of_order_reason(conn, cycle_date)
-    if veto_backdated_reason is not None and not settings.allow_backdated_veto:
-        raise OutOfOrderCycle(
-            f"{veto_backdated_reason}; pass --allow-backdated-veto for a deliberate historical "
-            "re-run, or --force (cycle backfill) to reset the replay range first"
-        )
+    # T-125's own out-of-order guard is checked inside `_veto()` below, not here -- like the
+    # positions guard (T-097), it must fire only when the veto step is actually about to write,
+    # not on every resumed run that has already completed it (PR #103 review: checking it this
+    # early refused a `cycle backfill --from F --to T` resume at F even when every step at F,
+    # veto included, was already `done` and no write would happen).
     run_id = open_cycle(
         conn,
         cycle_type,
@@ -178,7 +174,6 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
-            "veto_backdated_bypassed": veto_backdated_reason,
         },
         code_version=cv,
     )
@@ -187,7 +182,6 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     report.stale_price_bypassed = stale_reason
     report.dirty_tree_bypassed = dirty_reason
     report.stale_dq_gate_bypassed = gate_reason
-    report.veto_backdated_bypassed = veto_backdated_reason
 
     universe_rows = data.active_universe(
         conn, settings.universe, cycle_date, settings.universe_db_path
@@ -368,6 +362,20 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
         # -- veto
         def _veto() -> dict:
+            # T-125: refuse a cycle_date older than the latest veto stint transition already
+            # recorded -- `veto` is one shared table across live select/monitor and REPLAY
+            # backfill runs alike (T-097's own out-of-order rule, applied to veto instead of
+            # portfolio_position). Checked here, not at the top of `_run` (PR #103 review):
+            # the guard must apply only when this step is actually about to write, the same
+            # way the positions guard below only fires inside `_positions()`.
+            veto_backdated_reason = veto_out_of_order_reason(conn, cycle_date)
+            if veto_backdated_reason is not None and not settings.allow_backdated_veto:
+                raise OutOfOrderCycle(  # noqa: TRY301
+                    f"{veto_backdated_reason}; pass --allow-backdated-veto for a deliberate "
+                    "historical re-run, or --force (cycle backfill) to reset the replay range "
+                    "first"
+                )
+            report.veto_backdated_bypassed = veto_backdated_reason
             seed_catalog(conn)
             ctx = RuleContext(
                 cycle_date=cycle_date,
@@ -380,11 +388,20 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # cycle keeps a stint open instead of the writer misreading "no data" as "cleared".
             results = [(rule.RULE_ID, rule.evaluate(ctx)) for rule in enabled_rules(conn)]
             hits = [h for _, res in results for h in res]
+            report.vetoed = len({h.asset_id for h in hits if h.severity == "HARD"})
+            if veto_backdated_reason is not None:
+                # A backdated override must never write: `write_vetoes` only ever undoes and
+                # redoes the *latest* transition date's own rows (T-125 f) -- applied here, at
+                # an older date, it would delete or reopen stints that later, still-current
+                # transitions depend on, rewriting history rather than replaying it (PR #103
+                # review). `_rank` already reads the existing stints point-in-time through
+                # `hard_vetoed_as_of`/`active_soft_vetoes`, so a read-only veto step still
+                # ranks correctly.
+                return {"opened": 0, "cleared": 0, "backdated_readonly": True}
             evaluated = {rule_id: res.evaluated for rule_id, res in results}
             opened, cleared = writers.write_vetoes(
                 conn, cycle_date, hits, evaluated, disabled_rule_ids(conn), run_id=run_id
             )
-            report.vetoed = len({h.asset_id for h in hits if h.severity == "HARD"})
             return {"opened": opened, "cleared": cleared}
 
         _do("veto", _veto)

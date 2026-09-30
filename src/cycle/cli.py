@@ -22,7 +22,7 @@ from kg_schema import connect
 from kg_schema.cli import resolve_db_path
 from kg_schema.env import DB_ENV_VAR, database_path
 from kg_schema.provenance import DirtyTree
-from kg_schema.queries import StaleAsOf, StaleGateVersion
+from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
@@ -212,6 +212,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         NotBackdated,
         StaleAsOf,
         StaleGateVersion,
+        VetoSchemaStale,
         DirtyTree,
         TooManyUnscored,
     ) as exc:

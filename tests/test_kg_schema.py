@@ -237,6 +237,65 @@ def test_m009_collapses_per_date_veto_hits_into_stints() -> None:
     assert migrations.apply_migrations(conn) == []
 
 
+def test_m009_ignores_a_row_the_old_writer_had_already_cleared_same_date() -> None:
+    """PR #103 review: the pre-T-125 writer set ``cleared_at`` on a row when a same-date
+    re-run no longer hit that (asset, rule) pair (``ON CONFLICT ... cleared_at = NULL`` on a
+    fresh hit; left set otherwise) -- such a row's ``cycle_date`` was NOT a hit in that
+    date's final, persisted verdict, and the migration must not read it as one. The date
+    still counts as an evaluation date through ``cycle_checkpoint`` regardless, so a rule
+    with only such a row for an asset must end up with zero open stints for it."""
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.executescript(
+        """
+        CREATE TABLE sectors (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+        CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE,
+                             sector_id INTEGER, sub_industry TEXT);
+        CREATE TABLE rule_catalog (
+            rule_id TEXT PRIMARY KEY, description TEXT NOT NULL, severity TEXT NOT NULL,
+            params_json TEXT, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
+        );
+        CREATE TABLE cycle_run (
+            id INTEGER PRIMARY KEY, cycle_type TEXT NOT NULL, cycle_date TEXT NOT NULL,
+            started_at TEXT NOT NULL, finished_at TEXT, status TEXT NOT NULL,
+            params_json TEXT, code_version TEXT, UNIQUE (cycle_type, cycle_date)
+        );
+        CREATE TABLE cycle_checkpoint (
+            id INTEGER PRIMARY KEY,
+            cycle_run_id INTEGER NOT NULL REFERENCES cycle_run(id) ON DELETE CASCADE,
+            step TEXT NOT NULL, status TEXT NOT NULL, detail_json TEXT,
+            updated_at TEXT NOT NULL, UNIQUE (cycle_run_id, step)
+        );
+        CREATE TABLE veto (
+            id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL REFERENCES assets(id),
+            rule_id TEXT NOT NULL REFERENCES rule_catalog(rule_id), severity TEXT NOT NULL,
+            detected_at TEXT NOT NULL, cycle_date TEXT NOT NULL, cleared_at TEXT,
+            evidence_json TEXT, run_id INTEGER,
+            UNIQUE (asset_id, rule_id, cycle_date)
+        );
+        INSERT INTO assets (id, ticker) VALUES (1, 'AAA');
+        INSERT INTO rule_catalog (rule_id, description, severity, created_at)
+            VALUES ('R1', 'x', 'HARD', '2026-01-01');
+        INSERT INTO cycle_run (id, cycle_type, cycle_date, started_at, status)
+            VALUES (1, 'SELECTION', '2026-06-30', '2026-06-30T00:00:00Z', 'completed');
+        INSERT INTO cycle_checkpoint (cycle_run_id, step, status, updated_at)
+            VALUES (1, 'veto', 'done', '2026-06-30T00:00:00Z');
+        INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date, cleared_at)
+            VALUES (1, 'R1', 'HARD', '2026-06-30T00:00:00Z', '2026-06-30', '2026-06-30T01:00:00Z');
+        """
+    )
+    queries.ensure(conn)
+    queries.record(conn, 8, "pretend floor")
+    conn.commit()
+
+    assert 9 in kg_schema.ensure(conn, run_migrations=True)
+
+    assert conn.execute("SELECT COUNT(*) FROM veto WHERE asset_id = 1").fetchone()[0] == 0
+    assert queries.hard_vetoed_as_of(conn, "2026-06-30") == set()
+
+
 def test_database_path_prefers_canonical_then_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("KG_FINANCIAL_DB", raising=False)
     monkeypatch.delenv("KG_FINANTIAL_DB", raising=False)

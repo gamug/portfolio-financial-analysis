@@ -10,7 +10,12 @@ from portfolio_common.db import Database
 
 from cycle.rules.base import VetoHit
 from cycle.scores.sector import SectorAggregate
-from kg_schema.queries import active_soft_vetoes, hard_vetoed_as_of, veto_out_of_order_reason
+from kg_schema.queries import (
+    active_soft_vetoes,
+    hard_vetoed_as_of,
+    require_veto_stint_columns,
+    veto_out_of_order_reason,
+)
 
 __all__ = [
     "OutOfOrderCycle",
@@ -168,8 +173,14 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
     older *cycle_date* than the latest recorded transition is the caller's job to refuse
     (:func:`kg_schema.queries.veto_out_of_order_reason`) before this is ever called.
 
+    Raises :class:`kg_schema.queries.VetoSchemaStale` against a ``veto`` table that exists
+    but predates m009's stint columns, rather than failing mid-write on a missing-column
+    ``DatabaseError`` once production `migrate` (deliberately deferred by this same PR) is
+    still pending (PR #103 review).
+
     Returns ``(opened, cleared)``.
     """
+    require_veto_stint_columns(conn)
     now = _now()
     conn.execute("DELETE FROM veto WHERE raised_on = ?", (cycle_date,))
     conn.execute(

@@ -32,7 +32,7 @@ from cycle.writers import (
     write_vetoes,
 )
 from kg_schema.provenance import DirtyTree
-from kg_schema.queries import StaleAsOf, StaleGateVersion
+from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
 from pricing_agent import db as pricing_db
 
@@ -515,6 +515,29 @@ def test_allow_backdated_overrides_the_guard_and_records_it(cycle_seed: Database
     assert out_of_order_reason(conn, "2026-04-01") is not None
 
 
+def test_allow_backdated_veto_is_read_only_not_a_history_rewrite(cycle_seed: Database) -> None:
+    """PR #103 review: ``write_vetoes`` only ever undoes/redoes *its own* cycle_date's own
+    rows (T-125 f) -- called at an older, already-superseded date under the override, it
+    would instead delete the stint(s) raised on the latest date and roll back last_seen_on
+    on any stint still open from before it, rewriting history rather than replaying it (a
+    reproduced case made ``hard_vetoed_as_of`` retroactively stop seeing an asset as
+    vetoed). The override must make the veto step read-only: it still runs (so ``vetoed``
+    reflects what today's rules say), but never calls ``write_vetoes``."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)  # CCC/DDD/EEE breach LEVERAGE_EXTREME
+    before = [dict(r) for r in conn.execute("SELECT * FROM veto ORDER BY id")]
+    assert before
+
+    backdated = _settings(conn).model_copy(update={"allow_backdated_veto": True})
+    # MONITORING, not SELECTION: isolates the veto guard from T-097's separate positions guard.
+    report = run_monitoring(backdated, "2026-05-01", conn=conn)
+
+    assert report.veto_backdated_bypassed is not None
+    assert "veto" in report.steps_run
+    after = [dict(r) for r in conn.execute("SELECT * FROM veto ORDER BY id")]
+    assert after == before  # untouched -- the step ran read-only, it did not rewrite history
+
+
 # -- T-115: cycle backfill replays into its own book, isolated from the live one --------
 
 
@@ -581,6 +604,30 @@ def test_replay_resumes_without_duplicating(cycle_seed: Database) -> None:
 
     assert "positions" in again.steps_skipped
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position_replay").fetchone()[0] == before
+
+
+def test_veto_guard_does_not_block_resuming_an_already_completed_date(
+    cycle_seed: Database,
+) -> None:
+    """PR #103 review: the veto out-of-order guard used to run unconditionally at the top of
+    ``_run``, before ``done_steps`` was even read -- so resuming ``cycle backfill --from F
+    --to T`` after it was killed refused outright at F, even though every step there
+    (``veto`` included) was already ``done`` and no write would happen. Moved inside
+    ``_veto()`` (mirroring the positions guard, T-097), it must fire only when the step is
+    actually about to execute, never on a pure resume."""
+    conn = cycle_seed
+    first = run_replay(_settings(conn), "2026-06-30", conn=conn)
+    assert "veto" in first.steps_run  # CCC/DDD/EEE breach LEVERAGE_EXTREME -- real stints open
+
+    # a later replay date extends those same open stints (last_seen_on moves past F)
+    later = run_replay(_settings(conn), "2026-07-07", conn=conn)
+    assert "veto" in later.steps_run
+    assert veto_out_of_order_reason(conn, "2026-06-30") is not None  # sanity: F is now "old"
+
+    resumed = run_replay(_settings(conn), "2026-06-30", conn=conn)  # must not raise
+
+    assert "veto" in resumed.steps_skipped
+    assert "positions" in resumed.steps_skipped
 
 
 def test_replay_refuses_a_new_older_date_without_force(cycle_seed: Database) -> None:
@@ -1164,6 +1211,59 @@ def test_reset_replay_range_also_undoes_veto_transitions(memory_db: Database) ->
 
     reset_replay_range(memory_db, "2026-06-01")  # now also wipes the stint's own raising
     assert memory_db.execute("SELECT COUNT(*) FROM veto").fetchone()[0] == 0
+
+
+def test_reset_replay_range_rolls_back_last_seen_on_past_date_from(memory_db: Database) -> None:
+    """PR #103 review: the void/reopen pair above only ever touches raised_on/cleared_on. A
+    stint raised *before* date_from but extended (last_seen_on bumped forward) by a hit on
+    or after it survived untouched -- itself a transition dated on or after date_from, so
+    the very guard this reset exists to clear the way for still found one and refused the
+    redo. On a copy of production, where a live stint raised earlier was still being seen
+    after the range being reset, ``cycle backfill --force`` failed on its first date."""
+    _seed_rule(memory_db)
+    hit = VetoHit(1, "R1", "HARD", {})
+    write_vetoes(memory_db, "2026-06-01", [hit], {"R1": frozenset({1})}, [], run_id=1)
+    write_vetoes(memory_db, "2026-07-01", [hit], {"R1": frozenset({1})}, [], run_id=2)  # extends
+
+    reset_replay_range(memory_db, "2026-06-15")
+
+    assert veto_out_of_order_reason(memory_db, "2026-06-15") is None
+    row = memory_db.execute("SELECT raised_on, last_seen_on FROM veto").fetchone()
+    assert (row["raised_on"], row["last_seen_on"]) == ("2026-06-01", "2026-06-01")
+
+
+def test_veto_predicates_raise_a_clear_error_against_a_pre_m009_veto_table(
+    memory_db: Database,
+) -> None:
+    """PR #103 review: before production ``migrate`` runs (deliberately deferred by this PR),
+    ``veto`` may still be the old per-(asset, rule, cycle_date) hit-row shape. Every reader
+    here, and ``write_vetoes``, used to catch a bare ``DatabaseError`` around the query --
+    swallowing "no such column: raised_on" the same as "no such table: veto" -- so a cycle
+    run would either silently see no vetoes at all, or crash mid-write with a raw traceback
+    instead of an actionable message."""
+    conn = memory_db
+    conn.executescript(
+        """
+        DROP TABLE veto;
+        CREATE TABLE veto (
+            id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL REFERENCES assets(id),
+            rule_id TEXT NOT NULL REFERENCES rule_catalog(rule_id), severity TEXT NOT NULL,
+            detected_at TEXT NOT NULL, cycle_date TEXT NOT NULL, cleared_at TEXT,
+            evidence_json TEXT, run_id INTEGER,
+            UNIQUE (asset_id, rule_id, cycle_date)
+        );
+        """
+    )
+    conn.commit()
+
+    for fn in (
+        lambda: hard_vetoed_as_of(conn, "2026-06-30"),
+        lambda: active_soft_vetoes(conn, "2026-06-30"),
+        lambda: veto_out_of_order_reason(conn, "2026-06-30"),
+        lambda: write_vetoes(conn, "2026-06-30", [], {}, [], run_id=1),
+    ):
+        with pytest.raises(VetoSchemaStale, match="migrate"):
+            fn()
 
 
 # -- T-119: no FUNDAMENTAL score at all -----------------------------------

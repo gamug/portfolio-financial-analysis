@@ -459,9 +459,15 @@ def _m009_veto_stints(db: Database) -> None:
             )
         }
     )
+    # cleared_at IS NULL: the old writer set cleared_at on a row when a same-date re-run no
+    # longer hit that (asset, rule) pair (ON CONFLICT ... cleared_at = NULL on a fresh hit,
+    # else left set by the clearing UPDATE) -- such a row's cycle_date was NOT a hit in that
+    # date's final verdict, and must not be read as one here (PR #103 review). The date still
+    # counts as an evaluation date through cycle_checkpoint regardless, so the pair still
+    # closes correctly on it.
     old_rows = db.execute(
         "SELECT asset_id, rule_id, severity, detected_at, cycle_date, evidence_json, run_id "
-        "FROM veto ORDER BY asset_id, rule_id, cycle_date"
+        "FROM veto WHERE cleared_at IS NULL ORDER BY asset_id, rule_id, cycle_date"
     ).fetchall()
     by_pair: dict[tuple[int, str], dict[str, dict]] = {}
     for r in old_rows:
