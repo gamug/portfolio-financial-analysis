@@ -3,12 +3,33 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from portfolio_common.db import Database
 
 from cycle.rules.base import VetoHit
 from cycle.scores.sector import SectorAggregate
+from kg_schema.queries import (
+    active_soft_vetoes,
+    hard_vetoed_as_of,
+    require_veto_stint_columns,
+    veto_out_of_order_reason,
+)
+
+__all__ = [
+    "OutOfOrderCycle",
+    "active_soft_vetoes",
+    "apply_normalized",
+    "hard_vetoed_as_of",
+    "out_of_order_reason",
+    "sync_positions",
+    "veto_out_of_order_reason",
+    "write_ranking",
+    "write_scores",
+    "write_sector_aggregates",
+    "write_vetoes",
+]
 
 # Weights closer than this are the same weight (float noise, not a re-weight).
 WEIGHT_EPS = 1e-9
@@ -128,66 +149,104 @@ def write_sector_aggregates(
     return len(aggregates)
 
 
-def write_vetoes(
-    conn: Database, cycle_date: str, hits: list[VetoHit], *, run_id: int
+def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
+    conn: Database,
+    cycle_date: str,
+    hits: list[VetoHit],
+    evaluated: dict[str, frozenset[int]],
+    disabled_rule_ids: Iterable[str],
+    *,
+    run_id: int,
 ) -> tuple[int, int]:
-    """Insert new hits, clear ones whose condition no longer holds. Returns (opened, cleared)."""
+    """Apply this cycle's veto transitions as stints (T-125), not per-date rows.
+
+    *evaluated* is rule_id -> the asset_ids that rule could actually resolve this cycle
+    (hit or not) -- ``cycle.rules.base.RuleResult.evaluated``; an asset missing from its
+    rule's evaluated set (missing data) is left untouched: its open stint, if any, stays
+    open, and no new one opens. *disabled_rule_ids* (``cycle.rules.disabled_rule_ids``)
+    close every open stint of a rule turned off in ``rule_catalog``, since a disabled rule
+    is never asked to evaluate anything and so would otherwise never clear.
+
+    Idempotent re-run (T-125 f): before applying anything, this *cycle_date*'s own prior
+    transitions are undone -- stints it opened are deleted, stints it closed are reopened --
+    so re-running the same date recomputes cleanly rather than compounding. A genuinely
+    older *cycle_date* than the latest recorded transition is the caller's job to refuse
+    (:func:`kg_schema.queries.veto_out_of_order_reason`) before this is ever called.
+
+    Raises :class:`kg_schema.queries.VetoSchemaStale` against a ``veto`` table that exists
+    but predates m009's stint columns, rather than failing mid-write on a missing-column
+    ``DatabaseError`` once production `migrate` (deliberately deferred by this same PR) is
+    still pending (PR #103 review).
+
+    Returns ``(opened, cleared)``.
+    """
+    require_veto_stint_columns(conn)
     now = _now()
-    active_keys = {(h.asset_id, h.rule_id) for h in hits}
-    conn.executemany(
-        """
-        INSERT INTO veto (asset_id, rule_id, severity, detected_at, cycle_date, evidence_json, run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (asset_id, rule_id, cycle_date) DO UPDATE SET
-            evidence_json = excluded.evidence_json, cleared_at = NULL
-        """,
-        [
-            (h.asset_id, h.rule_id, h.severity, now, cycle_date, json.dumps(h.evidence), run_id)
-            for h in hits
-        ],
-    )
-    # clear any still-open veto for this cycle_date that is not in the current hit set
-    open_rows = conn.execute(
-        "SELECT asset_id, rule_id FROM veto WHERE cycle_date = ? AND cleared_at IS NULL",
+    conn.execute("DELETE FROM veto WHERE raised_on = ?", (cycle_date,))
+    conn.execute(
+        "UPDATE veto SET cleared_on = NULL, cleared_at = NULL WHERE cleared_on = ?",
         (cycle_date,),
-    ).fetchall()
-    cleared = 0
-    for r in open_rows:
-        if (int(r["asset_id"]), str(r["rule_id"])) not in active_keys:
+    )
+    open_rows = {
+        (int(r["asset_id"]), str(r["rule_id"])): r
+        for r in conn.execute("SELECT id, asset_id, rule_id FROM veto WHERE cleared_on IS NULL")
+    }
+    hit_by_key = {(h.asset_id, h.rule_id): h for h in hits}
+    opened = cleared = 0
+    for rule_id, asset_ids in evaluated.items():
+        for aid in asset_ids:
+            key = (aid, rule_id)
+            hit = hit_by_key.get(key)
+            existing = open_rows.get(key)
+            if hit is not None:
+                if existing is None:
+                    conn.execute(
+                        """
+                        INSERT INTO veto (asset_id, rule_id, severity, raised_on, cleared_on,
+                                          last_seen_on, detected_at, evidence_json, run_id)
+                        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                        """,
+                        (
+                            aid,
+                            rule_id,
+                            hit.severity,
+                            cycle_date,
+                            cycle_date,
+                            now,
+                            json.dumps(hit.evidence),
+                            run_id,
+                        ),
+                    )
+                    opened += 1
+                else:
+                    conn.execute(
+                        "UPDATE veto SET last_seen_on = ?, severity = ?, evidence_json = ?, "
+                        "run_id = ? WHERE id = ?",
+                        (
+                            cycle_date,
+                            hit.severity,
+                            json.dumps(hit.evidence),
+                            run_id,
+                            int(existing["id"]),
+                        ),
+                    )
+            elif existing is not None:
+                conn.execute(
+                    "UPDATE veto SET cleared_on = ?, cleared_at = ? WHERE id = ?",
+                    (cycle_date, now, int(existing["id"])),
+                )
+                cleared += 1
+    for rule_id in disabled_rule_ids:
+        for r in conn.execute(
+            "SELECT id FROM veto WHERE rule_id = ? AND cleared_on IS NULL", (rule_id,)
+        ).fetchall():
             conn.execute(
-                "UPDATE veto SET cleared_at = ? WHERE cycle_date = ? AND asset_id = ? AND rule_id = ?",
-                (now, cycle_date, r["asset_id"], r["rule_id"]),
+                "UPDATE veto SET cleared_on = ?, cleared_at = ? WHERE id = ?",
+                (cycle_date, now, int(r["id"])),
             )
             cleared += 1
     conn.commit()
-    return len(hits), cleared
-
-
-def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
-    """asset_ids carrying an uncleared HARD veto detected on or before *cutoff_date*
-    -- the T-1 contagion filter (cycle on N reads cycle_date <= N-1)."""
-    rows = conn.execute(
-        """
-        SELECT DISTINCT asset_id FROM veto
-        WHERE severity = 'HARD' AND cleared_at IS NULL AND cycle_date <= ?
-        """,
-        (cutoff_date,),
-    ).fetchall()
-    return {int(r["asset_id"]) for r in rows}
-
-
-def active_soft_vetoes(conn: Database, cutoff_date: str) -> dict[int, list[str]]:
-    rows = conn.execute(
-        """
-        SELECT asset_id, rule_id FROM veto
-        WHERE severity = 'SOFT' AND cleared_at IS NULL AND cycle_date <= ?
-        """,
-        (cutoff_date,),
-    ).fetchall()
-    out: dict[int, list[str]] = {}
-    for r in rows:
-        out.setdefault(int(r["asset_id"]), []).append(str(r["rule_id"]))
-    return out
+    return opened, cleared
 
 
 def write_ranking(conn: Database, cycle_run_id: int, ranked: list[dict[str, object]]) -> None:

@@ -306,6 +306,105 @@ def stale_gate_version_reason(conn: Database, gate_version: str) -> str | None:
     )
 
 
+# -- veto stints: one shared point-in-time predicate (T-125) ----------------------------
+#
+# `veto` holds stints (raised_on / cleared_on / last_seen_on -- cycle dates), not per-date
+# events: a stint is active at cutoff C iff `raised_on <= C AND (cleared_on IS NULL OR
+# cleared_on > C)`. Both `cycle` (the HARD filter, the SOFT penalty) and `quant` (the
+# liquidity/universe gate) read this same predicate, at C = the cycle/as-of date's T-1, so
+# there is exactly one definition of "active" rather than the two independent SQL copies
+# that predated T-125 (`cycle.writers` and `quant.db` each had their own).
+
+
+class VetoSchemaStale(RuntimeError):
+    """``veto`` exists but predates migration m009's stint columns (``raised_on``/
+    ``cleared_on``/``last_seen_on``) -- production `migrate` is deliberately deferred by
+    T-125's own PR, so a cycle/quant run against the un-migrated table would otherwise
+    either silently read no vetoes at all (the old bare ``except DatabaseError`` swallowed
+    "no such column" the same as "no such table") or crash on it mid-write (PR #103
+    review). Raised instead, with an actionable fix, the same way
+    :class:`StaleGateVersion` covers a stale Ring-1 gate version."""
+
+
+def require_veto_stint_columns(conn: Database) -> bool:
+    """``True`` once ``veto`` has m009's stint shape; ``False`` when the table does not
+    exist at all yet (every caller's own empty/``None`` default already covers a database
+    that has simply never run a cycle). Raises :class:`VetoSchemaStale` when ``veto``
+    exists but is still the old per-(asset, rule, cycle_date) hit-row shape. Shared by
+    every veto reader here and by :func:`cycle.writers.write_vetoes` before it writes."""
+    if not conn.relation_exists("veto"):
+        return False
+    if "raised_on" not in conn.table_columns("veto"):
+        raise VetoSchemaStale(
+            "veto exists but predates m009 (no raised_on/cleared_on/last_seen_on stint "
+            "columns) -- run `python -m fundamental_agent migrate` (or `pricing_agent "
+            "migrate`) to apply it first"
+        )
+    return True
+
+
+def hard_vetoed_as_of(conn: Database, cutoff_date: str) -> set[int]:
+    """asset_ids with an open HARD veto stint active at *cutoff_date* -- the T-1 contagion
+    filter (a cycle/as-of on N reads cutoff N-1)."""
+    if not require_veto_stint_columns(conn):
+        return set()  # no veto table in this DB
+    rows = conn.execute(
+        """
+        SELECT DISTINCT asset_id FROM veto
+        WHERE severity = 'HARD' AND raised_on <= ? AND (cleared_on IS NULL OR cleared_on > ?)
+        """,
+        (cutoff_date, cutoff_date),
+    ).fetchall()
+    return {int(r["asset_id"]) for r in rows}
+
+
+def active_soft_vetoes(conn: Database, cutoff_date: str) -> dict[int, list[str]]:
+    """asset_id -> the distinct SOFT rule_ids with an open stint active at *cutoff_date*.
+    One entry per rule the stint is still open under -- never once per cycle it has held,
+    since there is at most one open stint per (asset_id, rule_id) (T-125)."""
+    if not require_veto_stint_columns(conn):
+        return {}
+    rows = conn.execute(
+        """
+        SELECT asset_id, rule_id FROM veto
+        WHERE severity = 'SOFT' AND raised_on <= ? AND (cleared_on IS NULL OR cleared_on > ?)
+        """,
+        (cutoff_date, cutoff_date),
+    ).fetchall()
+    out: dict[int, list[str]] = {}
+    for r in rows:
+        out.setdefault(int(r["asset_id"]), []).append(str(r["rule_id"]))
+    return out
+
+
+def veto_out_of_order_reason(conn: Database, cycle_date: str) -> str | None:
+    """Why writing veto transitions at *cycle_date* would be out-of-order -- or ``None``
+    when it's safe (T-125 f, the same rule T-097 applies to ``portfolio_position``).
+
+    ``veto`` is not isolated between a live ``select``/``monitor`` run and a ``cycle
+    backfill`` REPLAY the way ``portfolio_position``/``portfolio_position_replay`` are
+    (T-115) -- both write the same shared stints table -- so this checks the latest
+    transition date recorded anywhere in it (``raised_on``/``cleared_on``/``last_seen_on``),
+    regardless of which run wrote it. *cycle_date* equal to that latest date is safe: that
+    is the ordinary same-date re-run, which ``write_vetoes`` makes idempotent by undoing and
+    redoing its own transitions first."""
+    if not require_veto_stint_columns(conn):
+        return None
+    row = conn.execute(
+        """
+        SELECT MAX(d) AS latest FROM (
+            SELECT raised_on AS d FROM veto
+            UNION ALL SELECT cleared_on AS d FROM veto WHERE cleared_on IS NOT NULL
+            UNION ALL SELECT last_seen_on AS d FROM veto
+        )
+        """
+    ).fetchone()
+    latest = row["latest"] if row else None
+    if latest is None or cycle_date >= str(latest):
+        return None
+    return f"cycle_date {cycle_date} is older than the latest veto transition ({latest})"
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,

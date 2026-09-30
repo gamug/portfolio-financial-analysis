@@ -3842,3 +3842,261 @@ present as equivalent to a real, computed score (constitution AI behavior #5).
   `rank` raises.
 - `uv run pytest -q` -- 779 passed. `ruff check` / `ruff format --check` / `uv run mypy` -- all
   clean.
+
+---
+
+## T-125 — Veto lifecycle: a per-cycle-date event model made a HARD veto permanent and double-counted a held SOFT one
+
+**Status**: Code done 2026-09-29 (`T-125`, P0, added 2026-09-27 from PR #94's review). Production
+`migrate` (the schema rebuild, `m009`) is **deferred, pending explicit user direction** -- the
+same category as every other pending production action in `TASKS.md` (`T-121`-`T-124`).
+
+### Symptom
+
+Verified directly against a read-only copy of production (`data/financial-2.db`, schema floor 6,
+via `KG_FINANCIAL_DB`), 2026-09-29 -- 19 `veto` rows total, all `cleared_at IS NULL`:
+
+- **WAT** (`asset_id` 486) carries a HARD `NEGATIVE_FCF` row dated `cycle_date = 2026-06-30`
+  (from the backdated run T-104 later reverted) with no later row at all for that
+  `(asset, rule)` pair -- i.e. the 2026-09-22 cycle re-evaluated WAT and found the condition no
+  longer breached, but the code has no way to record that: it still reads as an active HARD veto
+  today, permanently, unless someone notices and hand-deletes the row.
+- **9 other `(asset_id, rule_id)` pairs** -- APA/T/STZ/NEE/PM/PG/SBAC's `LIQUIDITY_DISTRESS`
+  (SOFT) and MA/SBAC's `LEVERAGE_EXTREME` (HARD) -- each carry **two** separate rows, one dated
+  `2026-06-30` and one `2026-09-22`, both still uncleared. Reading the old
+  `active_soft_vetoes`/`hard_vetoed_as_of` predicate (`cycle_date <= cutoff AND cleared_at IS
+  NULL`) at a projected next cycle's T-1 cutoff (`2026-09-28`) returns **both** rows for each of
+  the 7 SOFT-vetoed names -- `soft_veto_penalty * 2` (30 points at the default 15/rule) instead
+  of `* 1` -- confirming the "4 weekly cycles = -60, not -15" shape the PR #94 review described,
+  generalized to any name whose SOFT condition is simply still true across cycles.
+
+### Root cause
+
+`veto` (`src/kg_schema/ddl.py`) keyed each row on `(asset_id, rule_id, cycle_date)` -- a per-date
+*event*, not a *condition*. `writers.write_vetoes` (`src/cycle/writers.py`) only ever cleared
+rows `WHERE cycle_date = ?` for the run's own date, so a prior date's row was never touched by a
+later run: a HARD hit, once written, had no code path that could ever set its `cleared_at`
+again, and a condition true on N separate cycle dates produced N separate rows, each read as an
+independent, simultaneously-active hit by `hard_vetoed_as_of`/`active_soft_vetoes`'s
+`cycle_date <= cutoff` scan. Neither reader nor writer had any notion of "the same veto,
+continuing" versus "a new one" -- exactly the shape `portfolio_position` had before T-104
+introduced `valid_from`/`valid_to` stints for the identical reason (a position, once opened,
+needs a record of when it *closed*, not a fresh row every time it's still held).
+
+### Theoretical/technical reference
+
+This is a data-modeling correctness question, not a ratio/GAAP one: representing "a condition
+that holds over an interval of time, with a definite start and (if any) end" is the standard
+slowly-changing-dimension "Type 2" pattern (Kimball & Ross, *The Data Warehouse Toolkit*, 3rd
+ed., ch. 5) -- an open-ended validity interval per state change, one row per interval, never
+mutated in place except to close it. This repo already adopted exactly that shape for
+`portfolio_position` (T-104, `valid_from`/`valid_to`) and `portfolio_position_replay` (T-115);
+`veto`'s `raised_on`/`cleared_on`/`last_seen_on` is the same pattern applied to the same repo's
+own veto-lifecycle gap PR #94's review identified, not a new technique.
+
+### Fix
+
+- **Schema** (`src/kg_schema/ddl.py`): `veto` now holds stints -- `raised_on`, `cleared_on`
+  (`NULL` = open), `last_seen_on` (cycle dates); `detected_at`/`cleared_at` stay as wall-clock
+  metadata only, never read by the point-in-time predicate. `UNIQUE (asset_id, rule_id,
+  raised_on)` plus a partial unique index (`ux_veto_open ... WHERE cleared_on IS NULL`) enforce
+  at most one open stint per `(asset_id, rule_id)` -- a re-raise after a clear opens a new,
+  distinct stint. The two new indexes name the new columns, so they cannot ship inline in
+  `ADDITIVE_DDL` the way the table itself can (a pre-T-125 database's `CREATE TABLE IF NOT
+  EXISTS veto` safely no-ops against the old shape, but an unconditional `CREATE INDEX` naming
+  a column that shape lacks would abort `kg_schema.ensure`'s additive path outright, which must
+  stay safe to run anytime, migrated or not) -- `kg_schema._ensure_veto_indexes` creates them
+  only once `raised_on` actually exists (a fresh database, or a migrated one).
+- **Three-state evaluation** (`src/cycle/rules/base.py`, `builtin.py`): `Rule.evaluate()` now
+  returns a `RuleResult(hits, evaluated)` -- `evaluated` is the `frozenset[int]` of asset_ids the
+  rule could actually resolve this cycle, hit or not, distinguishing "evaluated, no longer hit"
+  (clears an open stint) from "couldn't tell this cycle, e.g. no filing yet" (leaves an open
+  stint untouched, never opens a new one). `RuleResult` iterates as its own `hits`, so every
+  existing `for h in rule.evaluate(ctx)` call site (tests included) keeps working unchanged.
+  Each of the 5 built-in rules defines its own evaluated set from what it actually reads:
+  `_ThresholdRule`/`_LeverageRule` by the deciding metric being non-`None`; `_DrawdownRule` by
+  `max_drawdown_90d` being non-`None`; `_StaleFundamentalRule` by asset membership in
+  `ctx.last_fundamental` (T-119: only ever populated for a scored asset); `_DataQualityRule` by
+  a non-empty `ctx.metrics` entry (the same usable-filing set Ring-1 gates against).
+- **Transitions + idempotent re-run** (`src/cycle/writers.py::write_vetoes`): takes `hits`,
+  `evaluated` (`dict[rule_id, frozenset[asset_id]]`), and `disabled_rule_ids`. Before applying
+  anything, it undoes *this cycle_date's own* prior transitions (deletes stints it raised,
+  reopens stints it cleared), then reapplies: hit + no open stint -> open; hit + open stint ->
+  bump `last_seen_on` (and `severity`, which can flip between SOFT/HARD run to run for
+  `LEVERAGE_EXTREME`'s negative-equity branch); evaluated, not hit, open stint -> close; a rule
+  disabled in `rule_catalog` -> close its open stints too, via `cycle.rules.disabled_rule_ids`
+  (a disabled rule is never asked to evaluate, so nothing else would ever clear it).
+- **One shared point-in-time predicate** (`src/kg_schema/queries.py`): `hard_vetoed_as_of` /
+  `active_soft_vetoes` -- `raised_on <= cutoff AND (cleared_on IS NULL OR cleared_on > cutoff)`
+  -- replace two independent copies (`cycle.writers`, and `quant.db`'s own "copied ... to avoid
+  importing cycle"). `active_soft_vetoes` now returns one entry per open stint, so
+  `orchestrator._rank`'s existing `soft_veto_penalty * len(soft.get(a, []))` is "once per open
+  stint" for free, with no formula change needed.
+- **Out-of-order guard** (`kg_schema.queries.veto_out_of_order_reason`, wired into
+  `cycle.orchestrator._run`): mirrors T-097's `portfolio_position` guard -- refuses a
+  `cycle_date` older than the latest transition recorded anywhere in the shared `veto` table
+  unless `--allow-backdated-veto` (`CycleSettings.allow_backdated_veto`, new CLI flag on
+  `select`/`monitor`). Same date as the latest transition is safe (the ordinary idempotent
+  same-date re-run above).
+- **Replay reset** (`src/cycle/replay.py::reset_replay_range`, T-115's `--force`): now also
+  deletes stints raised on/after `--from` and reopens stints cleared on/after `--from`, mirroring
+  the existing `portfolio_position_replay` void/reopen pair -- `veto` is one table shared between
+  live and REPLAY runs (unlike `portfolio_position`/`portfolio_position_replay`), so a REPLAY at
+  an older date needs the same reset before it, not a separate override flag.
+- **Migration** (`src/kg_schema/migrations.py::_m009_veto_stints`): collapses the old
+  per-`(asset, rule, cycle_date)` hit rows into stints, using the set of cycle dates the "veto"
+  checkpoint step actually completed on (any `cycle_run`, any `cycle_type`) as the evaluation
+  timeline: a stint opens on a pair's first hit date, extends across consecutive hit dates, and
+  closes at the first evaluation date with no hit row for that pair -- reopening a new stint if
+  hit again later. Registered as `MIGRATIONS`' version 9.
+
+### Design decisions
+
+- **`RuleResult` iterates as its own hits, deliberately.** Changing `evaluate()`'s return type
+  outright would have forced touching every existing rule-level test (`test_threshold_and_
+  drawdown_rules` and the six `_LeverageRule` tests) for no behavioral reason -- they only ever
+  consume the hits, never an evaluated set. Making the return value iterable keeps every one of
+  those call sites correct unchanged, per constitution's "prefer the smallest change consistent
+  with the existing pattern."
+- **`_DataQualityRule`'s evaluated set is `ctx.metrics`, not `ctx.data_quality`'s own keys.**
+  `ctx.data_quality` is seeded by the orchestrator only for assets *with* a HARD issue
+  (`{a: dq.hard[a] for a in asset_ids if a in dq.hard}`), so its keys are already the hit set,
+  not a could-evaluate set -- an asset Ring-1 gated and found clean never appears there at all.
+  Ring-1 runs against the same usable-filing set `latest_metrics` populates, so a non-empty
+  `ctx.metrics[aid]` is the correct proxy for "this asset's latest filing was gated this cycle."
+- **Veto stays one shared table between live and REPLAY runs -- not mirrored into a
+  `veto_replay` table.** T-115 fully isolated `portfolio_position` into a parallel
+  `portfolio_position_replay` table; this task's own text only asks `reset_replay_range` to also
+  undo veto transitions, not to isolate the table itself, and `cycle backfill`'s `--db` is
+  already required to be a throwaway copy of the database for exactly this reason (score_
+  snapshot, veto and cycle_ranking are all acknowledged, pre-existing non-isolated writes --
+  `cli.py::_BACKFILL_DB_HELP`). Full isolation would need a second physical table (and would
+  conflict with (a)'s single global "at most one open stint" constraint, which a two-stream
+  design can't honor without weakening it); out of this task's scope.
+- **The out-of-order guard applies uniformly to live and REPLAY runs, with different escape
+  hatches.** `test_replay_never_conflicts_with_an_existing_live_book` (T-115) had assumed a
+  REPLAY never conflicts with anything the live book has done, true for `portfolio_position` but
+  never actually true for `veto` (see the point above) -- updated to reflect that a REPLAY whose
+  date is older than an existing veto transition needs the same `--allow-backdated-veto`
+  override a live run would (in production, `--force`'s now-extended reset is the intended path,
+  since `--db` there always names a copy, not the live database).
+
+### Verification
+
+- Real-data before/after, on a scratch copy of `data/financial-2.db` (never the tracked file;
+  copy discarded after use) run through `kg_schema.ensure(conn, run_migrations=True)`:
+  - **Before** (raw per-date rows): 19 rows; WAT's HARD `NEGATIVE_FCF` shows as active at any
+    cutoff on/after `2026-06-30`, forever; at a projected `2026-09-28` cutoff, 7 SOFT names each
+    contribute 2 rule-id entries (`penalty x 2`).
+  - **After migration**: 10 stints. WAT's `NEGATIVE_FCF` stint is `raised_on = 2026-06-30,
+    cleared_on = 2026-09-22` -- correctly inactive from 2026-09-22 on. The other 9 pairs
+    collapse to one open stint each (`raised_on = 2026-06-30, last_seen_on = 2026-09-22`). At the
+    same `2026-09-28` cutoff, `kg_schema.queries.active_soft_vetoes` now returns exactly one
+    rule-id per name (`penalty x 1`), and `hard_vetoed_as_of` returns `{MA, SBAC}` only -- WAT
+    correctly excluded.
+- New tests (+9, `uv run pytest -q` 794 passed, was 785): `tests/test_cycle.py` --
+  `test_rule_result_iterates_as_its_hits`,
+  `test_write_vetoes_opens_extends_then_clears_a_hard_stint` (open -> extend -> clear -> re-raise
+  as a new stint, plus the point-in-time predicate either side of the clear date),
+  `test_write_vetoes_soft_stint_penalizes_once_not_per_cycle_held`,
+  `test_write_vetoes_leaves_open_stint_untouched_when_asset_not_evaluated`,
+  `test_write_vetoes_disabled_rule_closes_its_open_stints`,
+  `test_write_vetoes_same_date_rerun_is_idempotent`,
+  `test_veto_out_of_order_reason_pure_function`,
+  `test_reset_replay_range_also_undoes_veto_transitions`; `tests/test_kg_schema.py` --
+  `test_m009_collapses_per_date_veto_hits_into_stints` (the exact WAT/re-raise shape found in
+  production above, hand-built at schema floor 8, asserting the resulting stints and that the
+  migration is idempotent).
+- Updated (schema-shape or guard-interaction, not behavior-under-test):
+  `test_t_minus_1_hard_veto_excludes_asset`,
+  `test_hard_veto_detected_via_rules_excludes_asset_starting_next_cycle`,
+  `test_a_cycle_before_the_filings_are_public_sees_no_fundamentals`,
+  `test_gate_drops_illiquid_short_and_vetoed`,
+  `test_benchmark_gate_keeps_a_hard_vetoed_name_a_book_would_drop`,
+  `test_evaluate_s_benchmark_panel_keeps_a_hard_vetoed_name_a_book_would_drop`,
+  `test_select_refuses_to_write_a_backdated_book`,
+  `test_allow_backdated_cannot_end_newer_open_positions`,
+  `test_allow_backdated_overrides_the_guard_and_records_it`,
+  `test_replay_never_conflicts_with_an_existing_live_book`,
+  `test_m008_backfills_every_row_and_restores_the_guards`,
+  `test_migrations_rebuild_and_preserve_rows` (schema floor 8 -> 9).
+- `ruff check` / `ruff format --check` / `uv run mypy` -- all clean.
+
+### Residual scope / deliberately deferred
+
+- **Production `migrate`** (the real `data/financial.db`'s `m009` rebuild) is deferred pending
+  explicit user direction, same as `T-121`-`T-124`.
+- **Veto is still not fully isolated between live and REPLAY runs** -- see "Design decisions"
+  above. A future full isolation (a `veto_replay` table) is a larger, separate change, not
+  something this task's own acceptance criteria called for.
+
+### PR #103 review follow-up (2026-09-30) -- 5 required fixes
+
+A human review of PR #103 (T-125's own PR) found five bugs in the initial implementation above;
+two overlapped with `sourcery-ai`'s inline findings on the same PR (`src/cycle/writers.py:175`,
+`src/cycle/replay.py:151`). All five are fixed here, each verified against a scratch copy of
+`/workspaces/thesis/data/financial.db` (never the tracked file; copy discarded after use) --
+schema floor 8, the same un-migrated shape (19 `veto` rows, all `cleared_at IS NULL`) the
+original T-125 verification used.
+
+1. **`--force`'s replay reset left a stale `last_seen_on` behind.**
+   `cycle.replay.reset_replay_range`'s void/reopen pair only ever touched
+   `raised_on`/`cleared_on` -- a stint raised *before* `date_from` but extended (`last_seen_on`
+   bumped forward) by a hit on or after it survived untouched, itself a transition dated on/after
+   `date_from` that immediately tripped `veto_out_of_order_reason` again on the very redo `--force`
+   exists to unblock. Fixed by also running `UPDATE veto SET last_seen_on = raised_on WHERE
+   raised_on < ? AND last_seen_on >= ?` in the same reset. `veto_out_of_order_reason` itself keeps
+   reading `last_seen_on` unchanged -- only the reset needed the fix.
+2. **The veto out-of-order guard ran too early, blocking a plain resume.** It sat at the top of
+   `cycle.orchestrator._run`, before `done_steps` was even read, so re-invoking `cycle backfill
+   --from F --to T` after it was killed refused outright at `F` even when every step there
+   (`veto` included) was already `done` and no write would happen. Moved inside the `_veto()`
+   step closure -- mirroring exactly where the T-097 positions guard already lives inside
+   `_positions()` -- so it fires only when the step is actually about to execute.
+3. **`--allow-backdated-veto` rewrote veto history instead of replaying it.** `write_vetoes` only
+   ever undoes/redoes *its own* cycle_date's rows (the idempotent-same-date-rerun design, T-125 f);
+   called at an older, already-superseded date under the override, it instead deleted the stint(s)
+   raised on the true latest date and rolled a still-open earlier stint's `last_seen_on` back --
+   reproduced case: `hard_vetoed_as_of` went from `{asset}` to `set()` for a cutoff between the
+   backdated date and the (now-deleted) later transition, i.e. an asset retroactively stopped
+   reading as vetoed. Fixed by making the override read-only: `_veto()` still evaluates the rules
+   (so `vetoed`/the CLI's hard-veto count reflect today's conditions) but returns before calling
+   `write_vetoes` whenever the guard was bypassed. `_rank` already reads existing stints
+   point-in-time through `hard_vetoed_as_of`/`active_soft_vetoes`, so ranking stays correct with
+   nothing written.
+4. **The veto predicates silently misread a pre-`migrate` database as vetoless.**
+   `hard_vetoed_as_of`/`active_soft_vetoes`/`veto_out_of_order_reason` each caught a bare
+   `DatabaseError` to handle "no `veto` table yet" -- which also swallows "`veto` exists but has
+   no `raised_on` column" (the exact state production sits in until `migrate` runs, deliberately
+   deferred by this same PR) the same way, returning an empty/`None` result instead of an error.
+   `cycle.writers.write_vetoes` had the opposite problem: no guard at all, so it crashed on the
+   same missing column with a raw `DatabaseError` traceback instead of an actionable message
+   (`sourcery-ai`'s own finding on `writers.py:175`). Both fixed by one shared helper,
+   `kg_schema.queries.require_veto_stint_columns`: `False` when `veto` doesn't exist yet (every
+   caller's existing empty default), raises the new `kg_schema.queries.VetoSchemaStale` when it
+   exists but predates `m009`, naming `migrate` as the fix -- the same pattern `StaleGateVersion`
+   already uses for a stale Ring-1 gate version. Wired into `cycle`'s and `quant`'s CLI exception
+   handlers (`cycle.cli.main`, `quant.cli._run_build_risk_model`/`_run_optimize`) alongside the
+   other guard exceptions, so it prints one line and exits 1 rather than a traceback.
+5. **`_m009_veto_stints` read a same-date-corrected row as a hit.** The pre-T-125 writer set
+   `cleared_at` on a row when a same-date re-run no longer hit that `(asset, rule)` pair (`ON
+   CONFLICT ... cleared_at = NULL` on a fresh hit, left set otherwise) -- such a row's `cycle_date`
+   was *not* a hit in that date's final, persisted verdict, but the migration's `old_rows` query
+   read every row regardless, so it would have opened or extended a stint from a veto that was
+   never actually active on that date. Fixed with a `WHERE cleared_at IS NULL` filter (the date
+   still counts as an evaluation date through `cycle_checkpoint`, so the pair still closes
+   correctly on it). **Verified count on the real (scratch) database: 0 such rows** -- this PR's
+   `m009` run against it is behaviorally unchanged (same 10 stints, same WAT `NEGATIVE_FCF` close
+   on `2026-09-22` as the original T-125 verification above); the fix only matters for a database
+   that does carry a same-date correction, none of which exist in this one.
+
+**New tests (+5, `uv run pytest -q` 799 passed, was 794):** `tests/test_cycle.py` --
+`test_veto_guard_does_not_block_resuming_an_already_completed_date` (fix 2: two `run_replay`s
+then a resume of the earlier date must not raise), `test_allow_backdated_veto_is_read_only_not_a_
+history_rewrite` (fix 3: the override runs the step but leaves `veto` byte-for-byte unchanged),
+`test_reset_replay_range_rolls_back_last_seen_on_past_date_from` (fix 1),
+`test_veto_predicates_raise_a_clear_error_against_a_pre_m009_veto_table` (fix 4: all four of
+`hard_vetoed_as_of`/`active_soft_vetoes`/`veto_out_of_order_reason`/`write_vetoes` against a
+hand-built old-shape `veto` table); `tests/test_kg_schema.py` --
+`test_m009_ignores_a_row_the_old_writer_had_already_cleared_same_date` (fix 5).
+`ruff check` / `ruff format --check` / `uv run mypy` -- all clean.

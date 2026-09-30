@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
@@ -12,6 +13,22 @@ class VetoHit:
     rule_id: str
     severity: str
     evidence: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class RuleResult:
+    """A rule's verdict for one cycle: its hits, plus the asset_ids it could actually
+    resolve (T-125 b) -- hit or not. ``write_vetoes`` needs the *evaluated* set to tell
+    "condition no longer holds" (closes an open stint) apart from "couldn't tell this
+    cycle" (missing data -- an open stint must stay open, never silently clear). Iterating
+    a ``RuleResult`` directly yields its hits, so existing ``for h in rule.evaluate(ctx)``
+    call sites keep working unchanged."""
+
+    hits: list[VetoHit] = field(default_factory=list)
+    evaluated: frozenset[int] = frozenset()
+
+    def __iter__(self) -> Iterator[VetoHit]:
+        return iter(self.hits)
 
 
 @dataclass
@@ -38,4 +55,4 @@ class Rule(Protocol):
         """Serializable rule parameters (matches the impls' attribute name)."""
         ...
 
-    def evaluate(self, ctx: RuleContext) -> list[VetoHit]: ...
+    def evaluate(self, ctx: RuleContext) -> RuleResult: ...

@@ -116,19 +116,31 @@ CREATE TABLE IF NOT EXISTS rule_catalog (
     created_at  TEXT NOT NULL
 );
 
+-- T-125: a veto is a stint (raised_on .. cleared_on), not a per-cycle-date event -- a
+-- HARD veto raised on one cycle and never seen again must clear once the rule re-evaluates
+-- the asset and finds it no longer breached, and a SOFT rule held across N cycles is one
+-- open stint, not N separate hits. `raised_on`/`cleared_on`/`last_seen_on` are cycle dates
+-- (what the veto is *about*); `detected_at`/`cleared_at` are wall-clock metadata only, never
+-- read by the point-in-time predicate. At most one open stint per (asset_id, rule_id) --
+-- a partial unique index, added separately by `kg_schema.ensure` once the columns exist
+-- (`_ensure_veto_indexes`) -- never inline here: unlike a plain nullable `ADD COLUMN`, an
+-- index naming these new column names would abort `CREATE TABLE IF NOT EXISTS`'s no-op
+-- safety on a pre-T-125 database that still has the old, per-cycle-date shape and hasn't
+-- run `migrate` yet.
 CREATE TABLE IF NOT EXISTS veto (
     id            INTEGER PRIMARY KEY,
     asset_id      INTEGER NOT NULL REFERENCES assets(id),
     rule_id       TEXT NOT NULL REFERENCES rule_catalog(rule_id),
     severity      TEXT NOT NULL,
+    raised_on     TEXT NOT NULL,           -- cycle date the stint opened
+    cleared_on    TEXT,                    -- cycle date the stint closed; NULL = still open
+    last_seen_on  TEXT NOT NULL,           -- cycle date the condition was last confirmed hit
     detected_at   TEXT NOT NULL,
-    cycle_date    TEXT NOT NULL,
     cleared_at    TEXT,
     evidence_json TEXT,
     run_id        INTEGER,
-    UNIQUE (asset_id, rule_id, cycle_date)
+    UNIQUE (asset_id, rule_id, raised_on)
 );
-CREATE INDEX IF NOT EXISTS ix_veto_active ON veto (cycle_date) WHERE cleared_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS portfolio_position (
     id              INTEGER PRIMARY KEY,

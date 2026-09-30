@@ -19,6 +19,7 @@ fresh rather than translated, so those stay as-is.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 from portfolio_common.db import Database
 
@@ -419,6 +420,143 @@ def _m008_available_at(db: Database) -> None:
         )
 
 
+# -- m009: veto per-date hit rows collapsed into stints (T-125) ------------------
+
+
+def _m009_veto_stints(db: Database) -> None:
+    """Collapse ``veto``'s per-(asset, rule, cycle_date) hit-event rows into stints
+    (``raised_on``/``cleared_on``/``last_seen_on``), so a HARD veto clears the first cycle
+    its condition stops holding on an evaluated asset, and a SOFT rule penalizes once per
+    open stint rather than once per per-date row it happened to be hit on (the bug this
+    migration exists to retroactively undo: a HARD veto was permanent once raised, and a
+    SOFT rule held across N cycles counted N times).
+
+    The old table only ever recorded *hits* -- a row exists for a (asset, rule, cycle_date)
+    only where the rule actually fired that date; there is no stored record of a date it
+    was evaluated and found clean. What *is* recorded, system-wide, is which cycle dates
+    the "veto" checkpoint step actually completed on (any ``cycle_run``, any
+    ``cycle_type`` -- REPLAY runs write the same shared table). For each (asset_id,
+    rule_id) pair this walks its own hit dates union those global evaluation dates in
+    order: a stint opens on the first hit date reached with none already open, extends
+    (``last_seen_on``) across consecutive hit dates, and closes (``cleared_on``) at the
+    first evaluation date reached with no hit row for that pair -- reopening a new, later
+    stint if a hit row appears again after that. A pair's last hit, if no evaluation date
+    after it shows a miss, stays open, exactly like a currently-active veto should.
+    """
+    if not _table_exists(db, "veto"):
+        return
+    ddl = db.relation_ddl("veto")
+    if ddl is None or "raised_on" in ddl:
+        return  # fresh DB already has the stint shape
+    migrated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
+    eval_dates = sorted(
+        {
+            str(r["cycle_date"])
+            for r in db.execute(
+                "SELECT DISTINCT cr.cycle_date FROM cycle_checkpoint cc "
+                "JOIN cycle_run cr ON cr.id = cc.cycle_run_id "
+                "WHERE cc.step = 'veto' AND cc.status = 'done'"
+            )
+        }
+    )
+    # cleared_at IS NULL: the old writer set cleared_at on a row when a same-date re-run no
+    # longer hit that (asset, rule) pair (ON CONFLICT ... cleared_at = NULL on a fresh hit,
+    # else left set by the clearing UPDATE) -- such a row's cycle_date was NOT a hit in that
+    # date's final verdict, and must not be read as one here (PR #103 review). The date still
+    # counts as an evaluation date through cycle_checkpoint regardless, so the pair still
+    # closes correctly on it.
+    old_rows = db.execute(
+        "SELECT asset_id, rule_id, severity, detected_at, cycle_date, evidence_json, run_id "
+        "FROM veto WHERE cleared_at IS NULL ORDER BY asset_id, rule_id, cycle_date"
+    ).fetchall()
+    by_pair: dict[tuple[int, str], dict[str, dict]] = {}
+    for r in old_rows:
+        key = (int(r["asset_id"]), str(r["rule_id"]))
+        by_pair.setdefault(key, {})[str(r["cycle_date"])] = dict(r)
+    stints: list[dict] = []
+    for (asset_id, rule_id), by_date in by_pair.items():
+        open_stint: dict[str, object] | None = None
+        # A hit before the earliest global eval date (a legacy/manually-inserted row) still
+        # opens a stint of its own.
+        dates = sorted(set(eval_dates) | set(by_date))
+        for d in dates:
+            row = by_date.get(d)
+            if row is not None:
+                if open_stint is None:
+                    open_stint = {
+                        "asset_id": asset_id,
+                        "rule_id": rule_id,
+                        "severity": row["severity"],
+                        "raised_on": d,
+                        "cleared_on": None,
+                        "last_seen_on": d,
+                        "detected_at": row["detected_at"],
+                        "cleared_at": None,
+                        "evidence_json": row["evidence_json"],
+                        "run_id": row["run_id"],
+                    }
+                else:
+                    open_stint["last_seen_on"] = d
+                    open_stint["severity"] = row["severity"]
+                    open_stint["evidence_json"] = row["evidence_json"]
+                    open_stint["run_id"] = row["run_id"]
+            elif open_stint is not None and d in eval_dates:
+                open_stint["cleared_on"] = d
+                open_stint["cleared_at"] = migrated_at
+                stints.append(open_stint)
+                open_stint = None
+        if open_stint is not None:
+            stints.append(open_stint)
+    db.execute("PRAGMA foreign_keys = OFF")
+    db.create_schema(
+        """
+        DROP VIEW IF EXISTS v_veto;
+        CREATE TABLE veto__new (
+            id            INTEGER PRIMARY KEY,
+            asset_id      INTEGER NOT NULL REFERENCES assets(id),
+            rule_id       TEXT NOT NULL REFERENCES rule_catalog(rule_id),
+            severity      TEXT NOT NULL,
+            raised_on     TEXT NOT NULL,
+            cleared_on    TEXT,
+            last_seen_on  TEXT NOT NULL,
+            detected_at   TEXT NOT NULL,
+            cleared_at    TEXT,
+            evidence_json TEXT,
+            run_id        INTEGER,
+            UNIQUE (asset_id, rule_id, raised_on)
+        );
+        DROP TABLE veto;
+        ALTER TABLE veto__new RENAME TO veto;
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_veto_open ON veto (asset_id, rule_id)
+            WHERE cleared_on IS NULL;
+        CREATE INDEX IF NOT EXISTS ix_veto_active ON veto (raised_on) WHERE cleared_on IS NULL;
+        """
+    )
+    db.executemany(
+        """
+        INSERT INTO veto (asset_id, rule_id, severity, raised_on, cleared_on, last_seen_on,
+                          detected_at, cleared_at, evidence_json, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                s["asset_id"],
+                s["rule_id"],
+                s["severity"],
+                s["raised_on"],
+                s["cleared_on"],
+                s["last_seen_on"],
+                s["detected_at"],
+                s["cleared_at"],
+                s["evidence_json"],
+                s["run_id"],
+            )
+            for s in stints
+        ],
+    )
+    db.execute("PRAGMA foreign_keys = ON")
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -444,6 +582,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "available_at on sec_filings / fundamental_metrics / FUNDAMENTAL scores, backfilled "
         "and guarded (T-107)",
         _m008_available_at,
+    ),
+    (
+        9,
+        "veto: per-(asset, rule, cycle_date) hit rows collapsed into raised_on/cleared_on/"
+        "last_seen_on stints (T-125)",
+        _m009_veto_stints,
     ),
 ]
 
