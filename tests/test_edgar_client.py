@@ -135,6 +135,44 @@ def test_financials_sends_the_accession_number_only_when_given() -> None:
     assert seen[1].url.params["accession_number"] == "0000034088-24-000068"
 
 
+def test_financials_raises_on_a_nonempty_reconciliation_errors_list() -> None:
+    """PR #98 review, item 1: T-042 (upstream PR #46) returns a statement
+    rendered-but-unvalidated when its own reconciliation fails, recorded in
+    `data["reconciliation_errors"]` (`[{"statement", "error"}]`) alongside
+    `data["corrections"]` rather than failing the whole response. Such a statement's
+    values are indistinguishable in shape from a genuinely clean one, so this client
+    must surface the failure itself -- silently returning it would let an unvalidated,
+    possibly-synthesized value reach `financial_facts` with `correction_rule = NULL`,
+    meaning "filed as-is", exactly what T-118(3) exists to prevent."""
+    payload = {
+        "income_statement": [],
+        "balance_sheet": [{"concept": "us-gaap_Assets"}],
+        "cash_flow": [],
+        "corrections": [],
+        "reconciliation_errors": [
+            {"statement": "balance_sheet", "error": "xbrl.facts.query() raised KeyError"}
+        ],
+    }
+    with (
+        _serving({"success": True, "data": payload}) as client,
+        pytest.raises(EdgarError, match=r"balance_sheet.*KeyError"),
+    ):
+        client.financials("XOM", "10-K", 2024)
+
+
+def test_financials_with_no_reconciliation_errors_returns_normally() -> None:
+    """A pre-PR-#46 gateway (no `reconciliation_errors` key at all) and a post-PR-#46
+    gateway with an empty list must both pass through unchanged -- only a genuinely
+    non-empty list is a failure."""
+    payloads: list[dict[str, Any]] = [
+        {"income_statement": [], "balance_sheet": [], "cash_flow": []},
+        {"income_statement": [], "balance_sheet": [], "cash_flow": [], "reconciliation_errors": []},
+    ]
+    for payload in payloads:
+        with _serving({"success": True, "data": payload}) as client:
+            assert client.financials("XOM", "10-K", 2024) == payload
+
+
 def test_an_unqualified_multi_filing_request_raises_ambiguity_with_the_candidates() -> None:
     with (
         _serving(_REAL["financials_XOM_10-Q_2024_ambiguous"]) as client,

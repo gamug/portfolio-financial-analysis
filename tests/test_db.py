@@ -124,6 +124,52 @@ def test_snapshot_is_append_only_and_drives_resume(memory_db: Database) -> None:
     assert db.completed_units(memory_db) == {("AAPL", "10-K", "FY2023")}
 
 
+def test_append_financial_facts_persists_the_gateways_correction_rule(
+    memory_db: Database,
+) -> None:
+    """T-118 (PR #98 review): a fact `iter_facts` tagged with `correction_rule` (the
+    gateway's own `data["corrections"]` rule id, e.g. "T-118") must land in that column,
+    not silently dropped -- otherwise a derived value is indistinguishable in
+    `financial_facts` from one the filer actually filed. An uncorrected fact stores
+    `NULL`, the "filed as-is" default."""
+    db.sync_universe(memory_db, [_company("APA", "APA Corp", "Energy")])
+    asset_id = db.load_universe(memory_db)[0]["id"]
+    filing_id = db.upsert_filing(
+        memory_db,
+        FilingKey(asset_id, "10-K", 2023, "FY2023"),
+        FilingMeta(filing_date="2024-02-26", period_end="2023-12-31"),
+    )
+
+    db.append_financial_facts(
+        memory_db,
+        filing_id,
+        [
+            {
+                "statement": "income_statement",
+                "concept": "us-gaap_Revenues",
+                "period_key": "2023-12-31 (FY)",
+                "value": 8_279_000_000.0,
+                "correction_rule": "T-118",
+            },
+            {
+                "statement": "income_statement",
+                "concept": "us-gaap_NetIncomeLoss",
+                "period_key": "2023-12-31 (FY)",
+                "value": 350_000_000.0,
+            },
+        ],
+    )
+
+    rows = {
+        r["concept"]: r["correction_rule"]
+        for r in memory_db.execute(
+            "SELECT concept, correction_rule FROM financial_facts WHERE filing_id = ?",
+            (filing_id,),
+        )
+    }
+    assert rows == {"us-gaap_Revenues": "T-118", "us-gaap_NetIncomeLoss": None}
+
+
 def test_bump_run_counter_rejects_unknown_column(memory_db: Database) -> None:
     run_id = db.start_run(memory_db, params={})
     with pytest.raises(ValueError, match="counter column"):

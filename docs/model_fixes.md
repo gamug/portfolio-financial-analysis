@@ -3689,6 +3689,144 @@ revenue would land in `financial_facts` indistinguishable from a real filed fact
 or provenance field on the affected `financial_facts` row(s). Not yet designed or implemented;
 tracked as `T-118`'s step (3) in `TASKS.md`.
 
+**Step (3) done, 2026-09-30.** `Statements` gained a `corrections` field (`from_payload` reads
+`payload.get("corrections") or []`, `[]` for a payload from a gateway version that predates
+PR #44 -- no error). `iter_facts` builds a `{(concept, column): rule}` lookup from it and tags
+each matching fact's dict with `correction_rule` (`None` for every fact not named in the list,
+meaning filed as-is). `financial_facts` gained a nullable `correction_rule TEXT` column
+(`kg_schema.ddl.REQUIRED_COLUMNS`, additive -- grafted onto an existing database by
+`kg_schema.ensure` the same way `filing_version`/`run_id` already are, no migration needed
+since it never existed under a different shape). `db.append_financial_facts` persists
+`fact.get("correction_rule")` into it, gated on the column actually being present (mirrors the
+existing `has_versioned` fallback for a database that predates `kg_schema.ensure`, so a
+pre-`ensure` write still degrades to the base seven columns rather than erroring).
+`repair.py`'s re-ingestion path shares this for free -- it already calls `iter_facts`.
+**Scope note**: this closes step (3) only, not the rest of `T-118` -- steps (1) (re-verifying
+`T-117`'s guard against the actual redeployed `sec_edgar`) and (2) (the upstream general
+defect, `portfolio-data-mining`'s own `T-042`, not yet started there) are unaffected. Step (1)
+specifically needs a live call to the real gateway (`http://host.docker.internal:8000`), which
+this sandbox has no network path to (confirmed: `curl` to it times out) -- it stays gated on
+the user's own devcontainer, the same category as `T-121`-`T-124`'s production-DB actions.
+Tests: `tests/test_statements.py` (+2: a payload with no `corrections` key parses to `[]`;
+`iter_facts` tags only the named `(concept, column)` cell, leaving the same concept's other
+periods and every other concept `None`), `tests/test_db.py` (+1: `append_financial_facts`
+round-trips `correction_rule` through a real `memory_db`, uncorrected fact reads back `NULL`).
+`uv run pytest -q` -- 802 passed (was 799); `ruff check` / `ruff format --check` / `uv run
+mypy` -- all clean.
+
+**Steps (1) and (2), live re-verification -- done 2026-09-30.** The user raised the
+`sec_edgar` gateway (unreachable from the sandbox as of the entry above; confirmed reachable
+now, `curl http://host.docker.internal:8000/edgar/edgar/company_info/APA` -> 200) and merged
+the upstream general fix the same day (`portfolio-data-mining` PR #45, closing its own `T-042`,
+plus PR #46 isolating its per-statement reconciliation failures).
+
+*Step (1) -- re-verified against the real, redeployed gateway (no mocking).* Pulled APA's
+10-Ks live via the real `EdgarClient`/`Statements`/`iter_facts` path:
+
+| Filing | `revenue` resolves to | Acceptance figure | `correction_rule` |
+|---|---|---|---|
+| FY2023 10-K | $8,279,000,000 | $8,279,000,000 | `T-118` |
+| FY2024 10-K | $9,737,000,000 | $9,737,000,000 | `T-118` |
+| FY2025 10-K | $8,920,000,000 | $8,920,000,000 | `T-118` |
+
+End-to-end ingestion through the real production path (`db.append_financial_facts` into a
+scratch in-memory database, never the tracked file) persists `correction_rule = 'T-118'` on
+these rows, matching `T-118` step (3)'s own design. **`T-117`'s local guard never fires on any
+of these** -- the gateway's own corrected value already arrives inside `total_concepts`'s Tier
+1 slot, above `_total_is_plausible`'s floor, with nothing later in the statement to contradict
+it -- meeting this task's original, narrower acceptance criterion exactly ("the gateway returns
+APA's statement-level totals; `T-117`'s guard no longer rejects APA").
+
+**A further finding, live and real, not a regression to fix:** APA's FY2021 and FY2022 10-Ks
+(each filing's *own* target period, not a later filing's comparative column) now resolve
+`revenue` to `None`, where `T-095`'s original 2026-09-22 fix had trusted $7,988,000,000 /
+$11,075,000,000. Traced against the live payload: both were themselves *uncaught instances of
+the same synthesis defect* `T-117`/`T-118` fixed for `us-gaap_Revenues`, just one concept over,
+on `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax` -- the exact concept `T-095`'s
+Tier 2 fallback had trusted as a clean, non-dimensional filed fact. The FY2021 10-K's own
+dimensional breakdown rows for that concept sum *exactly* to $7,988,000,000
+(`$6,501,000,000` "Oil and Gas, Exploration and Production" -- itself
+`$3,280M` US + `$2,085M` Egypt + `$1,136M` North Sea -- plus `$1,487,000,000`
+"Oil and gas, purchased"), proving it was a synthesized rollup of segment breakdowns, never a
+literally-filed non-dimensional fact -- confirmed independently against SEC's own
+`companyconcept` API (`data.sec.gov/api/xbrl/companyconcept/CIK0001841666/us-gaap/
+RevenueFromContractWithCustomerIncludingAssessedTax.json`): no FY-period value exists under
+that concept at all, only four stray zero/partial-quarter 2021 rows. `T-042`'s
+`reconcile_with_filed_facts` correctly drops it (`data["corrections"]`: `rule: "T-042"`,
+`reason: "no_filed_nondimensional_fact"`) rather than reconstructing a number -- `T-118`'s
+revenue-specific layer has no later, smaller, contradicting total row in *these* filings to
+reconstruct one from (that mechanism is what recovers FY2023-2025's revenue, not a general
+segment-sum reconstruction).
+
+This is **not a regression needing a code change here**: `fundamental_agent.quality._revenue_pos`
+already HARD-quarantines a filing with `net_income` set and `revenue` `None`
+(`DQ_REVENUE_POS`), the same safety net a genuinely-missing revenue concept has always hit.
+Recorded here so a future audit does not mistake newly-`None` FY2021/FY2022 revenue for a new
+defect -- it is the corrected, more conservative answer once the general synthesis defect is
+accounted for; the old $7,988M/$11,075M values were themselves never provably real. No
+production `financial_facts` are affected (the real database has not yet been re-ingested
+against the redeployed gateway; that re-ingestion is part of `T-100`'s eventual full-universe
+run, same as every other `metrics-v3`-era recompute).
+
+*Step (2)* is upstream's own closed task (`portfolio-data-mining` `T-042`, PR #45/#46) --
+nothing further for this repo to implement. No code, test, lint or type change accompanied
+this live-data verification itself -- run against a scratch in-memory database.
+
+**PR #104 review (`@eldova1702`), fixed 2026-09-30.** The reviewer independently ran this
+PR's own code against 8 real live 10-Ks (APA, SNA, CTVA, MSFT, AEP, STZ, PG, XOM) and
+confirmed every `T-042` correction found was a genuine `no_filed_nondimensional_fact` drop
+(spot-checked against SEC `companyconcept`), then found three required changes:
+
+1. **`data["reconciliation_errors"]` (upstream PR #46) was never read.** Since that PR, a
+   statement whose reconciliation query itself fails comes back *rendered-but-unvalidated*
+   (possibly still synthesized) rather than failing the whole response, with the failure
+   named in this top-level list. Left unread, such a value would have been stored with
+   `correction_rule = NULL` -- indistinguishable from genuinely filed -- exactly what this
+   task exists to prevent. Fixed in `EdgarClient.financials` (`edgar_client.py`): a
+   non-empty `reconciliation_errors` now raises `EdgarError` naming the statement and
+   error, before `Statements.from_payload` ever sees the payload. No new plumbing needed
+   downstream -- `pipeline._run_filing`'s existing per-filing failure handling already
+   turns any `EdgarError` from `financials()` into an unscored, retried unit
+   (`failed_units`, `analysis_run_error`), never touching `financial_facts`.
+2. **`iter_facts`'s correction lookup was keyed by `(concept, column)`, not
+   `(statement, concept, column)`.** The original reasoning -- "a correction's concept
+   only ever appears on one statement" -- held for `T-118`'s revenue-only layer, but
+   stopped once `T-042` started reconciling all three statements: a concept like
+   `NetIncomeLoss` or `DepreciationDepletionAndAmortization` can appear on more than one,
+   corrected independently on each. The reviewer found no live clash in their 8-filing
+   sample, but fixed it for correctness -- every upstream correction entry already carries
+   its own `"statement"` field (PR #45), so the fix is keying on it too.
+3. **Stored facts are not replaced by a plain re-run.** `db.append_financial_facts` is
+   `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key, filing_version =
+   accession_number)` -- re-running `fundamental_agent run` against a database that
+   already has a filing's facts under its accession changes nothing, gateway redeploy or
+   not. The reviewer reproduced this directly on their own local database
+   (`/Users/dova/thesis/data/financial.db`): after a post-redeploy re-ingest, APA FY2023
+   still stores revenue `16,558,000,000` and COGS `1,076,000,000` (both values `T-042` now
+   drops) under `correction_rule = NULL`, because that accession's rows predate
+   2026-09-30. This is not a bug to fix here -- it is `financial_facts`' documented
+   append-only design working as intended -- but it means `T-100`'s eventual full-universe
+   run **must start from a database with no pre-2026-09-30 `financial_facts` rows**, never
+   one carried forward; `TASKS.md`'s `T-100` entry now says so explicitly, and the
+   priority note there and in `PLAN.md` no longer points straight at Work item 8 -- the
+   system-review follow-up tasks and the pilot reaching `verify_pilot` 0 FAIL come first,
+   so `T-079`'s LLM re-run does not start early.
+
+Also confirmed, non-blocking: the `T-121`-`T-124` production actions this task's own
+`TASKS.md`/`CHANGELOG.md` record as "applied at the user's direction" genuinely were --
+each task's own entry already carried its production-apply date and post-write
+`PRAGMA quick_check` result before this review, unaffected by it.
+
+Tests: `tests/test_edgar_client.py` (+2: a non-empty `reconciliation_errors` raises, an
+empty or absent one passes through unchanged), `tests/test_pipeline.py` (+1, full-run
+integration: a reconciliation failure writes no `financial_facts`/`score_snapshot` rows and
+counts one failed unit), `tests/test_statements.py` (+1: the same `(concept, column)` on
+two statements, only one corrected, only that one tagged). `uv run pytest -q` -- 806 passed
+(was 802); `ruff check` / `ruff format --check` / `uv run mypy` -- all clean.
+
+**`T-118` is now fully done.** See `TASKS.md`'s own entry for the task-tracking record; Work
+item 14 (the second forensic audit) closes with it and moves to `CHANGELOG.md`.
+
 ## T-119 — An unscored asset silently escaped every rule check; now ineligible immediately, with a universe-wide circuit breaker
 
 **Status**: Fixed 2026-09-29 (`T-119`, PR #78 review, found while testing `T-106`); PR #99

@@ -28,14 +28,17 @@ additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
 **This overrides the priority order implied by the numbering below.**
-Execute in this order: Work items 7, 10, 11 and 13 are **closed** (done 2026-09-25, 2026-09-20,
-2026-09-25 and 2026-09-25 — see `CHANGELOG.md`), and so is Work item 5 (built in this repo's
-vendored `kg_schema`, 2026-09-25) → **Work item 14 (P0/P1 — the second audit's live defects,
-added 2026-09-25; before Work item 8 because it corrects metrics the LLM re-run consumes)** →
+Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
+2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **the system-review
+follow-up tasks (to be added in a forthcoming docs PR) and the pilot reaching
+`verify_pilot` 0 FAIL (PR #104 review, 2026-09-30 — added ahead of Work item 8 here so the
+`T-079` LLM re-run does not start early)** →
 **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
-cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
+cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all,
+against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -1572,7 +1575,7 @@ record and a new metrics engine version (append-only), then a `quality` re-gate.
 **Acceptance criteria**: NEE's revenue resolves and `DQ_REVENUE_POS` clears for it; MCD's
 seven filings pass `DQ_MCAP_SCALE` under the new version; the full suite stays green.
 
-## Work item 14 — P0/P1: second forensic audit — defects still live (added 2026-09-25)
+## Work item 14 — P0/P1: second forensic audit — defects still live (added 2026-09-25) — DONE 2026-09-30
 
 **Source**: `feedback_plan 1.md` (repo root, untracked), a revised version of the 2026-09-08
 audit with new sections on temporal coherence (T1–T7), benchmark arithmetic (Q5), forward
@@ -1601,7 +1604,7 @@ that reproduce today.
 | Dirty `code_version` on production runs | **live** (`359797e-dirty`) | `T-114` |
 | Replay hygiene — backfill mutates the live book, no force | **live** (and now refused by `T-097`'s guard) | `T-115` |
 | `DQ_NEG_EQUITY` / C2 screen on `debt_to_assets` | **fixed 2026-09-28** — both gates now key on `net_debt_to_ebitda > 5.0` (S&P's "highly leveraged" band) + `interest_coverage < 1.5`; NULL-on-both routed to SOFT, not dropped | `T-116` (done) |
-| APA revenue — a breakdown figure presented as the total (PR #77 review) | **fixed 2026-09-28** — `Statements._label_total_correction` rejects/corrects a too-large `total_concepts` match structurally; validated clean across the full 503-asset stored universe (16 flagged, all APA, all correct) | `T-117` (done, local guard), `T-118` (upstream, still open) |
+| APA revenue — a breakdown figure presented as the total (PR #77 review) | **fixed 2026-09-28, upstream general fix + live re-verification done 2026-09-30** — `Statements._label_total_correction` rejects/corrects a too-large `total_concepts` match structurally; validated clean across the full 503-asset stored universe (16 flagged, all APA, all correct); upstream `portfolio-data-mining` PR #44 (`T-118`) + PR #45/#46 (`T-042`, general synthesis-defect reconciliation) redeployed and re-verified live against the real gateway — APA FY2023-2025 resolve to the exact acceptance figures; FY2021/2022 correctly drop to `None` under the stricter general fix (both were themselves unproven synthesized rollups, not filed facts), already safely quarantined by `DQ_REVENUE_POS` | `T-117` (done, local guard), `T-118` (done) |
 | `EARNINGS_MISSING` skips unscored assets (found testing `T-106`) | **latent** — no effect on today's 20 scored names; decided: unscored = ineligible same-cycle, stop above 5% unscored | `T-119` |
 | Veto lifecycle — per-cycle-date events, not stints (PR #94 review) | **fixed 2026-09-29** — `veto` rebuilt to `raised_on`/`cleared_on`/`last_seen_on` stints; a HARD veto now clears the first evaluated cycle its condition is false, a SOFT rule penalizes once per open stint. Verified against a scratch copy of production: WAT's reverted-run HARD veto (permanent under the old model) correctly closes; 7 double-counted SOFT names collapse to one penalty each. Production `migrate` pending | `T-125` (code done; production `migrate` pending) |
 | Valuation coverage floor, daily price marking | refinement | noted on `T-071` |

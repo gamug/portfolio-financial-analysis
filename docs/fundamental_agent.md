@@ -56,7 +56,12 @@ most recent first, and an empty list — not an error — when there is none; an
 object-shaped (pre-#39) payload raises `EdgarError` rather than being guessed at.
 `financials` takes an optional `accession_number`, required whenever the year holds more
 than one filing of the form: without it the gateway answers `success: false` ("Found 3
-'10-Q' filings … Available: …"), surfaced as `EdgarAmbiguousError(candidates=[…])`.
+'10-Q' filings … Available: …"), surfaced as `EdgarAmbiguousError(candidates=[…])`. It also
+raises a plain `EdgarError` when `data["reconciliation_errors"]` (T-042, `portfolio-data-
+mining` PR #46) is non-empty — a statement whose own reconciliation failed comes back
+rendered-but-unvalidated, so the filing is treated as a failed unit (retried next run, no
+facts written) rather than risk an unvalidated value reaching `financial_facts` looking
+filed.
 
 ### universe source
 
@@ -80,7 +85,12 @@ plausibility floor and T-117's too-large label-total contradiction check (a late
 label-matched "total revenue" row in the same statement that materially disagrees — detected
 structurally, no filer's own concept ever named — corrected by subtracting the rows between
 the two, or rejected with no guess if those rows are too large to trust). `iter_facts` flattens
-every non-abstract numeric cell for `financial_facts`.
+every non-abstract numeric cell for `financial_facts`, tagging a cell named in the gateway's own
+`data["corrections"]` (T-118) with that entry's `rule` id as `correction_rule` -- keyed by
+`(statement, concept, column)`, not `concept`/`column` alone, since `T-042` corrects a concept
+like `NetIncomeLoss` independently on more than one statement -- everything else gets `None`
+(filed as-is). `Statements.corrections` holds the raw list (`[]` for a payload from a gateway
+version that predates it).
 
 ### `metrics/` — one module per group
 
@@ -190,7 +200,7 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 | `load_universe(conn, *, tickers=None, symbols=None, limit=None)` | asset rows restricted to the point-in-time `symbols` (and optional `tickers`) |
 | `start_run(conn, *, params, as_of=None, code_version=None)` | `analysis_run` row with the run's as-of + code tag |
 | `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`. Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
-| `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet |
+| `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet. A fact carrying `correction_rule` (T-118: set by `iter_facts` from the gateway's own `data["corrections"]`) is persisted with that rule id in the like-named column; `NULL` means filed as-is |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end and `prompt_hash` (T-113) |
 | `completed_units(conn)` | `(ticker, form, fiscal_period)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume |

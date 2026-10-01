@@ -76,7 +76,10 @@ New tables (see the table below) plus `REQUIRED_COLUMNS`, a
 agent tables — `event_time` / `ingested_at` / `filing_version` on the fact tables,
 plus **run provenance**: `run_id` on `sec_filings` / `financial_facts` /
 `fundamental_metrics` / `price_window` / `price_daily`, `as_of` + `code_version` on
-`analysis_run` / `pricing_run`, and `code_version` on `quant_run` / `cycle_run`, and
+`analysis_run` / `pricing_run`, `code_version` on `quant_run` / `cycle_run`,
+`correction_rule` on `financial_facts` (T-118: the EDGAR gateway's own `data["corrections"]`
+rule id when a value was derived rather than filed, e.g. `"T-118"`; `NULL` for a filed fact —
+`fundamental_agent.statements.iter_facts` sets it, `db.append_financial_facts` persists it), and
 `manifest_json` on `quant_risk_model` / `quant_portfolio` (T-090: the input versions a
 model or book was built on; NULL on rows written before it), and `forensic_flags_json` on
 `score_snapshot` (T-041: the fundamental synthesis's four forensic booleans, written by

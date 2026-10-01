@@ -138,6 +138,94 @@ def _revenue_payload(*rows: dict[str, Any]) -> dict[str, Any]:
     return {"income_statement": list(rows), "balance_sheet": [], "cash_flow": []}
 
 
+def test_from_payload_reads_the_gateways_own_corrections_list() -> None:
+    """T-118: `get_financials` (PR #44, upstream) adds a top-level `data["corrections"]`
+    naming every value it derived rather than returned as filed. A payload predating
+    that gateway version (no `corrections` key at all) parses with an empty list, not
+    an error -- the shape iter_facts below always sees, whichever gateway version
+    answered."""
+    key = "2023-12-31 (FY)"
+    corrections = [
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_Revenues",
+            "column": key,
+            "original": 16_558_000_000.0,
+            "corrected": 8_279_000_000.0,
+            "rule": "T-118",
+        }
+    ]
+    payload = _revenue_payload(_income_row("us-gaap_Revenues", "Total revenues", **{key: 8.279e9}))
+    payload["corrections"] = corrections
+
+    assert Statements.from_payload(payload).corrections == corrections
+    assert Statements.from_payload(_revenue_payload()).corrections == []
+
+
+def test_iter_facts_marks_only_the_fact_the_gateway_corrected() -> None:
+    """T-118 (PR #98 review): a corrected value must be persisted distinguishably from a
+    filed one -- `iter_facts` tags the matching `(statement, concept, column)` cell with
+    the correction's `rule` id and leaves every other fact (including the same concept's
+    other periods, and every other concept) `None`, meaning filed as-is."""
+    key, other_key = "2023-12-31 (FY)", "2022-12-31 (FY)"
+    payload = _revenue_payload(
+        _income_row("us-gaap_Revenues", "Total revenues", **{key: 8.279e9, other_key: 11.075e9}),
+        _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 3.0e9}),
+    )
+    payload["corrections"] = [
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_Revenues",
+            "column": key,
+            "original": 16_558_000_000.0,
+            "corrected": 8_279_000_000.0,
+            "rule": "T-118",
+        }
+    ]
+    stmts = Statements.from_payload(payload)
+
+    facts = {(f["concept"], f["period_key"]): f["correction_rule"] for f in iter_facts(stmts)}
+
+    assert facts[("us-gaap_Revenues", key)] == "T-118"
+    assert facts[("us-gaap_Revenues", other_key)] is None
+    assert facts[("us-gaap_CostOfRevenue", key)] is None
+
+
+def test_iter_facts_keys_corrections_by_statement_too() -> None:
+    """T-118 (PR #98 review, item 2): once T-042 started reconciling all three statements,
+    the same `(concept, column)` can appear on more than one -- e.g.
+    `us-gaap_NetIncomeLoss` on the income statement and again as a cash-flow
+    reconciliation line -- and be corrected on only one of them. Keying the lookup by
+    `(concept, column)` alone would tag both facts identically; keying by
+    `(statement, concept, column)` tags only the one the gateway actually named."""
+    key = "2023-12-31 (FY)"
+    concept = "us-gaap_NetIncomeLoss"
+    payload = {
+        "income_statement": [_income_row(concept, "Net income", **{key: 500_000_000.0})],
+        "balance_sheet": [],
+        "cash_flow": [_income_row(concept, "Net income", **{key: 500_000_000.0})],
+        "corrections": [
+            {
+                "statement": "cash_flow",
+                "concept": concept,
+                "column": key,
+                "original": 500_000_000.0,
+                "corrected": 480_000_000.0,
+                "rule": "T-042",
+            }
+        ],
+    }
+    stmts = Statements.from_payload(payload)
+
+    facts = {
+        (f["statement"], f["concept"], f["period_key"]): f["correction_rule"]
+        for f in iter_facts(stmts)
+    }
+
+    assert facts[("income_statement", concept, key)] is None
+    assert facts[("cash_flow", concept, key)] == "T-042"
+
+
 @pytest.mark.parametrize("total_first", [False, True])
 def test_revenue_prefers_total_over_components_regardless_of_document_order(
     total_first: bool,

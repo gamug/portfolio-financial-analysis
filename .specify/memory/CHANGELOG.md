@@ -984,3 +984,865 @@ defects the gates now quarantine and veto, but do not fix. Each is a methodology
       seven filings (market cap $184–224B, 3.4–4.0× assets) clear `DQ_MCAP_SCALE` and
       `DQ_FCF_YIELD`. F1's tests unchanged; +10 tests. Full record in `docs/model_fixes.md`'s
       T-103 entry; production re-persist is `T-100`'s.
+
+## Work item 14 — P0/P1: second forensic audit (`feedback_plan 1.md`) — DONE 2026-09-30
+
+Added 2026-09-25 from the second audit (`feedback_plan 1.md`, a revised version of the
+2026-09-08 audit with new temporal, benchmark and validation sections). Every claim was
+re-checked against today's code and production (`KG_FINANCIAL_DB`, read-only); only defects
+that **reproduce today** are listed. Items already fixed or tracked (F1/F2/F4-ROA/C1/C2/Q2/Q3/
+Ring 1/`v_quant_vs_live`/E1/MD-1), claims that did not reproduce (Q6's current-weights
+look-ahead — books are keyed per formation date; split handling — prices and dividends are
+consistently split-adjusted), design proposals that are not defects (§4.9 trigger
+rebalancing, equal composite weights) and the §5 validation layer (the scope `T-078` was
+deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work item 14.
+
+- [x] **T-104** *(P0)* Repair the live book. `portfolio_position` still holds the backdated
+      2026-06-30 `cycle select` run's book (the `T-097` incident was not reverted, despite its
+      record): all ten weights are that run's 0.10 instead of cycle 1's (2026-09-22) targets
+      (0.1167 / 0.075), BF.B is open since 2026-06-30, and WFC's stint closes before it opens
+      (`valid_from` 2026-09-22, `valid_to` 2026-06-30). Restore the book to the latest cycle's
+      selection, then prevent a recurrence: an integrity check that `valid_to >= valid_from`,
+      and `writers.sync_positions` re-weighting by closing the stint and opening a new one
+      (today it `UPDATE`s the weight in place, so the previous weight is lost and a revert
+      cannot restore it). Correct `T-097`'s CHANGELOG record. **Acceptance**: the live book
+      equals cycle 1's selection and weights; no stint with `valid_to < valid_from`; a
+      re-weight leaves the old weight in history. **Code done 2026-09-25**: `sync_positions`
+      re-weights as close + new stint (same-date re-run in place) and refuses to end a stint
+      opened after the cycle date even with `--allow-backdated`; `kg_schema` triggers reject
+      `valid_to < valid_from` on insert/update; `cycle undo-run --cycle-run N [--apply]`
+      (`cycle/repair.py`) reverts a backdated run. On a copy of production, undoing run 2
+      voids BF.B, reopens WFC, restores nine weights: the live book at 2026-09-22 equals
+      cycle 1's selection (10 names, targets 0.1167/0.075), 0 inverted stints, run 2
+      `reverted`, `quick_check` ok. `T-097`'s CHANGELOG record corrected. **Production repaired
+      2026-09-25** (after merge, at the user's direction; no writers running; backup
+      `financial.db.pre-t104-undo-backup-20260925`, byte-identical by md5 + `quick_check` ok):
+      `cycle undo-run --cycle-run 2 --apply` voided BF.B, reopened WFC and restored nine
+      weights — the live book at 2026-09-22 equals cycle 1's selection (10 names, weights sum
+      1.0), nothing live at 2026-06-30, 0 inverted stints, run 2 `reverted`, both triggers
+      installed, `quick_check` ok, all views query.
+- [x] **T-105** *(P0)* Finish F4 for the ratios it deferred. 10-Q metrics still divide one
+      quarter's flow by a stock or a price level: FCF yield (and its enterprise and SBC
+      variants) 10-Q median 0.9% vs 10-K 3.4% (×3.6–3.9 too small), `net_debt_to_ebitda`
+      10.47× vs 2.62× (×4 too large; MCD ~10× on every 10-Q, 2.7× on its 10-K),
+      `return_on_invested_capital` 4.0% vs 14.2% (×3.5). ROA and asset turnover, which F4
+      fixed, agree within 7%. The FCF yields and ROIC feed `cycle`'s VALORIZATION, so a name
+      whose latest filing is a 10-Q scores about 4× worse on value than one on a 10-K. Use the
+      existing `db.ttm_flows` path in `valuation.py`, `leverage.py` and `roic.py`; new metrics
+      version (`metrics-v3` if still unpersisted in production, else the next). Methodology
+      change: `docs/model_fixes.md` record. **Acceptance**: those 10-Q medians within ~1.3× of
+      10-K; F4's existing tests unchanged. **Done 2026-09-25**, under `metrics-v3` (still
+      unpersisted in production). The TTM now prefers the standard identity `FY(prior 10-K) −
+      YTD(last year) + YTD(this year)` — the filing's own YTD columns, so it also covers
+      filers whose 10-Q cash flow has no quarterly column (XOM) — then F4's four quarters, then
+      ×4, and stamps each group `annualized_ttm`/`annualized_x4`. Valuation, leverage and
+      ROIC take the TTM flows (never mixing a raw quarter in); raw values stay in the inputs.
+      Recomputed over every production filing of the 20-asset sample (stored facts, read-only):
+      10-K/10-Q median ratios FCF yield 0.86, enterprise 0.95, SBC-adjusted 0.94, net debt /
+      EBITDA 0.95, ROIC 0.95 (were 3.6–3.9, 0.25, 3.5); 10-Q FCF-yield coverage 97 filings;
+      the identity used for 1,789 of 1,891 flows (94.6%), ×4 for 92; no recomputed |FCF yield| > 0.5.
+      F4's tests unchanged; +12 tests, mutation-checked. Record: `docs/model_fixes.md` T-105.
+      **Review follow-ups (PR #77)**: SBC and interest in the valuation group's provenance;
+      TTM reads pinned to the running engine version; identity-vs-four-quarter cross-check
+      recorded as a SOFT `DQ_TTM_CROSSCHECK` review (16 of 780 on the sample: AT&T's 2022
+      restatement, APA's revenue, one WFC value); `scripts/verify_t105.py`. +4 tests.
+- [x] **T-106** *(P0)* Make `cycle`'s readers point in time. `data.latest_metrics` and
+      `data.data_quality` pick each asset's filing by `period_end <= cycle_date`, and
+      `last_fundamental_dates`/`latest_fundamental_score` by `event_time` (= period end), so a
+      cycle on date D reads filings not yet public: the filing gap averages 48.7 days (10-K)
+      and 34.4 (10-Q), up to 420. `market_cap_estimates` has no date filter at all (a 2023
+      cycle can read a 2026 market cap). Key every reader on `sec_filings.filing_date <=
+      cycle_date`. **Acceptance**: a regression test over a historical date proves no fact
+      filed after it is reachable.
+      **Done 2026-09-25**: every fundamental reader keys on `filing_date <= cycle_date` —
+      `latest_metrics`/`data_quality` (one filing per asset), the FUNDAMENTAL score readers
+      through the score's own `filing_id` (the orchestrator's duplicate readers folded into
+      `data.latest_fundamental_rows`), `market_cap_estimates` and its `quant` mirror
+      `load_market_caps(..., as_of=)`; an undated filing is never read as public. The
+      FUNDAMENTAL normalization now updates the snapshot it read, by id. Test
+      `tests/test_point_in_time_readers.py`: a day-by-day sweep over 18 months finds no read of
+      a filing filed after the day. Production: the live 2026-09-22 cycle's reads are
+      unchanged; the (reverted) 2026-06-30 run read unfiled filings for 426/503 assets.
+- [x] **T-107** *(P0 — **decided 2026-09-25: option (b)**, PR #78 review; after `T-120`)* — **DONE 2026-09-26**
+      Give FUNDAMENTAL scores and metrics a publication timestamp. All 377 FUNDAMENTAL `score_snapshot` rows and 11,878
+      `fundamental_metrics` rows have `event_time = period_end`, none `filing_date`. SPEC.md
+      defines FUNDAMENTAL `event_time` as the period end ("what the score is about"), so the
+      choice is either (a) re-key `event_time` to `filing_date`, as the audit proposes (a
+      contract change for every `v_score_snapshot` reader and the `UNIQUE(asset_id,
+      score_type, event_time)` key), or (b) keep `event_time` and add an explicit nullable
+      availability column (`available_at` = `filing_date`), leaving the contract intact.
+      Recommendation: (b). Deterministic backfill either way.
+      **Decision (b)** — keep `event_time` as the period end and add `available_at`. Option (a)
+      would put the filing date in `UNIQUE(asset_id, score_type, event_time)`: the reviewer's
+      full-universe DB has 46 (asset, filing date) pairs with more than one FUNDAMENTAL score,
+      which would collide and be silently dropped (production today: 42 (asset, filing date)
+      pairs with more than one filing, none scored twice yet). Scope:
+      - `available_at` on FUNDAMENTAL `score_snapshot` rows and on `fundamental_metrics`,
+        backfilled from `sec_filings.filing_date`, and **required non-null** for those rows
+        (a test or trigger), so "nullable" cannot become "silently missing".
+      - Convention: a filing is usable from the **trading day after** its filing date (EDGAR
+        dates an after-close submission with the same day). `available_at` holds that day,
+        and `T-106`'s `filing_date <= cycle_date` readers move to it.
+      - A test that no as-of reader filters FUNDAMENTAL scores or metrics by `event_time`.
+      **Acceptance**: every FUNDAMENTAL score and metric row carries a non-null `available_at`
+      (the trading day after its filing date); every as-of reader filters on it; SPEC.md
+      updated.
+      **Code done 2026-09-26 (PR #82); production `migrate` (m008) applied 2026-09-26.**
+      `available_at` is stored on `sec_filings` too, since the filing pickers and the
+      data-quality verdicts key on the filing; metrics and FUNDAMENTAL scores copy it.
+      `kg_schema.trading_calendar` is a rule-based NYSE calendar, identical to production's
+      1,167-session price spine and the NYSE's 2022–2028 lists. Triggers require the value
+      (a metric or FUNDAMENTAL score of an undated filing, or with no filing, is refused) and
+      carry a re-dated filing's rows along. `m008` backfills and refuses to leave a gap.
+      `cycle`/`quant` refuse to run until it has (`availability.require`). The pipeline skips
+      undated filings. Readers: `latest_metrics`, `data_quality`, `latest_fundamental_rows`,
+      `market_cap_estimates`, `load_market_caps`, `coverage`. Tests
+      `tests/test_available_at.py`, `tests/test_trading_calendar.py`, plus the point-in-time
+      readers now requiring the next session; 12 mutations all caught. Production-copy dry
+      run: 5,076 filings / 11,878 metrics / 377 scores filled, 0 NULL, 0 mismatches,
+      `quick_check` ok; the live 2026-09-22 cycle's reads are unchanged. Record:
+      `docs/model_fixes.md` "T-107".
+      **Production, 2026-09-26** (at the user's direction; 4 min 15 s): backup
+      `financial.db.pre-t107-migrate-backup-20260926` (md5 `6a3bb9ffc697532cfbe60e9a98753c0d`,
+      `quick_check` ok, schema v7). After: schema v8; 5,076 filings, 11,878 metrics and 377
+      FUNDAMENTAL scores carry `available_at`, 0 NULL, 0 differing from their filing, none on
+      or before its filing date; gaps 1 day ×3,912, 2 ×18, 3 ×1,002, 4 ×144; all 5,057 values up
+      to the price spine's end are spine sessions; the 7 guards in place; `v_score_snapshot` /
+      `v_sec_filing` expose the column; facts (1,206,001), scores (497), sections (11,526)
+      unchanged; `quick_check` ok, FK clean; `availability.missing` empty, so `cycle` and
+      `quant` run. The live 2026-09-22 cycle reads the same 20 scores and 16 market caps as
+      before.
+- [x] **T-108** *(P0)* Fix the internal benchmark (`quant/benchmark.py`). It compounds the
+      cross-sectional **mean of log returns**, not `ln(1 + mean simple return)`, so it is lower
+      every day by about half the cross-sectional variance: on today's 20-asset panel it
+      compounds at 5.98%/yr against a true equal weight of 10.32% (−4.34 pp/yr; the audit
+      measured −6.98 pp/yr on the full universe). It also averages every name that has a row
+      rather than the gated panel. Every `active_return` in `quant_benchmark_performance`
+      inherits the bias. New `bench-v2`; a loader for an external cap-weighted total-return
+      series (the series itself is a data-acquisition step). **Acceptance**: the recomputed
+      index matches an independent equal-weight calculation to 1e-9.
+      **Code done 2026-09-26 (PR #84); production re-evaluation pending approval.**
+      `bench-v2`: the mean of simple returns over the investable universe as of the window's
+      start (`universe.benchmark_gate` -- `build-risk-model`'s `settings_gate` knobs, but never
+      a book's own hard-veto exclusion, so a veto can't also shrink the yardstick a book is
+      graded against; a review caught the panel still using `settings_gate` pre-merge),
+      compounded `(1 + r)`. `evaluate` grades against the version it built, writes `perf-v2`,
+      records version and panel on its run, and only reads an external series
+      (`quant load-benchmark`, `csv-v1`). `v_quant_benchmark_performance` shows the latest
+      version per (book, date). Tests `tests/test_benchmark.py` (23) and
+      `tests/test_quant_gate.py` (3); 9 mutations caught. The pre-correction dry run's
+      "7.43 % vs 6.63 %, summed daily active return −6.16 % → −6.91 %" is withdrawn: its
+      "live book" was a stale T-104 snapshot (`quant_portfolio` id 4), and active return
+      should be compounded, not summed daily (review, 2026-09-26). Void that snapshot and its
+      41 perf rows, then re-run the dry run against a current production copy with the
+      corrected panel, before any production `quant evaluate`. Record: `docs/model_fixes.md`
+      "T-108".
+- [x] **T-109** *(P0)* One expected-return convention across `quant`. `risk.equilibrium_returns`
+      computes `rf + λΣw`, but `persist.py` never passes `rf`, so the stored `equilibrium` μ
+      (the default, used by production's risk model) is an *excess* return, while `hist_mean`
+      and `james_stein` are total returns — and `max_sharpe`/tangency and every Sharpe subtract
+      `rf` again. Pick one convention (total), apply it to every estimator and to `T-077`'s
+      Carhart projection. **Acceptance**: a test pins μ as total for all three estimators;
+      tangency/Sharpe subtract `rf` exactly once.
+      **Code done 2026-09-27.** Convention: total return, matching `hist_mean`/`james_stein`
+      (already means of the panel's total-return series) rather than making those excess.
+      `persist.py::_expected_returns` now threads the `rf` it already loads (for
+      `quant_risk_model.rf_annual`) into `equilibrium_returns(..., rf=rf)`; no change to
+      `equilibrium_returns` itself (its docstring already gave the total-return formula) or to
+      `optimize.py::_stats` (already subtracts `rf` exactly once, given a total-return μ) —
+      only the wiring between them was wrong. `T-077`'s Carhart estimator (not yet
+      implemented) already plans `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k`, consistent with this
+      fix. Tests `tests/test_quant_risk_model.py` (+2): building the same risk model at two
+      `risk_free_rate`s 0.05 apart, `hist_mean`/`james_stein` are unchanged while `equilibrium`
+      shifts by exactly 0.05 uniformly; a `min_var` book's `expected_return` shifts by the same
+      0.05 while its `sharpe` stays invariant (rf-independent once μ is genuinely total) — both
+      confirmed to fail on the pre-fix code with the bug's exact signature (`expected_return`
+      flat instead of shifting). Full suite 692 passed (was 690); ruff, format, mypy clean.
+      Record: `docs/model_fixes.md` "T-109". **Every risk model built before this fix carries
+      an excess-return `equilibrium` μ; re-persisting corrected values for the live universe
+      needs a production `build-risk-model`/`optimize` re-run — pending, same as F1/F2/F4's own
+      deferred production re-runs.**
+- [x] **T-110** *(P1)* Validate as-of dates against the price spine. Production `quant_run`s
+      7–10 and both `cycle_run`s are dated 2026-09-21/22 while `price_daily` ends 2026-08-27;
+      `price_observation` has 503 rows at 2026-08-28 (no `price_daily` bar that day) and all
+      503 `price_window` "full" rows of one run end 2026-08-28 — a run with `--observations`
+      but without `--store-daily` wrote analytics for a bar it never stored. Warn (or refuse
+      with an override) when a `quant`/`cycle` as-of is past the last stored price; make
+      `pricing_agent` never write observations or windows past `price_daily`'s last date;
+      clean the orphan rows. **Acceptance**: zero orphan observation dates; a run past the
+      price cutoff is recorded as such.
+      **Code done 2026-09-27.** Shared `kg_schema.queries.stale_as_of_reason`/`last_price_date`
+      (`MAX(date) FROM price_daily`, tolerant of a missing table). `quant`'s
+      `build-risk-model`/`optimize` and `cycle`'s `select`/`monitor`/`backfill` all refuse a
+      stale as-of via the new `StaleAsOf`, unless `--allow-stale-prices`, which records the
+      bypass reason on the run (`params_json`, `RiskModelResult`/`OptimizeRunResult`/
+      `CycleReport`) for the CLI's `WARNING`. `pricing_agent`'s `--observations` now requires
+      `--store-daily` (refused at the CLI and again in `pipeline.run` itself), closing the
+      orphan-observation-date root cause going forward — `price_window` itself is left
+      ungated, since it's documented as pricing_agent's standalone base product, and the
+      acceptance criterion only asked for zero orphan *observation* dates. `evaluate`/
+      `benchmark` are deliberately not guarded (already degrade gracefully on missing forward
+      data, FR-010). Tests: `tests/test_kg_schema.py` (+2), `tests/test_quant_risk_model.py`
+      (+5), `tests/test_cycle.py` (+4), `tests/test_pricing_pipeline.py` (+3). Full suite 706
+      passed (was 692); ruff, format, mypy, pre-commit clean. Record: `docs/model_fixes.md`
+      "T-110".
+      **PR #87 review (`@eldova1702`) found `optimize`'s model-reuse path skipped the check
+      entirely** (a stale model built once under `--allow-stale-prices` let a later `optimize`
+      at that same stale as-of reuse it unchecked, with no `stale_as_of_bypassed` recorded on
+      that `optimize` run) — fixed 2026-09-27 by having `run_optimize` compute and gate on
+      `stale_as_of_reason` itself, unconditionally, before resolving the model either way;
+      regression test added (`test_optimize_re_checks_staleness_even_when_reusing_a_stored_model`).
+      Same review also corrected the T-109 Black-Litterman citation in `docs/model_fixes.md`
+      (Π is the implied excess return; `quant` stores the total return `rf + Π`) and the
+      matching `risk.equilibrium_returns` docstring. Full suite 707 passed after the fix.
+      **Merged via PR #87.** Cleaning the production orphan rows themselves is a separate,
+      deferred production action — see `T-123`.
+- [x] **T-111** *(P1)* `quant evaluate`: a missing asset-day counts as a 0% return
+      (`fwd[d].get(a, 0.0)`), dragging the book toward zero in proportion to missing names.
+      Renormalize the day's weights over names that have a return. (Transaction costs belong
+      to `T-077`.) **Acceptance**: a book with one name missing a day earns the other names'
+      renormalized return.
+      **Done 2026-09-27; corrected 2026-09-27 (PR #89 review, `@eldova1702`).** The first cut
+      renormalized *every* missing asset-day, which review found double counts a genuine
+      one-day `price_daily` gap: the return engine bridges the gap by computing the next
+      available day's return from the last available close, so that next return already
+      contains the gap day's move -- renormalizing the gap day imputes an extra return on top.
+      Corrected: `_evaluate_book` (and `benchmark.build_internal_benchmark`, for the same
+      convention) now tracks each name's `last_seen` date in the window; a name missing *today*
+      but with a later return stays a "survivor" contributing 0% today, weight kept (its move
+      lands, once, on the day it reappears); only a name with no later return at all (delisted,
+      series ends) is dropped and the remaining weights renormalized, from that day on. Tests:
+      `tests/test_quant_pipeline.py::test_evaluate_matches_the_no_gap_result_across_a_one_day_price_data_gap`,
+      `tests/test_quant_pipeline.py::test_evaluate_renormalizes_from_a_names_permanent_end_of_data`,
+      and the matching pair in `tests/test_benchmark.py`. Full suite 710 passed (was 707); ruff,
+      format, mypy, pre-commit clean. `SPEC.md` FR-010 and `docs/quant.md` updated. Record:
+      `docs/model_fixes.md` "T-111".
+- [x] **T-112** *(P1)* `optimize.efficient_frontier` returns *k* identical copies of the
+      min-variance point, all labelled `optimal`, when the feasible return range collapses.
+      Return that one point with an explicit `degenerate` status. **Acceptance**: a collapsed
+      frontier yields one point marked degenerate.
+      **Done 2026-09-27.** The collapse path (`r_max is None or r_max <= r_min + 1e-9`) now
+      returns a single `FrontierPoint(0, r_min, r_min, lo.expected_vol, lo.sharpe, "degenerate",
+      lo.weights)` instead of `k` copies stamped `"optimal"`; `insert_frontier_points` already
+      deletes any stale higher-`k` rows before inserting, so no schema/persistence change is
+      needed. Test: `tests/test_quant_optimize.py::test_frontier_collapses_on_flat_mu_but_spans_on_dispersed_mu`
+      strengthened to assert `len(flat_pts) == 1` and `status == "degenerate"` (fails on the
+      pre-fix code: 6 points, all `"optimal"`). Full suite 710 passed (test count unchanged,
+      existing test strengthened); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-009 and
+      `docs/quant.md` updated. Record: `docs/model_fixes.md` "T-112".
+- [x] **T-113** *(P1 — before `T-079`)* LLM score provenance. The rule-based fallback score is
+      stored under the model's own name (1 of production's 377 FUNDAMENTAL scores is a fallback
+      labelled `deepseek-chat`); `temperature` is 0.2 with no seed; no prompt hash is recorded.
+      Label fallback rows as such, set `temperature = 0` (and a seed if the API honours one),
+      stamp a prompt hash per score, and record the fallback count on `analysis_run`.
+      **Acceptance**: fallbacks are distinguishable from model output in `score_snapshot`;
+      every new score carries its prompt hash.
+      **Done 2026-09-27; corrected 2026-09-27 (PR #91 review, `@eldova1702`).** `build_model`
+      sets `temperature=0`/`seed=0` (forwarded verbatim by Strands' `OpenAIModel`, safe whether
+      or not the endpoint honours `seed`; docs say "reduces variance," not "reproducible" --
+      no provider guarantees determinism at `temperature=0`). The first cut computed
+      `prompt_hash` per filing, as a sha256 of the orchestrator's whole message history; review
+      found this unverifiable (the transcript itself isn't stored) and unable to group scores
+      by the prompt version that produced them (what `T-079` needs, to separate scores from
+      before/after the `T-073`/`T-074`/`T-076` prompt edits) -- a per-filing hash is unique by
+      construction. Corrected: new `_prompt_version_hash(model_name)` hashes `MASTER_PROMPT`,
+      every specialist prompt, the synthesis/repair prompts, and the model config; computed
+      **once** in `FundamentalAnalyst.__init__` and reused for every filing that analyst
+      scores, so two filings in one run share one hash and it changes only when a prompt/SOP/
+      model config actually changes. `pipeline.py` sets `SnapshotRow.model =
+      agents.FALLBACK_MODEL_LABEL` ("`rule-based-fallback-v1`") when `used_fallback`, never the
+      real model's own id, and bumps a new `analysis_run.fallback_units` counter. New additive
+      columns: `score_snapshot.prompt_hash` (TEXT), `analysis_run.fallback_units` (INTEGER
+      DEFAULT 0). Tests: `tests/test_agents.py` (two filings share a hash; changing a
+      specialist prompt or the model id changes it) and
+      `tests/test_pipeline.py::test_run_labels_a_fallback_score_and_records_it_on_the_run`.
+      Full suite 714 passed (was 710); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-002
+      and `docs/fundamental_agent.md` updated. Record: `docs/model_fixes.md` "T-113".
+      **Confirming the live DeepSeek endpoint actually accepts `seed` is left as an explicit
+      step before `T-079` begins (this environment's network egress policy blocks reaching
+      it).** **The one existing production fallback row keeps its stale `model` label and a NULL
+      `prompt_hash` until relabeled — see `T-124`.**
+- [x] **T-114** *(P1)* Clean-tree provenance. Production runs carry `code_version`
+      `359797e-dirty` (cycle, quant, analysis runs): results come from uncommitted code. Refuse
+      production writes from a dirty checkout unless `--allow-dirty` is passed (and recorded).
+      **Acceptance**: a dirty checkout cannot write a run without the explicit override.
+      **Done 2026-09-27.** New `kg_schema.provenance.dirty_tree_reason(version=None)`/
+      `DirtyTree`: `None` if `code_version()` doesn't end in `-dirty`, else a reason naming
+      it. Wired into every run-writing driver across all three packages the audit named --
+      `fundamental_agent.pipeline.run`, `quant.persist.run_build_risk_model`/`run_optimize`,
+      `quant.returns.run_build_returns`, `quant.actions.backfill_corporate_actions`,
+      `quant.evaluate.run_evaluate`, `cycle.orchestrator._run` (shared by
+      `select`/`monitor`/`backfill`) -- each raising `DirtyTree` unless
+      `settings.allow_dirty`, at the same point in that function its own T-110/T-097/T-086
+      guard already raises. `--allow-dirty` added to every affected CLI subcommand, recording
+      the bypass reason on the run's `params_json` and a CLI `WARNING`. Test suite hardening:
+      `tests/conftest.py` gained a session-scoped fixture pinning `code_version()` to a
+      clean, deterministic value (hermetic per NR-006 -- the ambient repo legitimately has
+      uncommitted changes during active development, which must not spuriously trip the new
+      guard in every unrelated test). Tests: `tests/test_provenance.py` (+4),
+      `tests/test_quant_risk_model.py` (+3), `tests/test_quant_pipeline.py` (+1),
+      `tests/test_quant_dividends_guard.py` (+2), `tests/test_quant_actions.py` (+1),
+      `tests/test_cycle.py` (+4), `tests/test_pipeline.py` (+3). Full suite 732 passed (was
+      714); ruff, format, mypy, pre-commit clean. `SPEC.md` FR-012 and `docs/quant.md`/
+      `docs/cycle.md`/`docs/fundamental_agent.md`/`docs/kg_schema.md` updated. Record:
+      `docs/model_fixes.md` "T-114".
+- [x] **T-115** *(P1)* `cycle backfill` cannot replay history: it calls the live
+      `run_selection`, which mutates `portfolio_position` — since `T-097` it is refused as
+      soon as a newer live book exists, and it has no override — and the checkpoint guard skips
+      any already-completed (type, date) with no force option. Route replay positions to a
+      separate simulated-book table and add a force/re-run flag. **Acceptance**: a full replay
+      leaves the live book untouched and can be re-run after a fix.
+      **Done 2026-09-27.** New `portfolio_position_replay` table (`kg_schema.ddl`) — same shape
+      and T-104 triggers as `portfolio_position`, never read by or refused for conflicting with
+      it; `cycle_run.cycle_type` gains `'REPLAY'`. New `cycle/replay.py`:
+      `out_of_order_replay_reason`/`sync_replay_positions` (the live guard/writer's own shape,
+      against the replay table) and `reset_replay_range(conn, date_from)` (`--force`'s
+      implementation — drops/reopens every replay stint and `cycle_run` row on or after
+      `date_from`, unconditionally, never touching an earlier date). `cycle.orchestrator.run_replay`
+      is `backfill`'s new entrypoint (`cycle_type='REPLAY'`, same step sequence as
+      `run_selection`); the `positions` step branches on `cycle_type` to call the replay path
+      instead of `writers.sync_positions`, with no `--allow-backdated`-style override (nothing
+      to override once `--force` resets from the range's start up front). `cycle/cli.py`'s
+      `backfill` now calls `run_replay`; new `--force` flag calls `reset_replay_range` once
+      before the date loop; `--db` is now mandatory and refused when it resolves to the
+      configured production path by actual file (`os.path.samefile`, falling back to a
+      resolved-path comparison), not a literal string match — a relative alias or a symlink to
+      it is refused too (PR #94 review, second round; every step but `positions` still writes
+      the shared database, so only a whole separate copy is truly isolated).
+      14 new tests in `tests/test_cycle.py` (8 + 4 + 2 across two review rounds). Full suite
+      753 passed (was 739); ruff, format, mypy clean. `docs/cycle.md`, `docs/kg_schema.md`,
+      `SPEC.md`'s schema table updated. PR #94 review also opened `T-125` (veto lifecycle,
+      P0, unrelated pre-existing gap — not fixed here). Record: `docs/model_fixes.md` "T-115".
+- [x] **T-116** *(P1 — after `T-105`)* Recalibrate the negative-equity distress screen
+      (`LEVERAGE_EXTREME` negative-equity branch, `DQ_NEG_EQUITY`'s HARD condition). Both use
+      `debt_to_assets > 0.8` or `interest_coverage < 1.5`; the audit shows the first never
+      reaches the buyback cohort (MCD 0.665) and proposes the standard credit pair
+      `net_debt_to_ebitda` + `interest_coverage`, with NULL on both routed to SOFT review.
+      `net_debt_to_ebitda` is only usable once `T-105` annualizes it. Methodology change:
+      `docs/model_fixes.md` record. **Acceptance**: thresholds calibrated on annualized data;
+      NULL-on-both never passes silently.
+      **Done 2026-09-28.** Both gates now read `net_debt_to_ebitda > 5.0` (S&P Global Ratings'
+      "Corporate Methodology" "highly leveraged" band, cited) in place of `debt_to_assets >
+      0.8`; `interest_coverage < 1.5` unchanged. Recomputed over all 41 negative-equity filings
+      in the 20-asset production sample (MCD 19, SBAC 19, APA 2, APO 1; annualized
+      `net_debt_to_ebitda` via T-105's TTM method): MCD 2.53x-2.96x (spared, unchanged), SBAC
+      6.91x-8.16x (HARD, unchanged) — the new metric reclassifies nothing in-sample, closing
+      the gap for a future name `debt_to_assets` would have missed for the wrong reason.
+      `_LeverageRule`'s NULL-on-both case (APA, APO: neither metric resolvable) now emits a
+      SOFT `VetoHit` instead of silently dropping the hit entirely; `DQ_NEG_EQUITY` already
+      handled this correctly (unchanged). `DATA_QUALITY_GATE_VERSION` bumped `dq-v1` -> `dq-v2`
+      (append-only re-gate, T-065's own convention for a threshold change). Tests:
+      `tests/test_cycle.py` (4 leverage-rule tests updated/replaced),
+      `tests/test_data_quality.py` (2 tests updated). Full suite 753 passed (unchanged count —
+      existing coverage reparametrized, not net-new); ruff, format, mypy clean. Record:
+      `docs/model_fixes.md` "T-116". **Production re-gate under `dq-v2`** (a `python -m
+      fundamental_agent quality` re-run) **is deferred, pending explicit user direction** — the
+      same category as every other pending production action in this file.
+      **PR #95 review (`@eldova1702`) found two real bugs, fixed 2026-09-28**: (1) bumping to
+      `dq-v2` alone would have silently zeroed every quarantine/HARD issue until the production
+      re-gate ran — new `kg_schema.queries.StaleGateVersion`/`stale_gate_version_reason` refuses
+      `cycle select`/`monitor`/`backfill` when `data_quality_issue` holds an older gate version
+      but none under the current one, unless `--allow-stale-dq-gate` (`CycleSettings.
+      allow_stale_dq_gate`); (2) `net_debt_to_ebitda` reads negative EBITDA with positive net
+      debt (the most distressed profile) as healthy, since the ratio itself goes negative —
+      reproduced on real stored data (WAT 10-Q 2026-04-04, ratio -399.36). `_neg_equity`
+      (`fundamental_agent`) now reconstructs EBITDA/net debt from the same raw inputs the ratio
+      was divided from; `_LeverageRule` (`cycle`, no raw inputs available) treats a negative
+      ratio as unresolved, not healthy, falling back to `interest_coverage`. Neither fix
+      reclassifies any of the 41 in-sample filings (0 have the EBITDA<=0-with-debt shape today;
+      forward-looking correctness fixes). Also corrected two docs claims: this entry's
+      "APA/APO now surface a SOFT review hit" does not hold on the live path (`DQ_NEG_EQUITY`
+      quarantines `debt_to_equity` before `_LeverageRule` ever sees it; `_LeverageRule`'s branch
+      is a backstop for filings Ring-1 hasn't gated yet), and the S&P `>5.0x` citation is noted
+      as a limitation (its band is on lease/pension-adjusted debt; this screen's is plain
+      balance-sheet debt minus cash, more lenient for lease-heavy names). +12 tests (765 total).
+      Record: `docs/model_fixes.md` "T-116", "PR #95 review".
+
+- [x] **T-117** *(P0 — added 2026-09-25 from PR #77's review)* Guard revenue against a
+      breakdown figure presented as the company total. APA never filed a consolidated
+      `us-gaap:Revenues` (per the reviewer, from SEC companyfacts — to be re-verified); the
+      gateway presents a breakdown figure as the total: too small in FY2021 (T-095's case), and
+      exactly 2× the consolidated **"Total revenues"** line every year since FY2023 — 16,558 /
+      19,474 / 17,840 vs 8,279 / 9,737 / 8,920 ($M); FY2022 is correct (11,075). "Total
+      revenues" is not stored as its own fact since FY2023; it is the statement's "Total
+      revenues and other" less the lines between the two totals (derivative results,
+      divestiture gains, losses on previously sold Gulf properties, other) — verified to the
+      $M for FY2022–FY2025 (`scripts/verify_t105.py` derives and prints it). APA 2024Q1–Q3
+      revenue also trips the TTM cross-check (11–25%). Reject a revenue total that the filing's own income statement
+      contradicts. The rule must be validated on the **full universe** — the number of filings
+      it rejects reported and each inspected — not tuned on APA (the mistake `T-095` made).
+      Also correct `T-095`'s diagnosis in `docs/model_fixes.md`: APA FY2021 was not a
+      filer-side tagging defect but this gateway issue. Methodology change: #12 record.
+      **Acceptance**: APA revenue = "Total revenues" (FY2023 8,279; FY2024 9,737; FY2025
+      8,920 $M) — not "Total revenues and other", which matches only in FY2024, where the
+      in-between items net to zero; the full-universe rejection count reported and inspected;
+      `T-095`'s entry corrected.
+      **Done 2026-09-28.** `Statements._label_total_correction` (`statements.py`): scans the
+      same statement, document order, for a later row whose *label* (never a filer's own
+      concept name) reads as a revenue total and is materially smaller than the Tier 1
+      `total_concepts` match — a well-formed statement's later, broader total is never smaller
+      than an earlier one labeled the same way, so finding one is itself the contradiction.
+      Corrects by subtracting the rows between the two when they're individually small enough
+      to trust; refuses to guess (returns no value, not the bad total) when they're not.
+      `scripts/verify_t117.py` (new) scanned every stored filing's own period across
+      production's **full 503-asset, 5,076-filing universe** (not a sample): 16 filing-periods
+      flagged, all APA, all safely corrected, 0 false positives — after the first cut's naive
+      `r"total...revenue"` regex was itself found (by that same full-universe scan, inspected
+      one by one) to false-positive on 81 filing-periods across ADBE/STE/TER/TSLA/URI/XYZ, all
+      "Total cost of revenues" (a near-universal COGS label matching "total"/"revenue" as bare
+      substrings) — fixed with an explicit "cost" exclusion before any number here was final.
+      APA's `revenue` recomputed for all 5 stored 10-Ks: FY2021 $7,988,000,000 (T-095's
+      existing path, unchanged), FY2022 $11,075,000,000 (untouched, correctly not
+      contradicted), FY2023 $8,279,000,000, FY2024 $9,737,000,000, FY2025 $8,920,000,000 —
+      exact acceptance-criterion match, derived purely from each filing's own facts, no
+      APA-specific code. `T-095`'s diagnosis corrected in `docs/model_fixes.md` (its own
+      "Correction (T-117)" section): re-verified live against SEC's `companyfacts`/
+      `companyconcept` APIs, APA has never filed `us-gaap:Revenues` at all — its real FY2023
+      10-K income statement has no "Total revenues" line, only "Total revenues and other";
+      the original "filer-side tagging defect" explanation does not hold. Tests:
+      `tests/test_statements.py` (+5). Full suite 769 passed (was 765 post-T-116); ruff,
+      format, mypy clean. Record: `docs/model_fixes.md` "T-117", "T-095" (Correction).
+- [x] **T-118** *(P1 — upstream, `portfolio-data-mining`; added 2026-09-25 from PR #77's
+      review)* Fix the root cause of `T-117`: the EDGAR gateway (`sec_edgar`) presents
+      breakdown figures as company totals. Implemented upstream (same pattern as Work item 6);
+      this task tracks it and verifies it here once deployed. `T-117` stays as the local guard
+      until then. **Acceptance**: the gateway returns APA's statement-level totals; `T-117`'s
+      guard no longer rejects APA.
+      **Code done upstream 2026-09-28** (`portfolio-data-mining` PR #44,
+      `gamug/portfolio-data-mining@fix/t118-sec-edgar-revenue-total-contradiction`).
+      **Mechanism confirmed 2026-09-28** by that PR's review (`@eldova1702`, superseding
+      the earlier, hedged "Oil and gas" corroborating-observation note): `edgartools==5.44.1`'s
+      `xbrl.statements.income_statement().to_dataframe()` — the only source `get_financials`
+      reads income-statement rows from — *synthesizes* a non-dimensional "total" row for a
+      concept by summing that concept's dimensional axis members, and double-counts whenever
+      one member is itself a parent whose value already includes its own children. APA's case
+      is exactly this: FY2023's synthesized `us-gaap_Revenues` is `8279 (parent "Oil and gas")
+      + 7385 + 894 (its two children, which already sum to 8279) = 16558`; FY2024 is
+      `9737 + 8196 + 1541 = 19474` (`8196 + 1541 = 9737`, same shape). Confirmed against
+      `data.sec.gov`'s `companyconcept` API:
+      APA has never filed a real `us-gaap:Revenues` fact at all (`404 NoSuchKey`) — not a
+      filer-side defect either. **This is a general `edgartools` synthesis defect, not an
+      APA/revenue-specific one**: a full-universe scan across the 500-company stored universe
+      (the 61 `us-gaap` concepts `fundamental_agent` reads, compared against each company's SEC
+      `companyfacts`) found 163 stored values matching no SEC-filed value at that period end
+      (e.g. SNA Q3 2024 operating income 2x, CTVA FY2021 D&A 2x, AEP Q2 2025 revenue 270.5 vs.
+      5,086.9, CEG FY2021 revenue 55,588 vs. 19,649, MNST Q3 2023 net income to common 4.7 vs.
+      452.7), and 105 (company, concept) pairs — 1,101 rows total — that were never filed
+      non-dimensionally at all, so every value for them is synthesized (e.g. APA COGS,
+      STZ/KKR diluted EPS and shares, WFC/UNH/SCHW contract revenue). New
+      `sec_edgar.agent.correct_revenue_totals`, ported from this repo's own
+      `Statements._label_total_correction` (`T-117`), applied to `get_financials`'
+      `income_statement` before it's returned — **fixes APA's revenue instance only**, not the
+      general defect. Live-verified there (no mocking) against every available APA 10-K
+      (FY2021-FY2025) and every 2024 10-Q: resolves to the exact `T-117` acceptance figures
+      (FY2023 $8,279M, FY2024 $9,737M, FY2025 $8,920M), FY2021/FY2022 correctly untouched. As of
+      PR #44's latest commit, `get_financials` also returns a top-level `data["corrections"]`
+      list (`{"concept", "column", "original", "corrected", "rule": "T-118"}` per entry)
+      recording every value it corrects or drops, so a derived number never reaches this repo's
+      database looking like a filed fact. +8 tests updated (242 total there);
+      ruff/format/mypy/pre-commit clean.
+      **Still open, and stays open past PR #44's merge**: that PR explicitly does not close
+      this task. Remaining, in order: (1) PR #44 merging and the `sec_edgar` service
+      redeploying, then re-verifying here that `T-117`'s local guard finds nothing left to
+      correct on APA specifically (this task's original, narrower acceptance criterion, the
+      same operational pattern as Work item 6's `T-052` handoff); (2) the upstream general fix
+      (tracked there as `portfolio-data-mining` `T-042`, not yet started) — validating every
+      synthesized non-dimensional row against the filing's own default-context facts for that
+      concept/period, passing it through when filed, replacing it with the filed value or
+      marking it synthesized (via the same `corrections` mechanism) otherwise, then
+      re-ingesting the affected filings under a new facts version — is what this task's P1
+      priority is actually about: APA/revenue was only ever the first-discovered instance of a
+      universe-wide defect, not the whole of it; (3) *(this repo, added 2026-09-28 from PR #98's
+      review)* when re-ingesting against the redeployed `sec_edgar`, `fundamental_agent` must
+      persist `data["corrections"]` — today `Statements.from_payload` reads only the three
+      statement keys (`income_statement`/`balance_sheet`/`cash_flow`), so a derived value like
+      APA's corrected revenue would land in `financial_facts` indistinguishable from a real
+      filed fact. Needs a flag or provenance field on the affected `financial_facts` row(s)
+      recording that the value was derived/corrected, not filed as-is. Not yet designed or
+      implemented.
+      **Step (3) done 2026-09-30**: `Statements.corrections` (from `payload.get("corrections")`,
+      `[]` for a pre-PR-#44 gateway) + `iter_facts` tagging the matching `(concept, column)`
+      fact's `correction_rule`; new nullable `financial_facts.correction_rule` column
+      (`kg_schema.ddl.REQUIRED_COLUMNS`, additive, no migration — same mechanism as
+      `filing_version`/`run_id`); `db.append_financial_facts` persists it, gated on the column
+      existing (mirrors the existing `has_versioned` fallback). `repair.py`'s re-ingestion path
+      covered for free (already calls `iter_facts`). Tests: `tests/test_statements.py` (+2),
+      `tests/test_db.py` (+1, round-trips through a real `memory_db`). Full suite 802 passed
+      (was 799); ruff, format, mypy clean. Record: `docs/model_fixes.md`, this task's own entry
+      ("Step (3) done" subsection); `docs/fundamental_agent.md`, `docs/kg_schema.md`, `SPEC.md`
+      (`financial_facts` row) updated.
+      **Steps (1) and (2) done 2026-09-30 — task closed.** The user raised the gateway
+      (`http://host.docker.internal:8000`, unreachable from the sandbox as of the previous
+      entry, confirmed reachable now) and merged the upstream general fix
+      (`portfolio-data-mining` PR #45, `T-042`, plus PR #46 isolating its per-statement
+      failures) the same day.
+      **Step (1) — live re-verification against the redeployed gateway (real SEC data, no
+      mocking):** APA's FY2023/FY2024/FY2025 10-Ks now resolve `revenue` to exactly `T-117`'s
+      acceptance figures ($8,279M / $9,737M / $8,920M), each carrying `iter_facts.
+      correction_rule = "T-118"`; end-to-end ingestion through the real
+      `EdgarClient`/`Statements`/`db.append_financial_facts` path (a scratch in-memory DB, no
+      production write) persists `correction_rule = 'T-118'` on those rows. **`T-117`'s guard
+      itself never fires on any of these** — the corrected value already arrives inside
+      `total_concepts`'s Tier 1 match, well above `_total_is_plausible`'s floor and with
+      nothing later to contradict it — meeting this task's original acceptance criterion.
+      **A further finding, not a regression:** APA's FY2021/FY2022 10-Ks (each filing's *own*
+      target period) now resolve `revenue` to `None`, where `T-095`'s original fix had trusted
+      $7,988M/$11,075M. Traced live: both were themselves uncaught instances of the *same*
+      synthesis defect, just on `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax`
+      instead of `us-gaap_Revenues` — the FY2021 filing's own dimensional breakdown rows sum
+      exactly to $7,988M (`$6,501M` "Oil and Gas, Exploration and Production" +
+      `$1,487M` "Oil and gas, purchased", themselves further sums of per-region/segment rows),
+      confirming it was a synthesized rollup, not a filed fact; `T-042`'s
+      `reconcile_with_filed_facts` correctly drops it (`corrections`: `rule: "T-042"`,
+      `reason: "no_filed_nondimensional_fact"`) rather than reconstructing a number `T-118`'s
+      revenue-specific layer has no later-contradicting-total to reconstruct it from. SEC's own
+      `companyconcept` API confirms directly: APA has no FY-period value at all under that
+      concept (only four stray zero/`Q1`/`Q2` 2021 rows). `_revenue_pos`
+      (`fundamental_agent/quality.py`) already HARD-quarantines a filing with `net_income` set
+      and `revenue` `None` — this repo needs no code change for it, only the production
+      re-verification recorded here (and in `docs/model_fixes.md`) so it isn't mistaken for a
+      new defect on the next audit.
+      **Step (2)** is upstream's own closed task; nothing further for this repo to implement.
+      Tests, lint, mypy unaffected (no code change, live-data verification only). Full record:
+      `docs/model_fixes.md`'s `T-118` entry ("Steps (1) and (2), live re-verification" section).
+      **PR #104 review (`@eldova1702`), fixed 2026-09-30**: (1) `EdgarClient.financials` now
+      raises `EdgarError` when the gateway's own reconciliation failed for a statement
+      (`data["reconciliation_errors"]`, upstream PR #46) — such a statement comes back
+      rendered-but-unvalidated, and without this check it would have stored with
+      `correction_rule = NULL` (indistinguishable from filed-as-is), exactly what this task's
+      step (3) exists to prevent. The existing per-filing failure path (`_run_filing`) already
+      does the right thing once it raises: unscored, `failed_units` incremented, retried on the
+      next run (never in `engine.completed`). Tests: `tests/test_edgar_client.py` (+2),
+      `tests/test_pipeline.py` (+1, full-run integration: a reconciliation failure writes no
+      `financial_facts`/`score_snapshot` rows and counts one failed unit). (2) `iter_facts`'s
+      correction lookup now keys on `(statement, concept, column)`, not `(concept, column)` —
+      once `T-042` started reconciling all three statements, a concept like `NetIncomeLoss` can
+      appear (and be corrected) on more than one; keying by concept and column alone could tag
+      the wrong statement's fact. No live clash found in the reviewer's 8-filing sample, but
+      fixed for correctness. Test: `tests/test_statements.py` (+1, same `(concept, column)` on
+      two statements, only one corrected). (3) **Stored facts are not replaced by a plain
+      re-run**: `financial_facts` is append-only, `INSERT OR IGNORE` on `(filing_id, statement,
+      concept, period_key, filing_version = accession_number)` — reproduced directly
+      (reviewer's own local database, `/Users/dova/thesis/data/financial.db`): APA FY2023 still
+      stores revenue `16,558,000,000` and COGS `1,076,000,000` (both values `T-042` now drops)
+      under `correction_rule = NULL`, because that accession's rows were already ingested
+      before the gateway redeploy. `T-100`'s own `TASKS.md` entry now says it must run against
+      a fresh `financial.db`, not one carried forward from before 2026-09-30; the priority note
+      here and in `PLAN.md` no longer says "Work item 8 next" outright — the system-review
+      follow-up tasks (a forthcoming docs PR) and the pilot reaching `verify_pilot` 0 FAIL come
+      first, so `T-079`'s LLM re-run does not start early. (4, non-blocking) Confirmed in the PR
+      thread: `T-121`–`T-124`'s production actions were genuinely already applied at the time
+      this entry says so — each task's own record above (`T-121` "Production void applied
+      2026-09-29", `T-122` "Second pass ... Post-run `PRAGMA quick_check` → `ok`", `T-123`
+      "Post-write `PRAGMA quick_check` → `ok`", `T-124` "Post-write: zero ... rows") predates
+      and is unaffected by this review. Full suite 806 passed (was 802, +4: `tests/test_edgar_
+      client.py` ×2, `tests/test_pipeline.py` ×1, `tests/test_statements.py` ×1); ruff, format,
+      mypy clean.
+- [x] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* — **DONE 2026-09-29**
+      `EARNINGS_MISSING` never fires for an asset with no FUNDAMENTAL score at all: the rule
+      iterates `last_fundamental_dates`, which holds only assets that have one, so its `last is
+      None` branch is unreachable. No effect today (all 20 ranked assets are scored); on the
+      full-universe run (`T-100`) every unscored member would escape the check. **Decision
+      (PR #78 review): an unscored asset is ineligible, not penalized** — no SOFT veto. A
+      selection change: #12 record (`docs/model_fixes.md`, this task's own entry).
+      **Acceptance**: a universe member with no public FUNDAMENTAL score is ineligible for
+      selection in the same cycle it is detected (not through the T-1 veto lag); it stays in
+      the ranking, marked with the reason in `veto_rules_json`, and is listed in the cycle's
+      output; if more than 5% of the universe is unscored, the selection cycle stops with an
+      error instead of building a portfolio.
+      New `cycle.data.unscored_assets`/`TooManyUnscored`/`too_many_unscored_reason`; new
+      `CycleSettings.unscored_max_share` (0.05, no `--allow-*` override); `orchestrator._rank`
+      raises `TooManyUnscored` over that share of the universe, otherwise marks each unscored
+      asset's `cycle_ranking` row `vetoed=True` with `"UNSCORED"` in `veto_rules` directly in
+      this same step — never the `veto` table, never the T-1 cutoff, so exclusion from
+      `positions` is immediate. `_StaleFundamentalRule`'s scope narrowed in its own docstring to
+      "score exists but aged," no behavior change.
+      **PR #99 review (`@eldova1702`, Sourcery), fixed same day**: (1) the first pass exempted a
+      *whole*-unscored universe from `TooManyUnscored` (reasoning: a cycle dated before any
+      filing is public yet, T-106/T-107, has no scored peer to be missing relative to) — this
+      inverted PR #78's own decision ("more than 5% unscored stops the cycle" includes 100%);
+      reproduced live against `cycle_seed` (deleting all 5 FUNDAMENTAL rows built a portfolio on
+      TECHNICAL/VALORIZATION alone with zero `UNSCORED` marks and no warning); dropped the
+      exemption from both functions, updated `test_a_cycle_before_the_filings_are_public_sees_
+      no_fundamentals` to expect `TooManyUnscored`, added
+      `test_all_unscored_also_refuses_the_selection_cycle`. (2) `select`/`monitor`/`backfill`
+      never printed the unscored tickers, only a count nobody saw — new `CycleReport.
+      unscored_tickers`, `cli.py`'s `_print_unscored`. (3) `report.unscored` misreported 0 on a
+      resumed run that skips an already-`done` `rank` step — now read back from `cycle_ranking`
+      (via `json_each(veto_rules_json)`) after `_do("rank", ...)` regardless of whether it ran
+      or was skipped, not a step-local variable.
+      Tests: `tests/test_cycle.py` (+10 net across both rounds), `tests/test_point_in_time_
+      readers.py` (1 updated). Full suite 779 passed; ruff, format, mypy clean. Record:
+      `docs/model_fixes.md` "T-119" (includes a "PR #99 review" section).
+- [x] **T-120** *(P0 — PR #78 review; before `T-107`'s backfill and `T-100`)* — **DONE 2026-09-26** Re-ingest the
+      legacy pre-`T-091` quarterly rows. Before `T-092` fixed the gateway, one Q3 10-Q per
+      year was stored as Q1, Q2 and Q3 rows sharing its accession number and filing date —
+      e.g. ALLE 2022: three 10-Qs, accession `0001579241-22-000063`, all filed 2022-10-27.
+      Production has 41 such accessions over 13 tickers (AEP, ALLE, AXON, BNY, CSX, DAL, ETR,
+      FIS, HPQ, NOC, PNR, REGN, TT; the reviewer counted 15 on the full-universe DB); none has
+      metrics yet. Under `T-106` such a Q1/Q2 row reads as public only at Q3's date (late,
+      never early), but `T-107` would backfill that wrong date into `available_at`. Re-ingest
+      them, make `T-100` unable to resume past them, and add an invariant (test or trigger):
+      no two `sec_filings` rows of the same asset share an accession number.
+      **Acceptance**: 0 shared accessions per asset in production; the invariant refuses a new
+      one; the re-ingested quarters carry their own accession numbers and filing dates.
+      **Code done 2026-09-25 (PR pending); production repair pending** — the gateway cannot
+      reach SEC today (`Temporary failure in name resolution`). `fundamental_agent
+      repair-accessions [--apply] [--drop-unresolved]` (`repair.py`): per shared accession it
+      keeps the row for the filing's own (latest) period, finds each stale quarter's own 10-Q
+      on the gateway, and only then deletes the stale rows (facts and sections cascade) and
+      writes the replacement filing and facts in one transaction — a group whose replacement
+      is not found is left as it was, so a gateway outage is safe to re-run; a stale row with
+      derived data is refused. Triggers `trg_sf_accession_insert/update` refuse a second row
+      of an asset with the same accession; `run` refuses to start while any remain
+      (`SharedAccessionsError`), which is what stops `T-100` resuming past them. Production
+      plan (read-only): 41 accessions, 13 tickers, 67 stale rows, 15,960 facts, 93 borrowed
+      sections, nothing refused; exercised end to end on a production copy (0 shared left,
+      metrics and scores untouched, no FK violations). Test `tests/test_shared_accessions.py`
+      (real STZ 10-Qs).
+      **2026-09-26, gateway back**: the dry run on a production copy found 65 of 67 stale
+      quarters; NOC's 2023Q2 and 2024Q2 stale rows carried a period end borrowed from a stray
+      "(Q2)" column of the Q3 10-Q (2023-04-25, 2024-05-01), so matching on the period end
+      missed their own Q2 10-Qs (ending 06-30). Stale quarters are now matched on the fiscal
+      period (the row's key) and take the replacement's own period end. Re-run on the copy:
+      67 of 67 found and applied — 0 shared accessions, facts −15,960 borrowed / +13,341 own,
+      93 borrowed sections gone, metrics and scores untouched, FK clean. Production backup
+      `financial.db.pre-t120-repair-backup-20260926` (md5 `2a2743dff02f3d53892056a4388803e1`,
+      `quick_check` ok).
+      **Production applied 2026-09-26** (PRs #79, #80; at the user's direction, 2 min 15 s):
+      41 shared accessions, 67 quarters replaced, 0 unresolved. Verified: 0 shared accessions;
+      `financial_facts` 1,208,620 → 1,206,001; `sec_filing_section` 11,619 → 11,526;
+      `fundamental_metrics` (11,878) and `score_snapshot` (497) unchanged; FK check clean;
+      `quick_check` ok — identical to the copy. NOC 2023Q2/2024Q2 now end 06-30 (filed
+      2023-07-27, 2024-07-25); ALLE 2022 reads as three 10-Qs filed 04-26, 07-28, 10-27.
+      The replaced quarters' own narrative sections are not fetched yet (`run --sections`).
+- [x] **T-121** *(P0 — before `T-122`; production DB action, at the user's direction only)* — **DONE 2026-09-29** Void
+      the stale live-book snapshot `T-108`'s and `T-109`'s reviews both flagged: `quant_portfolio`
+      id 4 (`as_of` 2026-06-30, `BF.B` weight 0.10) is a `T-104` leftover from the reverted
+      2026-06-30 run, not the current live book, and its 41 `perf-v1`/`perf-v2` rows in
+      `quant_benchmark_performance` are graded against it. Any dry run or `evaluate` reading that
+      snapshot (as `T-108`'s pre-correction PR body did) produces meaningless active-return
+      figures. **Acceptance**: `quant_portfolio` id 4 and its 41 dependent
+      `quant_benchmark_performance` rows are voided (not merely ignored) on production; a
+      post-void `quick_check` is clean.
+      **Code done 2026-09-28**: `quant void-portfolio --portfolio-id N [--apply]`
+      (`quant/repair.py`) — `plan_void` reads the row, its `quant_position` stints and
+      `quant_benchmark_performance` count read-only, refusing anything but `kind='live_book'`
+      (never a real optimized book); `apply_void` deletes it in one transaction
+      (`quant_position`/`quant_benchmark_performance` cascade via `ON DELETE CASCADE`;
+      `quant_frontier_point` deleted explicitly first, since it carries no cascade action and a
+      real book's frontier points must never vanish as a side effect). Dry run unless `--apply`,
+      same convention as `cycle undo-run` (T-104). Exercised end to end on a throwaway copy of
+      production (never the live file): dry run printed exactly the documented shape (id 4,
+      `as_of` 2026-06-30, `BF.B` weight 0.10, 41 performance rows); `--apply` deleted them,
+      `PRAGMA quick_check` ok, `PRAGMA foreign_key_check` clean, the other 3 `quant_portfolio`
+      rows untouched. Tests: `tests/test_quant_repair.py` (6, incl. refusing an unknown id and a
+      non-`live_book` kind). Full suite 759 passed (was 753); ruff, format, mypy clean.
+      **Production void applied 2026-09-29** (PR #96 merged, then run at explicit user
+      direction): `financial.db` backed up first
+      (`/workspaces/thesis/data/financial.db.pre-t121-void-backup-20260929`, the same naming
+      convention as `T-052`/`T-068`/`T-088`/`T-101`/`T-104`/`T-107`/`T-120`'s own backups). Dry
+      run against `KG_FINANCIAL_DB` matched the documented shape exactly (id 4, `as_of`
+      2026-06-30, `BF.B` weight 0.10, 41 performance rows); `--apply` deleted them. Post-void:
+      `PRAGMA quick_check` -> `ok`, `PRAGMA foreign_key_check` -> no rows, the other 3
+      `quant_portfolio` rows (ids 1-3, `min_var`/`tangency`/`target_vol`, `as_of` 2026-09-22)
+      untouched, a repeat dry run correctly reports id 4 no longer exists.
+- [x] **T-122** *(P0 — after `T-121`; production DB action, at the user's direction only)* —
+      **DONE 2026-09-29** Re-persist `T-108`'s and `T-109`'s fixes to production. Every risk
+      model and benchmark series built before those fixes landed still carries the pre-fix
+      numbers: the benchmark's geometric mean-of-log-returns index over a hard-veto-filtered
+      panel (`T-108`), and an excess-return `equilibrium` μ that understates every book's
+      `expected_return`/`sharpe` whenever `ret_estimator = "equilibrium"` (the default) —
+      `tangency`'s weights themselves, not only its reported stats, are wrong today (PR #85
+      review: 66% of its weight moves, Sharpe 0.038 → 0.325, once μ is corrected).
+      **Acceptance**: a fresh production `build-risk-model` → `optimize` → `evaluate` run over
+      the current live book and universe, with `T-121` already applied; the dry-run figures in
+      `docs/model_fixes.md`'s `T-108`/`T-109` entries are replaced with real post-fix production
+      numbers, and any `tangency` book read afterward reflects the corrected μ.
+      **Scope note**: this session's quant/cycle testing deliberately stays on the 20-ticker
+      development sample (`APA, APO, BF.B, CPT, ESS, HOOD, HUM, MA, MCD, NEE, PG, PM, PSX, SBAC,
+      STZ, T, UDR, WAT, WFC, XOM` — the same 20 `quant_return_daily`/`qret-v2` already covers),
+      not the full 503-member universe (`T-100`'s eventual full-universe cutover, not yet run).
+      A custom, checked-in `/workspaces/thesis/data/universe_sample20.db` (copied from the real
+      `universe.db`, filtered to these 20 symbols) is passed as `--universe-db` to every `quant`
+      command below, so nothing widens back to the full universe by omission.
+      **First pass (`--analysis-date 2026-08-27`) was incomplete**: `price_daily`'s spine capped
+      there at the time (T-110's own last `--store-daily` backfill), three weeks *before* the
+      live book's only stints ever opened (`valid_from = 2026-09-22`) — no date had both a live
+      book and forward price data at once, so `evaluate` could rebuild the benchmark but
+      snapshotted no live book and evaluated 0 perf rows (`quant_run` id 14, harmless, left in
+      place). `build-risk-model`/`optimize` still produced real, T-109-fixed numbers at that
+      date (model id 2; `quant_portfolio` ids 4/5/6): tangency Sharpe `0.038 → 0.325`,
+      `expected_return` `0.0528 → 0.0890`, `expected_vol` `0.2056 → 0.1355` — matching PR #85
+      review's own prediction almost exactly; `min_var` Sharpe `-0.089 → 0.288`, `target_vol`
+      `0.0068 → 0.319`.
+      **Pricing gateway raised 2026-09-29, at the user's direction**: `pricing_agent run
+      --analysis-date 2026-09-29 --start 2026-08-20 --store-daily --observations` refreshed
+      `price_daily`/`price_observation` through today. Run without `--limit`/`--tickers` by
+      mistake, so it covered the full 503-member universe rather than the 20-ticker sample
+      (`pricing_run` id 8, 503/503) — caught and corrected (this entry's own scope note, above);
+      the extra pricing coverage for the other 483 names is harmless and additive (`price_daily`/
+      `price_observation` rows only, nothing quant-side reads), left in place rather than
+      reverted, but not built on further.
+      **Second pass, properly scoped via `--universe-db universe_sample20.db`**:
+      `backfill-actions --from 2022-01-01 --to 2026-09-29` (20/20 fetched) → `build-returns
+      --from 2022-01-01` (20 assets, 440 new `qret-v2` rows) → `build-risk-model
+      --analysis-date 2026-09-29` (model id 3, 17 assets — `MA` still fails the risk model's own
+      liquidity/history gate, unrelated to T-108/T-109) → `optimize --max-name-weight 0.15`
+      (matching the first pass's own override; the default `0.05` cap makes a 17-name book
+      infeasible, `17*0.05=0.85 < 1`, unrelated to this task) → `min_var`/`tangency`/
+      `target_vol`/15-point `frontier` books (`quant_portfolio` ids 7/8/9), confirming the same
+      fixed numbers as the first pass (tangency Sharpe `0.3253`, consistent day-to-day drift
+      from `0.3249`, both real post-fix figures) → `evaluate --from 2026-09-22
+      --analysis-date 2026-09-29 --benchmark SP500_EW_INTERNAL`: **live_book #10 snapshotted (10
+      positions, matching the live book exactly) and evaluated against `SP500_EW_INTERNAL` over
+      5 real forward trading days (2026-09-23 → 2026-09-29)** — cumulative_return `-0.88%`
+      vs. the rebuilt (T-108-fixed) benchmark, daily `active_return` ranging `-0.46%` to
+      `+0.91%` (`quant_benchmark_performance`, `perf-v2`, `portfolio_id = 10`). Post-run
+      `PRAGMA quick_check` → `ok`, `PRAGMA foreign_key_check` → no rows.
+      Acceptance now fully met: a real `build-risk-model` → `optimize` → `evaluate` production
+      run over the current live book and (sample) universe, `T-121` already applied, with
+      genuine post-fix numbers for both `T-108` (the live book's own benchmark comparison) and
+      `T-109` (tangency's corrected μ). `docs/model_fixes.md`'s `T-108`/`T-109` entries updated
+      with these final numbers, replacing the dry-run figures.
+- [x] **T-123** *(P1 — after `T-110`'s code fix; production DB action, at the user's direction
+      only)* — **DONE 2026-09-29** Clean the production orphan rows `T-110` found: 503
+      `price_observation` rows dated 2026-08-28 with no matching `price_daily` bar, and
+      whichever of `quant_run`s 7–10 and the two `cycle_run`s were built at an as-of past the
+      price spine then in effect (each now individually assessed — a run may simply need
+      re-recording as stale-as-of rather than voided, if its own inputs were otherwise fine).
+      The going-forward guard (`T-110`, code done) prevents a recurrence; this is the one-time
+      cleanup of what already exists. **Acceptance**: zero `price_observation` rows without a
+      same-day `price_daily` row; each flagged `quant_run`/`cycle_run` is either re-run within
+      the price spine or explicitly annotated as a known-stale historical run, not left silently
+      ambiguous.
+      **Orphan rows: already zero**, a side effect of `T-122`'s own pricing refresh
+      (`pricing_agent run --store-daily --observations` together this time, unlike the original
+      `--observations`-without-`--store-daily` run that created the orphans) — verified directly
+      (`price_observation` LEFT JOIN `price_daily` on `(asset_id, date)`, zero unmatched rows),
+      no separate cleanup needed.
+      **`quant_run`s 7/10 (`build-returns`/`evaluate`) individually assessed as not applicable**:
+      T-110's stale-as-of guard was never wired into either command by design — `build-returns`
+      builds over an explicit `--from`/`--to` range, not a point-in-time universe resolution;
+      `evaluate` "deliberately not guarded (already degrade gracefully on missing forward
+      data)" per `T-110`'s own record. Neither claimed a freshness its inputs didn't have; no
+      annotation needed.
+      **`quant_run`s 8/9 (`build-risk-model`/`optimize`, as-of `2026-09-22`) and `cycle_run` 1
+      (`SELECTION`, `2026-09-22`) individually assessed as genuinely stale-as-of** (`price_daily`
+      capped at `2026-08-27` when each ran) **and retroactively annotated, not re-run**: each
+      `params_json` now carries `"stale_as_of_bypassed"` naming the as-of, the spine then in
+      effect, and that it was annotated after the fact under `T-123` rather than re-run.
+      **Precision (PR #101 review, Sourcery):** this key means something different on each
+      table, and the annotation is not "the same thing the guard would have written" on
+      `cycle_run` specifically. `quant`'s `open_run` runs *before* its `StaleAsOf` check
+      (`persist.py`), so every `quant_run` row -- refused or not -- already carries this key
+      going forward; the `quant_run` 8/9 annotation matches that existing behavior exactly.
+      `cycle`'s own check runs *before* `open_cycle` (`orchestrator.py`), so a normal refused
+      stale `select`/`monitor` never creates a `cycle_run` row at all going forward -- the key
+      only ever appears there when `--allow-stale-prices` explicitly permitted the run. `cycle_
+      run` 1's annotation is therefore a separate, one-off retroactive database write (this
+      `cycle_run` row already existed, pre-dating the guard) mimicking the shape an
+      `--allow-stale-prices`-permitted run's own `params_json` would carry, not something the
+      going-forward guard itself would ever produce for a row that didn't already exist.
+      A deliberate, lower-risk choice over re-running `cycle select` specifically, since that
+      would reopen/close live positions with real portfolio consequences, well beyond a
+      metadata cleanup task; the user can ask for a fresh `select` separately if an updated live
+      book is wanted. `quant_run` 8/9's own outputs (`quant_risk_model` id 1, `quant_portfolio`
+      ids 1-3) are additionally already superseded by `T-122`'s fresh, correctly-scoped
+      2026-09-29 re-run (`quant_risk_model` ids 2/3, `quant_portfolio` ids 4-9) -- kept, not
+      voided (`quant void-portfolio`, T-121's tool, refuses anything but `kind='live_book'` by
+      design; a real optimized book's history stays on record).
+      **`cycle_run` 2 (`SELECTION`, `2026-06-30`) assessed as not applicable**: a deliberate
+      backdated run (`cycle_date` far before any spine concern either then or now), already
+      `status='reverted'` via `T-104`'s own `undo-run` for an unrelated reason — no stale-as-of
+      claim to annotate.
+      Backed up `financial.db` first
+      (`financial.db.pre-t123-annotate-backup-20260929`). Post-write `PRAGMA quick_check` →
+      `ok`, `PRAGMA foreign_key_check` → no rows.
+- [x] **T-124** *(P1 — after `T-113`'s code fix; production DB action, at the user's direction
+      only)* — **DONE 2026-09-29** Relabel the one production `score_snapshot[FUNDAMENTAL]` row
+      `T-113` found stored under `model = 'deepseek-chat'` but actually a rule-based fallback, to
+      `agents.FALLBACK_MODEL_LABEL`. `prompt_hash` stays `NULL` for this and every other
+      pre-fix row — the original LLM interaction (or failed attempt) that produced them no
+      longer exists to hash retroactively; that is expected, not a defect to correct.
+      **Acceptance**: zero production `score_snapshot[FUNDAMENTAL]` rows with `model` equal to
+      a real configured model id whose score actually came from `_fallback_assessment`.
+      **Identified precisely, not by inference**: `_fallback_assessment` (`agents.py`) writes a
+      fixed `narrative` ("Automated fallback: the language model could not return a usable JSON
+      verdict, so this score is derived directly from the computed ratios"), which no real LLM
+      reply ever produces verbatim — `score_snapshot` id 171 (asset 373, `PG`, `filing_id`
+      3529), of 377 total FUNDAMENTAL rows, is the sole match. Relabeled `model` from
+      `'deepseek-chat'` to `'rule-based-fallback-v1'` (`agents.FALLBACK_MODEL_LABEL`);
+      `prompt_hash` left `NULL` as expected. `fundamental_snapshot_legacy` (the frozen, pre-`m004`
+      migration table) checked and has zero rows matching that narrative -- it predates this
+      fallback row entirely, out of this task's scope, not touched. Backed up `financial.db`
+      first (`financial.db.pre-t124-relabel-backup-20260929`). Post-write: zero
+      `score_snapshot[FUNDAMENTAL]` rows have that narrative under any label but
+      `rule-based-fallback-v1`; `PRAGMA quick_check` → `ok`, `PRAGMA foreign_key_check` → no
+      rows.
+- [x] **T-125** *(P0 — added 2026-09-27 from PR #94's review; before any `cycle backfill` run
+      and before the next live `cycle select`)* — **Code done 2026-09-29.** Veto lifecycle: a veto is a stint, not a
+      per-date event. Today `writers.write_vetoes` clears only rows `WHERE cycle_date = ?` (the
+      run's own date), and `hard_vetoed_as_of` / `active_soft_vetoes` /
+      `quant.db.hard_vetoed_as_of` read every uncleared row `<= cutoff`. As a result (all
+      reproduced): a HARD veto is permanent once raised, even with the condition false on 3
+      later cycles; the same SOFT rule counts once per cycle it held (4 weekly cycles = -60,
+      not -15); production (`financial-2.db`) still carries WAT's HARD `NEGATIVE_FCF` from the
+      reverted 2026-06-30 run as active, and 7 names carry the same SOFT rule on two dates.
+      **Fix**: (a) schema — `veto` holds stints: `raised_on`, `cleared_on` (cycle dates, not
+      wall-clock), `last_seen_on`, `severity`, `evidence_json`, `run_id`, at most one open
+      stint per `(asset_id, rule_id)` (partial unique index `WHERE cleared_on IS NULL`);
+      `detected_at`/`cleared_at` stay as wall-clock metadata only. (b) three-state evaluation —
+      each rule returns its hits and the set of assets it could evaluate; an open stint closes
+      only for an asset that was evaluated and not hit; an asset the rule could not evaluate
+      (missing data) keeps its open stint and never opens a new one. (c) transitions at cycle
+      date N: hit + no open stint → open (`raised_on = N`); hit + open stint →
+      `last_seen_on = N`; evaluated, not hit, open stint → `cleared_on = N`; a rule disabled in
+      `rule_catalog` → its open stints close at N. (d) one point-in-time predicate in
+      `kg_schema`, used by both `cycle` (HARD filter, SOFT penalty) and `quant` (universe
+      gate): active at cutoff C ⇔ `raised_on <= C AND (cleared_on IS NULL OR cleared_on > C)`,
+      C = N-1 (T-1 lag for both raising and clearing). (e) SOFT penalty =
+      `soft_veto_penalty × count(distinct active SOFT rules)`. (f) idempotent re-run:
+      re-running date N first undoes N's own transitions (deletes stints raised on N, reopens
+      stints cleared on N), then re-applies them; a live veto evaluation at a date older than
+      the latest transition is refused, the same rule as `T-097`. (g) replay — `reset_replay_range`
+      (`T-115`'s `--force`) also undoes veto transitions on or after `--from` in the replay
+      database. (h) migration — collapse existing per-date rows into stints using the
+      completed veto-step dates already recorded in `cycle_checkpoint`.
+      **Acceptance**: a HARD veto clears the first cycle its condition is false and the asset
+      was evaluated (not permanent); a SOFT rule penalizes once while its stint stays open, not
+      once per cycle it holds; re-running a past date is idempotent; `cycle backfill --force`
+      resets veto transitions the same way `T-115` resets positions. Changes live behavior
+      (`SPEC.md` FR-006) — its own PR, separate from any other in-flight work.
+      **Done 2026-09-29.** All eight sub-items (a)-(h) implemented as specified above:
+      `veto` rebuilt to stints (`kg_schema/ddl.py`); `Rule.evaluate()` now returns a
+      `RuleResult(hits, evaluated)` (`cycle/rules/base.py`/`builtin.py`) so `write_vetoes`
+      (`cycle/writers.py`) can tell "evaluated, no longer hit" from "couldn't evaluate" per
+      rule per asset; transitions, disabled-rule closure, and the self-undo-then-reapply
+      idempotent re-run all live in `write_vetoes`; the shared point-in-time predicate
+      (`hard_vetoed_as_of`/`active_soft_vetoes`) moved to `kg_schema.queries`, replacing the
+      two independent copies in `cycle.writers` and `quant.db` (the latter now re-exports it);
+      `veto_out_of_order_reason` (new, `kg_schema.queries`) mirrors `T-097`'s guard, wired into
+      `cycle.orchestrator._run` behind a new `--allow-backdated-veto` (`select`/`monitor`);
+      `cycle.replay.reset_replay_range` (`--force`) now also deletes/reopens veto transitions
+      from `--from` onward; migration `m009` (`kg_schema/migrations.py`) collapses old
+      per-date hit rows into stints using the `"veto"` checkpoint step's own completed cycle
+      dates as the evaluation timeline. Verified against a scratch copy of
+      `data/financial-2.db` (never the tracked file): before, WAT's HARD `NEGATIVE_FCF`
+      (raised 2026-06-30, reverted-run leftover) reads active forever and 7 SOFT-vetoed names
+      would double-count at a projected next cutoff (`penalty x 2`); after `migrate`, WAT's
+      stint correctly closes `2026-09-22` (the cycle that re-evaluated it clean), the 7 names
+      collapse to one open stint each (`penalty x 1`), and `hard_vetoed_as_of` returns exactly
+      `{MA, SBAC}` at that cutoff. +9 tests (794 total; `test_cycle.py` ×8 unit-level
+      `write_vetoes`/guard/replay-reset tests, `test_kg_schema.py`'s `m009` migration test
+      reproducing the exact WAT/re-raise shape found in production); ruff, format, mypy clean.
+      Record: `docs/model_fixes.md` "T-125". `SPEC.md` FR-006 and the `veto` schema row,
+      `docs/cycle.md`, `docs/kg_schema.md`, `docs/quant.md` updated.
+      **Production `migrate` (the real `data/financial.db`'s `m009` rebuild) is deferred,
+      pending explicit user direction** — the same category as `T-121`-`T-124`.
+      **Known, accepted residual scope** (see `docs/model_fixes.md`'s "Design decisions"):
+      `veto` stays one table shared between live and REPLAY runs, not mirrored into a
+      `veto_replay` table the way `T-115` isolated `portfolio_position` — `cycle backfill`'s
+      `--db` being mandatory-and-always-a-copy (already true since `T-115`) is what actually
+      protects the live book, not per-cycle-type partitioning of veto stints, which would
+      conflict with (a)'s single global "at most one open stint" constraint.
