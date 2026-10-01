@@ -15,13 +15,14 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 8 and 9 below
 (`T-070`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14 and 16 are in
+open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15 and 16 are in
 `CHANGELOG.md`.) **Work item 14 (P0/P1, the second audit's live defects) is done
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
-item 8 starts next (PR #104 review):** the system-review follow-up tasks (to be
-added in a forthcoming docs PR) and the pilot reaching `verify_pilot` 0 FAIL both
-come first — **do not start `T-079`'s LLM re-run until both have landed.** Once
+item 8 starts next (PR #104 review):** the priority order is **Work item 17
+(`T-131` → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+`verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
+all of it has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item
 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
 **9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all** (which
@@ -97,7 +98,11 @@ only durable record.
       standardization, `0.50/0.30/0.20` weights) + `BREAK_TREND_200` (SOFT),
       `VOLATILITY_SHOCK`/`CRASH_Z_SCORE` (HARD-temporal, 10-trading-day
       re-evaluation, expiration persisted on `veto`) in
-      `rules/builtin.py`. → `PLAN.md` Work item 8, step 1.
+      `rules/builtin.py`. → `PLAN.md` Work item 8, step 1. *(2026-09-29 system review, scope
+      addition: recalibrate `LIQUIDITY_DISTRESS` (N7) — `current_ratio < 1.0` → SOFT flags
+      structurally healthy PG, NEE, PM, T, STZ, APA and SBAC (7 of 20); combine it with cash
+      coverage (e.g. OCF / current liabilities, interest coverage) and exempt utilities and
+      financials. Also add a minimum signal-coverage floor to TECHNICAL (audit C5).)*
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,
@@ -106,10 +111,16 @@ only durable record.
       coverage floor — `_factor_score` averages whichever factors exist, so a name scored on
       one of three is indistinguishable from one scored on all — persist per-factor coverage
       in `inputs_json`, and mark market cap at the cycle date rather than the filing's period
-      end.)*
+      end.)* *(2026-09-29 system review, scope addition: compute `earnings_yield` from TTM
+      net income and the as-of market cap (N8 / audit C1) — `orchestrator._valorization` reads
+      `profitability.net_income`/`income_statement.net_income`, neither a stored metric, so the
+      value factor uses FCF yields only; keep FUNDAMENTAL normalization in `cycle_ranking`,
+      not overwritten on the stored snapshot (N9); ROIC is None when invested capital ≤ 0
+      (audit F9). The as-of market cap itself comes from `T-132`'s shared reader.)*
 - [ ] **T-072** Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
-      step 2 (EBITDA sub-task).
+      step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt
+      subtracts short-term investments (audit F7).)*
 - [ ] **T-073** Fundamental continuous scoring rubric in `agents.py`
       (4-pillar weighted, one-decimal-place score) eliminating the
       22-discrete-value quantization. → step 3.
@@ -126,7 +137,10 @@ only durable record.
       valuation magnitude gate (`DATA_ERROR_SUSPECTED` on `|FCF yield| >
       50%` or scale mismatch), new dedicated `profitability` skill
       (DuPont, annualization, ROE→ROIC fallback), cost-hygiene trim of
-      `SKILL.md` boilerplate. → step 5.
+      `SKILL.md` boilerplate. → step 5. *(2026-09-29 system review, scope addition, before
+      `T-079`'s LLM re-run: YoY growth returns None when the prior value is ≤ 0 (audit F8);
+      quick ratio as (cash + ST investments + receivables) / current liabilities, and cash
+      ratio tolerant of a missing cash line (audit F5, F6).)*
 - [ ] **T-077** Carhart 4-factor `ret_estimator` with Vasicek beta
       shrinkage (`mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
       `{MKT,SMB,HML,MOM}`, vendored version-pinned Kenneth French factor
@@ -136,7 +150,10 @@ only durable record.
       `evaluate.py`. **Supersedes T-020–T-026.** → step 6. *(2026-09-25, second audit:
       `turnover_cap` is inert today — it needs `Constraints.w_prev`, which nothing populates;
       populating it from the prior book is part of this task. Its μ must follow `T-109`'s
-      convention.)*
+      convention.)* *(2026-09-29 system review, scope addition: the risk-free CSV path
+      refuses an as-of before the series instead of using a future rate (audit Q3);
+      optionally, `max_sharpe` falls back to the frontier on solver infeasibility (audit
+      Q5).)*
 - [ ] **T-078** *(**DEPRECATED 2026-09-25, at the user's direction — not part of the
       development; do not implement.** Kept unchecked as the historical record, per this
       file's "mark cancelled in place, don't renumber" rule. Reason: a meaningful IC needs a
@@ -149,6 +166,14 @@ only durable record.
 - [ ] **T-079** One bundled LLM re-run covering T-073+T-074+T-076 together
       (~4,844 filings) — do not re-run per prompt edit; full suite green
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
+
+**Composite-weights decision (system review N11, 2026-09-29) — open, needs a decision before
+`T-070`/`T-071` land.** `src/cycle/config.py` blends FUNDAMENTAL 0.4 / VALORIZATION 0.3 /
+TECHNICAL 0.2 / SEMANTIC 0.1 (`_DEFAULT_WEIGHTS`), while the plan's §5.3 decision was equal
+weights (1/3 each across the three score types present), and neither choice is recorded
+here. Resolve it one way or the other: either adopt equal weights, or keep 0.4 / 0.3 / 0.2
+and record its justification here (and in `PLAN.md` Work item 8). Until then `0.4/0.3/0.2/0.1`
+is the shipped behaviour, not a documented decision.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption
 
@@ -168,18 +193,109 @@ only durable record.
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
-## Work item 15 — Dev environment: parameterize devcontainer mount path
+## Work item 17 — P0/P1: data-integrity defects from the 2026-09-29 system review
 
-- [ ] **T-126** `.devcontainer/devcontainer.json`'s `mounts` entry hardcodes a
-      contributor-specific host path (`source=/Users/dova/thesis`), so the
-      bind mount only works on that one machine's filesystem layout.
-      Replace it with a `${localEnv:VAR_NAME}` substitution (devcontainer's
-      host-environment variable syntax, resolved before the container is
-      created — not `${containerEnv:...}`, which reads a variable already
-      set inside the container), optionally with a fallback default
-      (`${localEnv:VAR_NAME:/Users/dova/thesis}`), so each contributor sets
-      their own path via an env var instead of editing the committed file.
-      Not yet started — tracked here, not implemented.
+Added 2026-10-01, from `docs/md primera revision/system_review_2026-09-29.md` §4 (a
+whole-pipeline review of code and logic, checked against `data/financial-3.db`). Each task
+below is verified on that database, affects results, and is not covered by an existing task.
+They land **ahead of Work item 8** (see the priority note above): `T-131` first, then
+`T-132` and `T-133`, then the pilot. The review's findings N1–N4 → `T-131`/`T-132`, N5/N6 →
+`T-133`; N7–N9 and N11 became scope additions to `T-070`/`T-071`/Work item 8 (above), and N10
+(the `dq-v2` production re-gate) stays a user-direction action, not a task.
+
+> **Note — `T-122`'s moving-average note:** `T-122`'s record in `CHANGELOG.md` says MA was
+> excluded by the liquidity/history gate. It was excluded by a **HARD veto** (`T-125`), not
+> the liquidity gate: MA has full history (1,189 days). `T-122` is closed, so the correction
+> lives here rather than in its record.
+>
+> **Note — `T-132`(a) needs an upstream change:** the cover-page share count
+> (`dei:EntityCommonStockSharesOutstanding`) must first be exposed by the
+> `portfolio-data-mining` gateway — the same pattern as `T-042`/`T-118` (upstream PR, then
+> this repo consumes it). `T-132`(b)–(d) and `T-133` are local and do **not** wait for it.
+
+- [ ] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`).
+      - (a) Never store a bar for a session that hasn't closed: using the NYSE calendar,
+        refuse `--analysis-date`/`--end` of today before the close plus a buffer.
+      - (b) Build `price_observation` from the asset's **full stored `price_daily` history**,
+        not the fetched window, and recompute (upsert) every observation date whose inputs
+        changed.
+      - (c) When `corporate_action` shows a split dated after an asset's stored history
+        began, re-fetch that asset's full history and rebuild its observations and returns.
+        Refuse to store a series with a split-shaped jump (×2, ×0.5, ×3 …) that doesn't match
+        a recorded split.
+      - (d) Filter by `engine_version` in `quant.universe._history_counts` and
+        `_median_dollar_volume`, which today would double-count history as soon as a second
+        returns or observation version exists (forensic audit Q4).
+
+      **Why (system review N1–N3)**: pricing runs on 2026-09-29 at 14:04–14:10 UTC stored a
+      partial intraday session as the day's close (363M shares across 503 names against a
+      normal 2,684–3,371M); `price_observation` and `quant_return_daily` are `INSERT OR
+      IGNORE`, so it is permanent and feeds the 09-29 benchmark, evaluation rows and risk
+      model 3. Observations computed only over a refresh's fetched window left
+      `realized_vol_90d`, `momentum_252d`, `max_drawdown_90d` and `momentum_63d` NULL on
+      10,500 rows (all 503 names since 2026-08-31). APH (2:1, 2026-09-03) and MNST (2:1,
+      2026-08-11) have split-shaped jumps from a partial refresh (7 in total; real moves such
+      as FISV −44% are not errors).
+
+      **Clean-up**: delete the 2026-09-29 rows from `price_observation` and
+      `quant_return_daily` and the benchmark, perf and risk-model rows built on them; rebuild
+      observations for all 503 names from full history; re-fetch APH and MNST in full.
+
+      **Acceptance**: an intraday run for today is refused; an incremental refresh produces
+      observations identical to a full recompute; 0 split-shaped jumps; `verify_pilot.py`
+      T-131 checks pass.
+
+- [ ] **T-132** *(P0)* Market capitalization.
+      - (a) Point-in-time share count from the cover page
+        (`dei:EntityCommonStockSharesOutstanding`): gateway (upstream) plus
+        `fundamental_agent`. **Needs the upstream `portfolio-data-mining` change first (same
+        pattern as `T-042`); (b)–(d) do not wait for it.**
+      - (b) Never use `CommonStockSharesIssued` as shares outstanding.
+      - (c) One shared reader in `kg_schema`, used by `cycle` and `quant`: the latest
+        point-in-time count times the **close at the as-of date**, refusing a count older
+        than a set age.
+      - (d) `quant` refuses a risk model, or records it explicitly, when any panel asset
+        lacks a cap, never weighting it 0 silently. Record cap coverage and age on
+        `quant_run`.
+
+      **Why (system review N4)**: `statements.REGISTRY["shares_outstanding"]` falls back to
+      `us-gaap_CommonStockSharesIssued`, which includes treasury stock (PG: $650B cap on
+      4.009B issued vs SEC's 2.324B outstanding, about 1.7× too high; 139 stored filings have
+      only "issued"). XOM, PM, NEE and HUM have no share concept stored; 101 of 359 sample
+      filings (28%) have no cap, and 238 of the 258 that do use the diluted weighted average.
+      `quant.db.load_market_caps` keeps the latest non-null cap with no age limit (PG's
+      2024-03-31 value is used on 2026-09-29) while `cycle.data.market_cap_estimates` takes
+      the latest filing even when NULL, so the two modules disagree. A missing cap is silently
+      weighted 0 in the equilibrium market portfolio (`caps_by_id.get(a, 0.0)`): XOM gets 0
+      and PG about 40% of the market weight in risk model 3. Caps are valued at the filing's
+      period-end price, not the as-of price. `T-122`'s post-fix quant numbers rest on this
+      vector, so they are not thesis-usable yet. *(Not the same as `T-127`, MCD's market-cap
+      scale, already fixed by `T-103`.)*
+
+      **Acceptance**: every sample name has a cap from a point-in-time count; PG within 5% of
+      SEC's cover count × price; a test with one missing cap refuses; `verify_pilot.py` T-132
+      passes.
+
+- [ ] **T-133** *(P1)* Quarterly cash flow and the NEGATIVE_FCF rule.
+      - (a) On 10-Qs, derive the quarter's cash flows (YTD minus the prior quarter's YTD), or
+        compute cash-flow margins on the TTM basis `T-105` already builds (TTM FCF / TTM
+        revenue), consistently for every filing.
+      - (b) NEGATIVE_FCF reads TTM FCF, not one quarter.
+      - (c) Recognize oil & gas capex (ASC 932: `PaymentsToExploreAndDevelopOilAndGasProperties`,
+        `PaymentsToAcquireOilAndGasProperty`) and a filer's custom capex concept through a
+        cash-flow-statement-only label fallback. Today APA and PSX have no FCF on any 10-K
+        (forensic audit F2; PSX uses `psx_CapitalExpendituresAndInvestments`).
+
+      **Why (system review N5/N6)**: a 10-Q cash-flow statement reports only year-to-date
+      columns and the cashflow group reads the quarter column, so FCF margin is missing for
+      172 of 182 Q2/Q3 10-Qs (95%); the cashflow group, VALORIZATION's quality factor and
+      NEGATIVE_FCF work only on Q1 10-Qs and 10-Ks. NEGATIVE_FCF (HARD) reads a single
+      quarter: WAT is vetoed for Q1 2026 alone (FCF −$42M on revenue of $1,267M) while its
+      TTM FCF is positive, and `T-125` makes the veto permanent.
+
+      **Acceptance**: < 5% of Q2/Q3 FCF margins missing; APA and PSX 10-K FCF present; WAT's
+      Q1 2026 no longer triggers the HARD veto while its TTM FCF is positive;
+      `verify_pilot.py` T-133 checks pass.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
@@ -227,14 +343,15 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       re-ingest under a bumped engine version, not a same-accession re-run) is the only way
       to replace them. `T-100`'s full-universe run must therefore start from a database with
       no pre-2026-09-30 `financial_facts` rows, not an existing one carried forward — the
-      share-count scale cross-check (`detect_share_scale_factors`) and the planned market-cap
-      reader (a system-review follow-up task, not yet in this file) both read
+      share-count scale cross-check (`detect_share_scale_factors`) and the market-cap
+      reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
 
 ## Status
 
-**🔴 Current top priority: the system-review follow-up tasks and the pilot, then
+**🔴 Current top priority: Work item 17 (`T-131` → `T-132`/`T-133`), then the pilot
+(`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL), then
 Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
 section's own earlier claim that Work item 8 was next).** Work item 14 (the
 second forensic audit) is fully closed 2026-09-30, `T-118` last — see
@@ -244,8 +361,8 @@ its production-apply date and verification), and `T-125`'s own `migrate` remains
 the one deliberately-deferred production write left over from it (still pending
 explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
 production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
-`T-079`'s LLM re-run (Work item 8) until the system-review tasks (to be added in
-a forthcoming docs PR) and `verify_pilot` reaching 0 FAIL have both landed** —
+`T-079`'s LLM re-run (Work item 8) until Work item 17 and `verify_pilot` reaching
+0 FAIL have both landed** —
 once they have, priority runs **Work item 8, `T-070`–`T-079` (P1, `T-078`
 deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
@@ -256,7 +373,7 @@ transfer independent of any task here)**.
 
 Work items 1 (done), 3 (superseded by `T-077` — do not implement), 6 (done
 upstream + `T-052`), 5 (done 2026-09-25, `T-044` deprecated), 7 (done 2026-09-25), 10 (done),
-11 (done 2026-09-25), 13 (done 2026-09-25), 14 (done 2026-09-30) and 16 (done 2026-10-01) are
+11 (done 2026-09-25), 13 (done 2026-09-25), 14 (done 2026-09-30), 15 (done 2026-10-01, PR #106) and 16 (done 2026-10-01) are
 closed — see `CHANGELOG.md`.
 
 Work items 2 and 4 are unaffected by the audit and keep their original,

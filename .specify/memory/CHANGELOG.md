@@ -1847,6 +1847,22 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       protects the live book, not per-cycle-type partitioning of veto stints, which would
       conflict with (a)'s single global "at most one open stint" constraint.
 
+## Work item 15 — Dev environment: parameterize devcontainer mount path — DONE 2026-10-01
+
+- [x] **T-126** `.devcontainer/devcontainer.json`'s `mounts` entry hardcodes a
+      contributor-specific host path (`source=/Users/dova/thesis`), so the
+      bind mount only works on that one machine's filesystem layout.
+      Replace it with a `${localEnv:VAR_NAME}` substitution (devcontainer's
+      host-environment variable syntax, resolved before the container is
+      created — not `${containerEnv:...}`, which reads a variable already
+      set inside the container), optionally with a fallback default
+      (`${localEnv:VAR_NAME:/Users/dova/thesis}`), so each contributor sets
+      their own path via an env var instead of editing the committed file.
+      **Done 2026-10-01 (PR #106, `16c3a05`).** The mount is now
+      `source=${localEnv:THESIS_HOST_DIR},target=/workspaces/thesis,...`, with no fallback
+      default; `THESIS_HOST_DIR` is the shared variable name used across this repo's
+      `portfolio-*` siblings that mount the same directory, and is documented in `README.md`.
+
 ## Work item 16 — Fine-tuning follow-ups: second-iteration review (`fixes_feedback.md`) — DONE 2026-10-01
 
 Added 2026-10-01, from `fixes_feedback.md`'s independent empirical verification of the
