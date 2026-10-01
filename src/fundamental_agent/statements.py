@@ -10,6 +10,7 @@ instant column with the matching (or nearest-earlier) date.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -80,9 +81,9 @@ class LineItem:
     label_contains: tuple[str, ...] = ()
     # An already-aggregated total: if any row matches one of these, it wins
     # outright over every `concepts` match, regardless of document order --
-    # unless Statements._total_is_plausible (T-095) rejects it as far smaller
-    # than a named `concepts` candidate, a tagging defect rather than a real
-    # aggregate.
+    # unless Statements._total_is_plausible (T-095/T-128) rejects it as a
+    # duplicate of one dimensional slice that is smaller than a named
+    # `concepts` candidate, a tagging defect rather than a real aggregate.
     total_concepts: tuple[str, ...] = ()
     # When no `total_concepts` row matches: sum one value per distinct
     # additive component (instead of just returning the first match) --
@@ -409,7 +410,9 @@ class Statements:
         order -- *unless* :meth:`_total_is_plausible` rejects it (T-095,
         ``docs/model_fixes.md``): a ``total_concepts`` tag is sometimes
         mistagged on one small dimensional slice of the real breakdown
-        rather than the consolidated aggregate (APA FY2021's real shape --
+        rather than the consolidated aggregate (T-128: detected structurally, as a
+        non-dimensional row that exactly duplicates a dimensional row of the same
+        concept; APA FY2021's real shape --
         ``us-gaap_Revenues`` = $1,082M, matching only its "Equity Method
         Investment, Nonconsolidated Investee" dimensional row, while the
         real total is $7,988M), and such a value can never be the genuine
@@ -456,30 +459,52 @@ class Statements:
                     return value
         return None
 
-    # A `total_concepts` match must be at least this fraction of the largest
-    # `spec.concepts` candidate to be trusted outright (T-095, docs/model_fixes.md).
-    # A genuine aggregate is never far smaller than one of its own named
-    # components; a total this much smaller is a tagging defect (a filer's
-    # generic "total" concept landing on one small dimensional slice instead of
-    # the consolidated figure -- APA FY2021's real shape, see :meth:`get`).
-    # Picked to sit well above real, correct cases (the total exactly equals or
-    # slightly exceeds the largest component -- UDR's real shape, ratio ~1.0)
-    # and well below the observed defect (ratio ~0.14); pinned exactly by
-    # ``tests/test_statements.py::test_revenue_total_concepts_plausibility_floor_is_pinned``.
-    _TOTAL_PLAUSIBILITY_FLOOR = 0.5
+    # Dimension axes whose slice may legitimately equal the consolidated total: a
+    # single-segment filer discloses its one segment's revenue, which *is* the total. A
+    # duplicate on any other axis (APA FY2021: the equity-method-investee axis) is a
+    # slice promoted to a total, not a coincidence (T-128).
+    _WHOLE_ENTITY_AXES = frozenset(
+        {"srt:ConsolidationItemsAxis", "us-gaap:StatementBusinessSegmentsAxis"}
+    )
 
     def _total_is_plausible(self, spec: LineItem, column: str, total_value: float) -> bool:
-        """Sanity-check a Tier 1 ``total_concepts`` match against the largest
-        named ``spec.concepts`` candidate -- see :meth:`get` and
-        :data:`_TOTAL_PLAUSIBILITY_FLOOR`. A filer with no ``concepts`` rows at
-        all (e.g. a bank's ``RevenuesNetOfInterestExpense`` total, JPM's real
-        shape) has nothing to compare against, so its total is trusted as
-        before -- this only ever *rejects*, never invents a floor where none
-        of ``spec.concepts`` is tagged."""
+        """Sanity-check a Tier 1 ``total_concepts`` match -- see :meth:`get`.
+
+        T-128 (``docs/model_fixes.md``): a total is a tagging defect, not a consolidated
+        aggregate, when **both** hold -- (1) it exactly duplicates a *dimensional* row of the
+        same concept in the same column, on an axis that is not a whole-entity one
+        (:data:`_WHOLE_ENTITY_AXES`): the gateway promoted one breakdown slice to a
+        non-dimensional total (APA FY2021's ``us-gaap_Revenues`` is filed only with the
+        equity-method-investee dimension, $1,082M); and (2) a named ``spec.concepts``
+        component is larger than it, which a real aggregate never is. This replaced T-095's
+        50%-of-the-largest-component floor, which rejected legitimate gas-producer totals
+        that net hedging losses below half their gross sales (EQT, EXE). A filer with no
+        ``concepts`` rows at all (a bank's ``RevenuesNetOfInterestExpense``, JPM's real shape)
+        has nothing to compare against, so its total is trusted as before -- this only ever
+        *rejects*, never invents a floor."""
         largest = self._largest_component_value(spec, column)
-        if largest is None:
+        if largest is None or total_value >= largest:
             return True
-        return total_value >= largest * self._TOTAL_PLAUSIBILITY_FLOOR
+        return not self._duplicates_a_dimensional_slice(spec, column, total_value)
+
+    def _duplicates_a_dimensional_slice(
+        self, spec: LineItem, column: str, total_value: float
+    ) -> bool:
+        """Whether a dimensional row of a ``total_concepts`` concept, on a non-whole-entity
+        axis, carries exactly *total_value* in *column* (:meth:`_total_is_plausible`)."""
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if (
+                    row.get("abstract")
+                    or not row.get("dimension")
+                    or row.get("concept") not in spec.total_concepts
+                    or row.get("dimension_axis") in self._WHOLE_ENTITY_AXES
+                ):
+                    continue
+                value = _numeric(row.get(column))
+                if value is not None and math.isclose(value, total_value, rel_tol=1e-9):
+                    return True
+        return False
 
     # T-117: a later candidate must be no more than this fraction of the Tier 1 total to
     # count as a contradiction, not rounding/immaterial noise -- APA's ratio is ~0.42-0.50
