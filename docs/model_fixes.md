@@ -4238,3 +4238,99 @@ history_rewrite` (fix 3: the override runs the step but leaves `veto` byte-for-b
 hand-built old-shape `veto` table); `tests/test_kg_schema.py` --
 `test_m009_ignores_a_row_the_old_writer_had_already_cleared_same_date` (fix 5).
 `ruff check` / `ruff format --check` / `uv run mypy` -- all clean.
+
+---
+
+## T-128 — A revenue `total_concepts` tag is rejected as a duplicated dimensional slice, not by a 50% magnitude floor
+
+**Status**: Fixed 2026-10-01 (branch `fix/work-item-16-fine-tuning-followups`, `T-128`). Production is
+recomputed by `T-100` (still `metrics-v2` there).
+
+### Symptom
+
+`fixes_feedback.md` §4.2 swept `T-095`'s floor over the full universe (stored facts, 985
+income-statement totals checked) and found it rejects 5 legitimate totals besides the defect it was
+calibrated on: EQT FY2021 (total $3,064.7M vs largest component $6,804.0M, ratio 0.45), EQT FY2024
+(0.35), EQT FY2025 (0.36), EXE FY2022 (0.42) and EXE FY2024 (4,235M / 8,518M = 0.497, a hair under
+the 0.5 floor). Natural-gas producers report
+revenue net of derivative settlement losses, so the top line is legitimately far below gross sales.
+Rejecting the total sends `Statements.get("revenue")` to Tier 2, which returns the *gross* sales
+component — a revenue overstated 1.5-3x, and every margin built on it understated by the same factor.
+
+### Root cause — re-derived against the filings, and one earlier claim corrected
+
+The floor is a *magnitude* proxy for "this total is a mis-promoted slice". The actual defect shape
+(`T-095`, APA FY2021) is structural. Re-derived from APA's FY2021 10-K inline-XBRL instance
+(accession `0001784031-22-000009`, `apa-20211231.htm`, read from `sec.gov/Archives/edgar`,
+2026-10-01): `us-gaap:Revenues` is filed for FY2021 **only** with the dimension
+`EquityMethodInvestmentNonconsolidatedInvesteeAxis` ($1,082M); there is no un-dimensional
+`us-gaap:Revenues` fact. The gateway's un-dimensional row is therefore a dimensional slice
+presented as a total, and its payload carries both rows with the identical value.
+
+**This corrects `T-095`'s and `T-117`'s statement that APA "has never filed a `us-gaap:Revenues` fact in
+any context".** That was checked against SEC's `companyfacts`/`companyconcept` APIs, which expose
+only facts without dimensions; the dimensional fact exists in the filing. The conclusion that the
+un-dimensional row is not a filed fact stands, and is what makes the structural test sound.
+
+The five false positives were checked the same way (inline XBRL, FY facts of `us-gaap:Revenues`):
+EQT FY2021 (`eqt-20211231.htm`), FY2024, FY2025; EXE FY2022 (`chk-20221231.htm`), FY2024. In every one
+the total exists un-dimensionally and **no dimensional `us-gaap:Revenues` row carries its value**
+(EQT FY2025's dimensional rows are 565M, 9,898M, 572M, 1,301M, 8,024M and -1,254M against a total of
+8,644M). They are genuine totals.
+
+### Theoretical/technical reference
+
+- XBRL Dimensions 1.0 (xbrl.org; no stable URL could be confirmed from here): a fact with a
+  dimension qualifies a *portion* of an entity's activity; the same concept without dimensions is the
+  consolidated value. FASB ASC 280-10-50 (segment reporting) for why a segment disclosure may
+  legitimately equal the whole. A total that is *equal to one slice and smaller than a named component* cannot be the
+  consolidated aggregate.
+- Why the net total is below gross sales: these registrants present derivative gains and losses
+  inside the revenue section of the income statement (observed in EQT's FY2021 10-K: sales of natural
+  gas, NGLs and oil $6,804M, total operating revenues $3,065M), not a tagging defect.
+
+### Fix (`fundamental_agent/statements.py`, `Statements`)
+
+`_total_is_plausible` now rejects a Tier 1 `total_concepts` match only when **both** hold:
+1. a named `spec.concepts` component is **larger** than the total (a real aggregate is never smaller
+   than its own component) — this is the T-095 premise kept, minus the percentage; and
+2. the total **exactly duplicates a dimensional row** of the same concept in the same column
+   (`_duplicates_a_dimensional_slice`, `math.isclose` at 1e-9), on an axis that is not whole-entity.
+
+`_TOTAL_PLAUSIBILITY_FLOOR` is removed. Tier 1/Tier 2 resolution, `_label_total_correction` (T-117)
+and every other path are unchanged.
+
+### Design decisions
+
+- **Whole-entity axes are exempt** (`srt:ConsolidationItemsAxis`,
+  `us-gaap:StatementBusinessSegmentsAxis`). A single-segment filer's segment revenue *is* its total,
+  so the twin is expected there, not evidence. Without the exemption, a single-segment gas producer
+  with hedging netted below gross sales would be rejected again — the false positive being fixed.
+  APA's twin is on the equity-method-investee axis, so it is still caught.
+- **Conjunction with "below a component"**, not the twin alone: a single-product filer legitimately
+  has a twin on a product axis, and its total is never below its own component.
+- **Residual risk**: only the `dimension_axis` the gateway reports is inspected (a row with several
+  axes carries one). A duplicate hidden behind a multi-axis row is not seen — it fails open (trusts the
+  total), the safe direction for a gate that "only ever rejects".
+
+### Verification
+
+- **Real filings** (above): APA FY2021 has the twin and is rejected → $7,988M; the five EQT/EXE
+  totals have no twin → kept at $3,064.7M / $5,273.3M / $8,644.2M / $11,743M / $4,235M. The gateway
+  was not reachable from this environment, so the payload was reasoned from the instance rather than
+  replayed; the unit tests build the gateway's documented row shape (`dimension`, `dimension_axis`),
+  taken from the captured `tests/fixtures/financials_*.json`.
+- `tests/test_statements.py`: the APA test now carries the equity-method twin; the 0.5/0.49 boundary pin
+  is replaced by EQT-shaped totals at ratios 0.45 and 0.27 that are trusted, a duplicate at 0.9994 of
+  its component that is rejected, and three guards (whole-entity axis, total not below a component, twin in a
+  different column or off by 0.02%). Mutation-checked: never rejecting fails the APA, 0.9-ratio and
+  utility tests; dropping the axis exemption fails the whole-entity test; dropping the
+  "below a component" condition fails the single-product test. `uv run pytest -q`, `ruff` and `mypy` green.
+- Every existing F2/T-095/T-117 test and the captured fixtures (`jpm_10k`, `aapl_10k`, XEL, NEE) pass
+  unchanged.
+
+### Residual scope, deliberately deferred
+
+- **Production re-persist** — `T-100`'s full recompute. EQT/EXE are not in the 20-asset sample.
+- **The gateway's `corrections` list (T-118)** is an independent, upstream guard; this is the
+  defence-in-depth on the consuming side.

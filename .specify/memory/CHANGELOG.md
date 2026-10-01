@@ -1846,3 +1846,97 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       `--db` being mandatory-and-always-a-copy (already true since `T-115`) is what actually
       protects the live book, not per-cycle-type partitioning of veto stints, which would
       conflict with (a)'s single global "at most one open stint" constraint.
+
+## Work item 16 — Fine-tuning follow-ups: second-iteration review (`fixes_feedback.md`) — DONE 2026-10-01
+
+Added 2026-10-01, from `fixes_feedback.md`'s independent empirical verification of the
+Work item 7/13/14 batch of fixes (76 commits, `562081f..3d2d47c`, verified against the
+20-ticker sample in `data/financial-2.db`). Every item below refines an **already-closed**
+task — `T-060`, `T-095`, `T-062`/`T-094` and `T-067` all verified correct against their
+original acceptance criteria; these are edge cases the broader universe surfaced that the
+original fix's scope didn't cover, not regressions. → `fixes_feedback.md` §5.
+
+- [x] **T-127** *(F1 follow-up to `T-060`)* `src/fundamental_agent/metrics/valuation.py`:
+      7 historical MCD filings (2023-12-31–2025-06-30) keep an unscaled ~$200K market cap
+      because `T-092`'s tripled 10-Q ingestion caused later filings to restate the same
+      unscaled comparative share count, and the detector's "agreement with historical
+      filings proves it's clean" heuristic treats that restated agreement as confirmation,
+      suppressing the EPS-implied $10^6$ correction. Let the EPS-implied share signal
+      override historical agreement whenever `mcap / total_assets < 0.001`. **Execution
+      order matters**: this calculation-engine fix must land and be verified before any
+      Ring-1 `DQ_MCAP_SCALE` re-gate (`T-040`/`T-065`) runs against the affected filings —
+      otherwise the gate quarantines/vetoes MCD instead of the value being corrected.
+      **Acceptance**: all 7 MCD filings correct to the ~$190B–$225B range (consistent with
+      the filings already fixed); `T-065`'s gate passes MCD with 0 vetoes afterward.
+      **Done 2026-10-01 — already fixed by `T-103` (closed 2026-09-25), no code change here.**
+      The review's data (`data/financial-2.db`, batch `562081f..3d2d47c`, last commit 2026-09-22)
+      predates `T-103`, which fixed exactly this: the seven MCD filings were poisoned by
+      `overlapping_history` reading *later* filings (a look-ahead) whose mis-scaled restatement of the
+      same period read as proof the period was clean. `T-103` made the history point-in-time and added
+      the EPS guards, so the EPS-implied ×10⁶ is no longer overruled; the `mcap / total_assets <
+      0.001` override proposed here was therefore not added (it would put a magnitude heuristic
+      on top of the same cause). Re-verified: `tests/test_share_scale.py` (19 passed, incl. the
+      MCD-with-a-later-mis-scaled-restatement case); `docs/model_fixes.md` T-103 records all seven MCD
+      filings at $184–224B (3.4–4.0× assets) clearing `DQ_MCAP_SCALE`. Production still holds the
+      `metrics-v2` values the review saw (checked read-only: MCD 2023-12-31..2025-06-30 at ~$200k); its
+      re-persist is `T-100`'s, per `T-103`. The execution-order point stands and is already respected:
+      the calculation fix landed before any `DQ_MCAP_SCALE` re-gate.
+- [x] **T-128** *(follow-up to `T-095`)* `src/fundamental_agent/statements.py`
+      (`Statements._total_is_plausible`): the 50% magnitude floor
+      (`_TOTAL_PLAUSIBILITY_FLOOR`), calibrated against APA's FY2021 defect, false-positives
+      on natural-gas producers whose top-line revenue legitimately nets hedging-contract
+      adjustments below 50% of their largest gross component (EQT FY2021/FY2024/FY2025,
+      EXE FY2022/FY2024 — 5 of 985 totals checked in the full universe). Replace the
+      percentage heuristic with a structural XBRL duplicate-slice check (does an
+      un-dimensional revenue line exactly duplicate a dimensional sub-line) before `T-100`'s
+      full-universe run. **Acceptance**: APA FY2021 still resolves to $7.988B; EQT/EXE's
+      5 flagged totals are no longer rejected.
+      **Done 2026-10-01.** `_total_is_plausible` now rejects a total only when it exactly duplicates
+      a *dimensional* row of the same concept (on a non-whole-entity axis) **and** a named component is
+      larger than it; `_TOTAL_PLAUSIBILITY_FLOOR` is gone. Verified against the real 10-K inline-XBRL
+      instances on sec.gov (the gateway was unreachable from here): APA FY2021 `us-gaap:Revenues`
+      exists *only* on the equity-method-investee dimension ($1,082M) → still rejected → $7,988M; EQT
+      FY2021/FY2024/FY2025 and EXE FY2022/FY2024 totals have no dimensional twin → all five kept. `T-095`/`T-117`'s
+      statement that APA "never filed `us-gaap:Revenues`" is corrected in `docs/model_fixes.md`'s
+      T-128 entry (SEC's `companyfacts` API omits dimensional facts; the filing has one).
+      Single-segment filers, whose segment revenue legitimately equals the total, are exempted by axis.
+      Five new test functions replace the floor-boundary pin (2 existing tests updated),
+      mutation-checked on all three guards; 810 passed, `ruff`/`mypy` green. Production re-persist is `T-100`'s.
+- [x] **T-129** *(F4 residual, follow-up to `T-062`/`T-094`)*
+      `src/fundamental_agent/metrics/roic.py` and `leverage.py`:
+      `return_on_invested_capital` and `net_debt_to_ebitda` were explicitly left
+      unannualized when `T-094` TTM-annualized ROA/ROE/asset_turnover
+      (`docs/model_fixes.md` lines 643–646) — 10-Q/10-K median ratios are 3.54x and 0.25x
+      respectively, vs. ~1.0x for the already-fixed ratios. Consume the existing `ttm`
+      dict for `operating_income` in `roic.py`; annualize `ebitda` in `leverage.py` via TTM
+      difference or ×4 fallback, same convention as `T-094`. Matters because ROIC feeds
+      `cycle/scores/valorization.py`'s VALORIZATION quality factor directly, so 10-Q filers
+      are currently quality-scored unfairly low relative to 10-K filers. **Acceptance**:
+      10-K/10-Q median ratio for both metrics falls within the ~1.0–1.1x band `T-094`
+      achieved for ROA/ROE/asset_turnover.
+      **Done 2026-10-01 — already fixed by `T-105` (closed 2026-09-25), no code change here.**
+      `roic.py` and `leverage.py` already take the `ttm` dict (`operating_income`; `operating_income`
+      + `depreciation_amortization`), built by `db.ttm_detail` via the standard identity `FY(prior
+      10-K) − YTD(prior) + YTD(current)` → four quarters → ×4. The review's data predates it.
+      `docs/model_fixes.md` T-105 records the 10-K/10-Q median ratios recomputed over the 20-asset
+      sample: ROIC 3.54 → **0.95**, net debt / EBITDA 0.25 → **0.95** (10-K ÷ 10-Q; marginally under the
+      acceptance's "~1.0–1.1×" band's low edge, i.e. 10-Qs now run ~5% higher, which is parity
+      within noise rather than an annualization gap). Production still holds `metrics-v2`; re-persist is `T-100`'s.
+- [x] **T-130** *(operational, follow-up to `T-067`)* `src/quant/cli.py` (`quant optimize`):
+      the Markowitz books (`min_var`/`tangency`/`target_vol`) were formed 2026-09-22, after
+      the available price series ends (2026-08-27), so `quant evaluate` can't forward-track
+      them even though `T-067`'s `--from` default fix works correctly (`live_book` gets 41
+      daily rows). Anchor future optimizer formation runs to a date with subsequent price
+      coverage (e.g. `--as-of 2026-06-30`, matching `live_book`) as part of `T-068`'s Phase-A
+      re-sequence. **Acceptance**: `quant evaluate` produces forward daily rows for all four
+      books, not just `live_book`.
+      **Done 2026-10-01 — satisfied without a new production run; no code change here.** The
+      failure mode (books formed past the end of the price series) is now blocked at the source by
+      `T-110`'s price-spine guard (`--allow-stale-prices` is the only override), and production moved
+      on: `price_daily` now ends 2026-09-29, and read-only on `financial.db` each book kind already has
+      forward rows from earlier `evaluate` runs (none re-run here) — `min_var`/`tangency`/`target_vol` @ 2026-08-27: 22 daily rows each (2026-08-28 →
+      2026-09-29), `live_book` @ 2026-09-22: 5 (2026-09-23 → 2026-09-29), plus the @ 2026-09-22 optimizer
+      books at 5. (`min_var`/`tangency`/`target_vol` @ 2026-09-29 have none yet, correctly: no price after
+      their as-of.) `optimize --as-of` already exists, so no flag was needed. For `T-100`: `T-110`
+      blocks an as-of *past* the spine's last date; to be forward-trackable, form the books strictly
+      before it.

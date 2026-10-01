@@ -1688,6 +1688,9 @@ this document.** Their internal sequencing:
 - Work item 5 (`portfolio-common` v0.3.0) is **closed** (2026-09-25): built locally in the
   vendored `kg_schema`, `T-044` deprecated. (Work item 6, the `portfolio-data-mining` corporate-actions
   endpoint, is closed — see `CHANGELOG.md`.)
+- Work item 16 (`fixes_feedback.md`'s second-iteration follow-ups, `T-127`–`T-130`) is **closed**
+  (2026-10-01, see `CHANGELOG.md`): `T-128` was the only code change; `T-127`/`T-129`/`T-130`
+  were already satisfied by `T-103`/`T-105`/`T-110`.
 - Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`), and so is
   Work item 13, which fixed what its gates found. Historical note: its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first

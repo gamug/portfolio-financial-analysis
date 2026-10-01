@@ -134,6 +134,19 @@ def _income_row(concept: str, label: str, **periods: float) -> dict[str, Any]:
     return row
 
 
+def _slice_row(
+    concept: str, label: str, axis: str, member: str, **periods: float
+) -> dict[str, Any]:
+    """A dimensional income-statement row -- the gateway's real shape for a breakdown slice
+    (``dimension=true`` plus ``dimension_axis``/``dimension_member``, see the AAPL/NVDA fixtures)."""
+    row = _income_row(concept, label, **periods)
+    row.update(dimension=True, dimension_axis=axis, dimension_member=member)
+    return row
+
+
+_EQUITY_METHOD_AXIS = "us-gaap:EquityMethodInvestmentNonconsolidatedInvesteeAxis"
+
+
 def _revenue_payload(*rows: dict[str, Any]) -> dict[str, Any]:
     return {"income_statement": list(rows), "balance_sheet": [], "cash_flow": []}
 
@@ -331,12 +344,22 @@ def test_revenue_rejects_a_total_far_smaller_than_a_named_component() -> None:
     aggregate; the real total sits on
     `us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax` ($7,988M,
     corroborated by `apa_RevenuesAndOther`'s $7,928M "Total revenues and
-    other", not modeled here). A `total_concepts` match this far below a
-    named `concepts` candidate must be rejected, not trusted outright."""
+    other", not modeled here). T-128: the filing's `us-gaap:Revenues` exists only on
+    the equity-method-investee dimension (verified in the 10-K's XBRL instance); the
+    gateway's non-dimensional row duplicates it exactly. A `total_concepts` match that
+    duplicates a dimensional slice and is below a named `concepts` candidate must be
+    rejected, not trusted outright."""
     key = "2021-12-31 (FY)"
     stmts = Statements.from_payload(
         _revenue_payload(
             _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_082_000_000.0}),
+            _slice_row(
+                "us-gaap_Revenues",
+                "Total revenues",
+                _EQUITY_METHOD_AXIS,
+                "us-gaap_EquityMethodInvestmentNonconsolidatedInvesteeOrGroupOfInvesteesMember",
+                **{key: 1_082_000_000.0},
+            ),
             _income_row(
                 "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
                 "Revenue from contract with customer, including assessed tax",
@@ -365,34 +388,124 @@ def test_revenue_total_concepts_with_no_component_to_compare_is_trusted() -> Non
     assert stmts.get("revenue", key) == 5_000_000.0
 
 
+def _gas_producer_payload(key: str, total: float, *extra: dict[str, Any]) -> dict[str, Any]:
+    """A gas producer whose reported total nets hedging losses below its gross sales (EQT's
+    real shape): gross sales component 6,804M, total operating revenues 3,064M."""
+    return _revenue_payload(
+        _income_row("us-gaap_Revenues", "Total operating revenues", **{key: total}),
+        _income_row(
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Sales of natural gas, natural gas liquids and oil",
+            **{key: 6_804_020_000.0},
+        ),
+        *extra,
+    )
+
+
 @pytest.mark.parametrize(
-    ("ratio", "expect_total"),
-    [(0.5, True), (0.49, False)],
-    ids=["at_floor_trusted", "just_below_floor_rejected"],
+    ("total", "label"),
+    [(3_064_663_000.0, "EQT FY2021, ratio 0.45"), (5_273_309_000.0 * 0.35, "ratio 0.35")],
+    ids=["eqt_fy2021", "deeper_hedging_loss"],
 )
-def test_revenue_total_concepts_plausibility_floor_is_pinned(
-    ratio: float, expect_total: bool
-) -> None:
-    """T-095's plausibility floor (`Statements._TOTAL_PLAUSIBILITY_FLOOR`) is
-    an exact, documented fraction of the largest named component -- not an
-    arbitrary cutoff picked to fit APA alone. Pin the boundary explicitly so
-    a future change to the constant is a deliberate edit, not a silent
-    mutation."""
-    key = "2023-12-31 (FY)"
-    largest_component = 1_000_000_000.0
-    total = largest_component * ratio
+def test_a_total_netting_hedges_below_half_a_component_is_trusted(total: float, label: str) -> None:
+    """T-128: T-095's 50% floor rejected EQT FY2021/FY2024/FY2025 and EXE FY2022/FY2024 --
+    gas producers whose top line legitimately nets derivative losses below half their gross
+    sales. Their totals are not a dimensional slice (checked in each 10-K's XBRL instance),
+    so the structural check leaves them alone however small the ratio."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(_gas_producer_payload(key, total))
+
+    assert stmts.get("revenue", key) == total, label
+
+
+def test_a_total_that_duplicates_an_oil_and_gas_slice_next_to_a_larger_component_is_rejected() -> (
+    None
+):
+    """The ratio is irrelevant in the other direction too: APA's duplicate sits at 0.14 here, but
+    the same defect at 0.9 of the component is still a promoted slice, and is rejected."""
+    key = "2021-12-31 (FY)"
+    total = 6_800_000_000.0
     stmts = Statements.from_payload(
-        _revenue_payload(
-            _income_row("us-gaap_Revenues", "Total revenues", **{key: total}),
-            _income_row(
-                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
-                "Net revenues",
-                **{key: largest_component},
+        _gas_producer_payload(
+            key,
+            total,
+            _slice_row(
+                "us-gaap_Revenues", "Total", _EQUITY_METHOD_AXIS, "inv_Member", **{key: total}
             ),
         )
     )
 
-    assert stmts.get("revenue", key) == (total if expect_total else largest_component)
+    assert stmts.get("revenue", key) == 6_804_020_000.0
+
+
+def test_a_total_equal_to_a_whole_entity_segment_is_trusted() -> None:
+    """A single-segment filer's segment revenue *is* its total, so a dimensional twin on the
+    segment/consolidation axes is no evidence of a promoted slice -- even beside a larger gross
+    component (hedging again)."""
+    key = "2021-12-31 (FY)"
+    total = 3_064_663_000.0
+    stmts = Statements.from_payload(
+        _gas_producer_payload(
+            key,
+            total,
+            _slice_row(
+                "us-gaap_Revenues",
+                "Operating segments",
+                "srt:ConsolidationItemsAxis",
+                "us-gaap_OperatingSegmentsMember",
+                **{key: total},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == total
+
+
+def test_a_dimensional_twin_is_ignored_when_the_total_is_not_below_a_component() -> None:
+    """A real aggregate is never smaller than one of its components, so a twin on a
+    non-segment axis (a single-product filer) cannot make a total at least as large as every
+    component implausible."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row("us-gaap_Revenues", "Total revenues", **{key: 1_000_000_000.0}),
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Net revenues",
+                **{key: 900_000_000.0},
+            ),
+            _slice_row(
+                "us-gaap_Revenues",
+                "Total revenues",
+                _EQUITY_METHOD_AXIS,
+                "inv_Member",
+                **{key: 1_000_000_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 1_000_000_000.0
+
+
+def test_a_dimensional_row_of_another_period_or_value_is_not_a_twin() -> None:
+    """The twin must match in the same column and exactly -- a slice that merely sits close to
+    the total, or in another fiscal year, proves nothing."""
+    key = "2021-12-31 (FY)"
+    stmts = Statements.from_payload(
+        _gas_producer_payload(
+            key,
+            3_064_663_000.0,
+            _slice_row(
+                "us-gaap_Revenues",
+                "Total",
+                _EQUITY_METHOD_AXIS,
+                "inv_Member",
+                **{key: 3_064_000_000.0, "2020-12-31 (FY)": 3_064_663_000.0},
+            ),
+        )
+    )
+
+    assert stmts.get("revenue", key) == 3_064_663_000.0
 
 
 def _apa_fy2023_rows(key: str) -> list[dict[str, Any]]:
@@ -585,13 +698,20 @@ def test_a_utility_total_wins_over_its_regulated_and_unregulated_lines(
 
 
 def test_the_utility_total_is_still_checked_against_a_named_component() -> None:
-    """The new total concept goes through T-095's plausibility floor like the others."""
+    """The new total concept goes through the duplicate-slice check (T-095/T-128) like the others."""
     key = "2025-12-31 (FY)"
     stmts = Statements.from_payload(
         _revenue_payload(
             _income_row(
                 "us-gaap_RegulatedAndUnregulatedOperatingRevenue",
                 "Operating revenues",
+                **{key: 100.0},
+            ),
+            _slice_row(
+                "us-gaap_RegulatedAndUnregulatedOperatingRevenue",
+                "Subsidiary",
+                _EQUITY_METHOD_AXIS,
+                "inv_Member",
                 **{key: 100.0},
             ),
             _income_row(
