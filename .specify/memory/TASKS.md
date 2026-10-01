@@ -237,7 +237,9 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
       2026-08-11) have split-shaped jumps from a partial refresh (7 in total; real moves such
       as FISV −44% are not errors).
 
-      **Clean-up**: delete the 2026-09-29 rows from `price_observation` and
+      **Clean-up** *(production DB action, at the user's direction only; not needed if
+      production is never used again before `T-100`, since the pilot and `T-100` both start from
+      a fresh database)*: delete the 2026-09-29 rows from `price_observation` and
       `quant_return_daily` and the benchmark, perf and risk-model rows built on them; rebuild
       observations for all 503 names from full history; re-fetch APH and MNST in full.
 
