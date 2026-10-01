@@ -8,7 +8,7 @@
     }
   },
   "mounts": [
-    "source=D:\\thesis,target=/workspaces/thesis,type=bind,consistency=cached"
+    "source=${localEnv:THESIS_HOST_DIR},target=/workspaces/thesis,type=bind,consistency=cached"
   ],
   "postCreateCommand": "bash scripts/init.sh",
   "remoteEnv": {
