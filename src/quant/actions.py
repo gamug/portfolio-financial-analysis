@@ -264,9 +264,9 @@ def dividends_not_ready_reason(
     """Why a total-return series for ``[date_from, date_to]`` would be built without a
     complete set of gateway dividends -- or ``None`` when it is safe (T-086).
 
-    ``quant_return_daily`` is ``INSERT OR IGNORE`` per ``(asset, day, engine_version)``, so
-    a series built while dividends are missing is price-only *and* locks in under that
-    version. Safe means: a completed ``backfill-actions`` run whose window covers the
+    A series built while dividends are missing is price-only, and ``quant_return_daily`` rows
+    that feed a book would have to be rebuilt after the dividends arrive (since T-131 a
+    rebuild rewrites a changed row; it used to be ``INSERT OR IGNORE`` and locked in). Safe means: a completed ``backfill-actions`` run whose window covers the
     build window fetched **every** asset (``assets_errored == 0``), and gateway rows exist.
     Any such run will do -- a later run that failed does not undo the rows an earlier clean
     one already wrote. A run recorded before T-085 has no ``assets_errored`` and does not

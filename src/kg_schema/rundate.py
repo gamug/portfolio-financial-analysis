@@ -23,6 +23,12 @@ def parse_analysis_date(value: str) -> str:
         ) from exc
 
 
+def now() -> datetime:
+    """The current instant, timezone-aware (UTC). The seam for a guard that depends on the
+    time of day, not just the date (T-131's closed-session check)."""
+    return datetime.now(tz=UTC)
+
+
 def today() -> str:
     """Today's date as ISO ``YYYY-MM-DD``. The one wall-clock seam for run dates."""
     return datetime.now(tz=UTC).date().isoformat()

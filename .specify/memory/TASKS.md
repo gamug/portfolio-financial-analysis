@@ -20,7 +20,7 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15 and 16 ar
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131` → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+(`T-131` ✅ code done → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
 all of it has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item
@@ -213,7 +213,7 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
 > `portfolio-data-mining` gateway — the same pattern as `T-042`/`T-118` (upstream PR, then
 > this repo consumes it). `T-132`(b)–(d) and `T-133` are local and do **not** wait for it.
 
-- [ ] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`).
+- [x] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`). **Code done 2026-10-01.**
       - (a) Never store a bar for a session that hasn't closed: using the NYSE calendar,
         refuse `--analysis-date`/`--end` of today before the close plus a buffer.
       - (b) Build `price_observation` from the asset's **full stored `price_daily` history**,
@@ -246,6 +246,28 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
       **Acceptance**: an intraday run for today is refused; an incremental refresh produces
       observations identical to a full recompute; 0 split-shaped jumps; `verify_pilot.py`
       T-131 checks pass.
+
+      **Done 2026-10-01** (branch `fix/t131-price-ingestion-integrity`). (a)
+      `kg_schema.trading_calendar.session_final_at`/`session_is_open_or_pending`/`last_final_session`
+      (16:00 ET + 1 h, US DST by rule) and `pipeline._require_closed_session`: a trading-day end whose bar
+      is not final raises `SessionNotClosed` before the DB is opened (the default `--analysis-date` is
+      therefore refused most of a trading day — pass the latest final session, which the error names).
+      (b) observations are built from the asset's full stored `price_daily` history and
+      `upsert_price_observations` rewrites a row only when a value differs. (c) `_reconcile_history`
+      (`--store-daily`): a full re-fetch once when a recorded SPLIT postdates a bar stored before it, or a
+      split-shaped seam jump matches a recorded split; a jump that survives or has no recorded split is
+      refused, writing nothing for the ticker (`pricing_run_error.stage = 'split_jump'`), unless
+      `--allow-split-jumps`. `quant.db.upsert_return_daily` follows the same update-on-change rule, so
+      `quant build-returns` rebuilds a re-adjusted series. (d) `quant.universe` reads
+      `v_quant_return_daily`/`v_price_observation`. **Verified on production `financial.db` (read-only):**
+      the detector finds exactly the 7 jumps (APH 1, MNST 6), each matching its recorded 2:1 split, and a
+      full recompute fills all 10,500 NULL observation rows; the gateway was unreachable, so the re-fetch
+      is exercised against a stub, not live. +48 tests (858 total), mutation-checked; ruff, format, mypy
+      clean. Record: `docs/model_fixes.md` "T-131"; `SPEC.md` FR-004 and NR-007 (the two derived series
+      are rewritten on a changed input), `docs/pricing_agent.md` updated.
+      **Still open:** the production clean-up above (user direction only) and `verify_pilot.py`'s T-131
+      checks, which run in the pilot. The first `pricing_agent --store-daily` run after this re-fetches
+      every asset that has a split in its history, once each.
 
 - [ ] **T-132** *(P0)* Market capitalization.
       - (a) Point-in-time share count from the cover page
@@ -352,7 +374,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current top priority: Work item 17 (`T-131` → `T-132`/`T-133`), then the pilot
+**🔴 Current top priority: Work item 17 (`T-131` ✅ code done 2026-10-01 → `T-132`/`T-133`), then the pilot
 (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL), then
 Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
 section's own earlier claim that Work item 8 was next).** Work item 14 (the

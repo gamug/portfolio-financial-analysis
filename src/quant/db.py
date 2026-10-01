@@ -282,20 +282,43 @@ class ReturnRow:
     tr_log_return: float | None
 
 
+# One literal statement (no interpolation, constitution Code & Git #10). The WHERE makes a
+# conflicting row a no-op unless one of the derived values actually differs.
+_UPSERT_RETURN_SQL = """
+INSERT INTO quant_return_daily
+    (asset_id, obs_date, close_split_adj, adj_close, tr_index, cash_dividend,
+     split_factor, price_log_return, tr_log_return, source, engine_version, computed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?)
+ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
+    close_split_adj = excluded.close_split_adj, adj_close = excluded.adj_close,
+    tr_index = excluded.tr_index, cash_dividend = excluded.cash_dividend,
+    split_factor = excluded.split_factor, price_log_return = excluded.price_log_return,
+    tr_log_return = excluded.tr_log_return, computed_at = excluded.computed_at
+WHERE quant_return_daily.close_split_adj IS NOT excluded.close_split_adj
+   OR quant_return_daily.adj_close IS NOT excluded.adj_close
+   OR quant_return_daily.tr_index IS NOT excluded.tr_index
+   OR quant_return_daily.cash_dividend IS NOT excluded.cash_dividend
+   OR quant_return_daily.split_factor IS NOT excluded.split_factor
+   OR quant_return_daily.price_log_return IS NOT excluded.price_log_return
+   OR quant_return_daily.tr_log_return IS NOT excluded.tr_log_return
+"""
+
+
 def upsert_return_daily(
     conn: Database, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
 ) -> int:
-    """``INSERT OR IGNORE`` on ``(asset_id, obs_date, engine_version)``."""
+    """Insert each day, or rewrite it when its values changed (T-131); a no-op when identical.
+
+    A day's return is a pure function of its asset's stored closes and recorded dividends, so a
+    corrected bar or a re-adjusted history (a split the gateway applied after the first build)
+    has to reach it. ``INSERT OR IGNORE`` froze the first build for good: the 2026-09-29 partial
+    session stayed in the benchmark and risk model, and a split-shaped jump could only be undone
+    by bumping the engine version. Returns the rows inserted or changed."""
     now = _now()
-    inserted = 0
+    changed = 0
     for r in rows:
         cur = conn.execute(
-            """
-            INSERT OR IGNORE INTO quant_return_daily
-                (asset_id, obs_date, close_split_adj, adj_close, tr_index, cash_dividend,
-                 split_factor, price_log_return, tr_log_return, source, engine_version, computed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?)
-            """,
+            _UPSERT_RETURN_SQL,
             (
                 asset_id,
                 r.obs_date,
@@ -310,9 +333,9 @@ def upsert_return_daily(
                 now,
             ),
         )
-        inserted += cur.rowcount
+        changed += cur.rowcount
     conn.commit()
-    return inserted
+    return changed
 
 
 def load_market_caps(

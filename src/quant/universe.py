@@ -39,16 +39,21 @@ def _median(values: list[float]) -> float:
 
 
 def _history_counts(conn: Database, as_of: str) -> dict[int, int]:
+    """Days of return history per asset, each day counted once (T-131).
+
+    Read through ``v_quant_return_daily`` / ``v_price_observation``, which resolve the latest
+    ``engine_version`` per (asset, day): a raw ``COUNT(*)`` over the tables counts a day once per
+    engine version, so a second returns or observation version would double every history."""
     have_tr = conn.execute("SELECT 1 FROM quant_return_daily LIMIT 1").fetchone() is not None
     if have_tr:
         rows = conn.execute(
-            "SELECT asset_id, COUNT(*) n FROM quant_return_daily "
+            "SELECT asset_id, COUNT(*) n FROM v_quant_return_daily "
             "WHERE obs_date <= ? AND tr_log_return IS NOT NULL GROUP BY asset_id",
             (as_of,),
         )
     else:
         rows = conn.execute(
-            "SELECT asset_id, COUNT(*) n FROM price_observation "
+            "SELECT asset_id, COUNT(*) n FROM v_price_observation "
             "WHERE obs_date <= ? AND log_return IS NOT NULL GROUP BY asset_id",
             (as_of,),
         )
@@ -59,7 +64,7 @@ def _median_dollar_volume(conn: Database, asset_id: int, *, as_of: str, lookback
     vals = [
         float(r["dollar_volume"])
         for r in conn.execute(
-            "SELECT dollar_volume FROM price_observation "
+            "SELECT dollar_volume FROM v_price_observation "
             "WHERE asset_id = ? AND obs_date <= ? AND dollar_volume IS NOT NULL "
             "ORDER BY obs_date DESC LIMIT ?",
             (asset_id, as_of, lookback),

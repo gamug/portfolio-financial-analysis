@@ -261,6 +261,38 @@ def upsert_price_window(conn: Database, row: PriceWindowRow, *, run_id: int | No
     conn.commit()
 
 
+# One literal statement (no interpolation, constitution Code & Git #10). The WHERE makes a
+# conflicting row a no-op unless one of the derived values actually differs.
+_UPSERT_OBSERVATION_SQL = """
+INSERT INTO price_observation
+    (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
+     realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
+     momentum_252d, dollar_volume, event_time, computed_at, engine_version, run_id, run_kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
+    close = excluded.close, prev_close = excluded.prev_close,
+    log_return = excluded.log_return, true_range = excluded.true_range,
+    atr_14 = excluded.atr_14, realized_vol_21d = excluded.realized_vol_21d,
+    realized_vol_90d = excluded.realized_vol_90d,
+    max_drawdown_90d = excluded.max_drawdown_90d,
+    momentum_21d = excluded.momentum_21d, momentum_63d = excluded.momentum_63d,
+    momentum_252d = excluded.momentum_252d, dollar_volume = excluded.dollar_volume,
+    computed_at = excluded.computed_at, run_id = excluded.run_id, run_kind = excluded.run_kind
+WHERE price_observation.close IS NOT excluded.close
+   OR price_observation.prev_close IS NOT excluded.prev_close
+   OR price_observation.log_return IS NOT excluded.log_return
+   OR price_observation.true_range IS NOT excluded.true_range
+   OR price_observation.atr_14 IS NOT excluded.atr_14
+   OR price_observation.realized_vol_21d IS NOT excluded.realized_vol_21d
+   OR price_observation.realized_vol_90d IS NOT excluded.realized_vol_90d
+   OR price_observation.max_drawdown_90d IS NOT excluded.max_drawdown_90d
+   OR price_observation.momentum_21d IS NOT excluded.momentum_21d
+   OR price_observation.momentum_63d IS NOT excluded.momentum_63d
+   OR price_observation.momentum_252d IS NOT excluded.momentum_252d
+   OR price_observation.dollar_volume IS NOT excluded.dollar_volume
+"""
+
+
 def upsert_price_observations(
     conn: Database,
     asset_id: int,
@@ -269,8 +301,13 @@ def upsert_price_observations(
     engine_version: str = PRICE_OBSERVATION_ENGINE_VERSION,
     run_id: int | None = None,
 ) -> int:
-    """Write the derived per-day price analytics. Immutable per
-    ``(asset_id, obs_date, engine_version)`` -- a re-run with the same version is a no-op."""
+    """Write the derived per-day price analytics, keyed ``(asset_id, obs_date, engine_version)``.
+
+    A row is *rewritten when its inputs changed* (T-131): the observation is a pure function of
+    the asset's stored ``price_daily`` history, so a corrected bar or a re-adjusted past must
+    reach it, and the old ``INSERT OR IGNORE`` froze whatever the first run computed. A re-run
+    on unchanged prices touches no row (``computed_at`` and ``run_id`` move only with a value).
+    Returns the number of rows offered, not the number changed."""
     now = _now()
     rows = [
         (
@@ -296,16 +333,7 @@ def upsert_price_observations(
         )
         for o in observations
     ]
-    conn.executemany(
-        """
-        INSERT OR IGNORE INTO price_observation
-            (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
-             realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
-             momentum_252d, dollar_volume, event_time, computed_at, engine_version, run_id, run_kind)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        rows,
-    )
+    conn.executemany(_UPSERT_OBSERVATION_SQL, rows)
     conn.commit()
     return len(rows)
 
@@ -334,6 +362,65 @@ def replace_daily_prices(
     )
     conn.commit()
     return len(rows)
+
+
+def load_daily_candles(conn: Database, asset_id: int, *, end: str) -> list[Candle]:
+    """The asset's *full stored* ``price_daily`` history up to *end*, oldest first (T-131).
+
+    Observations are windowed analytics (a 252-day momentum needs 252 earlier bars), so they are
+    derived from this, never from the handful of candles one refresh happened to fetch."""
+    rows = conn.execute(
+        "SELECT date, open, high, low, close, volume, source FROM price_daily "
+        "WHERE asset_id = ? AND date <= ? ORDER BY date",
+        (asset_id, end),
+    )
+    return [
+        Candle(
+            date=str(r["date"]),
+            open=float(r["open"]),
+            high=float(r["high"]),
+            low=float(r["low"]),
+            close=float(r["close"]),
+            volume=float(r["volume"] or 0.0),
+            source=str(r["source"] or "unknown"),
+        )
+        for r in rows
+        if r["close"] is not None
+    ]
+
+
+def recorded_split_values(conn: Database, asset_id: int, *, end: str) -> list[float]:
+    """Ratios of the splits ``corporate_action`` records for the asset on or before *end*."""
+    rows = conn.execute(
+        "SELECT value FROM corporate_action "
+        "WHERE asset_id = ? AND action_type = 'SPLIT' AND ex_date <= ?",
+        (asset_id, end),
+    )
+    return [float(r["value"]) for r in rows]
+
+
+def has_pre_split_rows(conn: Database, asset_id: int, *, end: str) -> bool:
+    """True when a recorded split (on or before *end*) postdates a stored bar that was written
+    before the split -- a bar the gateway could not yet have adjusted (T-131).
+
+    ``price_daily.ingested_at`` is the last time the row was written, so once the asset's full
+    history is re-fetched after the split every pre-split bar carries a later stamp and this is
+    false again: the re-fetch is triggered once, not on every run. A bar with no stamp
+    (written before the column existed) counts as written before."""
+    row = conn.execute(
+        """
+        SELECT 1 FROM corporate_action c
+        WHERE c.asset_id = ? AND c.action_type = 'SPLIT' AND c.ex_date <= ?
+          AND EXISTS (
+              SELECT 1 FROM price_daily p
+              WHERE p.asset_id = c.asset_id AND p.date < c.ex_date
+                AND (p.ingested_at IS NULL OR p.ingested_at < c.ex_date)
+          )
+        LIMIT 1
+        """,
+        (asset_id, end),
+    ).fetchone()
+    return row is not None
 
 
 # -- run log ------------------------------------------------------------

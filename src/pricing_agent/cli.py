@@ -66,6 +66,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="deprecated no-op (the universe is always read fresh from universe.db)",
     )
     run_cmd.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    run_cmd.add_argument(
+        "--allow-split-jumps",
+        action="store_true",
+        help="store a series even though it has a split-shaped (x2, x0.5, x3 ...) close jump "
+        "that a full re-fetch did not remove or that no recorded split explains (T-131) -- for a "
+        "genuine one-day move of that size, which the guard cannot tell from a mis-adjusted split",
+    )
 
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
@@ -82,6 +89,18 @@ def _split(value: str | None) -> list[str] | None:
     return [item.strip().upper() for item in value.split(",") if item.strip()]
 
 
+def _settings_from_args(args: argparse.Namespace) -> Settings:
+    settings = Settings.load()
+    updates: dict[str, object] = {}
+    if args.db:
+        updates["db_path"] = Path(args.db)
+    if args.universe_db:
+        updates["universe_db_path"] = Path(args.universe_db)
+    if args.allow_dirty:
+        updates["allow_dirty"] = True
+    return settings.model_copy(update=updates) if updates else settings
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -95,16 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "analytics over a specific price_daily bar, and writing them without also "
             "storing that bar leaves an orphan observation date (T-110)"
         )
-    settings = Settings.load()
-    updates: dict[str, object] = {}
-    if args.db:
-        updates["db_path"] = Path(args.db)
-    if args.universe_db:
-        updates["universe_db_path"] = Path(args.universe_db)
-    if args.allow_dirty:
-        updates["allow_dirty"] = True
-    if updates:
-        settings = settings.model_copy(update=updates)
+    settings = _settings_from_args(args)
 
     params = RunParams(
         start_date=args.start,
@@ -116,6 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         observations=args.observations,
         fresh=args.fresh,
         refresh_universe=args.refresh_universe,
+        allow_split_jumps=args.allow_split_jumps,
         analysis_date=resolve_analysis_date(args.analysis_date),
     )
     report = run(settings, params)
@@ -125,6 +136,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{report.skipped} skipped, {report.failed} failed "
         f"(of {report.planned} tickers)"
     )
+    if report.full_refetches:
+        print(
+            f"  re-fetched in full after a split (T-131): {', '.join(report.full_refetches)} "
+            "-- re-run `quant build-returns` to rebuild their return series"
+        )
     if report.dirty_tree_bypassed is not None:
         print(
             f"  WARNING: --allow-dirty overrode the clean-tree guard "

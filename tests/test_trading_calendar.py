@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from kg_schema.trading_calendar import (
     available_from,
     is_trading_day,
+    last_final_session,
     next_trading_day,
     nyse_holidays,
+    session_final_at,
+    session_is_open_or_pending,
 )
 
 # The NYSE's published full-day closures (weekday closures only).
@@ -88,3 +91,55 @@ def test_an_undated_filing_is_never_usable() -> None:
 
 def test_a_timestamp_is_read_by_its_date() -> None:
     assert available_from("2026-02-20T21:15:00") == "2026-02-23"
+
+
+# -- when a session's bar is final (T-131) -------------------------------------------------
+
+
+def _utc(text: str) -> datetime:
+    return datetime.fromisoformat(text).replace(tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("day", "final_utc"),
+    [
+        (date(2026, 9, 29), "2026-09-29T21:00"),  # EDT: 16:00 close = 20:00 UTC, +1h settle
+        (date(2026, 1, 15), "2026-01-15T22:00"),  # EST: 16:00 close = 21:00 UTC, +1h settle
+        (date(2026, 3, 6), "2026-03-06T22:00"),  # the Friday before DST starts (Mar 8)
+        (date(2026, 3, 9), "2026-03-09T21:00"),  # the Monday after
+        (date(2026, 10, 30), "2026-10-30T21:00"),  # the Friday before DST ends (Nov 1)
+        (date(2026, 11, 2), "2026-11-02T22:00"),  # the Monday after
+    ],
+)
+def test_a_session_is_final_an_hour_after_the_16_00_et_close(day: date, final_utc: str) -> None:
+    assert session_final_at(day) == _utc(final_utc)
+
+
+def test_the_2026_09_29_intraday_run_was_inside_the_pending_session() -> None:
+    """The review's runs stored 10:04 ET (14:04 UTC) as the 09-29 close."""
+    assert session_is_open_or_pending(date(2026, 9, 29), _utc("2026-09-29T14:04"))
+    assert session_is_open_or_pending(date(2026, 9, 29), _utc("2026-09-29T20:30"))  # at the bell
+    assert not session_is_open_or_pending(date(2026, 9, 29), _utc("2026-09-29T21:00"))
+
+
+def test_a_future_trading_day_is_pending_and_a_closed_day_never_is() -> None:
+    now = _utc("2026-09-29T14:04")
+    assert session_is_open_or_pending(date(2026, 9, 30), now)
+    assert not session_is_open_or_pending(date(2026, 9, 26), now)  # a Saturday
+    assert not session_is_open_or_pending(date(2026, 9, 7), now)  # Labor Day, long past anyway
+    assert not session_is_open_or_pending(
+        date(2026, 11, 26), _utc("2026-11-26T12:00")
+    )  # Thanksgiving
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        ("2026-09-29T14:04", date(2026, 9, 28)),  # mid-session: the day before
+        ("2026-09-29T21:00", date(2026, 9, 29)),  # settled
+        ("2026-10-03T15:00", date(2026, 10, 2)),  # a Saturday: Friday
+        ("2026-09-08T00:30", date(2026, 9, 4)),  # Tuesday before the open, Labor Day Monday: Friday
+    ],
+)
+def test_last_final_session(now: str, expected: date) -> None:
+    assert last_final_session(_utc(now)) == expected
