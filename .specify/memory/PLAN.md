@@ -30,9 +30,8 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
 2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **the system-review
-follow-up tasks (to be added in a forthcoming docs PR) and the pilot reaching
-`verify_pilot` 0 FAIL (PR #104 review, 2026-09-30 — added ahead of Work item 8 here so the
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **Work item 17 (`T-131` → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+`verify_pilot.py` at 0 FAIL) (PR #104 review, 2026-09-30 — added ahead of Work item 8 here so the
 `T-079` LLM re-run does not start early)** →
 **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
@@ -807,6 +806,13 @@ as task `T-077`.
   do not re-run the full corpus once per prompt edit — batch prompt/skill
   changes into a single re-run per the audit's own cost-control note
   (marginal `forensic_flags` token cost inside that bundle is ≈$0).
+
+**Open decision — composite score weights (system review N11, 2026-09-29)**: `cycle/config.py`
+blends FUNDAMENTAL 0.4 / VALORIZATION 0.3 / TECHNICAL 0.2 / SEMANTIC 0.1, while the earlier
+decision (§5.3) was equal weights (1/3 each for the three score types present). Either adopt
+equal weights or record the 0.4/0.3/0.2 choice with its justification here; tracked in
+`TASKS.md` under Work item 8. Until decided, 0.4/0.3/0.2/0.1 is shipped behaviour, not a
+documented decision.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption (needs Work item 5's A3/A4 first)
 
@@ -1691,6 +1697,17 @@ this document.** Their internal sequencing:
 - Work item 16 (`fixes_feedback.md`'s second-iteration follow-ups, `T-127`–`T-130`) is **closed**
   (2026-10-01, see `CHANGELOG.md`): `T-128` was the only code change; `T-127`/`T-129`/`T-130`
   were already satisfied by `T-103`/`T-105`/`T-110`.
+- Work item 15 (devcontainer mount path, `T-126`) is **closed** (2026-10-01, PR #106, see
+  `CHANGELOG.md`).
+- **Work item 17 (P0/P1, the 2026-09-29 system review's data-integrity defects: `T-131`
+  prices, `T-132` market caps, `T-133` quarterly cash flow) runs ahead of Work item 8** —
+  `T-131` first (its clean-up rebuilds the observations and returns everything else reads), then
+  `T-132`/`T-133`, then the pilot. `T-132`(a) (the cover-page
+  `dei:EntityCommonStockSharesOutstanding` count) needs an upstream `portfolio-data-mining`
+  gateway change first — the same pattern as `T-042`; `T-132`(b)–(d) and `T-133` are local and do
+  not wait for it. Its source is `docs/md primera revision/system_review_2026-09-29.md` §4; the
+  review's other findings became scope additions to `T-070`, `T-071`, `T-072`, `T-076` and
+  `T-077` in `TASKS.md`. Task text and acceptance criteria live in `TASKS.md`.
 - Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`), and so is
   Work item 13, which fixed what its gates found. Historical note: its
   F1/F2/F4/C1/C2 fixes have no external dependency and should land first
