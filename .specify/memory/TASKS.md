@@ -168,6 +168,71 @@ only durable record.
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
 
+## Work item 15 — Dev environment: parameterize devcontainer mount path
+
+- [ ] **T-126** `.devcontainer/devcontainer.json`'s `mounts` entry hardcodes a
+      contributor-specific host path (`source=/Users/dova/thesis`), so the
+      bind mount only works on that one machine's filesystem layout.
+      Replace it with a `${localEnv:VAR_NAME}` substitution (devcontainer's
+      host-environment variable syntax, resolved before the container is
+      created — not `${containerEnv:...}`, which reads a variable already
+      set inside the container), optionally with a fallback default
+      (`${localEnv:VAR_NAME:/Users/dova/thesis}`), so each contributor sets
+      their own path via an env var instead of editing the committed file.
+      Not yet started — tracked here, not implemented.
+
+## Work item 16 — Fine-tuning follow-ups: second-iteration review (`fixes_feedback.md`)
+
+Added 2026-10-01, from `fixes_feedback.md`'s independent empirical verification of the
+Work item 7/13/14 batch of fixes (76 commits, `562081f..3d2d47c`, verified against the
+20-ticker sample in `data/financial-2.db`). Every item below refines an **already-closed**
+task — `T-060`, `T-095`, `T-062`/`T-094` and `T-067` all verified correct against their
+original acceptance criteria; these are edge cases the broader universe surfaced that the
+original fix's scope didn't cover, not regressions. → `fixes_feedback.md` §5.
+
+- [ ] **T-127** *(F1 follow-up to `T-060`)* `src/fundamental_agent/metrics/valuation.py`:
+      7 historical MCD filings (2023-12-31–2025-06-30) keep an unscaled ~$200K market cap
+      because `T-092`'s tripled 10-Q ingestion caused later filings to restate the same
+      unscaled comparative share count, and the detector's "agreement with historical
+      filings proves it's clean" heuristic treats that restated agreement as confirmation,
+      suppressing the EPS-implied $10^6$ correction. Let the EPS-implied share signal
+      override historical agreement whenever `mcap / total_assets < 0.001`. **Execution
+      order matters**: this calculation-engine fix must land and be verified before any
+      Ring-1 `DQ_MCAP_SCALE` re-gate (`T-040`/`T-065`) runs against the affected filings —
+      otherwise the gate quarantines/vetoes MCD instead of the value being corrected.
+      **Acceptance**: all 7 MCD filings correct to the ~$190B–$225B range (consistent with
+      the filings already fixed); `T-065`'s gate passes MCD with 0 vetoes afterward.
+- [ ] **T-128** *(follow-up to `T-095`)* `src/fundamental_agent/statements.py`
+      (`Statements._total_is_plausible`): the 50% magnitude floor
+      (`_TOTAL_PLAUSIBILITY_FLOOR`), calibrated against APA's FY2021 defect, false-positives
+      on natural-gas producers whose top-line revenue legitimately nets hedging-contract
+      adjustments below 50% of their largest gross component (EQT FY2021/FY2024/FY2025,
+      EXE FY2022/FY2024 — 5 of 985 totals checked in the full universe). Replace the
+      percentage heuristic with a structural XBRL duplicate-slice check (does an
+      un-dimensional revenue line exactly duplicate a dimensional sub-line) before `T-100`'s
+      full-universe run. **Acceptance**: APA FY2021 still resolves to $7.988B; EQT/EXE's
+      5 flagged totals are no longer rejected.
+- [ ] **T-129** *(F4 residual, follow-up to `T-062`/`T-094`)*
+      `src/fundamental_agent/metrics/roic.py` and `leverage.py`:
+      `return_on_invested_capital` and `net_debt_to_ebitda` were explicitly left
+      unannualized when `T-094` TTM-annualized ROA/ROE/asset_turnover
+      (`docs/model_fixes.md` lines 643–646) — 10-Q/10-K median ratios are 3.54x and 0.25x
+      respectively, vs. ~1.0x for the already-fixed ratios. Consume the existing `ttm`
+      dict for `operating_income` in `roic.py`; annualize `ebitda` in `leverage.py` via TTM
+      difference or ×4 fallback, same convention as `T-094`. Matters because ROIC feeds
+      `cycle/scores/valorization.py`'s VALORIZATION quality factor directly, so 10-Q filers
+      are currently quality-scored unfairly low relative to 10-K filers. **Acceptance**:
+      10-K/10-Q median ratio for both metrics falls within the ~1.0–1.1x band `T-094`
+      achieved for ROA/ROE/asset_turnover.
+- [ ] **T-130** *(operational, follow-up to `T-067`)* `src/quant/cli.py` (`quant optimize`):
+      the Markowitz books (`min_var`/`tangency`/`target_vol`) were formed 2026-09-22, after
+      the available price series ends (2026-08-27), so `quant evaluate` can't forward-track
+      them even though `T-067`'s `--from` default fix works correctly (`live_book` gets 41
+      daily rows). Anchor future optimizer formation runs to a date with subsequent price
+      coverage (e.g. `--as-of 2026-06-30`, matching `live_book`) as part of `T-068`'s Phase-A
+      re-sequence. **Acceptance**: `quant evaluate` produces forward daily rows for all four
+      books, not just `live_book`.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 Added 2026-09-25, at the user's direction. Every other task in this file is either
