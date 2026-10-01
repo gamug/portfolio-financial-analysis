@@ -30,11 +30,15 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
 2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) →
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **the system-review
+follow-up tasks (to be added in a forthcoming docs PR) and the pilot reaching
+`verify_pilot` 0 FAIL (PR #104 review, 2026-09-30 — added ahead of Work item 8 here so the
+`T-079` LLM re-run does not start early)** →
 **Work item 8 (P1 — methodological
 redesign; supersedes Work item 3's approach in place)** → Work items 2/4
 (as already planned, unaffected by the audit) → **Work item 9 (P2 —
-cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all**.
+cleanup)** → **Work item 12 (`T-100`) — the full-universe production run, last of all,
+against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in

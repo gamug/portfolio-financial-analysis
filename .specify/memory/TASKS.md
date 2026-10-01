@@ -18,11 +18,15 @@ production data (`data/financial.db`) found live correctness bugs, not
 open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13 and 14 are in
 `CHANGELOG.md`.) **Work item 14 (P0/P1, the second audit's live defects) is done
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
-re-run/`T-079` consumes) and `T-113`, are both closed, so priority now runs
-**8 (P1, supersedes Work item 3/`T-020`–`T-026`)** → Work items 2/4 (unaffected,
-original priority) → **9 (P2)** → **Work item 12 (`T-100`), the full-universe run,
-last of all**. See `PLAN.md`'s "🔴 Priority Override"
-section for the full rationale — the source audit markdowns
+re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
+item 8 starts next (PR #104 review):** the system-review follow-up tasks (to be
+added in a forthcoming docs PR) and the pilot reaching `verify_pilot` 0 FAIL both
+come first — **do not start `T-079`'s LLM re-run until both have landed.** Once
+they have, priority runs **8 (P1, supersedes Work item
+3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
+**9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all** (which
+itself needs a *fresh* `financial.db` — see `T-100`'s own entry). See `PLAN.md`'s
+"🔴 Priority Override" section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
 after being fully incorporated into `PLAN.md`/this file, which are now the
@@ -197,17 +201,40 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       universe member with core data (or an explained, recorded exception); `cycle`
       ranks the full universe; the `quant` books and `evaluate` run clean on it; the
       run is recorded on the `*_run` log rows with its `code_version`.
+      **Must run on a fresh `financial.db` (PR #104 review, 2026-09-30):** `financial_facts`
+      is append-only, `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key,
+      filing_version = accession_number)` — a re-run against a database already carrying a
+      filing's facts under the same accession changes nothing, even after `T-118`'s gateway
+      redeploy. Reproduced directly: re-ingesting APA's FY2023 10-K post-redeploy still
+      leaves revenue `16,558,000,000` and COGS `1,076,000,000` (both values `T-042` now
+      drops) stored with `correction_rule = NULL`, because that accession's rows already
+      existed from before 2026-09-30. Any database ingested before the gateway redeploy
+      keeps its pre-`T-042`/pre-`T-118` synthesized facts regardless of how many times
+      `fundamental_agent run` runs against it afterward — a new `filing_version` (full
+      re-ingest under a bumped engine version, not a same-accession re-run) is the only way
+      to replace them. `T-100`'s full-universe run must therefore start from a database with
+      no pre-2026-09-30 `financial_facts` rows, not an existing one carried forward — the
+      share-count scale cross-check (`detect_share_scale_factors`) and the planned market-cap
+      reader (a system-review follow-up task, not yet in this file) both read
+      `financial_facts` directly and would otherwise silently keep reading synthesized
+      values. The pilot is unaffected, since it already starts from a fresh database.
 
 ## Status
 
-**🔴 Current top priority: Work item 8, then Work item 9.** Work item 14 (the second
-forensic audit) is fully closed 2026-09-30, `T-118` last — see `CHANGELOG.md`. Its
-`T-121`/`T-122`/`T-123`/`T-124` production actions were all applied at the user's
-direction, and `T-125`'s own `migrate` remains the one deliberately-deferred
-production write left over from it (still pending explicit user direction, same as
-`T-104`/`T-107`/`T-120`'s own precedent); a production `dq-v2` re-gate for `T-116` is
-deferred the same way. None of that blocks Work item 8/9 — priority now runs
-**Work item 8, `T-070`–`T-079` (P1, `T-078` deprecated — `T-074` needs
+**🔴 Current top priority: the system-review follow-up tasks and the pilot, then
+Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
+section's own earlier claim that Work item 8 was next).** Work item 14 (the
+second forensic audit) is fully closed 2026-09-30, `T-118` last — see
+`CHANGELOG.md`. Its `T-121`/`T-122`/`T-123`/`T-124` production actions were all
+applied at the user's direction (each task's own entry in `CHANGELOG.md` records
+its production-apply date and verification), and `T-125`'s own `migrate` remains
+the one deliberately-deferred production write left over from it (still pending
+explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
+production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
+`T-079`'s LLM re-run (Work item 8) until the system-review tasks (to be added in
+a forthcoming docs PR) and `verify_pilot` reaching 0 FAIL have both landed** —
+once they have, priority runs **Work item 8, `T-070`–`T-079` (P1, `T-078`
+deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production

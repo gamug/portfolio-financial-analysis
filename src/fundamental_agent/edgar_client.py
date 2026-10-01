@@ -146,11 +146,22 @@ class EdgarClient:
         self, ticker: str, form: str, year: int, accession_number: str | None = None
     ) -> dict[str, list[dict[str, Any]]]:
         """The statements of one filing. *accession_number* is required whenever the
-        year holds more than one filing of *form* (raises :class:`EdgarAmbiguousError`)."""
+        year holds more than one filing of *form* (raises :class:`EdgarAmbiguousError`).
+
+        Raises :class:`EdgarError` when the gateway's own reconciliation (T-042) failed
+        for one or more statements (``data["reconciliation_errors"]``, upstream PR #46) --
+        such a statement comes back rendered but unvalidated, indistinguishable in shape
+        from a genuinely clean one, so it must never reach ``financial_facts`` looking
+        like either. The caller's existing per-filing failure handling (unscored, retried
+        next run) already does the right thing once this raises."""
         params: dict[str, Any] = {"form": form, "year": year}
         if accession_number is not None:
             params["accession_number"] = accession_number
         raw = self._get(f"/financials/{ticker}", params)
+        errors = raw.get("reconciliation_errors") or []
+        if errors:
+            detail = "; ".join(f"{e.get('statement')}: {e.get('error')}" for e in errors)
+            raise EdgarError(f"/financials/{ticker} reconciliation failed: {detail}")
         return cast("dict[str, list[dict[str, Any]]]", raw)
 
     # -- helpers --------------------------------------------------------------

@@ -22,7 +22,7 @@ from fundamental_agent.agents import (
 )
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta
-from fundamental_agent.edgar_client import FilingRef
+from fundamental_agent.edgar_client import EdgarError, FilingRef
 from fundamental_agent.metrics import compute_group
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.pipeline import (
@@ -316,6 +316,47 @@ def test_run_gates_every_filing_it_analyses(
     assert {c[0] for c in calls} == {db.METRICS_ENGINE_VERSION}
     assert {c[2] for c in calls} == {report.run_id}
     assert all(c[1] is not None for c in calls)
+
+
+def test_a_reconciliation_failure_from_edgar_fails_the_unit_without_writing_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #98 review, item 1: `EdgarClient.financials` now raises `EdgarError` when the
+    gateway's own reconciliation failed for a statement (T-042,
+    `data["reconciliation_errors"]`) -- confirms the existing per-filing failure path
+    (`_run_filing`) does the right thing once it does: the unit counts as failed, not
+    scored, and no facts land in `financial_facts` for it, exactly like any other
+    `EdgarError` from this client. It is also retried, not skipped -- a rerun with
+    `--fresh` off would pick it back up, since it is never added to `engine.completed`."""
+
+    class _FailingEdgar(_FakeEdgar):
+        def financials(
+            self, ticker: str, form: str, year: int, accession_number: str | None = None
+        ) -> dict:
+            raise EdgarError(f"/financials/{ticker} reconciliation failed: balance_sheet: boom")
+
+    monkeypatch.setattr(pipeline, "EdgarClient", _FailingEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
+
+    settings = _settings(tmp_path)
+    report = pipeline.run(
+        settings, RunParams(forms=["10-K"], since_year=2023, until_year=2023, tickers=["AAPL"])
+    )
+
+    assert report.completed == 0
+    assert report.failed == 1
+    assert "reconciliation failed" in report.errors[0]
+
+    conn = sqlite3.connect(settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM financial_facts").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == 0
+    assert (
+        conn.execute("SELECT COUNT(*) FROM analysis_run_error WHERE stage = 'process'").fetchone()[
+            0
+        ]
+        == 1
+    )
 
 
 def test_run_labels_a_fallback_score_and_records_it_on_the_run(

@@ -147,6 +147,7 @@ def test_from_payload_reads_the_gateways_own_corrections_list() -> None:
     key = "2023-12-31 (FY)"
     corrections = [
         {
+            "statement": "income_statement",
             "concept": "us-gaap_Revenues",
             "column": key,
             "original": 16_558_000_000.0,
@@ -163,8 +164,8 @@ def test_from_payload_reads_the_gateways_own_corrections_list() -> None:
 
 def test_iter_facts_marks_only_the_fact_the_gateway_corrected() -> None:
     """T-118 (PR #98 review): a corrected value must be persisted distinguishably from a
-    filed one -- `iter_facts` tags the matching `(concept, column)` cell with the
-    correction's `rule` id and leaves every other fact (including the same concept's
+    filed one -- `iter_facts` tags the matching `(statement, concept, column)` cell with
+    the correction's `rule` id and leaves every other fact (including the same concept's
     other periods, and every other concept) `None`, meaning filed as-is."""
     key, other_key = "2023-12-31 (FY)", "2022-12-31 (FY)"
     payload = _revenue_payload(
@@ -173,6 +174,7 @@ def test_iter_facts_marks_only_the_fact_the_gateway_corrected() -> None:
     )
     payload["corrections"] = [
         {
+            "statement": "income_statement",
             "concept": "us-gaap_Revenues",
             "column": key,
             "original": 16_558_000_000.0,
@@ -187,6 +189,41 @@ def test_iter_facts_marks_only_the_fact_the_gateway_corrected() -> None:
     assert facts[("us-gaap_Revenues", key)] == "T-118"
     assert facts[("us-gaap_Revenues", other_key)] is None
     assert facts[("us-gaap_CostOfRevenue", key)] is None
+
+
+def test_iter_facts_keys_corrections_by_statement_too() -> None:
+    """T-118 (PR #98 review, item 2): once T-042 started reconciling all three statements,
+    the same `(concept, column)` can appear on more than one -- e.g.
+    `us-gaap_NetIncomeLoss` on the income statement and again as a cash-flow
+    reconciliation line -- and be corrected on only one of them. Keying the lookup by
+    `(concept, column)` alone would tag both facts identically; keying by
+    `(statement, concept, column)` tags only the one the gateway actually named."""
+    key = "2023-12-31 (FY)"
+    concept = "us-gaap_NetIncomeLoss"
+    payload = {
+        "income_statement": [_income_row(concept, "Net income", **{key: 500_000_000.0})],
+        "balance_sheet": [],
+        "cash_flow": [_income_row(concept, "Net income", **{key: 500_000_000.0})],
+        "corrections": [
+            {
+                "statement": "cash_flow",
+                "concept": concept,
+                "column": key,
+                "original": 500_000_000.0,
+                "corrected": 480_000_000.0,
+                "rule": "T-042",
+            }
+        ],
+    }
+    stmts = Statements.from_payload(payload)
+
+    facts = {
+        (f["statement"], f["concept"], f["period_key"]): f["correction_rule"]
+        for f in iter_facts(stmts)
+    }
+
+    assert facts[("income_statement", concept, key)] is None
+    assert facts[("cash_flow", concept, key)] == "T-042"
 
 
 @pytest.mark.parametrize("total_first", [False, True])

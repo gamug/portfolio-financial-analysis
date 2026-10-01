@@ -3769,8 +3769,60 @@ against the redeployed gateway; that re-ingestion is part of `T-100`'s eventual 
 run, same as every other `metrics-v3`-era recompute).
 
 *Step (2)* is upstream's own closed task (`portfolio-data-mining` `T-042`, PR #45/#46) --
-nothing further for this repo to implement. No code, test, lint or type change accompanies this
-entry -- live-data verification only, run against a scratch in-memory database.
+nothing further for this repo to implement. No code, test, lint or type change accompanied
+this live-data verification itself -- run against a scratch in-memory database.
+
+**PR #104 review (`@eldova1702`), fixed 2026-09-30.** The reviewer independently ran this
+PR's own code against 8 real live 10-Ks (APA, SNA, CTVA, MSFT, AEP, STZ, PG, XOM) and
+confirmed every `T-042` correction found was a genuine `no_filed_nondimensional_fact` drop
+(spot-checked against SEC `companyconcept`), then found three required changes:
+
+1. **`data["reconciliation_errors"]` (upstream PR #46) was never read.** Since that PR, a
+   statement whose reconciliation query itself fails comes back *rendered-but-unvalidated*
+   (possibly still synthesized) rather than failing the whole response, with the failure
+   named in this top-level list. Left unread, such a value would have been stored with
+   `correction_rule = NULL` -- indistinguishable from genuinely filed -- exactly what this
+   task exists to prevent. Fixed in `EdgarClient.financials` (`edgar_client.py`): a
+   non-empty `reconciliation_errors` now raises `EdgarError` naming the statement and
+   error, before `Statements.from_payload` ever sees the payload. No new plumbing needed
+   downstream -- `pipeline._run_filing`'s existing per-filing failure handling already
+   turns any `EdgarError` from `financials()` into an unscored, retried unit
+   (`failed_units`, `analysis_run_error`), never touching `financial_facts`.
+2. **`iter_facts`'s correction lookup was keyed by `(concept, column)`, not
+   `(statement, concept, column)`.** The original reasoning -- "a correction's concept
+   only ever appears on one statement" -- held for `T-118`'s revenue-only layer, but
+   stopped once `T-042` started reconciling all three statements: a concept like
+   `NetIncomeLoss` or `DepreciationDepletionAndAmortization` can appear on more than one,
+   corrected independently on each. The reviewer found no live clash in their 8-filing
+   sample, but fixed it for correctness -- every upstream correction entry already carries
+   its own `"statement"` field (PR #45), so the fix is keying on it too.
+3. **Stored facts are not replaced by a plain re-run.** `db.append_financial_facts` is
+   `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key, filing_version =
+   accession_number)` -- re-running `fundamental_agent run` against a database that
+   already has a filing's facts under its accession changes nothing, gateway redeploy or
+   not. The reviewer reproduced this directly on their own local database
+   (`/Users/dova/thesis/data/financial.db`): after a post-redeploy re-ingest, APA FY2023
+   still stores revenue `16,558,000,000` and COGS `1,076,000,000` (both values `T-042` now
+   drops) under `correction_rule = NULL`, because that accession's rows predate
+   2026-09-30. This is not a bug to fix here -- it is `financial_facts`' documented
+   append-only design working as intended -- but it means `T-100`'s eventual full-universe
+   run **must start from a database with no pre-2026-09-30 `financial_facts` rows**, never
+   one carried forward; `TASKS.md`'s `T-100` entry now says so explicitly, and the
+   priority note there and in `PLAN.md` no longer points straight at Work item 8 -- the
+   system-review follow-up tasks and the pilot reaching `verify_pilot` 0 FAIL come first,
+   so `T-079`'s LLM re-run does not start early.
+
+Also confirmed, non-blocking: the `T-121`-`T-124` production actions this task's own
+`TASKS.md`/`CHANGELOG.md` record as "applied at the user's direction" genuinely were --
+each task's own entry already carried its production-apply date and post-write
+`PRAGMA quick_check` result before this review, unaffected by it.
+
+Tests: `tests/test_edgar_client.py` (+2: a non-empty `reconciliation_errors` raises, an
+empty or absent one passes through unchanged), `tests/test_pipeline.py` (+1, full-run
+integration: a reconciliation failure writes no `financial_facts`/`score_snapshot` rows and
+counts one failed unit), `tests/test_statements.py` (+1: the same `(concept, column)` on
+two statements, only one corrected, only that one tagged). `uv run pytest -q` -- 806 passed
+(was 802); `ruff check` / `ruff format --check` / `uv run mypy` -- all clean.
 
 **`T-118` is now fully done.** See `TASKS.md`'s own entry for the task-tracking record; Work
 item 14 (the second forensic audit) closes with it and moves to `CHANGELOG.md`.

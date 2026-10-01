@@ -56,7 +56,12 @@ most recent first, and an empty list — not an error — when there is none; an
 object-shaped (pre-#39) payload raises `EdgarError` rather than being guessed at.
 `financials` takes an optional `accession_number`, required whenever the year holds more
 than one filing of the form: without it the gateway answers `success: false` ("Found 3
-'10-Q' filings … Available: …"), surfaced as `EdgarAmbiguousError(candidates=[…])`.
+'10-Q' filings … Available: …"), surfaced as `EdgarAmbiguousError(candidates=[…])`. It also
+raises a plain `EdgarError` when `data["reconciliation_errors"]` (T-042, `portfolio-data-
+mining` PR #46) is non-empty — a statement whose own reconciliation failed comes back
+rendered-but-unvalidated, so the filing is treated as a failed unit (retried next run, no
+facts written) rather than risk an unvalidated value reaching `financial_facts` looking
+filed.
 
 ### universe source
 
@@ -81,9 +86,11 @@ label-matched "total revenue" row in the same statement that materially disagree
 structurally, no filer's own concept ever named — corrected by subtracting the rows between
 the two, or rejected with no guess if those rows are too large to trust). `iter_facts` flattens
 every non-abstract numeric cell for `financial_facts`, tagging a cell named in the gateway's own
-`data["corrections"]` (T-118) with that entry's `rule` id as `correction_rule` -- everything else
-gets `None` (filed as-is). `Statements.corrections` holds the raw list (`[]` for a payload from a
-gateway version that predates it).
+`data["corrections"]` (T-118) with that entry's `rule` id as `correction_rule` -- keyed by
+`(statement, concept, column)`, not `concept`/`column` alone, since `T-042` corrects a concept
+like `NetIncomeLoss` independently on more than one statement -- everything else gets `None`
+(filed as-is). `Statements.corrections` holds the raw list (`[]` for a payload from a gateway
+version that predates it).
 
 ### `metrics/` — one module per group
 

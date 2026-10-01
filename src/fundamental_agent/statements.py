@@ -665,15 +665,20 @@ class Statements:
 def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
     """Yield one flat fact per (non-abstract, non-dimensional row, period column).
 
-    T-118: a fact whose ``(concept, column)`` matches one of ``stmts.corrections`` --
-    the gateway's own record of a value it derived rather than returned as filed --
-    carries that entry's ``rule`` id as ``correction_rule``; every other fact gets
-    ``None``, meaning "filed as-is". Ambiguous by ``(concept, column)`` alone, not
-    also by statement, but the gateway's synthesis defects (T-118) are concept-scoped
-    (e.g. a revenue concept only ever appears on the income statement) so this never
-    matches across statements in practice.
+    T-118: a fact whose ``(statement, concept, column)`` matches one of
+    ``stmts.corrections`` -- the gateway's own record of a value it derived rather than
+    returned as filed -- carries that entry's ``rule`` id as ``correction_rule``; every
+    other fact gets ``None``, meaning "filed as-is". Keyed by statement too (PR #98
+    review): once the general reconciliation (T-042) started validating all three
+    statements, not just revenue on the income statement, a concept like
+    ``NetIncomeLoss`` or ``DepreciationDepletionAndAmortization`` can appear -- and be
+    corrected independently -- on more than one of them; `(concept, column)` alone could
+    then tag the wrong statement's fact.
     """
-    corrected_rule = {(c.get("concept"), c.get("column")): c.get("rule") for c in stmts.corrections}
+    corrected_rule = {
+        (c.get("statement"), c.get("concept"), c.get("column")): c.get("rule")
+        for c in stmts.corrections
+    }
     for statement, rows in stmts.raw.items():
         for row in rows:
             if row.get("abstract") or row.get("dimension"):
@@ -694,7 +699,7 @@ def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
                     "label": row.get("label"),
                     "period_key": column,
                     "value": number,
-                    "correction_rule": corrected_rule.get((concept, column)),
+                    "correction_rule": corrected_rule.get((statement, concept, column)),
                 }
 
 

@@ -1505,6 +1505,39 @@ deprecated for) are left out — see `PLAN.md` Work item 14. → `PLAN.md` Work 
       **Step (2)** is upstream's own closed task; nothing further for this repo to implement.
       Tests, lint, mypy unaffected (no code change, live-data verification only). Full record:
       `docs/model_fixes.md`'s `T-118` entry ("Steps (1) and (2), live re-verification" section).
+      **PR #104 review (`@eldova1702`), fixed 2026-09-30**: (1) `EdgarClient.financials` now
+      raises `EdgarError` when the gateway's own reconciliation failed for a statement
+      (`data["reconciliation_errors"]`, upstream PR #46) — such a statement comes back
+      rendered-but-unvalidated, and without this check it would have stored with
+      `correction_rule = NULL` (indistinguishable from filed-as-is), exactly what this task's
+      step (3) exists to prevent. The existing per-filing failure path (`_run_filing`) already
+      does the right thing once it raises: unscored, `failed_units` incremented, retried on the
+      next run (never in `engine.completed`). Tests: `tests/test_edgar_client.py` (+2),
+      `tests/test_pipeline.py` (+1, full-run integration: a reconciliation failure writes no
+      `financial_facts`/`score_snapshot` rows and counts one failed unit). (2) `iter_facts`'s
+      correction lookup now keys on `(statement, concept, column)`, not `(concept, column)` —
+      once `T-042` started reconciling all three statements, a concept like `NetIncomeLoss` can
+      appear (and be corrected) on more than one; keying by concept and column alone could tag
+      the wrong statement's fact. No live clash found in the reviewer's 8-filing sample, but
+      fixed for correctness. Test: `tests/test_statements.py` (+1, same `(concept, column)` on
+      two statements, only one corrected). (3) **Stored facts are not replaced by a plain
+      re-run**: `financial_facts` is append-only, `INSERT OR IGNORE` on `(filing_id, statement,
+      concept, period_key, filing_version = accession_number)` — reproduced directly
+      (reviewer's own local database, `/Users/dova/thesis/data/financial.db`): APA FY2023 still
+      stores revenue `16,558,000,000` and COGS `1,076,000,000` (both values `T-042` now drops)
+      under `correction_rule = NULL`, because that accession's rows were already ingested
+      before the gateway redeploy. `T-100`'s own `TASKS.md` entry now says it must run against
+      a fresh `financial.db`, not one carried forward from before 2026-09-30; the priority note
+      here and in `PLAN.md` no longer says "Work item 8 next" outright — the system-review
+      follow-up tasks (a forthcoming docs PR) and the pilot reaching `verify_pilot` 0 FAIL come
+      first, so `T-079`'s LLM re-run does not start early. (4, non-blocking) Confirmed in the PR
+      thread: `T-121`–`T-124`'s production actions were genuinely already applied at the time
+      this entry says so — each task's own record above (`T-121` "Production void applied
+      2026-09-29", `T-122` "Second pass ... Post-run `PRAGMA quick_check` → `ok`", `T-123`
+      "Post-write `PRAGMA quick_check` → `ok`", `T-124` "Post-write: zero ... rows") predates
+      and is unaffected by this review. Full suite 806 passed (was 802, +4: `tests/test_edgar_
+      client.py` ×2, `tests/test_pipeline.py` ×1, `tests/test_statements.py` ×1); ruff, format,
+      mypy clean.
 - [x] **T-119** *(P1 — found 2026-09-25 while testing `T-106`)* — **DONE 2026-09-29**
       `EARNINGS_MISSING` never fires for an asset with no FUNDAMENTAL score at all: the rule
       iterates `last_fundamental_dates`, which holds only assets that have one, so its `last is
