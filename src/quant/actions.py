@@ -226,6 +226,7 @@ def backfill_corporate_actions(
                 max_failures=max_failures,
             )
         except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             set_run_params(
                 conn,
                 run_id,

@@ -184,6 +184,7 @@ def run_build_returns(
                 )
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             fail_run(conn, run_id, str(exc))
             raise
         return report

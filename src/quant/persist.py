@@ -253,6 +253,7 @@ def run_build_risk_model(
             cov_rows = insert_covariance(conn, model_id, panel.asset_ids, sigma) if store_cov else 0
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             fail_run(conn, run_id, str(exc))
             raise
         return RiskModelResult(
@@ -469,6 +470,7 @@ def run_optimize(
                 )
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             fail_run(conn, run_id, str(exc))
             raise
         return OptimizeRunResult(

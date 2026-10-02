@@ -340,7 +340,9 @@ def test_an_interrupted_run_is_marked_failed_not_left_running(
     conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=False)
     client, _http, _seen = _gateway()
 
-    def _interrupt(*_a: object, **_k: object) -> None:
+    def _interrupt(conn: Database, *_a: object, **_k: object) -> None:
+        # an uncommitted write pending at the moment of the interrupt
+        conn.execute("INSERT INTO sectors (name) VALUES ('PENDING-AT-INTERRUPT')")
         raise KeyboardInterrupt
 
     monkeypatch.setattr(quant.actions, "_fetch_all", _interrupt)
@@ -348,3 +350,10 @@ def test_an_interrupted_run_is_marked_failed_not_left_running(
         backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
     status, _error, _params = _last_run(conn)
     assert status == "failed"
+    # fail_run commits, so the pending write must have been rolled back first
+    assert (
+        conn.execute("SELECT COUNT(*) FROM sectors WHERE name = 'PENDING-AT-INTERRUPT'").fetchone()[
+            0
+        ]
+        == 0
+    )
