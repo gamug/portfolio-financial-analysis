@@ -19,19 +19,73 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15, 16 and 1
 `CHANGELOG.md`.) **Work item 14 (P0/P1, the second audit's live defects) is done
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
-item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131`, `T-132`, `T-133` ✅ all done and approved, PRs #109, #110, #111 — closed 2026-10-02, now in `CHANGELOG.md`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
-`verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
-the pilot has landed.** Once
-they have, priority runs **8 (P1, supersedes Work item
-3/`T-020`–`T-026`)** → Work items 2/4 (unaffected, original priority) →
-**9 (P2)** → **Work item 12 (`T-100`), the full-universe run, last of all** (which
-itself needs a *fresh* `financial.db` — see `T-100`'s own entry). See `PLAN.md`'s
+item 8 starts next (PR #104 review):** the priority order (re-set by the user 2026-10-02) is
+**Work item 18 (`T-134`–`T-139`, the N-ticker weight heuristic — below) → Work item 8 → Work item 9
+→ Work item 3 → Work item 4 → Work item 12 (`T-100`), the full-universe run, last of all** (which
+itself needs a *fresh* `financial.db` — see `T-100`'s own entry). Work item 17 (`T-131`, `T-132`,
+`T-133`, PRs #109/#110/#111) is closed 2026-10-02, see `CHANGELOG.md`. **The pilot
+(`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL) still gates `T-079`'s
+LLM re-run: do not start that re-run until the pilot has landed.** Two things in the user's order
+need a call (see `PLAN.md`'s Priority Override): Work item 3 is **superseded** by `T-077`
+(Work item 8) and stays "do not implement" unless the user un-supersedes it, so its slot is
+empty; and Work item 2 (orchestrator) was not named, so it is parked after Work item 4 until placed. See `PLAN.md`'s
 "🔴 Priority Override" section for the full rationale — the source audit markdowns
 (`feedback_plan.md`, `upstream_data_mining.md`,
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
 after being fully incorporated into `PLAN.md`/this file, which are now the
 only durable record.
+
+## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold
+
+Added 2026-10-02, at the user's direction; **first in the new order** (18 → 8 → 9 → 3 → 4). Source: the
+2026-10-02 read-only audit's cap finding (recorded in full here, no external file) — with `top_n = 10` the default
+`max_name_weight = 0.10` forces every name to exactly 0.10, four Financials then sum to 0.40 and no
+weight vector satisfies the 0.30 sector cap; `cycle.construction.target_weights` runs 8 rounds and
+returns whatever it has, silently. Production's live book (`cycle_run` 1, 2026-09-22) holds six names at
+0.1167 against a 0.10 cap and Energy at 0.35 against 0.30. The caps are constants, but whether they are
+feasible, and how much room a score tilt has, depends on **N**, the number of tickers the user wants to
+hold (`--top-n`, default 30). This work item makes the weighting rule a function of N, and refuses to
+return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
+
+- [ ] **T-134** Decision + spec, **needs the user before code**: (1) N is the existing `--top-n`
+      (confirm, or add `--n-tickers`); (2) the proposed rule, to confirm or replace:
+      `max_name_weight(N) = max(0.10, 1.5 / N)` and `max_sector_weight(N) = max(0.30, 1.5 / N)`
+      (never tighter than today's defaults, never tighter than 1.5x an equal weight, so a score tilt always
+      has room: N=3 -> 0.50, N=5 -> 0.30, N=10 -> 0.15, N>=15 -> 0.10), explicit
+      `--max-name-weight`/`--max-sector-weight` still win; (3) when a cap cannot hold (too few sectors,
+      or fewer eligible names than N) which gives way — the proposal is the **name** cap relaxes first and
+      the **sector** cap stays binding, with the relaxation recorded; (4) whether selection may skip a
+      ranked name whose sector is full and take the next one (proposal: yes, at most
+      `floor(max_sector_weight x N)` names per sector, so the book still has N names), and whether a
+      cash weight is acceptable (proposal: no, always fully invested); (5) the scheme per N
+      (`score_proportional` default; `equal` as the degenerate case when the cap is `1/N`). Record the
+      decision in `PLAN.md` Work item 18 and `SPEC.md` FR-007. → step 1.
+- [ ] **T-135** Implement in `src/cycle/construction.py`: a pure `resolve_caps(n, ...)` per `T-134`, the
+      sector-aware fill, and **infeasibility detection** — after the cap loop, any residual breach (or a
+      cap that cannot sum to 1) is returned in a result object and logged, never silent. `target_weights`
+      keeps its signature or gains a result type; callers updated. Tests: N in `{1, 2, 3, 5, 10, 20, 30}`,
+      few-sector and single-sector universes, the production shape (10 names / 4 Financials / 3 Energy),
+      explicit-override precedence, sum-to-1 and both caps hold or the breach is reported. → step 2.
+- [ ] **T-136** Wire it through `cycle`: `CycleSettings`/`--top-n`, the **effective** caps and any
+      recorded relaxation persisted in `cycle_run.params_json` (so `v_weight_scheme`, which reads
+      `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change), N larger than
+      the eligible, non-vetoed count recorded as a shortfall rather than padded. Production re-select is
+      a write and stays deferred until the user directs it. → step 3.
+- [ ] **T-137** Align `quant`'s benchmark with the same N: `QuantSettings.max_name_weight` (0.05) and
+      `max_sector_weight` (0.30) are constants too, and a benchmark with a different effective N is not
+      comparable to the live book. `quant` must not import `cycle` (isolation test), so copy the rule the way
+      `quant.state` copies `cycle.state` and pin the two against each other with a test; leave the
+      benchmark's universe/liquidity gate untouched (it must stay independent of any score). Needs `T-134`'s
+      answer on whether the benchmark follows N or keeps its own caps. → step 4.
+- [ ] **T-138** Verify on real data, on a **scratch copy** of `financial.db` (production is not written):
+      reproduce `cycle_run` 1's failing shape, then `cycle select` for N in `{3, 5, 10, 20}` on the
+      20-ticker sample (`universe_sample20.db`); every book sums to 1 and satisfies both caps, or records
+      its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers and a
+      reference (constitution AI behavior #12; e.g. a long-only mean-variance/constraint-feasibility
+      reference such as the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009). → step 5.
+- [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if
+      `T-137` lands, `SPEC.md` FR-007, and both architecture artifacts (constitution AI behavior #11,
+      reconcile, never rename). → step 6.
 
 ## Work item 2 — Cross-module orchestrator
 
@@ -251,10 +305,11 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current top priority: the pilot (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL;
-Work item 17 — `T-131`, `T-132`, `T-133`, PRs #109/#110/#111 — closed 2026-10-02, see `CHANGELOG.md`), then
-Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
-section's own earlier claim that Work item 8 was next).** Work item 14 (the
+**🔴 Current priority order (user's, 2026-10-02): Work item 18 (`T-134`–`T-139`, the N-ticker
+weight heuristic) → Work item 8 → Work item 9 → Work item 3 (superseded by `T-077`, see the top of this
+file) → Work item 4.** The pilot (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at
+0 FAIL) still gates `T-079`'s LLM re-run. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
+closed 2026-10-02, see `CHANGELOG.md`. Work item 14 (the
 second forensic audit) is fully closed 2026-09-30, `T-118` last — see
 `CHANGELOG.md`. Its `T-121`/`T-122`/`T-123`/`T-124` production actions were all
 applied at the user's direction (each task's own entry in `CHANGELOG.md` records
@@ -263,11 +318,10 @@ the one deliberately-deferred production write left over from it (still pending
 explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
 production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
 `T-079`'s LLM re-run (Work item 8) until `verify_pilot` reaches
-0 FAIL (Work item 17 has landed)** —
-once they have, priority runs **Work item 8, `T-070`–`T-079` (P1, `T-078`
+0 FAIL (Work item 17 has landed)**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
 deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
-re-run scores already-corrected ratios)** → **Work item 9, `T-080`–`T-084`
+re-run scores already-corrected ratios) is followed by **Work item 9, `T-080`–`T-084`
 (P2 — `T-082` needs `T-043`, `T-083` needs `T-042`; the production
 `entity_resolution` re-graph is additionally blocked on a `urls.db`
 transfer independent of any task here)**.
@@ -277,9 +331,9 @@ upstream + `T-052`), 5 (done 2026-09-25, `T-044` deprecated), 7 (done 2026-09-25
 11 (done 2026-09-25), 13 (done 2026-09-25), 14 (done 2026-09-30), 15 (done 2026-10-01, PR #106) and 16 (done 2026-10-01) are
 closed — see `CHANGELOG.md`.
 
-Work items 2 and 4 are unaffected by the audit and keep their original,
-lower priority (after Work items 8 and 9 above): nothing in either has
-started; both are unblocked.
+Work items 2 and 4 are unaffected by the audit: nothing in either has started and both are
+unblocked. Work item 4 is placed last-but-one by the user's order; Work item 2 was not named in it and is
+parked after Work item 4 until the user places it.
 
 **Work item 12 (`T-100`, the full-universe production run) runs last of all**, after
 every other task in this file — current and future.
