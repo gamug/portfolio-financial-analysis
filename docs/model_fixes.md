@@ -4419,8 +4419,11 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
 
 - **Production `financial.db`, read-only, 2026-10-01**: the detector finds exactly the 7 jumps (APH 1, MNST 6), and each ratio matches
   the recorded 2:1 split of its asset; a full recompute of the 10,500 NULL observation rows over the stored history leaves **0** NULL
-  in the four fields. The gateway was not reachable from this environment, so the re-fetch path is exercised against a stub
-  gateway, not live.
+  in the four fields. The gateway was not reachable from this environment, so the re-fetch path was first exercised against a stub
+  gateway; the PR #109 review then ran it **live** (real gateway, scratch copy of the DB with the 09-29 partial bar and the
+  APH/MNST seams): 09-29 volume AAPL 5.6M -> 38.5M, APH and MNST re-fetched in full automatically, split-shaped jumps 7 -> 0, NULL
+  `realized_vol_90d` 21 -> 0 per ticker, a second identical run changed 0 observation rows, and PG's 09-29 `tr_log_return` moved
+  -0.00592 -> -0.00478 after `build-returns`.
 - `tests/test_pricing_integrity.py` (32), `tests/test_trading_calendar.py`, `tests/test_quant_t131.py` (two versions present, the
   counts follow the pinned one even when the other is newer). Mutation-checked: building
   observations from the fetched candles fails 3 tests; dropping the session guard 2; dropping the jump refusal 2; dropping the

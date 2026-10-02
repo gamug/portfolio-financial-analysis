@@ -20,7 +20,7 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15 and 16 ar
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131` ✅ code done → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+(`T-131` ✅ done, PR #109 → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
 all of it has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item
@@ -198,7 +198,7 @@ is the shipped behaviour, not a documented decision.
 Added 2026-10-01, from `docs/md primera revision/system_review_2026-09-29.md` §4 (a
 whole-pipeline review of code and logic, checked against `data/financial-3.db`). Each task
 below is verified on that database, affects results, and is not covered by an existing task.
-They land **ahead of Work item 8** (see the priority note above): `T-131` first, then
+They land **ahead of Work item 8** (see the priority note above): `T-131` first (done), then
 `T-132` and `T-133`, then the pilot. The review's findings N1–N4 → `T-131`/`T-132`, N5/N6 →
 `T-133`; N7–N9 and N11 became scope additions to `T-070`/`T-071`/Work item 8 (above), and N10
 (the `dq-v2` production re-gate) stays a user-direction action, not a task.
@@ -213,7 +213,7 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
 > `portfolio-data-mining` gateway — the same pattern as `T-042`/`T-118` (upstream PR, then
 > this repo consumes it). `T-132`(b)–(d) and `T-133` are local and do **not** wait for it.
 
-- [x] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`). **Code done 2026-10-01.**
+- [x] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`). **Code done 2026-10-01 (PR #109, approved).**
       - (a) Never store a bar for a session that hasn't closed: using the NYSE calendar,
         refuse `--analysis-date`/`--end` of today before the close plus a buffer.
       - (b) Build `price_observation` from the asset's **full stored `price_daily` history**,
@@ -261,8 +261,10 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
       `quant build-returns` rebuilds a re-adjusted series. (d) `quant.universe` filters by the pinned
       `return_engine_version` / new `observation_engine_version` (PR #109 review). **Verified on production `financial.db` (read-only):**
       the detector finds exactly the 7 jumps (APH 1, MNST 6), each matching its recorded 2:1 split, and a
-      full recompute fills all 10,500 NULL observation rows; the gateway was unreachable, so the re-fetch
-      is exercised against a stub, not live. +50 tests (860 total), mutation-checked; ruff, format, mypy
+      full recompute fills all 10,500 NULL observation rows; the gateway was unreachable from this
+      container, so the re-fetch was exercised against a stub — then verified live by the PR #109 review
+      (real gateway, scratch copy of the DB: 09-29 bar healed, APH/MNST re-fetched in full, jumps 7 → 0,
+      NULL vol-90d 21 → 0 per ticker, second run changed 0 rows). +50 tests (860 total), mutation-checked; ruff, format, mypy
       clean. Record: `docs/model_fixes.md` "T-131"; `SPEC.md` FR-004 and NR-007 (the two derived series
       are rewritten on a changed input), `docs/pricing_agent.md` updated.
       **Still open:** the production clean-up above (user direction only) and `verify_pilot.py`'s T-131
@@ -374,7 +376,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current top priority: Work item 17 (`T-131` ✅ code done 2026-10-01 → `T-132`/`T-133`), then the pilot
+**🔴 Current top priority: Work item 17 (`T-131` ✅ done 2026-10-01 (PR #109) → `T-132`/`T-133`), then the pilot
 (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL), then
 Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
 section's own earlier claim that Work item 8 was next).** Work item 14 (the
