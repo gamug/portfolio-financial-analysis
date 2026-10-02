@@ -242,13 +242,14 @@ REGISTRY: dict[str, LineItem] = {
     ),
     # Point-in-time common shares outstanding, for market cap (price x shares at the
     # period-end date). Not always present -- callers fall back to `diluted_shares`.
+    # Never `CommonStockSharesIssued` (T-132): it includes treasury stock, so it overstates a
+    # buyback-heavy filer's count (PG: 4.009B issued vs 2.324B outstanding) -- an absent concept
+    # is a missing count, which is honest, not an inflated one. The cover-page count
+    # (`Statements.cover_shares`) is preferred over this balance-sheet figure.
     "shares_outstanding": LineItem(
         "shares_outstanding",
         _BALANCE,
-        concepts=(
-            "us-gaap_CommonStockSharesOutstanding",
-            "us-gaap_CommonStockSharesIssued",
-        ),
+        concepts=("us-gaap_CommonStockSharesOutstanding",),
         standard=("SharesYearEnd",),
     ),
     # Weighted-average diluted share count from the income statement -- always
@@ -344,6 +345,32 @@ REGISTRY: dict[str, LineItem] = {
 }
 
 
+@dataclass(frozen=True)
+class CoverShares:
+    """One entry of the gateway's ``data["cover"]["shares_outstanding"]``: the filing's own
+    cover-page count of shares outstanding on ``as_of_date`` (T-132). ``class_member`` is ``""``
+    for a single-class filer's count or a filed total, else the share class it counts."""
+
+    value: float
+    as_of_date: str
+    class_member: str = ""
+
+
+def _cover_shares(payload: dict[str, Any]) -> list[CoverShares]:
+    cover = payload.get("cover")
+    entries = cover.get("shares_outstanding") if isinstance(cover, dict) else None
+    out: list[CoverShares] = []
+    for item in entries or []:
+        if not isinstance(item, dict):
+            continue
+        value, as_of = _numeric(item.get("value")), item.get("as_of_date")
+        if value is None or value <= 0 or not isinstance(as_of, str) or not as_of:
+            continue  # never store a count the filing did not date
+        member = item.get("class_member")
+        out.append(CoverShares(value, as_of[:10], str(member) if member else ""))
+    return out
+
+
 @dataclass
 class Statements:
     """A parsed ``financials`` payload."""
@@ -358,6 +385,10 @@ class Statements:
     # the derived value is marked in `financial_facts`, not stored indistinguishably
     # from a filed fact.
     corrections: list[dict[str, Any]] = field(default_factory=list)
+    # T-132: the cover-page share count(s), and why there are none when the gateway's cover read
+    # failed (it fails in isolation, so the statements above are still validated).
+    cover_shares: list[CoverShares] = field(default_factory=list)
+    cover_error: str | None = None
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> Statements:
@@ -372,7 +403,18 @@ class Statements:
                             seen[column] = parsed
         periods = sorted(seen.values(), key=lambda p: (p.date, p.tag))
         corrections = [c for c in payload.get("corrections") or [] if isinstance(c, dict)]
-        return cls(raw=raw, periods=periods, corrections=corrections)
+        cover_errors = [
+            str(e.get("error"))
+            for e in payload.get("reconciliation_errors") or []
+            if isinstance(e, dict) and e.get("statement") == "cover"
+        ]
+        return cls(
+            raw=raw,
+            periods=periods,
+            corrections=corrections,
+            cover_shares=_cover_shares(payload),
+            cover_error="; ".join(cover_errors) or None,
+        )
 
     def fy_periods(self) -> list[Period]:
         return [p for p in self.periods if p.is_fy]

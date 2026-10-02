@@ -278,7 +278,8 @@ def test_every_reader_of_fundamental_metrics_applies_the_version_filter() -> Non
 
 def test_the_known_readers_are_actually_covered_by_that_guard() -> None:
     """Guard the guard: the two consumer modules must really be scanned and really filtered."""
-    for rel, reads in (("cycle/data.py", 2), ("quant/db.py", 1)):
+    # T-132: quant reads no stored metric any more (its market cap is the shared reader's)
+    for rel, reads in (("cycle/data.py", 1), ("quant/db.py", 0)):
         text = (SRC / rel).read_text()
         assert len(_READ.findall(text)) == reads, rel
         assert text.count(VERSION_FILTER_SQL) == reads, rel

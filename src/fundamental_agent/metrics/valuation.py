@@ -17,6 +17,7 @@ from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
+from kg_schema.market_cap import cover_total
 
 GROUP = "valuation"
 
@@ -28,12 +29,18 @@ class _ShareCount:
     shares: float | None
     used_diluted_fallback: bool
     scale_correction_factor: float | None = None
+    from_cover: bool = False
 
 
 def _share_count(
     stmts: Statements, period_key: str, scale_factors: dict[str, float]
 ) -> _ShareCount:
-    """Shares for market cap: point-in-time if reported, else weighted-average diluted.
+    """Shares for market cap: the cover-page count (T-132), else the balance sheet's
+    point-in-time count, else weighted-average diluted.
+
+    The cover count is the filing's own number of shares outstanding on a date near its filing
+    (:func:`kg_schema.market_cap.cover_total`); it needs no scale correction and is never replaced
+    by ``CommonStockSharesIssued`` (the registry no longer reads it).
 
     *scale_factors* (from
     :func:`fundamental_agent.db.detect_share_scale_factors`) corrects a share
@@ -44,6 +51,9 @@ def _share_count(
     category of operation as ``Statements._instant_for``'s own
     nearest-earlier-column resolution.
     """
+    cover = cover_total((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares)
+    if cover is not None:
+        return _ShareCount(cover.value, False, from_cover=True)
     shares = stmts.get("shares_outstanding", period_key)
     if shares is not None and shares > 0.0:
         factor = scale_factors.get("shares_outstanding")
@@ -112,6 +122,7 @@ def compute(
     )
     inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
     inputs["shares_are_diluted_average"] = float(used_diluted)
+    inputs["shares_from_cover_page"] = float(share_count.from_cover)
     if share_count.scale_correction_factor is not None:
         inputs["shares_scale_correction_factor"] = share_count.scale_correction_factor
     if annual.is_ttm:

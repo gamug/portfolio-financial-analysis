@@ -30,6 +30,7 @@ from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
 from quant.persist import (
     DryRunPlan,
+    MissingMarketCaps,
     plan_build_risk_model,
     plan_optimize,
     run_build_risk_model,
@@ -67,6 +68,15 @@ _ALLOW_STALE_PRICES_HELP = (
     "past price_daily's last stored date -- the model would silently read prices weeks stale "
     "while claiming to be as of a later date; for a deliberate run ahead of the spine, not "
     "routine use"
+)
+_MAX_SHARE_AGE_HELP = (
+    "refuse a market cap whose cover-page share count is older than this many days at the "
+    "as-of date (T-132; default 200: a quarter, the filing lag and slack)"
+)
+_ALLOW_MISSING_CAPS_HELP = (
+    "build the risk model even though some panel assets have no market cap as of the date "
+    "(T-132): they are weighted 0 in the equilibrium market portfolio and the run's params_json "
+    "names them -- by default the build refuses instead of dropping them silently"
 )
 _ALLOW_DIRTY_HELP = (
     "override the clean-tree guard (T-114) and write this run's code_version even though the "
@@ -121,6 +131,13 @@ def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.Argume
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
     rm.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     rm.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    rm.add_argument("--allow-missing-caps", action="store_true", help=_ALLOW_MISSING_CAPS_HELP)
+    rm.add_argument(
+        "--market-cap-max-share-age-days",
+        dest="market_cap_max_share_age_days",
+        type=int,
+        help=_MAX_SHARE_AGE_HELP,
+    )
     _add_profile(rm)
     _add_dry_run(rm)
 
@@ -147,6 +164,13 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
     op.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
     op.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    op.add_argument("--allow-missing-caps", action="store_true", help=_ALLOW_MISSING_CAPS_HELP)
+    op.add_argument(
+        "--market-cap-max-share-age-days",
+        dest="market_cap_max_share_age_days",
+        type=int,
+        help=_MAX_SHARE_AGE_HELP,
+    )
     _add_profile(op)
     _add_dry_run(op)
 
@@ -254,6 +278,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "max_sector_weight": ("max_sector_weight", float),
     "turnover_cap": ("turnover_cap", float),
     "solver": ("solver", str),
+    "market_cap_max_share_age_days": ("market_cap_max_share_age_days", int),
 }
 
 
@@ -279,6 +304,8 @@ def _settings(args: argparse.Namespace) -> QuantSettings:
         updates["allow_stale_prices"] = True
     if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
+    if getattr(args, "allow_missing_caps", False):
+        updates["allow_missing_caps"] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -335,7 +362,7 @@ def _run_versions(settings: QuantSettings) -> int:
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
     try:
         res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
-    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale) as exc:
+    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale, MissingMarketCaps) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
     shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
@@ -355,13 +382,25 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({res.dirty_tree_bypassed})",
             file=sys.stderr,
         )
+    cov = res.market_cap_coverage
+    if cov:
+        print(
+            f"  market caps: {cov['n_with_cap']}/{cov['n_assets']} assets, share count age "
+            f"median {cov['share_age_days_median']}d, max {cov['share_age_days_max']}d"
+        )
+        if cov["n_missing"]:
+            print(
+                f"  WARNING: --allow-missing-caps weighted {cov['n_missing']} asset(s) 0 in the "
+                f"market portfolio: {', '.join(cov['missing'])}",
+                file=sys.stderr,
+            )
     return 0
 
 
 def _run_optimize(settings: QuantSettings, as_of: str) -> int:
     try:
         opt = run_optimize(settings, as_of=as_of)
-    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale) as exc:
+    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale, MissingMarketCaps) as exc:
         print(f"optimize: {exc}", file=sys.stderr)
         return 1
     books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())

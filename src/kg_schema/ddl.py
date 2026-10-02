@@ -277,6 +277,25 @@ CREATE TABLE IF NOT EXISTS sec_filing_section (
 );
 CREATE INDEX IF NOT EXISTS ix_sfs_filing ON sec_filing_section (filing_id);
 
+-- T-132: the filing's own cover-page share count (`dei:EntityCommonStockSharesOutstanding`, via
+-- the gateway's `data["cover"]["shares_outstanding"]`, portfolio-data-mining T-043): a
+-- point-in-time count of the shares actually outstanding on `as_of_date` (a date near the
+-- filing's, never its period end). One row per class; `class_member = ''` is the filer's own
+-- non-dimensional total, only present when it filed one -- nothing here is ever summed upstream.
+-- Never `CommonStockSharesIssued` (that counts treasury stock) and never a weighted average.
+CREATE TABLE IF NOT EXISTS filing_cover_shares (
+    id           INTEGER PRIMARY KEY,
+    filing_id    INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    class_member TEXT NOT NULL DEFAULT '',
+    value        REAL NOT NULL CHECK (value > 0),
+    as_of_date   TEXT NOT NULL,
+    event_time   TEXT NOT NULL,                -- the filing's period end, as for its facts
+    ingested_at  TEXT NOT NULL,
+    run_id       INTEGER,
+    UNIQUE (filing_id, class_member, as_of_date)
+);
+CREATE INDEX IF NOT EXISTS ix_fcs_filing ON filing_cover_shares (filing_id);
+
 -- Step 7: candidate shared-executive edges from news PER co-occurrence.
 CREATE TABLE IF NOT EXISTS shared_executive_edge (
     id              INTEGER PRIMARY KEY,

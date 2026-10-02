@@ -369,6 +369,28 @@ def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
     return [_Target(period, f"{period.year}Q{period.tag[1]}", stmts.prior_of(period))]
 
 
+def _store_cover_shares(
+    engine: _Engine, task: _YearTask, filing_id: int, stmts: Statements, target: _Target
+) -> None:
+    """Record the filing's cover-page share count (T-132). A filing the gateway returned no count
+    for is left without one -- never given a balance-sheet or weighted-average stand-in -- and a
+    failed cover read is recorded for triage, never failing the filing."""
+    if stmts.cover_error:
+        db.record_error(
+            engine.conn,
+            engine.report.run_id,
+            RunError(task.ticker, task.form, target.fiscal_period, "cover", stmts.cover_error),
+        )
+    if stmts.cover_shares:
+        db.insert_cover_shares(
+            engine.conn,
+            filing_id,
+            stmts.cover_shares,
+            event_time=target.period.date,
+            run_id=engine.report.run_id,
+        )
+
+
 def _extract_sections(
     engine: _Engine, task: _YearTask, filing_id: int, target: _Target, meta: FilingMeta
 ) -> None:
@@ -493,6 +515,7 @@ def _analyze_one(
         event_time=target.period.date,
         run_id=run_id,
     )
+    _store_cover_shares(engine, task, filing_id, stmts, target)
     if engine.params.sections:
         _extract_sections(engine, task, filing_id, target, meta)
 

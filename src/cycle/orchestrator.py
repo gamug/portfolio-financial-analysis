@@ -252,8 +252,9 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
 
         # -- valorization
         def _valorization() -> dict:
-            mcap = data.market_cap_estimates(conn, cycle_date, metrics, versions)
+            mcap = data.market_cap_estimates(conn, cycle_date, list(asset_ids))
             rows = {}
+            no_cap = 0
             for a in asset_ids:
                 m = dict(metrics.get(a, {}))
                 quarantined = dq.quarantined.get(a, set())
@@ -267,6 +268,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     m["earnings_yield"] = ni / mc
                 if mc:
                     m["neg_log_market_cap"] = -math.log(mc)
+                else:
+                    no_cap += 1  # T-132: a missing size factor, reported rather than guessed
                 rows[a] = m
             scores = valorization.compute(rows)
             writers.write_scores(
@@ -278,7 +281,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
             )
-            return {"scored": len(scores)}
+            return {"scored": len(scores), "market_cap_missing": no_cap}
 
         _do("valorization", _valorization)
 

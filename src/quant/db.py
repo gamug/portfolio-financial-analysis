@@ -8,7 +8,6 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,7 +24,6 @@ from kg_schema.env import universe_database_path
 # predicate `cycle` and `quant` both read) -- re-exported here (see __all__ below) since
 # quant.universe imports it from this module.
 from kg_schema.queries import connect_ro, hard_vetoed_as_of, resolve_asset_ids, symbols_asof
-from kg_schema.versions import MetricVersions
 
 # hard_vetoed_as_of is otherwise unused in this module -- it is imported only to be
 # re-exported, since quant.universe imports it from quant.db (T-125).
@@ -336,42 +334,6 @@ def upsert_return_daily(
         changed += cur.rowcount
     conn.commit()
     return changed
-
-
-def load_market_caps(
-    conn: Database, asset_ids: list[int], versions: MetricVersions, *, as_of: str
-) -> dict[int, float]:
-    """``asset_id -> market cap`` parsed from ``fundamental_metrics.inputs_json``
-    (latest per asset usable on *as_of* -- ``available_at``, T-106/T-107) of the *versions* the run
-    resolved (T-090); mirrors ``cycle.data.market_cap_estimates``. Missing -> absent."""
-    kg_schema.availability.require(conn)  # T-107: never read none of the un-backfilled rows
-    out: dict[int, float] = {}
-    try:
-        rows = conn.execute(
-            """
-            SELECT sf.asset_id, m.value, m.inputs_json
-            FROM fundamental_metrics m JOIN sec_filings sf ON sf.id = m.filing_id
-            WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
-              AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
-              AND m.available_at IS NOT NULL AND m.available_at <= ?
-            ORDER BY sf.period_end, m.available_at, sf.id
-            """,
-            (versions.json_param(), as_of),
-        ).fetchall()
-    except DatabaseError:
-        return out
-    wanted = set(asset_ids)
-    for r in rows:
-        aid = int(r["asset_id"])
-        cap = r["value"]
-        if cap is None and r["inputs_json"]:
-            try:
-                cap = json.loads(r["inputs_json"]).get("market_capitalization")
-            except (ValueError, TypeError):
-                cap = None
-        if cap is not None and aid in wanted:
-            out[aid] = float(cap)  # ORDER BY period_end => last wins = most recent
-    return out
 
 
 # -- risk model -------------------------------------------------------------

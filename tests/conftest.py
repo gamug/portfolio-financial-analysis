@@ -190,6 +190,35 @@ def seed_filing(  # noqa: PLR0913 - one filing row, every column a test may pin
     )
 
 
+def seed_cover_shares(  # noqa: PLR0913 - one cover count, every column a test may pin
+    conn: Database,
+    asset_id: int,
+    shares: float,
+    *,
+    as_of_date: str,
+    filing_date: str | None = None,
+    class_member: str = "",
+    filing_id: int | None = None,
+) -> int:
+    """Insert one ``filing_cover_shares`` row (T-132) on a filing of its own (or *filing_id*),
+    filed on *filing_date* (default: the count's own date). Returns the filing id."""
+    if filing_id is None:
+        filing_id = seed_filing(
+            conn,
+            asset_id,
+            period_end=as_of_date,
+            filing_date=filing_date or as_of_date,
+            form="10-Q",
+            fiscal_period=f"{as_of_date[:4]}Q{(int(as_of_date[5:7]) - 1) // 3 + 1}",
+        )
+    conn.execute(
+        "INSERT INTO filing_cover_shares (filing_id, class_member, value, as_of_date, "
+        "event_time, ingested_at) VALUES (?, ?, ?, ?, ?, 'now')",
+        (filing_id, class_member, shares, as_of_date, as_of_date),
+    )
+    return filing_id
+
+
 def seed_fundamental_score(  # noqa: PLR0913 - one scored filing, every column a test may pin
     conn: Database,
     asset_id: int,
@@ -237,6 +266,20 @@ def memory_quant_db() -> Database:
     return conn
 
 
+def _seed_quarterly_caps(
+    conn: Database, asset_id: int, days: list[str], *, enabled: bool = True
+) -> None:
+    """T-132: a cover-page share count every ~quarter (so one is never older than the reader's age
+    limit), 100k shares x the asset's index => caps that differ by name. Skipped on a database with
+    no fundamental tables (the tests that never build a risk model)."""
+    if not enabled or not (
+        conn.table_exists("filing_cover_shares") and conn.table_exists("sec_filings")
+    ):
+        return
+    for q in range(0, len(days), 63):
+        seed_cover_shares(conn, asset_id, 100_000.0 * asset_id, as_of_date=days[q])
+
+
 @pytest.fixture
 def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., Database]:
     """Return a seeder: fixed-seed geometric random walk into price_daily /
@@ -253,6 +296,7 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
         n_days: int = 300,
         start: str = "2024-01-01",
         with_dividends: bool = True,
+        with_caps: bool = True,
         seed: int = 7,
     ) -> Database:
         rng = random.Random(seed)
@@ -309,6 +353,7 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
                 )
                 prev = price
 
+            _seed_quarterly_caps(conn, a, days, enabled=with_caps)
             if with_dividends:
                 # Four quarterly dividends per asset, as the gateway (the only corporate-actions
                 # source, T-085) would have written them, spread across the seeded window.

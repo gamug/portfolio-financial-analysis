@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 from portfolio_common.db import Database, DatabaseError
 
 from kg_schema import connect
+from kg_schema.market_cap import MarketCapResult, market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import StaleAsOf, stale_as_of_reason
 from quant.config import QuantSettings
@@ -23,7 +25,6 @@ from quant.db import (
     insert_risk_model,
     load_covariance,
     load_expected_returns,
-    load_market_caps,
     load_risk_model,
     load_sector_of,
     sync_positions,
@@ -41,7 +42,7 @@ from quant.risk import (
     ledoit_wolf_covariance,
     sample_covariance,
 )
-from quant.state import fail_run, finish_run, open_run
+from quant.state import fail_run, finish_run, merge_run_params, open_run
 from quant.universe import settings_gate
 
 _W_EPS = 1e-6  # sparsify: drop near-zero weights from the stored book
@@ -59,6 +60,7 @@ class RiskModelResult:
     manifest_tag: str = ""
     stale_prices_bypassed: str | None = None  # T-110: why, if --allow-stale-prices overrode it
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
+    market_cap_coverage: dict[str, Any] = field(default_factory=dict)  # T-132: caps and their age
 
 
 def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray, float | None]:
@@ -72,14 +74,47 @@ def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray
     return sigma, delta
 
 
-def _expected_returns(  # noqa: PLR0913 - the panel, its Σ, and where to read caps as of
+class MissingMarketCaps(RuntimeError):
+    """Panel assets have no market cap as of the date (T-132). The equilibrium prior weights
+    assets by cap, so an unvalued one would silently get weight 0 -- dropped from the market
+    portfolio, and every other asset's weight inflated -- unless the run says so out loud."""
+
+
+def _market_caps(
+    settings: QuantSettings, panel: ReturnPanel, conn: Database, *, as_of: str
+) -> tuple[np.ndarray, MarketCapResult]:
+    """The panel's market caps from the shared as-of reader. A panel asset the reader cannot value
+    refuses the model (:class:`MissingMarketCaps`) unless ``settings.allow_missing_caps`` -- then it
+    gets weight 0 and the run records who and why. A panel with no cap at all always refuses: there
+    is no market portfolio to be equilibrium to, and an equal-weight stand-in would pass for one."""
+    res = market_caps_as_of(
+        conn,
+        panel.asset_ids,
+        as_of=as_of,
+        max_share_age_days=settings.market_cap_max_share_age_days,
+        max_price_age_days=settings.market_cap_max_price_age_days,
+        corpact_engine_version=settings.corpact_engine_version,
+    )
+    if not res.caps:
+        raise MissingMarketCaps(f"no panel asset has a market cap as of {as_of}")
+    if res.missing and not settings.allow_missing_caps:
+        shown = ", ".join(f"{a} ({r})" for a, r in sorted(res.missing.items())[:10])
+        more = f" (+{len(res.missing) - 10} more)" if len(res.missing) > 10 else ""  # noqa: PLR2004
+        raise MissingMarketCaps(
+            f"{len(res.missing)} of {panel.n_assets} panel assets have no market cap as of "
+            f"{as_of}: asset_id {shown}{more}; pass --allow-missing-caps to build with them "
+            "weighted 0 in the market portfolio, recorded on the run"
+        )
+    caps = np.array([res.get(a) or 0.0 for a in panel.asset_ids], dtype=np.float64)
+    return caps, res
+
+
+def _expected_returns(
     settings: QuantSettings,
     panel: ReturnPanel,
     sigma: np.ndarray,
-    conn: Database,
-    manifest: QuantManifest,
+    caps: np.ndarray,
     *,
-    as_of: str,
     rf: float,
 ) -> dict[str, dict[int, float]]:
     """All three estimators are total returns (T-109): ``hist_mean``/``james_stein`` are means
@@ -89,10 +124,6 @@ def _expected_returns(  # noqa: PLR0913 - the panel, its Σ, and where to read c
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
     js = james_stein_mean(panel.returns, periods_per_year=ppy)
-    caps_by_id = load_market_caps(conn, panel.asset_ids, manifest.metrics, as_of=as_of)
-    caps = np.array([caps_by_id.get(a, 0.0) for a in panel.asset_ids], dtype=np.float64)
-    if caps.sum() <= 0:
-        caps = np.ones(panel.n_assets)
     eq = equilibrium_returns(sigma, caps, risk_aversion=settings.equilibrium_risk_aversion, rf=rf)
     return {
         "hist_mean": dict(zip(panel.asset_ids, hist.tolist(), strict=True)),
@@ -157,9 +188,10 @@ def run_build_risk_model(
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
-            mu_by_model = _expected_returns(
-                settings, panel, sigma, conn, manifest, as_of=as_of, rf=rf.annualized_rate
-            )
+            caps, cap_result = _market_caps(settings, panel, conn, as_of=as_of)
+            coverage = cap_result.coverage()
+            merge_run_params(conn, run_id, {"market_caps": coverage})
+            mu_by_model = _expected_returns(settings, panel, sigma, caps, rf=rf.annualized_rate)
 
             spec = {
                 "asset_ids": panel.asset_ids,
@@ -183,7 +215,9 @@ def run_build_risk_model(
                     panel_engine_version=manifest.return_engine_version,
                     panel_spec_json=json.dumps(spec, separators=(",", ":")),
                     rf_annual=rf.annualized_rate,
-                    params_json=json.dumps(settings.model_dump(mode="json"), default=str),
+                    params_json=json.dumps(
+                        {**settings.model_dump(mode="json"), "market_caps": coverage}, default=str
+                    ),
                     quant_run_id=run_id,
                     manifest_json=manifest.json(),
                 ),
@@ -205,6 +239,7 @@ def run_build_risk_model(
             manifest_tag=manifest.tag,
             stale_prices_bypassed=stale_reason,
             dirty_tree_bypassed=dirty_reason,
+            market_cap_coverage=coverage,
         )
     finally:
         if owns:

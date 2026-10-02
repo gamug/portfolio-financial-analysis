@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -10,6 +9,7 @@ from typing import Any
 from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
+from kg_schema.market_cap import market_caps_as_of
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
 
@@ -255,33 +255,11 @@ def latest_semantic_score(conn: Database, cycle_date: str) -> dict[int, float | 
 
 
 def market_cap_estimates(
-    conn: Database,
-    cycle_date: str,
-    metrics: dict[int, dict[str, float | None]],
-    versions: MetricVersions,
+    conn: Database, cycle_date: str, asset_ids: list[int]
 ) -> dict[int, float | None]:
-    """Read market cap straight off the stored valuation metric inputs of the resolved
-    *versions* (T-090), when present; the most recent filing per asset *usable on
-    cycle_date* wins (T-106/T-107 -- a 2023 cycle must not read a 2026 market cap)."""
-    rows = conn.execute(
-        """
-        SELECT f.asset_id, m.inputs_json
-        FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
-        WHERE m.metric_group = 'valuation' AND m.metric_name = 'market_capitalization'
-          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
-          AND m.available_at IS NOT NULL AND m.available_at <= ?
-        ORDER BY f.period_end, m.available_at, f.id
-        """,
-        (versions.json_param(), cycle_date),
-    ).fetchall()
-    out: dict[int, float | None] = {}
-    for r in rows:
-        aid = int(r["asset_id"])
-        try:
-            payload = json.loads(r["inputs_json"] or "{}")
-        except (TypeError, ValueError):
-            payload = {}
-        out[aid] = payload.get("market_capitalization") or payload.get("value")
-    for aid in metrics:
-        out.setdefault(aid, None)
-    return out
+    """Each asset's market cap on *cycle_date* from the shared as-of reader (T-132): the latest
+    cover-page share count usable that day times the close on or before it. ``None`` where the
+    reader refuses to value the name (no count, a count too old, no recent close) -- a missing
+    size factor, never a stale or inflated one. ``quant`` reads the same function."""
+    result = market_caps_as_of(conn, asset_ids, as_of=cycle_date)
+    return {aid: result.get(aid) for aid in asset_ids}

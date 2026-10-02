@@ -18,8 +18,7 @@ from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
 from fundamental_agent.metrics.base import MetricResult
 from kg_schema import apply_migrations, availability, queries
 from kg_schema.availability import AvailabilityMissing
-from kg_schema.versions import resolve_metric_versions
-from quant.db import load_market_caps
+from kg_schema.market_cap import market_caps_as_of
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -237,11 +236,11 @@ def test_a_cycle_refuses_to_run_before_the_backfill(cycle_seed: Database) -> Non
     assert conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == 0
 
 
-def test_quant_refuses_to_read_market_caps_before_the_backfill(cycle_seed: Database) -> None:
+def test_the_market_cap_reader_refuses_before_the_backfill(cycle_seed: Database) -> None:
     conn = cycle_seed
     _pre_t107(conn)
     with pytest.raises(AvailabilityMissing):
-        load_market_caps(conn, [1], resolve_metric_versions(conn), as_of="2026-06-30")
+        market_caps_as_of(conn, [1], as_of="2026-06-30")
 
 
 # -- no as-of reader keys fundamentals on anything else ----------------------------------------
@@ -292,6 +291,10 @@ def test_the_as_of_consumers_filter_filings_by_available_at_alone() -> None:
 def test_the_scan_sees_the_readers_it_guards() -> None:
     """Guard the guard: the known as-of readers are string literals the scan parses."""
     cycle_sql = _sql_strings(SRC / "cycle" / "data.py")
-    assert sum("available_at <= ?" in s for s in cycle_sql) == 4
+    assert sum("available_at <= ?" in s for s in cycle_sql) == 3
+    # T-132: the market cap is the shared reader's (cycle and quant no longer read a stored metric
+    # for it), whose one filing read is the cover-share query
     quant_sql = _sql_strings(SRC / "quant" / "db.py")
-    assert sum("available_at <= ?" in s for s in quant_sql) == 1
+    assert sum("available_at <= ?" in s for s in quant_sql) == 0
+    shared_sql = _sql_strings(SRC / "kg_schema" / "queries.py")
+    assert sum("sf.available_at <= ?" in s for s in shared_sql) == 1

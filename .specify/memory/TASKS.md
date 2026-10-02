@@ -20,7 +20,7 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15 and 16 ar
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131` ✅ done, PR #109 → `T-132`/`T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+(`T-131` ✅ done, PR #109; `T-132` ✅ code done, PR #PR → `T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
 all of it has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item
@@ -208,10 +208,10 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first 
 > the liquidity gate: MA has full history (1,189 days). `T-122` is closed, so the correction
 > lives here rather than in its record.
 >
-> **Note — `T-132`(a) needs an upstream change:** the cover-page share count
-> (`dei:EntityCommonStockSharesOutstanding`) must first be exposed by the
-> `portfolio-data-mining` gateway — the same pattern as `T-042`/`T-118` (upstream PR, then
-> this repo consumes it). `T-132`(b)–(d) and `T-133` are local and do **not** wait for it.
+> **Note — `T-132`(a)'s upstream change has landed:** the cover-page share count
+> (`dei:EntityCommonStockSharesOutstanding`) is exposed by the `portfolio-data-mining` gateway
+> since 2026-10-02 (its `T-043`, PR #48: `data["cover"]["shares_outstanding"]`), the same pattern
+> as `T-042`/`T-118`. `T-133` is local and never waited for it.
 
 - [x] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`). **Code done 2026-10-01 (PR #109, approved).**
       - (a) Never store a bar for a session that hasn't closed: using the NYSE calendar,
@@ -271,11 +271,11 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first 
       checks, which run in the pilot. The first `pricing_agent --store-daily` run after this re-fetches
       every asset that has a split in its history, once each.
 
-- [ ] **T-132** *(P0)* Market capitalization.
+- [x] **T-132** *(P0)* Market capitalization. **Code done 2026-10-02 (PR #PR).**
       - (a) Point-in-time share count from the cover page
         (`dei:EntityCommonStockSharesOutstanding`): gateway (upstream) plus
-        `fundamental_agent`. **Needs the upstream `portfolio-data-mining` change first (same
-        pattern as `T-042`); (b)–(d) do not wait for it.**
+        `fundamental_agent`. *(Upstream `portfolio-data-mining` `T-043`, PR #48, merged
+        2026-10-02.)*
       - (b) Never use `CommonStockSharesIssued` as shares outstanding.
       - (c) One shared reader in `kg_schema`, used by `cycle` and `quant`: the latest
         point-in-time count times the **close at the as-of date**, refusing a count older
@@ -301,6 +301,19 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first 
       **Acceptance**: every sample name has a cap from a point-in-time count; PG within 5% of
       SEC's cover count × price; a test with one missing cap refuses; `verify_pilot.py` T-132
       passes.
+
+      **Closure (2026-10-02)**: the cover count is stored in `filing_cover_shares`; the registry no
+      longer reads `CommonStockSharesIssued`; `kg_schema.market_cap.market_caps_as_of` is the one
+      reader `cycle` and `quant` call (latest usable cover count × the close on the date,
+      split-basis adjusted, refusing a count older than 200 days or a close older than 10);
+      `build-risk-model` refuses on a missing cap (`--allow-missing-caps` records and weights 0) and
+      records coverage and age on `quant_run`; `METRICS_ENGINE_VERSION` → `metrics-v4`. Verified live
+      on a scratch copy of production: 20 of 20 sample names have a cap (6 had none), PG = SEC's
+      2,324,433,060 × the close, XOM's equilibrium return 1.99% → 9.98%; see `docs/model_fixes.md`.
+      **Still open:** production filings carry no cover counts until re-ingested (`run --fresh` /
+      `T-100`; no backfill command was built), `verify_pilot.py`'s T-132 check (in the pilot), and
+      a follow-up to retire quant's now-vestigial `--metrics-version` (market caps were the only
+      `fundamental_metrics` it read).
 
 - [ ] **T-133** *(P1)* Quarterly cash flow and the NEGATIVE_FCF rule.
       - (a) On 10-Qs, derive the quarter's cash flows (YTD minus the prior quarter's YTD), or
@@ -376,7 +389,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current top priority: Work item 17 (`T-131` ✅ done 2026-10-01 (PR #109) → `T-132`/`T-133`), then the pilot
+**🔴 Current top priority: Work item 17 (`T-131` ✅ done 2026-10-01 (PR #109), `T-132` ✅ code done 2026-10-02 (PR #PR) → `T-133`), then the pilot
 (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL), then
 Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
 section's own earlier claim that Work item 8 was next).** Work item 14 (the
