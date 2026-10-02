@@ -199,3 +199,21 @@ def test_allow_dirty_overrides_the_guard_and_records_it(
         conn.execute("SELECT params_json FROM pricing_run ORDER BY id DESC LIMIT 1").fetchone()[0]
     )
     assert params["dirty_tree_bypassed"] == report.dirty_tree_bypassed
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_an_interrupted_run_is_marked_failed_not_left_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pipeline, "_run_task", _interrupt)
+    settings = _settings(tmp_path)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.run(settings, RunParams(start_date="2022-01-01", end_date="2023-12-31"))
+    conn = sqlite3.connect(settings.db_path)
+    status, finished = conn.execute(
+        "SELECT status, finished_at FROM pricing_run ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert status == "failed" and finished is not None

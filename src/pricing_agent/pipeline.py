@@ -142,10 +142,15 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
             engine = _Engine(conn, client, params, report, completed)
 
-            bar = tqdm(tasks, desc="s&p 500 pricing", unit="ticker")
-            for task in bar:
-                bar.set_postfix_str(task.ticker)
-                _run_task(engine, task)
+            try:
+                bar = tqdm(tasks, desc="s&p 500 pricing", unit="ticker")
+                for task in bar:
+                    bar.set_postfix_str(task.ticker)
+                    _run_task(engine, task)
+            except BaseException:  # an interrupt too: never leave the run log 'running'
+                conn.rollback()  # drop any half-written statement before recording the outcome
+                db.finish_run(conn, run_id, status="failed")
+                raise
 
             db.finish_run(conn, run_id, status="completed")
             return report

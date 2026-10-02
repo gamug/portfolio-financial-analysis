@@ -183,7 +183,8 @@ def run_build_returns(
                     conn, asset_id, rows, engine_version=settings.return_engine_version
                 )
             finish_run(conn, run_id)
-        except Exception as exc:
+        except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             fail_run(conn, run_id, str(exc))
             raise
         return report

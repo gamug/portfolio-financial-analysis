@@ -243,7 +243,8 @@ def run_evaluate(
                 perf_rows += added
                 evaluated += 1 if added else 0
             finish_run(conn, run_id)
-        except Exception as exc:
+        except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
             fail_run(conn, run_id, str(exc))
             raise
         return EvaluateResult(
