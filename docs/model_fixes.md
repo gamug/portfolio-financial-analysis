@@ -4444,7 +4444,7 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
 
 ## T-132 — Market capitalization: "shares issued", an unbounded-age stored cap, a silent zero weight and a period-end price
 
-**Status**: Fixed 2026-10-02 (branch `feat/t132-market-capitalization`, `T-132` (a)-(d)). The upstream half of (a)
+**Status**: Fixed 2026-10-02 (branch `feat/t132-market-capitalization`, PR #110, approved; `T-132` (a)-(d)). The upstream half of (a)
 (`portfolio-data-mining` T-043, PR #48, merged 2026-10-02) is what makes the cover count available. Production is **not**
 repaired by this change: its filings carry no cover counts until they are re-ingested (`T-100` starts from a fresh database).
 
