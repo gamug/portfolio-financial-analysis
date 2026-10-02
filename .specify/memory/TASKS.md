@@ -20,7 +20,7 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15 and 16 ar
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131` ✅ done, PR #109; `T-132` ✅ code done, PR #PR → `T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+(`T-131` ✅ done, PR #109; `T-132` ✅ code done, PR #110 → `T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
 all of it has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item
@@ -271,7 +271,7 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first 
       checks, which run in the pilot. The first `pricing_agent --store-daily` run after this re-fetches
       every asset that has a split in its history, once each.
 
-- [x] **T-132** *(P0)* Market capitalization. **Code done 2026-10-02 (PR #PR).**
+- [x] **T-132** *(P0)* Market capitalization. **Code done 2026-10-02 (PR #110).**
       - (a) Point-in-time share count from the cover page
         (`dei:EntityCommonStockSharesOutstanding`): gateway (upstream) plus
         `fundamental_agent`. *(Upstream `portfolio-data-mining` `T-043`, PR #48, merged
@@ -389,7 +389,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current top priority: Work item 17 (`T-131` ✅ done 2026-10-01 (PR #109), `T-132` ✅ code done 2026-10-02 (PR #PR) → `T-133`), then the pilot
+**🔴 Current top priority: Work item 17 (`T-131` ✅ done 2026-10-01 (PR #109), `T-132` ✅ code done 2026-10-02 (PR #110) → `T-133`), then the pilot
 (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL), then
 Work item 8, then Work item 9 (PR #104 review, 2026-09-30 — corrects this
 section's own earlier claim that Work item 8 was next).** Work item 14 (the

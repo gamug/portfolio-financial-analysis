@@ -30,7 +30,7 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
 2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **Work item 17 (`T-131` ✅ done 2026-10-01, PR #109; `T-132` ✅ code done 2026-10-02, PR #PR → `T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **Work item 17 (`T-131` ✅ done 2026-10-01, PR #109; `T-132` ✅ code done 2026-10-02, PR #110 → `T-133`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) (PR #104 review, 2026-09-30 — added ahead of Work item 8 here so the
 `T-079` LLM re-run does not start early)** →
 **Work item 8 (P1 — methodological
@@ -1704,7 +1704,7 @@ this document.** Their internal sequencing:
   `T-131` first (**done 2026-10-01, PR #109**: the session guard, full-history observations, split
   re-fetch/refusal and the pinned quant gate; only its optional production clean-up and
   `verify_pilot.py`'s T-131 checks remain, the latter in the pilot), then `T-132`
-  (**code done 2026-10-02, PR #PR**: the cover-page share count stored in `filing_cover_shares`
+  (**code done 2026-10-02, PR #110**: the cover-page share count stored in `filing_cover_shares`
   after `portfolio-data-mining` `T-043`, no more "shares issued", the shared as-of reader
   `kg_schema.market_cap` for `cycle` and `quant`, and a risk model that refuses on a missing cap;
   production needs a re-ingest for the counts), `T-133`, then the pilot. Its source is `docs/md primera revision/system_review_2026-09-29.md` §4; the
