@@ -38,7 +38,7 @@ only durable record.
 ## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold
 
 Added 2026-10-02, at the user's direction; **first in the new order** (18 → 8 → 9 → 3 → 4). Source: the
-2026-10-02 audit's cap finding (`AUDIT_DECISIONS.md`, untracked) — with `top_n = 10` the default
+2026-10-02 read-only audit's cap finding (recorded in full here, no external file) — with `top_n = 10` the default
 `max_name_weight = 0.10` forces every name to exactly 0.10, four Financials then sum to 0.40 and no
 weight vector satisfies the 0.30 sector cap; `cycle.construction.target_weights` runs 8 rounds and
 returns whatever it has, silently. Production's live book (`cycle_run` 1, 2026-09-22) holds six names at
