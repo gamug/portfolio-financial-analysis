@@ -21,7 +21,10 @@ def list_scores(
     score_type: str | None = Query(
         None, description="FUNDAMENTAL / TECHNICAL / VALORIZATION / ..."
     ),
-    as_of: str | None = Query(None, description="only rows with event_time <= this date"),
+    as_of: str | None = Query(
+        None,
+        description="only rows already available on this date (available_at, else event_time)",
+    ),
     page: Page = Depends(page_params),
     db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
@@ -35,7 +38,10 @@ def list_scores(
         clauses.append("score_type = ?")
         params.append(score_type.upper())
     if as_of:
-        clauses.append("event_time <= ?")
+        # No lookahead: a FUNDAMENTAL row's event_time is its period end, known only once the
+        # filing is available (T-107's available_at); cycle scores carry none and are known at
+        # their cycle date, their event_time.
+        clauses.append("COALESCE(available_at, event_time) <= ?")
         params.append(as_of)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)

@@ -123,3 +123,20 @@ def test_scores_and_positions(client: TestClient) -> None:
     assert len(positions) == 1
     assert positions[0]["ticker"] == "AAPL"
     assert positions[0]["weight"] == 0.05
+
+
+def test_scores_as_of_reads_availability_not_period_end(client: TestClient) -> None:
+    # The seeded FY score's period ends 2024-03-31 but its filing is only available ~45 days
+    # later: as of 2024-04-30 it was not yet known (constitution AI behavior #4, no lookahead).
+    before = client.get("/api/v1/scores", params={"ticker": "AAPL", "as_of": "2024-04-30"})
+    assert before.json() == []
+    after = client.get("/api/v1/scores", params={"ticker": "AAPL", "as_of": "2024-06-30"})
+    assert len(after.json()) == 1
+
+
+def test_positions_as_of_is_honoured_without_open_only(client: TestClient) -> None:
+    # The only stint opens 2024-06-30; an earlier as_of must not return it, even with the
+    # default open_only=true.
+    assert client.get("/api/v1/portfolio/positions", params={"as_of": "2024-01-01"}).json() == []
+    held = client.get("/api/v1/portfolio/positions", params={"as_of": "2024-07-01"}).json()
+    assert [p["ticker"] for p in held] == ["AAPL"]

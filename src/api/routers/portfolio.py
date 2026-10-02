@@ -17,12 +17,14 @@ router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 @router.get("/positions")
 def positions(
     as_of: str | None = Query(None, description="position stints open as of this date"),
-    open_only: bool = Query(True, description="only currently-open stints (valid_to IS NULL)"),
+    open_only: bool = Query(
+        True, description="only currently-open stints (valid_to IS NULL); ignored with as_of"
+    ),
     db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
     sql = "SELECT * FROM v_portfolio_position"
     params: list[object] = []
-    if as_of and not open_only:
+    if as_of:
         sql += " WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)"
         params += [as_of, as_of]
     elif open_only:
