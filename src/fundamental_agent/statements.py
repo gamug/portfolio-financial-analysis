@@ -101,6 +101,12 @@ class LineItem:
     # ``concepts`` -- one pass in document order -- an earlier tier here beats a later one however
     # the rows are ordered, so a filer's real spend is not displaced by an acquisition line.
     fallback_concepts: tuple[str, ...] = ()
+    # Concepts added to the value of one of the first ``fallback_addend_tiers`` fallback tiers, when
+    # the filer reports them: a line that sits *beside* the tier's own rather than inside it, so a
+    # sum cannot double count (T-133 review: EOG's "other property, plant and equipment" is a
+    # separate line from its oil and gas additions).
+    fallback_addends: tuple[str, ...] = ()
+    fallback_addend_tiers: int = 0
     # The last resort: a row whose label matches this regex and none of ``label_fallback_exclude``
     # (both case-insensitive). A filer's custom-extension concept (PSX's
     # ``psx_CapitalExpendituresAndInvestments``) has no stable tag to list, only its caption.
@@ -251,6 +257,10 @@ REGISTRY: dict[str, LineItem] = {
             # the same additions line tagged net of disposals (WAT's 10-Ks to FY2024)
             "us-gaap_PaymentsForProceedsFromProductiveAssets",
         ),
+        # An oil & gas filer's non-field spending (EOG: $479M beside $6,115M of oil and gas
+        # additions) is its own line; it joins the three oil & gas tiers, not the "net" line.
+        fallback_addends=("us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",),
+        fallback_addend_tiers=3,
         # A custom concept, found by its caption on the cash-flow statement alone, when exactly one
         # line reads "capital expenditure(s)" (PSX: "Capital expenditures and investments"). The
         # statement's non-cash reconciling rows ("change in capital expenditures not yet paid",
@@ -686,12 +696,14 @@ class Statements:
         """The T-133 fallback tiers, in order: each ``spec.fallback_concepts`` entry, then the
         ``spec.label_fallback`` caption. Reached only when :meth:`_first_component_match` found
         nothing, so it can never displace a value the ordinary lookup returns."""
-        for concept in spec.fallback_concepts:
-            for row in self._rows_for(spec):
-                if row.get("concept") == concept:
-                    value = _numeric(row.get(column))
-                    if value is not None:
-                        return value
+        for tier, concept in enumerate(spec.fallback_concepts):
+            value = self._concept_value(spec, column, concept)
+            if value is None:
+                continue
+            if tier < spec.fallback_addend_tiers:
+                for extra in spec.fallback_addends:
+                    value += self._concept_value(spec, column, extra) or 0.0
+            return value
         if not spec.label_fallback:
             return None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)
@@ -710,6 +722,15 @@ class Statements:
         # independent-power line), and either alone would understate it -- a partial figure is
         # worse than none, so the item stays missing.
         return next(iter(found.values())) if len(found) == 1 else None
+
+    def _concept_value(self, spec: LineItem, column: str, concept: str) -> float | None:
+        """The first non-dimensional row tagged *concept* that has a value in *column*."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept:
+                value = _numeric(row.get(column))
+                if value is not None:
+                    return value
+        return None
 
     def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
         """One value per distinct ``spec.concepts`` member, first occurrence in

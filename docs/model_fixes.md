@@ -4633,8 +4633,10 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
 - **A partial capex is worse than none.** NEE files "Capital expenditures of FPL" ($9.1B), a duplicate "Capital expenditures", "Other
   capital expenditures" and the independent-power line; any one alone put NEE's FY2022 FCF margin at −3.8% where the total is far lower.
   Ambiguity returns no capex. The same rule is why the concept tiers are ordered and the caption is a last resort.
-- **EOG's other PP&E is not added** (about 3-5% of its spending): summing concepts needs a per-filer judgement about overlap that a
-  closed list cannot make, and the figure stays a slight understatement of capex, not a fraction.
+- **An oil & gas filer's "other PP&E" line is added to its oil & gas spend** (PR #111 review). EOG files $6,115M of oil and gas
+  additions and, on a separate line, $479M of `PaymentsToAcquireOtherPropertyPlantAndEquipment`; stopping at the first tier put its FCF
+  at $3,929M instead of $3,450M (~14% high). `fallback_addends` joins that concept to the three oil & gas tiers only (not to the "net"
+  additions line, and it is never capex on its own): a separate line cannot double count. Live: EOG capex -6,594M, FCF margin 15.2%.
 - **Folded into `metrics-v4`** rather than `v5` (see Status).
 
 ### Verification
@@ -4650,8 +4652,11 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
   ambiguous (APO, WFC, HOOD: financials; ESS: a REIT; NEE: a utility) -- not the year-to-date defect; the other 4 are the first quarters
   stored before any 10-K of PG, BF.B and STZ (no prior fiscal year to anchor a TTM). Among names that have an FCF on their 10-Ks, 9 of
   146 Q2/Q3 (6.2%) are missing, all of that kind; over the whole 503-ticker database the same figure is 141 of 2,136 (6.6%), the
-  scratch database holding only part of each ticker's history. The task's "< 5%" is **not** met as stated; the remainder is the
-  capex-concept inventory below, not this fix.
+  scratch database holding only part of each ticker's history. Read as written ("< 5% of Q2/Q3 FCF margins missing") the
+  target is not reached; the PR #111 review recalibrated it to the population where an FCF is defined -- companies with a 10-K FCF,
+  10-Qs after their first 10-K -- where the remaining gap is the earliest quarters with no prior year, and treats it as met.
+  `verify_pilot.py`'s T-133 check measures that population. Companies with no capex line (APO, WFC, HOOD), or one deliberately left
+  empty (ESS; NEE's split capex), are outside it.
 - **WAT**: first quarter of 2026 FCF margin **-3.3% -> +7.0%** (TTM = FY2025 - Q1 2025 + Q1 2026, method `ytd` for OCF, capex and
   revenue), so `NEGATIVE_FCF` no longer fires; the later 10-Q reads +8.6%. Across the sample, 7 10-Qs flip from a negative single
   quarter to a positive year (WAT 1, BF.B 2, PM 4). New negatives are real: HUM 2024Q1-Q3 (-3% to -5%) and HOOD.
@@ -4661,11 +4666,14 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
   non-cash exclusion removed; the acquisition tier ahead of development; a fallback displacing a found value; a 3-month denominator in
   TTM mode; an empty TTM treated as a 10-K; `x4` inside `real_ttm`; the group given `x4`; a 10-K given a TTM; the balance-sheet
   detection disabled or always true; the prior-year column required to carry the same tag. `uv run pytest -q`, `ruff`, `mypy` green.
+- **PR #111 review follow-up**: the oil & gas "other PP&E" addend above (3 tests; mutation-checked: addend tiers 0 and 4 both
+  caught). `uv run pytest -q` 955.
 - `verify_pilot.py`'s T-133 checks run in the pilot.
 
 ### Residual scope, deliberately deferred
 
-- **Capex-concept inventory.** Filers whose capex is a utility's construction line (`PaymentsForConstructionInProcess`: AEP, ED),
+- **Capex-concept inventory** (recorded as scope of `T-071`, sector-appropriate cash-flow measures in the valorization redesign, per the
+  PR #111 review -- not a new task). Filers whose capex is a utility's construction line (`PaymentsForConstructionInProcess`: AEP, ED),
   split into utility and non-utility lines (DTE, LNT, NEE), or tagged `PaymentsToAcquireOtherPropertyPlantAndEquipment` /
   `...OtherProductiveAssets` (LLY, EQIX, DAL, HOOD) still have no FCF. Each needs a decision about summing lines that the single-line
   lookup cannot make; banks, insurers and asset managers have no capex line at all.

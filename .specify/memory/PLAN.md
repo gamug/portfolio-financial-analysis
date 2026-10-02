@@ -1711,7 +1711,7 @@ this document.** Their internal sequencing:
   `cashflow` group is trailing-twelve-month on a 10-Q so `NEGATIVE_FCF` no longer judges a company
   on one quarter, oil & gas and single-caption capex are recognised, and a first quarter the gateway
   tags `(Q2)` is its own year-to-date; Q2/Q3 FCF margin missing 94.5% -> 24.7% on the sample, the
-  rest a capex-concept inventory for financials, REITs and utilities), then the pilot. Its source is `docs/md primera revision/system_review_2026-09-29.md` §4; the
+  rest is utility/REIT capex, recorded as `T-071` scope), then the pilot. Its source is `docs/md primera revision/system_review_2026-09-29.md` §4; the
   review's other findings became scope additions to `T-070`, `T-071`, `T-072`, `T-076` and
   `T-077` in `TASKS.md`. Task text and acceptance criteria live in `TASKS.md`.
 - Work item 7 (P0 critical fixes) is **closed** (2026-09-25, see `CHANGELOG.md`), and so is

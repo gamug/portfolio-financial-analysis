@@ -215,6 +215,39 @@ def test_development_beats_an_acquisition_of_reserves_whatever_the_row_order() -
     assert _capex(acquire) == -8_920.0  # sole line: the best that is known
 
 
+def test_an_oil_and_gas_filer_s_other_property_line_joins_its_oil_and_gas_spend() -> None:
+    """EOG: $6,115M of oil and gas additions and, on its own line, $479M of other PP&E."""
+    og = _row(
+        "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        "Additions to oil and gas",
+        **{FY: -6_115.0},
+    )
+    other = _row(
+        "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "Additions to other PP&E",
+        **{FY: -479.0},
+    )
+    assert _capex(og, other) == -6_594.0
+    assert _capex(other, og) == -6_594.0  # whatever the row order
+    assert _capex(og) == -6_115.0  # the line is optional
+
+
+def test_other_property_alone_is_not_oil_and_gas_capex() -> None:
+    """The addend rides on an oil and gas tier; on its own it is not a recognised capex line."""
+    other = _row(
+        "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment", "Other PP&E", **{FY: -479.0}
+    )
+    assert _capex(other) is None
+
+
+def test_the_net_additions_line_takes_no_addend() -> None:
+    net = _row("us-gaap_PaymentsForProceedsFromProductiveAssets", "Additions, net", **{FY: -100.0})
+    other = _row(
+        "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment", "Other PP&E", **{FY: -50.0}
+    )
+    assert _capex(net, other) == -100.0
+
+
 def test_a_standard_capex_row_is_never_displaced_by_a_fallback() -> None:
     plain = _row("us-gaap_PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{FY: -10.0})
     develop = _row(

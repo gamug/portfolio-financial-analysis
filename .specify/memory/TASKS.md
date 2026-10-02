@@ -116,7 +116,12 @@ only durable record.
       `profitability.net_income`/`income_statement.net_income`, neither a stored metric, so the
       value factor uses FCF yields only; keep FUNDAMENTAL normalization in `cycle_ranking`,
       not overwritten on the stored snapshot (N9); ROIC is None when invested capital ≤ 0
-      (audit F9). The as-of market cap itself comes from `T-132`'s shared reader.)*
+      (audit F9). The as-of market cap itself comes from `T-132`'s shared reader.)* *(2026-10-02,
+      `T-133` review, scope addition: sector-appropriate cash-flow measures -- capex for utilities
+      (`PaymentsForConstructionInProcess`, utility/non-utility split lines) and REITs, and for filers
+      whose capex is `PaymentsToAcquireOtherPropertyPlantAndEquipment`/`...OtherProductiveAssets`, which
+      `T-133`'s single-line lookup leaves empty rather than partial; see `docs/model_fixes.md` T-133
+      "Residual scope".)*
 - [ ] **T-072** Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt

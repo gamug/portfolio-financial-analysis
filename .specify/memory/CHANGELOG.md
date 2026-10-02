@@ -2114,10 +2114,13 @@ They landed **ahead of Work item 8**: `T-131` first, then
       scratch copy of `financial-3.db` through the real TTM code: Q2/Q3 FCF margin missing **94.5% ->
       24.7%** on the 20-ticker sample, WAT's first quarter of 2026 **-3.3% -> +7.0%**; see
       `docs/model_fixes.md`.
-      **Acceptance not met as written**: "< 5% missing" -- 41 of the remaining 45 are five names with no
-      recognised capex line (APO, WFC, HOOD: financials; ESS: a REIT; NEE: a utility), 4 are the first
-      quarters stored before any 10-K; among names with a 10-K FCF, 9 of 146 (6.2%) are missing. Closing
-      it is a capex-concept inventory (utility construction lines, "other PP&E" variants, summing split
-      lines) that needs per-filer judgement.
-      **Still open:** that inventory (a follow-up if wanted), `verify_pilot.py`'s T-133 checks (in the
-      pilot), and the production re-run (`T-100`).
+      **Acceptance**: read as written ("< 5% missing") it is not reached -- 41 of the remaining 45 are
+      five names with no recognised capex line (APO, WFC, HOOD: financials; ESS: a REIT; NEE: a utility),
+      4 are the first quarters stored before any 10-K. The PR #111 review recalibrated the criterion to the
+      population where an FCF is defined (companies with a 10-K FCF, 10-Qs after their first 10-K), where
+      only the earliest quarters with no prior year remain, and treats it as met; `verify_pilot.py`'s
+      T-133 check measures that population. PR #111 review also added an oil & gas filer's "other PP&E"
+      line to its oil & gas capex (EOG capex -6,115M -> -6,594M, FCF -14%).
+      **Still open:** utility and REIT capex (utility construction lines, split lines, "other PP&E"
+      variants) -- recorded as scope of `T-071`, not a new task; `verify_pilot.py`'s T-133 checks (in the
+      pilot); and the production re-run (`T-100`).
