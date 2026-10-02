@@ -101,6 +101,9 @@ class QuantSettings(BaseModel):
     # backfill-actions covers the window (T-086), because rows built without dividends
     # would be locked in under this version by INSERT OR IGNORE.
     return_engine_version: str = "qret-v2"
+    # The price_observation series the universe gate reads (T-131 review). quant is a leaf and
+    # cannot import pricing_agent's PRICE_OBSERVATION_ENGINE_VERSION, so the pin lives here.
+    observation_engine_version: str = "priceobs-v1"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"
     # bench-v2 (T-108): the mean of *simple* returns over the gated panel, compounded (1 + r);

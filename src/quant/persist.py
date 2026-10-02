@@ -142,7 +142,9 @@ def run_build_risk_model(
                     f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
                     "of the price spine"
                 )
-            gate = settings_gate(conn, settings, as_of=as_of)
+            gate = settings_gate(
+                conn, settings, as_of=as_of, return_engine_version=manifest.return_engine_version
+            )
             if not gate.asset_ids:
                 raise RuntimeError(f"universe gate is empty as of {as_of}")  # noqa: TRY301
             panel = build_return_panel(

@@ -138,7 +138,8 @@ technical/veto path onto quant's rows.
 
 `liquidity_data_gate` keeps a name iff it (a) is an index member as of the date,
 (b) has ≥ `min_history_days` return observations, (c) clears a median
-dollar-volume floor, and (optionally) (d) is not under a T-1 HARD veto —
+dollar-volume floor (both read at the **pinned** `return_engine_version` /
+`observation_engine_version`, never "latest" — T-131), and (optionally) (d) is not under a T-1 HARD veto —
 `kg_schema.queries.hard_vetoed_as_of`, the same point-in-time stint predicate
 `cycle` reads (T-125; `quant.db.hard_vetoed_as_of` re-exports it, no longer its
 own copy). It reads **no** `score_snapshot` / `cycle_ranking` / blended score, so the gate stays an

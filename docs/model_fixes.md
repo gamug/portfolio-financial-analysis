@@ -4395,8 +4395,12 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
   (`pricing_run_error.stage = 'split_jump'`) and **nothing** is written for it. `--allow-split-jumps` overrides. Only jumps
   involving a bar the run fetched count. `quant.db.upsert_return_daily` follows the same update-on-change rule, so
   `quant build-returns` rebuilds a returns series after a re-adjustment (it was `INSERT OR IGNORE`).
-- **(d)** the two readers use `v_quant_return_daily` / `v_price_observation`, which already resolve the latest `engine_version`
-  per (asset, day).
+- **(d)** the two readers filter by a **pinned** `engine_version`, as every other quant reader does (panel, benchmark, evaluate):
+  `QuantSettings.return_engine_version` for returns (`persist.py` passes the resolved manifest version, which is what the panel
+  reads under `--returns-version`) and a new `QuantSettings.observation_engine_version = "priceobs-v1"` for observations (quant
+  cannot import `pricing_agent`'s constant). First version of this fix read the `v_*` views, which resolve "latest per day" by
+  `computed_at`; PR #109's review showed that can count a different series than the panel is built from, and that the rewrites
+  this change introduces bump `computed_at`, so "latest" could flip per row after a rebuild.
 
 ### Design decisions
 
@@ -4417,10 +4421,11 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
   the recorded 2:1 split of its asset; a full recompute of the 10,500 NULL observation rows over the stored history leaves **0** NULL
   in the four fields. The gateway was not reachable from this environment, so the re-fetch path is exercised against a stub
   gateway, not live.
-- `tests/test_pricing_integrity.py` (32), `tests/test_trading_calendar.py`, `tests/test_quant_t131.py`. Mutation-checked: building
+- `tests/test_pricing_integrity.py` (32), `tests/test_trading_calendar.py`, `tests/test_quant_t131.py` (two versions present, the
+  counts follow the pinned one even when the other is newer). Mutation-checked: building
   observations from the fetched candles fails 3 tests; dropping the session guard 2; dropping the jump refusal 2; dropping the
-  pre-split trigger 1; dropping the touched-bar filter 1; making observations `DO NOTHING` 2; reading the raw tables in
-  `quant.universe` 3; making the returns upsert `DO NOTHING` 1. `uv run pytest -q` (858), `ruff`, `mypy` green.
+  pre-split trigger 1; dropping the touched-bar filter 1; making observations `DO NOTHING` 2; leaving the observation or returns pin off in
+  `quant.universe` 1-2 each, ignoring the manifest version in `settings_gate` 1; making the returns upsert `DO NOTHING` 1. `uv run pytest -q` (860), `ruff`, `mypy` green.
 - `verify_pilot.py` T-131 checks (last session volume, NULL long-window analytics, split-shaped jumps) run in the pilot.
 
 ### Residual scope, deliberately deferred
@@ -4428,5 +4433,8 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
 - **Production clean-up** (user's direction only; unnecessary if production is not used before `T-100`): delete the 2026-09-29 rows
   from `price_observation` / `quant_return_daily` and the benchmark, performance and risk-model rows built on them; re-fetch APH and
   MNST in full; rebuild observations and returns.
+- `build-returns` over a window that extends past a new ex-date rewrites that asset's whole history, because `adj_close` is
+  back-adjusted to the window end (PR #109 review: MCD/NEE/BF.B/UDR, 1,167 rows each); nothing reads `adj_close`, so results are
+  unaffected, and it is left in the change test so the column never goes stale. Exact float comparison can rewrite a row on 1e-18 noise.
 - A genuine one-day x2 / x0.5 move is indistinguishable from a seam and needs `--allow-split-jumps` (none in the current universe).
 - Early-close days are treated as full days (refuses slightly longer than needed).

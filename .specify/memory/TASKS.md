@@ -258,11 +258,11 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first,
       split-shaped seam jump matches a recorded split; a jump that survives or has no recorded split is
       refused, writing nothing for the ticker (`pricing_run_error.stage = 'split_jump'`), unless
       `--allow-split-jumps`. `quant.db.upsert_return_daily` follows the same update-on-change rule, so
-      `quant build-returns` rebuilds a re-adjusted series. (d) `quant.universe` reads
-      `v_quant_return_daily`/`v_price_observation`. **Verified on production `financial.db` (read-only):**
+      `quant build-returns` rebuilds a re-adjusted series. (d) `quant.universe` filters by the pinned
+      `return_engine_version` / new `observation_engine_version` (PR #109 review). **Verified on production `financial.db` (read-only):**
       the detector finds exactly the 7 jumps (APH 1, MNST 6), each matching its recorded 2:1 split, and a
       full recompute fills all 10,500 NULL observation rows; the gateway was unreachable, so the re-fetch
-      is exercised against a stub, not live. +48 tests (858 total), mutation-checked; ruff, format, mypy
+      is exercised against a stub, not live. +50 tests (860 total), mutation-checked; ruff, format, mypy
       clean. Record: `docs/model_fixes.md` "T-131"; `SPEC.md` FR-004 and NR-007 (the two derived series
       are rewritten on a changed input), `docs/pricing_agent.md` updated.
       **Still open:** the production clean-up above (user direction only) and `verify_pilot.py`'s T-131
