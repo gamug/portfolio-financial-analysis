@@ -8,7 +8,7 @@ per-day `price_observation` analytics).
 ```bash
 uv run python -m pricing_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
     [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
-    [--allow-dirty]
+    [--allow-dirty] [--allow-split-jumps]
 uv run python -m pricing_agent migrate
 ```
 
@@ -24,7 +24,33 @@ is a deprecated no-op.
 specific stored `price_daily` bar, and `_store` builds both from the same fetched
 `candles` in one call, so writing observations without also storing the matching daily
 bars would leave an orphan observation date — no `price_daily` row for a day
-`price_observation` claims to analyze.
+`price_observation` claims to analyze. The observations are built from the asset's
+**full stored `price_daily` history** (T-131), read back after the bars are written,
+not from the run's fetched candles: a 252-day momentum needs 252 earlier bars, and
+an incremental refresh used to leave 90-day vol / 252-day momentum / drawdown NULL on
+every row it created.
+
+### Price ingestion integrity (T-131)
+
+- **Closed sessions only.** `run` refuses an end date (`--analysis-date`/`--end`) that is an
+  NYSE trading day whose bar is not final — before 16:00 ET plus a 1-hour settle buffer
+  (`kg_schema.trading_calendar.session_final_at`) — with `SessionNotClosed`, before the DB is
+  touched. A weekend/holiday end is accepted (no session). The default `--analysis-date`
+  (today, UTC) is therefore refused for most of a trading day: pass the latest final session,
+  which the error names.
+- **Splits.** The gateway adjusts history for a split as of the fetch date, so a window fetched
+  after a split sits on a different basis from older stored rows. With `--store-daily`, a
+  full-history re-fetch (from the first stored bar) happens **once** when a recorded
+  `corporate_action` SPLIT postdates a stored bar written before it
+  (`price_daily.ingested_at < ex_date`, or no stamp), or when the stored-plus-fetched series has
+  a split-shaped jump at the run's seam that matches a recorded split. The first run after
+  T-131 re-fetches every asset that has a split in its history (legacy bars have no
+  `ingested_at`), once each. Re-run `quant build-returns` afterwards to rebuild their returns.
+- **Refusal.** A split-shaped close jump (x2, x0.5, x3, x1/3, x4, x1/4, x10, x0.1, ±3%) in the
+  series to store that survives the re-fetch — or that no recorded split explains (run
+  `quant backfill-actions`) — fails that ticker (`pricing_run_error.stage = 'split_jump'`) and
+  writes nothing for it. `--allow-split-jumps` accepts it, for a genuine move of that size. Only
+  jumps involving a bar this run fetched are considered, so an old one is not every run's problem.
 
 `run` refuses to write its `pricing_run` row at all when `code_version()` is dirty
 (an uncommitted change under `src/`, `skills/`, `pyproject.toml`, or `uv.lock` — see
@@ -92,7 +118,9 @@ Per-`(asset, day)` analytics (roadmap `PriceObservation`). Pure functions over a
 | `completed_windows(conn)` | `(ticker, start, end, label)` resume set |
 | `upsert_price_window(row)` | upsert on `(asset_id, start_date, end_date, label)`; sets `event_time = end_date` |
 | `replace_daily_prices(conn, asset_id, candles)` | raw OHLCV; sets `event_time = date`, `ingested_at` |
-| `upsert_price_observations(conn, asset_id, observations, *, engine_version, run_id)` | **immutable** per `(asset_id, obs_date, engine_version)`; `PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"` |
+| `upsert_price_observations(conn, asset_id, observations, *, engine_version, run_id)` | keyed `(asset_id, obs_date, engine_version)`; **rewritten only when a derived value differs** (T-131), a no-op on unchanged prices; `PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"` |
+| `load_daily_candles(conn, asset_id, *, end)` | the asset's full stored `price_daily` history up to `end` — what observations and the split-seam check read (T-131) |
+| `recorded_split_values` / `has_pre_split_rows` | the asset's `corporate_action` SPLIT ratios, and whether one postdates a bar stored before it (T-131) |
 
 ### `pipeline.py`
 

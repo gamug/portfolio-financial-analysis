@@ -176,7 +176,7 @@ def test_run_refuses_a_dirty_code_version(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.setattr(pipeline, "code_version", lambda: "deadbee-dirty")
 
     with pytest.raises(DirtyTree, match="deadbee-dirty"):
-        pipeline.run(settings, RunParams())
+        pipeline.run(settings, RunParams(analysis_date="2023-12-31"))
 
     # refused right after ensure_schema, before the universe is even loaded
     conn = sqlite3.connect(settings.db_path)

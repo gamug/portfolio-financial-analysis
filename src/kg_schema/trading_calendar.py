@@ -14,7 +14,7 @@ NYSE's published holiday lists (``tests/test_calendar.py``).
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from functools import cache
 
 # Unscheduled full-day closures since 2000 (national days of mourning, weather, 9/11).
@@ -110,3 +110,46 @@ def available_from(filing_date: str | None) -> str | None:
     if not filing_date:
         return None
     return next_trading_day(date.fromisoformat(filing_date[:10])).isoformat()
+
+
+# -- when a session's daily bar is final (T-131) ------------------------------------------
+
+#: The regular close, 16:00 America/New_York. An early close (13:00) is treated as a full day:
+#: refusing a little too long is the safe side of this guard.
+_CLOSE_HOUR_ET = 16
+#: A vendor's volume is still being revised just after the bell; this much later the bar is final.
+SESSION_SETTLE_BUFFER = timedelta(hours=1)
+_SUNDAY_WEEKDAY = 6
+_MARCH, _NOVEMBER = 3, 11
+
+
+def _is_dst(day: date) -> bool:
+    """US daylight time: from the second Sunday of March to the first Sunday of November.
+    The changeovers are Sunday 02:00 local, so a weekday's 16:00 close is never ambiguous."""
+    start = _nth_weekday(day.year, _MARCH, _SUNDAY_WEEKDAY, 2)
+    end = _nth_weekday(day.year, _NOVEMBER, _SUNDAY_WEEKDAY, 1)
+    return start <= day < end
+
+
+def session_final_at(day: date) -> datetime:
+    """The UTC instant from which *day*'s daily bar is complete: the 16:00 ET close plus
+    :data:`SESSION_SETTLE_BUFFER`. Hand-computed from the US DST rule rather than ``zoneinfo``
+    so it needs no tz database in a minimal container."""
+    utc_offset = 4 if _is_dst(day) else 5
+    close = datetime(day.year, day.month, day.day, _CLOSE_HOUR_ET + utc_offset, tzinfo=UTC)
+    return close + SESSION_SETTLE_BUFFER
+
+
+def session_is_open_or_pending(day: date, now: datetime) -> bool:
+    """True when *day* is a trading day whose bar is not yet final at *now* (an aware
+    datetime): the session is in progress or has not started. A weekend or holiday has no
+    session, so is never pending."""
+    return is_trading_day(day) and now < session_final_at(day)
+
+
+def last_final_session(now: datetime) -> date:
+    """The latest NYSE trading day whose bar is final at *now*."""
+    day = now.astimezone(UTC).date()
+    while not is_trading_day(day) or now < session_final_at(day):
+        day -= timedelta(days=1)
+    return day

@@ -38,31 +38,50 @@ def _median(values: list[float]) -> float:
     return s[mid] if len(s) % 2 else 0.5 * (s[mid - 1] + s[mid])
 
 
-def _history_counts(conn: Database, as_of: str) -> dict[int, int]:
-    have_tr = conn.execute("SELECT 1 FROM quant_return_daily LIMIT 1").fetchone() is not None
+def _history_counts(
+    conn: Database, as_of: str, *, return_engine_version: str, observation_engine_version: str
+) -> dict[int, int]:
+    """Days of return history per asset at the *pinned* engine versions (T-131).
+
+    Pinned, not "latest per day": every other quant reader (panel, benchmark, evaluate) reads
+    ``settings.return_engine_version``, so a gate that resolved the latest version could count
+    one series while the panel is built from another -- and a rewrite bumps ``computed_at``, so
+    "latest" could flip per row after any rebuild. A raw ``COUNT(*)`` without the filter counts a
+    day once per version."""
+    have_tr = (
+        conn.execute(
+            "SELECT 1 FROM quant_return_daily WHERE engine_version = ? LIMIT 1",
+            (return_engine_version,),
+        ).fetchone()
+        is not None
+    )
     if have_tr:
         rows = conn.execute(
             "SELECT asset_id, COUNT(*) n FROM quant_return_daily "
-            "WHERE obs_date <= ? AND tr_log_return IS NOT NULL GROUP BY asset_id",
-            (as_of,),
+            "WHERE obs_date <= ? AND tr_log_return IS NOT NULL AND engine_version = ? "
+            "GROUP BY asset_id",
+            (as_of, return_engine_version),
         )
     else:
         rows = conn.execute(
             "SELECT asset_id, COUNT(*) n FROM price_observation "
-            "WHERE obs_date <= ? AND log_return IS NOT NULL GROUP BY asset_id",
-            (as_of,),
+            "WHERE obs_date <= ? AND log_return IS NOT NULL AND engine_version = ? "
+            "GROUP BY asset_id",
+            (as_of, observation_engine_version),
         )
     return {int(r["asset_id"]): int(r["n"]) for r in rows}
 
 
-def _median_dollar_volume(conn: Database, asset_id: int, *, as_of: str, lookback: int) -> float:
+def _median_dollar_volume(
+    conn: Database, asset_id: int, *, as_of: str, lookback: int, observation_engine_version: str
+) -> float:
     vals = [
         float(r["dollar_volume"])
         for r in conn.execute(
             "SELECT dollar_volume FROM price_observation "
             "WHERE asset_id = ? AND obs_date <= ? AND dollar_volume IS NOT NULL "
-            "ORDER BY obs_date DESC LIMIT ?",
-            (asset_id, as_of, lookback),
+            "AND engine_version = ? ORDER BY obs_date DESC LIMIT ?",
+            (asset_id, as_of, observation_engine_version, lookback),
         )
     ]
     return _median(vals)
@@ -78,11 +97,18 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
     liquidity_lookback_days: int = 21,
     exclude_hard_vetoed: bool = True,
     universe_db_path: str | Path | None = None,
+    return_engine_version: str = "qret-v2",
+    observation_engine_version: str = "priceobs-v1",
 ) -> GateResult:
     members = load_universe_asset_ids(
         conn, universe=universe, as_of=as_of, universe_db_path=universe_db_path
     )
-    history = _history_counts(conn, as_of)
+    history = _history_counts(
+        conn,
+        as_of,
+        return_engine_version=return_engine_version,
+        observation_engine_version=observation_engine_version,
+    )
     vetoed = hard_vetoed_as_of(conn, _t_minus_1(as_of)) if exclude_hard_vetoed else set()
 
     kept: list[int] = []
@@ -95,7 +121,13 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
             dropped[aid] = "hard_veto"
             continue
         if (
-            _median_dollar_volume(conn, aid, as_of=as_of, lookback=liquidity_lookback_days)
+            _median_dollar_volume(
+                conn,
+                aid,
+                as_of=as_of,
+                lookback=liquidity_lookback_days,
+                observation_engine_version=observation_engine_version,
+            )
             < min_dollar_volume
         ):
             dropped[aid] = "illiquid"
@@ -104,9 +136,18 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
     return GateResult(asset_ids=sorted(kept), dropped=dropped)
 
 
-def settings_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> GateResult:
+def settings_gate(
+    conn: Database,
+    settings: QuantSettings,
+    *,
+    as_of: str,
+    return_engine_version: str | None = None,
+) -> GateResult:
     """:func:`liquidity_data_gate` with *settings*' knobs -- the gate the risk model's books
-    are built from, including *settings*' own choice of ``exclude_hard_vetoed``."""
+    are built from, including *settings*' own choice of ``exclude_hard_vetoed``.
+
+    *return_engine_version* is the series the panel will actually read (the resolved manifest
+    version when ``--returns-version`` constrains it); default ``settings.return_engine_version``."""
     return liquidity_data_gate(
         conn,
         as_of=as_of,
@@ -116,6 +157,8 @@ def settings_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> Gat
         liquidity_lookback_days=settings.liquidity_lookback_days,
         exclude_hard_vetoed=settings.exclude_hard_vetoed,
         universe_db_path=settings.universe_db_path,
+        return_engine_version=return_engine_version or settings.return_engine_version,
+        observation_engine_version=settings.observation_engine_version,
     )
 
 
@@ -133,4 +176,6 @@ def benchmark_gate(conn: Database, settings: QuantSettings, *, as_of: str) -> Ga
         liquidity_lookback_days=settings.liquidity_lookback_days,
         exclude_hard_vetoed=False,
         universe_db_path=settings.universe_db_path,
+        return_engine_version=settings.return_engine_version,
+        observation_engine_version=settings.observation_engine_version,
     )

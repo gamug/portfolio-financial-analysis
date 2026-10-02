@@ -94,12 +94,16 @@ class QuantSettings(BaseModel):
     corpact_engine_version: str = "corpact-v1"
     # Bumped from "qret-v1" when the Q3 fix (docs/model_fixes.md; the derivation it added
     # was later removed by T-085 -- dividends now come only from the gateway) landed:
-    # quant_return_daily is append-only keyed on (asset_id, obs_date, engine_version), so
-    # a static version would silently no-op every re-run and never fold corrected
-    # dividends into the series. build-returns refuses to run until a clean gateway
+    # quant_return_daily was append-only keyed on (asset_id, obs_date, engine_version), so
+    # a static version silently no-op'd every re-run and never folded corrected dividends
+    # into the series. Since T-131 a row is rewritten when its values change, so a rebuild
+    # reaches it without a bump; the version still marks a change of method. build-returns refuses to run until a clean gateway
     # backfill-actions covers the window (T-086), because rows built without dividends
     # would be locked in under this version by INSERT OR IGNORE.
     return_engine_version: str = "qret-v2"
+    # The price_observation series the universe gate reads (T-131 review). quant is a leaf and
+    # cannot import pricing_agent's PRICE_OBSERVATION_ENGINE_VERSION, so the pin lives here.
+    observation_engine_version: str = "priceobs-v1"
     risk_model_version: str = "rm-v1"
     optimizer_engine_version: str = "opt-v1"
     # bench-v2 (T-108): the mean of *simple* returns over the gated panel, compounded (1 + r);

@@ -4334,3 +4334,110 @@ and every other path are unchanged.
 - **Production re-persist** — `T-100`'s full recompute. EQT/EXE are not in the 20-asset sample.
 - **The gateway's `corrections` list (T-118)** is an independent, upstream guard; this is the
   defence-in-depth on the consuming side.
+
+
+## T-131 — Price ingestion integrity: a partial session, windowed observations and a half-adjusted split were all stored permanently
+
+**Status**: Fixed 2026-10-01 (branch `fix/t131-price-ingestion-integrity`, `T-131` (a)-(d)). Production is
+**not** repaired by this change: its clean-up (below) is a separate action at the user's direction, and
+`T-100` starts from a fresh database.
+
+### Symptom
+
+From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured on production
+`financial.db` (read-only) on 2026-10-01:
+
+- **N1 — partial session.** Runs on 2026-09-29 at 14:04-14:10 UTC (10:04 ET) stored that day's bar. Total
+  volume across the 503 names is **362,731,192** against **2,940,224,500** (09-28) and 2,684,015,824 (09-25).
+  `price_daily` self-heals on the next fetch; `price_observation` and `quant_return_daily` were
+  `INSERT OR IGNORE`, so the partial day is permanent in the benchmark, the evaluation rows and risk model 3.
+- **N2 — windowed observations.** `build_observations` saw only the candles of that run. T-122's refresh used
+  `--start 2026-08-20`, leaving `realized_vol_90d`, `momentum_252d`, `max_drawdown_90d` and `momentum_63d` NULL on
+  **10,500 rows** (500 assets, every observation since 2026-08-31 that has more than 260 stored bars).
+- **N3 — split seam.** **7** split-shaped day-over-day jumps in `price_daily`: APH x0.491 on 2026-08-20 (2:1 split
+  2026-09-03; the refresh start) and six on MNST (x0.489, x1.956, x0.493, x1.941, x0.498, x0.504 between 2026-07-20 and
+  2026-08-11; 2:1 split 2026-08-11), the stored closes alternating between the two bases.
+- **(d)** `quant.universe._history_counts` / `_median_dollar_volume` counted `quant_return_daily` /
+  `price_observation` rows with no `engine_version` filter, so a second version doubles every history.
+
+### Root cause
+
+1. `pricing_agent` accepted `--analysis-date` = today at any hour and stored whatever the gateway returned.
+2. `_store` built observations from the fetched `candles`, not the stored history, and wrote them with
+   `INSERT OR IGNORE`, so the first (wrong or incomplete) value was kept for good.
+3. The gateway returns history split-adjusted *as of the fetch date*. A refresh that rewrites only its window leaves older
+   stored rows on the previous basis; nothing compared the two.
+4. The readers took `COUNT(*)` over a table keyed by `engine_version`.
+
+### Theoretical/technical reference
+
+- NYSE, *Holidays & Trading Hours*: the core session runs 9:30-16:00 ET (13:00 on the few early-close days). A bar read before
+  the close is a partial one. The guard uses 16:00 ET plus a 1-hour buffer for the vendor's volume to settle and treats an
+  early-close day as a full one (it only ever waits longer).
+- A split changes the price level by its ratio and nothing else, so a correctly adjusted series has no day-over-day move of
+  exactly that ratio at a split date. The jump ratios checked (x2, x0.5, x3, x1/3, x4, x1/4, x10, x0.1, +-3%) are the set
+  `verify_pilot.py` counts, so the guard and the pilot acceptance agree.
+- Windowed estimators (Wilder ATR, a 90-day realized volatility, a 252-day momentum) are defined on the series *before* the
+  date, so they can only be computed from the full history -- the same reasoning as T-105's TTM.
+
+### Fix
+
+- **(a)** `kg_schema.trading_calendar.session_final_at / session_is_open_or_pending / last_final_session` (US DST computed by
+  rule, no tz database) and `pipeline._require_closed_session`: `run` raises `SessionNotClosed` for a trading-day end whose bar is
+  not final, before the DB is opened. `rundate.now()` is the clock seam.
+- **(b)** `_store` builds observations from `db.load_daily_candles` (the full stored history up to the end date, read back after
+  the write), and `upsert_price_observations` is now `ON CONFLICT ... DO UPDATE ... WHERE <a value differs>`: an identical
+  recompute touches no row, a changed input rewrites the row.
+- **(c)** `_reconcile_history` (only with `--store-daily`): when a recorded SPLIT postdates a bar written before it
+  (`db.has_pre_split_rows`, by `price_daily.ingested_at`), or the stored-plus-fetched series has a split-shaped jump at the run's
+  seam that matches a recorded split, the asset's full history is re-fetched **once** (the stamps move past the ex-date, so it
+  does not repeat). A jump that survives, or that no recorded split explains, makes `_SplitJumpRefused`: the ticker fails
+  (`pricing_run_error.stage = 'split_jump'`) and **nothing** is written for it. `--allow-split-jumps` overrides. Only jumps
+  involving a bar the run fetched count. `quant.db.upsert_return_daily` follows the same update-on-change rule, so
+  `quant build-returns` rebuilds a returns series after a re-adjustment (it was `INSERT OR IGNORE`).
+- **(d)** the two readers filter by a **pinned** `engine_version`, as every other quant reader does (panel, benchmark, evaluate):
+  `QuantSettings.return_engine_version` for returns (`persist.py` passes the resolved manifest version, which is what the panel
+  reads under `--returns-version`) and a new `QuantSettings.observation_engine_version = "priceobs-v1"` for observations (quant
+  cannot import `pricing_agent`'s constant). First version of this fix read the `v_*` views, which resolve "latest per day" by
+  `computed_at`; PR #109's review showed that can count a different series than the panel is built from, and that the rewrites
+  this change introduces bump `computed_at`, so "latest" could flip per row after a rebuild.
+
+### Design decisions
+
+- **Refuse, don't clamp.** Clamping a today-before-close end to the last final session would write a different date than the
+  caller asked for. The error names the latest final session. Consequence: the *default* `--analysis-date` (today, UTC) is refused
+  for most of a trading day; the pilot already uses an explicit `D`.
+- **The jump is not accepted just because a split is recorded.** A recorded split changes the *remedy* (re-fetch once), not the
+  verdict: a jump left after the re-fetch is still a mis-adjusted series.
+- **`INSERT OR IGNORE` -> update-on-change for the two derived series** weakens NR-007's "never overwritten" for them only
+  (amended in `SPEC.md`): they are pure functions of stored prices, so "unchanged input -> unchanged row" is the invariant
+  that matters, and a frozen first value is exactly what made N1-N3 permanent.
+- **The first run after this change re-fetches every asset that has a split in its history once** (577,325 production bars have
+  no `ingested_at`, 69 recorded splits would trigger). It is a one-off per asset, not per run.
+
+### Verification
+
+- **Production `financial.db`, read-only, 2026-10-01**: the detector finds exactly the 7 jumps (APH 1, MNST 6), and each ratio matches
+  the recorded 2:1 split of its asset; a full recompute of the 10,500 NULL observation rows over the stored history leaves **0** NULL
+  in the four fields. The gateway was not reachable from this environment, so the re-fetch path was first exercised against a stub
+  gateway; the PR #109 review then ran it **live** (real gateway, scratch copy of the DB with the 09-29 partial bar and the
+  APH/MNST seams): 09-29 volume AAPL 5.6M -> 38.5M, APH and MNST re-fetched in full automatically, split-shaped jumps 7 -> 0, NULL
+  `realized_vol_90d` 21 -> 0 per ticker, a second identical run changed 0 observation rows, and PG's 09-29 `tr_log_return` moved
+  -0.00592 -> -0.00478 after `build-returns`.
+- `tests/test_pricing_integrity.py` (32), `tests/test_trading_calendar.py`, `tests/test_quant_t131.py` (two versions present, the
+  counts follow the pinned one even when the other is newer). Mutation-checked: building
+  observations from the fetched candles fails 3 tests; dropping the session guard 2; dropping the jump refusal 2; dropping the
+  pre-split trigger 1; dropping the touched-bar filter 1; making observations `DO NOTHING` 2; leaving the observation or returns pin off in
+  `quant.universe` 1-2 each, ignoring the manifest version in `settings_gate` 1; making the returns upsert `DO NOTHING` 1. `uv run pytest -q` (860), `ruff`, `mypy` green.
+- `verify_pilot.py` T-131 checks (last session volume, NULL long-window analytics, split-shaped jumps) run in the pilot.
+
+### Residual scope, deliberately deferred
+
+- **Production clean-up** (user's direction only; unnecessary if production is not used before `T-100`): delete the 2026-09-29 rows
+  from `price_observation` / `quant_return_daily` and the benchmark, performance and risk-model rows built on them; re-fetch APH and
+  MNST in full; rebuild observations and returns.
+- `build-returns` over a window that extends past a new ex-date rewrites that asset's whole history, because `adj_close` is
+  back-adjusted to the window end (PR #109 review: MCD/NEE/BF.B/UDR, 1,167 rows each); nothing reads `adj_close`, so results are
+  unaffected, and it is left in the change test so the column never goes stale. Exact float comparison can rewrite a row on 1e-18 noise.
+- A genuine one-day x2 / x0.5 move is indistinguishable from a seam and needs `--allow-split-jumps` (none in the current universe).
+- Early-close days are treated as full days (refuses slightly longer than needed).
