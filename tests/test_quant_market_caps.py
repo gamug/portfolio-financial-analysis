@@ -180,7 +180,8 @@ def test_allowing_missing_caps_weights_them_zero_and_names_them(seeded: Database
 
 
 @pytest.mark.parametrize("command", ["build-risk-model", "optimize"])
-def test_the_flag_reaches_the_settings(command: str) -> None:
+def test_the_flag_reaches_the_settings(command: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KG_FINANCIAL_DB", ":memory:")  # QuantSettings.load() needs the path
     parser = build_parser()
     assert parser.parse_args([command]).allow_missing_caps is False
     args = parser.parse_args([command, "--allow-missing-caps"])
