@@ -96,6 +96,16 @@ class LineItem:
     # amounts -- see the class docstring. Only consulted by the
     # `sum_components` path.
     synonym_groups: tuple[tuple[str, ...], ...] = ()
+    # Consulted only when the ``concepts``/``standard``/``label_contains`` pass found no value
+    # (T-133): ordered tiers, each tried in turn, first row with a value wins. Unlike
+    # ``concepts`` -- one pass in document order -- an earlier tier here beats a later one however
+    # the rows are ordered, so a filer's real spend is not displaced by an acquisition line.
+    fallback_concepts: tuple[str, ...] = ()
+    # The last resort: a row whose label matches this regex and none of ``label_fallback_exclude``
+    # (both case-insensitive). A filer's custom-extension concept (PSX's
+    # ``psx_CapitalExpendituresAndInvestments``) has no stable tag to list, only its caption.
+    label_fallback: str = ""
+    label_fallback_exclude: str = ""
 
 
 _INCOME = ("income_statement",)
@@ -228,6 +238,27 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
             "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
+        ),
+        # T-133: an ASC 932 oil & gas producer capitalizes its drilling and development spend
+        # under its own concept, so none of the above exists (APA, FANG: no FCF on any 10-K).
+        # Development first; an *acquisition* of reserves (FANG's Endeavor deal: $8.9B beside
+        # $2.9B of development) is capex only when the filer reports nothing else. Then the
+        # "net" variant of the plain additions line.
+        fallback_concepts=(
+            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "us-gaap_PaymentsToAcquireOilAndGasProperty",
+            # the same additions line tagged net of disposals (WAT's 10-Ks to FY2024)
+            "us-gaap_PaymentsForProceedsFromProductiveAssets",
+        ),
+        # A custom concept, found by its caption on the cash-flow statement alone, when exactly one
+        # line reads "capital expenditure(s)" (PSX: "Capital expenditures and investments"). The
+        # statement's non-cash reconciling rows ("change in capital expenditures not yet paid",
+        # "...included in accounts payable") are excluded -- accrual adjustments, never cash spent.
+        label_fallback=r"\bcapital expenditures?\b",
+        label_fallback_exclude=(
+            r"\b(accrued|unpaid|not (yet )?paid|incurred|included|financed|non-?cash|payable"
+            r"|change|increase|decrease|proceeds|reimburse\w*|sales?)\b"
         ),
     ),
     "stock_based_compensation": LineItem(
@@ -501,7 +532,10 @@ class Statements:
 
         if spec.sum_components:
             return self._sum_matching_components(spec, column)
-        return self._first_component_match(spec, column)
+        value = self._first_component_match(spec, column)
+        if value is None and (spec.fallback_concepts or spec.label_fallback):
+            return self._fallback_match(spec, column)
+        return value
 
     def _first_total_match(self, spec: LineItem, column: str) -> float | None:
         """Tier 1: the first row tagged with one of ``spec.total_concepts``."""
@@ -647,6 +681,35 @@ class Statements:
                 if value is not None:
                     return value
         return None
+
+    def _fallback_match(self, spec: LineItem, column: str) -> float | None:
+        """The T-133 fallback tiers, in order: each ``spec.fallback_concepts`` entry, then the
+        ``spec.label_fallback`` caption. Reached only when :meth:`_first_component_match` found
+        nothing, so it can never displace a value the ordinary lookup returns."""
+        for concept in spec.fallback_concepts:
+            for row in self._rows_for(spec):
+                if row.get("concept") == concept:
+                    value = _numeric(row.get(column))
+                    if value is not None:
+                        return value
+        if not spec.label_fallback:
+            return None
+        wanted = re.compile(spec.label_fallback, re.IGNORECASE)
+        # an empty pattern would match every label, so "no exclusion" must not compile to it
+        unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
+        found: dict[str, float] = {}
+        for row in self._rows_for(spec):
+            label = str(row.get("label") or "")
+            if not wanted.search(label) or unwanted.search(label):
+                continue
+            value = _numeric(row.get(column))
+            if value is not None:
+                found.setdefault(str(row.get("concept")), value)
+        # One caption, one line. Two lines that both read as the item are a filer reporting it in
+        # parts (NEE: "Capital expenditures of FPL" beside "Other capital expenditures" and the
+        # independent-power line), and either alone would understate it -- a partial figure is
+        # worse than none, so the item stays missing.
+        return next(iter(found.values())) if len(found) == 1 else None
 
     def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
         """One value per distinct ``spec.concepts`` member, first occurrence in

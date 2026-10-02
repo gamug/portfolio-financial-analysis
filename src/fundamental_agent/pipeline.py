@@ -441,15 +441,39 @@ _TTM_ITEMS = (
 _YEAR_TOLERANCE_DAYS = 20
 
 
+# A 10-Q's balance sheet sets its period end beside the last fiscal year end: about one quarter
+# earlier for a first quarter, two or three for the others. The window absorbs 52/53-week calendars.
+_FIRST_QUARTER_GAP_DAYS = (60, 115)
+
+
+def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
+    """Whether *target* is its fiscal year's first quarter, so that its quarter column *is* its
+    year-to-date. The gateway's ``(Q1)`` tag says so for a calendar-aligned filer, but it tags a
+    column by the calendar quarter its date falls in: Waters' first quarter ends 2026-04-04 and
+    arrives as ``(Q2)`` with no ``(YTD)`` column at all (T-133). The balance sheet's comparative
+    column -- the last fiscal year end -- is what places it."""
+    if target.period.tag == "Q1":
+        return True
+    end = date.fromisoformat(target.period.date)
+    low, high = _FIRST_QUARTER_GAP_DAYS
+    return any(
+        low <= (end - date.fromisoformat(p.date)).days <= high
+        for p in stmts.periods
+        if p.is_instant
+    )
+
+
 def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | None, str | None]:
     """``(this year's YTD column, last year's same YTD column, that column's end date)`` of a
     10-Q. A first quarter's year-to-date *is* its quarter, so a Q1 filing with no ``(YTD)``
     columns uses its ``(Q1)`` columns (T-105)."""
     end = date.fromisoformat(target.period.date)
     year_ago = end - timedelta(days=365)
-    tags = ("YTD", target.period.tag) if target.period.tag == "Q1" else ("YTD",)
+    tags = ("YTD", target.period.tag) if _is_first_quarter(stmts, target) else ("YTD",)
     for tag in tags:
-        periods = [p for p in stmts.periods if p.tag == tag]
+        # a first quarter's prior-year column can carry another quarter tag than its own (Waters:
+        # (Q2) beside (Q1)), so any quarter column stands in for it
+        periods = [p for p in stmts.periods if (p.is_quarter if tag != "YTD" else p.tag == tag)]
         current = next((p for p in periods if p.date == target.period.date), None)
         prior = next(
             (

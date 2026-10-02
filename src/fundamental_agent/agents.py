@@ -148,6 +148,13 @@ class FilingContext:
     def ttm(self) -> dict[str, float]:
         return {item: flow.value for item, flow in self.ttm_flows.items()}
 
+    @property
+    def real_ttm(self) -> dict[str, float]:
+        """The flows whose trailing twelve months were actually built (T-105 ``ytd`` or
+        ``quarters``), without the ``x4`` fallback -- one quarter times four is that quarter's
+        ratio again, not a trailing year."""
+        return {item: f.value for item, f in self.ttm_flows.items() if f.method != "x4"}
+
 
 # The flows each group annualizes on a 10-Q (F4, T-105): its ratios' TTM numerators.
 _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
@@ -162,6 +169,16 @@ _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
         "interest_expense",
     ),
 }
+
+
+def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
+    """The *ttm* argument for *group*'s ``compute``. Cash-flow quality is a trailing-twelve-month
+    measure on a 10-Q and the fiscal-year figure on a 10-K, where ``None`` says "already annual"
+    (T-133); it takes the real TTM flows only, since a company-exclusion rule must not read one
+    quarter x 4. Every other group takes the T-105 flows, ``x4`` fallback included."""
+    if group != "cashflow":
+        return ctx.ttm
+    return ctx.real_ttm if ctx.form == "10-Q" else None
 
 
 def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str, TTMFlow]) -> None:
@@ -272,7 +289,9 @@ class FundamentalAnalyst:
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
         out: list[tuple[str, MetricResult]] = []
         for group in _ALL_GROUPS:
-            for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key, ctx.ttm):
+            for result in compute_group(
+                group, ctx.stmts, ctx.period_key, ctx.prior_key, _group_ttm(group, ctx)
+            ):
                 out.append((group, result))
         if ctx.price is not None:
             for result in valuation_metrics.compute(

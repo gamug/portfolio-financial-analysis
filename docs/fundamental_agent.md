@@ -115,7 +115,7 @@ list[MetricResult]`. `MetricResult(name, value, unit, inputs)` — `unit ∈
 | `leverage` | debt/equity, debt/assets, interest coverage, net-debt/EBITDA |
 | `efficiency` | asset / inventory / receivables turnover |
 | `growth` | YoY revenue / operating income / net income / FCF growth (needs prior period) |
-| `cashflow` | OCF margin, FCF margin, FCF conversion, capex intensity; `free_cash_flow()` helper |
+| `cashflow` | OCF margin, FCF margin, FCF conversion, capex intensity; `free_cash_flow()` helper. Fiscal-year columns on a 10-K, **trailing twelve months on a 10-Q** (real `ytd`/`quarters` flows only, never the `x4` fallback; a flow missing from the TTM leaves its ratios empty) — a 10-Q's cash-flow statement is year-to-date only (T-133) |
 | `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC |
 | `cagr` | multi-year revenue / net income / OCF CAGR from a 10-K's FY columns |
 | `valuation` | market cap, EV, equity/enterprise/SBC-adjusted FCF yield — **needs a period-end price**; shares are the filing's cover-page count (`filing_cover_shares`, T-132), else the balance sheet's outstanding count, else the weighted-average diluted count (flagged `shares_are_diluted_average`) — never `CommonStockSharesIssued` |
@@ -297,3 +297,9 @@ any accession is left unresolved) and `migrate` →
   it opt-in.
 - Line-item matching is scoped per statement — otherwise it hits cash-flow
   "increase/decrease in …" rows and returns negatives.
+- `capital_expenditure` is found by its PP&E concepts, then (T-133) by ordered fallback tiers — oil & gas development, oil & gas
+  acquisition, the "net" additions line — and last by a cash-flow caption "capital expenditure(s)" **only when exactly one line reads
+  that way**: a filer reporting capex in parts (NEE) has no capex rather than a fraction of it. Banks, insurers and many utilities
+  therefore still have no FCF.
+- A 10-Q's first quarter is its year-to-date; the gateway tags it by calendar quarter (Waters' arrives as `(Q2)`), so
+  `pipeline._is_first_quarter` also reads the balance sheet's comparative column (the last fiscal year end, one quarter back).
