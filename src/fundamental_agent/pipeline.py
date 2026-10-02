@@ -145,12 +145,17 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         db.update_run_plan(conn, run_id, universe_size=len(assets), planned_units=len(tasks))
         report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
 
-        analyst = FundamentalAnalyst(build_model(settings), settings.llm_model)
-        with EdgarClient(settings.edgar_base_url) as edgar:
-            engine = _Engine(
-                conn, edgar, analyst, params, report, completed, completed_accessions=accessions
-            )
-            _drive(engine, tasks)
+        try:
+            analyst = FundamentalAnalyst(build_model(settings), settings.llm_model)
+            with EdgarClient(settings.edgar_base_url) as edgar:
+                engine = _Engine(
+                    conn, edgar, analyst, params, report, completed, completed_accessions=accessions
+                )
+                _drive(engine, tasks)
+        except BaseException:  # an interrupt too: never leave the run log 'running'
+            conn.rollback()  # drop any half-written statement before recording the outcome
+            db.finish_run(conn, run_id, status="failed")
+            raise
 
         db.finish_run(conn, run_id, status="completed")
         return report

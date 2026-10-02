@@ -428,3 +428,21 @@ def test_allow_dirty_flag_exists_on_run() -> None:
     parser = fundamental_cli.build_parser()
     assert parser.parse_args(["run"]).allow_dirty is False
     assert parser.parse_args(["run", "--allow-dirty"]).allow_dirty is True
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_an_interrupted_run_is_marked_failed_not_left_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pipeline, "_drive", _interrupt)
+    settings = _settings(tmp_path)
+    with pytest.raises(KeyboardInterrupt):
+        pipeline.run(settings, RunParams(forms=["10-K"], since_year=2023, until_year=2023))
+    conn = sqlite3.connect(settings.db_path)
+    status, finished = conn.execute(
+        "SELECT status, finished_at FROM analysis_run ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert status == "failed" and finished is not None

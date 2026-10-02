@@ -252,7 +252,7 @@ def run_build_risk_model(
             insert_expected_returns(conn, model_id, mu_by_model)
             cov_rows = insert_covariance(conn, model_id, panel.asset_ids, sigma) if store_cov else 0
             finish_run(conn, run_id)
-        except Exception as exc:
+        except BaseException as exc:  # an interrupt too: never leave 'running'
             fail_run(conn, run_id, str(exc))
             raise
         return RiskModelResult(
@@ -468,7 +468,7 @@ def run_optimize(
                     ],
                 )
             finish_run(conn, run_id)
-        except Exception as exc:
+        except BaseException as exc:  # an interrupt too: never leave 'running'
             fail_run(conn, run_id, str(exc))
             raise
         return OptimizeRunResult(

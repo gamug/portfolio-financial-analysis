@@ -328,3 +328,23 @@ def test_the_cli_exits_1_when_any_asset_has_no_data(
     monkeypatch.setattr("quant.cli.backfill_corporate_actions", lambda *_a, **_k: report)
     assert _run_backfill_actions(_settings(), _args(), "2024-12-31") == expected
     assert "backfill-actions [gateway]" in capsys.readouterr().out
+
+
+def test_an_interrupted_run_is_marked_failed_not_left_running(
+    memory_quant_db: Database,
+    quant_seed: Callable[..., Database],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Production quant_run 15 (2026-09-29) stayed 'running' forever after a Ctrl-C: the
+    # handler caught Exception only, and KeyboardInterrupt is a BaseException.
+    conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=False)
+    client, _http, _seen = _gateway()
+
+    def _interrupt(*_a: object, **_k: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(quant.actions, "_fetch_all", _interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
+    status, _error, _params = _last_run(conn)
+    assert status == "failed"
