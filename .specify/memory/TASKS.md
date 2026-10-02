@@ -310,6 +310,8 @@ They land **ahead of Work item 8** (see the priority note above): `T-131` first 
       records coverage and age on `quant_run`; `METRICS_ENGINE_VERSION` → `metrics-v4`. Verified live
       on a scratch copy of production: 20 of 20 sample names have a cap (6 had none), PG = SEC's
       2,324,433,060 × the close, XOM's equilibrium return 1.99% → 9.98%; see `docs/model_fixes.md`.
+      PR #110 review follow-ups: the cover failure is read from `data["cover"]["error"]`; BRK's class A is
+      converted (`CLASS_CONVERSION`); `quant` counts a dual-listed issuer once (same CIK).
       **Still open:** production filings carry no cover counts until re-ingested (`run --fresh` /
       `T-100`; no backfill command was built), `verify_pilot.py`'s T-132 check (in the pilot), and
       a follow-up to retire quant's now-vestigial `--metrics-version` (market caps were the only

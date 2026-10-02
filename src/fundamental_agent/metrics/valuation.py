@@ -33,7 +33,7 @@ class _ShareCount:
 
 
 def _share_count(
-    stmts: Statements, period_key: str, scale_factors: dict[str, float]
+    stmts: Statements, period_key: str, scale_factors: dict[str, float], cik: str | None = None
 ) -> _ShareCount:
     """Shares for market cap: the cover-page count (T-132), else the balance sheet's
     point-in-time count, else weighted-average diluted.
@@ -51,7 +51,9 @@ def _share_count(
     category of operation as ``Statements._instant_for``'s own
     nearest-earlier-column resolution.
     """
-    cover = cover_total((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares)
+    cover = cover_total(
+        ((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares), cik=cik
+    )
     if cover is not None:
         return _ShareCount(cover.value, False, from_cover=True)
     shares = stmts.get("shares_outstanding", period_key)
@@ -65,12 +67,14 @@ def _share_count(
     return _ShareCount(None, False)
 
 
-def compute(
+def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit inputs
     stmts: Statements,
     period_key: str,
     price: ClosePrice,
     share_scale_factors: dict[str, float] | None = None,
     ttm: dict[str, float] | None = None,
+    *,
+    cik: str | None = None,
 ) -> list[MetricResult]:
     """FCF-yield family for *period_key*, valued at *price* (a period-end close).
 
@@ -88,7 +92,7 @@ def compute(
     annual = _AnnualFlows(stmts, period_key, ttm or {})
     fcfe_annual = annual.fcf()
     sbc_annual = annual.get("stock_based_compensation")
-    share_count = _share_count(stmts, period_key, share_scale_factors or {})
+    share_count = _share_count(stmts, period_key, share_scale_factors or {}, cik)
     shares, used_diluted = share_count.shares, share_count.used_diluted_fallback
 
     market_cap = shares * price.close if shares is not None else None

@@ -4485,7 +4485,7 @@ From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `f
   value or an `as_of_date` are dropped) and stored in a new additive table `filing_cover_shares` (`kg_schema/ddl.py`: one row per
   filing, class and date; `class_member = ''` is a single-class count or a filer's own total). `EdgarClient.financials` no longer
   raises on a reconciliation error whose statement is `cover` (the gateway's cover read fails in isolation, the statements are still
-  validated); `Statements.cover_error` carries it and the pipeline records it as a `cover` run error. `ensure()` creates the table,
+  validated); `Statements.cover_error` carries it (read from `data["cover"]["error"]`, the final contract of upstream PR #48; the earlier `reconciliation_errors` entry is still read) and the pipeline records it as a `cover` run error. `ensure()` creates the table,
   so no migration is needed.
 - **(b)** `CommonStockSharesIssued` is removed from the `shares_outstanding` concepts. The stored `valuation` metrics now take the
   cover count first, then the balance-sheet outstanding count, then (flagged `shares_are_diluted_average`) the weighted average;
@@ -4511,8 +4511,15 @@ From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `f
 - **The as-of price, not the period-end price.** `cap(D) = count(latest usable on D) x close(D)`. The stored metric's period-end price
   is unchanged for the yields it feeds.
 - **Dual-class filers.** The filer's own non-dimensional total is used when it filed one; otherwise the classes are summed and
-  `n_multi_class` flags it. The sum is at the traded close, which is exact only when the classes carry the same economics (BF.B, MA,
-  HOOD, STZ do to within the small class); a filer like BRK (A = 1,500 B) is understated until a per-class conversion is modelled.
+  `n_multi_class` flags it, at the traded close. That is exact when the classes carry the same economics (BF.B, MA, HOOD, STZ,
+  GOOGL); Berkshire's do not (1 class A = 1,500 class B, the listing BRK.B trades B), so `market_cap.CLASS_CONVERSION` — a small,
+  explicit table `{cik: {class_member: units of the traded class}}` — converts A before the sum, in `cover_total`, which the stored
+  metric and the reader share (PR #110 review). Summed 1:1 BRK's cap was 35.6% low and its cycle yields ~1.55× high.
+- **One company, one weight (quant only).** The reader gives every *listing* the company's whole cap, which is right for `cycle`
+  (yields and size are company-level). The equilibrium market portfolio would count GOOG + GOOGL, FOX + FOXA and NWS + NWSA (one CIK
+  each) twice, so `quant.persist._split_dual_listings` splits the company cap equally among the panel assets sharing a CIK and
+  the grouping is recorded as `market_caps.dual_listed` (PR #110 review). Sibling classes are nearly collinear, so
+  `pi = delta*Sigma*w` barely depends on the split.
 - **200 / 10 days.** A count is at worst a quarter plus the filing lag old just before the next filing becomes available; both limits
   are settings, not constants. A refusal is preferred to a stale cap.
 - **No silent zero, but an override.** Refusing by default stops a risk model from being quietly wrong; the override exists for a
@@ -4539,12 +4546,18 @@ From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `f
   `available_at` filter; missing caps weighted 0 silently; the balance sheet before the cover; a cover error failing the filing; the
   all-missing fallback; a split after the last bar applied; the filer's total summed with its classes; the cover not stored by the
   pipeline; the legacy corporate-action engine counted; `cycle` not calling the reader. `uv run pytest -q` (919), `ruff`, `mypy` green.
+- **PR #110 review follow-ups**, live: the gateway's final payload carries `data["cover"]["error"]` (`null` on success) and an empty
+  `reconciliation_errors`; BRK-B's latest 10-Q gives 1,408,035,161 B + 1,500 × 488,450 A = 2,140,710,161 B-equivalents × $502.61 =
+  **$1,075.95B** as of 2026-09-29 (summed 1:1 it was $707.7B, 34% low). Tests added for the final error shape, the BRK conversion in
+  both the metric and the reader, and the dual-listing split; mutation-checked (ignoring `cover.error`, counting dual listings twice,
+  dropping the conversion, the metric ignoring the issuer — all caught). `uv run pytest -q` 927.
 - `verify_pilot.py`'s T-132 check (latest filing's stored `market_capitalization` is not NULL) runs in the pilot; it reads the stored
   metric, which now prefers the cover count.
 
 ### Residual scope, deliberately deferred
 
-- BRK-style classes with unequal economics (above); GOOGL-style filers are fine (A and C trade together, B is small).
+- A new multi-class filer whose classes are not 1:1 needs a line in `CLASS_CONVERSION` (BRK is the only one in the universe today).
+- The equal split between listings of one issuer is a convention; a class-based split is equally defensible.
 - The stored `valuation.market_capitalization` can differ from the as-of cap (period-end price, and a fallback count when a filing has
   no cover entry); only the yields and `DQ_MCAP_SCALE` read it.
 - Production has no cover counts until it is re-ingested.

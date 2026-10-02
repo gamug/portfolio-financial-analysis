@@ -195,9 +195,10 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
     try:
         return db.execute(
             """
-            SELECT sf.asset_id, sf.id AS filing_id, sf.available_at,
+            SELECT sf.asset_id, a.cik, sf.id AS filing_id, sf.available_at,
                    c.class_member, c.value, c.as_of_date
             FROM filing_cover_shares c JOIN sec_filings sf ON sf.id = c.filing_id
+            JOIN assets a ON a.id = sf.asset_id
             WHERE sf.asset_id IN (SELECT value FROM json_each(?))
               AND sf.available_at IS NOT NULL AND sf.available_at <= ? AND c.as_of_date <= ?
             ORDER BY sf.asset_id, sf.id, c.class_member, c.as_of_date

@@ -16,10 +16,15 @@ import pytest
 from portfolio_common.db import Database
 
 from cycle import data as cycle_data
-from kg_schema.market_cap import market_caps_as_of
+from kg_schema.market_cap import MarketCap, MarketCapResult, market_caps_as_of
 from quant.cli import _run_build_risk_model, _settings, build_parser
 from quant.config import QuantSettings
-from quant.persist import MissingMarketCaps, RiskModelResult, run_build_risk_model
+from quant.persist import (
+    MissingMarketCaps,
+    RiskModelResult,
+    _split_dual_listings,
+    run_build_risk_model,
+)
 from quant.returns import run_build_returns
 
 
@@ -238,3 +243,47 @@ def test_cycle_and_quant_read_the_same_caps(seeded: Database) -> None:
     shared = market_caps_as_of(seeded, ids, as_of=as_of)
     assert cycle == {a: shared.get(a) for a in ids}
     assert cycle[3] is None and all(cycle[a] for a in (1, 2, 4, 5, 6))  # missing => None, not 0
+
+
+# -- one company, one weight (PR #110 review) ---------------------------------------------------
+
+
+def _cap(asset_id: int, value: float, cik: str | None) -> MarketCap:
+    return MarketCap(
+        asset_id, value, 1.0, 1.0, "2026-01-01", 1, 1, value, "2026-01-02", 0, 1.0, cik
+    )
+
+
+def test_listings_of_one_issuer_share_the_company_cap() -> None:
+    """GOOG/GOOGL (and FOX/FOXA, NWS/NWSA) share a CIK; the reader gives each the company's cap, the
+    market portfolio must count it once."""
+    res = MarketCapResult("2026-09-29", 200, 10)
+    res.caps = {
+        1: _cap(1, 4000.0, "0001652044"),  # GOOGL
+        2: _cap(2, 4000.0, "0001652044"),  # GOOG
+        3: _cap(3, 300.0, "0000080424"),
+        4: _cap(4, 50.0, None),
+    }
+    basis = _split_dual_listings(res, [1, 2, 3, 4])
+    assert basis == {1: 2000.0, 2: 2000.0, 3: 300.0, 4: 50.0}
+    assert basis[1] + basis[2] == 4000.0  # one company cap, not two
+
+
+def test_only_the_listings_in_the_panel_split_it() -> None:
+    res = MarketCapResult("2026-09-29", 200, 10)
+    res.caps = {1: _cap(1, 4000.0, "0001652044"), 2: _cap(2, 4000.0, "0001652044")}
+    assert _split_dual_listings(res, [1]) == {1: 4000.0}  # GOOG not in the panel: GOOGL keeps all
+
+
+def test_a_dual_listed_issuer_is_counted_once_and_recorded(seeded: Database) -> None:
+    as_of = _as_of(seeded)
+    single = run_build_risk_model(_config(risk_model_version="rm-single"), as_of=as_of, conn=seeded)
+    assert single.market_cap_coverage["dual_listed"] == {}
+
+    seeded.execute("UPDATE assets SET cik = '0001652044' WHERE id IN (5, 6)")  # two listings
+    seeded.commit()
+    dual = run_build_risk_model(_config(risk_model_version="rm-dual"), as_of=as_of, conn=seeded)
+    assert dual.market_cap_coverage["dual_listed"] == {"0001652044": [5, 6]}
+    assert _run_params(seeded)["market_caps"] == dual.market_cap_coverage
+    # the market portfolio really changed: the issuer is no longer in twice
+    assert _equilibrium(seeded, dual.model_id) != _equilibrium(seeded, single.model_id)

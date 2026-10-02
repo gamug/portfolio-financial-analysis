@@ -102,6 +102,19 @@ def test_a_failed_cover_read_is_carried_beside_the_still_validated_statements() 
     assert stmts.cover_shares == [] and stmts.cover_error == "KeyError: 'dei'"
 
 
+def test_the_final_contract_reports_a_failed_cover_read_in_cover_error() -> None:
+    """portfolio-data-mining PR #48's final shape: ``data["cover"]["error"]`` (null on success),
+    nothing in ``reconciliation_errors`` (PR #110 review)."""
+    failed = Statements.from_payload(
+        _payload(
+            cover={"shares_outstanding": [], "error": "KeyError: 'dei'"}, reconciliation_errors=[]
+        )
+    )
+    assert failed.cover_shares == [] and failed.cover_error == "KeyError: 'dei'"
+    ok = Statements.from_payload(_payload(cover={**PG_COVER, "error": None}))
+    assert ok.cover_error is None and len(ok.cover_shares) == 1
+
+
 # -- the client --------------------------------------------------------------------------------
 
 
@@ -170,6 +183,25 @@ def test_the_cover_count_is_preferred_to_the_balance_sheet(aapl_10k: Statements)
     cap, inputs = _market_cap(aapl_10k, key, 100.0)
     assert cap == pytest.approx(15_000_000_000.0 * 100.0)
     assert inputs["shares_from_cover_page"] == 1.0 and inputs["shares_are_diluted_average"] == 0.0
+
+
+def test_a_berkshire_class_a_share_is_converted_to_class_b_in_the_metric(
+    aapl_10k: Statements,
+) -> None:
+    """BRK: 1 class A = 1,500 class B, and the listing (BRK.B) trades B."""
+    aapl_10k.cover_shares = [
+        CoverShares(511_820.0, "2026-01-31", "us-gaap:CommonClassAMember"),
+        CoverShares(1_389_605_139.0, "2026-01-31", "us-gaap:CommonClassBMember"),
+    ]
+    key = "2023-09-30 (FY)"
+    results = valuation.compute(aapl_10k, key, ClosePrice("2023-09-29", 1.0), cik="0001067983")
+    cap = next(r for r in results if r.name == "market_capitalization").value
+    assert cap == pytest.approx(1_389_605_139 + 1500 * 511_820)
+    # any other issuer with the same member names stays 1:1
+    other = valuation.compute(aapl_10k, key, ClosePrice("2023-09-29", 1.0), cik="0000320193")
+    assert next(r for r in other if r.name == "market_capitalization").value == pytest.approx(
+        1_389_605_139 + 511_820
+    )
 
 
 def test_a_dual_class_cover_is_summed_in_the_metric_as_in_the_reader(aapl_10k: Statements) -> None:
@@ -279,3 +311,19 @@ def test_a_failed_cover_read_is_recorded_for_triage_and_does_not_fail_the_filing
     conn = sqlite3.connect(tmp_path / "kg.db")
     errors = conn.execute("SELECT stage, message FROM analysis_run_error").fetchall()
     assert errors == [("cover", "dei facts unreadable")]
+
+
+def test_a_failed_cover_read_in_the_final_shape_is_recorded_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = {**_q1_payload(), "cover": {"shares_outstanding": [], "error": "boom"}}
+    report = _run(
+        monkeypatch,
+        tmp_path,
+        _Edgar({("10-Q", 2023): [Q1_JUN]}, {Q1_JUN.accession_number: payload}),
+    )
+    assert (report.completed, report.failed) == (1, 0)
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    assert conn.execute("SELECT stage, message FROM analysis_run_error").fetchall() == [
+        ("cover", "boom")
+    ]

@@ -62,6 +62,7 @@ class MarketCap:
     close_date: str
     n_classes: int  # non-total classes summed into share_count; 0 for one class or a filed total
     split_factor: float
+    cik: str | None = None  # the issuer: two listings of one company share it (GOOG/GOOGL)
 
 
 @dataclass
@@ -102,10 +103,28 @@ class ShareCount:
     n_classes: int  # non-total classes summed into value; 0 for one class or a filed total
 
 
-def cover_total(entries: Iterable[tuple[str, float, str]]) -> ShareCount | None:
+#: Share classes that are not 1:1 with the class the filer's listing trades, as ``{cik:
+#: {class_member: units of the traded class per share}}`` (T-132, PR #110 review). The cap is a
+#: count times the *traded* close, so a class worth more than one traded share is converted before
+#: it is summed: Berkshire's class A converts into 1,500 class B (the listing, BRK.B, is B). Every
+#: other multi-class filer in the universe (GOOGL, BF.B, MA, HOOD, STZ ...) is economically 1:1 and
+#: stays out of the table. Keyed by the zero-padded 10-digit CIK, members as the gateway names them.
+CLASS_CONVERSION: dict[str, dict[str, float]] = {
+    "0001067983": {"us-gaap:CommonClassAMember": 1500.0},
+}
+
+
+def _conversion(cik: str | None) -> dict[str, float]:
+    return CLASS_CONVERSION.get(str(cik).zfill(10), {}) if cik else {}
+
+
+def cover_total(
+    entries: Iterable[tuple[str, float, str]], *, cik: str | None = None
+) -> ShareCount | None:
     """One filing's count from its cover entries ``(class_member, value, as_of_date)``: the filer's
-    own total (class ``""``, its newest) when it filed one, else each class's newest value summed
-    and dated by the oldest of them. ``None`` for no entries.
+    own total (class ``""``, its newest) when it filed one, else each class's newest value, converted
+    to the traded class by :data:`CLASS_CONVERSION` for *cik*, summed and dated by the oldest of
+    them. ``None`` for no entries.
 
     The one aggregation the stored valuation metric and the as-of reader share, so the two cannot
     disagree on what a dual-class filer's count is."""
@@ -120,8 +139,11 @@ def cover_total(entries: Iterable[tuple[str, float, str]]) -> ShareCount | None:
             newest[e[0]] = e
     if not newest:
         return None
+    factor = _conversion(cik)
     return ShareCount(
-        sum(e[1] for e in newest.values()), min(e[2] for e in newest.values()), len(newest)
+        sum(e[1] * factor.get(e[0], 1.0) for e in newest.values()),
+        min(e[2] for e in newest.values()),
+        len(newest),
     )
 
 
@@ -132,6 +154,7 @@ class _Count:
     value: float
     as_of_date: str
     n_classes: int
+    cik: str | None = None
 
 
 def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
@@ -142,7 +165,8 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
     out: dict[int, list[_Count]] = defaultdict(list)
     for (asset_id, filing_id), entries in by_filing.items():
         total = cover_total(
-            (str(e["class_member"]), float(e["value"]), str(e["as_of_date"])) for e in entries
+            ((str(e["class_member"]), float(e["value"]), str(e["as_of_date"])) for e in entries),
+            cik=entries[0]["cik"],
         )
         if total is not None:
             out[asset_id].append(
@@ -152,6 +176,7 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
                     total.value,
                     total.as_of_date,
                     total.n_classes,
+                    entries[0]["cik"],
                 )
             )
     return out
@@ -231,5 +256,6 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             close_date=close_date,
             n_classes=count.n_classes,
             split_factor=factor,
+            cik=count.cik,
         )
     return result

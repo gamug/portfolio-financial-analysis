@@ -140,6 +140,9 @@ class FilingContext:
     # docs/model_fixes.md; fundamental_agent.db.ttm_detail). Empty for a 10-K, which already
     # reports annual flows.
     ttm_flows: dict[str, TTMFlow] = field(default_factory=dict)
+    # the issuer's zero-padded CIK: a multi-class share count is converted to the traded class by
+    # `kg_schema.market_cap.CLASS_CONVERSION` (T-132: BRK's A = 1,500 B)
+    cik: str | None = None
 
     @property
     def ttm(self) -> dict[str, float]:
@@ -273,7 +276,7 @@ class FundamentalAnalyst:
                 out.append((group, result))
         if ctx.price is not None:
             for result in valuation_metrics.compute(
-                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors, ctx.ttm
+                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors, ctx.ttm, cik=ctx.cik
             ):
                 out.append((valuation_metrics.GROUP, result))
         _flag_annualization(out, ctx.ttm_flows)

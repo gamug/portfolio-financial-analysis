@@ -173,7 +173,7 @@ model built from it is reproducible. No pandas.
   `james_stein` over ~5 y of daily data shrinks μ almost flat, which collapses the
   frontier onto `min_var` (see the note below).
 
-**Market caps (`T-132`).** `w_market` is built from `kg_schema.market_cap.market_caps_as_of` at
+**Market caps (`T-132`).** One company counts once: panel assets sharing a CIK (GOOG/GOOGL, FOX/FOXA, NWS/NWSA) split the company cap equally in `w_market`. `w_market` is built from `kg_schema.market_cap.market_caps_as_of` at
 the as-of date: the latest cover-page share count usable that day × the close on or before it,
 refusing a count older than `--market-cap-max-share-age-days` (200) or a close older than 10
 days. A panel asset with no cap makes `build-risk-model` (and `optimize`, which builds one)
@@ -181,7 +181,7 @@ days. A panel asset with no cap makes `build-risk-model` (and `optimize`, which 
 longer silently weight 0, and an all-missing panel no longer falls back to equal weights.
 `--allow-missing-caps` builds anyway, those assets at weight 0. Either way the run records
 `quant_run.params_json["market_caps"]` (`n_with_cap`, `missing{asset_id: reason}`,
-`share_age_days_median/max`, `n_multi_class`) and the same object lands in the risk model's
+`share_age_days_median/max`, `n_multi_class`, `dual_listed{cik: [asset_ids]}`) and the same object lands in the risk model's
 `params_json`; the CLI prints it.
 
 Persisted as `quant_risk_model` metadata + `quant_expected_return` (μ per model)

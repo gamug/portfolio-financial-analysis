@@ -80,9 +80,29 @@ class MissingMarketCaps(RuntimeError):
     portfolio, and every other asset's weight inflated -- unless the run says so out loud."""
 
 
+def _split_dual_listings(res: MarketCapResult, asset_ids: list[int]) -> dict[int, float]:
+    """Each panel asset's weight basis with one company counted once (PR #110 review).
+
+    The reader gives every *listing* the company's whole cap (right for ``cycle``: yields and size
+    are company-level), but two listings of one issuer (GOOG/GOOGL, FOX/FOXA, NWS/NWSA share a CIK)
+    in the market portfolio would put the company's cap in twice. Panel assets sharing a CIK split
+    the company cap equally; sibling classes are nearly collinear, so ``pi = delta * Sigma * w``
+    barely depends on how."""
+    groups: dict[str, list[int]] = {}
+    for a in asset_ids:
+        cap = res.caps.get(a)
+        if cap is not None and cap.cik:
+            groups.setdefault(cap.cik, []).append(a)
+    basis = {a: res.caps[a].value for a in asset_ids if a in res.caps}
+    for members in groups.values():
+        for a in members:
+            basis[a] = res.caps[a].value / len(members)
+    return basis
+
+
 def _market_caps(
     settings: QuantSettings, panel: ReturnPanel, conn: Database, *, as_of: str
-) -> tuple[np.ndarray, MarketCapResult]:
+) -> tuple[np.ndarray, dict[str, Any]]:
     """The panel's market caps from the shared as-of reader. A panel asset the reader cannot value
     refuses the model (:class:`MissingMarketCaps`) unless ``settings.allow_missing_caps`` -- then it
     gets weight 0 and the run records who and why. A panel with no cap at all always refuses: there
@@ -105,8 +125,16 @@ def _market_caps(
             f"{as_of}: asset_id {shown}{more}; pass --allow-missing-caps to build with them "
             "weighted 0 in the market portfolio, recorded on the run"
         )
-    caps = np.array([res.get(a) or 0.0 for a in panel.asset_ids], dtype=np.float64)
-    return caps, res
+    basis = _split_dual_listings(res, panel.asset_ids)
+    caps = np.array([basis.get(a, 0.0) for a in panel.asset_ids], dtype=np.float64)
+    coverage = res.coverage()
+    by_cik: dict[str, list[int]] = {}
+    for a in panel.asset_ids:
+        if a in res.caps and res.caps[a].cik:
+            by_cik.setdefault(str(res.caps[a].cik), []).append(a)
+    # companies listed more than once in the panel, each counted once in the market portfolio
+    coverage["dual_listed"] = {cik: ids for cik, ids in sorted(by_cik.items()) if len(ids) > 1}
+    return caps, coverage
 
 
 def _expected_returns(
@@ -188,8 +216,7 @@ def run_build_risk_model(
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
-            caps, cap_result = _market_caps(settings, panel, conn, as_of=as_of)
-            coverage = cap_result.coverage()
+            caps, coverage = _market_caps(settings, panel, conn, as_of=as_of)
             merge_run_params(conn, run_id, {"market_caps": coverage})
             mu_by_model = _expected_returns(settings, panel, sigma, caps, rf=rf.annualized_rate)
 

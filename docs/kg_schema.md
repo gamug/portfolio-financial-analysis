@@ -135,8 +135,10 @@ MarketCapResult` = the latest `filing_cover_shares` count from a filing already 
   adjustment reaches).
 - `cover_total(entries)` is the aggregation of one filing's entries — the filer's own total
   when it filed one, else each class's newest value summed — shared with the stored valuation
-  metric so the two cannot disagree. Classes are summed at the traded close: exact only when
-  they carry the same economics (a BRK-style A = 1,500 B is understated).
+  metric so the two cannot disagree. Classes are summed at the traded close, after
+  `CLASS_CONVERSION` (`{cik: {class_member: units of the traded class}}`; today Berkshire's
+  class A = 1,500 class B) converts a class that is not 1:1 with the traded one. `MarketCap.cik`
+  identifies the issuer, so two listings of one company (GOOG/GOOGL) can be told apart.
 - Raises `AvailabilityMissing` on an un-backfilled database, like every as-of reader.
 
 ### `versions.py` — metric-version selection and run manifests (T-090)

@@ -225,6 +225,36 @@ def test_classes_with_no_filed_total_are_summed_and_flagged(conn: Database) -> N
     assert res.coverage()["n_multi_class"] == 1
 
 
+BRK_A, BRK_B = "us-gaap:CommonClassAMember", "us-gaap:CommonClassBMember"
+
+
+def test_berkshire_class_a_is_converted_to_class_b_before_summing(conn: Database) -> None:
+    """PR #110 review: A 511,820 + B 1,389,605,139 summed 1:1 is 1.39B B-equivalents; 1 A is
+    1,500 B, so 2.157B -- the cap was 35.6% low."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (3, 'BRK.B', '0001067983')")
+    fid = seed_cover_shares(conn, 3, 511_820, as_of_date="2026-01-31", class_member=BRK_A)
+    seed_cover_shares(
+        conn, 3, 1_389_605_139, as_of_date="2026-01-31", class_member=BRK_B, filing_id=fid
+    )
+    _price(conn, 3, "2026-02-27", 500.0)
+    cap = market_caps_as_of(conn, [3], as_of="2026-02-27").caps[3]
+    assert cap.share_count == 1_389_605_139 + 1500 * 511_820 == 2_157_335_139
+    assert cap.value == pytest.approx(2_157_335_139 * 500.0)
+    assert cap.cik == "0001067983" and cap.n_classes == 2
+
+
+def test_the_conversion_is_keyed_by_issuer_and_padding_does_not_matter() -> None:
+    entries = [(BRK_A, 2.0, "2026-01-31"), (BRK_B, 3.0, "2026-01-31")]
+    assert cover_total(entries, cik="0001067983") == ShareCount(3003.0, "2026-01-31", 2)
+    assert cover_total(entries, cik="1067983") == ShareCount(3003.0, "2026-01-31", 2)
+    assert cover_total(entries, cik="0000000001") == ShareCount(5.0, "2026-01-31", 2)
+    assert cover_total(entries) == ShareCount(5.0, "2026-01-31", 2)
+    # a filed total is never converted
+    assert cover_total([("", 7.0, "2026-01-31"), *entries], cik="0001067983") == ShareCount(
+        7.0, "2026-01-31", 0
+    )
+
+
 def test_cover_total_is_the_one_aggregation() -> None:
     assert cover_total([]) is None
     assert cover_total([("", 5.0, "2026-01-02")]) == ShareCount(5.0, "2026-01-02", 0)

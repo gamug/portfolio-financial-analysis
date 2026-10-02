@@ -371,6 +371,21 @@ def _cover_shares(payload: dict[str, Any]) -> list[CoverShares]:
     return out
 
 
+def _cover_errors(payload: dict[str, Any]) -> list[str]:
+    """Why the gateway's cover read failed, if it did. The final contract (portfolio-data-mining
+    PR #48) reports it as ``data["cover"]["error"]`` (``null`` on success); an earlier build put a
+    ``{"statement": "cover", "error"}`` entry in ``reconciliation_errors``, still read for
+    compatibility."""
+    errors: list[str] = []
+    cover = payload.get("cover")
+    if isinstance(cover, dict) and cover.get("error"):
+        errors.append(str(cover["error"]))
+    for entry in payload.get("reconciliation_errors") or []:
+        if isinstance(entry, dict) and entry.get("statement") == "cover" and entry.get("error"):
+            errors.append(str(entry["error"]))
+    return errors
+
+
 @dataclass
 class Statements:
     """A parsed ``financials`` payload."""
@@ -403,11 +418,7 @@ class Statements:
                             seen[column] = parsed
         periods = sorted(seen.values(), key=lambda p: (p.date, p.tag))
         corrections = [c for c in payload.get("corrections") or [] if isinstance(c, dict)]
-        cover_errors = [
-            str(e.get("error"))
-            for e in payload.get("reconciliation_errors") or []
-            if isinstance(e, dict) and e.get("statement") == "cover"
-        ]
+        cover_errors = _cover_errors(payload)
         return cls(
             raw=raw,
             periods=periods,
