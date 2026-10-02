@@ -1707,7 +1707,7 @@ this document.** Their internal sequencing:
   (**done 2026-10-02, PR #110, approved**: the cover-page share count stored in `filing_cover_shares`
   after `portfolio-data-mining` `T-043`, no more "shares issued", the shared as-of reader
   `kg_schema.market_cap` for `cycle` and `quant` (BRK's class A converted, a dual-listed issuer counted once in quant's market portfolio), and a risk model that refuses on a missing cap;
-  production needs a re-ingest for the counts), then `T-133` (**done 2026-10-02, PR #111**: the
+  production needs a re-ingest for the counts), then `T-133` (**done 2026-10-02, PR #111, approved**: the
   `cashflow` group is trailing-twelve-month on a 10-Q so `NEGATIVE_FCF` no longer judges a company
   on one quarter, oil & gas and single-caption capex are recognised, and a first quarter the gateway
   tags `(Q2)` is its own year-to-date; Q2/Q3 FCF margin missing 94.5% -> 24.7% on the sample, the

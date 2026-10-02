@@ -2081,7 +2081,7 @@ They landed **ahead of Work item 8**: `T-131` first, then
       a follow-up to retire quant's now-vestigial `--metrics-version` (market caps were the only
       `fundamental_metrics` it read).
 
-- [x] **T-133** *(P1)* Quarterly cash flow and the NEGATIVE_FCF rule. **Code done 2026-10-02 (PR #111).**
+- [x] **T-133** *(P1)* Quarterly cash flow and the NEGATIVE_FCF rule. **Code done 2026-10-02 (PR #111, approved).**
       - (a) On 10-Qs, derive the quarter's cash flows (YTD minus the prior quarter's YTD), or
         compute cash-flow margins on the TTM basis `T-105` already builds (TTM FCF / TTM
         revenue), consistently for every filing.

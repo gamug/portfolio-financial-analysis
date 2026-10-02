@@ -20,7 +20,7 @@ open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15, 16 and 1
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order is **Work item 17
-(`T-131`, `T-132`, `T-133` ✅ all done, PRs #109, #110, #111 — closed 2026-10-02, now in `CHANGELOG.md`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
+(`T-131`, `T-132`, `T-133` ✅ all done and approved, PRs #109, #110, #111 — closed 2026-10-02, now in `CHANGELOG.md`) → the pilot (`docs/md primera revision/pilot_rerun_plan.md`,
 `verify_pilot.py` at 0 FAIL) → Work item 8** — **do not start `T-079`'s LLM re-run until
 the pilot has landed.** Once
 they have, priority runs **8 (P1, supersedes Work item

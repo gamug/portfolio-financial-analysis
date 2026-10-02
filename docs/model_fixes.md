@@ -4564,7 +4564,7 @@ From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `f
 
 ## T-133 — Quarterly cash flow: a 10-Q's year-to-date columns left FCF empty for 95% of Q2/Q3, and one quarter vetoed a company
 
-**Status**: Fixed 2026-10-02 (branch `feat/t133-quarterly-cash-flow`; `T-133` (a)-(c)). Folded into `metrics-v4`, the version `T-132`
+**Status**: Fixed 2026-10-02 (branch `feat/t133-quarterly-cash-flow`, PR #111, approved; `T-133` (a)-(c)). Folded into `metrics-v4`, the version `T-132`
 introduced: no `metrics-v4` row has been written to any production database yet, so a further bump would only add a version nothing
 reads. Production is **not** repaired by this change: its stored metrics are `metrics-v2` and are replaced by the `T-100` re-run.
 
