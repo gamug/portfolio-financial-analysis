@@ -259,7 +259,7 @@ RULES: list[Rule] = [
     _ThresholdRule(
         "NEGATIVE_FCF",
         "HARD",
-        "negative free-cash-flow margin",
+        "negative trailing-twelve-month free-cash-flow margin",
         "cashflow.free_cash_flow_margin",
         "<",
         0.0,

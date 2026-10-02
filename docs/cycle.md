@@ -188,7 +188,7 @@ dropped. Pure derivation — nothing fetched.
   (`metrics`, `price_obs`, `last_fundamental`, `data_quality` per asset), `Rule` protocol
   (`RULE_ID`, `SEVERITY`, `DESCRIPTION`, `PARAMS` property, `evaluate(ctx)`).
 - `builtin.py` — `RULES`: `LEVERAGE_EXTREME` (`debt_to_equity > 3`, HARD),
-  `NEGATIVE_FCF` (`free_cash_flow_margin < 0`, HARD), `LIQUIDITY_DISTRESS`
+  `NEGATIVE_FCF` (`free_cash_flow_margin < 0`, HARD; the margin is trailing-twelve-month on a 10-Q, T-133), `LIQUIDITY_DISTRESS`
   (`current_ratio < 1`, SOFT), `PRICE_CRASH` (`max_drawdown_90d < −0.35`, SOFT),
   `EARNINGS_MISSING` (a FUNDAMENTAL score *exists but has aged* past 400 days, SOFT — an asset
   with no score at all never reaches this rule at all, see `unscored` below, T-119),

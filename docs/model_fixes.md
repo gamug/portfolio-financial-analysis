@@ -4561,3 +4561,123 @@ From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `f
 - The stored `valuation.market_capitalization` can differ from the as-of cap (period-end price, and a fallback count when a filing has
   no cover entry); only the yields and `DQ_MCAP_SCALE` read it.
 - Production has no cover counts until it is re-ingested.
+
+## T-133 — Quarterly cash flow: a 10-Q's year-to-date columns left FCF empty for 95% of Q2/Q3, and one quarter vetoed a company
+
+**Status**: Fixed 2026-10-02 (branch `feat/t133-quarterly-cash-flow`, PR #111, approved; `T-133` (a)-(c)). Folded into `metrics-v4`, the version `T-132`
+introduced: no `metrics-v4` row has been written to any production database yet, so a further bump would only add a version nothing
+reads. Production is **not** repaired by this change: its stored metrics are `metrics-v2` and are replaced by the `T-100` re-run.
+
+### Symptom
+
+From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-ticker sample of production `financial-3.db`:
+
+- A 10-Q's cash-flow statement reports year-to-date columns only (Q2 = six months, Q3 = nine), and the `cashflow` group read the quarter
+  column. **FCF margin was missing for 172 of 182 Q2/Q3 10-Qs (94.5%)**; the cashflow group, VALORIZATION's quality factor and
+  `NEGATIVE_FCF` therefore worked only on Q1 10-Qs and 10-Ks, so names were compared on different inputs depending on the quarter of
+  their latest filing.
+- Where the quarter column did exist it was **one quarter**. `NEGATIVE_FCF` (HARD) read that margin: WAT's first quarter of 2026 has
+  OCF −$3M and capex −$39M on revenue of $1,267M (FCF margin −3.3%) while its trailing year is positive, and `T-125` makes the veto
+  permanent. BF.B (2 filings) and PM (4) had the same shape.
+- APA and PSX had no FCF on any 10-K: the capex registry named three PP&E concepts, and APA files its drilling spend under
+  `PaymentsToExploreAndDevelopOilAndGasProperties` (ASC 932) and PSX under the custom `psx_CapitalExpendituresAndInvestments`.
+
+### Root cause
+
+1. The group computed ratios from `stmts.get(item, period_key)`, the filing's own quarter column. T-105 had already built the
+   trailing-twelve-month flows (`db.ttm_detail`: `FY(prior 10-K) - YTD(last year) + YTD(this year)`, which needs no quarter column) and
+   handed them to `valuation`, `leverage` and `roic`, but not to `cashflow`.
+2. A threshold rule reads whatever the metric holds; nothing said the metric should be a year.
+3. Capex was found by a closed list of concepts, with no path for a filer whose spending is not "property, plant and equipment".
+4. (Found while verifying.) The year-to-date detection of T-105 treats a first quarter's quarter column as its YTD only when the gateway
+   tags it `(Q1)`. The gateway tags a column by the calendar quarter its date falls in, so Waters' first quarter (ends 2026-04-04) arrives
+   as `(Q2)`, beside a prior-year `(Q1)`, with no `(YTD)` column at all: no pair, no identity, and the flow fell to `quarter x 4`.
+
+### Theoretical/technical reference
+
+- Free cash flow is a flow: its margin is only comparable across filings over the same horizon. The trailing twelve months is the
+  horizon a 10-K already reports and the one `T-105` standardised on for every other flow ratio.
+- A company-exclusion rule should not act on seasonal or lumpy single-quarter cash (working-capital timing, a capex cluster); a
+  quarter multiplied by four is that quarter's ratio again, not a trailing year.
+- XBRL ASC 932 (extractive activities) capitalises exploration and development under dedicated concepts; an *acquisition* of
+  reserves (`PaymentsToAcquireOilAndGasProperty`) is not maintenance or development capex.
+
+### Fix
+
+- **(a)/(b)** `cashflow.compute(stmts, key, prior_key, ttm)`: `ttm is None` (a 10-K) reads the annual columns as before; a dict (a
+  10-Q, even an empty one) computes **every** ratio from the TTM flows alone -- OCF, capex, revenue, net income -- so a missing flow
+  leaves the ratio empty rather than dividing a 12-month numerator by a 3-month denominator. The audit inputs keep the raw
+  single-period figures (a later filing's TTM reads `operating_cash_flow` and `capital_expenditure` back from them) and add
+  `*_ttm` keys. `agents._group_ttm` hands the group `FilingContext.real_ttm`: the `ytd` and `quarters` flows, **never the `x4`
+  fallback**. `NEGATIVE_FCF` still reads `cashflow.free_cash_flow_margin`; that margin is now a trailing-twelve-month figure (its
+  description says so), so the rule needs no change of its own, and a filing whose year cannot be built has no margin and is left
+  unevaluated rather than judged on a quarter.
+- **(c)** `LineItem` gains `fallback_concepts` (ordered tiers) and `label_fallback`/`label_fallback_exclude`, consulted only when the
+  ordinary pass finds nothing, so they can never displace a value that was found before. `capital_expenditure` falls back to, in order,
+  `PaymentsToExploreAndDevelopOilAndGasProperties`, `PaymentsToAcquireOilAndGasPropertyAndEquipment` (EOG),
+  `PaymentsToAcquireOilAndGasProperty`, `PaymentsForProceedsFromProductiveAssets` (WAT's 10-Ks to FY2024), then a cash-flow-statement
+  caption "capital expenditure(s)" that excludes the statement's non-cash reconciling rows and proceeds, **and only when exactly one
+  line reads that way**.
+- **Year-to-date detection** (`pipeline._is_first_quarter`, used by `_ytd_columns`): a quarter is a fiscal year's first when the gateway
+  tags it `(Q1)` **or** the balance sheet carries an instant 60-115 days before its end (the comparative column of a 10-Q is the last
+  fiscal year end, one quarter back for a first quarter, two or three for the others). Its prior-year column may carry any quarter tag.
+
+### Design decisions
+
+- **TTM for every 10-Q, not "YTD minus the prior quarter's YTD".** The task allowed either; the identity already exists, is exercised
+  by `valuation`/`leverage`/`roic`, needs only the filing's own columns plus the prior 10-K, and makes the cash-flow group consistent with
+  them. Deriving a quarter would also have meant recording a derived value where the pipeline records raw ones.
+- **`x4` is excluded from the cash-flow group.** The other groups keep it (flagged `annualized_x4`), because their ratios are not
+  exclusion rules. A quarter x 4 inside a HARD rule would reproduce N6 for any filing whose year cannot be built; the cost is that such a
+  filing has no cash-flow ratios, which affects only the first quarters stored before any 10-K of the asset (below).
+- **A partial capex is worse than none.** NEE files "Capital expenditures of FPL" ($9.1B), a duplicate "Capital expenditures", "Other
+  capital expenditures" and the independent-power line; any one alone put NEE's FY2022 FCF margin at −3.8% where the total is far lower.
+  Ambiguity returns no capex. The same rule is why the concept tiers are ordered and the caption is a last resort.
+- **An oil & gas filer's "other PP&E" line is added to its oil & gas spend** (PR #111 review). EOG files $6,115M of oil and gas
+  additions and, on a separate line, $479M of `PaymentsToAcquireOtherPropertyPlantAndEquipment`; stopping at the first tier put its FCF
+  at $3,929M instead of $3,450M (~14% high). `fallback_addends` joins that concept to the three oil & gas tiers only (not to the "net"
+  additions line, and it is never capex on its own): a separate line cannot double count. Live: EOG capex -6,594M, FCF margin 15.2%.
+- **Folded into `metrics-v4`** rather than `v5` (see Status).
+
+### Verification
+
+- **Live gateway, 2026-10-02** (real `EdgarClient`, FY2025 10-Ks): APA capex −2,740M (FCF margin 20.2%), PSX −2,233M (2.1%), EOG
+  −6,115M (17.4%), FANG −3,523M (development, **not** the −5,938M of acquisitions listed beside it; 34.8%), COP −12,553M, XOM −28,358M
+  (unchanged concept). NEE: no capex (ambiguous), as designed. WAT's first-quarter 10-Q arrives as `(Q2)` with `(Q1)` as its comparative:
+  `_is_first_quarter` is true and the pair `("2026-04-04 (Q2)", "2025-03-29 (Q1)")` is found; the single quarter reads −3.3%.
+- **Replay of the scratch copy of `financial-3.db`** (a copy; production untouched): every stored filing rebuilt into a payload from
+  `financial_facts`, run chronologically through the real `_targets`/`_ytd_columns`/`db.ttm_detail`/`cashflow.compute`, each filing's raw
+  flows recorded under a throwaway engine version so the next filing's identity reads them. 20-ticker sample, 182 Q2/Q3 10-Qs:
+  **FCF margin missing 172 (94.5%) -> 45 (24.7%)**. 41 of the 45 are five names with no capex line the registry recognises or that is
+  ambiguous (APO, WFC, HOOD: financials; ESS: a REIT; NEE: a utility) -- not the year-to-date defect; the other 4 are the first quarters
+  stored before any 10-K of PG, BF.B and STZ (no prior fiscal year to anchor a TTM). Among names that have an FCF on their 10-Ks, 9 of
+  146 Q2/Q3 (6.2%) are missing, all of that kind; over the whole 503-ticker database the same figure is 141 of 2,136 (6.6%), the
+  scratch database holding only part of each ticker's history. Read as written ("< 5% of Q2/Q3 FCF margins missing") the
+  target is not reached; the PR #111 review recalibrated it to the population where an FCF is defined -- companies with a 10-K FCF,
+  10-Qs after their first 10-K -- where the remaining gap is the earliest quarters with no prior year, and treats it as met.
+  `verify_pilot.py`'s T-133 check measures that population. Companies with no capex line (APO, WFC, HOOD), or one deliberately left
+  empty (ESS; NEE's split capex), are outside it.
+- **WAT**: first quarter of 2026 FCF margin **-3.3% -> +7.0%** (TTM = FY2025 - Q1 2025 + Q1 2026, method `ytd` for OCF, capex and
+  revenue), so `NEGATIVE_FCF` no longer fires; the later 10-Q reads +8.6%. Across the sample, 7 10-Qs flip from a negative single
+  quarter to a positive year (WAT 1, BF.B 2, PM 4). New negatives are real: HUM 2024Q1-Q3 (-3% to -5%) and HOOD.
+- `tests/test_cashflow_ttm.py` (25): the TTM ratios and their inputs, no mixing of bases, an empty TTM is still a 10-Q, the WAT shape,
+  which flows each group is given, the capex tiers and their order, the caption fallback (non-cash and proceeds rows, ambiguity), the
+  first-quarter detection both ways, and the analyst wiring. Mutation-checked, all caught: ambiguity returning the first line; the
+  non-cash exclusion removed; the acquisition tier ahead of development; a fallback displacing a found value; a 3-month denominator in
+  TTM mode; an empty TTM treated as a 10-K; `x4` inside `real_ttm`; the group given `x4`; a 10-K given a TTM; the balance-sheet
+  detection disabled or always true; the prior-year column required to carry the same tag. `uv run pytest -q`, `ruff`, `mypy` green.
+- **PR #111 review follow-up**: the oil & gas "other PP&E" addend above (3 tests; mutation-checked: addend tiers 0 and 4 both
+  caught). `uv run pytest -q` 955.
+- `verify_pilot.py`'s T-133 checks run in the pilot.
+
+### Residual scope, deliberately deferred
+
+- **Capex-concept inventory** (recorded as scope of `T-071`, sector-appropriate cash-flow measures in the valorization redesign, per the
+  PR #111 review -- not a new task). Filers whose capex is a utility's construction line (`PaymentsForConstructionInProcess`: AEP, ED),
+  split into utility and non-utility lines (DTE, LNT, NEE), or tagged `PaymentsToAcquireOtherPropertyPlantAndEquipment` /
+  `...OtherProductiveAssets` (LLY, EQIX, DAL, HOOD) still have no FCF. Each needs a decision about summing lines that the single-line
+  lookup cannot make; banks, insurers and asset managers have no capex line at all.
+- The first quarters of an asset's stored history (before its first 10-K) have no cash-flow ratios. They are the oldest filings, which
+  `cycle` never reads as an asset's latest.
+- A quarter whose year can be built only as `x4` still gets `x4` ratios in the other groups, flagged `annualized_x4`.
+- Production carries `metrics-v2`; the re-run is `T-100`'s.
