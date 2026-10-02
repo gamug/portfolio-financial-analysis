@@ -1956,3 +1956,168 @@ original fix's scope didn't cover, not regressions. → `fixes_feedback.md` §5.
       their as-of.) `optimize --as-of` already exists, so no flag was needed. For `T-100`: `T-110`
       blocks an as-of *past* the spine's last date; to be forward-trackable, form the books strictly
       before it.
+
+## Work item 17 — P0/P1: data-integrity defects from the 2026-09-29 system review — DONE 2026-10-02
+
+Added 2026-10-01, from `docs/md primera revision/system_review_2026-09-29.md` §4 (a
+whole-pipeline review of code and logic, checked against `data/financial-3.db`). Each task
+below is verified on that database, affects results, and is not covered by an existing task.
+They landed **ahead of Work item 8**: `T-131` first, then
+`T-132` and `T-133`, then the pilot. The review's findings N1–N4 → `T-131`/`T-132`, N5/N6 →
+`T-133`; N7–N9 and N11 became scope additions to `T-070`/`T-071`/Work item 8 (in `TASKS.md`), and N10
+(the `dq-v2` production re-gate) stays a user-direction action, not a task.
+
+> **Note — `T-122`'s moving-average note:** `T-122`'s record in `CHANGELOG.md` says MA was
+> excluded by the liquidity/history gate. It was excluded by a **HARD veto** (`T-125`), not
+> the liquidity gate: MA has full history (1,189 days). `T-122` is closed, so the correction
+> lives here rather than in its record.
+>
+> **Note — `T-132`(a)'s upstream change has landed:** the cover-page share count
+> (`dei:EntityCommonStockSharesOutstanding`) is exposed by the `portfolio-data-mining` gateway
+> since 2026-10-02 (its `T-043`, PR #48: `data["cover"]["shares_outstanding"]`), the same pattern
+> as `T-042`/`T-118`. `T-133` is local and never waited for it.
+
+- [x] **T-131** *(P0)* Price ingestion integrity (`pricing_agent`). **Code done 2026-10-01 (PR #109, approved).**
+      - (a) Never store a bar for a session that hasn't closed: using the NYSE calendar,
+        refuse `--analysis-date`/`--end` of today before the close plus a buffer.
+      - (b) Build `price_observation` from the asset's **full stored `price_daily` history**,
+        not the fetched window, and recompute (upsert) every observation date whose inputs
+        changed.
+      - (c) When `corporate_action` shows a split dated after an asset's stored history
+        began, re-fetch that asset's full history and rebuild its observations and returns.
+        Refuse to store a series with a split-shaped jump (×2, ×0.5, ×3 …) that doesn't match
+        a recorded split.
+      - (d) Filter by `engine_version` in `quant.universe._history_counts` and
+        `_median_dollar_volume`, which today would double-count history as soon as a second
+        returns or observation version exists (forensic audit Q4).
+
+      **Why (system review N1–N3)**: pricing runs on 2026-09-29 at 14:04–14:10 UTC stored a
+      partial intraday session as the day's close (363M shares across 503 names against a
+      normal 2,684–3,371M); `price_observation` and `quant_return_daily` are `INSERT OR
+      IGNORE`, so it is permanent and feeds the 09-29 benchmark, evaluation rows and risk
+      model 3. Observations computed only over a refresh's fetched window left
+      `realized_vol_90d`, `momentum_252d`, `max_drawdown_90d` and `momentum_63d` NULL on
+      10,500 rows (all 503 names since 2026-08-31). APH (2:1, 2026-09-03) and MNST (2:1,
+      2026-08-11) have split-shaped jumps from a partial refresh (7 in total; real moves such
+      as FISV −44% are not errors).
+
+      **Clean-up** *(production DB action, at the user's direction only; not needed if
+      production is never used again before `T-100`, since the pilot and `T-100` both start from
+      a fresh database)*: delete the 2026-09-29 rows from `price_observation` and
+      `quant_return_daily` and the benchmark, perf and risk-model rows built on them; rebuild
+      observations for all 503 names from full history; re-fetch APH and MNST in full.
+
+      **Acceptance**: an intraday run for today is refused; an incremental refresh produces
+      observations identical to a full recompute; 0 split-shaped jumps; `verify_pilot.py`
+      T-131 checks pass.
+
+      **Done 2026-10-01** (branch `fix/t131-price-ingestion-integrity`). (a)
+      `kg_schema.trading_calendar.session_final_at`/`session_is_open_or_pending`/`last_final_session`
+      (16:00 ET + 1 h, US DST by rule) and `pipeline._require_closed_session`: a trading-day end whose bar
+      is not final raises `SessionNotClosed` before the DB is opened (the default `--analysis-date` is
+      therefore refused most of a trading day — pass the latest final session, which the error names).
+      (b) observations are built from the asset's full stored `price_daily` history and
+      `upsert_price_observations` rewrites a row only when a value differs. (c) `_reconcile_history`
+      (`--store-daily`): a full re-fetch once when a recorded SPLIT postdates a bar stored before it, or a
+      split-shaped seam jump matches a recorded split; a jump that survives or has no recorded split is
+      refused, writing nothing for the ticker (`pricing_run_error.stage = 'split_jump'`), unless
+      `--allow-split-jumps`. `quant.db.upsert_return_daily` follows the same update-on-change rule, so
+      `quant build-returns` rebuilds a re-adjusted series. (d) `quant.universe` filters by the pinned
+      `return_engine_version` / new `observation_engine_version` (PR #109 review). **Verified on production `financial.db` (read-only):**
+      the detector finds exactly the 7 jumps (APH 1, MNST 6), each matching its recorded 2:1 split, and a
+      full recompute fills all 10,500 NULL observation rows; the gateway was unreachable from this
+      container, so the re-fetch was exercised against a stub — then verified live by the PR #109 review
+      (real gateway, scratch copy of the DB: 09-29 bar healed, APH/MNST re-fetched in full, jumps 7 → 0,
+      NULL vol-90d 21 → 0 per ticker, second run changed 0 rows). +50 tests (860 total), mutation-checked; ruff, format, mypy
+      clean. Record: `docs/model_fixes.md` "T-131"; `SPEC.md` FR-004 and NR-007 (the two derived series
+      are rewritten on a changed input), `docs/pricing_agent.md` updated.
+      **Still open:** the production clean-up above (user direction only) and `verify_pilot.py`'s T-131
+      checks, which run in the pilot. The first `pricing_agent --store-daily` run after this re-fetches
+      every asset that has a split in its history, once each.
+
+- [x] **T-132** *(P0)* Market capitalization. **Code done 2026-10-02 (PR #110, approved).**
+      - (a) Point-in-time share count from the cover page
+        (`dei:EntityCommonStockSharesOutstanding`): gateway (upstream) plus
+        `fundamental_agent`. *(Upstream `portfolio-data-mining` `T-043`, PR #48, merged
+        2026-10-02.)*
+      - (b) Never use `CommonStockSharesIssued` as shares outstanding.
+      - (c) One shared reader in `kg_schema`, used by `cycle` and `quant`: the latest
+        point-in-time count times the **close at the as-of date**, refusing a count older
+        than a set age.
+      - (d) `quant` refuses a risk model, or records it explicitly, when any panel asset
+        lacks a cap, never weighting it 0 silently. Record cap coverage and age on
+        `quant_run`.
+
+      **Why (system review N4)**: `statements.REGISTRY["shares_outstanding"]` falls back to
+      `us-gaap_CommonStockSharesIssued`, which includes treasury stock (PG: $650B cap on
+      4.009B issued vs SEC's 2.324B outstanding, about 1.7× too high; 139 stored filings have
+      only "issued"). XOM, PM, NEE and HUM have no share concept stored; 101 of 359 sample
+      filings (28%) have no cap, and 238 of the 258 that do use the diluted weighted average.
+      `quant.db.load_market_caps` keeps the latest non-null cap with no age limit (PG's
+      2024-03-31 value is used on 2026-09-29) while `cycle.data.market_cap_estimates` takes
+      the latest filing even when NULL, so the two modules disagree. A missing cap is silently
+      weighted 0 in the equilibrium market portfolio (`caps_by_id.get(a, 0.0)`): XOM gets 0
+      and PG about 40% of the market weight in risk model 3. Caps are valued at the filing's
+      period-end price, not the as-of price. `T-122`'s post-fix quant numbers rest on this
+      vector, so they are not thesis-usable yet. *(Not the same as `T-127`, MCD's market-cap
+      scale, already fixed by `T-103`.)*
+
+      **Acceptance**: every sample name has a cap from a point-in-time count; PG within 5% of
+      SEC's cover count × price; a test with one missing cap refuses; `verify_pilot.py` T-132
+      passes.
+
+      **Closure (2026-10-02)**: the cover count is stored in `filing_cover_shares`; the registry no
+      longer reads `CommonStockSharesIssued`; `kg_schema.market_cap.market_caps_as_of` is the one
+      reader `cycle` and `quant` call (latest usable cover count × the close on the date,
+      split-basis adjusted, refusing a count older than 200 days or a close older than 10);
+      `build-risk-model` refuses on a missing cap (`--allow-missing-caps` records and weights 0) and
+      records coverage and age on `quant_run`; `METRICS_ENGINE_VERSION` → `metrics-v4`. Verified live
+      on a scratch copy of production: 20 of 20 sample names have a cap (6 had none), PG = SEC's
+      2,324,433,060 × the close, XOM's equilibrium return 1.99% → 9.98%; see `docs/model_fixes.md`.
+      PR #110 review follow-ups: the cover failure is read from `data["cover"]["error"]`; BRK's class A is
+      converted (`CLASS_CONVERSION`); `quant` counts a dual-listed issuer once (same CIK).
+      **Still open:** production filings carry no cover counts until re-ingested (`run --fresh` /
+      `T-100`; no backfill command was built), `verify_pilot.py`'s T-132 check (in the pilot), and
+      a follow-up to retire quant's now-vestigial `--metrics-version` (market caps were the only
+      `fundamental_metrics` it read).
+
+- [x] **T-133** *(P1)* Quarterly cash flow and the NEGATIVE_FCF rule. **Code done 2026-10-02 (PR #111).**
+      - (a) On 10-Qs, derive the quarter's cash flows (YTD minus the prior quarter's YTD), or
+        compute cash-flow margins on the TTM basis `T-105` already builds (TTM FCF / TTM
+        revenue), consistently for every filing.
+      - (b) NEGATIVE_FCF reads TTM FCF, not one quarter.
+      - (c) Recognize oil & gas capex (ASC 932: `PaymentsToExploreAndDevelopOilAndGasProperties`,
+        `PaymentsToAcquireOilAndGasProperty`) and a filer's custom capex concept through a
+        cash-flow-statement-only label fallback. Today APA and PSX have no FCF on any 10-K
+        (forensic audit F2; PSX uses `psx_CapitalExpendituresAndInvestments`).
+
+      **Why (system review N5/N6)**: a 10-Q cash-flow statement reports only year-to-date
+      columns and the cashflow group reads the quarter column, so FCF margin is missing for
+      172 of 182 Q2/Q3 10-Qs (95%); the cashflow group, VALORIZATION's quality factor and
+      NEGATIVE_FCF work only on Q1 10-Qs and 10-Ks. NEGATIVE_FCF (HARD) reads a single
+      quarter: WAT is vetoed for Q1 2026 alone (FCF −$42M on revenue of $1,267M) while its
+      TTM FCF is positive, and `T-125` makes the veto permanent.
+
+      **Acceptance**: < 5% of Q2/Q3 FCF margins missing; APA and PSX 10-K FCF present; WAT's
+      Q1 2026 no longer triggers the HARD veto while its TTM FCF is positive;
+      `verify_pilot.py` T-133 checks pass.
+
+      **Closure (2026-10-02)**: `cashflow.compute` measures a 10-Q over the trailing twelve months
+      (`T-105`'s `ytd`/`quarters` flows only -- never `quarter x 4`, which would reproduce N6 for a
+      filing whose year cannot be built) and a 10-K over its fiscal year, so `NEGATIVE_FCF`, which still
+      reads `free_cash_flow_margin`, now reads a trailing year; `capital_expenditure` recognises oil & gas
+      development and acquisition spend (ordered tiers), the "net" additions line and a single
+      "capital expenditure(s)" cash-flow caption, and is absent rather than partial when a filer reports it
+      in parts (NEE). Found while verifying: a first quarter the gateway tags `(Q2)` (Waters) had no
+      year-to-date pair; `_is_first_quarter` now also reads the balance sheet. Folded into `metrics-v4`.
+      Verified live (APA -2,740M, PSX -2,233M, EOG, FANG development not acquisitions) and by replaying a
+      scratch copy of `financial-3.db` through the real TTM code: Q2/Q3 FCF margin missing **94.5% ->
+      24.7%** on the 20-ticker sample, WAT's first quarter of 2026 **-3.3% -> +7.0%**; see
+      `docs/model_fixes.md`.
+      **Acceptance not met as written**: "< 5% missing" -- 41 of the remaining 45 are five names with no
+      recognised capex line (APO, WFC, HOOD: financials; ESS: a REIT; NEE: a utility), 4 are the first
+      quarters stored before any 10-K; among names with a 10-K FCF, 9 of 146 (6.2%) are missing. Closing
+      it is a capex-concept inventory (utility construction lines, "other PP&E" variants, summing split
+      lines) that needs per-filer judgement.
+      **Still open:** that inventory (a follow-up if wanted), `verify_pilot.py`'s T-133 checks (in the
+      pilot), and the production re-run (`T-100`).
