@@ -185,6 +185,76 @@ def resolve_asset_ids(
     return mapping, missing
 
 
+# -- market capitalisation inputs (T-132) ------------------------------------
+
+
+def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row]:
+    """The cover-page share counts usable on *as_of*: their filing's ``available_at`` and the
+    count's own ``as_of_date`` are both on or before it (T-107, no lookahead). Empty when the
+    table does not exist yet (a database no ingest has touched)."""
+    try:
+        return db.execute(
+            """
+            SELECT sf.asset_id, a.cik, sf.id AS filing_id, sf.available_at,
+                   c.class_member, c.value, c.as_of_date
+            FROM filing_cover_shares c JOIN sec_filings sf ON sf.id = c.filing_id
+            JOIN assets a ON a.id = sf.asset_id
+            WHERE sf.asset_id IN (SELECT value FROM json_each(?))
+              AND sf.available_at IS NOT NULL AND sf.available_at <= ? AND c.as_of_date <= ?
+            ORDER BY sf.asset_id, sf.id, c.class_member, c.as_of_date
+            """,
+            (json.dumps(sorted(set(asset_ids))), as_of, as_of),
+        ).fetchall()
+    except DatabaseError:
+        return []
+
+
+def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -> list[Row]:
+    """Each asset's last stored close on or before *as_of* and on or after *floor*."""
+    try:
+        return db.execute(
+            """
+            SELECT p.asset_id, p.date, p.close
+            FROM price_daily p
+            JOIN (
+                SELECT asset_id, MAX(date) AS d FROM price_daily
+                WHERE asset_id IN (SELECT value FROM json_each(?))
+                  AND date <= ? AND date >= ? AND close IS NOT NULL
+                GROUP BY asset_id
+            ) last ON last.asset_id = p.asset_id AND last.d = p.date
+            """,
+            (json.dumps(sorted(set(asset_ids))), as_of, floor),
+        ).fetchall()
+    except DatabaseError:
+        return []
+
+
+def last_price_dates(db: Database, asset_ids: list[int]) -> dict[int, str]:
+    """The newest stored bar per asset: the date the gateway's split adjustment is current to."""
+    try:
+        rows = db.execute(
+            "SELECT asset_id, MAX(date) AS d FROM price_daily "
+            "WHERE asset_id IN (SELECT value FROM json_each(?)) GROUP BY asset_id",
+            (json.dumps(sorted(set(asset_ids))),),
+        ).fetchall()
+    except DatabaseError:
+        return {}
+    return {int(r["asset_id"]): str(r["d"]) for r in rows}
+
+
+def split_rows(db: Database, asset_ids: list[int], *, engine_version: str) -> list[Row]:
+    """The recorded splits (ex-date, ratio) of one corporate-action engine build."""
+    try:
+        return db.execute(
+            "SELECT DISTINCT asset_id, ex_date, value FROM corporate_action "
+            "WHERE asset_id IN (SELECT value FROM json_each(?)) "
+            "AND action_type = 'SPLIT' AND engine_version = ? ORDER BY asset_id, ex_date",
+            (json.dumps(sorted(set(asset_ids))), engine_version),
+        ).fetchall()
+    except DatabaseError:
+        return []
+
+
 # -- data-coverage report -----------------------------------------------------
 
 

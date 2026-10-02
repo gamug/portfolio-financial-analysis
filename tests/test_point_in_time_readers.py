@@ -20,15 +20,16 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import seed_cover_shares
 from portfolio_common.db import Database
 
 from cycle import data as cycle_data
 from cycle.config import CycleSettings
 from cycle.orchestrator import run_selection
 from kg_schema import apply_migrations
+from kg_schema.market_cap import market_caps_as_of
 from kg_schema.trading_calendar import available_from
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, resolve_metric_versions
-from quant.db import load_market_caps
 
 # (filing id, asset, form, fiscal period, period end, filing date)
 FILINGS = [
@@ -64,6 +65,8 @@ def filed(memory_db: Database) -> Database:
                 "VALUES (?, ?, ?, ?, 'x', ?, 'now', 'metrics-v2', ?, ?)",
                 (fid, group, name, float(fid), json.dumps({name: float(fid)}), pe, AVAILABLE[fid]),
             )
+        # T-132: the cap is the filing's cover count (= its id) x a close of 1.0
+        seed_cover_shares(conn, aid, float(fid), as_of_date=fd, filing_id=fid)
         conn.execute(
             "INSERT INTO data_quality_issue (filing_id, asset_id, metric_group, metric_name, "
             "metric_engine_version, rule_id, gate_version, severity, quarantined, value, "
@@ -77,25 +80,34 @@ def filed(memory_db: Database) -> Database:
             "VALUES (?, 'FUNDAMENTAL', ?, ?, ?, 'now', 'seed', 'analysis', ?, ?)",
             (aid, float(fid), float(fid), pe, fid, AVAILABLE[fid]),
         )
+    conn.execute("CREATE TABLE price_daily (asset_id INTEGER, date TEXT, close REAL)")
+    day = date(2024, 12, 1)
+    while day <= date(2027, 4, 30):
+        for aid in (1, 2):
+            conn.execute(
+                "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 1.0)",
+                (aid, day.isoformat()),
+            )
+        day += timedelta(days=1)
     conn.commit()
     return conn
 
 
 def _read_everything(conn: Database, day: str) -> dict[str, dict[int, float | None]]:
-    """Every fundamental reader ``cycle`` (and ``quant``'s market cap) uses, as asset -> the
-    filing id its value came from."""
+    """Every fundamental reader ``cycle`` and ``quant`` use (the market cap reader is shared,
+    T-132), as asset -> the filing id its value came from."""
     versions = resolve_metric_versions(conn)
     metrics = cycle_data.latest_metrics(conn, day, versions)
     dq = cycle_data.data_quality(conn, day, versions)
     return {
         "latest_metrics": {a: m["profitability.net_margin"] for a, m in metrics.items()},
+        # the age limit is a separate property (tests/test_market_cap.py): lifted here so the
+        # sweep below isolates *which filing* is reachable on a day
         "market_cap": {
-            a: v
-            for a, v in cycle_data.market_cap_estimates(conn, day, metrics, versions).items()
-            if v is not None
-        },
-        "quant_market_cap": {
-            a: v for a, v in load_market_caps(conn, [1, 2], versions, as_of=day).items()
+            a: c.value
+            for a, c in market_caps_as_of(
+                conn, [1, 2], as_of=day, max_share_age_days=10_000
+            ).caps.items()
         },
         "data_quality": {a: issues[0]["value"] for a, issues in dq.hard.items()},
         "fundamental_score": cycle_data.latest_fundamental_score(conn, day),

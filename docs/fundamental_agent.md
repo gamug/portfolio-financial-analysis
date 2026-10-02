@@ -61,7 +61,10 @@ raises a plain `EdgarError` when `data["reconciliation_errors"]` (T-042, `portfo
 mining` PR #46) is non-empty — a statement whose own reconciliation failed comes back
 rendered-but-unvalidated, so the filing is treated as a failed unit (retried next run, no
 facts written) rather than risk an unvalidated value reaching `financial_facts` looking
-filed.
+filed. The exception is an entry whose `statement` is `"cover"` (the cover-page share count,
+read independently upstream, `portfolio-data-mining` T-043): the statements are still validated,
+so the filing is analysed, `Statements.cover_error` carries the message, and the pipeline records
+it as a `cover` run error (T-132).
 
 ### universe source
 
@@ -92,6 +95,12 @@ like `NetIncomeLoss` independently on more than one statement -- everything else
 (filed as-is). `Statements.corrections` holds the raw list (`[]` for a payload from a gateway
 version that predates it).
 
+`Statements.cover_shares` (T-132) is the payload's `data["cover"]["shares_outstanding"]` — the
+filing's own count of shares outstanding (`dei:EntityCommonStockSharesOutstanding`) with its
+`as_of_date` and `class_member` (`""` for a single class or a filed total). An entry without a
+positive value or a date is dropped. The pipeline stores them in `filing_cover_shares`
+(`db.insert_cover_shares`, idempotent), and `kg_schema.market_cap` reads them back as of a date.
+
 ### `metrics/` — one module per group
 
 Each exposes `GROUP` and `compute(stmts, period_key, prior_key=None) ->
@@ -109,7 +118,7 @@ list[MetricResult]`. `MetricResult(name, value, unit, inputs)` — `unit ∈
 | `cashflow` | OCF margin, FCF margin, FCF conversion, capex intensity; `free_cash_flow()` helper |
 | `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC |
 | `cagr` | multi-year revenue / net income / OCF CAGR from a 10-K's FY columns |
-| `valuation` | market cap, EV, equity/enterprise/SBC-adjusted FCF yield — **needs a period-end price** |
+| `valuation` | market cap, EV, equity/enterprise/SBC-adjusted FCF yield — **needs a period-end price**; shares are the filing's cover-page count (`filing_cover_shares`, T-132), else the balance sheet's outstanding count, else the weighted-average diluted count (flagged `shares_are_diluted_average`) — never `CommonStockSharesIssued` |
 
 `__init__.py`: `CORE_GROUPS` always computed; `OPTIONAL_GROUPS` the orchestrator may
 add; `valuation` is special-cased (needs a price arg).

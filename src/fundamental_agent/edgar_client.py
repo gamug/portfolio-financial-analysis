@@ -153,12 +153,20 @@ class EdgarClient:
         such a statement comes back rendered but unvalidated, indistinguishable in shape
         from a genuinely clean one, so it must never reach ``financial_facts`` looking
         like either. The caller's existing per-filing failure handling (unscored, retried
-        next run) already does the right thing once this raises."""
+        next run) already does the right thing once this raises. A failed *cover-page* read
+        (``statement == "cover"``, portfolio-data-mining T-043) is the exception: it leaves
+        the statements validated and only the share count empty, so it does not raise."""
         params: dict[str, Any] = {"form": form, "year": year}
         if accession_number is not None:
             params["accession_number"] = accession_number
         raw = self._get(f"/financials/{ticker}", params)
-        errors = raw.get("reconciliation_errors") or []
+        # The cover-page count (portfolio-data-mining T-043) is read independently of the
+        # statements and fails in isolation: its error rides in the same list but leaves all three
+        # statements validated, so it must not fail the filing -- the caller records it and the
+        # filing simply has no cover count (T-132).
+        errors = [
+            e for e in raw.get("reconciliation_errors") or [] if e.get("statement") != "cover"
+        ]
         if errors:
             detail = "; ".join(f"{e.get('statement')}: {e.get('error')}" for e in errors)
             raise EdgarError(f"/financials/{ticker} reconciliation failed: {detail}")

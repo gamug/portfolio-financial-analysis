@@ -133,9 +133,11 @@ exempt), `too_many_unscored_reason`/`TooManyUnscored` (refuses `rank` when more 
 `CycleSettings.unscored_max_share` of the universe has no score at all, up to and including
 100% — not overridable, no `--allow-*` flag, since it isn't a "deliberate run despite a known
 gap" case the way the other guards are),
-`latest_semantic_score`, `market_cap_estimates(conn, date, metrics, versions)` (reads the
-stored `valuation.market_capitalization` metric inputs; the most recent filing per asset
-usable on the date wins), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
+`latest_semantic_score`, `market_cap_estimates(conn, date, asset_ids)` (T-132: each asset's
+cap from the shared `kg_schema.market_cap` reader — the latest cover-page share count usable
+on the date × the close on or before it; `None` for an asset it refuses to value, which only
+drops that asset's `earnings_yield` and size factor; the valorization step records
+`market_cap_missing`), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
 `data_quality_issue` verdicts on the same latest filing, for the run's metric versions and the
 current gate version — `quarantined` keys, `hard` issues, `negative_equity` assets; `apply()`
 blanks quarantined values). **Point in time (T-106, T-107)**: a filing's period end is not when it

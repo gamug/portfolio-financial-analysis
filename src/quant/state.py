@@ -85,6 +85,17 @@ def set_run_params(conn: Database, run_id: int, params: dict[str, Any]) -> None:
     conn.commit()
 
 
+def merge_run_params(conn: Database, run_id: int, extra: dict[str, Any]) -> None:
+    """Add *extra* to a run's ``params_json`` -- for facts known only once the run has done its
+    work (T-132's market-cap coverage), without replacing what :func:`open_run` recorded."""
+    conn.execute(
+        "UPDATE quant_run SET params_json = json_patch(COALESCE(params_json, '{}'), ?) "
+        "WHERE id = ?",
+        (json.dumps(_redact(extra), default=str), run_id),
+    )
+    conn.commit()
+
+
 def fail_run(conn: Database, run_id: int, error: str) -> None:
     conn.execute(
         "UPDATE quant_run SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",

@@ -4441,3 +4441,123 @@ From `docs/md primera revision/system_review_2026-09-29.md` N1-N3, re-measured o
   unaffected, and it is left in the change test so the column never goes stale. Exact float comparison can rewrite a row on 1e-18 noise.
 - A genuine one-day x2 / x0.5 move is indistinguishable from a seam and needs `--allow-split-jumps` (none in the current universe).
 - Early-close days are treated as full days (refuses slightly longer than needed).
+
+## T-132 — Market capitalization: "shares issued", an unbounded-age stored cap, a silent zero weight and a period-end price
+
+**Status**: Fixed 2026-10-02 (branch `feat/t132-market-capitalization`, PR #110, approved; `T-132` (a)-(d)). The upstream half of (a)
+(`portfolio-data-mining` T-043, PR #48, merged 2026-10-02) is what makes the cover count available. Production is **not**
+repaired by this change: its filings carry no cover counts until they are re-ingested (`T-100` starts from a fresh database).
+
+### Symptom
+
+From `docs/md primera revision/system_review_2026-09-29.md` N4, on production `financial.db` (read-only):
+
+- `statements.REGISTRY["shares_outstanding"]` fell back to `us-gaap_CommonStockSharesIssued`, which includes treasury stock: PG's
+  market cap came out at about $650B on 4.009B issued shares against 2.324B outstanding on SEC's cover (about 1.7x too high); 139
+  stored filings have only "issued".
+- XOM, PM, NEE and HUM have no share concept stored at all: 101 of the 359 sample filings (28%) have no cap, and 238 of the 258 that
+  do use the diluted **weighted-average** count.
+- `quant.db.load_market_caps` kept the latest non-null cap with no age limit (PG's 2024-03-31 value on 2026-09-29) while
+  `cycle.data.market_cap_estimates` took the latest filing even when its cap was NULL -- two readers, two answers.
+- `_expected_returns` did `caps_by_id.get(a, 0.0)`: a missing cap was silently weight 0 in the equilibrium market portfolio (XOM 0,
+  PG about 40% of the weight in risk model 3), and an all-zero vector fell back to equal weights.
+- Caps were valued at the *filing's period-end* price, not the as-of price.
+
+### Root cause
+
+1. The share count had one source, the balance sheet, and a fallback chain that ended on the wrong concept: an absent
+   `CommonStockSharesOutstanding` became "issued", and then the weighted average.
+2. The cap was computed once, at ingest, and stored as a metric; every reader took whichever stored value it found, with no notion of
+   how old the count was or of what the price was on the date being asked about.
+3. Nothing treated "no cap" as a condition: the optimizer's input was a dict with a `0.0` default.
+
+### Theoretical/technical reference
+
+- Market capitalization = shares *outstanding* x price; treasury shares are issued but not outstanding. The SEC cover page
+  (`dei:EntityCommonStockSharesOutstanding`) is the filer's own count on a stated date, the most current number a filing carries.
+- Black-Litterman / equilibrium returns `pi = rf + lambda * Sigma * w_mkt` need market-cap weights `w_mkt` for **every** asset; an
+  asset left out is not neutral, it removes its weight from the market portfolio and inflates everyone else's.
+- A split between a count and a price puts them on different share bases (a 2:1 split halves an adjusted close but not an older count).
+
+### Fix
+
+- **(a)** `data["cover"]["shares_outstanding"]` from the gateway is parsed (`Statements.cover_shares`; entries without a positive
+  value or an `as_of_date` are dropped) and stored in a new additive table `filing_cover_shares` (`kg_schema/ddl.py`: one row per
+  filing, class and date; `class_member = ''` is a single-class count or a filer's own total). `EdgarClient.financials` no longer
+  raises on a reconciliation error whose statement is `cover` (the gateway's cover read fails in isolation, the statements are still
+  validated); `Statements.cover_error` carries it (read from `data["cover"]["error"]`, the final contract of upstream PR #48; the earlier `reconciliation_errors` entry is still read) and the pipeline records it as a `cover` run error. `ensure()` creates the table,
+  so no migration is needed.
+- **(b)** `CommonStockSharesIssued` is removed from the `shares_outstanding` concepts. The stored `valuation` metrics now take the
+  cover count first, then the balance-sheet outstanding count, then (flagged `shares_are_diluted_average`) the weighted average;
+  `inputs.shares_from_cover_page` records which. `METRICS_ENGINE_VERSION` -> `metrics-v4`.
+- **(c)** `kg_schema/market_cap.py`: `market_caps_as_of(db, asset_ids, as_of=...)` -- the latest cover count from a filing already
+  *usable* on the date (`available_at`, T-107) x the last stored close on or before it. It refuses a count older than 200 days
+  (`stale_shares`), a close older than 10 days (`no_recent_price`) and a name with no count (`no_cover_shares`); the reason is
+  returned, never a number. The count is put on the price's split basis first (every `corpact-v1` SPLIT dated after the count and no
+  later than the asset's newest stored bar). `cycle.data.market_cap_estimates(conn, date, asset_ids)` and `quant` both call it;
+  `quant.db.load_market_caps` is gone.
+- **(d)** `quant.persist._market_caps`: a panel asset the reader cannot value raises `MissingMarketCaps` (naming asset ids and reasons)
+  and fails the run. `--allow-missing-caps` builds anyway with those assets at weight 0 and records them; a panel with no cap at
+  all always refuses (the equal-weight fallback is gone). Coverage and age (`n_with_cap`, `missing{asset: reason}`,
+  `share_age_days_median/max`, `n_multi_class`) are merged into `quant_run.params_json["market_caps"]` and into the risk model's
+  `params_json`, and printed by the CLI. `QuantSettings.market_cap_max_share_age_days / market_cap_max_price_age_days /
+  allow_missing_caps` carry the knobs.
+
+### Design decisions
+
+- **One reader, no fallback chain.** The reader uses the cover count only. A balance-sheet or weighted-average stand-in would
+  reintroduce exactly the silent substitution this fixes; the stored `valuation` metrics keep their fallbacks (a yield needs *a* cap
+  more than it needs a point-in-time one) but are no longer what `cycle`'s size factor or `quant`'s market portfolio read.
+- **The as-of price, not the period-end price.** `cap(D) = count(latest usable on D) x close(D)`. The stored metric's period-end price
+  is unchanged for the yields it feeds.
+- **Dual-class filers.** The filer's own non-dimensional total is used when it filed one; otherwise the classes are summed and
+  `n_multi_class` flags it, at the traded close. That is exact when the classes carry the same economics (BF.B, MA, HOOD, STZ,
+  GOOGL); Berkshire's do not (1 class A = 1,500 class B, the listing BRK.B trades B), so `market_cap.CLASS_CONVERSION` — a small,
+  explicit table `{cik: {class_member: units of the traded class}}` — converts A before the sum, in `cover_total`, which the stored
+  metric and the reader share (PR #110 review). Summed 1:1 BRK's cap was 35.6% low and its cycle yields ~1.55× high.
+- **One company, one weight (quant only).** The reader gives every *listing* the company's whole cap, which is right for `cycle`
+  (yields and size are company-level). The equilibrium market portfolio would count GOOG + GOOGL, FOX + FOXA and NWS + NWSA (one CIK
+  each) twice, so `quant.persist._split_dual_listings` splits the company cap equally among the panel assets sharing a CIK and
+  the grouping is recorded as `market_caps.dual_listed` (PR #110 review). Sibling classes are nearly collinear, so
+  `pi = delta*Sigma*w` barely depends on the split.
+- **200 / 10 days.** A count is at worst a quarter plus the filing lag old just before the next filing becomes available; both limits
+  are settings, not constants. A refusal is preferred to a stale cap.
+- **No silent zero, but an override.** Refusing by default stops a risk model from being quietly wrong; the override exists for a
+  deliberate run and leaves the evidence on the run row.
+- **`metrics-v4`** because valuation outputs change for the same filings (T-102's precedent); `cycle`/`quant` resolve the newest
+  version present per group, so until `T-100` has written `v4` for the whole universe, pin `--metrics-version metrics-v3`.
+- **No backfill command.** A filing ingested before this change has no cover count and so no cap; re-ingesting it (`run --fresh`, or
+  `T-100`) fills it. A dedicated backfill would be a cheaper way to repair a populated database and can be added if the pilot needs it.
+- **Quant's `--metrics-version` is now vestigial.** Market caps were the only `fundamental_metrics` quant read; the manifest keeps
+  the `metrics` entry so that existing risk-model keys stay comparable, but it no longer changes any number.
+
+### Verification
+
+- **Live gateway, 2026-10-02** (real `EdgarClient`): PG 2,324,433,060 (2026-07-31), XOM 4,166,763,453 (2026-01-31), HUM 120,595,967
+  (2026-01-31), GOOGL A 5,822M / B 837M / C 5,438M (2026-01-28) -- identical to the upstream PR's table.
+- **Scratch copy of production `financial-3.db`** (a copy; production untouched): cover counts for the 20 sample names' latest 10-K and
+  10-Q (48 rows) stored through `db.insert_cover_shares`, then `market_caps_as_of(..., "2026-09-29")`: **20 of 20 names have a cap**
+  (6 had none before: BF.B, HUM, NEE, PG, PM, XOM), count ages 29-95 days (median 68), 4 multi-class. PG = 2,324.4M x $148.15 =
+  **$344.4B** (SEC's cover count exactly; the ~$650B on issued shares is gone). `quant build-risk-model --analysis-date 2026-09-29` on
+  that copy: 18/18 caps, median age 71 d, and XOM's equilibrium return moved from 1.99% (risk model 1, cap 0) to 9.98%.
+- `tests/test_market_cap.py` (22: formula, point in time, age limits, splits, classes, coverage), `tests/test_cover_shares.py` (28:
+  parsing, client, registry, valuation, storage, pipeline), `tests/test_quant_market_caps.py` (12: refusal, override, recorded coverage,
+  CLI, cycle = quant). Mutation-checked, all caught: shares issued back in the registry; no age limit; no split adjustment; no
+  `available_at` filter; missing caps weighted 0 silently; the balance sheet before the cover; a cover error failing the filing; the
+  all-missing fallback; a split after the last bar applied; the filer's total summed with its classes; the cover not stored by the
+  pipeline; the legacy corporate-action engine counted; `cycle` not calling the reader. `uv run pytest -q` (919), `ruff`, `mypy` green.
+- **PR #110 review follow-ups**, live: the gateway's final payload carries `data["cover"]["error"]` (`null` on success) and an empty
+  `reconciliation_errors`; BRK-B's latest 10-Q gives 1,408,035,161 B + 1,500 × 488,450 A = 2,140,710,161 B-equivalents × $502.61 =
+  **$1,075.95B** as of 2026-09-29 (summed 1:1 it was $707.7B, 34% low). Tests added for the final error shape, the BRK conversion in
+  both the metric and the reader, and the dual-listing split; mutation-checked (ignoring `cover.error`, counting dual listings twice,
+  dropping the conversion, the metric ignoring the issuer — all caught). `uv run pytest -q` 927.
+- `verify_pilot.py`'s T-132 check (latest filing's stored `market_capitalization` is not NULL) runs in the pilot; it reads the stored
+  metric, which now prefers the cover count.
+
+### Residual scope, deliberately deferred
+
+- A new multi-class filer whose classes are not 1:1 needs a line in `CLASS_CONVERSION` (BRK is the only one in the universe today).
+- The equal split between listings of one issuer is a convention; a class-based split is equally defensible.
+- The stored `valuation.market_capitalization` can differ from the as-of cap (period-end price, and a fallback count when a filing has
+  no cover entry); only the yields and `DQ_MCAP_SCALE` read it.
+- Production has no cover counts until it is re-ingested.

@@ -173,6 +173,17 @@ model built from it is reproducible. No pandas.
   `james_stein` over ~5 y of daily data shrinks μ almost flat, which collapses the
   frontier onto `min_var` (see the note below).
 
+**Market caps (`T-132`).** One company counts once: panel assets sharing a CIK (GOOG/GOOGL, FOX/FOXA, NWS/NWSA) split the company cap equally in `w_market`. `w_market` is built from `kg_schema.market_cap.market_caps_as_of` at
+the as-of date: the latest cover-page share count usable that day × the close on or before it,
+refusing a count older than `--market-cap-max-share-age-days` (200) or a close older than 10
+days. A panel asset with no cap makes `build-risk-model` (and `optimize`, which builds one)
+**refuse** with `MissingMarketCaps`, naming the asset ids and reasons — a missing cap is no
+longer silently weight 0, and an all-missing panel no longer falls back to equal weights.
+`--allow-missing-caps` builds anyway, those assets at weight 0. Either way the run records
+`quant_run.params_json["market_caps"]` (`n_with_cap`, `missing{asset_id: reason}`,
+`share_age_days_median/max`, `n_multi_class`, `dual_listed{cik: [asset_ids]}`) and the same object lands in the risk model's
+`params_json`; the CLI prints it.
+
 Persisted as `quant_risk_model` metadata + `quant_expected_return` (μ per model)
 + `quant_covariance` (the annualized lower triangle, `N(N+1)/2` rows;
 `--no-store-cov` skips it and keeps only the reproducible `panel_spec_json`).
@@ -221,9 +232,11 @@ books at one as-of, unlike `portfolio_position`'s `(asset_id, valid_from)`.
 
 ### `manifest.py` — the input versions of a run (T-090)
 
-`quant` reads two versioned inputs: the `valuation` metric group (market capitalisation, the
-weights behind the equilibrium expected return — the risk model always computes all three μ
-estimators) and the return series named by `return_engine_version`. `resolve_quant_manifest`
+`quant` reads one versioned input, the return series named by `return_engine_version`.
+(Until `T-132` it read a second, the `valuation` metric group's market capitalisation; the
+caps now come from `kg_schema.market_cap`, which is not versioned, so `--metrics-version` no
+longer changes any number — the manifest keeps its `metrics` entry so existing risk-model keys
+stay comparable.) `resolve_quant_manifest`
 resolves `--metrics-version` against what `fundamental_metrics` actually stores (via
 `kg_schema.versions`) and returns a `QuantManifest` whose 8-hex **tag** is folded into the
 keys the outputs already use: `quant_risk_model.model_version` (`rm-v1` → `rm-v1+3f9a1c2b`)

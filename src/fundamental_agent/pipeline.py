@@ -369,14 +369,40 @@ def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
     return [_Target(period, f"{period.year}Q{period.tag[1]}", stmts.prior_of(period))]
 
 
+def _asset_cik(engine: _Engine, asset_id: int) -> str | None:
+    row = engine.conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    return str(row["cik"]) if row and row["cik"] else None
+
+
+def _store_cover_shares(
+    engine: _Engine, task: _YearTask, filing_id: int, stmts: Statements, target: _Target
+) -> None:
+    """Record the filing's cover-page share count (T-132). A filing the gateway returned no count
+    for is left without one -- never given a balance-sheet or weighted-average stand-in -- and a
+    failed cover read is recorded for triage, never failing the filing."""
+    if stmts.cover_error:
+        db.record_error(
+            engine.conn,
+            engine.report.run_id,
+            RunError(task.ticker, task.form, target.fiscal_period, "cover", stmts.cover_error),
+        )
+    if stmts.cover_shares:
+        db.insert_cover_shares(
+            engine.conn,
+            filing_id,
+            stmts.cover_shares,
+            event_time=target.period.date,
+            run_id=engine.report.run_id,
+        )
+
+
 def _extract_sections(
     engine: _Engine, task: _YearTask, filing_id: int, target: _Target, meta: FilingMeta
 ) -> None:
     """Best-effort narrative-text extraction. A failure here never fails the filing."""
     if not meta.accession_number:
         return
-    row = engine.conn.execute("SELECT cik FROM assets WHERE id = ?", (task.asset_id,)).fetchone()
-    cik = row["cik"] if row else None
+    cik = _asset_cik(engine, task.asset_id)
     if not cik:
         return
     try:
@@ -493,6 +519,7 @@ def _analyze_one(
         event_time=target.period.date,
         run_id=run_id,
     )
+    _store_cover_shares(engine, task, filing_id, stmts, target)
     if engine.params.sections:
         _extract_sections(engine, task, filing_id, target, meta)
 
@@ -516,6 +543,7 @@ def _analyze_one(
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
         share_scale_factors=share_scale_factors,
         ttm_flows=ttm,
+        cik=_asset_cik(engine, task.asset_id),
     )
     result = engine.analyst.analyze(ctx)
     db.record_metrics(

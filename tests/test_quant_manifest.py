@@ -58,8 +58,9 @@ def _settings(**over: object) -> QuantSettings:
 
 @pytest.fixture
 def two_versions(memory_quant_db: Database, quant_seed: Callable[..., Database]) -> Database:
-    """Six assets with prices, and market caps stored under metrics-v1 (all equal) and
-    metrics-v2 (very unequal) -- so the equilibrium expected returns genuinely differ."""
+    """Six assets with prices and cover-page share counts (T-132: the market caps now come from
+    the shared as-of reader, not from a stored metric), plus ``valuation`` metrics stored under
+    metrics-v1 and metrics-v2 so that both versions are resolvable for the manifest."""
     conn = quant_seed(memory_quant_db, n_assets=6, n_days=280, with_dividends=True)
     run_build_returns(
         QuantSettings(db_path=Path(":memory:")),
@@ -130,8 +131,9 @@ def test_two_manifests_write_two_risk_models_that_coexist(two_versions: Database
     assert by_id[older.model_id]["metrics"] == {"valuation": "metrics-v1"}
     assert by_id[newest.model_id]["returns"] == "qret-v2"
 
-    # the inputs genuinely differed, and the two results kept their own numbers
-    assert _equilibrium(conn, newest.model_id) != _equilibrium(conn, older.model_id)
+    # T-132: market caps no longer read the stored metric, so the two inputs differ in label only
+    # and the two results hold the same numbers -- each under its own manifest
+    assert _equilibrium(conn, newest.model_id) == _equilibrium(conn, older.model_id)
 
 
 def test_the_same_manifest_updates_in_place(two_versions: Database) -> None:

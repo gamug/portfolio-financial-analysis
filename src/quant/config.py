@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
+from kg_schema.market_cap import DEFAULT_MAX_PRICE_AGE_DAYS, DEFAULT_MAX_SHARE_AGE_DAYS
 
 _DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol", "risk_parity"]
 DEFAULT_PRICING_BASE_URL = "http://host.docker.internal:8000/pricing"
@@ -62,6 +63,14 @@ class QuantSettings(BaseModel):
     # (uncommitted changes) -- its results would come from code HEAD alone can't reproduce.
     # Meant for a deliberate run from a work-in-progress checkout, not routine use.
     allow_dirty: bool = False
+    # T-132: the equilibrium prior weights assets by market cap, read as of the date from the
+    # shared reader (`kg_schema.market_cap`). A cap is refused (so the asset is "missing") when its
+    # share count is older than this, or its close is. `build-risk-model` refuses to build when any
+    # panel asset is missing a cap -- weighting it 0 would silently drop it from the market
+    # portfolio -- unless `allow_missing_caps` records the names and does exactly that.
+    market_cap_max_share_age_days: int = DEFAULT_MAX_SHARE_AGE_DAYS
+    market_cap_max_price_age_days: int = DEFAULT_MAX_PRICE_AGE_DAYS
+    allow_missing_caps: bool = False
 
     # --- return panel / risk model ---
     lookback_days: int = 756

@@ -118,12 +118,35 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   memberships for newcomers, closes them for the departed. No longer on any
   write path (see `v_universe_membership` below), kept for compatibility.
 
+### `market_cap.py` — market capitalisation as of a date (T-132)
+
+The one reader `cycle` and `quant` share: `market_caps_as_of(db, asset_ids, *, as_of,
+max_share_age_days=200, max_price_age_days=10, corpact_engine_version="corpact-v1") ->
+MarketCapResult` = the latest `filing_cover_shares` count from a filing already usable on
+`as_of` (`available_at`, T-107) × the last stored `price_daily.close` on or before it.
+
+- Refuses, with a reason and never a number: `no_cover_shares`, `stale_shares` (count older
+  than the limit), `no_recent_price`. `result.caps[asset_id]` is a `MarketCap` with every
+  input (count, its date and age, filing, close and its date, classes summed, split factor);
+  `result.missing[asset_id]` is the reason code; `result.coverage()` is the JSON summary a run
+  records.
+- The count is put on the price's split basis: multiplied by every `corpact-v1` SPLIT dated
+  after the count and no later than the asset's newest stored bar (the date the gateway's
+  adjustment reaches).
+- `cover_total(entries)` is the aggregation of one filing's entries — the filer's own total
+  when it filed one, else each class's newest value summed — shared with the stored valuation
+  metric so the two cannot disagree. Classes are summed at the traded close, after
+  `CLASS_CONVERSION` (`{cik: {class_member: units of the traded class}}`; today Berkshire's
+  class A = 1,500 class B) converts a class that is not 1:1 with the traded one. `MarketCap.cik`
+  identifies the issuer, so two listings of one company (GOOG/GOOGL) can be told apart.
+- Raises `AvailabilityMissing` on an un-backfilled database, like every as-of reader.
+
 ### `versions.py` — metric-version selection and run manifests (T-090)
 
 `fundamental_metrics` is append-only per `engine_version`, so parallel versions of a
 metric accumulate. This module is the **one place that chooses among them**; every
-reader goes through it (`cycle.data.latest_metrics` / `market_cap_estimates`,
-`quant.db.load_market_caps`), and `tests/test_metric_versions.py` fails on any raw
+reader goes through it (`cycle.data.latest_metrics`; market caps no longer read a stored
+metric, see `market_cap.py` below), and `tests/test_metric_versions.py` fails on any raw
 `fundamental_metrics` read in `src/` that lacks the filter.
 
 - `resolve_metric_versions(db, selection=None, *, groups=METRIC_GROUPS) -> MetricVersions`
@@ -255,6 +278,7 @@ connection, calls `ensure(db, run_migrations=True)`, prints the
 | `cycle_run` / `cycle_checkpoint` | orchestrator provenance + resume; `cycle_type` is `'SELECTION'`\|`'MONITORING'`\|`'ENTITY_RESOLUTION'`\|`'REPLAY'` | `UNIQUE(cycle_type, cycle_date)` / `UNIQUE(cycle_run_id, step)` |
 | `cycle_ranking` | the ranked cohort of a cycle | `UNIQUE(cycle_run_id, asset_id)` |
 | `price_observation` | derived per-day price analytics | `UNIQUE(asset_id, obs_date, engine_version)` |
+| `filing_cover_shares` | the filing's own cover-page share count (`dei:EntityCommonStockSharesOutstanding`), one row per class and date; `class_member = ''` is a single-class count or a filer's own total (T-132) | `UNIQUE(filing_id, class_member, as_of_date)` |
 | `sec_filing_section` | narrative filing text | `UNIQUE(filing_id, section_type, ordinal, engine_version)` |
 | `shared_executive_edge` | `sharedExecutiveWith` candidates | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |
 | `media_cooccurrence` | the same shape for press / analyst co-occurrences, kept apart from executive edges (T-043; written once T-082 lands) | `UNIQUE(asset_id_a, asset_id_b, person_name, method)` |

@@ -20,7 +20,7 @@ from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import REGISTRY, Statements
+from fundamental_agent.statements import REGISTRY, CoverShares, Statements
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
 
@@ -61,7 +61,7 @@ _CROSS_ITEM_BAND = 1.25
 # FY2023-2025 revenue changes from ~2x too large to the statement's own derived figure.
 # All four landed before any ``metrics-v3`` row was persisted.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v3"
+METRICS_ENGINE_VERSION = "metrics-v4"
 
 
 @dataclass(frozen=True)
@@ -446,6 +446,32 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
         )
     if commit:
         conn.commit()
+    return len(rows)
+
+
+def insert_cover_shares(
+    conn: Database,
+    filing_id: int,
+    shares: Iterable[CoverShares],
+    *,
+    event_time: str,
+    run_id: int | None = None,
+) -> int:
+    """Append *filing_id*'s cover-page share counts (T-132); a re-run collides on the unique key
+    and is ignored. Returns how many rows were offered."""
+    now = _now()
+    rows = [
+        (filing_id, c.class_member, c.value, c.as_of_date, event_time, now, run_id) for c in shares
+    ]
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO filing_cover_shares
+            (filing_id, class_member, value, as_of_date, event_time, ingested_at, run_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
     return len(rows)
 
 

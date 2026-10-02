@@ -9,6 +9,7 @@ from itertools import pairwise
 from pathlib import Path
 
 import pytest
+from conftest import _QUANT_EXTRA_DDL
 from portfolio_common.db import Database
 
 import quant.evaluate as quant_evaluate
@@ -31,6 +32,7 @@ def _new_quant_db() -> Database:
     conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     pricing_db.ensure_schema(conn)
+    conn.executescript(_QUANT_EXTRA_DDL)  # sec_filings: the cap reader joins it (T-132)
     quant_db.ensure_schema(conn)
     return conn
 

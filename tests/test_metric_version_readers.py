@@ -17,7 +17,6 @@ from cycle import data as cycle_data
 from kg_schema import apply_migrations
 from kg_schema.trading_calendar import available_from
 from kg_schema.versions import MetricVersions, resolve_metric_versions
-from quant.db import load_market_caps
 
 
 def _add_filing(conn: Database, filing_id: int, asset_id: int, period_end: str) -> None:
@@ -86,54 +85,7 @@ def test_latest_metrics_with_no_resolved_versions_returns_nothing(two_versions: 
     assert cycle_data.latest_metrics(two_versions, "2026-06-30", MetricVersions({})) == {}
 
 
-def test_cycle_market_caps_follow_the_resolved_version(two_versions: Database) -> None:
-    conn = two_versions
-    metrics: dict[int, dict[str, float | None]] = {1: {}, 2: {}}
-    v2 = cycle_data.market_cap_estimates(conn, "2026-06-30", metrics, resolve_metric_versions(conn))
-    v1 = cycle_data.market_cap_estimates(
-        conn, "2026-06-30", metrics, resolve_metric_versions(conn, "metrics-v1")
-    )
-    assert (v2[1], v2[2]) == (300.0, 400.0)
-    assert (v1[1], v1[2]) == (100.0, 200.0)
-
-
-def test_the_most_recent_filing_wins_deterministically(two_versions: Database) -> None:
-    """Row order used to decide this. Now ``period_end`` does: a later filing's cap wins even
-    though its row was inserted *before* the older filing's."""
-    conn = two_versions
-    _add_filing(conn, 3, 1, "2026-03-31")  # a newer filing for asset 1, inserted last...
-    _add_metric(conn, 3, "valuation", "market_capitalization", "metrics-v2", 999.0)
-    _add_filing(conn, 4, 2, "2024-12-31")  # ...and an OLDER filing for asset 2, also inserted last
-    _add_metric(conn, 4, "valuation", "market_capitalization", "metrics-v2", 1.0)
-    conn.commit()
-    versions = resolve_metric_versions(conn)
-    caps = cycle_data.market_cap_estimates(conn, "2026-06-30", {1: {}, 2: {}}, versions)
-    assert caps[1] == 999.0  # newer period_end wins
-    assert caps[2] == 400.0  # not the older filing that happens to be the last row
-    assert load_market_caps(conn, [1, 2], versions, as_of="2026-06-30") == {1: 999.0, 2: 400.0}
-
-
-def test_quant_market_caps_follow_the_resolved_version(two_versions: Database) -> None:
-    conn = two_versions
-    assert load_market_caps(conn, [1, 2], resolve_metric_versions(conn), as_of="2026-06-30") == {
-        1: 300.0,
-        2: 400.0,
-    }
-    assert load_market_caps(
-        conn, [1, 2], resolve_metric_versions(conn, "metrics-v1"), as_of="2026-06-30"
-    ) == {
-        1: 100.0,
-        2: 200.0,
-    }
-    assert load_market_caps(conn, [1], resolve_metric_versions(conn), as_of="2026-06-30") == {
-        1: 300.0
-    }  # asset filter
-    assert load_market_caps(conn, [1, 2], MetricVersions({}), as_of="2026-06-30") == {}
-
-
 def test_the_readers_require_the_versions_they_can_no_longer_omit(two_versions: Database) -> None:
     """A reader called without versions is a TypeError, not a silent read of every version."""
     with pytest.raises(TypeError):
         cycle_data.latest_metrics(two_versions, "2026-06-30")  # type: ignore[call-arg]
-    with pytest.raises(TypeError):
-        load_market_caps(two_versions, [1])  # type: ignore[call-arg]
