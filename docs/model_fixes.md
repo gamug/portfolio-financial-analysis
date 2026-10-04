@@ -4684,3 +4684,139 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
   `cycle` never reads as an asset's latest.
 - A quarter whose year can be built only as `x4` still gets `x4` ratios in the other groups, flagged `annualized_x4`.
 - Production carries `metrics-v2`; the re-run is `T-100`'s.
+
+## T-140 — A revenue total the gateway dropped, and filings lost to a repeated period label (pilot-1 F1/F2)
+
+Pilot-1 (2026-10-04, 20 tickers on a fresh database) ran at 2 FAIL with the original verification. Both failures trace to two ingestion
+defects; neither raised an error. Methodology change (constitution AI behavior #12): the engine becomes **`metrics-v5`**
+(`db.METRICS_ENGINE_VERSION`), so a re-run writes beside the `metrics-v4` rows instead of colliding with them.
+
+### Symptom
+
+- **F1 -- APA has no revenue for 2021Q1-2023Q3 (11 filings).** Pilot-1 stored `revenue` `None` for nine of them and a **$0** (a surviving
+  "production revenues" component) for 2021Q1 and 2021Q2, so every revenue ratio was empty and `DQ_REVENUE_POS` (HARD) fired **77 times on
+  11 filings** -- all APA -- and vetoed it (replay 2024-01-05 to 2024-02-23). FY2023 onward was fine (`T-117`).
+- **F2 -- a 10-Q lost to a repeated label.** Waters' quarter ended 2023-07-01 (fiscal Q2) arrived tagged `(Q3)`, the same tag as the real Q3
+  (2023-09-30); the resume key `(ticker, form, fiscal_period)` read the second as already done (`pipeline.py:343-347`) and skipped it, no
+  error logged. WAT was stored with 22 filings and a 183-day hole, and two of them labelled **Q4** (2021-10-02, 2022-10-01). A 10-Q has no Q4.
+  Production has 40 names with a 10-Q labelled "Q4" (JNJ, PFE, TMO, AAPL, INTC, DIS, TGT among them): the known scope for `T-100`.
+  APO's Q1-2023 10-Q was neither stored nor logged: the gateway returns only the prior fiscal year's column (`2022-12-31 (FY)`).
+
+### Root cause
+
+- **F1.** The gateway's `T-042` rule (`no_filed_nondimensional_fact`) removes a value a filer tags only with a dimension. APA tags
+  `us-gaap_Revenues` ("Total revenues") that way, so the row survives in the payload **empty**, and so do its components; only the later
+  "Total revenues and other" ($12,132M for FY2022) keeps a value. `Statements.get("revenue")` found no `total_concepts` value and fell to
+  Tier 2: nothing, or a $0 component. The gateway's `corrections` list names what it dropped (`original` 11,075 for FY2022 -- see below for
+  when that is, and is not, the total).
+- **F2.** The gateway tags a column from the *calendar month* of the period end relative to the fiscal year end's month, so a 52/53-week
+  filer's quarter that closes a few days after a month boundary is tagged one ahead: Waters 2023-04-01 `(Q2)`, 2023-07-01 `(Q3)`,
+  2021-10-02 `(Q4)`; Johnson & Johnson 2023-10-01 `(Q4)`. `pipeline._targets` built the label from that tag, and the resume key, the
+  `sec_filings` upsert and the accession trigger all key on the label. The same flaw hides a year later in `FY<calendar year of the end>`:
+  J&J's fiscal 2022 ended 2023-01-01 and fiscal 2023 ended 2023-12-31 -- both `FY2023` (found while auditing the keys; a Starbucks-shaped
+  calendar does the same with `2023Q1`).
+
+### Fix
+
+**(a) `Statements.rebuild_total` (`statements.py`, beside `T-117`'s `_label_total_correction`).** Only where no `total_concepts` row has a
+value in the column (a total that is present but rejected, `T-095`/`T-128`, is a mistagged value, not a dropped one). By label, never a
+filer's concept name:
+
+1. The *revenue section* ends at the last valued row of a registry revenue concept (`concepts`/`total_concepts`).
+2. The anchor is the first valued row **after** it whose label reads as a revenue total (`T-117`'s regex, **"cost" lines excluded**).
+3. Revenue = anchor minus the valued rows between the section and the anchor. APA FY2022: 12,132 - (-114 + 1,180 - 157 + 148) = **11,075**;
+   FY2021: 7,928 - (94 + 67 - 446 + 228) = **7,985**.
+4. `T-117`'s trust rule: every row between must be at most 25% of the anchor, else **no value** (never a guess). A non-positive result is
+   refused too. Works on any column -- 10-K, a 10-Q's quarter, its year-to-date.
+5. A component that survived but is *below* the rebuilt total (APA 2021Q1's $0 row) is a partial stream and loses; one *above* it
+   contradicts the rebuild and the pre-`T-140` answer stands.
+
+**(b) `fiscal.py`, `pipeline.py`, `db.py`.** A 10-Q's quarter is its distance from the fiscal year end, `round(days / 91.3)` modulo a year,
+within 30 days of a quarter boundary, only 1-3 (the fourth is the 10-K) -- the same on any 52/53-week or 4-4-5 calendar. The year end is the
+asset's latest stored 10-K before the period (`db.latest_fiscal_year_end`), else the balance sheet's own comparative column
+(`payload_fiscal_year_end`, so `repair.py`, which has no database at hand, labels the same way). Label year is the calendar year of the period
+end, **counting an end in the first week of January as the year before's** (`fiscal.label_year`); the stored `fiscal_year` follows.
+
+- **Resume key**: `(ticker, form, period_end)` (`db.completed_units`, `_Unit`); `score_snapshot` was already keyed on `event_time`.
+- **`upsert_filing` refuses a label already held by another period end** (`FilingLabelCollision`): its `ON CONFLICT (asset, form,
+  fiscal_period)` used to overwrite the first filing in place. A second period under a label is now a recorded failure, never a silent loss.
+- **A filing with no period of its own is recorded** (`analysis_run_error`, stage `period`, with the accession and the columns the payload
+  held; counted as skipped and printed by the CLI): no quarter column at all (APO Q1-2023), a latest quarter column that ends before the
+  balance sheet's date (a comparative, not the filing's own), or a date that is no quarter end of the fiscal year.
+- **`Statements.prior_of` pairs a quarter with the quarter column that ended a year before it** (date, +-20 days), not the same tag: Waters'
+  `2023-09-30 (Q3)` sits beside `2022-10-01 (Q4)`, so the tag found no prior year and the filing the key used to drop would have been stored
+  without a year-over-year comparison. Other periods keep the same-tag rule.
+
+### Design decisions
+
+- **The 25% ceiling stays `T-117`'s, and is not tuned on APA.** Two own-quarter APA columns exceed it: 2021Q3 (a $446M loss on a $1,651M
+  subtotal, 27%) and 2022Q1 (a $1,176M divestiture gain on $3,828M, 31%). Refusing them leaves two APA filings with no revenue and
+  `DQ_REVENUE_POS` still firing. They are admitted on **corroboration**, not on a looser constant: when the gateway's own record of the
+  dropped total (`corrections[].original`, same statement, concept in `total_concepts`, same column) equals the rebuilt value to the dollar
+  (2,059 and 2,669), two independent derivations agree. Without the gateway's figure -- the replay from `financial_facts`, which does not
+  keep `corrections` -- they are refused (below). The `original` is **never trusted alone**: it can be the promoted dimensional slice
+  (next bullet), which no rebuild equals.
+- **Cross-check against the gateway's `original`, all 11 APA payloads (34 dropped `us-gaap_Revenues` entries): the rebuild equals it in 26.
+  The other 8 are the equity-method-investee slice** ($1,082M for FY2021, $707M FY2020, $302M FY2019, and $812M, $531M twice, $351M and $254M in
+  quarterly and year-to-date columns) -- exactly one of the filing's dimensional `us-gaap_Revenues` rows each, 5-17% of the real total. That is `T-128`'s
+  shape, so the stated check ("every rebuilt value equals the original") holds only where the original is the consolidated total, and the
+  rebuilt figure is the one corroborated by the FY2022 10-K's original for FY2021 (7,985).
+- **Label year stays the calendar year of the period end** (not the fiscal year): every label a calendar filer has, and every one a
+  non-calendar filer's tag already got right, is unchanged (below). Moving to fiscal-year labels would relabel all non-calendar filers.
+- **The unique constraints are kept**, `sec_filings (asset_id, form, fiscal_period)` and the legacy `fundamental_snapshot`: with a label that
+  is a function of the period end they hold, and the collision guard makes any violation loud. Rebuilding SQLite tables to key on the period end
+  would be a non-additive migration for no gain. Relabelling is **not done in place** on an existing database (its snapshots are immutable and
+  point at the old row): re-ingest into a fresh one (`T-100`); a non-fresh run over an old-labelled row fails loudly through the guard.
+- **No fallback to the gateway's tag** when no fiscal year end can be found: no label is better than a wrong one that can collide.
+
+### Consumers of `fiscal_period` and of the quarter tag -- none changes for a calendar-quarter filer
+
+| Consumer | Reads | Effect |
+|---|---|---|
+| `sec_filings` upsert / `UNIQUE (asset, form, fiscal_period)` / accession triggers | the label | label unchanged for calendar filers; collisions now refused (above) |
+| `completed_units` (resume) | **was** the label | now the period end |
+| `score_snapshot`, `fundamental_snapshot` (a view over `score_snapshot` after the shared-schema migration) | `event_time` (period end); label shown only | none |
+| TTM pairing (`db._filing_near`, `ttm_detail`, `_fiscal_year_between`) | period end (dates), by design since `T-094` | none |
+| `_is_first_quarter`, `_ytd_columns` (`T-133` TTM path) | the column tag `Q1`, or the balance-sheet gap; the YTD columns by date | none (not the label) |
+| `Statements.prior_of` -> growth, CAGR | **was** the column tag | quarters now by date: identical for a calendar filer, finds the prior year for a shifted one (7 pilot filings, all WAT) |
+| `repair.py` (`_targets` labels vs stale rows) | the label | same derivation; legacy stale rows carry old labels (run `repair-accessions` before a re-ingest, as before) |
+| LLM prompt text (`agents.py`), CLI, `v_sec_filing` | the label, for display | the text differs only for the relabelled filings |
+
+### Verification
+
+- **Replay of a scratch copy of the pilot-1 database** (449 filings, 1,487 income-statement columns, every period of every
+  stored filing, rebuilt from `financial_facts`; `scripts/verify_t140.py`; the copy deleted afterwards). **(a)** the rebuild runs on 110
+  columns and changes the value of **31, all APA**; PSX's 74 equal the value Tier 2 already gave (the consolidated "Total Revenues and Other
+  Income" less equity earnings, gains and other income reproduces its "Sales and other operating revenues" to the dollar -- the rule agrees
+  with a second filer); 5 APA columns are refused (3 comparatives and the two own columns above, admitted only with the gateway's figure);
+  no component was above a rebuilt total. **(b)** 449 10-K/10-Qs, 334 of them 10-Qs: **10 relabelled, all WAT**; the other 19 tickers
+  (324 10-Qs, every 10-K) keep their label, among them the non-calendar BF.B, PG and STZ. The two Q4 labels become Q3.
+- **Every APA own-period column, from the live gateway** (11 filings, 2021Q1-2023Q3, by `Statements.get` on the real payloads):
+  1,871 / 1,756 / **2,059**\* / 7,985 (FY2021) / **2,669**\* / 3,047 / 2,887 / **11,075** (FY2022) / 2,008 / 1,796 / 2,308 ($M; \* admitted by
+  the gateway's figure). The rows between: for 2021Q1, 2,092 - (158 + 2 + 61); for 2023Q3, 2,309 - (0 + 1 + 0).
+  The corroborated quarters agree with the year-to-date arithmetic (2022 YTD-Q2 5,716 - Q2 3,047 = 2,669; 2021 YTD-Q3 5,686 - H1 3,627 = 2,059).
+- **End to end on a fresh scratch database, real gateway, the LLM stubbed** (APA, WAT, APO, 2021-2023; not pilot-2): 29 filings analysed, 5
+  skipped, 0 failed, every row `metrics-v5`. APA: the eleven revenues above, net margins 24.1% / 23.2% / -1.5% / 16.4% (FY2021) / 72.9% (the
+  one-off gain) / 35.0% / 18.4% / 36.9% (FY2022) / 16.2% / 25.7% / 24.1%; **`DQ_REVENUE_POS` = 0** (pilot-1: 77). WAT: 12 filings, all
+  three 2023 quarters stored as `2023Q1`/`Q2`/`Q3` (periods 04-01, 07-01, 09-30), 2021-10-02 and 2022-10-01 labelled Q3, **no gap over 110
+  days, no 10-Q labelled Q4**. APO: Q1-2023 recorded as `analysis_run_error` (stage `period`: "the payload has no quarter column of its own
+  (periods: 2022-12-31 (FY)); the gateway returned only another period").
+- Real J&J payloads (10-K year ended 2023-01-01 and 2023-12-31; the 10-Q ended 2023-10-01 tagged `(Q4)`): `FY2022` and `FY2023`, `2023Q3`.
+- `tests/test_revenue_rebuild.py` (20) and `tests/test_quarter_labels.py` (57), on real gateway captures (APA, WAT, APO, J&J; trimmed to the rows
+  needed): the real APA/WAT shapes, the rule on small synthetic statements, a 15-year 52/53-week calendar, the calendar filer's unchanged
+  labels, the resume key and the collision guard through a full pipeline run, APO's recorded skip, a comparative-only payload. Mutation-checked,
+  all caught: corroboration removed; the cost-line exclusion dropped; the ceiling disabled; a surviving component always beating the rebuild;
+  the section start ignored; the rebuild run even when a total survives; the sign flipped; the resume key back on the label; the collision
+  guard removed; the label taken from the gateway's tag; APO's recording removed; the stored fiscal year end ignored; the 30-day tolerance
+  removed; quarter 4 allowed; the own-quarter check removed; the year wraparound removed; `prior_of` back on the tag; the January shift
+  removed. `uv run pytest -q` 960 -> 1,037; `ruff`, `ruff format --check`, `mypy` green.
+
+### Known scope and residual
+
+- **`T-100` counts**: the filings whose revenue is rebuilt and the filings whose label changes, over the full universe, inspected. Known:
+  the 40 production names with a "Q4" 10-Q (above), every 10-K ending in the first week of January (J&J's fiscal 2021 `FY2022` -> `FY2021`,
+  2022 `FY2023` -> `FY2022`), and any 10-Q ending then. Not measured here: production data was out of reach of this change.
+- **APO Q1-2023 stays unstored** until `portfolio-data-mining` returns the quarter: the run error is the record, and a pilot-2
+  verification of "no gap over 110 days" will still see APO's 181-day hole (2022-12-31 -> 2023-06-30). Upstream note drafted, not filed.
+- A rebuild needs the statement's own later "total ... revenue" line; a filer with none still has no revenue when the gateway drops it.
+- A pilot verification that expects a single metrics version must accept `metrics-v5` beside `metrics-v4` on a re-run.

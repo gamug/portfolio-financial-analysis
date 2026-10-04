@@ -87,7 +87,12 @@ utilities — T-102) over summing its named components, subject to T-095's too-s
 plausibility floor and T-117's too-large label-total contradiction check (a later,
 label-matched "total revenue" row in the same statement that materially disagrees — detected
 structurally, no filer's own concept ever named — corrected by subtracting the rows between
-the two, or rejected with no guess if those rows are too large to trust). `iter_facts` flattens
+the two, or rejected with no guess if those rows are too large to trust). Where no `total_concepts` row has a value at all (the
+gateway's `T-042` drops a total a filer tags only with a dimension: APA 2021Q1-2023Q3), `rebuild_total` (T-140) rebuilds it from the
+statement's own later "Total revenues and other" line less the valued rows between the revenue section and it, by label only, with
+`T-117`'s 25% trust ceiling (an over-ceiling row is admitted only when the gateway's own `corrections[].original` for the dropped total
+equals the result to the dollar) -- else no value. `Statements.prior_of` pairs a quarter with the quarter column that ended a year
+before it, by date (a 52/53-week filer's tags drift), and any other period with the same-tag column one step earlier. `iter_facts` flattens
 every non-abstract numeric cell for `financial_facts`, tagging a cell named in the gateway's own
 `data["corrections"]` (T-118) with that entry's `rule` id as `correction_rule` -- keyed by
 `(statement, concept, column)`, not `concept`/`column` alone, since `T-042` corrects a concept
@@ -208,11 +213,12 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 | `sync_universe(conn, members)` | upserts `assets` / `sectors` from `UniverseMember`s (identity write path only; no `universe_membership` write) |
 | `load_universe(conn, *, tickers=None, symbols=None, limit=None)` | asset rows restricted to the point-in-time `symbols` (and optional `tickers`) |
 | `start_run(conn, *, params, as_of=None, code_version=None)` | `analysis_run` row with the run's as-of + code tag |
-| `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`. Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
+| `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`; raises `FilingLabelCollision` when the label is already held by another `period_end` (T-140: the upsert would overwrite that filing in place). Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
 | `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet. A fact carrying `correction_rule` (T-118: set by `iter_facts` from the gateway's own `data["corrections"]`) is persisted with that rule id in the like-named column; `NULL` means filed as-is |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end and `prompt_hash` (T-113) |
-| `completed_units(conn)` | `(ticker, form, fiscal_period)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume |
+| `completed_units(conn)` | `(ticker, form, period_end)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume. Keyed on the date, not the `fiscal_period` label (T-140: two of Waters' quarters shared a label and the second was skipped as done) |
+| `latest_fiscal_year_end(conn, asset_id, before)` | period end of the asset's latest stored 10-K before a date — the fiscal year end a 10-Q's quarter is counted from (T-140) |
 | `shared_accession_filings(conn)` | filing rows whose accession another row of the same asset carries — the legacy pre-T-091 shape (T-120) |
 | `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"` (v2 = block-aware flatten + title-only headings + filer-CIK paths) |
 | `filings_with_sections(conn)` | resume set for `--sections` |
@@ -228,7 +234,18 @@ skip it if it is filed after the analysis date or its accession is already score
 resumed run makes no `financials` call for it), fetch its statements by
 `accession_number`, then for its `_target` → `_analyze_one`. A filing has exactly **one**
 target — its *own* reporting period (10-K: the latest FY + prior; 10-Q: the latest quarter
-in the payload). The comparative columns (prior quarter, prior year) stay facts and never
+in the payload), or **none**, in which case `_resolve_target` says why and the filing is counted
+as skipped *and* recorded in `analysis_run_error` (`stage='period'`) and the run report: no
+quarter column of its own (APO's Q1-2023 10-Q, whose payload holds only the prior fiscal year), a
+latest quarter column that ends before the balance sheet's date (a comparative), or a date that is
+no quarter end of the fiscal year (T-140). The label is derived, not copied from the gateway: a
+10-K is `FY<year>`; a 10-Q is `<year>Q<n>` with *n* counted from the fiscal year end (the asset's
+latest stored 10-K, else the balance sheet's own comparative column; `fundamental_agent.fiscal`),
+because the gateway tags a column from the calendar month of its end and a 52/53-week filer's
+quarter lands one tag ahead (Waters 2023-07-01 `(Q3)` beside the real Q3 2023-09-30; no 10-Q is a
+Q4). `<year>` is the calendar year of the period end, a period ending in the first week of January
+counting as the year before (J&J's fiscal 2022 ended 2023-01-01). A calendar-quarter filer's labels
+are unchanged. The resume unit is `(ticker, form, period_end)`. The comparative columns (prior quarter, prior year) stay facts and never
 become a filing row of their own, which would stamp them with this filing's accession and
 date. One failing filing goes to `analysis_run_error` (with its accession) and does not stop
 its siblings. `_analyze_one`: upsert filing → `append_financial_facts` → (if
