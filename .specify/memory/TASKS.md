@@ -23,9 +23,10 @@ item 8 starts next (PR #104 review):** the priority order (re-set by the user 20
 **Work item 18 (`T-134`–`T-139`, the N-ticker weight heuristic — below) → Work item 8 → Work item 9
 → Work item 3 → Work item 4 → Work item 12 (`T-100`), the full-universe run, last of all** (which
 itself needs a *fresh* `financial.db` — see `T-100`'s own entry). Work item 17 (`T-131`, `T-132`,
-`T-133`, PRs #109/#110/#111) is closed 2026-10-02, see `CHANGELOG.md`. **The pilot
-(`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL) still gates `T-079`'s
-LLM re-run: do not start that re-run until the pilot has landed.** Two things in the user's order
+`T-133`, PRs #109/#110/#111) is closed 2026-10-02, see `CHANGELOG.md`. **Pilot-1 (2026-10-04) ran
+at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-079` stays blocked
+until a pilot-2 on a fresh database, run after `T-140` and Work item 18 have merged, reaches 0
+FAIL.** Two things in the user's order
 need a call (see `PLAN.md`'s Priority Override): Work item 3 is **superseded** by `T-077`
 (Work item 8) and stays "do not implement" unless the user un-supersedes it, so its slot is
 empty; and Work item 2 (orchestrator) was not named, so it is parked after Work item 4 until placed. See `PLAN.md`'s
@@ -222,6 +223,36 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       monotonicity + strict out-of-sample validation
       (`2022-01-01→2024-12-31` calibration, `2025-01-01→2026-08-27`
       evaluation); record in `docs/quant.md`/`docs/cycle.md`. → step 7.
+- [ ] **T-140** (P0, pilot findings 2026-10-04; blocks `T-079` and `T-100`) Two ingestion defects
+      found by the 20-asset pilot on a fresh database. → `PLAN.md` Work item 8, step 8.
+      **(a) Revenue the gateway drops.** The gateway's `T-042` rule (`no_filed_nondimensional_fact`)
+      removes revenue that a filer tags only with a dimension. APA 2021Q1–2023Q3 (11 filings) then
+      has no revenue: FY2022 "Total revenues" $11,075M and production revenues $9,220M are dropped,
+      although `T-117` recorded FY2021 $7,988M and FY2022 $11,075M as correct. Every revenue ratio is
+      empty, and `DQ_REVENUE_POS` (HARD) fired 77 times and HARD-vetoes APA (replay: 2024-01-05 to
+      2024-02-23). Fix: when no revenue total survives, rebuild it from the "Total revenues and
+      other" line minus the rows between it and the missing total, using `T-117`'s label mechanism
+      (the rows are already stored in `financial_facts`). Refuse rather than guess when they aren't
+      there.
+      **(b) Quarters dropped for a repeated label.** The resume key `(ticker, form, fiscal_period)`
+      uses the gateway's quarter tag, which is wrong for shifted fiscal calendars. WAT's quarter
+      ending 2023-07-01 (fiscal Q2) is tagged `(Q3)`, the same as the real Q3 (2023-09-30), so the
+      second filing is skipped as "already done" (`pipeline.py:343-347`) with no error logged.
+      Production has 40 names with a 10-Q labelled "Q4" (JNJ, PFE, TMO, AAPL, INTC, DIS, TGT…). Fix:
+      key the resume on period end or accession, and derive the quarter label from the fiscal year
+      end. Record a run error with a reason whenever a filing yields no quarter of its own (APO
+      Q1-2023: the gateway returns only the prior fiscal year's column; note this for
+      `portfolio-data-mining`).
+      **Acceptance:**
+      - On the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
+        - APA FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null.
+        - `DQ_REVENUE_POS` = 0.
+        - WAT's 2023-09-30 10-Q stored.
+        - No gap over 110 days between consecutive 10-K/10-Q period ends, and no 10-Q labelled Q4.
+        - The pilot verification at 0 FAIL.
+      - At `T-100`: the number of filings with rebuilt revenue and of corrected labels, counted
+        across the full universe and inspected.
+      - A `docs/model_fixes.md` entry (methodology change, constitution AI behavior #12).
 - [ ] **T-079** One bundled LLM re-run covering T-073+T-074+T-076 together
       (~4,844 filings) — do not re-run per prompt edit; full suite green
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
@@ -307,8 +338,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 **🔴 Current priority order (user's, 2026-10-02): Work item 18 (`T-134`–`T-139`, the N-ticker
 weight heuristic) → Work item 8 → Work item 9 → Work item 3 (superseded by `T-077`, see the top of this
-file) → Work item 4.** The pilot (`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at
-0 FAIL) still gates `T-079`'s LLM re-run. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
+file) → Work item 4.** Pilot-1 (2026-10-04) ran at 2 FAIL with the original verification (`T-133`,
+explained by `T-140`); `T-079` stays blocked until a pilot-2 on a fresh database, run after `T-140`
+and Work item 18 have merged, reaches 0 FAIL. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
 closed 2026-10-02, see `CHANGELOG.md`. Work item 14 (the
 second forensic audit) is fully closed 2026-09-30, `T-118` last — see
 `CHANGELOG.md`. Its `T-121`/`T-122`/`T-123`/`T-124` production actions were all
@@ -317,8 +349,8 @@ its production-apply date and verification), and `T-125`'s own `migrate` remains
 the one deliberately-deferred production write left over from it (still pending
 explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
 production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
-`T-079`'s LLM re-run (Work item 8) until `verify_pilot` reaches
-0 FAIL (Work item 17 has landed)**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
+`T-079`'s LLM re-run (Work item 8) until a pilot-2 on a fresh database, run after `T-140`
+and Work item 18 have merged, reaches 0 FAIL**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
 deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios) is followed by **Work item 9, `T-080`–`T-084`

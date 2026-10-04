@@ -4655,8 +4655,10 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
   scratch database holding only part of each ticker's history. Read as written ("< 5% of Q2/Q3 FCF margins missing") the
   target is not reached; the PR #111 review recalibrated it to the population where an FCF is defined -- companies with a 10-K FCF,
   10-Qs after their first 10-K -- where the remaining gap is the earliest quarters with no prior year, and treats it as met.
-  `verify_pilot.py`'s T-133 check measures that population. Companies with no capex line (APO, WFC, HOOD), or one deliberately left
-  empty (ESS; NEE's split capex), are outside it.
+  `verify_pilot.py`'s T-133 check measures that population. Companies with no capex line (APO, WFC), one the registry does not recognise
+  (HOOD reports "Purchases of property, software, and equipment" every year; from FY2023 it is tagged
+  `us-gaap:PaymentsToAcquireOtherProductiveAssets`, part of the capex-concept inventory deferred to `T-071` below),
+  or one deliberately left empty (ESS; NEE's split capex), are outside it.
 - **WAT**: first quarter of 2026 FCF margin **-3.3% -> +7.0%** (TTM = FY2025 - Q1 2025 + Q1 2026, method `ytd` for OCF, capex and
   revenue), so `NEGATIVE_FCF` no longer fires; the later 10-Q reads +8.6%. Across the sample, 7 10-Qs flip from a negative single
   quarter to a positive year (WAT 1, BF.B 2, PM 4). New negatives are real: HUM 2024Q1-Q3 (-3% to -5%) and HOOD.

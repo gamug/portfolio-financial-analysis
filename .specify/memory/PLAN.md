@@ -35,9 +35,10 @@ user wants to hold; added 2026-10-02 at the user's direction, first in the new o
 (P1 — methodological redesign; supersedes Work item 3's approach in place)** → **Work item 9 (P2 —
 cleanup)** → **Work item 3** → **Work item 4** → **Work item 12 (`T-100`) — the full-universe production
 run, last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**. Work item 17
-(`T-131`, `T-132`, `T-133` ✅ all done, PRs #109/#110/#111) closed 2026-10-02. **The pilot
-(`docs/md primera revision/pilot_rerun_plan.md`, `verify_pilot.py` at 0 FAIL) (PR #104 review,
-2026-09-30) still gates `T-079`'s LLM re-run, not Work item 18 or the rest of Work item 8.**
+(`T-131`, `T-132`, `T-133` ✅ all done, PRs #109/#110/#111) closed 2026-10-02. **Pilot-1 (2026-10-04)
+ran at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-079` stays blocked
+until a pilot-2 on a fresh database, run after `T-140` and Work item 18 have merged, reaches 0 FAIL.
+It gates `T-079`'s LLM re-run, not Work item 18 or the rest of Work item 8.**
 
 **Two points in the user's 2026-10-02 order that need a call, surfaced here rather than resolved
 silently (constitution AI behavior #7):** (a) **Work item 3 is superseded** by `T-077` (Work item 8) and
@@ -789,6 +790,23 @@ as task `T-077`.
    out-of-sample split (`2022-01-01→2024-12-31` calibration,
    `2025-01-01→2026-08-27` evaluation) rather than in-sample-only checks.~~
 
+8. **Pilot-1 ingestion defects (`T-140`, P0, blocks `T-079` and `T-100`)** — the 20-asset pilot on a
+   fresh database (2026-10-04) found two defects in `fundamental_agent`'s ingestion; both lose filings'
+   data silently, so both must land before the bundled LLM re-run scores them. (a) **Revenue the gateway
+   drops**: its `T-042` rule (`no_filed_nondimensional_fact`) removes a revenue total that a filer tags
+   only with a dimension (APA 2021Q1–2023Q3: 11 filings with no revenue, `DQ_REVENUE_POS` fired 77 times
+   and HARD-vetoes APA). When no revenue total survives, rebuild it from the "Total revenues and other"
+   line minus the rows between it and the missing total, using `T-117`'s label mechanism over the rows
+   already in `financial_facts`; refuse rather than guess when they are absent. (b) **Quarters dropped for
+   a repeated label**: the resume key `(ticker, form, fiscal_period)` uses the gateway's quarter tag,
+   which is wrong for shifted fiscal calendars (WAT's fiscal Q2 ending 2023-07-01 is tagged `(Q3)`, so the
+   real Q3 of 2023-09-30 is skipped as "already done" at `pipeline.py:343-347`, with no error logged; 40
+   production names carry a 10-Q labelled "Q4"). Key the resume on period end or accession, derive the
+   quarter label from the fiscal year end, and record a run error with a reason whenever a filing yields
+   no quarter of its own (APO Q1-2023: the gateway returns only the prior fiscal year's column; note this
+   for `portfolio-data-mining`). It changes a deterministic computation's methodology, so it needs a
+   `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of step 3's re-run.
+
 **Acceptance criteria**:
 
 - Technical/valorization/fundamental changes each covered by a unit test
@@ -808,6 +826,11 @@ as task `T-077`.
   valorization formulas) updated to describe the shipped methodology, per
   this repo's own "spec/plan changes land with the requirement" rule —
   deferred to the PR(s) that actually implement this item, not done now.
+- **`T-140` acceptance** — on the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
+  APA FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
+  stored; no gap over 110 days between consecutive 10-K/10-Q period ends and no 10-Q labelled Q4; the
+  pilot verification at 0 FAIL. At `T-100`: the number of filings with rebuilt revenue and of corrected
+  labels, counted across the full universe and inspected.
 - **One bundled LLM re-run** covers steps 3+4+5 together (~4,844 filings);
   do not re-run the full corpus once per prompt edit — batch prompt/skill
   changes into a single re-run per the audit's own cost-control note
