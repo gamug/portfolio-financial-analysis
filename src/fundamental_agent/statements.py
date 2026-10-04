@@ -14,6 +14,7 @@ import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import Any
 
 STATEMENT_KEYS = ("income_statement", "balance_sheet", "cash_flow")
@@ -21,6 +22,9 @@ _DURATION_RE = re.compile(r"^\s*(?P<date>\d{4}-\d{2}-\d{2})\s*\((?P<tag>[A-Za-z0
 _INSTANT_RE = re.compile(r"^\s*(?P<date>\d{4}-\d{2}-\d{2})\s*$")
 _QUARTER_RE = re.compile(r"^Q[1-4]$")
 INSTANT = "INSTANT"
+_YEAR_DAYS = 365
+# A column "one year earlier" can sit a few days off on a 52/53-week calendar.
+YEAR_TOLERANCE_DAYS = 20
 
 
 @dataclass(frozen=True)
@@ -427,6 +431,21 @@ def _cover_errors(payload: dict[str, Any]) -> list[str]:
     return errors
 
 
+@dataclass(frozen=True)
+class TotalRebuild:
+    """How :meth:`Statements.rebuild_total` read one column (T-140): the anchor row it found,
+    the in-between rows it would subtract, and the value -- or, when it declined, why."""
+
+    anchor_label: str
+    anchor_value: float
+    between: tuple[float, ...]
+    value: float | None
+    refusal: str | None = None
+    # True when a row between exceeded the ceiling and the gateway's own record of the dropped
+    # total (``corrections[].original``) equals the value to the dollar: two derivations agree.
+    corroborated: bool = False
+
+
 @dataclass
 class Statements:
     """A parsed ``financials`` payload."""
@@ -482,7 +501,22 @@ class Statements:
         return fy[-1] if fy else None
 
     def prior_of(self, period: Period) -> Period | None:
-        """The same-tag column one step earlier in time, if the payload carries it."""
+        """The same period one step earlier in time, if the payload carries it.
+
+        A quarter is paired with the quarter column that ended a year before it (T-140): the
+        gateway's tag is a function of the end date's calendar month, so a 52/53-week filer's
+        quarter and its prior-year twin can carry neighbouring tags -- Waters' 2023-09-30 is
+        ``(Q3)`` beside 2022-10-01 ``(Q4)`` -- and a same-tag match found no prior year at all.
+        Any other period takes the same-tag column one step earlier."""
+        if period.is_quarter:
+            year_ago = date.fromisoformat(period.date) - timedelta(days=_YEAR_DAYS)
+            twins = [
+                (abs((date.fromisoformat(p.date) - year_ago).days), p.date, p)
+                for p in self.periods
+                if p.is_quarter
+            ]
+            near = [t for t in twins if t[0] <= YEAR_TOLERANCE_DAYS]
+            return min(near, key=lambda t: t[:2])[2] if near else None
         earlier = [p for p in self.periods if p.tag == period.tag and p.date < period.date]
         return earlier[-1] if earlier else None
 
@@ -522,6 +556,11 @@ class Statements:
         ``sum_components``), or, when ``spec.sum_components`` is set, the
         sum of the first row per distinct matching concept -- multiple
         co-reported streams with no separately tagged total.
+
+        When **no** ``total_concepts`` row has a value at all (the gateway's T-042 drops a
+        revenue total a filer tags only with a dimension -- APA 2021Q1-2023Q3), the total is
+        rebuilt from the statement's own later "Total revenues and other" line
+        (:meth:`_rebuild_missing_total`, T-140) when that is safely derivable.
         """
         spec = REGISTRY[item]
         column = period_key
@@ -531,15 +570,30 @@ class Statements:
                 return None
             column = instant
 
+        rebuild_missing_total = False
         if spec.total_concepts:
             total_value = self._first_total_match(spec, column)
-            if total_value is not None:
+            if total_value is None:
+                rebuild_missing_total = True
+            else:
                 corrected, contradicted = self._label_total_correction(spec, column, total_value)
                 if corrected is not None:
                     return corrected
                 if not contradicted and self._total_is_plausible(spec, column, total_value):
                     return total_value
 
+        value = self._component_value(spec, column)
+        if rebuild_missing_total:
+            rebuilt = self._rebuild_missing_total(spec, column)
+            # A surviving component (APA 2021Q1: a $0 "production revenues" row) is a partial
+            # stream, never the total; only a component *above* the rebuilt total contradicts it.
+            if rebuilt is not None and (value is None or rebuilt >= value):
+                return rebuilt
+        return value
+
+    def _component_value(self, spec: LineItem, column: str) -> float | None:
+        """Tier 2 of :meth:`get`: the summed components, or the first matching row (plus the
+        T-133 fallback tiers when that finds nothing)."""
         if spec.sum_components:
             return self._sum_matching_components(spec, column)
         value = self._first_component_match(spec, column)
@@ -674,6 +728,84 @@ class Statements:
                 return None, True  # contradicted, but too uncertain to derive
             return later_value - sum(between), True
         return None, False
+
+    def _rebuild_missing_total(self, spec: LineItem, column: str) -> float | None:
+        """T-140 (``docs/model_fixes.md``): rebuild a ``total_concepts`` total the gateway
+        dropped. Its T-042 rule (``no_filed_nondimensional_fact``) removes a value a filer
+        tags only with a dimension, so a statement can reach us with every revenue line empty
+        and only the *later*, broader subtotal ("Total revenues and other") still valued --
+        APA FY2022: ``us-gaap_Revenues`` $11,075M dropped, "Total revenues and other"
+        $12,132M kept. See :meth:`rebuild_total` for the rule; returns its value, or ``None``."""
+        rebuild = self.rebuild_total(spec, column)
+        return rebuild.value if rebuild else None
+
+    def rebuild_total(self, spec: LineItem, column: str) -> TotalRebuild | None:
+        """The structural reading behind :meth:`_rebuild_missing_total`, by label only (never a
+        filer's own concept names), the same as :meth:`_label_total_correction`'s: the first
+        valued row *after the revenue section* whose label reads as a revenue total
+        (:data:`_LABEL_TOTAL_RE`, never a cost line) is the anchor, and the revenue is that
+        value less the valued rows between the section and it -- the statement's own
+        non-revenue adjustment lines (derivative gains, divestiture gains, ...). The section
+        ends at the last valued row of a registry revenue concept
+        (``spec.concepts``/``spec.total_concepts``): a revenue component that did survive is
+        never subtracted, and a total *above* one is not a later, broader total at all. The trust rule is T-117's: every row between must be individually
+        small against the anchor (:data:`_BETWEEN_ROW_CEILING`), or the derivation is too
+        uncertain and the value is ``None`` -- no value, never a guess -- unless the gateway's own
+        figure for the dropped total corroborates it (:meth:`_gateway_original_is`); a
+        non-positive result is refused either way. ``None`` itself means the column has no
+        anchor row at all."""
+        rows = list(self._rows_for(spec))
+        revenue_concepts = set(spec.concepts) | set(spec.total_concepts)
+        section_end = max(
+            (
+                i
+                for i, row in enumerate(rows)
+                if row.get("concept") in revenue_concepts and _numeric(row.get(column)) is not None
+            ),
+            default=-1,
+        )
+        for i in range(section_end + 1, len(rows)):
+            value = _numeric(rows[i].get(column))
+            label = str(rows[i].get("label") or "")
+            if (
+                value is None
+                or value <= 0
+                or not self._LABEL_TOTAL_RE.search(label)
+                or self._LABEL_TOTAL_EXCLUDE_RE.search(label)
+            ):
+                continue
+            between = tuple(
+                v
+                for j in range(section_end + 1, i)
+                if (v := _numeric(rows[j].get(column))) is not None
+            )
+            rebuilt = value - sum(between)
+            if rebuilt <= 0:
+                return TotalRebuild(label, value, between, None, "not positive")
+            if any(abs(v) > value * self._BETWEEN_ROW_CEILING for v in between):
+                if self._gateway_original_is(spec, column, rebuilt):
+                    return TotalRebuild(label, value, between, rebuilt, corroborated=True)
+                return TotalRebuild(label, value, between, None, "a row between is too large")
+            return TotalRebuild(label, value, between, rebuilt)
+        return None
+
+    def _gateway_original_is(self, spec: LineItem, column: str, value: float) -> bool:
+        """Whether the gateway's own ``corrections`` record the dropped total of *column* with
+        exactly *value* as its ``original`` (T-140). A one-off gain in a small quarter can put a
+        between row above :data:`_BETWEEN_ROW_CEILING` (APA 2022Q1: a $1,176M divestiture gain
+        against a $3,828M total); the derivation is then trusted only when the gateway's
+        independent figure agrees to the dollar -- never on the strength of either alone.
+        The ``original`` is not trusted by itself: it can be the promoted dimensional slice
+        (APA FY2021: $1,082M, the equity-method investee row), which no rebuild equals."""
+        return any(
+            c.get("statement") == "income_statement"
+            and c.get("concept") in spec.total_concepts
+            and c.get("column") == column
+            and c.get("corrected") is None
+            and (original := _numeric(c.get("original"))) is not None
+            and math.isclose(original, value, rel_tol=1e-9)
+            for c in self.corrections
+        )
 
     def _largest_component_value(self, spec: LineItem, column: str) -> float | None:
         """The largest single first-matching-row value among ``spec.concepts``

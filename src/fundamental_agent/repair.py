@@ -206,7 +206,7 @@ def find_replacements(edgar: Gateway, group: SharedGroup) -> GroupOutcome:
                             stale,
                             ref.accession_number,
                             ref.filing_date,
-                            target.period.year,
+                            target.fiscal_year,
                             target.period.date,
                             stmts,
                         )

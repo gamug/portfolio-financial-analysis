@@ -7,7 +7,7 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -32,10 +32,11 @@ from fundamental_agent.edgar_client import (
     normalize_ticker,
 )
 from fundamental_agent.filing_text import fetch_primary_document
+from fundamental_agent.fiscal import label_year, payload_fiscal_year_end, quarter_label
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
-from fundamental_agent.statements import Period, Statements, iter_facts
+from fundamental_agent.statements import YEAR_TOLERANCE_DAYS, Period, Statements, iter_facts
 from kg_schema import connect, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
@@ -43,7 +44,8 @@ from kg_schema.queries import UniverseMember, connect_ro, members_asof
 DEFAULT_FORMS = ("10-K", "10-Q")
 DEFAULT_SINCE_YEAR = 2022
 
-_Unit = tuple[str, str, str]  # (ticker, form, fiscal_period)
+# (ticker, form, period_end): the date, not the derived fiscal_period label (T-140)
+_Unit = tuple[str, str, str]
 _Payload = dict[str, Any]
 
 
@@ -93,6 +95,7 @@ class _Target:
     period: Period
     fiscal_period: str
     prior: Period | None
+    fiscal_year: int  # the year the label carries (fiscal.label_year), stored beside it
 
 
 @dataclass
@@ -335,12 +338,18 @@ def _process_filing(
     stmts = Statements.from_payload(payload)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number)
 
+    resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
+    if isinstance(resolved, str):
+        # T-140: a filing with no quarter (or year) of its own is never dropped silently
+        _record_unusable(engine, task, ref, resolved)
+        return 0, 1
+
     done = skipped = 0
-    for target in _targets(stmts, task):
+    for target in [resolved]:
         if target.period.date > as_of:
             skipped += 1
             continue
-        unit = (task.ticker, task.form, target.fiscal_period)
+        unit = (task.ticker, task.form, target.period.date)
         if not engine.params.fresh and unit in engine.completed:
             skipped += 1
             continue
@@ -351,8 +360,42 @@ def _process_filing(
     return done, skipped
 
 
-def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
-    """The filing's **own** reporting period, and nothing else.
+def _fye_lookup(engine: _Engine, task: _YearTask) -> Callable[[str], date | None]:
+    """The asset's latest stored 10-K period end before a date: the fiscal year end its quarters
+    are counted from (T-140)."""
+
+    def lookup(before: str) -> date | None:
+        stored = db.latest_fiscal_year_end(engine.conn, task.asset_id, before)
+        return date.fromisoformat(stored) if stored else None
+
+    return lookup
+
+
+def _record_unusable(engine: _Engine, task: _YearTask, ref: FilingRef, reason: str) -> None:
+    """A filing the run cannot place in a period: counted as skipped, and recorded with its reason
+    in ``analysis_run_error`` and the run report -- before T-140 it was neither (APO's Q1-2023
+    10-Q, whose payload carries only the prior fiscal year's column)."""
+    message = f"{ref.accession_number}: {reason}"
+    engine.report.errors.append(f"{task.ticker} {task.form} {task.year} [skipped]: {message}")
+    db.record_error(
+        engine.conn,
+        engine.report.run_id,
+        RunError(task.ticker, task.form, str(task.year), "period", message),
+    )
+
+
+# A 10-Q's own quarter column ends on its balance sheet's date. A column further back is a
+# comparative: the payload then carries no quarter of the filing's own.
+_OWN_PERIOD_SLACK_DAYS = 20
+
+
+def _targets(
+    stmts: Statements,
+    task: _YearTask,
+    fye_lookup: Callable[[str], date | None] | None = None,
+) -> list[_Target]:
+    """The filing's **own** reporting period, and nothing else -- an empty list when it has none
+    (:func:`_resolve_target` says why).
 
     A payload carries comparative columns (the prior quarter, the prior year) beside the
     period the filing reports. Those are facts about earlier filings; recording them as a
@@ -361,17 +404,64 @@ def _targets(stmts: Statements, task: _YearTask) -> list[_Target]:
     fiscal year (10-K) or the latest quarter (10-Q) the payload holds. The old
     ``period.year == task.year`` filter is gone: ``task.year`` is the *filing* year, so it
     also dropped a January 10-Q for a December quarter."""
+    target = _resolve_target(stmts, task, fye_lookup)
+    return [] if isinstance(target, str) else [target]
+
+
+def _resolve_target(
+    stmts: Statements,
+    task: _YearTask,
+    fye_lookup: Callable[[str], date | None] | None = None,
+) -> _Target | str:
+    """The filing's own period as a :class:`_Target`, or the reason it has none.
+
+    A 10-K is labelled ``FY<year>`` (:func:`fundamental_agent.fiscal.label_year`: a year ending in
+    the first week of January is the year before's, so J&J's 2023-01-01 and 2023-12-31 differ). A 10-Q is labelled ``<year>Q<n>`` with *n* counted from the
+    fiscal year end (T-140, :mod:`fundamental_agent.fiscal`) -- never the gateway's column tag,
+    which a 52/53-week calendar shifts a quarter ahead. The year end is the asset's latest stored
+    10-K before the period (*fye_lookup*), else the balance sheet's own comparative column."""
     if task.form == "10-K":
         period = stmts.latest_fy()
         if period is None:
-            return []
-        return [_Target(period, f"FY{period.year}", stmts.prior_of(period))]
+            return f"the payload has no fiscal-year column (periods: {_columns(stmts)})"
+        year = label_year(date.fromisoformat(period.date))
+        return _Target(period, f"FY{year}", stmts.prior_of(period), year)
 
+    return _resolve_quarter(stmts, fye_lookup)
+
+
+def _resolve_quarter(
+    stmts: Statements, fye_lookup: Callable[[str], date | None] | None
+) -> _Target | str:
+    """A 10-Q's own quarter as a :class:`_Target`, or why the payload has none."""
     quarters = stmts.quarter_periods()
     if not quarters:
-        return []
+        return (
+            f"the payload has no quarter column of its own (periods: {_columns(stmts)}); "
+            "the gateway returned only another period"
+        )
     period = max(quarters, key=lambda p: p.date)
-    return [_Target(period, f"{period.year}Q{period.tag[1]}", stmts.prior_of(period))]
+    end = date.fromisoformat(period.date)
+    instants = [p.date for p in stmts.instant_periods()]
+    latest = max(instants, default=None)
+    if latest is not None and (date.fromisoformat(latest) - end).days > _OWN_PERIOD_SLACK_DAYS:
+        return (
+            f"the latest quarter column {period.key} ends before the balance sheet's {latest}: "
+            f"a comparative, not the filing's own quarter (periods: {_columns(stmts)})"
+        )
+    fye = (fye_lookup(period.date) if fye_lookup else None) or payload_fiscal_year_end(
+        instants, end
+    )
+    if fye is None:
+        return f"no fiscal year end to count the quarter ending {period.date} from"
+    label = quarter_label(end, fye)
+    if label is None:
+        return f"{period.date} is not a quarter end of the fiscal year ending {fye}"
+    return _Target(period, label, stmts.prior_of(period), label_year(end))
+
+
+def _columns(stmts: Statements) -> str:
+    return ", ".join(p.key for p in stmts.periods if not p.is_instant) or "none"
 
 
 def _asset_cik(engine: _Engine, asset_id: int) -> str | None:
@@ -442,8 +532,6 @@ _TTM_ITEMS = (
     "interest_expense",
     "stock_based_compensation",
 )
-# A year-to-date column "one year earlier" can sit a few days off on a 52/53-week calendar.
-_YEAR_TOLERANCE_DAYS = 20
 
 
 # A 10-Q's balance sheet sets its period end beside the last fiscal year end: about one quarter
@@ -484,7 +572,7 @@ def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | 
             (
                 p
                 for p in periods
-                if abs((date.fromisoformat(p.date) - year_ago).days) <= _YEAR_TOLERANCE_DAYS
+                if abs((date.fromisoformat(p.date) - year_ago).days) <= YEAR_TOLERANCE_DAYS
             ),
             None,
         )
@@ -532,7 +620,7 @@ def _analyze_one(
     run_id = engine.report.run_id
     filing_id = db.upsert_filing(
         engine.conn,
-        FilingKey(task.asset_id, task.form, target.period.year, target.fiscal_period),
+        FilingKey(task.asset_id, task.form, target.fiscal_year, target.fiscal_period),
         FilingMeta(
             filing_date=meta.filing_date,
             accession_number=meta.accession_number,

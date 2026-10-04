@@ -3,7 +3,8 @@
 ``assets`` and ``sectors`` may already be owned by another process, so they are only
 ever created when missing -- never altered or dropped. Everything else in this module
 is owned by this agent. ``fundamental_snapshot`` is append-only: one immutable row per
-``(asset, form, fiscal_period)``, which is also what makes re-runs resumable.
+``(asset, form, fiscal_period)``. Re-runs resume by ``(ticker, form, period_end)`` -- the date,
+never the label (T-140) -- see :func:`completed_units`.
 """
 
 from __future__ import annotations
@@ -60,8 +61,13 @@ _CROSS_ITEM_BAND = 1.25
 # "total"-labeled row contradicts is corrected or rejected, not trusted outright -- APA's
 # FY2023-2025 revenue changes from ~2x too large to the statement's own derived figure.
 # All four landed before any ``metrics-v3`` row was persisted.
+# ``metrics-v5`` (T-140): a revenue total the gateway dropped (T-042: a filer that tags it only
+# with a dimension) is rebuilt from the statement's own "Total revenues and other" line, so APA's
+# 2021Q1-2023Q3 revenue, and every ratio over it, changes from missing (or a $0 component) to a
+# value; and a 10-Q's fiscal quarter is read from the fiscal year end, not the gateway's tag, so
+# a 52/53-week filer's quarters stop sharing (or leaving unstored) a label.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v4"
+METRICS_ENGINE_VERSION = "metrics-v5"
 
 
 @dataclass(frozen=True)
@@ -331,6 +337,35 @@ def load_universe(
 # -- filings & facts ------------------------------------------------------
 
 
+class FilingLabelCollision(RuntimeError):
+    """Two different periods of one asset were given the same ``fiscal_period`` label (T-140)."""
+
+
+def _refuse_label_collision(conn: Database, key: FilingKey, meta: FilingMeta) -> None:
+    """The upsert below is keyed on the label, so a second period under a stored label would
+    overwrite the first row in place -- its facts and score keep pointing at a filing that now
+    reports another period. That is how a repeated gateway quarter tag once lost a filing without
+    a trace; it must be loud instead. The usual cause now is a database labelled before T-140
+    (a shifted fiscal calendar's quarters carry the gateway's tag): re-ingest it fresh."""
+    stored = conn.execute(
+        "SELECT period_end, accession_number FROM sec_filings "
+        "WHERE asset_id = ? AND form = ? AND fiscal_period = ?",
+        (key.asset_id, key.form, key.fiscal_period),
+    ).fetchone()
+    if (
+        stored is not None
+        and stored["period_end"]
+        and meta.period_end
+        and stored["period_end"] != meta.period_end
+    ):
+        raise FilingLabelCollision(
+            f"{key.form} {key.fiscal_period} already holds the filing for period end "
+            f"{stored['period_end']} (accession {stored['accession_number']}); refusing to "
+            f"overwrite it with the one for {meta.period_end} (accession "
+            f"{meta.accession_number})"
+        )
+
+
 def upsert_filing(
     conn: Database,
     key: FilingKey,
@@ -339,6 +374,7 @@ def upsert_filing(
     run_id: int | None = None,
     commit: bool = True,
 ) -> int:
+    _refuse_label_collision(conn, key, meta)
     conn.execute(
         """
         INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date,
@@ -1093,17 +1129,33 @@ def shared_accession_filings(conn: Database) -> list[Row]:
 
 
 def completed_units(conn: Database) -> set[tuple[str, str, str]]:
-    """``(ticker, form, fiscal_period)`` triples that already have a FUNDAMENTAL score."""
+    """``(ticker, form, period_end)`` triples that already have a FUNDAMENTAL score.
+
+    Keyed on the period end, never the ``fiscal_period`` label (T-140): a label is derived, and
+    one the gateway's quarter tag produced could repeat -- Waters' quarters ending 2023-07-01 and
+    2023-09-30 both arrived as ``(Q3)``, so the second was skipped as already done. A date names
+    one period on any fiscal calendar."""
     rows = conn.execute(
         """
-        SELECT a.ticker AS ticker, f.form AS form, f.fiscal_period AS fiscal_period
+        SELECT a.ticker AS ticker, f.form AS form, f.period_end AS period_end
         FROM score_snapshot s
         JOIN assets a ON a.id = s.asset_id
         JOIN sec_filings f ON f.id = s.filing_id
-        WHERE s.score_type = 'FUNDAMENTAL'
+        WHERE s.score_type = 'FUNDAMENTAL' AND f.period_end IS NOT NULL
         """
     )
-    return {(r["ticker"], r["form"], r["fiscal_period"]) for r in rows}
+    return {(r["ticker"], r["form"], r["period_end"]) for r in rows}
+
+
+def latest_fiscal_year_end(conn: Database, asset_id: int, before: str) -> str | None:
+    """Period end of the asset's latest stored 10-K ending before *before* -- the fiscal year
+    end a 10-Q's quarter is counted from (T-140, :mod:`fundamental_agent.fiscal`)."""
+    row = conn.execute(
+        "SELECT MAX(period_end) AS period_end FROM sec_filings "
+        "WHERE asset_id = ? AND form = '10-K' AND period_end < ?",
+        (asset_id, before),
+    ).fetchone()
+    return str(row["period_end"]) if row and row["period_end"] else None
 
 
 def completed_accessions(conn: Database) -> set[str]:

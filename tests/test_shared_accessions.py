@@ -188,7 +188,7 @@ def test_apply_replaces_the_stale_quarter_with_its_own_filing(
             "SELECT DISTINCT period_key FROM financial_facts WHERE filing_id = ?", (q1,)
         )
     }
-    assert keys == {"2023-05-31 (Q1)", "2022-05-31 (Q1)"}
+    assert keys == {"2023-05-31 (Q1)", "2022-05-31 (Q1)", "2023-02-28"}  # + the fiscal year end
     stale_left = conn.execute(
         "SELECT (SELECT COUNT(*) FROM financial_facts WHERE filing_id = ?) + "
         "(SELECT COUNT(*) FROM sec_filing_section WHERE filing_id = ?)",

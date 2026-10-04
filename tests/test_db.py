@@ -121,7 +121,7 @@ def test_snapshot_is_append_only_and_drives_resume(memory_db: Database) -> None:
         memory_db.execute("SELECT raw_value FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'")
     )
     assert [r["raw_value"] for r in rows] == [80.0]
-    assert db.completed_units(memory_db) == {("AAPL", "10-K", "FY2023")}
+    assert db.completed_units(memory_db) == {("AAPL", "10-K", "2023-09-30")}
 
 
 def test_append_financial_facts_persists_the_gateways_correction_rule(
