@@ -4655,7 +4655,8 @@ From `docs/md primera revision/system_review_2026-09-29.md` N5/N6, on the 20-tic
   scratch database holding only part of each ticker's history. Read as written ("< 5% of Q2/Q3 FCF margins missing") the
   target is not reached; the PR #111 review recalibrated it to the population where an FCF is defined -- companies with a 10-K FCF,
   10-Qs after their first 10-K -- where the remaining gap is the earliest quarters with no prior year, and treats it as met.
-  `verify_pilot.py`'s T-133 check measures that population. Companies with no capex line (APO, WFC), one the registry does not recognise
+  `verify_pilot.py`'s T-133 check measures that population; since pilot-1 (2026-10-04) it uses the Q2/Q3 10-Qs whose latest prior 10-K has
+  an FCF margin (0/159 missing on pilot-1). Companies with no capex line (APO, WFC), one the registry does not recognise
   (HOOD reports "Purchases of property, software, and equipment" every year; from FY2023 it is tagged
   `us-gaap:PaymentsToAcquireOtherProductiveAssets`, part of the capex-concept inventory deferred to `T-071` below),
   or one deliberately left empty (ESS; NEE's split capex), are outside it.

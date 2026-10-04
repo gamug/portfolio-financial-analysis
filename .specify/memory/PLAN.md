@@ -805,7 +805,8 @@ as task `T-077`.
    quarter label from the fiscal year end, and record a run error with a reason whenever a filing yields
    no quarter of its own (APO Q1-2023: the gateway returns only the prior fiscal year's column; note this
    for `portfolio-data-mining`). It changes a deterministic computation's methodology, so it needs a
-   `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of step 3's re-run.
+   `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of the bundled LLM re-run
+   (steps 3+4+5, `T-079`).
 
 **Acceptance criteria**:
 
@@ -827,7 +828,7 @@ as task `T-077`.
   this repo's own "spec/plan changes land with the requirement" rule —
   deferred to the PR(s) that actually implement this item, not done now.
 - **`T-140` acceptance** — on the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
-  APA FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
+  APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
   stored; no gap over 110 days between consecutive 10-K/10-Q period ends and no 10-Q labelled Q4; the
   pilot verification at 0 FAIL. At `T-100`: the number of filings with rebuilt revenue and of corrected
   labels, counted across the full universe and inspected.

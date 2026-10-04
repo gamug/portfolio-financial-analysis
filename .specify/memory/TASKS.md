@@ -228,7 +228,7 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       **(a) Revenue the gateway drops.** The gateway's `T-042` rule (`no_filed_nondimensional_fact`)
       removes revenue that a filer tags only with a dimension. APA 2021Q1–2023Q3 (11 filings) then
       has no revenue: FY2022 "Total revenues" $11,075M and production revenues $9,220M are dropped,
-      although `T-117` recorded FY2021 $7,988M and FY2022 $11,075M as correct. Every revenue ratio is
+      although production stored FY2021 $7,988M (`T-095`'s path, $3M off) and FY2022 $11,075M. Every revenue ratio is
       empty, and `DQ_REVENUE_POS` (HARD) fired 77 times and HARD-vetoes APA (replay: 2024-01-05 to
       2024-02-23). Fix: when no revenue total survives, rebuild it from the "Total revenues and
       other" line minus the rows between it and the missing total, using `T-117`'s label mechanism
@@ -245,7 +245,7 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       `portfolio-data-mining`).
       **Acceptance:**
       - On the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
-        - APA FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null.
+        - APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null.
         - `DQ_REVENUE_POS` = 0.
         - WAT's 2023-09-30 10-Q stored.
         - No gap over 110 days between consecutive 10-K/10-Q period ends, and no 10-Q labelled Q4.
