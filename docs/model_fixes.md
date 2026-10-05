@@ -4821,3 +4821,141 @@ end, **counting an end in the first week of January as the year before's** (`fis
   verification of "no gap over 110 days" will still see APO's 181-day hole (2022-12-31 -> 2023-06-30). Upstream note drafted, not filed.
 - A rebuild needs the statement's own later "total ... revenue" line; a filer with none still has no revenue when the gateway drops it.
 - A pilot verification that expects a single metrics version must accept `metrics-v5` beside `metrics-v4` on a re-run.
+
+## T-134 – T-139 — The portfolio weight rule: caps that cannot hold, and a book that was not a function of N (Work item 18)
+
+The 2026-10-02 audit found that the thesis book could break its own caps without saying so. Methodology change (constitution AI behavior #12):
+the construction of the live and replay books is replaced (`cycle.construction.build_book`, `T-135`/`T-136`) and the quant benchmark follows the
+same rule (`quant.caps`, `T-137`, optimizer engine **`opt-v2`**). Everything below was measured read-only against production, or on scratch
+copies of the pilot databases (deleted afterwards); `scripts/verify_t138.py` is the read-only check of every stored book. **Production is not
+re-selected by any of this**: the live book changes only when `cycle select` is next run, which waits for the user's direction.
+
+### Defect
+
+`cycle.construction.target_weights` took `top_n` but kept the caps as constants (`max_name_weight` 0.10, `max_sector_weight` 0.30) whatever N
+was, then alternated the two caps for **8 rounds** and returned whatever it had, with no error, log or record. At `N = 10` a 0.10 name cap forces
+every name to exactly 0.10, and a sector holding four of the ten then sums to 0.40, over the 0.30 cap: **no** weight vector satisfies both, and
+nothing said so. Production `cycle_run` 1 (SELECTION 2026-09-22, N = 10, `score_proportional`) is the case:
+
+| | stored (`target_weights`) |
+|---|---|
+| MA, HOOD, APO, WFC (Financials, 4 names) | 0.075 each = **0.300** |
+| APA, PSX, XOM (Energy, 3 names) | 0.1167 each = **0.350 against a 0.30 cap** |
+| PG, PM (Consumer Staples), UDR (Real Estate) | 0.1167 each |
+| largest name | **0.1167 against a 0.10 cap** (six names) |
+
+`docs/cycle.md` described the caps as holding "within rounding"; a 17% breach is not rounding. `verify_t138.py` against production (read-only)
+flags exactly these two violations on the one stored book. The quant benchmark had its own constant caps (0.05 / 0.30), so it was not comparable
+to the live book at any other N, and on the 20-asset pilot panel `20 x 0.05 = 1` forced every `min_var`, `tangency` and `target_vol` book to
+**exactly 0.05 in every name**, whatever the covariance (pilot-1).
+
+### The rule that replaces it (the T-134 decisions, user, 2026-10-04)
+
+1. **N** is `--top-n` (default 30). `n_held = min(N, eligible names)`; fewer eligible than N: hold them all, band on the actual count, record the
+   **shortfall**, never pad.
+2. **`score_tilt`** is the new default scheme: an equal-weight core with a bounded score tilt. Scores map linearly onto `[0.5/n_held, 1.5/n_held]`
+   (lowest held score to the floor, highest to the ceiling; all equal -> equal weights) and the result is the **exact Euclidean projection** of
+   that target onto `{sum = 1, band, sector sum <= cap}` (a common shift, bisection-free, finitely many steps). The name cap is `1.5/n_held` with
+   **no 0.10 floor** (0.05 at N = 30, 0.15 at N = 10, 0.50 at N = 3); an explicit `--max-name-weight` wins, one below `1/n_held` is relaxed to it
+   and recorded. `equal`, `score_proportional` and `inverse_vol` stay selectable (the same projection, floor 0, name cap 0.10 unless given).
+3. **Sectors**: cap 0.30 with a **sector-aware fill** -- a ranked name whose sector already holds `max(1, floor(cap x n_held))` names is skipped
+   for the next. When the cap cannot hold it is relaxed to the smallest feasible value and recorded; the book is always fully invested.
+4. **Preferences** (`--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors`) are inputs to the pure function; a HARD-vetoed pin is refused with
+   its reason, a SOFT-vetoed pin is held and flagged. Books built with preferences are **decision support, never thesis results**; a writing
+   `select` refuses them (`select --dry-run` previews them, `backfill` replays with them).
+5. Everything applied -- the effective caps, relaxations, shortfall, preferences, refused/flagged pins -- is recorded in `cycle_run.params_json`
+   (`v_weight_scheme` reports the effective caps, no view change); a resume with other settings is refused; `select --dry-run` is strictly
+   read-only. The quant benchmark uses the same `1.5/n_held` and 0.30 with no limit on the number of names (no integer programming).
+
+Reference: DeMiguel, Garlappi & Uppal (2009), "Optimal Versus Naive Diversification: How Inefficient is the 1/N Portfolio Strategy?", *Review of
+Financial Studies* 22(5), 1915-1953 -- the 1/N book is hard to beat out of sample, so the thesis book is an equal-weight core with a bounded
+tilt (`equal` is its zero-tilt case) rather than score-proportional weights.
+
+### Verification
+
+**1. Production's failing shape, read-only** (`cycle select --analysis-date 2026-09-22 --dry-run --top-n 10`; the stored ranking of `cycle_run` 1;
+nothing written; the production file's SHA-256 before and after: `78878b160bb2f609e2dbe66aa4e0bcc35cc6f7c40d316920fd4edabf46f3369c`, **identical**):
+
+| ticker | sector | stored | new `score_tilt` |
+|---|---|---|---|
+| MA | Financials | 0.0750 | 0.1478 |
+| PG | Consumer Staples | 0.1167 | 0.1379 |
+| APA | Energy | 0.1167 | 0.1056 |
+| PSX | Energy | 0.1167 | 0.1051 |
+| HOOD | Financials | 0.0750 | 0.0898 |
+| XOM | Energy | 0.1167 | 0.0893 |
+| PM | Consumer Staples | 0.1167 | 0.0990 |
+| APO | Financials | 0.0750 | 0.0625 |
+| WFC (rank 9, the **fourth Financial**) | Financials | 0.0750 | **skipped** |
+| UDR | Real Estate | 0.1167 | 0.0855 |
+| ESS (rank 11, the next-ranked name from another sector) | Real Estate | -- | 0.0776 |
+
+Effective caps 0.15 / 0.30, no relaxation. Every weight is in `[0.0625, 0.1478]` (band `[0.05, 0.15]`; the stored book had 0.1167 over its 0.10);
+Financials **0.300** (3 names) and Energy **0.300** (3 names), against the stored 0.30 / **0.35**; Consumer Staples 0.237, Real Estate 0.163. The
+default dry run on the same date (N = 30): the cohort has **20** eligible names, so the book holds 20 (shortfall 10 recorded), name cap
+`1.5/20 = 0.075`, weights in `[0.0296, 0.0750]`, the largest sector Financials 0.239 (the sector cap does not bind).
+
+**2. The default thesis book and the N sensitivity** (three scratch copies of the pilot-1 replay database; `cycle backfill --from 2024-01-05 --to
+2026-10-02 --step-days 7 --force --top-n N`, default scheme, 144 weekly dates; `scripts/verify_t138.py` on each; no performance is reported -- it
+is not a thesis result here, decision 6, and the evaluation belongs to `T-100`):
+
+| | N = 10 | N = 20 | N = 30 |
+|---|---|---|---|
+| invariant violations | **0** | **0** | **0** |
+| dates with a relaxation (kinds) | 0 | 0 | 0 |
+| effective name / sector cap | 0.15 / 0.30 | `1.5/n_held` (n_held 15-19) / 0.30 | the same |
+| average names held | 10.00 | 17.56 | 17.56 |
+| dates with a shortfall | 0 | 144 | 144 |
+| mean one-way turnover per week | 0.0559 | 0.0178 | 0.0178 |
+| median score range of the held names (min / max) | 16.53 (10.40 / 25.51) | 36.69 (17.87 / 49.32) | 36.69 (17.87 / 49.32) |
+| median sd of the held scores | 5.03 | 9.03 | 9.03 |
+| dates the name cap binds / the sector cap binds | 112 / 88 | 27 / 0 | 27 / 0 |
+
+The pilot universe is a **20-ticker sample**, so only 15-19 names are eligible on any date: at N = 20 and N = 30 every date holds all of them
+and the two books are **bit-identical** (2,405 stints); the sensitivity that distinguishes N is N = 10 against the rest. The pilot-1 replay
+(`score_proportional`, caps 0.10 / 0.30 at N = 30) had **0** cap violations on this small universe -- the defect needs a sector that holds a
+large share of a small N, which is production's shape, not the sample's -- and a mean one-way turnover of 0.0290 (the tilt's 0.0178 is lower).
+
+**3. One run with preferences -- decision support, not a thesis result** (`cycle select --analysis-date 2026-10-02 --dry-run --top-n 5 --pin MA
+--only-sectors "Financials,Energy"` on a scratch copy of the pilot database; nothing written): MA 0.1418, PSX 0.3000, HOOD 0.2237, XOM 0.2000,
+APO 0.1345. Relaxations: the **sector cap 0.30 -> 0.50** (two sectors over five names cannot hold 0.30; the fill ran out of names outside full
+sectors, so HOOD, XOM and APO were held past a full sector, listed as overflow). Pin notes: MA is **SOFT-vetoed**, held and flagged. The same
+date and N without preferences: PSX 0.300, BF.B 0.232, HOOD 0.186, MCD 0.164, UDR 0.118, no relaxation.
+
+**4. The quant benchmark** (scratch copy of the pilot database, `build-risk-model` then `optimize` at 2026-07-09, default N; 20 assets: name cap
+`1.5/20 = 0.075`, sector cap 0.30, no relaxation; `verify_t138.py` on the `opt-v2` books: **0 violations**, also at a 1e-9 tolerance):
+
+| book | `opt-v1` min / max weight | `opt-v1` vol | `opt-v2` min / max weight | `opt-v2` vol | names held | max sector |
+|---|---|---|---|---|---|---|
+| `min_var` | 0.0500 / 0.0500 | 0.1425 | 0.0080 / 0.0750 | 0.1250 | 18 | 0.232 |
+| `tangency` | 0.0500 / 0.0500 | 0.1425 | 0.0091 / 0.0750 | 0.1331 | 20 | 0.233 |
+| `target_vol` | 0.0500 / 0.0500 | 0.1425 | 0.0068 / 0.0750 | 0.1562 | 18 | 0.300 |
+| `risk_parity` | 0.0466 / 0.0503 | 0.1418 | 0.0261 / 0.0750 | 0.1310 | 20 | 0.230 |
+
+The books are no longer 0.05 in every name, and `min_var` buys 1.75 pp of volatility with the freedom. With a panel of 30 or more the caps are
+the old 0.05 / 0.30 and a feasible book is unchanged; `opt-v2` differs on a smaller panel (above), and `risk_parity` is now also held to the
+sector cap.
+
+### What the tilt does to the weight spread
+
+**The tilt spans the held names' own score range.** The lowest held score maps to `0.5/n_held` and the highest to `1.5/n_held` whatever the
+scores' spread, so the *target* weight spread is always the full `[0.5/N, 1.5/N]` band even when the scores are tightly clustered: a weight
+carries a name's **position inside the held set's score range**, not the size of the score gap. Two cohorts whose scores differ by 10 points or
+by 0.1 point get the same weights. Evidence: on four real replay dates (the three tightest held score ranges, 10.40, 10.48 and 11.16 points, and
+the widest, 25.51) compressing every score toward the cohort mean by 10x and by 100x (held range down to 0.10 point) left the weights unchanged
+(maximum difference 5e-15). The measured **realized** spread after the exact projection onto the caps is smaller than the band where the caps
+bind: as a fraction of the band's width `1/n_held`, **median 0.894 at N = 10** (min 0.611, max 0.999; the sector cap binds on 88 of 144 dates)
+and **median 0.941 at N = 20/30** (min 0.838, max 1.000). Measured score dispersion of the held names (blended score, 0-100): N = 10 range
+10.40 / 16.53 / 25.51 (min / median / max), sd median 5.03; N = 20 and 30 range 17.87 / 36.69 / 49.32, sd median 9.03; production `cycle_run` 1
+(N = 10) range 20.3, sd 5.92. Consequence for reading a result: the tilt is a *ranking* tilt, which is what an equal-weight core with a bounded
+tilt means; if a score-magnitude-sensitive weighting is ever wanted, that is a different scheme (`score_proportional` stays selectable).
+
+### Known scope and residual
+
+- **Production is not re-selected** (above); the stored `cycle_run` 1 book keeps its breaches until the user directs a re-select.
+- A run recorded before `T-136` has no `n_held`/relaxations in `params_json`; `verify_t138.py` checks it against the legacy caps it recorded.
+- The pilot sample cannot exercise the defect's own shape or N = 30 meaningfully (15-19 eligible names); `T-100`'s full-universe ingestion and
+  replay is where N = 20 and 30 differ.
+- Assets with no sector are uncapped in the quant benchmark (as `quant.optimize` always treated them): 0 of 503 in production, 0 of 20 in the pilot.
+- `scripts/verify_t138.py` (read-only) and `tests/test_verify_t138.py` (16, mutation-checked) are the record's tooling; `T-100`'s fresh-database
+  run should be checked with it.

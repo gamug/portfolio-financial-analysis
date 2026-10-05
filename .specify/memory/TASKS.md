@@ -167,7 +167,22 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       `cycle` (isolation test), so copy the rule the way `quant.state` copies `cycle.state` and pin the two
       against each other with a test; leave the benchmark's universe/liquidity gate untouched (it must stay
       independent of any score). → step 4.
-- [ ] **T-138** Verify on real data, on a **scratch copy** of `financial.db` (production is not written):
+- [x] **T-138** — **done 2026-10-05, PR #121 (approved)**: `scripts/verify_t138.py` (read-only; live, replay and
+      `opt-v2` quant books against the effective caps in each run's `params_json`, with score dispersion and counts;
+      `tests/test_verify_t138.py`) and the Work item 18 entry in `docs/model_fixes.md`; no `src/` change, no defect
+      found. Production only read (`select --dry-run`, `connect_ro`; file hash identical before and after): the
+      stored `cycle_run` 1 book is flagged (0.1167 > 0.10, Energy 0.350 > 0.30); at N = 10 the new book holds both
+      caps (Financials 0.300, Energy 0.300, max weight 0.1478 ≤ 0.15), the fourth Financial (WFC) is replaced by ESS
+      (rank 11); the default dry run holds 20 of 30 (shortfall 10 recorded, name cap 0.075). Replay sensitivity on
+      three scratch copies (144 weekly dates 2024-01-05..2026-10-02): **0 invariant violations and 0 relaxations at
+      N = 10, 20 and 30**; average names held 10.00 / 17.56 / 17.56, mean one-way turnover 0.0559 / 0.0178 / 0.0178,
+      median held-score range 16.53 / 36.69 / 36.69; N = 20 and 30 are bit-identical on the 20-ticker pilot
+      universe (15–19 eligible names). A preferences run is recorded as decision support, not a thesis result; the
+      `opt-v2` quant books hold their caps (0 violations). The tilt's target spans the held names' own score range;
+      the realized spread after the caps' projection is a median 0.894 of the band at N = 10 (min 0.611) and 0.941
+      at N = 20/30, stated in the entry. `--allow-dirty` was not needed for the scratch runs (reviewer's clean
+      re-run changes nothing). Reviewer reproduced the numbers from a clean checkout. The task as specified:
+      verify on real data, on a **scratch copy** of `financial.db` (production is not written):
       reproduce `cycle_run` 1's failing shape, then the default thesis book (N = 30, no preferences) plus
       the **sensitivity check over N ∈ {10, 20, 30}**, and **one run with preferences** (decision support,
       never reported as a thesis result); every book sums to 1 and satisfies the band and both caps, or
