@@ -1724,9 +1724,9 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
 3. **Wire (`T-136`, done 2026-10-05, PR #119; `select --dry-run` is a read-only preview from the stored ranking)** it through `cycle` (and delete the old `Candidate` with `target_weights`): the settings, the preference flags on `select`/`backfill`, and
    the effective caps, relaxations, shortfall and preferences in `cycle_run.params_json` (the existing
    `v_weight_scheme` already reads those keys, so no view change).
-4. **Align `quant`'s benchmark (`T-137`)**: the same N-derived name cap (`1.5/N`) and sector cap 0.30, no
-   limit on the number of names (no integer programming). At N = 30 that is 0.05, today's
-   `QuantSettings.max_name_weight`, so the default benchmark does not change. The rule is copied (it must
+4. **Align `quant`'s benchmark (`T-137`, done 2026-10-05, PR #120; engine `opt-v2`)**: the same N-derived name cap (`1.5/N`) and sector cap 0.30, no
+   limit on the number of names (no integer programming). At N = 30 with a panel of 30 or more that is 0.05, today's
+   `QuantSettings.max_name_weight`, so that default benchmark does not change (a smaller panel's does: `opt-v2`). The rule is copied (it must
    not import `cycle`; pinned by `tests/test_quant_import_isolation.py`) and pinned against `cycle`'s by a
    test; its universe/liquidity gate stays independent of scores.
 5. **Verify (`T-138`)** on scratch copies of `financial.db`: the default thesis book (N = 30, no
