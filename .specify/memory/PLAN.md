@@ -30,7 +30,7 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
 2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → Work item 18 (the asset-weight heuristic as a function of N; added 2026-10-02, **closed 2026-10-05**, plan and acceptance in `CHANGELOG.md`) → **Work item 8
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → Work item 18 (the asset-weight heuristic as a function of N; added 2026-10-02, **closed 2026-10-05**, its plan below, its tasks in `CHANGELOG.md`) → **Work item 8
 (P1 — methodological redesign; supersedes Work item 3's approach in place)** → **Work item 9 (P2 —
 cleanup)** → **Work item 3** → **Work item 4** → **Work item 12 (`T-100`) — the full-universe production
 run, last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**. Work item 17
@@ -1673,6 +1673,92 @@ latest cycle's selection; no `cycle` reader can reach a fact filed after the cyc
 and 10-K medians of every flow-over-stock ratio within ~1.3×; the benchmark matches an
 independent equal-weight index; one μ convention across estimators.
 
+## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold — DONE 2026-10-05
+
+**Closed 2026-10-05** by `T-139` (PR #122): `T-134`–`T-139`, PRs #117–#122; the tasks are in `CHANGELOG.md`.
+
+**Why**: `cycle.construction.target_weights` takes `top_n` (the user's N, default 30) but keeps the caps
+as constants (`max_name_weight = 0.10`, `max_sector_weight = 0.30`) whatever N is. Whether those caps are
+satisfiable, and how much room a score tilt has, depends on N: at `N = 10` a 0.10 name cap forces every
+name to exactly 0.10, and a sector holding four of the ten then sums to 0.40, over the 0.30 sector cap, so
+**no** weight vector satisfies both. The function alternates the two caps 8 times and returns whatever it
+has, with no error or log. Measured on production (read-only, 2026-10-02): `cycle_run` 1 (live book,
+2026-09-22, 10 names) holds six names at 0.1167 against a 0.10 cap and Energy at 0.35 against 0.30;
+`cycle_run` 2 (2026-06-30, now `reverted`) was feasible only because its sector mix happened to allow it.
+`docs/cycle.md` describes the caps as holding "within rounding"; a 17% breach is not rounding. `quant`'s
+benchmark has its own constant caps (`QuantSettings`: 0.05 / 0.30), so the benchmark and the live book are
+also not comparable at a different N.
+
+**One task per PR, in order** (`T-135` → `T-136` → `T-137` → `T-138` → `T-139`).
+
+**Approach** (the rule is `T-134`'s decision, taken by the user on 2026-10-04, and recorded in `SPEC.md`
+FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
+
+1. **The decision (done, `T-134`)**: N is `--top-n` (default 30). The default scheme is `score_tilt`, an
+   equal-weight core with a bounded score tilt — each weight in `[0.5/N, 1.5/N]`, proportional to the score
+   inside that band; `equal` stays as the zero-tilt case, `score_proportional` and `inverse_vol` stay
+   selectable so old runs reproduce, and explicit `--max-name-weight`/`--max-sector-weight` still win. The name cap is `1.5/N` with **no 0.10
+   floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50); the earlier proposal `max(0.10, 1.5/N)` is
+   superseded, not the rule. At
+   N = 30 the per-name maximum goes from 10% to 5% and the floor removes near-zero positions (NEE 0.25% in
+   pilot-1); reference: the 1/N benchmark (DeMiguel, Garlappi & Uppal 2009). Sector cap 0.30 with a
+   **sector-aware fill** (skip a ranked name whose sector is full, take the next, so the book holds N
+   names); a sector is **full** when it already holds `max(1, floor(sector cap × N))` names, N being the
+   names actually held — 9 at N = 30, 3 at N = 10 (the production shape skips the fourth Financial), 1 at
+   N = 5 and N = 3 — and the `max(1, ·)` keeps N ≤ 3 from treating every sector as full; when the cap
+   cannot hold it is relaxed to the smallest feasible value and the relaxation is recorded (at N = 3, one
+   name per sector, the largest sector weight is at least 1/3 > 0.30, so the cap relaxes to 1/3); an
+   explicit `--max-name-weight` below 1/N cannot sum to 1 and is relaxed to 1/N, recorded — never silent,
+   never a failed run; never hold cash. Fewer eligible names than N: hold them all, band on the actual count, record
+   the shortfall, never pad. Preferences (`--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors`) are
+   inputs to the pure function and CLI flags on `cycle select`/`backfill`: a pin is held first, counts
+   toward N and obeys the band and caps; a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin
+   is allowed and flagged; `--only-sectors` relaxes the sector cap to feasibility; all are recorded in
+   `cycle_run.params_json`.
+2. **Implement (`T-135`, done 2026-10-05, PR #118, not wired)** the pure construction function in `construction.py` — `score_tilt`, the band,
+   the sector-aware fill (full = `max(1, floor(sector cap × N))` names, N = names actually held), pins and
+   exclusions, and the relaxation of a name cap below 1/N — returning a result object (weights, effective caps,
+   relaxations, shortfall, refused and flagged pins). The name cap is `1.5/N` with no 0.10 floor;
+   the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is superseded and must not be implemented. The
+   8-round loop goes and infeasibility is a reported result, not a silent
+   best effort.
+3. **Wire (`T-136`, done 2026-10-05, PR #119; `select --dry-run` is a read-only preview from the stored ranking)** it through `cycle` (and delete the old `Candidate` with `target_weights`): the settings, the preference flags on `select`/`backfill`, and
+   the effective caps, relaxations, shortfall and preferences in `cycle_run.params_json` (the existing
+   `v_weight_scheme` already reads those keys, so no view change).
+4. **Align `quant`'s benchmark (`T-137`, done 2026-10-05, PR #120; engine `opt-v2`)**: the same N-derived name cap (`1.5/N`) and sector cap 0.30, no
+   limit on the number of names (no integer programming). At N = 30 with a panel of 30 or more that is 0.05, today's
+   `QuantSettings.max_name_weight`, so that default benchmark does not change (a smaller panel's does: `opt-v2`). The rule is copied (it must
+   not import `cycle`; pinned by `tests/test_quant_import_isolation.py`) and pinned against `cycle`'s by a
+   test; its universe/liquidity gate stays independent of scores.
+5. **Verify (`T-138`, done 2026-10-05, PR #121; `scripts/verify_t138.py`)** on scratch copies of `financial.db`: the default thesis book (N = 30, no
+   preferences) with a sensitivity check over N ∈ {10, 20, 30}, and one run with preferences; record the
+   methodology change in `docs/model_fixes.md` (constitution AI behavior #12), reporting the top-N score
+   dispersion and stating that the tilt spans the held names' score range (the spread is the full band even
+   for tightly clustered scores). The thesis book is the
+   default configuration; books built with user preferences are decision support and are never reported as
+   thesis results.
+6. **Docs/artifacts (`T-139`, done 2026-10-05, PR #122; the two architecture artifacts could not be edited from the implementing environment)**: `docs/cycle.md`, `docs/quant.md`, `SPEC.md` FR-007, both architecture
+   artifacts (constitution AI behavior #11), and `SPEC.md` FR-001's older "re-run on the same
+   `(asset, form, fiscal_period)`" sentence, which should say the period end (`T-140`).
+
+**Out of scope**: re-running `cycle select` on production (a write, only at the user's direction), the
+composite-weights question (`TASKS.md` N11), any change to the `v_*` views, a user-facing API endpoint (a
+later task with an FR-014 amendment; it would be `api`'s first import of `cycle` code) and the investment
+amount (the app).
+
+**Acceptance criteria**:
+
+- **Exact feasibility**: for every book, the weights sum to 1 and both caps and the band hold within 1e-9,
+  or the relaxation (which cap, by how much) is recorded; no book breaches anything without saying so.
+  Tested for N ∈ {1, 3, 5, 10, 20, 30}, single-sector and few-sector cases, pins (including vetoed
+  ones), exclusions, and the production shape (10 names, 4 Financials, 3 Energy), which no longer returns
+  0.1167 / 0.35.
+- Explicit `--max-name-weight` / `--max-sector-weight` override the derived values.
+- `cycle_run.params_json` carries the effective caps, relaxations, shortfall and preferences;
+  `v_weight_scheme` reports the caps.
+- `quant`'s benchmark follows the same rule, pinned against `cycle`'s by a test; the isolation test stays
+  green, and `uv run pytest -q`, `ruff` and `mypy` are green.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small
@@ -1733,7 +1819,7 @@ this document.** Their internal sequencing:
 - Work item 15 (devcontainer mount path, `T-126`) is **closed** (2026-10-01, PR #106, see
   `CHANGELOG.md`).
 - Work item 18 (the N-ticker weight heuristic, `T-134`–`T-139`) is **closed** (2026-10-05, PRs #117–#122, see
-  `CHANGELOG.md`, which holds its tasks and its plan and acceptance criteria): it was first in the user's 2026-10-02
+  `CHANGELOG.md` for its tasks; its plan and acceptance criteria stay in this file, Work item 18 above): it was first in the user's 2026-10-02
   order (18 -> 8 -> 9 -> 3 -> 4 -> 12) and touched `cycle/construction.py`, `cycle`'s settings and `quant`'s caps, none
   of which Work item 8's scoring redesign edits. What remains of that order is 8 -> 9 -> 3 -> 4 -> 12; Work item 3 is
   superseded and Work item 2 is unplaced (see the Priority Override section).
