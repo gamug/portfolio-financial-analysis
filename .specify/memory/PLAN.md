@@ -36,8 +36,9 @@ user wants to hold; added 2026-10-02 at the user's direction, first in the new o
 cleanup)** → **Work item 3** → **Work item 4** → **Work item 12 (`T-100`) — the full-universe production
 run, last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**. Work item 17
 (`T-131`, `T-132`, `T-133` ✅ all done, PRs #109/#110/#111) closed 2026-10-02. **Pilot-1 (2026-10-04)
-ran at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-079` stays blocked
-until a pilot-2 on a fresh database, run after `T-140` and Work item 18 have merged, reaches 0 FAIL.
+ran at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-140` merged
+2026-10-05 (PR #115, acceptance pending pilot-2); `T-079` stays blocked until a pilot-2 on a fresh
+database, run after Work item 18 has merged, reaches 0 FAIL.
 It gates `T-079`'s LLM re-run, not Work item 18 or the rest of Work item 8.**
 
 **Two points in the user's 2026-10-02 order that need a call, surfaced here rather than resolved
@@ -806,7 +807,10 @@ as task `T-077`.
    no quarter of its own (APO Q1-2023: the gateway returns only the prior fiscal year's column; note this
    for `portfolio-data-mining`). It changes a deterministic computation's methodology, so it needs a
    `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of the bundled LLM re-run
-   (steps 3+4+5, `T-079`). **Implemented in PR #115 (engine `metrics-v5`); acceptance pending pilot-2.**
+   (steps 3+4+5, `T-079`). **Implemented and approved: PR #115, merged 2026-10-05 (engine `metrics-v5`; `SPEC.md` FR-001
+   updated); acceptance pending pilot-2.** Kept on review beyond the brief: the first-week-of-January
+   label year, quarter pairing by date, and the quarter counted from the filing's own balance-sheet
+   fiscal year end before the stored 10-K.
 
 **Acceptance criteria**:
 
@@ -827,7 +831,7 @@ as task `T-077`.
   valorization formulas) updated to describe the shipped methodology, per
   this repo's own "spec/plan changes land with the requirement" rule —
   deferred to the PR(s) that actually implement this item, not done now.
-- **`T-140` acceptance** — on the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
+- **`T-140` acceptance** — on the pilot-2 run (fresh database, after Work item 18 merges; `T-140` has):
   APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
   stored; no gap over 110 days between consecutive 10-K/10-Q period ends and no 10-Q labelled Q4; the
   pilot verification at 0 FAIL. At `T-100`: the number of filings with rebuilt revenue and of corrected

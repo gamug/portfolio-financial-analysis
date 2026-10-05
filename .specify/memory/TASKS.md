@@ -24,8 +24,8 @@ item 8 starts next (PR #104 review):** the priority order (re-set by the user 20
 → Work item 3 → Work item 4 → Work item 12 (`T-100`), the full-universe run, last of all** (which
 itself needs a *fresh* `financial.db` — see `T-100`'s own entry). Work item 17 (`T-131`, `T-132`,
 `T-133`, PRs #109/#110/#111) is closed 2026-10-02, see `CHANGELOG.md`. **Pilot-1 (2026-10-04) ran
-at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-079` stays blocked
-until a pilot-2 on a fresh database, run after `T-140` and Work item 18 have merged, reaches 0
+at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-140` merged 2026-10-05 (PR #115, acceptance pending pilot-2); `T-079`
+stays blocked until a pilot-2 on a fresh database, run after Work item 18 has merged, reaches 0
 FAIL.** Two things in the user's order
 need a call (see `PLAN.md`'s Priority Override): Work item 3 is **superseded** by `T-077`
 (Work item 8) and stays "do not implement" unless the user un-supersedes it, so its slot is
@@ -225,11 +225,24 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       evaluation); record in `docs/quant.md`/`docs/cycle.md`. → step 7.
 - [ ] **T-140** (P0, pilot findings 2026-10-04; blocks `T-079` and `T-100`) Two ingestion defects
       found by the 20-asset pilot on a fresh database. → `PLAN.md` Work item 8, step 8.
-      **Implemented in PR #115 (engine `metrics-v5`); acceptance pending pilot-2** -- the box stays
-      open until the criteria below are measured on a fresh database after Work item 18 merges.
-      Record: `docs/model_fixes.md`, T-140. Known before pilot-2: APO's Q1-2023 10-Q stays unstored
-      (the gateway returns only the prior fiscal year's column; recorded as a run error, upstream
-      note drafted), so a "no gap over 110 days" check still sees APO's 181-day hole.
+      **Implemented and approved: PR #115, merged 2026-10-05 (engine `metrics-v5`); acceptance
+      pending pilot-2** -- the box stays open until the criteria below are measured on a fresh
+      database after Work item 18 merges. Record: `docs/model_fixes.md`, T-140; `SPEC.md` FR-001.
+      Beyond the brief, kept on review: periods ending in the first week of January label as the
+      year before (J&J's FY ending 2023-01-01 and 2023-12-31 were both `FY2023`), and a quarter is
+      paired with last year's by date (`Statements.prior_of`); the quarter is counted from the
+      filing's own balance-sheet fiscal year end first, the stored 10-K as fallback (FERG changed
+      its fiscal year). Two APA quarters over `T-117`'s ceiling are admitted only when the gateway's
+      own figure agrees to the dollar. Known before pilot-2: APO's Q1-2023 10-Q stays unstored
+      (the gateway returns only the prior fiscal year's column; recorded as a run error; the note
+      for `portfolio-data-mining` is drafted, not filed), so a "no gap over 110 days" check sees
+      APO's 181-day hole unless the recorded run error exempts it (the pilot verification now does).
+      IBKR FY2025 and KVUE's first 10-Q after its IPO also get no label; both are recorded.
+      **Review's production replay of `scripts/verify_t140.py` (5,076 filings, read-only), a
+      pre-count for `T-100`, not its acceptance:** revenue 0 changed (rule fires and equals the
+      existing value for MPC, NI, PSX; refused, existing value kept, for ADP, BNY, ICE); labels 95
+      relabelled across 51 tickers (73 quarters, 22 January year ends), spot-checked against each
+      company's fiscal calendar. `T-100` still counts both on its own fresh database.
       **(a) Revenue the gateway drops.** The gateway's `T-042` rule (`no_filed_nondimensional_fact`)
       removes revenue that a filer tags only with a dimension. APA 2021Q1–2023Q3 (11 filings) then
       has no revenue: FY2022 "Total revenues" $11,075M and production revenues $9,220M are dropped,
@@ -257,7 +270,8 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
         - The pilot verification at 0 FAIL.
       - At `T-100`: the number of filings with rebuilt revenue and of corrected labels, counted
         across the full universe and inspected.
-      - A `docs/model_fixes.md` entry (methodology change, constitution AI behavior #12).
+      - A `docs/model_fixes.md` entry (methodology change, constitution AI behavior #12). **Done**
+        in PR #115.
 - [ ] **T-079** One bundled LLM re-run covering T-073+T-074+T-076 together
       (~4,844 filings) — do not re-run per prompt edit; full suite green
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
@@ -344,8 +358,8 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 **🔴 Current priority order (user's, 2026-10-02): Work item 18 (`T-134`–`T-139`, the N-ticker
 weight heuristic) → Work item 8 → Work item 9 → Work item 3 (superseded by `T-077`, see the top of this
 file) → Work item 4.** Pilot-1 (2026-10-04) ran at 2 FAIL with the original verification (`T-133`,
-explained by `T-140`); `T-079` stays blocked until a pilot-2 on a fresh database, run after `T-140`
-and Work item 18 have merged, reaches 0 FAIL. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
+explained by `T-140`); `T-140` merged 2026-10-05 (PR #115, acceptance pending pilot-2); `T-079` stays
+blocked until a pilot-2 on a fresh database, run after Work item 18 has merged, reaches 0 FAIL. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
 closed 2026-10-02, see `CHANGELOG.md`. Work item 14 (the
 second forensic audit) is fully closed 2026-09-30, `T-118` last — see
 `CHANGELOG.md`. Its `T-121`/`T-122`/`T-123`/`T-124` production actions were all
@@ -354,8 +368,8 @@ its production-apply date and verification), and `T-125`'s own `migrate` remains
 the one deliberately-deferred production write left over from it (still pending
 explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
 production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
-`T-079`'s LLM re-run (Work item 8) until a pilot-2 on a fresh database, run after `T-140`
-and Work item 18 have merged, reaches 0 FAIL**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
+`T-079`'s LLM re-run (Work item 8) until a pilot-2 on a fresh database, run after Work item 18
+has merged (`T-140` already has), reaches 0 FAIL**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
 deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios) is followed by **Work item 9, `T-080`–`T-084`
