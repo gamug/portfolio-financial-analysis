@@ -57,7 +57,9 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
          Each name's weight lies in `[0.5/N, 1.5/N]`, proportional to its score inside that band. `equal`
          stays as the zero-tilt case; `score_proportional` and `inverse_vol` stay selectable so old runs
          remain reproducible but are no longer the default. Explicit `--max-name-weight`/
-         `--max-sector-weight` still win. **Methodology change**: at N = 30 the maximum per name goes from
+         `--max-sector-weight` still win. The name cap is `1.5/N` with **no 0.10 floor** (N = 30 → 0.05,
+         N = 10 → 0.15, N = 3 → 0.50); the earlier proposal `max(0.10, 1.5/N)` is superseded, not the
+         rule. **Methodology change**: at N = 30 the maximum per name goes from
          10% to 5%, and the floor removes near-zero positions (NEE 0.25% in pilot-1). Reference: the 1/N
          benchmark (DeMiguel, Garlappi & Uppal 2009).
       3. **Sectors**: cap 0.30 with a **sector-aware fill** — skip a ranked name whose sector is full and
@@ -87,9 +89,10 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       `score_tilt` (the `[0.5/N, 1.5/N]` band), the sector-aware fill, the sector cap with a recorded
       relaxation to the smallest feasible value, pins and exclusions (`--pin`, `--exclude`,
       `--exclude-sectors`, `--only-sectors` as plain arguments), and a **result object**: weights, effective
-      caps, relaxations, shortfall, refused and flagged pins — nothing is silent. It replaces the proposed
-      `resolve_caps(n)` / `max(0.10, 1.5 / N)` rule with the band and `1.5/N` as the name cap; the 8-round
-      loop goes. `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9):
+      caps, relaxations, shortfall, refused and flagged pins — nothing is silent. The name cap is
+      `1.5/N` with **no 0.10 floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50; an explicit
+      `--max-name-weight` still wins); the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is
+      superseded and must not be implemented. The 8-round loop goes. `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9):
       N in `{1, 3, 5, 10, 20, 30}`, single-sector and few-sector universes, pins (including HARD- and
       SOFT-vetoed), exclusions, `--only-sectors`, explicit-override precedence, fewer eligible names than N,
       the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold

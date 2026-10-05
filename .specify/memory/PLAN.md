@@ -1696,7 +1696,9 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
 1. **The decision (done, `T-134`)**: N is `--top-n` (default 30). The default scheme is `score_tilt`, an
    equal-weight core with a bounded score tilt — each weight in `[0.5/N, 1.5/N]`, proportional to the score
    inside that band; `equal` stays as the zero-tilt case, `score_proportional` and `inverse_vol` stay
-   selectable so old runs reproduce, and explicit `--max-name-weight`/`--max-sector-weight` still win. At
+   selectable so old runs reproduce, and explicit `--max-name-weight`/`--max-sector-weight` still win. The name cap is `1.5/N` with **no 0.10
+   floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50); the earlier proposal `max(0.10, 1.5/N)` is
+   superseded, not the rule. At
    N = 30 the per-name maximum goes from 10% to 5% and the floor removes near-zero positions (NEE 0.25% in
    pilot-1); reference: the 1/N benchmark (DeMiguel, Garlappi & Uppal 2009). Sector cap 0.30 with a
    **sector-aware fill** (skip a ranked name whose sector is full, take the next, so the book holds N
@@ -1709,8 +1711,9 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    `cycle_run.params_json`.
 2. **Implement (`T-135`)** the pure construction function in `construction.py` — `score_tilt`, the band,
    the sector-aware fill, pins and exclusions — returning a result object (weights, effective caps,
-   relaxations, shortfall, refused and flagged pins). It replaces the proposed `resolve_caps(n)` /
-   `max(0.10, 1.5 / N)` rule; the 8-round loop goes and infeasibility is a reported result, not a silent
+   relaxations, shortfall, refused and flagged pins). The name cap is `1.5/N` with no 0.10 floor;
+   the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is superseded and must not be implemented. The
+   8-round loop goes and infeasibility is a reported result, not a silent
    best effort.
 3. **Wire (`T-136`)** it through `cycle`: the settings, the preference flags on `select`/`backfill`, and
    the effective caps, relaxations, shortfall and preferences in `cycle_run.params_json` (the existing
