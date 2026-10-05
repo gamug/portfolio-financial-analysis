@@ -62,10 +62,16 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
          rule. **Methodology change**: at N = 30 the maximum per name goes from
          10% to 5%, and the floor removes near-zero positions (NEE 0.25% in pilot-1). Reference: the 1/N
          benchmark (DeMiguel, Garlappi & Uppal 2009).
-      3. **Sectors**: cap 0.30 with a **sector-aware fill** — skip a ranked name whose sector is full and
-         take the next one, so the book holds N names. When the cap cannot hold (too few eligible or chosen
-         sectors), relax it to the smallest feasible value and record the relaxation. Never hold cash:
-         always fully invested.
+      3. **Sectors**: cap 0.30 with a **sector-aware fill** — skip a ranked name whose sector is full
+         and take the next one, so the book holds N names. A sector is **full** when it already holds
+         `max(1, floor(sector cap × N))` names, N being the names actually held: 9 at N = 30; 3 at N =
+         10 (the production shape skips the fourth Financial); 1 at N = 5 and N = 3. At N = 3, one name
+         per sector, the largest sector weight is at least 1/3 > 0.30, so the cap relaxes to 1/3 and the
+         relaxation is recorded; the `max(1, ·)` keeps N ≤ 3 from treating every sector as full. An
+         explicit `--max-name-weight` below 1/N cannot sum to 1: it is relaxed to 1/N and the relaxation
+         is recorded — never silent, never a failed run. When the cap cannot hold (too few eligible or
+         chosen sectors), relax it to the smallest feasible value and record the relaxation. Never hold
+         cash: always fully invested.
       4. **Fewer eligible names than N**: hold them all, compute the band on the actual count, record the
          shortfall. Never pad.
       5. **User preferences** are inputs to the pure construction function and CLI flags on
@@ -92,7 +98,11 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       caps, relaxations, shortfall, refused and flagged pins — nothing is silent. The name cap is
       `1.5/N` with **no 0.10 floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50; an explicit
       `--max-name-weight` still wins); the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is
-      superseded and must not be implemented. The 8-round loop goes. `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9):
+      superseded and must not be implemented. A sector is **full** at `max(1, floor(sector cap × N))` names, N being the names actually held (9 at
+      N = 30, 3 at N = 10, 1 at N = 5 and N = 3; at N = 3 the cap relaxes to 1/3, recorded); an explicit
+      `--max-name-weight` below 1/N is relaxed to 1/N, recorded, never a failed run. The 8-round loop goes.
+      `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9, plus the full-sector
+      thresholds above and a name cap below 1/N):
       N in `{1, 3, 5, 10, 20, 30}`, single-sector and few-sector universes, pins (including HARD- and
       SOFT-vetoed), exclusions, `--only-sectors`, explicit-override precedence, fewer eligible names than N,
       the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold
@@ -119,7 +129,8 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       → step 5.
 - [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if
       `T-137` lands, `SPEC.md` FR-007, and both architecture artifacts (constitution AI behavior #11,
-      reconcile, never rename). → step 6.
+      reconcile, never rename), and `SPEC.md` FR-001's older sentence "a re-run on the same
+      `(asset, form, fiscal_period)` writes no new row", which should say the period end (`T-140`). → step 6.
 
 ## Work item 2 — Cross-module orchestrator
 

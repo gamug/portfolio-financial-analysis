@@ -1702,15 +1702,21 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    N = 30 the per-name maximum goes from 10% to 5% and the floor removes near-zero positions (NEE 0.25% in
    pilot-1); reference: the 1/N benchmark (DeMiguel, Garlappi & Uppal 2009). Sector cap 0.30 with a
    **sector-aware fill** (skip a ranked name whose sector is full, take the next, so the book holds N
-   names); when the cap cannot hold it is relaxed to the smallest feasible value and the relaxation is
-   recorded; never hold cash. Fewer eligible names than N: hold them all, band on the actual count, record
+   names); a sector is **full** when it already holds `max(1, floor(sector cap × N))` names, N being the
+   names actually held — 9 at N = 30, 3 at N = 10 (the production shape skips the fourth Financial), 1 at
+   N = 5 and N = 3 — and the `max(1, ·)` keeps N ≤ 3 from treating every sector as full; when the cap
+   cannot hold it is relaxed to the smallest feasible value and the relaxation is recorded (at N = 3, one
+   name per sector, the largest sector weight is at least 1/3 > 0.30, so the cap relaxes to 1/3); an
+   explicit `--max-name-weight` below 1/N cannot sum to 1 and is relaxed to 1/N, recorded — never silent,
+   never a failed run; never hold cash. Fewer eligible names than N: hold them all, band on the actual count, record
    the shortfall, never pad. Preferences (`--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors`) are
    inputs to the pure function and CLI flags on `cycle select`/`backfill`: a pin is held first, counts
    toward N and obeys the band and caps; a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin
    is allowed and flagged; `--only-sectors` relaxes the sector cap to feasibility; all are recorded in
    `cycle_run.params_json`.
 2. **Implement (`T-135`)** the pure construction function in `construction.py` — `score_tilt`, the band,
-   the sector-aware fill, pins and exclusions — returning a result object (weights, effective caps,
+   the sector-aware fill (full = `max(1, floor(sector cap × N))` names, N = names actually held), pins and
+   exclusions, and the relaxation of a name cap below 1/N — returning a result object (weights, effective caps,
    relaxations, shortfall, refused and flagged pins). The name cap is `1.5/N` with no 0.10 floor;
    the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is superseded and must not be implemented. The
    8-round loop goes and infeasibility is a reported result, not a silent
@@ -1729,7 +1735,8 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    default configuration; books built with user preferences are decision support and are never reported as
    thesis results.
 6. **Docs/artifacts (`T-139`)**: `docs/cycle.md`, `docs/quant.md`, `SPEC.md` FR-007, both architecture
-   artifacts (constitution AI behavior #11).
+   artifacts (constitution AI behavior #11), and `SPEC.md` FR-001's older "re-run on the same
+   `(asset, form, fiscal_period)`" sentence, which should say the period end (`T-140`).
 
 **Out of scope**: re-running `cycle select` on production (a write, only at the user's direction), the
 composite-weights question (`TASKS.md` N11), any change to the `v_*` views, a user-facing API endpoint (a
