@@ -9,22 +9,31 @@ step is delegated to an optional hook (the Strands ``FundamentalAnalyst``).
 from __future__ import annotations
 
 import json
+import logging
 import math
-from collections.abc import Callable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
 from portfolio_common.db import Database
 
 from cycle import data, writers
 from cycle.config import CycleSettings
-from cycle.construction import Candidate, target_weights
+from cycle.construction import BookCandidate, BookResult, VetoStatus, build_book
 from cycle.db import ensure_schema
 from cycle.replay import out_of_order_replay_reason, sync_replay_positions
 from cycle.rules import RuleContext, disabled_rule_ids, enabled_rules, seed_catalog
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
-from cycle.state import check_manifest, checkpoint, done_steps, finish_cycle, open_cycle
+from cycle.state import (
+    check_construction,
+    check_manifest,
+    checkpoint,
+    done_steps,
+    finish_cycle,
+    merge_params,
+    open_cycle,
+)
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
@@ -43,6 +52,8 @@ from kg_schema.versions import (
 )
 
 FundamentalHook = Callable[[Database, list[int], str], None]
+
+log = logging.getLogger(__name__)
 
 _SELECTION_STEPS = (
     "universe",
@@ -89,6 +100,110 @@ class CycleReport:
     # Their tickers, so the CLI can name them without a separate cycle_ranking query
     # (PR #99 review).
     unscored_tickers: list[str] = field(default_factory=list)
+    # The book `positions` built (T-136): its caps, relaxations, shortfall and pin notes, and each
+    # held name's ``(ticker, sector, weight)`` in rank order. None on a MONITORING run, or when a
+    # resume skipped the step. `select --dry-run` fills these and writes nothing.
+    book: BookResult | None = None
+    book_rows: list[tuple[str, str | None, float]] = field(default_factory=list)
+    dry_run: bool = False
+
+
+class PreferencesNeedDryRun(RuntimeError):
+    """A writing ``select`` was given book preferences (T-136, user decision 2026-10-05)."""
+
+
+def _book_candidates(
+    rows: list[dict],
+    tickers: Mapping[int, str],
+    sectors: Mapping[int, str | None],
+    price_obs: Mapping[int, Mapping[str, float | None]],
+) -> list[BookCandidate]:
+    """The ranked cohort as ``build_book`` input. HARD-vetoed names (at the T-1 cutoff) are passed
+    in, marked, so a HARD pin is refused with its reason; UNSCORED names are ineligible and left
+    out (a pin on one is refused as "not among the candidates")."""
+    cands: list[BookCandidate] = []
+    for r in rows:
+        aid = int(r["asset_id"])
+        rules = r["veto_rules"]
+        veto: VetoStatus = "HARD" if "HARD" in rules else "none"
+        if veto == "none" and "UNSCORED" in rules:
+            continue
+        if veto == "none" and any(rule not in ("HARD", "UNSCORED") for rule in rules):
+            veto = "SOFT"
+        cands.append(
+            BookCandidate(
+                asset_id=aid,
+                ticker=tickers[aid],
+                blended_score=float(r["blended_score"]),
+                sector=sectors.get(aid),
+                realized_vol_90d=(price_obs.get(aid) or {}).get("realized_vol_90d"),
+                veto=veto,
+            )
+        )
+    return cands
+
+
+def _call_build_book(settings: CycleSettings, cands: list[BookCandidate]) -> BookResult:
+    return build_book(
+        cands,
+        n=settings.top_n,
+        scheme=settings.weight_scheme,
+        max_name_weight=settings.max_name_weight,
+        max_sector_weight=settings.max_sector_weight,
+        pins=settings.pins,
+        exclude=settings.exclude,
+        exclude_sectors=settings.exclude_sectors,
+        only_sectors=settings.only_sectors,
+    )
+
+
+def _book_record(settings: CycleSettings, book: BookResult) -> dict[str, object]:
+    """What ``cycle_run.params_json`` keeps about the book: the **effective** caps under the keys
+    ``v_weight_scheme`` already reads (so it reports what was applied), what was requested under
+    ``construction`` (what a resume must not change), and every decision ``build_book`` made."""
+    return {
+        "top_n": settings.top_n,
+        "weight_scheme": book.scheme,
+        "max_name_weight": book.max_name_weight,
+        "max_sector_weight": book.max_sector_weight,
+        "construction": settings.construction(),
+        "n_held": book.n_held,
+        "shortfall": book.shortfall,
+        "relaxations": [asdict(r) for r in book.relaxations],
+        "pins": list(settings.pins),
+        "exclude": list(settings.exclude),
+        "exclude_sectors": list(settings.exclude_sectors),
+        "only_sectors": None if settings.only_sectors is None else list(settings.only_sectors),
+        "refused_pins": [asdict(p) for p in book.refused_pins],
+        "flagged_pins": [asdict(p) for p in book.flagged_pins],
+        "overflow_tickers": list(book.overflow_tickers),
+    }
+
+
+def _log_book(cycle_type: str, cycle_date: str, book: BookResult) -> None:
+    for r in book.relaxations:
+        log.warning(
+            "%s %s: %s cap relaxed %.6g -> %.6g (%s)",
+            cycle_type,
+            cycle_date,
+            r.cap,
+            r.requested,
+            r.effective,
+            r.reason,
+        )
+    for p in book.refused_pins:
+        log.warning("%s %s: pin %s refused: %s", cycle_type, cycle_date, p.ticker, p.reason)
+    for p in book.flagged_pins:
+        log.warning("%s %s: pin %s flagged: %s", cycle_type, cycle_date, p.ticker, p.reason)
+    if book.shortfall:
+        log.warning(
+            "%s %s: only %d of %d names are eligible; the book holds %d, never padded",
+            cycle_type,
+            cycle_date,
+            book.n_held,
+            book.requested_n,
+            book.n_held,
+        )
 
 
 def _t_minus_1(cycle_date: str) -> str:
@@ -118,6 +233,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     conn: Database,
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
+    if cycle_type == "SELECTION" and settings.has_preferences and not settings.dry_run:
+        # The live book is the thesis book: preferences make it decision support (T-134 decision 6),
+        # so a writing select refuses them -- `--dry-run` previews them, `backfill` replays with them.
+        raise PreferencesNeedDryRun(
+            "--pin / --exclude / --exclude-sectors / --only-sectors build a decision-support book, "
+            "never the live thesis book: use `select --dry-run` to preview it, or `backfill` "
+            "(which writes only portfolio_position_replay)"
+        )
     ensure_schema(conn)
     # Every fundamental read below keys on `available_at` (T-107): refuse to run on rows that
     # predate its backfill rather than read none of them.
@@ -132,6 +255,9 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     }
     tag = manifest_tag(manifest)
     check_manifest(conn, cycle_type, cycle_date, tag)
+    if "positions" in steps and not settings.dry_run:
+        # T-136: never resume onto a different book than the one the first attempt built.
+        check_construction(conn, cycle_type, cycle_date, settings.construction())
     # T-110: refuse a cycle_date past the price spine before any cycle_run row exists, the
     # same way check_manifest refuses just above -- TECHNICAL/veto both read prices, so a
     # stale as_of would silently score against data that is, at best, weeks old.
@@ -168,7 +294,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         cycle_type,
         cycle_date,
         {
-            **settings.model_dump(),
+            # Preferences and the dry-run flag are recorded by `positions` once a book is built (a
+            # dry run never records them: it could otherwise poison a later real run's params).
+            **settings.model_dump(
+                exclude={"dry_run", "pins", "exclude", "exclude_sectors", "only_sectors"}
+            ),
             "manifest": manifest,
             "manifest_tag": tag,
             "stale_as_of_bypassed": stale_reason,
@@ -188,6 +318,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     )
     asset_ids = [int(r["id"]) for r in universe_rows]
     sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
+    ticker_of = {int(r["id"]): str(r["ticker"]) for r in universe_rows}
+    sector_name_of = {int(r["id"]): r["sector"] for r in universe_rows}
     # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
     dq = data.data_quality(conn, cycle_date, versions)
     metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
@@ -480,27 +612,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- positions (SELECTION only)
         if "positions" in steps:
 
-            def _positions() -> dict:
+            def _book() -> tuple[list[dict], BookResult, list[BookCandidate]]:
                 rows = ranked_cache.get("rows") or _load_ranking(conn, run_id)
-                eligible = [r for r in rows if not r["vetoed"]]
-                cands = [
-                    Candidate(
-                        asset_id=int(r["asset_id"]),
-                        blended_score=float(r["blended_score"]),
-                        sector_id=sector_of.get(int(r["asset_id"])),
-                        realized_vol_90d=(price_obs.get(int(r["asset_id"])) or {}).get(
-                            "realized_vol_90d"
-                        ),
-                    )
-                    for r in eligible
-                ]
-                weights = target_weights(
-                    cands,
-                    top_n=settings.top_n,
-                    scheme=settings.weight_scheme,
-                    max_name_weight=settings.max_name_weight,
-                    max_sector_weight=settings.max_sector_weight,
-                )
+                cands = _book_candidates(rows, ticker_of, sector_name_of, price_obs)
+                return rows, _call_build_book(settings, cands), cands
+
+            def _positions() -> dict:
+                rows, book, cands = _book()
+                weights = book.weights
                 closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
                 if cycle_type == "REPLAY":
                     # T-115: a replay never touches, and is never refused for conflicting
@@ -509,14 +628,20 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     reason = out_of_order_replay_reason(conn, cycle_date)
                     if reason is not None:
                         raise OutOfOrderCycle(reason)  # noqa: TRY301
-                    opened, closed = sync_replay_positions(
-                        conn, cycle_date, weights, closes, cycle_run_id=run_id
-                    )
                 else:
                     reason = out_of_order_reason(conn, cycle_date)
                     if reason is not None and not settings.allow_backdated_positions:
                         raise OutOfOrderCycle(reason)  # noqa: TRY301
                     report.backdated_guard_bypassed = reason
+                # T-136: the effective caps, relaxations, shortfall and preferences, recorded just
+                # before the write (a refused run records nothing, so a retry may change them).
+                merge_params(conn, run_id, _book_record(settings, book))
+                _log_book(cycle_type, cycle_date, book)
+                if cycle_type == "REPLAY":
+                    opened, closed = sync_replay_positions(
+                        conn, cycle_date, weights, closes, cycle_run_id=run_id
+                    )
+                else:
                     opened, closed = writers.sync_positions(
                         conn, cycle_date, weights, closes, cycle_run_id=run_id
                     )
@@ -526,9 +651,34 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     r["target_weight"] = weights.get(int(r["asset_id"]))
                 writers.write_ranking(conn, run_id, rows)
                 report.selected = len(weights)
-                return {"opened": opened, "closed": closed, "positions": len(weights)}
+                report.book = book
+                by_id = {c.asset_id: c for c in cands}
+                report.book_rows = [
+                    (by_id[a].ticker, by_id[a].sector, w) for a, w in weights.items()
+                ]
+                return {
+                    "opened": opened,
+                    "closed": closed,
+                    "positions": len(weights),
+                    "n_held": book.n_held,
+                    "shortfall": book.shortfall,
+                }
 
-            _do("positions", _positions)
+            if settings.dry_run:
+                # `select --dry-run` (T-136): build and report the book; no positions, no
+                # checkpoint (a later real run must still find `positions` pending), nothing
+                # recorded in params_json.
+                _rows, dry_book, dry_cands = _book()
+                by_id = {c.asset_id: c for c in dry_cands}
+                report.dry_run = True
+                report.book = dry_book
+                report.selected = len(dry_book.weights)
+                report.book_rows = [
+                    (by_id[a].ticker, by_id[a].sector, w) for a, w in dry_book.weights.items()
+                ]
+                _log_book(cycle_type, cycle_date, dry_book)
+            else:
+                _do("positions", _positions)
 
         finish_cycle(conn, run_id, "completed")
     except Exception:

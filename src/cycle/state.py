@@ -65,6 +65,58 @@ def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -
         )
 
 
+class ConstructionMismatch(RuntimeError):
+    """A ``cycle_run`` for this (type, date) recorded other book-construction settings."""
+
+
+def check_construction(
+    conn: Database, cycle_type: str, cycle_date: str, construction: dict[str, Any]
+) -> None:
+    """Refuse to resume an existing run under different book-construction settings (T-136).
+
+    The first attempt that reaches the ``positions`` step records its settings (N, scheme, caps,
+    preferences) under ``params_json.construction``; resuming with others would build a second book
+    beside the first and silently mix them, the same hazard :func:`check_manifest` refuses for input
+    versions. A run with nothing recorded yet (it never reached ``positions``, or predates T-136) is
+    left alone. Call this *before* :func:`open_cycle`."""
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return
+    try:
+        recorded = json.loads(row["params_json"]).get("construction")
+    except (TypeError, ValueError):
+        return
+    if not isinstance(recorded, dict) or recorded == construction:
+        return
+    changed = sorted(
+        k for k in set(recorded) | set(construction) if recorded.get(k) != construction.get(k)
+    )
+    detail = "; ".join(f"{k}: {recorded.get(k)!r} -> {construction.get(k)!r}" for k in changed)
+    raise ConstructionMismatch(
+        f"the {cycle_type} run for {cycle_date} already built its book with other construction "
+        f"settings ({detail}). Resuming would mix two books -- rerun with the recorded settings, "
+        "or a different date"
+    )
+
+
+def merge_params(conn: Database, cycle_run_id: int, updates: dict[str, Any]) -> None:
+    """Merge *updates* into ``cycle_run.params_json`` (top-level keys; secrets stay redacted)."""
+    row = conn.execute("SELECT params_json FROM cycle_run WHERE id = ?", (cycle_run_id,)).fetchone()
+    try:
+        params = json.loads(row["params_json"]) if row and row["params_json"] else {}
+    except (TypeError, ValueError):
+        params = {}
+    params.update(_redact(updates))
+    conn.execute(
+        "UPDATE cycle_run SET params_json = ? WHERE id = ?",
+        (json.dumps(params, default=str), cycle_run_id),
+    )
+    conn.commit()
+
+
 def open_cycle(
     conn: Database,
     cycle_type: str,

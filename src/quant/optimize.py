@@ -2,8 +2,8 @@
 
 Every objective shares the same hard constraints: fully invested (``sum w = 1``),
 long only (``w >= 0``), a per-name box cap, and per-GICS-sector caps -- the same
-*intent* as ``cycle.construction._cap_sectors`` but enforced as hard linear
-constraints rather than water-fill redistribution. An optional turnover cap
+*intent* as ``cycle.construction.build_book``'s sector cap but enforced inside the
+optimizer as hard linear constraints rather than by an exact projection of a target. An optional turnover cap
 bounds ``sum |w - w_prev|`` against the previous book.
 """
 
