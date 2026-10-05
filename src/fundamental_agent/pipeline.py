@@ -361,8 +361,8 @@ def _process_filing(
 
 
 def _fye_lookup(engine: _Engine, task: _YearTask) -> Callable[[str], date | None]:
-    """The asset's latest stored 10-K period end before a date: the fiscal year end its quarters
-    are counted from (T-140)."""
+    """The asset's latest stored 10-K period end before a date: the fallback fiscal year end its
+    quarters are counted from when the payload's balance sheet carries none (T-140)."""
 
     def lookup(before: str) -> date | None:
         stored = db.latest_fiscal_year_end(engine.conn, task.asset_id, before)
@@ -418,8 +418,8 @@ def _resolve_target(
     A 10-K is labelled ``FY<year>`` (:func:`fundamental_agent.fiscal.label_year`: a year ending in
     the first week of January is the year before's, so J&J's 2023-01-01 and 2023-12-31 differ). A 10-Q is labelled ``<year>Q<n>`` with *n* counted from the
     fiscal year end (T-140, :mod:`fundamental_agent.fiscal`) -- never the gateway's column tag,
-    which a 52/53-week calendar shifts a quarter ahead. The year end is the asset's latest stored
-    10-K before the period (*fye_lookup*), else the balance sheet's own comparative column."""
+    which a 52/53-week calendar shifts a quarter ahead. The year end is the balance sheet's own
+    comparative column, else the asset's latest stored 10-K before the period (*fye_lookup*)."""
     if task.form == "10-K":
         period = stmts.latest_fy()
         if period is None:
@@ -449,8 +449,11 @@ def _resolve_quarter(
             f"the latest quarter column {period.key} ends before the balance sheet's {latest}: "
             f"a comparative, not the filing's own quarter (periods: {_columns(stmts)})"
         )
-    fye = (fye_lookup(period.date) if fye_lookup else None) or payload_fiscal_year_end(
-        instants, end
+    # The filing's own balance sheet first: it is the fiscal year end *this* quarter is counted
+    # from, even when the company changed its fiscal year (FERG: July -> December, so its stored
+    # 10-K of 2025-07-31 would put 2026-06-30 at no quarter). The stored 10-K is the fallback.
+    fye = payload_fiscal_year_end(instants, end) or (
+        fye_lookup(period.date) if fye_lookup else None
     )
     if fye is None:
         return f"no fiscal year end to count the quarter ending {period.date} from"

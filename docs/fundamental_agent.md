@@ -218,7 +218,7 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end and `prompt_hash` (T-113) |
 | `completed_units(conn)` | `(ticker, form, period_end)` triples with a FUNDAMENTAL score — drives `--fresh`-off resume. Keyed on the date, not the `fiscal_period` label (T-140: two of Waters' quarters shared a label and the second was skipped as done) |
-| `latest_fiscal_year_end(conn, asset_id, before)` | period end of the asset's latest stored 10-K before a date — the fiscal year end a 10-Q's quarter is counted from (T-140) |
+| `latest_fiscal_year_end(conn, asset_id, before)` | period end of the asset's latest stored 10-K before a date — the fallback fiscal year end for a 10-Q whose balance sheet carries none (T-140) |
 | `shared_accession_filings(conn)` | filing rows whose accession another row of the same asset carries — the legacy pre-T-091 shape (T-120) |
 | `insert_filing_sections(…, *, engine_version, event_time, source_url, run_id)` | append-only; `SECTIONS_ENGINE_VERSION = "edgar-html-item-split-v2"` (v2 = block-aware flatten + title-only headings + filer-CIK paths) |
 | `filings_with_sections(conn)` | resume set for `--sections` |
@@ -239,8 +239,9 @@ as skipped *and* recorded in `analysis_run_error` (`stage='period'`) and the run
 quarter column of its own (APO's Q1-2023 10-Q, whose payload holds only the prior fiscal year), a
 latest quarter column that ends before the balance sheet's date (a comparative), or a date that is
 no quarter end of the fiscal year (T-140). The label is derived, not copied from the gateway: a
-10-K is `FY<year>`; a 10-Q is `<year>Q<n>` with *n* counted from the fiscal year end (the asset's
-latest stored 10-K, else the balance sheet's own comparative column; `fundamental_agent.fiscal`),
+10-K is `FY<year>`; a 10-Q is `<year>Q<n>` with *n* counted from the fiscal year end (the filing's own
+balance sheet comparative column, else the asset's latest stored 10-K, so a changed fiscal year labels correctly;
+`fundamental_agent.fiscal`),
 because the gateway tags a column from the calendar month of its end and a 52/53-week filer's
 quarter lands one tag ahead (Waters 2023-07-01 `(Q3)` beside the real Q3 2023-09-30; no 10-Q is a
 Q4). `<year>` is the calendar year of the period end, a period ending in the first week of January

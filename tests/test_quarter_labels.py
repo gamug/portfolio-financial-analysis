@@ -203,8 +203,8 @@ def test_a_stored_fiscal_year_end_counts_a_quarter_whose_payload_has_no_balance_
     assert not isinstance(target, str) and target.fiscal_period == "2023Q2"
 
 
-def test_the_stored_fiscal_year_end_outranks_the_payload() -> None:
-    """The latest prior 10-K is the anchor; the payload's comparative column is the fallback."""
+def test_the_payload_fiscal_year_end_outranks_the_stored_one() -> None:
+    """The filing's own balance sheet is the anchor; the stored 10-K is only asked when it has none."""
     stmts = Statements.from_payload(_wat(WAT_Q2))
     asked: list[str] = []
 
@@ -213,13 +213,30 @@ def test_the_stored_fiscal_year_end_outranks_the_payload() -> None:
         return date(2022, 12, 31)
 
     target = _resolve_target(stmts, _task(), lookup)
-    assert asked == ["2023-07-01"]
+    assert asked == []
     assert not isinstance(target, str) and target.fiscal_period == "2023Q2"
+
+
+def test_a_company_that_changed_its_fiscal_year_is_labelled_from_its_own_balance_sheet() -> None:
+    """The FERG shape: a July year end moved to December. Its 10-Q for the quarter ended
+    2026-06-30 carries the new year end (2025-12-31, a Q2) beside it, while the latest stored 10-K
+    still ends 2025-07-31 -- which puts 2026-06-30 at 334 days, a fourth quarter, so no label."""
+    row = {"concept": "x", "label": "x", "abstract": False, "dimension": False}
+    payload = {
+        "income_statement": [{**row, "2026-06-30 (Q2)": 1.0, "2025-06-30 (Q2)": 1.0}],
+        "balance_sheet": [{**row, "2025-12-31": 1.0, "2026-06-30": 1.0}],
+        "cash_flow": [],
+    }
+    stored_10k = date(2025, 7, 31)
+    stmts = Statements.from_payload(payload)
+    assert quarter_label(date(2026, 6, 30), stored_10k) is None  # the old anchor alone: nothing
+    target = _resolve_target(stmts, _task("FERG", 2026), lambda _before: stored_10k)
+    assert not isinstance(target, str) and target.fiscal_period == "2026Q2"
 
 
 def test_a_period_that_is_no_quarter_of_the_fiscal_year_is_refused_with_a_reason() -> None:
     """Never a guessed label: an anchor that puts the quarter end 46 days past a boundary."""
-    stmts = Statements.from_payload(_wat(WAT_Q2))
+    stmts = Statements.from_payload({**_wat(WAT_Q2), "balance_sheet": []})
     reason = _resolve_target(stmts, _task(), lambda _before: date(2022, 11, 14))
     assert (
         isinstance(reason, str)

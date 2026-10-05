@@ -4733,8 +4733,9 @@ filer's concept name:
 
 **(b) `fiscal.py`, `pipeline.py`, `db.py`.** A 10-Q's quarter is its distance from the fiscal year end, `round(days / 91.3)` modulo a year,
 within 30 days of a quarter boundary, only 1-3 (the fourth is the 10-K) -- the same on any 52/53-week or 4-4-5 calendar. The year end is the
-asset's latest stored 10-K before the period (`db.latest_fiscal_year_end`), else the balance sheet's own comparative column
-(`payload_fiscal_year_end`, so `repair.py`, which has no database at hand, labels the same way). Label year is the calendar year of the period
+filing's own balance sheet comparative column (`payload_fiscal_year_end`: the same on every path, `repair.py`, which has no database at hand,
+included, and right for a company that changed its fiscal year -- FERG, July to December, whose stored 10-K of 2025-07-31 would put its
+2026-06-30 quarter at no quarter; PR #115 review), else the asset's latest stored 10-K before the period (`db.latest_fiscal_year_end`). Label year is the calendar year of the period
 end, **counting an end in the first week of January as the year before's** (`fiscal.label_year`); the stored `fiscal_year` follows.
 
 - **Resume key**: `(ticker, form, period_end)` (`db.completed_units`, `_Unit`); `score_snapshot` was already keyed on `event_time`.
@@ -4802,14 +4803,14 @@ end, **counting an end in the first week of January as the year before's** (`fis
   days, no 10-Q labelled Q4**. APO: Q1-2023 recorded as `analysis_run_error` (stage `period`: "the payload has no quarter column of its own
   (periods: 2022-12-31 (FY)); the gateway returned only another period").
 - Real J&J payloads (10-K year ended 2023-01-01 and 2023-12-31; the 10-Q ended 2023-10-01 tagged `(Q4)`): `FY2022` and `FY2023`, `2023Q3`.
-- `tests/test_revenue_rebuild.py` (20) and `tests/test_quarter_labels.py` (57), on real gateway captures (APA, WAT, APO, J&J; trimmed to the rows
+- `tests/test_revenue_rebuild.py` (20) and `tests/test_quarter_labels.py` (58), on real gateway captures (APA, WAT, APO, J&J; trimmed to the rows
   needed): the real APA/WAT shapes, the rule on small synthetic statements, a 15-year 52/53-week calendar, the calendar filer's unchanged
   labels, the resume key and the collision guard through a full pipeline run, APO's recorded skip, a comparative-only payload. Mutation-checked,
   all caught: corroboration removed; the cost-line exclusion dropped; the ceiling disabled; a surviving component always beating the rebuild;
   the section start ignored; the rebuild run even when a total survives; the sign flipped; the resume key back on the label; the collision
-  guard removed; the label taken from the gateway's tag; APO's recording removed; the stored fiscal year end ignored; the 30-day tolerance
+  guard removed; the label taken from the gateway's tag; APO's recording removed; the payload's fiscal year end ignored; the 30-day tolerance
   removed; quarter 4 allowed; the own-quarter check removed; the year wraparound removed; `prior_of` back on the tag; the January shift
-  removed. `uv run pytest -q` 960 -> 1,037; `ruff`, `ruff format --check`, `mypy` green.
+  removed. `uv run pytest -q` 960 -> 1,038; `ruff`, `ruff format --check`, `mypy` green.
 
 ### Known scope and residual
 

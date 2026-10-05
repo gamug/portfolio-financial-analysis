@@ -128,8 +128,8 @@ def _lookup(conn: Database, asset_id: int) -> Callable[[str], date | None]:
 
 
 def label_replay(conn: Database) -> None:
-    """Every stored 10-K and 10-Q through the pipeline's own ``_resolve_target`` (the latest stored
-    10-K as the fiscal year end, else the payload's balance sheet), against the label it was stored
+    """Every stored 10-K and 10-Q through the pipeline's own ``_resolve_target`` (the payload's balance
+    sheet as the fiscal year end, else the latest stored 10-K), against the label it was stored
     with."""
     rows = conn.execute(
         "SELECT f.id, f.asset_id, a.ticker, f.form, f.fiscal_period, f.period_end "
