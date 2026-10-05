@@ -30,16 +30,15 @@ additive, backward-compatible upstream schema/API change first (Work items
 **This overrides the priority order implied by the numbering below.**
 Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
 2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → **Work item 18 (P0/P1 — the asset-weight heuristic as a function of the number of tickers N the
-user wants to hold; added 2026-10-02 at the user's direction, first in the new order)** → **Work item 8
+item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → Work item 18 (the asset-weight heuristic as a function of N; added 2026-10-02, **closed 2026-10-05**, its plan below, its tasks in `CHANGELOG.md`) → **Work item 8
 (P1 — methodological redesign; supersedes Work item 3's approach in place)** → **Work item 9 (P2 —
 cleanup)** → **Work item 3** → **Work item 4** → **Work item 12 (`T-100`) — the full-universe production
 run, last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**. Work item 17
 (`T-131`, `T-132`, `T-133` ✅ all done, PRs #109/#110/#111) closed 2026-10-02. **Pilot-1 (2026-10-04)
 ran at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-140` merged
 2026-10-05 (PR #115, acceptance pending pilot-2); `T-079` stays blocked until a pilot-2 on a fresh
-database, run after Work item 18 has merged, reaches 0 FAIL.
-It gates `T-079`'s LLM re-run, not Work item 18 or the rest of Work item 8.**
+database — possible now, since `T-140` and Work item 18 have both merged — reaches 0 FAIL; `T-140` stays open until pilot-2
+measures its acceptance. It gates `T-079`'s LLM re-run, not the rest of Work item 8.**
 
 **Two points in the user's 2026-10-02 order that need a call, surfaced here rather than resolved
 silently (constitution AI behavior #7):** (a) **Work item 3 is superseded** by `T-077` (Work item 8) and
@@ -831,7 +830,7 @@ as task `T-077`.
   valorization formulas) updated to describe the shipped methodology, per
   this repo's own "spec/plan changes land with the requirement" rule —
   deferred to the PR(s) that actually implement this item, not done now.
-- **`T-140` acceptance** — on the pilot-2 run (fresh database, after Work item 18 merges; `T-140` has):
+- **`T-140` acceptance** — on the pilot-2 run (fresh database; `T-140` and Work item 18 have merged):
   APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
   stored; no gap over 110 days between consecutive 10-K/10-Q period ends and no 10-Q labelled Q4; the
   pilot verification at 0 FAIL. At `T-100`: the number of filings with rebuilt revenue and of corrected
@@ -1674,7 +1673,9 @@ latest cycle's selection; no `cycle` reader can reach a fact filed after the cyc
 and 10-K medians of every flow-over-stock ratio within ~1.3×; the benchmark matches an
 independent equal-weight index; one μ convention across estimators.
 
-## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold
+## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold — DONE 2026-10-05
+
+**Closed 2026-10-05** by `T-139` (PR #122): `T-134`–`T-139`, PRs #117–#122; the tasks are in `CHANGELOG.md`.
 
 **Why**: `cycle.construction.target_weights` takes `top_n` (the user's N, default 30) but keeps the caps
 as constants (`max_name_weight = 0.10`, `max_sector_weight = 0.30`) whatever N is. Whether those caps are
@@ -1736,7 +1737,7 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    for tightly clustered scores). The thesis book is the
    default configuration; books built with user preferences are decision support and are never reported as
    thesis results.
-6. **Docs/artifacts (`T-139`)**: `docs/cycle.md`, `docs/quant.md`, `SPEC.md` FR-007, both architecture
+6. **Docs/artifacts (`T-139`, done 2026-10-05, PR #122; the two architecture artifacts could not be edited from the implementing environment)**: `docs/cycle.md`, `docs/quant.md`, `SPEC.md` FR-007, both architecture
    artifacts (constitution AI behavior #11), and `SPEC.md` FR-001's older "re-run on the same
    `(asset, form, fiscal_period)`" sentence, which should say the period end (`T-140`).
 
@@ -1817,11 +1818,11 @@ this document.** Their internal sequencing:
   were already satisfied by `T-103`/`T-105`/`T-110`.
 - Work item 15 (devcontainer mount path, `T-126`) is **closed** (2026-10-01, PR #106, see
   `CHANGELOG.md`).
-- **Work item 18 (the N-ticker weight heuristic, `T-134`–`T-139`) is first in the user's 2026-10-02
-  order: 18 -> 8 -> 9 -> 3 -> 4 -> 12.** It touches `cycle/construction.py`, `cycle`'s settings and (`T-137`)
-  `quant`'s caps, none of which Work item 8's scoring redesign edits, so it has no ordering dependency on it;
-  `T-134` (the rule) is decided (user, 2026-10-04); one task per PR, in order. Work item 3 is superseded and Work item 2
-  is unplaced (see the Priority Override section).
+- Work item 18 (the N-ticker weight heuristic, `T-134`–`T-139`) is **closed** (2026-10-05, PRs #117–#122, see
+  `CHANGELOG.md` for its tasks; its plan and acceptance criteria stay in this file, Work item 18 above): it was first in the user's 2026-10-02
+  order (18 -> 8 -> 9 -> 3 -> 4 -> 12) and touched `cycle/construction.py`, `cycle`'s settings and `quant`'s caps, none
+  of which Work item 8's scoring redesign edits. What remains of that order is 8 -> 9 -> 3 -> 4 -> 12; Work item 3 is
+  superseded and Work item 2 is unplaced (see the Priority Override section).
 - **Work item 17 (P0/P1, the 2026-09-29 system review's data-integrity defects: `T-131`
   prices, `T-132` market caps, `T-133` quarterly cash flow) is **closed** (2026-10-02, see `CHANGELOG.md`); it ran ahead of Work item 8** —
   `T-131` first (**done 2026-10-01, PR #109**: the session guard, full-history observations, split

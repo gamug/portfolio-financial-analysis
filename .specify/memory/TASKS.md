@@ -15,18 +15,18 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit)**: Work items 8 and 9 below
 (`T-070`–`T-084`) are the current top priority — a direct audit against
 production data (`data/financial.db`) found live correctness bugs, not
-open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15, 16 and 17 are in
+open design work. (Closed Work items 1, 3, 5, 6, 7, 10, 11, 13, 14, 15, 16, 17 and 18 are in
 `CHANGELOG.md`.) **Work item 14 (P0/P1, the second audit's live defects) is done
 2026-09-30** — its blockers on Work item 8, `T-105` (corrects metrics the LLM
 re-run/`T-079` consumes) and `T-113`, are both closed. **This does not mean Work
 item 8 starts next (PR #104 review):** the priority order (re-set by the user 2026-10-02) is
-**Work item 18 (`T-134`–`T-139`, the N-ticker weight heuristic — below) → Work item 8 → Work item 9
-→ Work item 3 → Work item 4 → Work item 12 (`T-100`), the full-universe run, last of all** (which
+Work item 18 (the N-ticker weight heuristic, `T-134`–`T-139`) is **closed 2026-10-05**, see `CHANGELOG.md`; what remains is
+**Work item 8 → Work item 9 → Work item 3 → Work item 4 → Work item 12 (`T-100`), the full-universe run, last of all** (which
 itself needs a *fresh* `financial.db` — see `T-100`'s own entry). Work item 17 (`T-131`, `T-132`,
 `T-133`, PRs #109/#110/#111) is closed 2026-10-02, see `CHANGELOG.md`. **Pilot-1 (2026-10-04) ran
 at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-140` merged 2026-10-05 (PR #115, acceptance pending pilot-2); `T-079`
-stays blocked until a pilot-2 on a fresh database, run after Work item 18 has merged, reaches 0
-FAIL.** Two things in the user's order
+stays blocked until a pilot-2 on a fresh database — possible now, since `T-140` and Work item 18 have both merged — reaches 0
+FAIL; `T-140` stays open until pilot-2 measures its acceptance.** Two things in the user's order
 need a call (see `PLAN.md`'s Priority Override): Work item 3 is **superseded** by `T-077`
 (Work item 8) and stays "do not implement" unless the user un-supersedes it, so its slot is
 empty; and Work item 2 (orchestrator) was not named, so it is parked after Work item 4 until placed. See `PLAN.md`'s
@@ -35,167 +35,6 @@ empty; and Work item 2 (orchestrator) was not named, so it is parked after Work 
 `upstream_portfolio_common.md`) were deleted per the auditor's instruction
 after being fully incorporated into `PLAN.md`/this file, which are now the
 only durable record.
-
-## Work item 18 — P0/P1: asset-weight heuristic driven by the number of tickers the user wants to hold
-
-Added 2026-10-02, at the user's direction; **first in the new order** (18 → 8 → 9 → 3 → 4). Source: the
-2026-10-02 read-only audit's cap finding (recorded in full here, no external file) — with `top_n = 10` the default
-`max_name_weight = 0.10` forces every name to exactly 0.10, four Financials then sum to 0.40 and no
-weight vector satisfies the 0.30 sector cap; `cycle.construction.target_weights` runs 8 rounds and
-returns whatever it has, silently. Production's live book (`cycle_run` 1, 2026-09-22) holds six names at
-0.1167 against a 0.10 cap and Energy at 0.35 against 0.30. The caps are constants, but whether they are
-feasible, and how much room a score tilt has, depends on **N**, the number of tickers the user wants to
-hold (`--top-n`, default 30). This work item makes the weighting rule a function of N, and refuses to
-return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
-
-**One task per PR, in order** (`T-135` → `T-136` → `T-137` → `T-138` → `T-139`).
-
-- [x] **T-134** Decision + spec — **done 2026-10-05** (the user's decisions of 2026-10-04; recorded in
-      `PLAN.md` Work item 18 and `SPEC.md` FR-007 "(T-134 decision; implemented by T-135–T-137)"):
-      1. **N** is the existing `--top-n`, default 30.
-      2. **Weighting**: a new default scheme, `score_tilt` — an equal-weight core with a bounded score tilt.
-         Each name's weight lies in `[0.5/N, 1.5/N]`, proportional to its score inside that band. `equal`
-         stays as the zero-tilt case; `score_proportional` and `inverse_vol` stay selectable so old runs
-         remain reproducible but are no longer the default. Explicit `--max-name-weight`/
-         `--max-sector-weight` still win. The name cap is `1.5/N` with **no 0.10 floor** (N = 30 → 0.05,
-         N = 10 → 0.15, N = 3 → 0.50); the earlier proposal `max(0.10, 1.5/N)` is superseded, not the
-         rule. **Methodology change**: at N = 30 the maximum per name goes from
-         10% to 5%, and the floor removes near-zero positions (NEE 0.25% in pilot-1). Reference: the 1/N
-         benchmark (DeMiguel, Garlappi & Uppal 2009).
-      3. **Sectors**: cap 0.30 with a **sector-aware fill** — skip a ranked name whose sector is full
-         and take the next one, so the book holds N names. A sector is **full** when it already holds
-         `max(1, floor(sector cap × N))` names, N being the names actually held: 9 at N = 30; 3 at N =
-         10 (the production shape skips the fourth Financial); 1 at N = 5 and N = 3. At N = 3, one name
-         per sector, the largest sector weight is at least 1/3 > 0.30, so the cap relaxes to 1/3 and the
-         relaxation is recorded; the `max(1, ·)` keeps N ≤ 3 from treating every sector as full. An
-         explicit `--max-name-weight` below 1/N cannot sum to 1: it is relaxed to 1/N and the relaxation
-         is recorded — never silent, never a failed run. When the cap cannot hold (too few eligible or
-         chosen sectors), relax it to the smallest feasible value and record the relaxation. Never hold
-         cash: always fully invested.
-      4. **Fewer eligible names than N**: hold them all, compute the band on the actual count, record the
-         shortfall. Never pad.
-      5. **User preferences** are inputs to the pure construction function and CLI flags on
-         `cycle select`/`backfill`: `--pin tickers` (held first, count toward N, obey the band and the
-         caps; a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin is allowed and flagged);
-         `--exclude tickers`, `--exclude-sectors`, and `--only-sectors` (which relaxes the sector cap to
-         feasibility). All are recorded in `cycle_run.params_json`.
-      6. **The thesis book** is the default configuration (N = 30, no preferences), plus a sensitivity check
-         over N ∈ {10, 20, 30} in the replay. Books built with user preferences are decision support and
-         are never reported as thesis results.
-      7. **`T-137`**: the quant benchmark uses the same N-derived name cap (`1.5/N`) and sector cap 0.30,
-         with no limit on the number of names (no integer programming). At N = 30 that is 0.05, the same as
-         today's `QuantSettings.max_name_weight`, so the default benchmark does not change. The rule is
-         copied into `quant` (which must not import `cycle`) and pinned against `cycle`'s by a test.
-      8. **Out of scope for Work item 18**: a user-facing API endpoint (a later task with an FR-014
-         amendment; it would be `api`'s first import of `cycle` code) and the investment amount (the app).
-      9. **Acceptance**: exact feasibility. Both caps and the band hold within 1e-9, or the relaxation is
-         recorded. Tested for N ∈ {1, 3, 5, 10, 20, 30}, single-sector and few-sector cases, pins
-         (including vetoed ones), exclusions, and the production shape (10 names, 4 Financials, 3 Energy).
-- [x] **T-135** — **done 2026-10-05, PR #118 (approved)**: `build_book`/`BookResult` in
-      `src/cycle/construction.py`, **not wired** (`target_weights` and its caller are untouched until `T-136`).
-      Exactness: the reviewer re-checked the projection against cvxpy/Clarabel on 600 random cases (all
-      schemes, N ∈ {1, 3, 5, 10, 20, 30}, 1–9 sectors, vetoes): objective ≤ cvxpy's in every case, largest
-      weight difference 2.8e-7, largest constraint violation 4e-16. Choices where this entry was silent,
-      accepted on review: a new `BookCandidate` (sector as a label; unclassified names share one group);
-      a pin in an excluded sector, or more pins than N, is a `ValueError`, an unknown pin is refused with a
-      reason; pins count toward their sector's fullness but are never skipped for it; an explicit name cap
-      above `1.5/N` wins; the legacy schemes project with floor 0 and name cap = explicit, else 0.10
-      (relaxed to `1/N_held` and recorded), `inverse_vol` gives a name with no volatility the average
-      inverse vol (old stored runs are not bit-reproducible); `overflow_tickers` lists names held past a
-      full sector when nothing else was left; nothing eligible → an empty book with the full shortfall.
-      The task as specified: implement in `src/cycle/construction.py` the **pure** construction function per `T-134`:
-      `score_tilt` (the `[0.5/N, 1.5/N]` band), the sector-aware fill, the sector cap with a recorded
-      relaxation to the smallest feasible value, pins and exclusions (`--pin`, `--exclude`,
-      `--exclude-sectors`, `--only-sectors` as plain arguments), and a **result object**: weights, effective
-      caps, relaxations, shortfall, refused and flagged pins — nothing is silent. The name cap is
-      `1.5/N` with **no 0.10 floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50; an explicit
-      `--max-name-weight` still wins); the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is
-      superseded and must not be implemented. A sector is **full** at `max(1, floor(sector cap × N))` names, N being the names actually held (9 at
-      N = 30, 3 at N = 10, 1 at N = 5 and N = 3; at N = 3 the cap relaxes to 1/3, recorded); an explicit
-      `--max-name-weight` below 1/N is relaxed to 1/N, recorded, never a failed run. The 8-round loop goes.
-      `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9, plus the full-sector
-      thresholds above and a name cap below 1/N):
-      N in `{1, 3, 5, 10, 20, 30}`, single-sector and few-sector universes, pins (including HARD- and
-      SOFT-vetoed), exclusions, `--only-sectors`, explicit-override precedence, fewer eligible names than N,
-      the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold
-      within 1e-9 or the relaxation is in the result. → step 2.
-- [x] **T-136** — **done 2026-10-05, PR #119 (approved)**: the orchestrator builds `BookCandidate`s (ticker,
-      sector name, vol, T-1 veto status; HARD names passed in, marked) and calls `build_book` on the live and
-      REPLAY paths; `target_weights`, its loop, `_cap_names`/`_cap_sectors` and the old `Candidate` are deleted;
-      `weight_scheme` defaults to `score_tilt` and `max_name_weight` to `None` (derive `1.5/N`; an explicit value
-      wins); `select`/`backfill` take `--weight-scheme`, `--max-name-weight`, `--max-sector-weight`, `--pin`,
-      `--exclude`, `--exclude-sectors`, `--only-sectors` (backfill also `--top-n`), subparsers use
-      `allow_abbrev=False`, a falsy value such as `--max-sector-weight 0` reaches validation. The live book is
-      protected: a writing `select` with preferences is refused (`PreferencesNeedDryRun`, in the
-      orchestrator). `params_json` carries the effective caps (the keys `v_weight_scheme` reads), `n_held`,
-      `shortfall`, `relaxations`, the preferences, `refused_pins`, `flagged_pins`, `overflow_tickers` and a
-      `construction` block of what was requested; a resume with other construction settings is refused
-      (`ConstructionMismatch`). **`select --dry-run` is strictly read-only** (`dry_run_book`): preferences are
-      validated first, then the book is built from the ranking stored for the date (the SELECTION run's, else
-      the MONITORING run's) on a `mode=ro` connection; it opens, finishes or modifies no `cycle_run`, and with no
-      stored ranking refuses with "run `cycle monitor --analysis-date D` first". It replaces the old
-      `top_n = 0` dry run, which closed every open position. Reviewer's checks on a pilot-DB copy: whole-file
-      checksum unchanged after every dry-run variant. **Optional, later** (reviewer): when the date's SELECTION
-      run is reverted, the dry run could fall back to the MONITORING ranking. Production is not re-selected.
-      The task as specified: wire it through `cycle`: `CycleSettings`/`--top-n`, `score_tilt` as the default
-      `weight_scheme`, switch the caller to `build_book` (the orchestrator builds `BookCandidate`s, HARD-vetoed
-      names included and marked) and **delete the old `Candidate` together with `target_weights`** and its
-      8-round loop, and the CLI flags `--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors` on
-      `cycle select` and `backfill`; the **effective** caps, every relaxation, the shortfall and the
-      preferences persisted in `cycle_run.params_json` (so `v_weight_scheme`, which reads
-      `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change). A HARD-vetoed
-      pin is refused with its reason, not silently dropped. Production re-select is a write and stays
-      deferred until the user directs it. → step 3.
-- [x] **T-137** — **done 2026-10-05, PR #120 (approved)**: `src/quant/caps.py` (`resolve_caps`, copied from
-      `cycle.construction` and pinned to it by `tests/test_quant_caps.py`; `quant` still imports nothing from
-      `cycle`): `n_held = min(N, panel size)`, name cap `1.5/n_held` (an explicit cap wins; one below `1/n_held` is
-      relaxed and recorded), sector cap 0.30 relaxed to the smallest feasible value and recorded, no limit on
-      the number of names. `QuantSettings.max_name_weight` defaults to `None` and `top_n` to 30; `optimize` and
-      `build-risk-model` take `--top-n`/`--max-name-weight`/`--max-sector-weight`; every objective uses the
-      effective caps (`risk_parity` is projected onto both when it breaches them, where before it handled the
-      name cap only); `quant_run` and each `quant_portfolio` record `top_n`, `n_held`, the effective caps and the
-      relaxations. **Engine version `opt-v1` → `opt-v2`**: a default book differs on a panel smaller than N = 30
-      (and a few-sector panel no longer fails on an infeasible sector cap); with a panel of 30 or more the caps
-      are the old 0.05/0.30. Real data (scratch copy of the pilot DB, 2026-07-09, default N, 20 assets: name cap
-      0.075, sector cap 0.30, no relaxation): `min_var` 18 names in 0.0080–0.0750, vol 0.1250 vs 0.1425 under
-      `opt-v1` (every name exactly 0.05); `tangency`/`target_vol`/`risk_parity` no longer equal-weight; frontier
-      points within both caps; `quant evaluate` runs clean. Reviewer re-verified the table; an asset with no
-      sector stays uncapped in quant (0 of 503 in production, 0 of 20 in the pilot). The numbers are also in
-      `docs/quant.md`. The task as specified: align `quant`'s benchmark with the same rule (`T-134` decision 7): name cap `1.5/N`, sector
-      cap 0.30, no limit on the number of names (no integer programming). At N = 30 that is 0.05, equal to
-      `QuantSettings.max_name_weight`, so the default benchmark does not change. `quant` must not import
-      `cycle` (isolation test), so copy the rule the way `quant.state` copies `cycle.state` and pin the two
-      against each other with a test; leave the benchmark's universe/liquidity gate untouched (it must stay
-      independent of any score). → step 4.
-- [x] **T-138** — **done 2026-10-05, PR #121 (approved)**: `scripts/verify_t138.py` (read-only; live, replay and
-      `opt-v2` quant books against the effective caps in each run's `params_json`, with score dispersion and counts;
-      `tests/test_verify_t138.py`) and the Work item 18 entry in `docs/model_fixes.md`; no `src/` change, no defect
-      found. Production only read (`select --dry-run`, `connect_ro`; file hash identical before and after): the
-      stored `cycle_run` 1 book is flagged (0.1167 > 0.10, Energy 0.350 > 0.30); at N = 10 the new book holds both
-      caps (Financials 0.300, Energy 0.300, max weight 0.1478 ≤ 0.15), the fourth Financial (WFC) is replaced by ESS
-      (rank 11); the default dry run holds 20 of 30 (shortfall 10 recorded, name cap 0.075). Replay sensitivity on
-      three scratch copies (144 weekly dates 2024-01-05..2026-10-02): **0 invariant violations and 0 relaxations at
-      N = 10, 20 and 30**; average names held 10.00 / 17.56 / 17.56, mean one-way turnover 0.0559 / 0.0178 / 0.0178,
-      median held-score range 16.53 / 36.69 / 36.69; N = 20 and 30 are bit-identical on the 20-ticker pilot
-      universe (15–19 eligible names). A preferences run is recorded as decision support, not a thesis result; the
-      `opt-v2` quant books hold their caps (0 violations). The tilt's target spans the held names' own score range;
-      the realized spread after the caps' projection is a median 0.894 of the band at N = 10 (min 0.611) and 0.941
-      at N = 20/30, stated in the entry. `--allow-dirty` was not needed for the scratch runs (reviewer's clean
-      re-run changes nothing). Reviewer reproduced the numbers from a clean checkout. The task as specified:
-      verify on real data, on a **scratch copy** of `financial.db` (production is not written):
-      reproduce `cycle_run` 1's failing shape, then the default thesis book (N = 30, no preferences) plus
-      the **sensitivity check over N ∈ {10, 20, 30}**, and **one run with preferences** (decision support,
-      never reported as a thesis result); every book sums to 1 and satisfies the band and both caps, or
-      records its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers
-      and a reference (constitution AI behavior #12; the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009).
-      The entry also covers the quant benchmark's `opt-v2` (`T-137`; its pilot before/after numbers are in
-      `docs/quant.md`). Report the **top-N score dispersion** and state in the entry that the tilt spans the held names'
-      score range, so the weight spread is always the full band even when the scores are tightly clustered
-      (reviewer, PR #118). → step 5.
-- [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if
-      `T-137` lands, `SPEC.md` FR-007, and both architecture artifacts (constitution AI behavior #11,
-      reconcile, never rename), and `SPEC.md` FR-001's older sentence "a re-run on the same
-      `(asset, form, fiscal_period)` writes no new row", which should say the period end (`T-140`). → step 6.
 
 ## Work item 2 — Cross-module orchestrator
 
@@ -336,7 +175,7 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       found by the 20-asset pilot on a fresh database. → `PLAN.md` Work item 8, step 8.
       **Implemented and approved: PR #115, merged 2026-10-05 (engine `metrics-v5`); acceptance
       pending pilot-2** -- the box stays open until the criteria below are measured on a fresh
-      database after Work item 18 merges. Record: `docs/model_fixes.md`, T-140; `SPEC.md` FR-001.
+      database (possible now: `T-140` and Work item 18 have merged). Record: `docs/model_fixes.md`, T-140; `SPEC.md` FR-001.
       Beyond the brief, kept on review: periods ending in the first week of January label as the
       year before (J&J's FY ending 2023-01-01 and 2023-12-31 were both `FY2023`), and a quarter is
       paired with last year's by date (`Statements.prior_of`); the quarter is counted from the
@@ -371,7 +210,7 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       Q1-2023: the gateway returns only the prior fiscal year's column; note this for
       `portfolio-data-mining`).
       **Acceptance:**
-      - On the pilot-2 run (fresh database, after `T-140` and Work item 18 merge):
+      - On the pilot-2 run (fresh database; `T-140` and Work item 18 have merged):
         - APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null.
         - `DQ_REVENUE_POS` = 0.
         - WAT's 2023-09-30 10-Q stored.
@@ -464,11 +303,12 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current priority order (user's, 2026-10-02): Work item 18 (`T-134`–`T-139`, the N-ticker
-weight heuristic) → Work item 8 → Work item 9 → Work item 3 (superseded by `T-077`, see the top of this
+**🔴 Current priority order (user's, 2026-10-02; Work item 18, the N-ticker weight heuristic, closed 2026-10-05 — see
+`CHANGELOG.md`): Work item 8 → Work item 9 → Work item 3 (superseded by `T-077`, see the top of this
 file) → Work item 4.** Pilot-1 (2026-10-04) ran at 2 FAIL with the original verification (`T-133`,
 explained by `T-140`); `T-140` merged 2026-10-05 (PR #115, acceptance pending pilot-2); `T-079` stays
-blocked until a pilot-2 on a fresh database, run after Work item 18 has merged, reaches 0 FAIL. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
+blocked until a pilot-2 on a fresh database (possible now: `T-140` and Work item 18 have merged) reaches 0 FAIL;
+`T-140` stays open until pilot-2 measures its acceptance. Work item 17 (`T-131`, `T-132`, `T-133`, PRs #109/#110/#111)
 closed 2026-10-02, see `CHANGELOG.md`. Work item 14 (the
 second forensic audit) is fully closed 2026-09-30, `T-118` last — see
 `CHANGELOG.md`. Its `T-121`/`T-122`/`T-123`/`T-124` production actions were all
@@ -477,8 +317,8 @@ its production-apply date and verification), and `T-125`'s own `migrate` remains
 the one deliberately-deferred production write left over from it (still pending
 explicit user direction, same as `T-104`/`T-107`/`T-120`'s own precedent); a
 production `dq-v2` re-gate for `T-116` is deferred the same way. **Do not start
-`T-079`'s LLM re-run (Work item 8) until a pilot-2 on a fresh database, run after Work item 18
-has merged (`T-140` already has), reaches 0 FAIL**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
+`T-079`'s LLM re-run (Work item 8) until a pilot-2 on a fresh database (possible now: `T-140` and
+Work item 18 have merged) reaches 0 FAIL**; within Work item 8, `T-070`–`T-079` (P1, `T-078`
 deprecated — `T-074` needs
 `T-041`; run only after Work item 7's F1/F2/F4 fixes so the one bundled LLM
 re-run scores already-corrected ratios) is followed by **Work item 9, `T-080`–`T-084`

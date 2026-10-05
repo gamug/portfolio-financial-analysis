@@ -235,7 +235,7 @@ into `quant.caps` (the way `quant.state` copies `cycle.state`) and pinned agains
 |---|---|
 | `n_held` | `min(N, assets in the gated panel)` — the same meaning as `cycle`'s `n_held` |
 | name cap | `1.5 / n_held`, no 0.10 floor (0.05 at `N = 30` with a panel of 30 or more — the old constant; 0.075 for a 20-asset panel). `--max-name-weight` wins; one below `1/n_held` cannot sum to 1 and is relaxed to `1/n_held`, **recorded**. `--max-name-weight 1.0` means no per-name cap |
-| sector cap | 0.30, `--max-sector-weight` wins. If the panel's sectors cannot hold it under the name cap (`Σ min(c, k·cap) < 1`) it is relaxed to the smallest feasible value (the same `_feasible_sector_cap` as `cycle`, band floor 0), **recorded** |
+| sector cap | 0.30, `--max-sector-weight` wins (`QuantSettings.max_sector_weight = None`, not reachable from a flag, means no sector cap at all). If the panel's sectors cannot hold it under the name cap (`Σ min(c, k·cap) + (assets with no sector)·cap < 1`, `k` the sector's asset count) it is relaxed to the smallest feasible value (`quant.caps.feasible_sector_cap`, `cycle`'s `_feasible_sector_cap` with a band floor of 0), **recorded** |
 | number of names | **not limited** (no integer programming): the optimizer decides how many to hold; `N` only sizes the caps. The universe and liquidity gate are untouched and independent of every score |
 
 `QuantSettings.max_name_weight` defaults to `None` (derive); passing today's `0.05` explicitly would
