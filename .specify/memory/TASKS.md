@@ -48,45 +48,89 @@ feasible, and how much room a score tilt has, depends on **N**, the number of ti
 hold (`--top-n`, default 30). This work item makes the weighting rule a function of N, and refuses to
 return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
 
-- [ ] **T-134** Decision + spec, **needs the user before code**: (1) N is the existing `--top-n`
-      (confirm, or add `--n-tickers`); (2) the proposed rule, to confirm or replace:
-      `max_name_weight(N) = max(0.10, 1.5 / N)` and `max_sector_weight(N) = max(0.30, 1.5 / N)`
-      (never tighter than today's defaults, never tighter than 1.5x an equal weight, so a score tilt always
-      has room: N=3 -> 0.50, N=5 -> 0.30, N=10 -> 0.15, N>=15 -> 0.10), explicit
-      `--max-name-weight`/`--max-sector-weight` still win; (3) when a cap cannot hold (too few sectors,
-      or fewer eligible names than N) which gives way — the proposal is the **name** cap relaxes first and
-      the **sector** cap stays binding, with the relaxation recorded; (4) whether selection may skip a
-      ranked name whose sector is full and take the next one (proposal: yes, at most
-      `floor(max_sector_weight x N)` names per sector, so the book still has N names), and whether a
-      cash weight is acceptable (proposal: no, always fully invested); (5) the scheme per N
-      (`score_proportional` default; `equal` as the degenerate case when the cap is `1/N`). Record the
-      decision in `PLAN.md` Work item 18 and `SPEC.md` FR-007. → step 1.
-- [ ] **T-135** Implement in `src/cycle/construction.py`: a pure `resolve_caps(n, ...)` per `T-134`, the
-      sector-aware fill, and **infeasibility detection** — after the cap loop, any residual breach (or a
-      cap that cannot sum to 1) is returned in a result object and logged, never silent. `target_weights`
-      keeps its signature or gains a result type; callers updated. Tests: N in `{1, 2, 3, 5, 10, 20, 30}`,
-      few-sector and single-sector universes, the production shape (10 names / 4 Financials / 3 Energy),
-      explicit-override precedence, sum-to-1 and both caps hold or the breach is reported. → step 2.
-- [ ] **T-136** Wire it through `cycle`: `CycleSettings`/`--top-n`, the **effective** caps and any
-      recorded relaxation persisted in `cycle_run.params_json` (so `v_weight_scheme`, which reads
-      `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change), N larger than
-      the eligible, non-vetoed count recorded as a shortfall rather than padded. Production re-select is
-      a write and stays deferred until the user directs it. → step 3.
-- [ ] **T-137** Align `quant`'s benchmark with the same N: `QuantSettings.max_name_weight` (0.05) and
-      `max_sector_weight` (0.30) are constants too, and a benchmark with a different effective N is not
-      comparable to the live book. `quant` must not import `cycle` (isolation test), so copy the rule the way
-      `quant.state` copies `cycle.state` and pin the two against each other with a test; leave the
-      benchmark's universe/liquidity gate untouched (it must stay independent of any score). Needs `T-134`'s
-      answer on whether the benchmark follows N or keeps its own caps. → step 4.
+**One task per PR, in order** (`T-135` → `T-136` → `T-137` → `T-138` → `T-139`).
+
+- [x] **T-134** Decision + spec — **done 2026-10-05** (the user's decisions of 2026-10-04; recorded in
+      `PLAN.md` Work item 18 and `SPEC.md` FR-007 "(T-134 decision; implemented by T-135–T-137)"):
+      1. **N** is the existing `--top-n`, default 30.
+      2. **Weighting**: a new default scheme, `score_tilt` — an equal-weight core with a bounded score tilt.
+         Each name's weight lies in `[0.5/N, 1.5/N]`, proportional to its score inside that band. `equal`
+         stays as the zero-tilt case; `score_proportional` and `inverse_vol` stay selectable so old runs
+         remain reproducible but are no longer the default. Explicit `--max-name-weight`/
+         `--max-sector-weight` still win. The name cap is `1.5/N` with **no 0.10 floor** (N = 30 → 0.05,
+         N = 10 → 0.15, N = 3 → 0.50); the earlier proposal `max(0.10, 1.5/N)` is superseded, not the
+         rule. **Methodology change**: at N = 30 the maximum per name goes from
+         10% to 5%, and the floor removes near-zero positions (NEE 0.25% in pilot-1). Reference: the 1/N
+         benchmark (DeMiguel, Garlappi & Uppal 2009).
+      3. **Sectors**: cap 0.30 with a **sector-aware fill** — skip a ranked name whose sector is full
+         and take the next one, so the book holds N names. A sector is **full** when it already holds
+         `max(1, floor(sector cap × N))` names, N being the names actually held: 9 at N = 30; 3 at N =
+         10 (the production shape skips the fourth Financial); 1 at N = 5 and N = 3. At N = 3, one name
+         per sector, the largest sector weight is at least 1/3 > 0.30, so the cap relaxes to 1/3 and the
+         relaxation is recorded; the `max(1, ·)` keeps N ≤ 3 from treating every sector as full. An
+         explicit `--max-name-weight` below 1/N cannot sum to 1: it is relaxed to 1/N and the relaxation
+         is recorded — never silent, never a failed run. When the cap cannot hold (too few eligible or
+         chosen sectors), relax it to the smallest feasible value and record the relaxation. Never hold
+         cash: always fully invested.
+      4. **Fewer eligible names than N**: hold them all, compute the band on the actual count, record the
+         shortfall. Never pad.
+      5. **User preferences** are inputs to the pure construction function and CLI flags on
+         `cycle select`/`backfill`: `--pin tickers` (held first, count toward N, obey the band and the
+         caps; a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin is allowed and flagged);
+         `--exclude tickers`, `--exclude-sectors`, and `--only-sectors` (which relaxes the sector cap to
+         feasibility). All are recorded in `cycle_run.params_json`.
+      6. **The thesis book** is the default configuration (N = 30, no preferences), plus a sensitivity check
+         over N ∈ {10, 20, 30} in the replay. Books built with user preferences are decision support and
+         are never reported as thesis results.
+      7. **`T-137`**: the quant benchmark uses the same N-derived name cap (`1.5/N`) and sector cap 0.30,
+         with no limit on the number of names (no integer programming). At N = 30 that is 0.05, the same as
+         today's `QuantSettings.max_name_weight`, so the default benchmark does not change. The rule is
+         copied into `quant` (which must not import `cycle`) and pinned against `cycle`'s by a test.
+      8. **Out of scope for Work item 18**: a user-facing API endpoint (a later task with an FR-014
+         amendment; it would be `api`'s first import of `cycle` code) and the investment amount (the app).
+      9. **Acceptance**: exact feasibility. Both caps and the band hold within 1e-9, or the relaxation is
+         recorded. Tested for N ∈ {1, 3, 5, 10, 20, 30}, single-sector and few-sector cases, pins
+         (including vetoed ones), exclusions, and the production shape (10 names, 4 Financials, 3 Energy).
+- [ ] **T-135** Implement in `src/cycle/construction.py` the **pure** construction function per `T-134`:
+      `score_tilt` (the `[0.5/N, 1.5/N]` band), the sector-aware fill, the sector cap with a recorded
+      relaxation to the smallest feasible value, pins and exclusions (`--pin`, `--exclude`,
+      `--exclude-sectors`, `--only-sectors` as plain arguments), and a **result object**: weights, effective
+      caps, relaxations, shortfall, refused and flagged pins — nothing is silent. The name cap is
+      `1.5/N` with **no 0.10 floor** (N = 30 → 0.05, N = 10 → 0.15, N = 3 → 0.50; an explicit
+      `--max-name-weight` still wins); the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is
+      superseded and must not be implemented. A sector is **full** at `max(1, floor(sector cap × N))` names, N being the names actually held (9 at
+      N = 30, 3 at N = 10, 1 at N = 5 and N = 3; at N = 3 the cap relaxes to 1/3, recorded); an explicit
+      `--max-name-weight` below 1/N is relaxed to 1/N, recorded, never a failed run. The 8-round loop goes.
+      `equal`, `score_proportional` and `inverse_vol` stay selectable. Tests (acceptance 9, plus the full-sector
+      thresholds above and a name cap below 1/N):
+      N in `{1, 3, 5, 10, 20, 30}`, single-sector and few-sector universes, pins (including HARD- and
+      SOFT-vetoed), exclusions, `--only-sectors`, explicit-override precedence, fewer eligible names than N,
+      the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold
+      within 1e-9 or the relaxation is in the result. → step 2.
+- [ ] **T-136** Wire it through `cycle`: `CycleSettings`/`--top-n`, `score_tilt` as the default
+      `weight_scheme`, and the CLI flags `--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors` on
+      `cycle select` and `backfill`; the **effective** caps, every relaxation, the shortfall and the
+      preferences persisted in `cycle_run.params_json` (so `v_weight_scheme`, which reads
+      `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change). A HARD-vetoed
+      pin is refused with its reason, not silently dropped. Production re-select is a write and stays
+      deferred until the user directs it. → step 3.
+- [ ] **T-137** Align `quant`'s benchmark with the same rule (`T-134` decision 7): name cap `1.5/N`, sector
+      cap 0.30, no limit on the number of names (no integer programming). At N = 30 that is 0.05, equal to
+      `QuantSettings.max_name_weight`, so the default benchmark does not change. `quant` must not import
+      `cycle` (isolation test), so copy the rule the way `quant.state` copies `cycle.state` and pin the two
+      against each other with a test; leave the benchmark's universe/liquidity gate untouched (it must stay
+      independent of any score). → step 4.
 - [ ] **T-138** Verify on real data, on a **scratch copy** of `financial.db` (production is not written):
-      reproduce `cycle_run` 1's failing shape, then `cycle select` for N in `{3, 5, 10, 20}` on the
-      20-ticker sample (`universe_sample20.db`); every book sums to 1 and satisfies both caps, or records
-      its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers and a
-      reference (constitution AI behavior #12; e.g. a long-only mean-variance/constraint-feasibility
-      reference such as the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009). → step 5.
+      reproduce `cycle_run` 1's failing shape, then the default thesis book (N = 30, no preferences) plus
+      the **sensitivity check over N ∈ {10, 20, 30}**, and **one run with preferences** (decision support,
+      never reported as a thesis result); every book sums to 1 and satisfies the band and both caps, or
+      records its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers
+      and a reference (constitution AI behavior #12; the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009).
+      → step 5.
 - [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if
       `T-137` lands, `SPEC.md` FR-007, and both architecture artifacts (constitution AI behavior #11,
-      reconcile, never rename). → step 6.
+      reconcile, never rename), and `SPEC.md` FR-001's older sentence "a re-run on the same
+      `(asset, form, fiscal_period)` writes no new row", which should say the period end (`T-140`). → step 6.
 
 ## Work item 2 — Cross-module orchestrator
 
