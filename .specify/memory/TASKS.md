@@ -119,7 +119,25 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       SOFT-vetoed), exclusions, `--only-sectors`, explicit-override precedence, fewer eligible names than N,
       the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold
       within 1e-9 or the relaxation is in the result. → step 2.
-- [ ] **T-136** Wire it through `cycle`: `CycleSettings`/`--top-n`, `score_tilt` as the default
+- [x] **T-136** — **done 2026-10-05, PR #119 (approved)**: the orchestrator builds `BookCandidate`s (ticker,
+      sector name, vol, T-1 veto status; HARD names passed in, marked) and calls `build_book` on the live and
+      REPLAY paths; `target_weights`, its loop, `_cap_names`/`_cap_sectors` and the old `Candidate` are deleted;
+      `weight_scheme` defaults to `score_tilt` and `max_name_weight` to `None` (derive `1.5/N`; an explicit value
+      wins); `select`/`backfill` take `--weight-scheme`, `--max-name-weight`, `--max-sector-weight`, `--pin`,
+      `--exclude`, `--exclude-sectors`, `--only-sectors` (backfill also `--top-n`), subparsers use
+      `allow_abbrev=False`, a falsy value such as `--max-sector-weight 0` reaches validation. The live book is
+      protected: a writing `select` with preferences is refused (`PreferencesNeedDryRun`, in the
+      orchestrator). `params_json` carries the effective caps (the keys `v_weight_scheme` reads), `n_held`,
+      `shortfall`, `relaxations`, the preferences, `refused_pins`, `flagged_pins`, `overflow_tickers` and a
+      `construction` block of what was requested; a resume with other construction settings is refused
+      (`ConstructionMismatch`). **`select --dry-run` is strictly read-only** (`dry_run_book`): preferences are
+      validated first, then the book is built from the ranking stored for the date (the SELECTION run's, else
+      the MONITORING run's) on a `mode=ro` connection; it opens, finishes or modifies no `cycle_run`, and with no
+      stored ranking refuses with "run `cycle monitor --analysis-date D` first". It replaces the old
+      `top_n = 0` dry run, which closed every open position. Reviewer's checks on a pilot-DB copy: whole-file
+      checksum unchanged after every dry-run variant. **Optional, later** (reviewer): when the date's SELECTION
+      run is reverted, the dry run could fall back to the MONITORING ranking. Production is not re-selected.
+      The task as specified: wire it through `cycle`: `CycleSettings`/`--top-n`, `score_tilt` as the default
       `weight_scheme`, switch the caller to `build_book` (the orchestrator builds `BookCandidate`s, HARD-vetoed
       names included and marked) and **delete the old `Candidate` together with `target_weights`** and its
       8-round loop, and the CLI flags `--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors` on
