@@ -4,6 +4,7 @@ CLI exposes the construction flags. Hermetic: a seeded in-memory database, no ne
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -15,8 +16,8 @@ from cycle import orchestrator
 from cycle.cli import _settings, build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
-from cycle.construction import BookCandidate
-from cycle.orchestrator import PreferencesNeedDryRun, run_replay, run_selection
+from cycle.construction import BookCandidate, BookInputError
+from cycle.orchestrator import NoStoredRanking, PreferencesNeedDryRun, run_replay, run_selection
 from cycle.rules import seed_catalog
 from cycle.state import ConstructionMismatch
 
@@ -291,17 +292,41 @@ def _cli_on(conn: Database, monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the CLI at *conn* (a seeded in-memory database) instead of KG_FINANCIAL_DB."""
     monkeypatch.setattr("cycle.cli.CycleSettings.load", settings)
     monkeypatch.setattr("cycle.cli.make_hook", lambda _s: None)
-    for name in ("run_selection", "run_replay"):
+    for name in ("run_selection", "run_replay", "dry_run_book"):
         real = getattr(orchestrator, name)
         monkeypatch.setattr(
             f"cycle.cli.{name}", lambda s, d, _r=real, **k: _r(s, d, conn=conn, **k)
         )
 
 
-def test_select_dry_run_prints_the_book_and_writes_no_positions(
-    cohort: Database, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def snapshot(conn: Database) -> dict[str, list[tuple]]:
+    """Every row of every table: a dry run must leave all of it byte-identical."""
+    tables = [
+        r[0]
+        for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+    ]
+    return {
+        t: [tuple(r) for r in conn.execute(f"SELECT * FROM {t} ORDER BY 1")]  # noqa: S608
+        for t in tables
+    }
+
+
+@pytest.fixture
+def ticking_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A different timestamp on every call, so any `finished_at`/checkpoint rewrite shows."""
+    ticks = iter(f"2030-01-01T00:{m:02d}:{s:02d}+00:00" for m in range(60) for s in range(60))
+    monkeypatch.setattr("cycle.state._now", lambda: next(ticks))
+
+
+def test_select_dry_run_on_a_monitoring_ranking_prints_the_book_and_writes_nothing(
+    cohort: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ticking_clock: None,
 ) -> None:
     veto(cohort, 13, "HARD")
+    orchestrator.run_monitoring(settings(top_n=10), DAY, conn=cohort)  # no SELECTION run exists
+    before = snapshot(cohort)
     _cli_on(cohort, monkeypatch)
     code = cycle_main(
         [
@@ -311,40 +336,121 @@ def test_select_dry_run_prints_the_book_and_writes_no_positions(
     )  # fmt: skip
     out = capsys.readouterr().out
     assert code == 0
-    assert "dry run" in out and "ticker" in out and "sector" in out and "weight" in out
+    assert "MONITORING run" in out and "read-only" in out
+    assert "ticker" in out and "sector" in out and "weight" in out
     table = out.split("ticker")[1].split("total")[0]
     assert "T12" in table and "T01" not in table and "Materials" not in table
     assert "name cap 0.15" in out and "sector cap" in out
     assert "REFUSED pin T13" in out  # the HARD pin, with its reason
+    assert snapshot(cohort) == before  # no cycle_run, checkpoint, ranking or position touched
     assert cohort.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 0
-    done = {
-        r["step"] for r in cohort.execute("SELECT step FROM cycle_checkpoint WHERE status='done'")
-    }
-    assert "positions" not in done  # a later real run must still find it pending
-    assert "construction" not in params(cohort)  # nothing about the book is recorded
 
 
-def test_a_dry_run_leaves_the_live_book_and_a_later_real_select_alone(
-    cohort: Database, monkeypatch: pytest.MonkeyPatch
+def test_a_dry_run_leaves_an_existing_run_byte_identical_even_when_it_fails(
+    cohort: Database, ticking_clock: None
 ) -> None:
+    run_selection(settings(top_n=10), DAY, conn=cohort)
+    before = snapshot(cohort)
+    run_before = cohort.execute(
+        "SELECT status, finished_at, params_json FROM cycle_run WHERE cycle_type = 'SELECTION'"
+    ).fetchone()
+    assert run_before["status"] == "completed"
+    # a valid preview
+    dry_run_book = orchestrator.dry_run_book
+    dry_run_book(settings(top_n=4, pins=("T14",), exclude_sectors=("Tech",)), DAY, conn=cohort)
+    assert snapshot(cohort) == before
+    # invalid ones: before any read (a contradiction), and after the read (a pin in a barred sector)
+    for bad in (
+        {"pins": ("T05",), "exclude": ("T05",)},
+        {"pins": ("T03",), "exclude_sectors": ("Tech",)},  # T03 is Tech
+        {"max_sector_weight": 0.0},
+        {"pins": ("T01", "T02", "T03"), "top_n": 2},
+    ):
+        with pytest.raises(BookInputError):
+            dry_run_book(settings(**{"top_n": 10, **bad}), DAY, conn=cohort)
+        assert snapshot(cohort) == before
+    run_after = cohort.execute(
+        "SELECT status, finished_at, params_json FROM cycle_run WHERE cycle_type = 'SELECTION'"
+    ).fetchone()
+    assert tuple(run_after) == tuple(run_before)  # status, finished_at and params_json
+
+
+def test_a_dry_run_prefers_the_selection_runs_ranking_and_matches_the_book_select_wrote(
+    cohort: Database,
+) -> None:
+    orchestrator.run_monitoring(settings(top_n=10), DAY, conn=cohort)
+    run_selection(settings(top_n=10), DAY, conn=cohort)
+    d = orchestrator.dry_run_book(settings(top_n=10), DAY, conn=cohort)
+    selection_id = cohort.execute(
+        "SELECT id FROM cycle_run WHERE cycle_type = 'SELECTION'"
+    ).fetchone()["id"]
+    assert (d.source_cycle_type, d.source_cycle_run_id) == ("SELECTION", selection_id)
+    assert {t: w for t, _, w in d.rows} == pytest.approx(live_weights(cohort))  # the same book
+
+
+def test_a_date_with_no_ranking_is_refused_and_nothing_is_written(
+    cohort: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ticking_clock: None,
+) -> None:
+    before = snapshot(cohort)
+    with pytest.raises(NoStoredRanking, match="cycle monitor --analysis-date 2026-06-30"):
+        orchestrator.dry_run_book(settings(top_n=10), DAY, conn=cohort)
     _cli_on(cohort, monkeypatch)
-    assert cycle_main(["select", "--analysis-date", DAY, "--top-n", "10"]) == 0
-    live = live_weights(cohort)
-    rows = cohort.execute("SELECT * FROM portfolio_position ORDER BY id").fetchall()
-    # a dry run with other settings, same date: refused for nothing, writes nothing
+    assert cycle_main(["select", "--analysis-date", DAY, "--dry-run"]) == 1
+    assert "run `cycle monitor --analysis-date 2026-06-30` first" in capsys.readouterr().err
+    assert snapshot(cohort) == before
+    assert cohort.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0] == 0
+
+
+def test_the_cli_dry_run_opens_the_database_read_only(
+    cohort: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No injected connection: the CLI opens the file ``mode=ro``, so a write would raise."""
+    run_selection(settings(top_n=10), DAY, conn=cohort)
+    path = tmp_path / "copy.db"
+    target = sqlite3.connect(path)
+    cohort._conn.backup(target)
+    target.close()
+    before = path.read_bytes()
+    monkeypatch.setattr("cycle.cli.CycleSettings.load", settings)
+    monkeypatch.setattr("cycle.cli.make_hook", lambda _s: pytest.fail("a dry run needs no hook"))
     assert (
-        cycle_main(["select", "--analysis-date", DAY, "--top-n", "4", "--dry-run", "--pin", "T14"])
+        cycle_main(
+            ["select", "--analysis-date", DAY, "--top-n", "10", "--dry-run", "--db", str(path)]
+        )
         == 0
     )
-    assert [tuple(r) for r in cohort.execute("SELECT * FROM portfolio_position ORDER BY id")] == [
-        tuple(r) for r in rows
-    ]
-    assert live_weights(cohort) == live  # the old dry run (top_n = 0) closed every position
+    assert "SELECTION run" in capsys.readouterr().out
+    assert path.read_bytes() == before
+
+
+def test_the_dry_run_opens_the_database_with_the_read_only_factory(
+    cohort: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_selection(settings(top_n=10), DAY, conn=cohort)
+    opened: list[object] = []
+
+    def ro(path: object) -> Database:
+        opened.append(path)
+        return cohort
+
+    monkeypatch.setattr(orchestrator, "connect_ro", ro)
+    monkeypatch.setattr(orchestrator, "connect", lambda *_a, **_k: pytest.fail("writable connect"))
+    orchestrator.dry_run_book(
+        settings(top_n=10).model_copy(update={"db_path": tmp_path / "x.db"}), DAY
+    )
+    assert opened == [tmp_path / "x.db"]
 
 
 def test_a_real_select_after_a_dry_run_still_writes_its_book(
     cohort: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    orchestrator.run_monitoring(settings(top_n=10), DAY, conn=cohort)
     _cli_on(cohort, monkeypatch)
     assert (
         cycle_main(["select", "--analysis-date", DAY, "--top-n", "6", "--dry-run", "--pin", "T09"])
@@ -463,6 +569,26 @@ def test_select_and_backfill_accept_the_construction_flags_and_document_them(
         assert "decision support" in text
     with pytest.raises(SystemExit):
         build_parser().parse_args(["select", "--weight-scheme", "bogus"])
+
+
+def test_abbreviated_flags_are_not_accepted_and_a_zero_cap_is_not_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for argv in (
+        ["select", "--pi", "A"],
+        ["select", "--max-name", "0.1"],
+        ["monitor", "--top", "3"],
+    ):
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(argv)
+    monkeypatch.setattr("cycle.cli.CycleSettings.load", settings)
+    for argv, message in (
+        (["--max-sector-weight", "0"], "max_sector_weight"),
+        (["--top-n", "0"], "n must be"),
+    ):
+        s = _settings(build_parser().parse_args(["select", *argv]))
+        with pytest.raises(BookInputError, match=message):  # validation rejects them, loudly
+            orchestrator.dry_run_book(s, DAY, conn=None)
 
 
 def test_the_flags_reach_the_settings(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -37,13 +37,12 @@ class CycleSettings(BaseModel):
     max_sector_weight: float = 0.30
     # User preferences (T-134 decision 5): decision support, never the thesis book. Pins are held
     # first (a HARD-vetoed pin is refused); `only_sectors` None means every sector. A writing
-    # `select` refuses them, only `--dry-run` and `backfill` (the replay book) accept them.
+    # `select` refuses them; `select --dry-run` (a read-only preview, `dry_run_book`) and `backfill` (the
+    # replay book) accept them.
     pins: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     exclude_sectors: tuple[str, ...] = ()
     only_sectors: tuple[str, ...] | None = None
-    # `select --dry-run`: build and print the book, write no positions and record nothing about it.
-    dry_run: bool = False
     soft_veto_penalty: float = 15.0  # points knocked off blended score per active soft veto
     # Which fundamental_metrics engine version(s) the cycle reads (T-090): None = the newest
     # stored per group; "metrics-v1" = that one; "valuation=metrics-v1" = per group. A cycle_run

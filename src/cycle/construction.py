@@ -333,13 +333,19 @@ def _resolve_caps(
     return _Caps(lo, name_cap, sector_cap, tuple(relaxations))
 
 
-def _validate(
-    candidates: Sequence[BookCandidate],
+def validate_settings(  # noqa: PLR0913 - the settings that need no candidates to be checked
     n: int,
+    *,
     scheme: str,
     max_name_weight: float | None,
     max_sector_weight: float,
+    pins: Iterable[str] = (),
+    exclude: Iterable[str] = (),
+    only_sectors: Iterable[str] | None = None,
 ) -> None:
+    """Everything about the request that is wrong whatever the candidates are (``BookInputError``).
+
+    ``select --dry-run`` calls it first, before it reads anything."""
     if n < 1:
         raise BookInputError(f"n must be >= 1, got {n}")
     if scheme not in SCHEMES:
@@ -348,6 +354,14 @@ def _validate(
         raise BookInputError(f"max_sector_weight must be in (0, 1], got {max_sector_weight}")
     if max_name_weight is not None and not 0.0 < max_name_weight <= 1.0:
         raise BookInputError(f"max_name_weight must be in (0, 1], got {max_name_weight}")
+    if only_sectors is not None and not {_key(s) for s in only_sectors}:
+        raise BookInputError("only_sectors is empty; pass None to allow every sector")
+    both = {_key(t) for t in pins} & {_key(t) for t in exclude}
+    if both:
+        raise BookInputError(f"cannot both pin and exclude: {sorted(both)}")
+
+
+def _validate_candidates(candidates: Sequence[BookCandidate]) -> None:
     ids = {c.asset_id for c in candidates}
     tickers = {_key(c.ticker) for c in candidates}
     if len(ids) != len(candidates) or len(tickers) != len(candidates):
@@ -390,17 +404,24 @@ def build_book(  # noqa: PLR0913 - keyword-only inputs, one per T-134 decision
     Pins obey the band and the caps by the weights; they count toward the fullness of their sector but
     are never skipped for it.
     """
-    _validate(candidates, n, scheme, max_name_weight, max_sector_weight)
+    pins, exclude, exclude_sectors = tuple(pins), tuple(exclude), tuple(exclude_sectors)
+    only = None if only_sectors is None else tuple(only_sectors)
+    validate_settings(
+        n,
+        scheme=scheme,
+        max_name_weight=max_name_weight,
+        max_sector_weight=max_sector_weight,
+        pins=pins,
+        exclude=exclude,
+        only_sectors=only,
+    )
+    _validate_candidates(candidates)
     prefs = _Prefs(
         frozenset(map(_key, pins)),
         frozenset(map(_key, exclude)),
         frozenset(map(_key, exclude_sectors)),
-        None if only_sectors is None else frozenset(map(_key, only_sectors)),
+        None if only is None else frozenset(map(_key, only)),
     )
-    if prefs.only is not None and not prefs.only:
-        raise BookInputError("only_sectors is empty; pass None to allow every sector")
-    if prefs.pins & prefs.exclude:
-        raise BookInputError(f"cannot both pin and exclude: {sorted(prefs.pins & prefs.exclude)}")
 
     sel = _select(candidates, n, max_sector_weight, prefs)
     if not sel.chosen:  # nothing eligible: an empty book, the whole of n is the shortfall

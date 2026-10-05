@@ -16,7 +16,10 @@ from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
 from cycle.orchestrator import (
     CycleReport,
+    DryRunBook,
+    NoStoredRanking,
     PreferencesNeedDryRun,
+    dry_run_book,
     run_monitoring,
     run_replay,
     run_selection,
@@ -107,7 +110,9 @@ _ONLY_SECTORS_HELP = (
 )
 _DRY_RUN_HELP = (
     "select: build and print the book (ticker, sector, weight, the effective caps, relaxations "
-    "and pin notes) and write no positions. monitor: ignored"
+    "and pin notes) from the ranking already stored for the date -- the SELECTION run's, else "
+    "the MONITORING run's; with none, run `cycle monitor` first. Strictly read-only: it opens no "
+    "cycle_run and writes nothing. monitor: ignored"
 )
 _BACKFILL_DB_HELP = (
     "path to a throwaway copy of the database -- required. backfill's REPLAY steps write "
@@ -119,14 +124,17 @@ _BACKFILL_DB_HELP = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="cycle", description="Selection / monitoring cycles.")
+    # allow_abbrev=False everywhere: `--pin` must not silently match a longer flag (PR #119 review)
+    parser = argparse.ArgumentParser(
+        prog="cycle", description="Selection / monitoring cycles.", allow_abbrev=False
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name, helptext in (
         ("select", "run a selection cycle (writes portfolio_position)"),
         ("monitor", "run a monitoring cycle (refreshes vetoes / ranking only)"),
     ):
-        p = sub.add_parser(name, help=helptext)
+        p = sub.add_parser(name, help=helptext, allow_abbrev=False)
         p.add_argument(
             "--date", help="cycle date, YYYY-MM-DD (alias of --analysis-date; default: today)"
         )
@@ -152,6 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
         "undo-run",
         help="revert a backdated select run's writes to the live book (T-104); dry run unless "
         "--apply",
+        allow_abbrev=False,
     )
     undo.add_argument("--cycle-run", type=int, required=True, help="the backdated cycle_run id")
     undo.add_argument("--db", help="override KG_FINANCIAL_DB path")
@@ -161,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill",
         help="replay selection cycles across a date range into an isolated simulated "
         "book (T-115) -- never the live portfolio_position",
+        allow_abbrev=False,
     )
     bf.add_argument("--from", dest="date_from", required=True)
     bf.add_argument("--to", dest="date_to", required=True)
@@ -220,7 +230,7 @@ def _settings(args: argparse.Namespace) -> CycleSettings:
     updates: dict[str, object] = {}
     for flag, field in _VALUE_FLAGS.items():
         value = getattr(args, flag, None)
-        if value:  # an unset flag, or 0 / "" (--top-n 0 never meant "no names")
+        if value is not None and value != "":  # 0 passes through: validation rejects it, loudly
             updates[field] = Path(value) if field in _PATH_FIELDS else value
     for flag, field in _SWITCH_FLAGS.items():
         if getattr(args, flag, False):
@@ -284,6 +294,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ManifestMismatch,
         ConstructionMismatch,
         PreferencesNeedDryRun,
+        NoStoredRanking,
         BookInputError,
         OutOfOrderCycle,
         NotBackdated,
@@ -348,16 +359,19 @@ def _print_book(r: CycleReport) -> None:
         print(f"  {_book_line(r.book)}")
 
 
-def _print_dry_run_book(r: CycleReport) -> None:
+def _print_dry_run_book(d: DryRunBook) -> None:
     """`select --dry-run`: the book itself, then the effective caps, relaxations and pin notes."""
-    assert r.book is not None
-    width = max((len(t) for t, _, _ in r.book_rows), default=6)
+    print(
+        f"dry run for {d.cycle_date}: book built on the stored ranking of the "
+        f"{d.source_cycle_type} run {d.source_cycle_run_id} (read-only: nothing written)"
+    )
+    width = max((len(t) for t, _, _ in d.rows), default=6)
     print(f"  {'ticker':<{width}}  {'sector':<28}  weight")
-    for ticker, sector, weight in r.book_rows:
+    for ticker, sector, weight in d.rows:
         print(f"  {ticker:<{width}}  {sector or '-':<28}  {weight:.6f}")
-    print(f"  total {sum(w for _, _, w in r.book_rows):.6f}")
-    print(f"  {_book_line(r.book)}")
-    for rel in r.book.relaxations:
+    print(f"  total {sum(w for _, _, w in d.rows):.6f}")
+    print(f"  {_book_line(d.book)}")
+    for rel in d.book.relaxations:
         print(f"    relaxed {rel.cap}: {rel.reason}")
 
 
@@ -397,6 +411,10 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.command == "undo-run":  # needs no model settings
         return _undo_run(args)
     settings = _settings(args)
+    if args.command == "select" and args.dry_run:
+        # read-only preview from the stored ranking: no cycle step, no hook, no cycle_run
+        _print_dry_run_book(dry_run_book(settings, _resolve_cycle_date(parser, args)))
+        return 0
     hook = make_hook(settings)
 
     if args.command == "monitor":
@@ -411,19 +429,13 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return 0
     if args.command == "select":
         cycle_date = _resolve_cycle_date(parser, args)
-        if args.dry_run:
-            settings = settings.model_copy(update={"dry_run": True})
         r = run_selection(settings, cycle_date, fundamental_hook=hook)
         print(
-            f"select {r.cycle_run_id} {r.cycle_date}: {r.selected} selected"
-            f"{' (dry run: no positions written)' if r.dry_run else ''}, "
+            f"select {r.cycle_run_id} {r.cycle_date}: {r.selected} selected, "
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
-        if r.dry_run:
-            _print_dry_run_book(r)
-        else:
-            _print_book(r)
+        _print_book(r)
         _print_unscored(r)
         _print_bypass_warnings(r)
         return 0

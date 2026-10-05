@@ -19,7 +19,13 @@ from portfolio_common.db import Database
 
 from cycle import data, writers
 from cycle.config import CycleSettings
-from cycle.construction import BookCandidate, BookResult, VetoStatus, build_book
+from cycle.construction import (
+    BookCandidate,
+    BookResult,
+    VetoStatus,
+    build_book,
+    validate_settings,
+)
 from cycle.db import ensure_schema
 from cycle.replay import out_of_order_replay_reason, sync_replay_positions
 from cycle.rules import RuleContext, disabled_rule_ids, enabled_rules, seed_catalog
@@ -40,6 +46,7 @@ from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import (
     StaleAsOf,
     StaleGateVersion,
+    connect_ro,
     stale_as_of_reason,
     stale_gate_version_reason,
     veto_out_of_order_reason,
@@ -102,10 +109,9 @@ class CycleReport:
     unscored_tickers: list[str] = field(default_factory=list)
     # The book `positions` built (T-136): its caps, relaxations, shortfall and pin notes, and each
     # held name's ``(ticker, sector, weight)`` in rank order. None on a MONITORING run, or when a
-    # resume skipped the step. `select --dry-run` fills these and writes nothing.
+    # resume skipped the step.
     book: BookResult | None = None
     book_rows: list[tuple[str, str | None, float]] = field(default_factory=list)
-    dry_run: bool = False
 
 
 class PreferencesNeedDryRun(RuntimeError):
@@ -233,7 +239,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     conn: Database,
     fundamental_hook: FundamentalHook | None,
 ) -> CycleReport:
-    if cycle_type == "SELECTION" and settings.has_preferences and not settings.dry_run:
+    if cycle_type == "SELECTION" and settings.has_preferences:
         # The live book is the thesis book: preferences make it decision support (T-134 decision 6),
         # so a writing select refuses them -- `--dry-run` previews them, `backfill` replays with them.
         raise PreferencesNeedDryRun(
@@ -255,7 +261,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     }
     tag = manifest_tag(manifest)
     check_manifest(conn, cycle_type, cycle_date, tag)
-    if "positions" in steps and not settings.dry_run:
+    if "positions" in steps:
         # T-136: never resume onto a different book than the one the first attempt built.
         check_construction(conn, cycle_type, cycle_date, settings.construction())
     # T-110: refuse a cycle_date past the price spine before any cycle_run row exists, the
@@ -294,11 +300,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         cycle_type,
         cycle_date,
         {
-            # Preferences and the dry-run flag are recorded by `positions` once a book is built (a
-            # dry run never records them: it could otherwise poison a later real run's params).
-            **settings.model_dump(
-                exclude={"dry_run", "pins", "exclude", "exclude_sectors", "only_sectors"}
-            ),
+            # Preferences are recorded by `positions` once a book is built, with the rest of it.
+            **settings.model_dump(exclude={"pins", "exclude", "exclude_sectors", "only_sectors"}),
             "manifest": manifest,
             "manifest_tag": tag,
             "stale_as_of_bypassed": stale_reason,
@@ -612,13 +615,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- positions (SELECTION only)
         if "positions" in steps:
 
-            def _book() -> tuple[list[dict], BookResult, list[BookCandidate]]:
+            def _positions() -> dict:
                 rows = ranked_cache.get("rows") or _load_ranking(conn, run_id)
                 cands = _book_candidates(rows, ticker_of, sector_name_of, price_obs)
-                return rows, _call_build_book(settings, cands), cands
-
-            def _positions() -> dict:
-                rows, book, cands = _book()
+                book = _call_build_book(settings, cands)
                 weights = book.weights
                 closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
                 if cycle_type == "REPLAY":
@@ -664,21 +664,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     "shortfall": book.shortfall,
                 }
 
-            if settings.dry_run:
-                # `select --dry-run` (T-136): build and report the book; no positions, no
-                # checkpoint (a later real run must still find `positions` pending), nothing
-                # recorded in params_json.
-                _rows, dry_book, dry_cands = _book()
-                by_id = {c.asset_id: c for c in dry_cands}
-                report.dry_run = True
-                report.book = dry_book
-                report.selected = len(dry_book.weights)
-                report.book_rows = [
-                    (by_id[a].ticker, by_id[a].sector, w) for a, w in dry_book.weights.items()
-                ]
-                _log_book(cycle_type, cycle_date, dry_book)
-            else:
-                _do("positions", _positions)
+            _do("positions", _positions)
 
         finish_cycle(conn, run_id, "completed")
     except Exception:
@@ -715,6 +701,83 @@ def _load_ranking(conn: Database, run_id: int) -> list[dict]:
         }
         for r in rows
     ]
+
+
+# -- select --dry-run: a read-only preview (T-136, PR #119 review) ----------------------------------
+
+
+class NoStoredRanking(RuntimeError):
+    """``select --dry-run`` found no stored ranking for the date."""
+
+
+@dataclass(frozen=True)
+class DryRunBook:
+    """The preview: the book, and which stored ranking it was built from."""
+
+    cycle_date: str
+    source_cycle_type: str
+    source_cycle_run_id: int
+    book: BookResult
+    rows: list[tuple[str, str | None, float]]  # (ticker, sector, weight), in book order
+
+
+def dry_run_book(
+    settings: CycleSettings, cycle_date: str, *, conn: Database | None = None
+) -> DryRunBook:
+    """The book `select` would build at *cycle_date*, from the ranking already stored for it.
+
+    **Strictly read-only**: it never opens, finishes or modifies a ``cycle_run`` (the earlier
+    version re-ran the live run's steps, rewrote its ``finished_at`` and marked it ``failed`` when
+    a preference was invalid), writes no checkpoint and no position, and runs no cycle step -- so
+    `ensure_schema`, the guards and the fundamental hook are not involved either. Without *conn* it
+    opens the database ``mode=ro``, so a write would raise. The ranking is the date's SELECTION
+    run's, else its MONITORING run's (the same steps minus ``positions``); with neither it refuses.
+    """
+    # what is wrong whatever the data is: before anything is read
+    validate_settings(
+        settings.top_n,
+        scheme=settings.weight_scheme,
+        max_name_weight=settings.max_name_weight,
+        max_sector_weight=settings.max_sector_weight,
+        pins=settings.pins,
+        exclude=settings.exclude,
+        only_sectors=settings.only_sectors,
+    )
+    owned = conn is None
+    if conn is None:
+        conn = connect_ro(settings.db_path)
+    try:
+        source = conn.execute(
+            "SELECT cr.id, cr.cycle_type FROM cycle_run cr WHERE cr.cycle_date = ? "
+            "AND cr.cycle_type IN ('SELECTION', 'MONITORING') "
+            "AND EXISTS (SELECT 1 FROM cycle_ranking r WHERE r.cycle_run_id = cr.id) "
+            "ORDER BY CASE cr.cycle_type WHEN 'SELECTION' THEN 0 ELSE 1 END LIMIT 1",
+            (cycle_date,),
+        ).fetchone()
+        if source is None:
+            raise NoStoredRanking(
+                f"no stored ranking for {cycle_date}: run `cycle monitor --analysis-date "
+                f"{cycle_date}` first"
+            )
+        rows = _load_ranking(conn, int(source["id"]))
+        labels = data.asset_labels(conn, [int(r["asset_id"]) for r in rows])
+        tickers = {a: t for a, (t, _s) in labels.items()}
+        sectors = {a: s for a, (_t, s) in labels.items()}
+        cands = _book_candidates(
+            rows, tickers, sectors, data.latest_price_observation(conn, cycle_date)
+        )
+        book = _call_build_book(settings, cands)
+        by_id = {c.asset_id: c for c in cands}
+        return DryRunBook(
+            cycle_date,
+            str(source["cycle_type"]),
+            int(source["id"]),
+            book,
+            [(by_id[a].ticker, by_id[a].sector, w) for a, w in book.weights.items()],
+        )
+    finally:
+        if owned:
+            conn.close()
 
 
 # -- public entrypoints ----------------------------------------------

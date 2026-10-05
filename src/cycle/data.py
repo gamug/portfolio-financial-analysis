@@ -50,6 +50,18 @@ def active_universe(
     )
 
 
+def asset_labels(conn: Database, asset_ids: list[int]) -> dict[int, tuple[str, str | None]]:
+    """``asset_id -> (ticker, sector name)`` (a read; used by the read-only dry run)."""
+    if not asset_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT a.id, a.ticker, s.name AS sector FROM assets a "  # noqa: S608
+        f"LEFT JOIN sectors s ON s.id = a.sector_id WHERE a.id IN {in_clause(asset_ids)}",
+        asset_ids,
+    )
+    return {int(r["id"]): (str(r["ticker"]), r["sector"]) for r in rows}
+
+
 def latest_metrics(
     conn: Database, cycle_date: str, versions: MetricVersions
 ) -> dict[int, dict[str, float | None]]:
