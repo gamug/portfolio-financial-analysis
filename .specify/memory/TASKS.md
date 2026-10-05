@@ -146,7 +146,22 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change). A HARD-vetoed
       pin is refused with its reason, not silently dropped. Production re-select is a write and stays
       deferred until the user directs it. → step 3.
-- [ ] **T-137** Align `quant`'s benchmark with the same rule (`T-134` decision 7): name cap `1.5/N`, sector
+- [x] **T-137** — **done 2026-10-05, PR #120 (approved)**: `src/quant/caps.py` (`resolve_caps`, copied from
+      `cycle.construction` and pinned to it by `tests/test_quant_caps.py`; `quant` still imports nothing from
+      `cycle`): `n_held = min(N, panel size)`, name cap `1.5/n_held` (an explicit cap wins; one below `1/n_held` is
+      relaxed and recorded), sector cap 0.30 relaxed to the smallest feasible value and recorded, no limit on
+      the number of names. `QuantSettings.max_name_weight` defaults to `None` and `top_n` to 30; `optimize` and
+      `build-risk-model` take `--top-n`/`--max-name-weight`/`--max-sector-weight`; every objective uses the
+      effective caps (`risk_parity` is projected onto both when it breaches them, where before it handled the
+      name cap only); `quant_run` and each `quant_portfolio` record `top_n`, `n_held`, the effective caps and the
+      relaxations. **Engine version `opt-v1` → `opt-v2`**: a default book differs on a panel smaller than N = 30
+      (and a few-sector panel no longer fails on an infeasible sector cap); with a panel of 30 or more the caps
+      are the old 0.05/0.30. Real data (scratch copy of the pilot DB, 2026-07-09, default N, 20 assets: name cap
+      0.075, sector cap 0.30, no relaxation): `min_var` 18 names in 0.0080–0.0750, vol 0.1250 vs 0.1425 under
+      `opt-v1` (every name exactly 0.05); `tangency`/`target_vol`/`risk_parity` no longer equal-weight; frontier
+      points within both caps; `quant evaluate` runs clean. Reviewer re-verified the table; an asset with no
+      sector stays uncapped in quant (0 of 503 in production, 0 of 20 in the pilot). The numbers are also in
+      `docs/quant.md`. The task as specified: align `quant`'s benchmark with the same rule (`T-134` decision 7): name cap `1.5/N`, sector
       cap 0.30, no limit on the number of names (no integer programming). At N = 30 that is 0.05, equal to
       `QuantSettings.max_name_weight`, so the default benchmark does not change. `quant` must not import
       `cycle` (isolation test), so copy the rule the way `quant.state` copies `cycle.state` and pin the two
@@ -158,7 +173,8 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       never reported as a thesis result); every book sums to 1 and satisfies the band and both caps, or
       records its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers
       and a reference (constitution AI behavior #12; the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009).
-      Report the **top-N score dispersion** and state in the entry that the tilt spans the held names'
+      The entry also covers the quant benchmark's `opt-v2` (`T-137`; its pilot before/after numbers are in
+      `docs/quant.md`). Report the **top-N score dispersion** and state in the entry that the tilt spans the held names'
       score range, so the weight spread is always the full band even when the scores are tightly clustered
       (reviewer, PR #118). → step 5.
 - [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if

@@ -538,7 +538,7 @@ def test_a_dry_run_writes_nothing(cli_on: Database, capsys: pytest.CaptureFixtur
     assert "nothing written" in out
     assert '"returns":"qret-v3"' in out
     assert "not stored, would be built" in out
-    assert "books: engine_version opt-v1+" in out
+    assert "books: engine_version opt-v2+" in out
 
 
 def test_plans_match_what_the_real_runs_then_write(db: Database) -> None:
@@ -550,7 +550,7 @@ def test_plans_match_what_the_real_runs_then_write(db: Database) -> None:
         "SELECT model_version FROM quant_risk_model WHERE id = ?", (res.model_id,)
     ).fetchone()[0]
     assert stored == plan.model_version
-    assert plan.book_version == f"opt-v1+{res.manifest_tag}"
+    assert plan.book_version == f"opt-v2+{res.manifest_tag}"
     assert plan_build_risk_model(settings, as_of=as_of, conn=db).model_stored
 
 

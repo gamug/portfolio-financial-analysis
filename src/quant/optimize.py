@@ -2,9 +2,9 @@
 
 Every objective shares the same hard constraints: fully invested (``sum w = 1``),
 long only (``w >= 0``), a per-name box cap, and per-GICS-sector caps -- the same
-*intent* as ``cycle.construction.build_book``'s sector cap but enforced inside the
-optimizer as hard linear constraints rather than by an exact projection of a target. An optional turnover cap
-bounds ``sum |w - w_prev|`` against the previous book.
+*intent* as ``cycle.construction.build_book``'s caps (and, since T-137, the same effective values,
+resolved by ``quant.caps``) but enforced inside the optimizer as hard linear constraints rather
+than by an exact projection of a target. An optional turnover cap bounds ``sum |w - w_prev|`` against the previous book.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import cvxpy as cp
 import numpy as np
@@ -25,6 +25,7 @@ Vec = npt.NDArray[np.float64]
 
 _SOLVERS = ("CLARABEL", "OSQP", "SCS")
 _OK = ("optimal", "optimal_inaccurate")
+_CAP_TOL = 1e-9  # a cap breach smaller than this is solver noise, not a book to project
 
 
 class OptimizeError(RuntimeError):
@@ -72,23 +73,25 @@ def _sym_psd(sigma: Mat) -> Mat:
     return nearest_psd(np.asarray(sigma, dtype=np.float64))
 
 
-def _waterfill_cap(w: Vec, cap: float) -> Vec:
-    """Pin over-cap weights at *cap*, redistribute the excess proportionally to the
-    rest, repeat until stable. Feasible iff ``cap * len(w) >= 1``."""
-    w = np.maximum(w, 0.0)
-    w = w / w.sum() if w.sum() > 0 else np.full_like(w, 1.0 / len(w))
-    if cap * len(w) < 1.0 - 1e-12:
-        return w  # cap too tight to sum to 1; best effort
-    for _ in range(len(w)):
-        over = w > cap + 1e-12
-        if not over.any():
-            break
-        free = ~over
-        w[over] = cap
-        deficit = 1.0 - w[over].sum()
-        pool = w[free].sum()
-        w[free] = w[free] * (deficit / pool) if pool > 0 else deficit / free.sum()
-    return w
+def _breaches_caps(w: Vec, c: Constraints, n: int) -> bool:
+    if c.max_name_weight is not None and w.max() > c.max_name_weight + _CAP_TOL:
+        return True
+    return any(w[g].sum() > (c.max_sector_weight or 0.0) + _CAP_TOL for g in _sector_groups(c, n))
+
+
+def _project_onto_caps(w: Vec, c: Constraints, solver: str) -> Vec:
+    """The Euclidean projection of *w* onto the constraint set every other objective uses.
+
+    A risk-parity book is a point, not an optimum of the box/sector-constrained problem, so a cap
+    that it breaches is enforced by moving it to the nearest feasible book (T-137: the name cap now
+    follows N, so on a small panel an ERC book can sit above it; before, a water-fill handled the
+    name cap alone and the sector cap not at all)."""
+    n = len(w)
+    v = cp.Variable(n)
+    free = replace(c, turnover_cap=None, w_prev=None)  # ERC has no previous book to be near
+    prob = cp.Problem(cp.Minimize(cp.sum_squares(v - w)), _w_constraints(v, free, n))
+    _solve(prob, solver)
+    return np.asarray(v.value, dtype=np.float64)
 
 
 def _sector_groups(c: Constraints, n: int) -> list[list[int]]:
@@ -221,10 +224,9 @@ def risk_parity(
     solver: str = "CLARABEL",
 ) -> OptResult:
     """Equal-risk-contribution portfolio (Spinu 2013 convex form): minimize
-    ``0.5 w'Sigma w - sum(log(w_i))`` over ``w > 0``, then normalize. mu-free. The
-    per-name / sector caps do not bind on a ~500-name ERC book (weights are
-    inverse-vol scale, well under 5%), so they are not imposed here; a plain clip
-    keeps a small book inside the box cap."""
+    ``0.5 w'Sigma w - sum(log(w_i))`` over ``w > 0``, then normalize. mu-free. The caps rarely
+    bind on a ~500-name ERC book (weights are inverse-vol scale, well under 5%); when they do -- a
+    small panel, where the name cap is 1.5 / n_held -- the book is projected onto both."""
     sig = _sym_psd(sigma)
     n = sig.shape[0]
     t0 = time.perf_counter()
@@ -233,8 +235,8 @@ def risk_parity(
     used = _solve(prob, solver)
     wv = np.maximum(np.asarray(w.value), 1e-12)
     wv = wv / wv.sum()
-    if constraints.max_name_weight is not None:
-        wv = _waterfill_cap(wv, constraints.max_name_weight)
+    if _breaches_caps(wv, constraints, n):
+        wv = _project_onto_caps(wv, constraints, solver)
     ids = constraints.asset_ids or list(range(n))
     return _result("risk_parity", wv, ids, sig, mu, rf, used, prob.status, time.perf_counter() - t0)
 

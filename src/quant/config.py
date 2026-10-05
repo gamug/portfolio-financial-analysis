@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from kg_schema.market_cap import DEFAULT_MAX_PRICE_AGE_DAYS, DEFAULT_MAX_SHARE_AGE_DAYS
+from quant.caps import DEFAULT_SECTOR_CAP, DEFAULT_TOP_N
 
 _DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol", "risk_parity"]
 DEFAULT_PRICING_BASE_URL = "http://host.docker.internal:8000/pricing"
@@ -92,9 +93,17 @@ class QuantSettings(BaseModel):
     objectives: list[str] = Field(default_factory=lambda: list(_DEFAULT_OBJECTIVES))
     headline_objective: str = "min_var"
     target_volatility: float | None = None  # None => match the live book's trailing realized vol
-    max_name_weight: float | None = 0.05  # None => no per-name box cap
+    # T-137: the caps follow N, the same rule as the thesis book (`quant.caps`, copied from
+    # `cycle.construction`). `top_n` is N; `max_name_weight` None derives the name cap as
+    # 1.5 / min(N, panel size) -- 0.05 at N = 30 with a panel of 30 or more, the old constant -- and an
+    # explicit value wins (which is why the default must be None: 0.05 passed explicitly would silently
+    # override the rule). A cap that cannot hold on the panel is relaxed and recorded, never silent.
+    # There is no limit on the number of names: the optimizer decides how many to hold. To run
+    # without a per-name cap, pass 1.0.
+    top_n: int = Field(default=DEFAULT_TOP_N, ge=1)
+    max_name_weight: float | None = None
     min_name_weight: float = 0.0
-    max_sector_weight: float | None = 0.30  # None => no per-sector cap
+    max_sector_weight: float | None = DEFAULT_SECTOR_CAP  # None => no per-sector cap
     frontier_k: int = 15
     turnover_cap: float | None = None
     solver: str = "CLARABEL"
@@ -114,7 +123,12 @@ class QuantSettings(BaseModel):
     # cannot import pricing_agent's PRICE_OBSERVATION_ENGINE_VERSION, so the pin lives here.
     observation_engine_version: str = "priceobs-v1"
     risk_model_version: str = "rm-v1"
-    optimizer_engine_version: str = "opt-v1"
+    # opt-v2 (T-137): the name cap now follows N and the panel (1.5 / min(N, panel size)) and the
+    # sector cap relaxes to feasibility, and risk_parity respects both caps. A default-configuration
+    # book differs from opt-v1 on a panel smaller than N = 30 (the pilot-1 20-asset panel was capped at
+    # 0.05 = 1/20 and so was forced equal-weight); with a panel of 30 or more, the caps are the old
+    # 0.05 / 0.30 and a feasible min_var / tangency / target_vol / frontier book is unchanged.
+    optimizer_engine_version: str = "opt-v2"
     # bench-v2 (T-108): the mean of *simple* returns over the gated panel, compounded (1 + r);
     # bench-v1 averaged log returns over every name with a row.
     benchmark_engine_version: str = "bench-v2"

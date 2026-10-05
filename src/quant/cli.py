@@ -100,6 +100,29 @@ def _add_profile(sub: argparse.ArgumentParser) -> None:
     )
 
 
+_TOP_N_HELP = (
+    "N, the number of names the book is sized for (default 30): the name cap is 1.5 / min(N, panel "
+    "size) -- 0.05 at N = 30 with a panel of 30 or more -- the same rule as the thesis book "
+    "(`cycle`). It does not limit how many names the optimizer holds (T-137)"
+)
+_NAME_CAP_HELP = (
+    "explicit per-name weight cap; default derived: 1.5 / min(N, panel size), no 0.10 floor. A cap "
+    "below 1 / n_held cannot sum to 1 and is relaxed to it, recorded. Pass 1.0 for no per-name cap"
+)
+_SECTOR_CAP_HELP = (
+    "per-sector weight cap (default 0.30). If the panel's sectors cannot hold it under the name "
+    "cap it is relaxed to the smallest feasible value and the relaxation is recorded -- never silent"
+)
+
+
+def _add_cap_flags(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument("--top-n", dest="top_n", type=int, help=_TOP_N_HELP)
+    sub.add_argument("--max-name-weight", dest="max_name_weight", type=float, help=_NAME_CAP_HELP)
+    sub.add_argument(
+        "--max-sector-weight", dest="max_sector_weight", type=float, help=_SECTOR_CAP_HELP
+    )
+
+
 def _add_dry_run(sub: argparse.ArgumentParser) -> None:
     sub.add_argument(
         "--dry-run",
@@ -126,6 +149,7 @@ def _add_build_risk_model_parser(sub: argparse._SubParsersAction[argparse.Argume
         "--cov", dest="cov_estimator", choices=("ledoit_wolf_cc", "ledoit_wolf_diag", "sample")
     )
     rm.add_argument("--model-version", dest="model_version")
+    _add_cap_flags(rm)
     rm.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     rm.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     rm.add_argument("--no-store-cov", dest="store_cov", action="store_false")
@@ -151,8 +175,7 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument("--objectives", help="comma-separated: min_var,tangency,target_vol,frontier")
     op.add_argument("--frontier-k", dest="frontier_k", type=int)
     op.add_argument("--target-vol", dest="target_vol", type=float)
-    op.add_argument("--max-name-weight", dest="max_name_weight", type=float)
-    op.add_argument("--max-sector-weight", dest="max_sector_weight", type=float)
+    _add_cap_flags(op)
     op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
     op.add_argument(
         "--mu", dest="ret_estimator", choices=("equilibrium", "james_stein", "hist_mean")
@@ -272,6 +295,7 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "returns_version": ("returns_version", str),
     "risk_model_select": ("risk_model_select", str),
     "corpact_version": ("corpact_version", str),
+    "top_n": ("top_n", int),
     "frontier_k": ("frontier_k", int),
     "target_vol": ("target_volatility", float),
     "max_name_weight": ("max_name_weight", float),

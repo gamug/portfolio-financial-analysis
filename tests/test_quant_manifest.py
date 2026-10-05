@@ -177,8 +177,8 @@ def test_optimize_writes_parallel_books_each_tied_to_its_own_model(two_versions:
     ).fetchall()
     assert len(books) == 4  # min_var + tangency, once per manifest -- none overwritten
     assert {b["engine_version"] for b in books} == {
-        f"opt-v1+{new.manifest_tag}",
-        f"opt-v1+{old.manifest_tag}",
+        f"opt-v2+{new.manifest_tag}",
+        f"opt-v2+{old.manifest_tag}",
     }
     for b in books:  # every book is built on the model with the *same* manifest
         assert b["book_manifest"] == b["model_manifest"]
