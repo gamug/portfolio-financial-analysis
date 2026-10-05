@@ -26,7 +26,8 @@ def test_load_reads_db_and_pricing_url(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.headline_objective == "min_var"
     assert s.objectives == ["min_var", "tangency", "target_vol", "risk_parity"]
     assert s.ret_estimator == "equilibrium"
-    assert s.max_name_weight == 0.05
+    assert s.max_name_weight is None  # derived from N (T-137), not a constant
+    assert s.top_n == 30 and s.max_sector_weight == 0.30
     assert s.solver == "CLARABEL"
 
 

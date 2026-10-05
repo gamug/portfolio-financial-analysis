@@ -13,6 +13,7 @@ from kg_schema import connect
 from kg_schema.market_cap import MarketCapResult, market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import StaleAsOf, stale_as_of_reason
+from quant.caps import EffectiveCaps, resolve_caps
 from quant.config import QuantSettings
 from quant.db import (
     PortfolioRow,
@@ -218,6 +219,15 @@ def run_build_risk_model(
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
             caps, coverage = _market_caps(settings, panel, conn, as_of=as_of)
             merge_run_params(conn, run_id, {"market_caps": coverage})
+            merge_run_params(
+                conn,
+                run_id,
+                {
+                    "caps": effective_caps(
+                        settings, panel.asset_ids, load_sector_of(conn, panel.asset_ids)
+                    ).record()
+                },
+            )
             mu_by_model = _expected_returns(settings, panel, sigma, caps, rf=rf.annualized_rate)
 
             spec = {
@@ -292,6 +302,25 @@ def _weights_json(ids: list[int], w: np.ndarray) -> str:
     return json.dumps(
         {str(ids[i]): round(float(v), 8) for i, v in enumerate(w) if abs(float(v)) > _W_EPS},
         separators=(",", ":"),
+    )
+
+
+def effective_caps(
+    settings: QuantSettings, asset_ids: list[int], sector_of: dict[int, int | None]
+) -> EffectiveCaps:
+    """The caps this panel runs under (T-137): N-derived name cap, 0.30 sector cap, each relaxed to
+    feasibility and recorded (``quant.caps``). *asset_ids* is the gated panel."""
+    by_sector: dict[int, int] = {}
+    for a in asset_ids:
+        sid = sector_of.get(int(a))
+        if sid is not None:
+            by_sector[int(sid)] = by_sector.get(int(sid), 0) + 1
+    return resolve_caps(
+        settings.top_n,
+        len(asset_ids),
+        list(by_sector.values()),
+        max_name_weight=settings.max_name_weight,
+        max_sector_weight=settings.max_sector_weight,
     )
 
 
@@ -393,11 +422,14 @@ def run_optimize(
                 if rm and rm["rf_annual"] is not None
                 else (settings.risk_free_rate)
             )
+            sector_of = load_sector_of(conn, ids)
+            caps = effective_caps(settings, ids, sector_of)
+            merge_run_params(conn, run_id, {"caps": caps.record()})
             cons = Constraints(
-                max_name_weight=settings.max_name_weight,
+                max_name_weight=caps.max_name_weight,
                 min_name_weight=settings.min_name_weight,
-                max_sector_weight=settings.max_sector_weight,
-                sector_of=load_sector_of(conn, ids),
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=sector_of,
                 turnover_cap=settings.turnover_cap,
                 asset_ids=ids,
             )
@@ -432,6 +464,7 @@ def run_optimize(
                         model_id=model_id,
                         quant_run_id=run_id,
                         manifest_json=manifest.json(),
+                        params_json=json.dumps(caps.record(), separators=(",", ":")),
                     ),
                 )
                 sync_positions(

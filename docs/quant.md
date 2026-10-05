@@ -17,11 +17,12 @@ uv run python -m quant backfill-actions [--from 2022-01-01] [--analysis-date TOD
 uv run python -m quant build-returns    [--from 2022-01-01] [--analysis-date TODAY]
 uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 756] [--min-history 504]
                                         [--cov ledoit_wolf_cc|ledoit_wolf_diag|sample] [--no-store-cov]
+                                        [--top-n 30] [--max-name-weight F] [--max-sector-weight 0.30]  # the caps follow N (T-137)
                                         [--allow-stale-prices] [--allow-dirty]  # T-110 / T-114 guard overrides
 uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
                                 [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
-                                [--max-name-weight 0.05] [--max-sector-weight 0.30] [--turnover-cap F]
+                                [--top-n 30] [--max-name-weight F] [--max-sector-weight 0.30] [--turnover-cap F]
                                 [--allow-stale-prices]
 uv run python -m quant benchmark --from 2026-06-30 --analysis-date TODAY     # --from required: the panel is gated as of it
 uv run python -m quant load-benchmark --csv spy_tr.csv --benchmark SPY_TR      # columns: date,total_return_level
@@ -198,7 +199,7 @@ for reports.
 | objective | formulation |
 |---|---|
 | `min_var` | `minimize wᵀΣw` — μ-free, the robust headline base case |
-| `risk_parity` | equal risk contribution (Spinu 2013: `minimize 0.5 wᵀΣw − Σ log wᵢ`, then normalize); μ-free, more diversified than `min_var`. A water-fill cap keeps it inside `max_name_weight` if that binds (it does not on a ~500-name book). |
+| `risk_parity` | equal risk contribution (Spinu 2013: `minimize 0.5 wᵀΣw − Σ log wᵢ`, then normalize); μ-free, more diversified than `min_var`. The caps rarely bind on a ~500-name book; when the ERC book breaches either (a small panel, where the name cap is `1.5/n_held`) it is projected onto both caps (`quant.optimize._project_onto_caps`, T-137 — before, a water-fill handled the name cap alone and the sector cap not at all). |
 | `tangency` | y-space transform `minimize yᵀΣy s.t. (μ−rf)ᵀy = 1, y ≥ 0`, `w = y/Σy`; falls back to a frontier scan when there is no long-only tangency or a turnover cap is set |
 | `target_vol` | SOCP `maximize μᵀw s.t. wᵀΣw ≤ target_vol²`; falls back to `min_var` (`status = vol_infeasible`) when the target is below the min-var vol. `target_vol` defaults to 1.25× the min-var vol when unset |
 | `frontier` | k-point sweep from the min-var return to the max feasible return; if μ has no cross-sectional signal the frontier collapses and one point — the min-var portfolio, `status = "degenerate"` — represents it, not k copies mislabelled `optimal` as if a real sweep had run (T-112) |
@@ -217,10 +218,55 @@ frontier fans out and `tangency` becomes a capped cap-weight tilt. `risk_parity`
 and `min_var` are unaffected either way.
 
 Shared hard constraints: fully invested (`Σw = 1`), long only (`w ≥ 0`), per-name
-box (`w ≤ max_name_weight`), per-GICS-sector caps (`Σ_{i∈s} wᵢ ≤ max_sector_weight`
-— the same *intent* as `cycle.construction._cap_sectors` but a hard cvxpy
-constraint, not water-fill redistribution), optional turnover cap. Solver:
-Clarabel, falling back to OSQP then SCS.
+box (`w ≤` the effective name cap), per-GICS-sector caps (`Σ_{i∈s} wᵢ ≤` the effective
+sector cap — the same *values* as the thesis book's (`cycle.construction.build_book`, T-137),
+but hard cvxpy constraints rather than an exact projection of a target), optional turnover cap.
+Solver: Clarabel, falling back to OSQP then SCS. **Every** objective —
+`min_var`, `risk_parity`, `tangency`, `target_vol` and the `frontier` — runs under the effective caps.
+
+### `caps.py` — the caps follow N (T-137)
+
+The benchmark and the live book must be comparable at the same N, so the caps are a function of N
+exactly as in `cycle` (T-134 decision 7). `quant` must not import `cycle`, so the rule is **copied**
+into `quant.caps` (the way `quant.state` copies `cycle.state`) and pinned against `cycle`'s by
+`tests/test_quant_caps.py`.
+
+| | rule |
+|---|---|
+| `n_held` | `min(N, assets in the gated panel)` — the same meaning as `cycle`'s `n_held` |
+| name cap | `1.5 / n_held`, no 0.10 floor (0.05 at `N = 30` with a panel of 30 or more — the old constant; 0.075 for a 20-asset panel). `--max-name-weight` wins; one below `1/n_held` cannot sum to 1 and is relaxed to `1/n_held`, **recorded**. `--max-name-weight 1.0` means no per-name cap |
+| sector cap | 0.30, `--max-sector-weight` wins. If the panel's sectors cannot hold it under the name cap (`Σ min(c, k·cap) < 1`) it is relaxed to the smallest feasible value (the same `_feasible_sector_cap` as `cycle`, band floor 0), **recorded** |
+| number of names | **not limited** (no integer programming): the optimizer decides how many to hold; `N` only sizes the caps. The universe and liquidity gate are untouched and independent of every score |
+
+`QuantSettings.max_name_weight` defaults to `None` (derive); passing today's `0.05` explicitly would
+override the rule silently. `QuantSettings.top_n` defaults to 30. `build-risk-model` and `optimize`
+take `--top-n`, `--max-name-weight` and `--max-sector-weight` (same names and meaning as `cycle`'s). Assets
+with no sector are uncapped (as they always were) rather than one more capped group — the one place the
+two copies differ, and `cycle`'s band floor `0.5/n_held` has no counterpart here.
+
+**Recorded.** `quant_run.params_json["caps"]` (both `build-risk-model` and `optimize`) and each
+`quant_portfolio.params_json` carry `top_n`, `n_held`, the **effective** `max_name_weight` /
+`max_sector_weight`, and `relaxations` (`cap`, `requested`, `effective`, `reason`).
+
+**Engine version `opt-v2`** (was `opt-v1`). A default-configuration book can now differ on a panel
+smaller than `N = 30` (and a few-sector panel no longer fails on an infeasible sector cap); with a panel
+of 30 or more the caps are the old 0.05 / 0.30 and a feasible `min_var` / `tangency` / `target_vol` /
+`frontier` book is unchanged. Books under `opt-v1` stay beside the new ones (the version is part of
+their key).
+
+**The pilot-1 degeneracy.** The 20-asset pilot panel at the old constant cap of 0.05 (`20 × 0.05 = 1`)
+forced every `min_var` / `tangency` / `target_vol` book to exactly 0.05 in every name — equal weight,
+whatever the covariance. On a scratch copy of the pilot database at 2026-07-09, with the default `N = 30`
+(`n_held = 20`, name cap 0.075, sector cap 0.30, no relaxation):
+
+| book | `opt-v1` min / max weight | `opt-v1` vol | `opt-v2` min / max weight | `opt-v2` vol | names held |
+|---|---|---|---|---|---|
+| `min_var` | 0.0500 / 0.0500 | 0.1425 | 0.0080 / 0.0750 | 0.1250 | 18 |
+| `tangency` | 0.0500 / 0.0500 | 0.1425 | 0.0091 / 0.0750 | 0.1331 | 20 |
+| `target_vol` | 0.0500 / 0.0500 | 0.1425 | 0.0068 / 0.0750 | 0.1562 | 18 |
+| `risk_parity` | 0.0466 / 0.0503 | 0.1418 | 0.0261 / 0.0750 | 0.1310 | 20 |
+
+The largest sector sum is 0.30 or below in every book and the 15 frontier points stay within both caps.
 
 ### `persist.py` — the benchmark books
 
@@ -240,7 +286,7 @@ stay comparable.) `resolve_quant_manifest`
 resolves `--metrics-version` against what `fundamental_metrics` actually stores (via
 `kg_schema.versions`) and returns a `QuantManifest` whose 8-hex **tag** is folded into the
 keys the outputs already use: `quant_risk_model.model_version` (`rm-v1` → `rm-v1+3f9a1c2b`)
-and `quant_portfolio.engine_version` (`opt-v1` → `opt-v1+3f9a1c2b`). Because those tables
+and `quant_portfolio.engine_version` (`opt-v2` → `opt-v2+3f9a1c2b`). Because those tables
 were already unique on those columns, **no schema change** is needed, and:
 
 - the **same inputs give the same tag**, so a re-run refreshes the same risk model in place
