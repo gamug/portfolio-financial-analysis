@@ -1729,7 +1729,7 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    `QuantSettings.max_name_weight`, so that default benchmark does not change (a smaller panel's does: `opt-v2`). The rule is copied (it must
    not import `cycle`; pinned by `tests/test_quant_import_isolation.py`) and pinned against `cycle`'s by a
    test; its universe/liquidity gate stays independent of scores.
-5. **Verify (`T-138`)** on scratch copies of `financial.db`: the default thesis book (N = 30, no
+5. **Verify (`T-138`, done 2026-10-05, PR #121; `scripts/verify_t138.py`)** on scratch copies of `financial.db`: the default thesis book (N = 30, no
    preferences) with a sensitivity check over N ∈ {10, 20, 30}, and one run with preferences; record the
    methodology change in `docs/model_fixes.md` (constitution AI behavior #12), reporting the top-N score
    dispersion and stating that the tilt spans the held names' score range (the spread is the full band even
