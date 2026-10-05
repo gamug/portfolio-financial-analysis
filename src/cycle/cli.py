@@ -10,13 +10,23 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from cycle.config import CycleSettings
+from cycle.construction import SCHEMES, BookInputError, BookResult
 from cycle.data import TooManyUnscored
 from cycle.db import ensure_schema
 from cycle.fundamental_hook import make_hook
-from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
+from cycle.orchestrator import (
+    CycleReport,
+    DryRunBook,
+    NoStoredRanking,
+    PreferencesNeedDryRun,
+    dry_run_book,
+    run_monitoring,
+    run_replay,
+    run_selection,
+)
 from cycle.repair import NotBackdated, apply_undo, plan_undo
 from cycle.replay import reset_replay_range
-from cycle.state import ManifestMismatch
+from cycle.state import ConstructionMismatch, ManifestMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
@@ -66,6 +76,44 @@ _FORCE_HELP = (
     "the out-of-order-replay guard against it; for redoing a backfill after a code fix, not "
     "routine use"
 )
+_TOP_N_HELP = "portfolio size N, the number of names the book holds (default 30)"
+_SCHEME_HELP = (
+    "weight scheme (default score_tilt: an equal-weight core with a bounded score tilt, each "
+    "weight in [0.5/N, 1.5/N] proportional to its score inside that band). equal, "
+    "score_proportional and inverse_vol stay selectable, now through the same exact projection "
+    "(their old cap breaches are gone, so a stored run is not bit-reproducible) (T-134)"
+)
+_NAME_CAP_HELP = (
+    "explicit per-name weight cap; default is derived: 1.5/N for score_tilt (no 0.10 floor), 0.10 "
+    "for the legacy schemes. A cap below 1/N cannot sum to 1 and is relaxed to 1/N, recorded"
+)
+_SECTOR_CAP_HELP = (
+    "per-sector weight cap (default 0.30). A sector is skipped once it holds "
+    "max(1, floor(cap x N)) names; if the cap still cannot hold (too few sectors) it is relaxed "
+    "to the smallest feasible value and the relaxation is recorded -- never silent"
+)
+_PREFERENCES_NOTE = (
+    "A book built with preferences is decision support, never the thesis book: select accepts "
+    "them only with --dry-run (it prints the book and writes no positions), backfill accepts "
+    "them (it writes only portfolio_position_replay)."
+)
+_PIN_HELP = (
+    "comma-separated tickers held first (they count toward N and obey the weight band and the "
+    "caps). A HARD-vetoed pin is refused with its reason; a SOFT-vetoed pin is held and flagged. "
+    + _PREFERENCES_NOTE
+)
+_EXCLUDE_HELP = "comma-separated tickers never held. Excluding a pinned ticker is an error"
+_EXCLUDE_SECTORS_HELP = "comma-separated sector names never held (case-insensitive)"
+_ONLY_SECTORS_HELP = (
+    "comma-separated sector names: hold only these; the sector cap relaxes to what is feasible "
+    "(one sector -> 1.0), recorded"
+)
+_DRY_RUN_HELP = (
+    "select: build and print the book (ticker, sector, weight, the effective caps, relaxations "
+    "and pin notes) from the ranking already stored for the date -- the SELECTION run's, else "
+    "the MONITORING run's; with none, run `cycle monitor` first. Strictly read-only: it opens no "
+    "cycle_run and writes nothing. monitor: ignored"
+)
 _BACKFILL_DB_HELP = (
     "path to a throwaway copy of the database -- required. backfill's REPLAY steps write "
     "score_snapshot / veto / sector_aggregate_snapshot / cycle_ranking, all still shared with "
@@ -76,14 +124,17 @@ _BACKFILL_DB_HELP = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="cycle", description="Selection / monitoring cycles.")
+    # allow_abbrev=False everywhere: `--pin` must not silently match a longer flag (PR #119 review)
+    parser = argparse.ArgumentParser(
+        prog="cycle", description="Selection / monitoring cycles.", allow_abbrev=False
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name, helptext in (
         ("select", "run a selection cycle (writes portfolio_position)"),
         ("monitor", "run a monitoring cycle (refreshes vetoes / ranking only)"),
     ):
-        p = sub.add_parser(name, help=helptext)
+        p = sub.add_parser(name, help=helptext, allow_abbrev=False)
         p.add_argument(
             "--date", help="cycle date, YYYY-MM-DD (alias of --analysis-date; default: today)"
         )
@@ -91,8 +142,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--db", help="override KG_FINANCIAL_DB path")
         p.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
         p.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
-        p.add_argument("--top-n", type=int, help="portfolio size (selection only)")
-        p.add_argument("--dry-run", action="store_true", help="rank only, do not touch positions")
+        p.add_argument("--top-n", type=int, help=_TOP_N_HELP + " (selection only)")
+        p.add_argument("--dry-run", action="store_true", help=_DRY_RUN_HELP)
         p.add_argument("--allow-stale-prices", action="store_true", help=_ALLOW_STALE_PRICES_HELP)
         p.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
         p.add_argument("--allow-stale-dq-gate", action="store_true", help=_ALLOW_STALE_DQ_GATE_HELP)
@@ -103,11 +154,13 @@ def build_parser() -> argparse.ArgumentParser:
             # MONITORING never reaches the positions step (T-097), so the flag would be a
             # silent no-op there -- offered only where it can actually do something.
             p.add_argument("--allow-backdated", action="store_true", help=_ALLOW_BACKDATED_HELP)
+            _add_construction_args(p)
 
     undo = sub.add_parser(
         "undo-run",
         help="revert a backdated select run's writes to the live book (T-104); dry run unless "
         "--apply",
+        allow_abbrev=False,
     )
     undo.add_argument("--cycle-run", type=int, required=True, help="the backdated cycle_run id")
     undo.add_argument("--db", help="override KG_FINANCIAL_DB path")
@@ -117,6 +170,7 @@ def build_parser() -> argparse.ArgumentParser:
         "backfill",
         help="replay selection cycles across a date range into an isolated simulated "
         "book (T-115) -- never the live portfolio_position",
+        allow_abbrev=False,
     )
     bf.add_argument("--from", dest="date_from", required=True)
     bf.add_argument("--to", dest="date_to", required=True)
@@ -127,30 +181,60 @@ def build_parser() -> argparse.ArgumentParser:
     bf.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     bf.add_argument("--allow-stale-dq-gate", action="store_true", help=_ALLOW_STALE_DQ_GATE_HELP)
     bf.add_argument("--force", action="store_true", help=_FORCE_HELP)
+    bf.add_argument("--top-n", type=int, help=_TOP_N_HELP)
+    _add_construction_args(bf)
     return parser
+
+
+def _csv(text: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in text.split(",") if part.strip())
+
+
+def _add_construction_args(p: argparse.ArgumentParser) -> None:
+    """The book-construction flags shared by `select` and `backfill` (T-136; --top-n is separate)."""
+    p.add_argument("--weight-scheme", choices=SCHEMES, help=_SCHEME_HELP)
+    p.add_argument("--max-name-weight", type=float, help=_NAME_CAP_HELP)
+    p.add_argument("--max-sector-weight", type=float, help=_SECTOR_CAP_HELP)
+    p.add_argument("--pin", dest="pins", type=_csv, metavar="TICKERS", help=_PIN_HELP)
+    p.add_argument("--exclude", type=_csv, metavar="TICKERS", help=_EXCLUDE_HELP)
+    p.add_argument("--exclude-sectors", type=_csv, metavar="SECTORS", help=_EXCLUDE_SECTORS_HELP)
+    p.add_argument("--only-sectors", type=_csv, metavar="SECTORS", help=_ONLY_SECTORS_HELP)
+
+
+# CLI flag (argparse dest) -> CycleSettings field, for flags that carry a value / that switch one on.
+_VALUE_FLAGS = {
+    "db": "db_path",
+    "universe_db": "universe_db_path",
+    "top_n": "top_n",
+    "metrics_version": "metrics_version",
+    "weight_scheme": "weight_scheme",
+    "max_name_weight": "max_name_weight",
+    "max_sector_weight": "max_sector_weight",
+    "pins": "pins",
+    "exclude": "exclude",
+    "exclude_sectors": "exclude_sectors",
+    "only_sectors": "only_sectors",
+}
+_PATH_FIELDS = {"db_path", "universe_db_path"}
+_SWITCH_FLAGS = {
+    "allow_backdated": "allow_backdated_positions",
+    "allow_stale_prices": "allow_stale_prices",
+    "allow_dirty": "allow_dirty",
+    "allow_stale_dq_gate": "allow_stale_dq_gate",
+    "allow_backdated_veto": "allow_backdated_veto",
+}
 
 
 def _settings(args: argparse.Namespace) -> CycleSettings:
     s = CycleSettings.load()
     updates: dict[str, object] = {}
-    if getattr(args, "db", None):
-        updates["db_path"] = Path(args.db)
-    if getattr(args, "universe_db", None):
-        updates["universe_db_path"] = Path(args.universe_db)
-    if getattr(args, "top_n", None):
-        updates["top_n"] = args.top_n
-    if getattr(args, "metrics_version", None):
-        updates["metrics_version"] = args.metrics_version
-    if getattr(args, "allow_backdated", False):
-        updates["allow_backdated_positions"] = True
-    if getattr(args, "allow_stale_prices", False):
-        updates["allow_stale_prices"] = True
-    if getattr(args, "allow_dirty", False):
-        updates["allow_dirty"] = True
-    if getattr(args, "allow_stale_dq_gate", False):
-        updates["allow_stale_dq_gate"] = True
-    if getattr(args, "allow_backdated_veto", False):
-        updates["allow_backdated_veto"] = True
+    for flag, field in _VALUE_FLAGS.items():
+        value = getattr(args, flag, None)
+        if value is not None and value != "":  # 0 passes through: validation rejects it, loudly
+            updates[field] = Path(value) if field in _PATH_FIELDS else value
+    for flag, field in _SWITCH_FLAGS.items():
+        if getattr(args, flag, False):
+            updates[field] = True
     return s.model_copy(update=updates) if updates else s
 
 
@@ -208,6 +292,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (
         VersionError,
         ManifestMismatch,
+        ConstructionMismatch,
+        PreferencesNeedDryRun,
+        NoStoredRanking,
+        BookInputError,
         OutOfOrderCycle,
         NotBackdated,
         StaleAsOf,
@@ -248,6 +336,45 @@ def _print_unscored(r: CycleReport) -> None:
         print(f"  {r.unscored} unscored (ineligible): {', '.join(r.unscored_tickers)}")
 
 
+def _book_line(book: BookResult) -> str:
+    """One line: the effective caps, then every relaxation, shortfall and pin note (T-136)."""
+    parts = [
+        f"book: {book.n_held} of {book.requested_n} names, {book.scheme}, "
+        f"name cap {book.max_name_weight:.4g}, sector cap {book.max_sector_weight:.4g}"
+    ]
+    parts += [
+        f"RELAXED {r.cap} cap {r.requested:.4g} -> {r.effective:.4g}" for r in book.relaxations
+    ]
+    if book.shortfall:
+        parts.append(f"SHORTFALL {book.shortfall} (fewer eligible names than N; not padded)")
+    parts += [f"REFUSED pin {p.ticker} ({p.reason})" for p in book.refused_pins]
+    parts += [f"flagged pin {p.ticker} ({p.reason})" for p in book.flagged_pins]
+    if book.overflow_tickers:
+        parts.append(f"held past a full sector: {', '.join(book.overflow_tickers)}")
+    return "; ".join(parts)
+
+
+def _print_book(r: CycleReport) -> None:
+    if r.book is not None:
+        print(f"  {_book_line(r.book)}")
+
+
+def _print_dry_run_book(d: DryRunBook) -> None:
+    """`select --dry-run`: the book itself, then the effective caps, relaxations and pin notes."""
+    print(
+        f"dry run for {d.cycle_date}: book built on the stored ranking of the "
+        f"{d.source_cycle_type} run {d.source_cycle_run_id} (read-only: nothing written)"
+    )
+    width = max((len(t) for t, _, _ in d.rows), default=6)
+    print(f"  {'ticker':<{width}}  {'sector':<28}  weight")
+    for ticker, sector, weight in d.rows:
+        print(f"  {ticker:<{width}}  {sector or '-':<28}  {weight:.6f}")
+    print(f"  total {sum(w for _, _, w in d.rows):.6f}")
+    print(f"  {_book_line(d.book)}")
+    for rel in d.book.relaxations:
+        print(f"    relaxed {rel.cap}: {rel.reason}")
+
+
 def _print_bypass_warnings(r: CycleReport) -> None:
     if r.stale_price_bypassed is not None:
         print(
@@ -284,6 +411,10 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     if args.command == "undo-run":  # needs no model settings
         return _undo_run(args)
     settings = _settings(args)
+    if args.command == "select" and args.dry_run:
+        # read-only preview from the stored ranking: no cycle step, no hook, no cycle_run
+        _print_dry_run_book(dry_run_book(settings, _resolve_cycle_date(parser, args)))
+        return 0
     hook = make_hook(settings)
 
     if args.command == "monitor":
@@ -298,14 +429,13 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
         return 0
     if args.command == "select":
         cycle_date = _resolve_cycle_date(parser, args)
-        if args.dry_run:
-            settings = settings.model_copy(update={"top_n": 0})
         r = run_selection(settings, cycle_date, fundamental_hook=hook)
         print(
             f"select {r.cycle_run_id} {r.cycle_date}: {r.selected} selected, "
             f"{r.vetoed} hard-vetoed (steps: {'+'.join(r.steps_run) or 'all skipped'}; "
             f"manifest {r.manifest_tag})"
         )
+        _print_book(r)
         _print_unscored(r)
         _print_bypass_warnings(r)
         return 0
@@ -327,6 +457,7 @@ def _dispatch(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
     while d <= end:
         r = run_replay(settings, d.isoformat(), fundamental_hook=hook)
         print(f"  {d.isoformat()}: {r.selected} selected")
+        _print_book(r)
         _print_unscored(r)
         _print_bypass_warnings(r)
         d += timedelta(days=args.step_days)

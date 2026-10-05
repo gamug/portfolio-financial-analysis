@@ -14,7 +14,6 @@ import kg_schema
 from cycle.cli import _print_unscored, build_parser
 from cycle.cli import main as cycle_main
 from cycle.config import CycleSettings
-from cycle.construction import Candidate, target_weights
 from cycle.data import TooManyUnscored, too_many_unscored_reason, unscored_assets
 from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_selection
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
@@ -138,32 +137,6 @@ def test_sector_roll_up_mean_and_deviation() -> None:
     assert momentum[2] == pytest.approx(-10.0)
     assert momentum[3] == pytest.approx(0.0)
     assert 4 not in momentum  # sector-less asset dropped
-
-
-# -- construction -----------------------------------------------
-
-
-def test_target_weights_respects_name_and_sector_caps() -> None:
-    cands = [
-        Candidate(
-            asset_id=i, blended_score=100.0 - i, sector_id=1 if i < 4 else 2, realized_vol_90d=0.2
-        )
-        for i in range(8)
-    ]
-    w = target_weights(cands, top_n=6, max_name_weight=0.30, max_sector_weight=0.5)
-    assert abs(sum(w.values()) - 1.0) < 1e-6
-    # caps are enforced iteratively and converge to within rounding
-    assert max(w.values()) <= 0.30 + 1e-3
-    sector1 = sum(v for aid, v in w.items() if aid < 4)
-    assert sector1 <= 0.5 + 1e-3
-
-    # without a binding sector cap, higher score keeps a higher weight
-    flat = [
-        Candidate(asset_id=i, blended_score=100.0 - 10 * i, sector_id=1, realized_vol_90d=0.2)
-        for i in range(5)
-    ]
-    fw = target_weights(flat, top_n=5, max_name_weight=0.9, max_sector_weight=1.0)
-    assert fw[0] > fw[1] > fw[4]
 
 
 # -- rules ------------------------------------------------------

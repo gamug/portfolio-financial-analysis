@@ -1,10 +1,8 @@
-"""Turn a ranked, veto-filtered asset list into target portfolio weights.
+"""Turn a ranked asset list into the target portfolio book.
 
-Two constructions live here. ``target_weights`` is the original (HARD vetoes already removed ->
-take the top N -> raw weights by scheme -> alternate name and sector caps 8 times -> renormalize);
-it can silently return a book that breaks a cap, and ``orchestrator.py`` still calls it until
-T-136 switches the caller and deletes it. ``build_book`` is its replacement (T-135, the T-134
-decisions, SPEC FR-007): one pure, deterministic function whose result states every relaxation.
+``build_book`` (T-135/T-136, the T-134 decisions, SPEC FR-007) is one pure, deterministic function:
+who is held (pins, exclusions, the sector-aware fill), their weights (an exact projection onto the
+band and both caps), and a result that states every relaxation, shortfall and refused pin.
 """
 
 from __future__ import annotations
@@ -13,120 +11,6 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
-
-
-@dataclass(frozen=True)
-class Candidate:
-    asset_id: int
-    blended_score: float
-    sector_id: int | None
-    realized_vol_90d: float | None
-
-
-def _raw_weights(cands: list[Candidate], scheme: str) -> dict[int, float]:
-    if scheme == "equal" or not cands:
-        return {c.asset_id: 1.0 for c in cands}
-    if scheme == "inverse_vol":
-        inv = {c.asset_id: (1.0 / c.realized_vol_90d if c.realized_vol_90d else 0.0) for c in cands}
-        if any(inv.values()):
-            return inv
-        return {c.asset_id: 1.0 for c in cands}
-    # score_proportional (default): shift so the min score maps to a small positive weight
-    lo = min(c.blended_score for c in cands)
-    return {c.asset_id: (c.blended_score - lo) + 1.0 for c in cands}
-
-
-def _cap_names(weights: dict[int, float], cap: float) -> dict[int, float]:
-    """Water-fill: pin over-cap names at *cap*, spread the rest among the uncapped."""
-    if not weights or cap * len(weights) < 1.0 - 1e-9:
-        return _normalize(weights)  # cap too tight to sum to 1; best effort
-    w = dict(weights)
-    capped: set[int] = set()
-    for _ in range(len(w) + 1):
-        over = [aid for aid, v in w.items() if v > cap + 1e-12 and aid not in capped]
-        if not over:
-            break
-        capped.update(over)
-        for aid in over:
-            w[aid] = cap
-        used = sum(w[aid] for aid in capped)
-        free = [aid for aid in w if aid not in capped]
-        free_sum = sum(w[aid] for aid in free)
-        if free_sum <= 0:
-            break
-        scale = (1.0 - used) / free_sum
-        for aid in free:
-            w[aid] *= scale
-    return w
-
-
-def _normalize(weights: dict[int, float]) -> dict[int, float]:
-    total = sum(weights.values())
-    if total <= 0:
-        n = len(weights)
-        return {aid: 1.0 / n for aid in weights} if n else {}
-    return {aid: w / total for aid, w in weights.items()}
-
-
-def target_weights(
-    cands: list[Candidate],
-    *,
-    top_n: int,
-    scheme: str = "score_proportional",
-    max_name_weight: float = 0.10,
-    max_sector_weight: float = 0.30,
-) -> dict[int, float]:
-    chosen = sorted(cands, key=lambda c: c.blended_score, reverse=True)[:top_n]
-    if not chosen:
-        return {}
-    sector_of = {c.asset_id: c.sector_id for c in chosen}
-    weights = _normalize(_raw_weights(chosen, scheme))
-
-    # Alternate name and sector caps until both hold (or we give up and return the
-    # closest feasible mix). Each cap step redistributes only to non-capped names.
-    for _ in range(8):
-        weights = _cap_names(weights, max_name_weight)
-        before = dict(weights)
-        weights = _cap_sectors(weights, sector_of, max_sector_weight)
-        if (
-            max(weights.values()) <= max_name_weight + 1e-9
-            and _max_sector(weights, sector_of) <= max_sector_weight + 1e-9
-        ):
-            break
-        if weights == before:
-            break
-    return weights
-
-
-def _max_sector(weights: dict[int, float], sector_of: dict[int, int | None]) -> float:
-    tot: dict[int | None, float] = {}
-    for aid, w in weights.items():
-        tot[sector_of[aid]] = tot.get(sector_of[aid], 0.0) + w
-    return max(tot.values()) if tot else 0.0
-
-
-def _cap_sectors(
-    weights: dict[int, float], sector_of: dict[int, int | None], cap: float
-) -> dict[int, float]:
-    tot: dict[int | None, float] = {}
-    for aid, wt in weights.items():
-        tot[sector_of[aid]] = tot.get(sector_of[aid], 0.0) + wt
-    over = {s for s, t in tot.items() if t > cap + 1e-12}
-    if not over or all(sector_of[aid] in over for aid in weights):
-        return _normalize(weights)
-    w = dict(weights)
-    for aid in w:
-        if sector_of[aid] in over:
-            w[aid] *= cap / tot[sector_of[aid]]
-    used = sum(v for aid, v in w.items() if sector_of[aid] in over)
-    free = [aid for aid in w if sector_of[aid] not in over]
-    free_sum = sum(w[aid] for aid in free)
-    if free_sum > 0:
-        scale = (1.0 - used) / free_sum
-        for aid in free:
-            w[aid] *= scale
-    return w
-
 
 # -- build_book (T-135) -------------------------------------------------------------------------
 
@@ -138,6 +22,11 @@ _TILT_FLOOR = 0.5  # score_tilt band, in multiples of 1/N_held: [0.5/N, 1.5/N]
 _TILT_CEILING = 1.5
 _EPS = 1e-12  # tolerance for "is this a real cap breach / relaxation", far below the 1e-9 contract
 _FULL_SLACK = 1e-9  # keeps floor(0.3 * 10) at 3 despite float representation
+
+
+class BookInputError(ValueError):
+    """The inputs contradict each other or are out of range (a pin that is excluded, more pins than N, a
+    cap outside (0, 1]...): a user error to report, not a bug."""
 
 
 @dataclass(frozen=True)
@@ -355,7 +244,7 @@ def _resolve_pins(
                 PinNote(ticker, "not among the candidates (unknown, unscored or filtered)")
             )
         elif prefs.barred(c):
-            raise ValueError(f"cannot pin {c.ticker}: its sector {c.sector!r} is excluded")
+            raise BookInputError(f"cannot pin {c.ticker}: its sector {c.sector!r} is excluded")
         elif c.veto == "HARD":
             refused.append(PinNote(c.ticker, "HARD veto: a HARD-vetoed name is never held"))
         else:
@@ -396,7 +285,7 @@ def _select(
     ranked = sorted(candidates, key=_rank_key)
     held_pins, refused, flagged = _resolve_pins(ranked, prefs)
     if len(held_pins) > n:
-        raise ValueError(f"{len(held_pins)} pins do not fit in n = {n}")
+        raise BookInputError(f"{len(held_pins)} pins do not fit in n = {n}")
     eligible = [c for c in ranked if c.veto != "HARD" and not prefs.barred(c)]
     n_held = min(n, len(eligible))
     threshold = max(1, math.floor(sector_cap * n_held + _FULL_SLACK))
@@ -444,21 +333,35 @@ def _resolve_caps(
     return _Caps(lo, name_cap, sector_cap, tuple(relaxations))
 
 
-def _validate(
-    candidates: Sequence[BookCandidate],
+def validate_settings(  # noqa: PLR0913 - the settings that need no candidates to be checked
     n: int,
+    *,
     scheme: str,
     max_name_weight: float | None,
     max_sector_weight: float,
+    pins: Iterable[str] = (),
+    exclude: Iterable[str] = (),
+    only_sectors: Iterable[str] | None = None,
 ) -> None:
+    """Everything about the request that is wrong whatever the candidates are (``BookInputError``).
+
+    ``select --dry-run`` calls it first, before it reads anything."""
     if n < 1:
-        raise ValueError(f"n must be >= 1, got {n}")
+        raise BookInputError(f"n must be >= 1, got {n}")
     if scheme not in SCHEMES:
-        raise ValueError(f"unknown weight scheme {scheme!r}; expected one of {SCHEMES}")
+        raise BookInputError(f"unknown weight scheme {scheme!r}; expected one of {SCHEMES}")
     if not 0.0 < max_sector_weight <= 1.0:
-        raise ValueError(f"max_sector_weight must be in (0, 1], got {max_sector_weight}")
+        raise BookInputError(f"max_sector_weight must be in (0, 1], got {max_sector_weight}")
     if max_name_weight is not None and not 0.0 < max_name_weight <= 1.0:
-        raise ValueError(f"max_name_weight must be in (0, 1], got {max_name_weight}")
+        raise BookInputError(f"max_name_weight must be in (0, 1], got {max_name_weight}")
+    if only_sectors is not None and not {_key(s) for s in only_sectors}:
+        raise BookInputError("only_sectors is empty; pass None to allow every sector")
+    both = {_key(t) for t in pins} & {_key(t) for t in exclude}
+    if both:
+        raise BookInputError(f"cannot both pin and exclude: {sorted(both)}")
+
+
+def _validate_candidates(candidates: Sequence[BookCandidate]) -> None:
     ids = {c.asset_id for c in candidates}
     tickers = {_key(c.ticker) for c in candidates}
     if len(ids) != len(candidates) or len(tickers) != len(candidates):
@@ -482,7 +385,7 @@ def build_book(  # noqa: PLR0913 - keyword-only inputs, one per T-134 decision
     """The target book for *n* names: pure, deterministic, always fully invested (T-134, FR-007).
 
     **Selection**, in this order: (1) drop excluded tickers and sectors, or keep only
-    *only_sectors* (excluding a pinned ticker is a ``ValueError``); (2) HARD-vetoed candidates are
+    *only_sectors* (excluding a pinned ticker is a ``BookInputError``, a ``ValueError``); (2) HARD-vetoed candidates are
     never held, a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin is held and flagged;
     (3) pins first, then the rest, each by blended score descending (ties by ticker, so every run and
     every input order gives the same book); (4) fill by the sector-aware rule — a sector is *full* at
@@ -501,17 +404,24 @@ def build_book(  # noqa: PLR0913 - keyword-only inputs, one per T-134 decision
     Pins obey the band and the caps by the weights; they count toward the fullness of their sector but
     are never skipped for it.
     """
-    _validate(candidates, n, scheme, max_name_weight, max_sector_weight)
+    pins, exclude, exclude_sectors = tuple(pins), tuple(exclude), tuple(exclude_sectors)
+    only = None if only_sectors is None else tuple(only_sectors)
+    validate_settings(
+        n,
+        scheme=scheme,
+        max_name_weight=max_name_weight,
+        max_sector_weight=max_sector_weight,
+        pins=pins,
+        exclude=exclude,
+        only_sectors=only,
+    )
+    _validate_candidates(candidates)
     prefs = _Prefs(
         frozenset(map(_key, pins)),
         frozenset(map(_key, exclude)),
         frozenset(map(_key, exclude_sectors)),
-        None if only_sectors is None else frozenset(map(_key, only_sectors)),
+        None if only is None else frozenset(map(_key, only)),
     )
-    if prefs.only is not None and not prefs.only:
-        raise ValueError("only_sectors is empty; pass None to allow every sector")
-    if prefs.pins & prefs.exclude:
-        raise ValueError(f"cannot both pin and exclude: {sorted(prefs.pins & prefs.exclude)}")
 
     sel = _select(candidates, n, max_sector_weight, prefs)
     if not sel.chosen:  # nothing eligible: an empty book, the whole of n is the shortfall

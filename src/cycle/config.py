@@ -27,9 +27,22 @@ class CycleSettings(BaseModel):
     universe: str = "SP500"
     top_n: int = 30
     score_weights: dict[str, float] = Field(default_factory=lambda: dict(_DEFAULT_WEIGHTS))
-    weight_scheme: str = "score_proportional"  # equal | score_proportional | inverse_vol
-    max_name_weight: float = 0.10
+    # T-134/T-136: score_tilt is an equal-weight core with a bounded score tilt, each weight in
+    # [0.5/N, 1.5/N]; the other three stay selectable so old runs remain reproducible.
+    weight_scheme: str = "score_tilt"  # score_tilt | equal | score_proportional | inverse_vol
+    # None derives the name cap (1.5/N for score_tilt; 0.10 for the legacy schemes). An explicit
+    # value wins -- which is why the default must be None: 0.10 passed explicitly would override
+    # 1.5/N silently.
+    max_name_weight: float | None = None
     max_sector_weight: float = 0.30
+    # User preferences (T-134 decision 5): decision support, never the thesis book. Pins are held
+    # first (a HARD-vetoed pin is refused); `only_sectors` None means every sector. A writing
+    # `select` refuses them; `select --dry-run` (a read-only preview, `dry_run_book`) and `backfill` (the
+    # replay book) accept them.
+    pins: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    exclude_sectors: tuple[str, ...] = ()
+    only_sectors: tuple[str, ...] | None = None
     soft_veto_penalty: float = 15.0  # points knocked off blended score per active soft veto
     # Which fundamental_metrics engine version(s) the cycle reads (T-090): None = the newest
     # stored per group; "metrics-v1" = that one; "valuation=metrics-v1" = per group. A cycle_run
@@ -67,6 +80,29 @@ class CycleSettings(BaseModel):
     # veto lag -- but rank refuses outright, rather than silently building a portfolio blind on
     # most of the universe, once more than this share has no score at all.
     unscored_max_share: float = 0.05
+
+    @property
+    def has_preferences(self) -> bool:
+        return bool(
+            self.pins or self.exclude or self.exclude_sectors or self.only_sectors is not None
+        )
+
+    def construction(self) -> dict[str, object]:
+        """The settings that decide the book -- what a resumed run must not change (T-136)."""
+
+        def norm(values: tuple[str, ...]) -> list[str]:
+            return sorted({v.strip().casefold() for v in values})
+
+        return {
+            "top_n": self.top_n,
+            "weight_scheme": self.weight_scheme,
+            "max_name_weight": self.max_name_weight,
+            "max_sector_weight": self.max_sector_weight,
+            "pins": norm(self.pins),
+            "exclude": norm(self.exclude),
+            "exclude_sectors": norm(self.exclude_sectors),
+            "only_sectors": None if self.only_sectors is None else norm(self.only_sectors),
+        }
 
     @classmethod
     def load(cls, env_file: str | os.PathLike[str] | None = None) -> CycleSettings:

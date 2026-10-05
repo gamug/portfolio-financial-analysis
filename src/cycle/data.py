@@ -20,7 +20,7 @@ def active_universe(
     cycle_date: str,
     universe_db_path: str | Path | None = None,
 ) -> list[Row]:
-    """``(id, ticker, sector_id)`` for the *universe* members as of *cycle_date*,
+    """``(id, ticker, sector_id, sector)`` (``sector`` is the sector's name) for the *universe* members as of *cycle_date*,
     read point-in-time from ``universe.db`` and mapped by ticker.
 
     Raises ``RuntimeError`` when ``universe.db`` has no members as of *cycle_date*
@@ -42,11 +42,24 @@ def active_universe(
     ids = sorted(mapping.values())
     return list(
         conn.execute(
-            f"SELECT id, ticker, sector_id FROM assets WHERE id IN {in_clause(ids)} "  # noqa: S608
-            "ORDER BY ticker",
+            f"SELECT a.id, a.ticker, a.sector_id, s.name AS sector FROM assets a "  # noqa: S608
+            f"LEFT JOIN sectors s ON s.id = a.sector_id WHERE a.id IN {in_clause(ids)} "
+            "ORDER BY a.ticker",
             ids,
         )
     )
+
+
+def asset_labels(conn: Database, asset_ids: list[int]) -> dict[int, tuple[str, str | None]]:
+    """``asset_id -> (ticker, sector name)`` (a read; used by the read-only dry run)."""
+    if not asset_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT a.id, a.ticker, s.name AS sector FROM assets a "  # noqa: S608
+        f"LEFT JOIN sectors s ON s.id = a.sector_id WHERE a.id IN {in_clause(asset_ids)}",
+        asset_ids,
+    )
+    return {int(r["id"]): (str(r["ticker"]), r["sector"]) for r in rows}
 
 
 def latest_metrics(

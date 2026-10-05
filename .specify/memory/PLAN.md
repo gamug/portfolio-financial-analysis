@@ -1721,7 +1721,7 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is superseded and must not be implemented. The
    8-round loop goes and infeasibility is a reported result, not a silent
    best effort.
-3. **Wire (`T-136`)** it through `cycle` (and delete the old `Candidate` with `target_weights`): the settings, the preference flags on `select`/`backfill`, and
+3. **Wire (`T-136`, done 2026-10-05, PR #119; `select --dry-run` is a read-only preview from the stored ranking)** it through `cycle` (and delete the old `Candidate` with `target_weights`): the settings, the preference flags on `select`/`backfill`, and
    the effective caps, relaxations, shortfall and preferences in `cycle_run.params_json` (the existing
    `v_weight_scheme` already reads those keys, so no view change).
 4. **Align `quant`'s benchmark (`T-137`)**: the same N-derived name cap (`1.5/N`) and sector cap 0.30, no
