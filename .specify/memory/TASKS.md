@@ -91,7 +91,19 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       9. **Acceptance**: exact feasibility. Both caps and the band hold within 1e-9, or the relaxation is
          recorded. Tested for N ∈ {1, 3, 5, 10, 20, 30}, single-sector and few-sector cases, pins
          (including vetoed ones), exclusions, and the production shape (10 names, 4 Financials, 3 Energy).
-- [ ] **T-135** Implement in `src/cycle/construction.py` the **pure** construction function per `T-134`:
+- [x] **T-135** — **done 2026-10-05, PR #118 (approved)**: `build_book`/`BookResult` in
+      `src/cycle/construction.py`, **not wired** (`target_weights` and its caller are untouched until `T-136`).
+      Exactness: the reviewer re-checked the projection against cvxpy/Clarabel on 600 random cases (all
+      schemes, N ∈ {1, 3, 5, 10, 20, 30}, 1–9 sectors, vetoes): objective ≤ cvxpy's in every case, largest
+      weight difference 2.8e-7, largest constraint violation 4e-16. Choices where this entry was silent,
+      accepted on review: a new `BookCandidate` (sector as a label; unclassified names share one group);
+      a pin in an excluded sector, or more pins than N, is a `ValueError`, an unknown pin is refused with a
+      reason; pins count toward their sector's fullness but are never skipped for it; an explicit name cap
+      above `1.5/N` wins; the legacy schemes project with floor 0 and name cap = explicit, else 0.10
+      (relaxed to `1/N_held` and recorded), `inverse_vol` gives a name with no volatility the average
+      inverse vol (old stored runs are not bit-reproducible); `overflow_tickers` lists names held past a
+      full sector when nothing else was left; nothing eligible → an empty book with the full shortfall.
+      The task as specified: implement in `src/cycle/construction.py` the **pure** construction function per `T-134`:
       `score_tilt` (the `[0.5/N, 1.5/N]` band), the sector-aware fill, the sector cap with a recorded
       relaxation to the smallest feasible value, pins and exclusions (`--pin`, `--exclude`,
       `--exclude-sectors`, `--only-sectors` as plain arguments), and a **result object**: weights, effective
@@ -108,7 +120,9 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       the production shape (10 names / 4 Financials / 3 Energy); sum-to-1, the band and both caps hold
       within 1e-9 or the relaxation is in the result. → step 2.
 - [ ] **T-136** Wire it through `cycle`: `CycleSettings`/`--top-n`, `score_tilt` as the default
-      `weight_scheme`, and the CLI flags `--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors` on
+      `weight_scheme`, switch the caller to `build_book` (the orchestrator builds `BookCandidate`s, HARD-vetoed
+      names included and marked) and **delete the old `Candidate` together with `target_weights`** and its
+      8-round loop, and the CLI flags `--pin`, `--exclude`, `--exclude-sectors`, `--only-sectors` on
       `cycle select` and `backfill`; the **effective** caps, every relaxation, the shortfall and the
       preferences persisted in `cycle_run.params_json` (so `v_weight_scheme`, which reads
       `$.max_name_weight`/`$.max_sector_weight`, reports what was applied; no view change). A HARD-vetoed
@@ -126,7 +140,9 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       never reported as a thesis result); every book sums to 1 and satisfies the band and both caps, or
       records its relaxation. Methodology fix, so a `docs/model_fixes.md` entry with before/after numbers
       and a reference (constitution AI behavior #12; the 1/N benchmark, DeMiguel, Garlappi & Uppal 2009).
-      → step 5.
+      Report the **top-N score dispersion** and state in the entry that the tilt spans the held names'
+      score range, so the weight spread is always the full band even when the scores are tightly clustered
+      (reviewer, PR #118). → step 5.
 - [ ] **T-139** Docs and artifacts: `docs/cycle.md` (replace "caps are approximate"), `docs/quant.md` if
       `T-137` lands, `SPEC.md` FR-007, and both architecture artifacts (constitution AI behavior #11,
       reconcile, never rename), and `SPEC.md` FR-001's older sentence "a re-run on the same

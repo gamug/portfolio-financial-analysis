@@ -1714,14 +1714,14 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    toward N and obeys the band and caps; a HARD-vetoed pin is refused with its reason, a SOFT-vetoed pin
    is allowed and flagged; `--only-sectors` relaxes the sector cap to feasibility; all are recorded in
    `cycle_run.params_json`.
-2. **Implement (`T-135`)** the pure construction function in `construction.py` — `score_tilt`, the band,
+2. **Implement (`T-135`, done 2026-10-05, PR #118, not wired)** the pure construction function in `construction.py` — `score_tilt`, the band,
    the sector-aware fill (full = `max(1, floor(sector cap × N))` names, N = names actually held), pins and
    exclusions, and the relaxation of a name cap below 1/N — returning a result object (weights, effective caps,
    relaxations, shortfall, refused and flagged pins). The name cap is `1.5/N` with no 0.10 floor;
    the earlier `resolve_caps(n)` proposal (`max(0.10, 1.5/N)`) is superseded and must not be implemented. The
    8-round loop goes and infeasibility is a reported result, not a silent
    best effort.
-3. **Wire (`T-136`)** it through `cycle`: the settings, the preference flags on `select`/`backfill`, and
+3. **Wire (`T-136`)** it through `cycle` (and delete the old `Candidate` with `target_weights`): the settings, the preference flags on `select`/`backfill`, and
    the effective caps, relaxations, shortfall and preferences in `cycle_run.params_json` (the existing
    `v_weight_scheme` already reads those keys, so no view change).
 4. **Align `quant`'s benchmark (`T-137`)**: the same N-derived name cap (`1.5/N`) and sector cap 0.30, no
@@ -1731,7 +1731,9 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    test; its universe/liquidity gate stays independent of scores.
 5. **Verify (`T-138`)** on scratch copies of `financial.db`: the default thesis book (N = 30, no
    preferences) with a sensitivity check over N ∈ {10, 20, 30}, and one run with preferences; record the
-   methodology change in `docs/model_fixes.md` (constitution AI behavior #12). The thesis book is the
+   methodology change in `docs/model_fixes.md` (constitution AI behavior #12), reporting the top-N score
+   dispersion and stating that the tilt spans the held names' score range (the spread is the full band even
+   for tightly clustered scores). The thesis book is the
    default configuration; books built with user preferences are decision support and are never reported as
    thesis results.
 6. **Docs/artifacts (`T-139`)**: `docs/cycle.md`, `docs/quant.md`, `SPEC.md` FR-007, both architecture
