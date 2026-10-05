@@ -51,8 +51,9 @@ def _only_columns(payload: dict[str, Any], keep: set[str]) -> dict[str, Any]:
 
 
 def _q1_payload() -> dict[str, Any]:
-    """The Q1 filing: the real Q2 payload cut down to its Q1 columns."""
-    return _only_columns(_stz_q2_payload(), {"2023-05-31 (Q1)", "2022-05-31 (Q1)"})
+    """The Q1 filing: the real Q2 payload cut down to its Q1 columns -- and its balance sheet to
+    the fiscal year end (2023-02-28), since the Q2 balance sheet (2023-08-31) is not Q1's."""
+    return _only_columns(_stz_q2_payload(), {"2023-05-31 (Q1)", "2022-05-31 (Q1)", "2023-02-28"})
 
 
 def _task(form: str = "10-Q", year: int = 2023) -> _YearTask:

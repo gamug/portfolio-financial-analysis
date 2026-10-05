@@ -225,6 +225,11 @@ return a book that breaks a cap without saying so. → `PLAN.md` Work item 18.
       evaluation); record in `docs/quant.md`/`docs/cycle.md`. → step 7.
 - [ ] **T-140** (P0, pilot findings 2026-10-04; blocks `T-079` and `T-100`) Two ingestion defects
       found by the 20-asset pilot on a fresh database. → `PLAN.md` Work item 8, step 8.
+      **Implemented in PR #115 (engine `metrics-v5`); acceptance pending pilot-2** -- the box stays
+      open until the criteria below are measured on a fresh database after Work item 18 merges.
+      Record: `docs/model_fixes.md`, T-140. Known before pilot-2: APO's Q1-2023 10-Q stays unstored
+      (the gateway returns only the prior fiscal year's column; recorded as a run error, upstream
+      note drafted), so a "no gap over 110 days" check still sees APO's 181-day hole.
       **(a) Revenue the gateway drops.** The gateway's `T-042` rule (`no_filed_nondimensional_fact`)
       removes revenue that a filer tags only with a dimension. APA 2021Q1–2023Q3 (11 filings) then
       has no revenue: FY2022 "Total revenues" $11,075M and production revenues $9,220M are dropped,

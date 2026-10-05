@@ -138,8 +138,16 @@ def _stmts(*columns: str) -> Statements:
         "dimension": False,
         **dict.fromkeys(columns, 1.0),
     }
+    # the 10-Q's own balance sheet carries the last fiscal year end, which counts its quarter (T-140)
+    assets = {
+        "concept": "us-gaap_Assets",
+        "label": "Assets",
+        "abstract": False,
+        "dimension": False,
+        "2024-12-31": 1.0,
+    }
     return Statements.from_payload(
-        {"income_statement": [row], "balance_sheet": [], "cash_flow": []}
+        {"income_statement": [row], "balance_sheet": [assets], "cash_flow": []}
     )
 
 

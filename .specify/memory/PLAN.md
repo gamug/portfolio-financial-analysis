@@ -806,7 +806,7 @@ as task `T-077`.
    no quarter of its own (APO Q1-2023: the gateway returns only the prior fiscal year's column; note this
    for `portfolio-data-mining`). It changes a deterministic computation's methodology, so it needs a
    `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of the bundled LLM re-run
-   (steps 3+4+5, `T-079`).
+   (steps 3+4+5, `T-079`). **Implemented in PR #115 (engine `metrics-v5`); acceptance pending pilot-2.**
 
 **Acceptance criteria**:
 
