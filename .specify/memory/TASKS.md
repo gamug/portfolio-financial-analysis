@@ -42,10 +42,17 @@ now the only durable record. See `PLAN.md`'s "🔴 Priority Override" section fo
 
 Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143` (Work item 12).
 
-- [ ] **T-010** Design decision: a new `orchestrator/`-style package vs. a
+- [x] **T-010** Design decision: a new `orchestrator/`-style package vs. a
       `python -m cycle run-all`-style entrypoint on an existing package —
       pick one, consistent with constitution: Project structure #1's bar
       for a new top-level package. → `PLAN.md` Work item 2, step 1.
+      *(Closed 2026-10-06, user: the repo gets a **single entry point** — the orchestrator, exposed via
+      FastAPI/Swagger, with every intermediate step also an endpoint. Needs `T-018` before `T-011`.)*
+- [ ] **T-018** Amend the constitution (Tech stack #3's "read-only `api/`") and `SPEC.md` FR-014 ("never
+      triggers an agent run", all connections `mode=ro`) so `api/` may host the run endpoints; the existing
+      `GET` views stay read-only and FR-014's acceptance check is re-scoped to them. Must land before
+      `T-011` (a plan that conflicts with the constitution amends it first). → `PLAN.md` Work item 2,
+      step 1 *(added 2026-10-06)*.
 - [ ] **T-011** Implement the sequencing runner: pricing_agent →
       fundamental_agent → entity_resolution → cycle → quant, one
       `--analysis-date` fanned out to each step's own CLI/entrypoint,
@@ -67,6 +74,12 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
 - [ ] **T-015** Verify: killing the orchestrator mid-run and re-invoking it
       does not redo an already-completed step. → second acceptance
       criterion.
+- [ ] **T-017** Implement the incremental, upstream-aware run: detect pending SEC filings, prices and
+      (read-only) `portfolio-nlp` semantic output as of `--analysis-date`; append only; when nothing is
+      pending, run only `cycle`. Semantic check degrades to "no source configured" until Work item 4's
+      `KG_NLP_DB` seam exists. Document the cross-repo order (`portfolio-nlp` first, then this repo) per
+      the Portfolio Thesis artifact. → `PLAN.md` acceptance criteria, "Incremental, upstream-aware run"
+      *(added 2026-10-06)*.
 - [ ] **T-016** Update `SPEC.md` §13 item 3 and §2.2's "out of scope"
       hand-sequencing line to reflect the resolved state. Also update the
       two architecture artifacts per constitution AI behavior #11 —

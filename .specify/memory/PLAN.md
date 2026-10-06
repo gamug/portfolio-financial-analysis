@@ -213,10 +213,20 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
 
 **Approach**:
 
-1. Design a thin top-level runner (a new package, e.g. `orchestrator/`, or a
-   `python -m cycle run-all`-style entrypoint — decide which, consistent
-   with constitution: Project structure #1's bar for a new top-level
-   package) that takes one `--analysis-date` and sequences the five steps.
+1. **Decided 2026-10-06 (`T-010`, user): this repo gets a single entry point.** The orchestrator is that
+   entry point — one `--analysis-date` sequences the five steps — and it is exposed through the FastAPI app
+   (Swagger at `/docs`), which also exposes **each intermediate step as its own endpoint**
+   (`pricing_agent`, `fundamental_agent`, `entity_resolution`, `cycle`, `quant`), so a caller can run the
+   whole pipeline or any single step through the same surface. Consequences to resolve before `T-011`
+   (`T-018`):
+   - The constitution (Tech stack #3, "read-only `api/`") and `SPEC.md` FR-014 ("never triggers an agent
+     run", every connection `mode=ro`) currently forbid this. They must be amended first, not overridden.
+     The existing `GET` read-contract endpoints stay read-only; only the new run endpoints get write-capable
+     connections, and FR-014's `grep`-for-`connect(` acceptance check is re-scoped accordingly.
+   - Runs are long (LLM and gateway calls), so run endpoints return a run handle and are polled, rather
+     than holding the request open; the orchestrator's provenance rows (step 3) are what the poll reads.
+   - Where the orchestration code lives (a new top-level package vs. inside `api/`) is left to `T-011`; a
+     new package still has to meet Project structure #1's bar.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
    than re-implementing skip logic — the orchestrator's job is sequencing
    and failure surfacing, not duplicating each package's resume state.
@@ -237,6 +247,23 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
 - Killing the orchestrator mid-run and re-invoking it does not re-do a step
   that already completed and wrote its output (delegates to each package's
   own idempotency, per step 2 above).
+- **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks
+  for new upstream information as of `--analysis-date`: new SEC filings and new stock prices from
+  `portfolio-data-mining` (via the existing gateways), and new semantic information from `portfolio-nlp`
+  (assumed to have already run — see the execution order below — so the orchestrator only *checks* for its
+  output, never triggers it). Specifically:
+  - Runs **append** to the shared database, never erase or rebuild it (consistent with the append-only,
+    idempotent-writes invariant); each step processes only the pending data.
+  - If **no** step has pending data, the orchestrator runs only `cycle` (the scoring/ranking lane), and
+    skips `pricing_agent`, `fundamental_agent`, `entity_resolution` and `quant`.
+  - The semantic check is read-only. Until Work item 4 lands (the `KG_NLP_DB` seam, `T-030`; `SEMANTIC` is
+    out of the composite weights until then per `T-141`), it reports "no semantic source configured"
+    instead of failing, and does not count toward "pending data".
+  - **Execution order across the data repositories** is set by the system-wide
+    [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040) artifact:
+    `portfolio-data-mining` → **`portfolio-nlp`** first, then **`portfolio-financial-analysis`**. This
+    repo's orchestrator therefore never runs before `portfolio-nlp` has finished its own run for the same
+    date. The orchestrator documents this ordering and does not enforce it across repositories.
 - `SPEC.md` §13 item 3 updated to reflect the resolved state, and §2.2's
   "out of scope" line about hand-sequencing removed/updated to match. Also
   update the two architecture artifacts per constitution AI behavior #11.
