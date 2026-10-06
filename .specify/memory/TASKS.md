@@ -367,9 +367,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       `fundamental_agent run` for every asset → Ring-1 `data_quality_issue` backfill →
       `cycle select` → `quant backfill-actions`/`build-returns`/`build-risk-model`/
       `optimize`/`evaluate`. **Depends on every other task in `TASKS.md` — every task
-      open today and every task added later — except those the user deferred or superseded on
-      2026-10-05**: Work item 4 and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` are deferred until
-      after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by this task.
+      open today and every task added later — except those the user deferred or superseded
+      (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
+      20's `T-144` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by this task.
       `T-083` and `T-142` (Work item 19) and the final pilot `T-143` are prerequisites. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
@@ -401,7 +401,8 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 **🔴 Current priority order (user's, 2026-10-05; scope: finish this repo first):** Work item 8 (`T-141` →
 `T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) → Work item 19 (`T-083`, `T-142`) →
 Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
-Work item 4 and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` are deferred until after `T-100`; Work item 3
+Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-144`) are deferred until after
+`T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per
 PR throughout, each ending with its status commit after approval. Work item 18 (the N-ticker weight
 heuristic) closed 2026-10-05, see `CHANGELOG.md`.

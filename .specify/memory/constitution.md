@@ -450,7 +450,10 @@ above should cite the section by name.
   writes" (`portfolio-reports`, `portfolio-app`) loses that guarantee for the
   package as a whole. The per-package CLIs stay; Project structure #2 and
   "Executable cmds" only gain a pointer to the run endpoints, and
-  "Executable cmds" also lists the previously omitted `cycle undo-run`.
+  "Executable cmds" also lists the previously omitted `cycle undo-run`. Tech
+  stack #3 also states that run-endpoint access control (SPEC FR-015, Work item
+  20, deferred) is required before any non-dev deployment, and until then the
+  run endpoints are for the dev container / pilot only.
 - 1.4.0 (2026-09-27) — MINOR: new principle, Code & Git #12, requiring the
   checked-out branch's freshness to be verified *before* any file is edited
   for a new task, not discovered after the fact — a leftover, already-merged

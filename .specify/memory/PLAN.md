@@ -38,7 +38,8 @@ orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, t
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
-- **Deferred until after `T-100`**: Work item 4 (SEMANTIC; depends on `portfolio-nlp`) and Work item 9's
+- **Deferred until after `T-100`**: Work item 20 (run-endpoint access control, `T-144`; deferred 2026-10-06, the
+  repo is not a production version yet), Work item 4 (SEMANTIC; depends on `portfolio-nlp`) and Work item 9's
   `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph consumes, and `T-084` waits on
   data-mining's `urls.db`). They are no longer prerequisites of `T-100`. `T-083` (our API reading
   `v_quant_vs_live`) is local and moved into Work item 19.
@@ -241,6 +242,7 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
      `analysis_date` plus only their package's routine parameters.
    - **Access control is deferred (user, 2026-10-06)**: this is not a production deployment, so the run
      endpoints are for the dev container / pilot until Work item 20 (`SPEC.md` FR-015) adds it.
+     **`T-100` is invoked through the orchestrator's CLI wrapper** (same code as the HTTP endpoints), run from the dev container or the local host that holds the production `KG_FINANCIAL_DB`; this repo has no production *deployment* yet, so FR-015's "dev / pilot only" limits where the HTTP run endpoints may be reachable, not whether the full-universe *data* run may happen. If it is driven over HTTP instead, `:8010` must not be exposed beyond that host.
    - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
      package still has to meet Project structure #1's bar.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
@@ -1935,9 +1937,9 @@ very end of the repository setup**, when nothing is left to change underneath it
 full-universe scope, which was never that task's real purpose.)
 
 **Dependency rule**: `T-100` depends on **every other task in `TASKS.md` — every task
-open today and every task added later — except those the user deferred or superseded on
-2026-10-05**: Work item 4 and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` are deferred until after
-`T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself. `T-083` and
+open today and every task added later — except those the user deferred or superseded (2026-10-05,
+2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20's `T-144` are
+deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself. `T-083` and
 `T-142` (Work item 19) and the final pilot `T-143` are prerequisites. A new work item goes above this one,
 never below; `T-100` stays unchecked until every other box is checked, or explicitly
 superseded/moved/deferred.
@@ -1998,7 +2000,7 @@ this document.** Their internal sequencing:
   `CHANGELOG.md` for its tasks; its plan and acceptance criteria stay in this file, Work item 18 above): it was first in the user's 2026-10-02
   order (18 -> 8 -> 9 -> 3 -> 4 -> 12) and touched `cycle/construction.py`, `cycle`'s settings and `quant`'s caps, none
   of which Work item 8's scoring redesign edits. The order was re-set by the user on 2026-10-05: 8 -> 19 -> 2 -> `T-143` (the
-  final pilot) -> `T-100` (Work item 12); Work items 4 and 9 are deferred until after `T-100`, and Work item 3
+  final pilot) -> `T-100` (Work item 12); Work items 4, 9 and 20 are deferred until after `T-100`, and Work item 3
   stays superseded (see the Priority Override section).
 - **Work item 17 (P0/P1, the 2026-09-29 system review's data-integrity defects: `T-131`
   prices, `T-132` market caps, `T-133` quarterly cash flow) is **closed** (2026-10-02, see `CHANGELOG.md`); it ran ahead of Work item 8** —
@@ -2040,7 +2042,8 @@ this document.** Their internal sequencing:
 - Work item 19 (local follow-ups: `T-083`, `T-142`) follows Work item 8 and precedes Work item 2, so the
   orchestrator and the final pilot run on the corrected code.
 - Work item 2 (orchestrator) follows Work item 19; the final pilot `T-143` runs through it. Work item 4
-  (SEMANTIC boundary) is **deferred until after `T-100`** (2026-10-05).
+  (SEMANTIC boundary) is **deferred until after `T-100`** (2026-10-05), as is Work item 20 (run-endpoint access
+  control, 2026-10-06).
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all** — after
   every other task in `TASKS.md` that is not deferred or superseded, including any task added later.
 
