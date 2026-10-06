@@ -27,24 +27,30 @@ veto lane, and the Markowitz benchmark today. Two of the fixes need an
 additive, backward-compatible upstream schema/API change first (Work items
 5–6); everything else is entirely within this repo (Work items 7–9).
 
-**This overrides the priority order implied by the numbering below.**
-Execute in this order: Work items 7, 10, 11, 13 and 14 are **closed** (done 2026-09-25,
-2026-09-20, 2026-09-25, 2026-09-25 and 2026-09-30 — see `CHANGELOG.md`), and so is Work
-item 5 (built in this repo's vendored `kg_schema`, 2026-09-25) → Work item 18 (the asset-weight heuristic as a function of N; added 2026-10-02, **closed 2026-10-05**, its plan below, its tasks in `CHANGELOG.md`) → **Work item 8
-(P1 — methodological redesign; supersedes Work item 3's approach in place)** → **Work item 9 (P2 —
-cleanup)** → **Work item 3** → **Work item 4** → **Work item 12 (`T-100`) — the full-universe production
-run, last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry)**. Work item 17
-(`T-131`, `T-132`, `T-133` ✅ all done, PRs #109/#110/#111) closed 2026-10-02. **Pilot-1 (2026-10-04)
-ran at 2 FAIL with the original verification (`T-133`, explained by `T-140`); `T-140` merged
-2026-10-05 (PR #115, acceptance pending pilot-2); `T-079` stays blocked until a pilot-2 on a fresh
-database — possible now, since `T-140` and Work item 18 have both merged — reaches 0 FAIL; `T-140` stays open until pilot-2
-measures its acceptance. It gates `T-079`'s LLM re-run, not the rest of Work item 8.**
+**This overrides the priority order implied by the numbering below.** Work items 7, 10, 11, 13, 14, 15,
+16, 17 and 18 and Work items 5 and 6 are **closed** (see `CHANGELOG.md`; Work item 18, the N-ticker weight
+heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
-**Two points in the user's 2026-10-02 order that need a call, surfaced here rather than resolved
-silently (constitution AI behavior #7):** (a) **Work item 3 is superseded** by `T-077` (Work item 8) and
-marked "do not implement"; its slot in the order is therefore empty unless the user un-supersedes it.
-(b) **Work item 2 (orchestrator) was not named**; it is parked after Work item 4 and before Work item 12
-until the user places it.
+**The order now (user, 2026-10-05; scope: finish this repo first):**
+**Work item 8** (`T-141` → `T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) →
+**Work item 19** (local follow-ups before the final pilot: `T-083`, `T-142`) → **Work item 2** (the
+orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
+last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
+each ending with its status commit after approval.
+
+- **Deferred until after `T-100`**: Work item 4 (SEMANTIC; depends on `portfolio-nlp`) and Work item 9's
+  `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph consumes, and `T-084` waits on
+  data-mining's `urls.db`). They are no longer prerequisites of `T-100`. `T-083` (our API reading
+  `v_quant_vs_live`) is local and moved into Work item 19.
+- **Work item 3 stays superseded** by `T-077` (Work item 8) and "do not implement"; its slot in the order is
+  empty.
+- **`T-079` and `T-075` are superseded by `T-100`.** `T-100` starts from a fresh database and runs the LLM on
+  every filing, so a separate bundled re-run (`T-079`) would pay for the same calls twice; `T-075` was a
+  stop-gap for production's old narratives, and production stays frozen until `T-100`, which re-scores
+  everything with the final prompts.
+- **The final pilot (`T-143`) gates `T-100`.** Pilot-1 (2026-10-04) ran at 2 FAIL with the original
+  verification (`T-133`, explained by `T-140`); `T-140` merged 2026-10-05 (PR #115) and its acceptance is
+  measured by `T-143`, which also doubles as Work item 2's `T-014` check.
 
 The audit's own source documents (`feedback_plan.md`,
 `upstream_data_mining.md`, `upstream_portfolio_common.md`) were reviewed in
@@ -196,6 +202,9 @@ scattered across `quant`, `fundamental_agent`, `pricing_agent`, `cycle`,
 
 ## Work item 2 — Cross-module orchestrator
 
+**Placement (user, 2026-10-05)**: after Work item 19 and before the final pilot `T-143`, which runs through
+this orchestrator from a tagged clean commit and doubles as `T-014`'s check.
+
 **Why**: `pricing_agent` → `fundamental_agent` → `entity_resolution` →
 `cycle` → `quant` are sequenced by hand today (SPEC.md §13 item 3); a report
 wanting "everything as of D" issues five separate commands with no shared
@@ -290,7 +299,11 @@ cross-sectional signal to be meaningful, not just methodologically present.
   re-scoped if the comparison doesn't show an improvement — a legitimate
   outcome, not a required "success").
 
-## Work item 4 — SEMANTIC boundary: this repo's half
+## Work item 4 — SEMANTIC boundary: this repo's half — DEFERRED until after `T-100`
+
+**Deferred 2026-10-05 (user: finish this repo first).** It depends on `portfolio-nlp`, a different repo, and
+`T-141` removes `SEMANTIC` from the composite weights until this work item lands. It is no longer a
+prerequisite of `T-100`.
 
 **Why**: `docs/semantic-score-boundary.md`'s placement map assigns this
 repo three pieces of the SEMANTIC cutover that don't depend on
@@ -697,6 +710,12 @@ one market series) with the more rigorous spec in step 6 below — Work item
 superseded in place, don't renumber" rule; its execution now happens here,
 as task `T-077`.
 
+**Order inside this work item (user, 2026-10-05)**: `T-141` (step 9) → `T-072` (step 2's EBITDA sub-task) →
+`T-076` (step 5) → `T-073` (step 3) → `T-074` (step 4) → `T-070` (step 1) → `T-071` (step 2) → `T-077`
+(step 6). One task per PR, each ending with its status commit after approval. `T-079` (the bundled LLM
+re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by `T-100`: it runs the LLM on every
+filing from a fresh database, with the final prompts.
+
 **Approach**:
 
 1. **Technical score V2** (`src/cycle/scores/technical.py`): keep 12-1
@@ -745,10 +764,12 @@ as task `T-077`.
    `quant` ignored it" architecture-bypass finding (verified: 7 filings —
    BKNG, META, KHC, CPT, MCD, PHM, LHX — where the saved narrative already
    says "data error"/"accounting artifact"/"nonsensical" in prose today).
-   **Zero-cost immediate bridge**: before the full LLM re-run, regex-mine
+   ~~**Zero-cost immediate bridge**: before the full LLM re-run, regex-mine
    the existing 4,844 narratives for those same keywords and raise the
    data-quality veto from that match immediately (Ring 2 — $0, a SQL/regex
-   scan, no LLM calls) rather than waiting on step 3+4's full re-run.
+   scan, no LLM calls) rather than waiting on step 3+4's full re-run.~~
+   **Superseded 2026-10-05 (`T-075`)**: it was a stop-gap for production's old narratives, and
+   production stays frozen until `T-100`, which re-scores everything with the final prompts.
 5. **Skills redesign** (`skills/*/SKILL.md`, `agents.py`): add a 10-Q
    frequency preamble (no skill currently mentions 10-Q vs. 10-K despite
    `form` reaching the prompt — this is the LLM-side companion to fix F4:
@@ -790,7 +811,7 @@ as task `T-077`.
    out-of-sample split (`2022-01-01→2024-12-31` calibration,
    `2025-01-01→2026-08-27` evaluation) rather than in-sample-only checks.~~
 
-8. **Pilot-1 ingestion defects (`T-140`, P0, blocks `T-079` and `T-100`)** — the 20-asset pilot on a
+8. **Pilot-1 ingestion defects (`T-140`, P0, blocks `T-100`)** — the 20-asset pilot on a
    fresh database (2026-10-04) found two defects in `fundamental_agent`'s ingestion; both lose filings'
    data silently, so both must land before the bundled LLM re-run scores them. (a) **Revenue the gateway
    drops**: its `T-042` rule (`no_filed_nondimensional_fact`) removes a revenue total that a filer tags
@@ -805,11 +826,25 @@ as task `T-077`.
    quarter label from the fiscal year end, and record a run error with a reason whenever a filing yields
    no quarter of its own (APO Q1-2023: the gateway returns only the prior fiscal year's column; note this
    for `portfolio-data-mining`). It changes a deterministic computation's methodology, so it needs a
-   `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of the bundled LLM re-run
-   (steps 3+4+5, `T-079`). **Implemented and approved: PR #115, merged 2026-10-05 (engine `metrics-v5`; `SPEC.md` FR-001
-   updated); acceptance pending pilot-2.** Kept on review beyond the brief: the first-week-of-January
+   `docs/model_fixes.md` entry (constitution AI behavior #12) and runs ahead of the LLM run
+   (steps 3+4+5, now `T-100`'s). **Implemented and approved: PR #115, merged 2026-10-05 (engine `metrics-v5`; `SPEC.md` FR-001
+   updated); acceptance pending the final pilot (`T-143`).** Kept on review beyond the brief: the first-week-of-January
    label year, quarter pairing by date, and the quarter counted from the filing's own balance-sheet
    fiscal year end before the stored 10-K.
+9. **Equal composite weights (`T-141`, system review N11, user decision 2026-10-05; first in this work
+   item's order)** — resolves the open composite-weights question that stood before `T-070`/`T-071`.
+   `cycle/config.py`'s `_DEFAULT_WEIGHTS` blended FUNDAMENTAL 0.4 / VALORIZATION 0.3 / TECHNICAL 0.2 /
+   SEMANTIC 0.1, while the earlier decision (§5.3) was equal weights; neither choice was recorded. The
+   decision: **1/3 each across FUNDAMENTAL, VALORIZATION and TECHNICAL, and SEMANTIC removed from the
+   defaults until Work item 4 lands.** *Why it is mathematically sound*: all three components are winsorized
+   cross-sectional z-scores mapped to `50 + 10z` (`cycle/scores/normalize.py`), so they share one scale and
+   equal weights give equal expected influence; the per-asset renormalization over the components present
+   and the `[0, 100]` clamp are known effects, to be documented. Reference: the 1/N argument (DeMiguel,
+   Garlappi & Uppal 2009), consistent with Work item 18's equal-weight core. *Verification, on scratch
+   copies (never production)*: each component's cross-sectional standard deviation and the pairwise
+   correlations; how many assets are blended from fewer than three components; and, old `0.4/0.3/0.2` vs
+   the new weights, the rank correlation and the top-N overlap on the replay. Amend `SPEC.md` FR-007's
+   default text and `docs/cycle.md`, and add a `docs/model_fixes.md` entry (constitution AI behavior #12).
 
 **Acceptance criteria**:
 
@@ -830,24 +865,24 @@ as task `T-077`.
   valorization formulas) updated to describe the shipped methodology, per
   this repo's own "spec/plan changes land with the requirement" rule —
   deferred to the PR(s) that actually implement this item, not done now.
-- **`T-140` acceptance** — on the pilot-2 run (fresh database; `T-140` and Work item 18 have merged):
+- **`T-140` acceptance** — on the final pilot (`T-143`; fresh database):
   APA FY2021 revenue $7,985M, FY2022 revenue $11,075M and 2021Q1–2023Q3 non-null; `DQ_REVENUE_POS` = 0; WAT's 2023-09-30 10-Q
   stored; no gap over 110 days between consecutive 10-K/10-Q period ends and no 10-Q labelled Q4; the
   pilot verification at 0 FAIL. At `T-100`: the number of filings with rebuilt revenue and of corrected
   labels, counted across the full universe and inspected.
-- **One bundled LLM re-run** covers steps 3+4+5 together (~4,844 filings);
-  do not re-run the full corpus once per prompt edit — batch prompt/skill
-  changes into a single re-run per the audit's own cost-control note
-  (marginal `forensic_flags` token cost inside that bundle is ≈$0).
+- **`T-141` (equal composite weights)**: `_DEFAULT_WEIGHTS` is FUNDAMENTAL, VALORIZATION and TECHNICAL at
+  1/3 each with no SEMANTIC; the scratch-copy verification of step 9 is reported; `SPEC.md` FR-007,
+  `docs/cycle.md` and a `docs/model_fixes.md` entry are amended.
+- **No separate LLM re-run.** Steps 3+4+5 reach the data through `T-100`'s single LLM run on every filing
+  (~4,844 on the sample-era corpus, the full universe at `T-100`); do not re-run the corpus once per prompt
+  edit. `T-079` is superseded for that reason (marginal `forensic_flags` token cost inside that run is ≈$0).
 
-**Open decision — composite score weights (system review N11, 2026-09-29)**: `cycle/config.py`
-blends FUNDAMENTAL 0.4 / VALORIZATION 0.3 / TECHNICAL 0.2 / SEMANTIC 0.1, while the earlier
-decision (§5.3) was equal weights (1/3 each for the three score types present). Either adopt
-equal weights or record the 0.4/0.3/0.2 choice with its justification here; tracked in
-`TASKS.md` under Work item 8. Until decided, 0.4/0.3/0.2/0.1 is shipped behaviour, not a
-documented decision.
+## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption (needs Work item 5's A3/A4 first) — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
-## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption (needs Work item 5's A3/A4 first)
+**Deferred 2026-10-05 (user: finish this repo first).** Steps 1–3 and the production re-graph change what
+the knowledge graph consumes, and the re-graph waits on data-mining's `urls.db` (`T-084`). They are no longer
+prerequisites of `T-100`. **Step 4 (`T-083`, local: our API reading `v_quant_vs_live`) moved to Work item
+19**, text unchanged.
 
 **Why**: `entity_resolution`'s co-occurrence graph has severe false
 positives — verified top entities by edge count are FX/commodity market
@@ -1759,6 +1794,43 @@ amount (the app).
 - `quant`'s benchmark follows the same rule, pinned against `cycle`'s by a test; the isolation test stays
   green, and `uv run pytest -q`, `ruff` and `mypy` are green.
 
+## Work item 19 — Local follow-ups before the final pilot (added 2026-10-05)
+
+**Why**: the user's 2026-10-05 scope decision is to finish this repo before touching the knowledge-graph
+side. Work item 9's `T-083` is the one local piece of that item (our API reading the rewritten
+`v_quant_vs_live`), and PR #112's review left four follow-ups in code that the final pilot will exercise.
+Both land before the orchestrator (Work item 2) and the final pilot (`T-143`), so the pilot measures the
+corrected code. One task per PR, in order, each ending with its status commit after approval.
+
+**Approach**:
+
+1. **`T-083`** (moved from Work item 9, text unchanged): update `api`/`kg_schema` read paths to consume the
+   rewritten `v_quant_vs_live` (Work item 5's A3), so live-only positions (the MA/SNDK pattern) are no
+   longer silently absent from the API surface. Its acceptance is Work item 9's third criterion (the
+   audit's reconciliation query returns 0 rows).
+2. **`T-142`**, PR #112 review follow-ups, each code change with a regression test:
+   - (a) `cycle/orchestrator.py`: catch `BaseException` and call `conn.rollback()` before writing a failed
+     checkpoint or a failed `cycle_run`. Today a failure partway through a step saves its half-written
+     writes, and a Ctrl-C leaves the run at `running`.
+   - (b) `quant/db.py`: remove the inner `conn.commit()` from `insert_risk_model`,
+     `insert_expected_returns`, `insert_covariance`, `insert_portfolio`, `sync_positions` and
+     `insert_frontier_points`, so each run commits once at `finish_run`.
+   - (c) `/portfolio/ranking`: take the latest cycle date only from runs with `status = 'completed'` (join
+     `v_cycle_run`; no view change).
+   - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and `failed_units` in
+     `docs/fundamental_agent.md` and the `v_analysis_run` notes (documentation only; no test).
+
+**Not in this work item (yet)**: the knowledge-graph view changes. They become a task here once the user
+approves them; until then nothing about them is planned.
+
+**Acceptance criteria**:
+
+- `T-083`: the reconciliation query in Work item 9's acceptance returns 0 rows, and `api` renders a live-only
+  position.
+- `T-142` (a)–(c): each has a regression test that fails before the change and passes after; (d) is present
+  in both documents.
+- `uv run pytest -q`, `ruff` and `mypy` are green; no `v_*` view changes (constitution AI behavior #10).
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small
@@ -1772,9 +1844,20 @@ very end of the repository setup**, when nothing is left to change underneath it
 full-universe scope, which was never that task's real purpose.)
 
 **Dependency rule**: `T-100` depends on **every other task in `TASKS.md` — every task
-open today and every task added later**. A new work item goes above this one, never
-below; `T-100` stays unchecked until every other box is checked, or explicitly
-superseded/moved.
+open today and every task added later — except those the user deferred or superseded on
+2026-10-05**: Work item 4 and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` are deferred until after
+`T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself. `T-083` and
+`T-142` (Work item 19) and the final pilot `T-143` are prerequisites. A new work item goes above this one,
+never below; `T-100` stays unchecked until every other box is checked, or explicitly
+superseded/moved/deferred.
+
+**The final pilot (`T-143`, user, 2026-10-05) comes first.** The 20-ticker sample on a fresh database, run
+through the Work item 2 orchestrator from a **tagged clean commit**, after Work items 8, 19 and 2 have
+merged. It is accepted at `scripts/verify_pilot.py` **0 FAIL**, the reviewer extending the script for each
+merged change. It measures `T-140`'s acceptance (Work item 8, step 8) and doubles as `T-014`'s check (one
+command runs everything on a fresh database). If it fails, fix and re-run before `T-100`, so a defect found
+at sample size never costs a full-universe LLM run. `T-100` also runs the LLM on every filing with the final
+prompts, which is why `T-079`'s separate bundled re-run is superseded.
 
 **Approach**: purge the sample-era derived data if a version bump requires it (same
 mechanism as `T-088`) → `fundamental_agent run` over the full as-of universe →
@@ -1782,6 +1865,8 @@ Ring-1 `data_quality_issue` backfill (`T-065`) → `cycle select` → `quant
 backfill-actions` → `build-returns` → `build-risk-model` → `optimize` → `evaluate`.
 
 **Acceptance criteria**:
+- `T-143`: the final pilot reaches `verify_pilot.py` 0 FAIL on a fresh database, via the orchestrator, from
+  a tagged clean commit.
 - `coverage` for `fundamental_agent`, `pricing_agent` and `quant --strict` reports
   every as-of universe member with core data, or an explained, recorded exception.
 - `cycle` ranks the full universe; the `quant` books and `evaluate` run clean on it.
@@ -1821,8 +1906,9 @@ this document.** Their internal sequencing:
 - Work item 18 (the N-ticker weight heuristic, `T-134`–`T-139`) is **closed** (2026-10-05, PRs #117–#122, see
   `CHANGELOG.md` for its tasks; its plan and acceptance criteria stay in this file, Work item 18 above): it was first in the user's 2026-10-02
   order (18 -> 8 -> 9 -> 3 -> 4 -> 12) and touched `cycle/construction.py`, `cycle`'s settings and `quant`'s caps, none
-  of which Work item 8's scoring redesign edits. What remains of that order is 8 -> 9 -> 3 -> 4 -> 12; Work item 3 is
-  superseded and Work item 2 is unplaced (see the Priority Override section).
+  of which Work item 8's scoring redesign edits. The order was re-set by the user on 2026-10-05: 8 -> 19 -> 2 -> `T-143` (the
+  final pilot) -> `T-100` (Work item 12); Work items 4 and 9 are deferred until after `T-100`, and Work item 3
+  stays superseded (see the Priority Override section).
 - **Work item 17 (P0/P1, the 2026-09-29 system review's data-integrity defects: `T-131`
   prices, `T-132` market caps, `T-133` quarterly cash flow) is **closed** (2026-10-02, see `CHANGELOG.md`); it ran ahead of Work item 8** —
   `T-131` first (**done 2026-10-01, PR #109**: the session guard, full-history observations, split
@@ -1859,11 +1945,12 @@ this document.** Their internal sequencing:
   A4 (`media_cooccurrence`); it has no ordering dependency on Work items
   7/8 and its `entity_resolution` half is additionally blocked on the
   `urls.db` transfer noted in its own section, independent of any other
-  work item here.
-- Work items 2 (orchestrator) and 4 (SEMANTIC boundary) are unaffected by
-  the audit and keep their original priority — after Work items 5–9, per
-  the Priority Override section.
-- **Work item 12 (`T-100`, the full-universe production run) runs last of all** — after
-  every other task in `TASKS.md`, including the low-priority path and any task added later.
+  work item here. **Deferred until after `T-100`** (2026-10-05), except `T-083`, which moved to Work item 19.
+- Work item 19 (local follow-ups: `T-083`, `T-142`) follows Work item 8 and precedes Work item 2, so the
+  orchestrator and the final pilot run on the corrected code.
+- Work item 2 (orchestrator) follows Work item 19; the final pilot `T-143` runs through it. Work item 4
+  (SEMANTIC boundary) is **deferred until after `T-100`** (2026-10-05).
+- **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all** — after
+  every other task in `TASKS.md` that is not deferred or superseded, including any task added later.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
