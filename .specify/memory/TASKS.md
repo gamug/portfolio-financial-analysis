@@ -22,7 +22,8 @@ weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
 **Order (user, 2026-10-05; scope: finish this repo first):** Work item 8 (`T-141` → `T-072` → `T-076` →
 `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) → **Work item 19** (local follow-ups: `T-083`, `T-142`) →
 Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe
-run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 4 (SEMANTIC; depends on
+run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20 (run-endpoint access control;
+the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
 `portfolio-nlp`) and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph
 consumes; `T-084` waits on data-mining's `urls.db`) are **deferred until after `T-100`** and are no longer
 prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement). One task per PR throughout,
@@ -56,9 +57,11 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
 - [ ] **T-011** Implement the sequencing runner: pricing_agent → fundamental_agent → entity_resolution →
       cycle → quant, one `--analysis-date`, exposed as the orchestrator endpoint, the per-step endpoints listed
       in `PLAN.md` step 1 (run handle + a read-only status endpoint), and a CLI wrapper over the same code.
-      Relies on each package's existing idempotency rather than re-implementing skip logic. **Also decides where
-      the orchestration code lives** (a new top-level package vs. inside `api/`, against Project structure #1's
-      bar). → steps 1 and 2.
+      Relies on each package's existing idempotency rather than re-implementing skip logic. Implements step 1's
+      request contract (`analysis_date` + optional `top_n`/`weight_scheme`/`max_name_weight`/`max_sector_weight`,
+      the same on the CLI wrapper; preference flags rejected on the writing path; no `--allow-*` override or
+      `migrate` over HTTP). **Also decides where the orchestration code lives** (a new top-level package vs.
+      inside `api/`, against Project structure #1's bar). → steps 1 and 2.
 - [ ] **T-012** Record orchestrator-level provenance (step, run_id, start/end, status) reusing the existing
       run-log `v_*` pattern; every run endpoint, single-step included, writes a row; the status endpoint reads
       it. → step 3.
@@ -74,7 +77,8 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       "Incremental, upstream-aware run" *(added 2026-10-06)*.
 - [ ] **T-019** Verify the run endpoints: one endpoint per step in `PLAN.md` step 1; run handle, no held
       request; the status endpoint is a read-only `GET`; write connections only in the run routers and no read
-      router imports a run router (`grep`); no `migrate`/`cycle backfill` endpoint. → `PLAN.md` acceptance
+      router imports a run router (`grep`); no `migrate`/`cycle backfill`/`cycle undo-run` endpoint; the request
+      contract holds (preference flags rejected, no `--allow-*` override reachable). → `PLAN.md` acceptance
       criteria, "Run endpoints"; `SPEC.md` FR-014 *(added 2026-10-06)*.
 - [ ] **T-014** Verify: a single call (the orchestrator endpoint + poll, and the CLI wrapper) completes
       pricing → fundamental → entity_resolution → cycle → quant for one `--analysis-date` on a fresh universe
@@ -319,6 +323,14 @@ changes are not part of this work item yet: a task is added here once the user a
         `status = 'completed'` (join `v_cycle_run`; no view change).
       - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and
         `failed_units` in `docs/fundamental_agent.md` and the `v_analysis_run` notes.
+
+## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100`
+
+**Deferred 2026-10-06 (user: not a production version yet).** → `PLAN.md` Work item 20; `SPEC.md` FR-015.
+
+- [ ] **T-144** Gate the `api/` run routers: mounted only when `API_ENABLE_RUNS` is set, bearer token from
+      `API_RUN_TOKEN`, refuse when none is configured; read endpoints unaffected; tests per FR-015's acceptance
+      column; document in `docs/api.md`. *(Added 2026-10-06; the mechanism is confirmed when this starts.)*
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

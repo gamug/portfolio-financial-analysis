@@ -38,7 +38,10 @@ assumes the stack actually pinned in `pyproject.toml`.
    endpoints** (the orchestrator and each of its steps) are the only part of
    `api/` that may start an agent run and open a write-capable connection to
    `KG_FINANCIAL_DB`; they live in their own router module(s), apart from the
-   read routers, and a read router never imports them. `httpx` for the EDGAR
+   read routers, and a read router never imports them. Access control for the
+   run endpoints is required before any non-dev deployment (SPEC FR-015, Work
+   item 20, deferred); until then they are for the dev container / pilot only.
+   `httpx` for the EDGAR
    and pricing gateway calls;
    `pydantic>=2.6` for request/response and settings models;
    `beautifulsoup4`/`lxml` for narrative SEC filing HTML (`fundamental_agent
@@ -446,7 +449,8 @@ above should cite the section by name.
   because a principle is redefined: a consumer relying on "`api/` never
   writes" (`portfolio-reports`, `portfolio-app`) loses that guarantee for the
   package as a whole. The per-package CLIs stay; Project structure #2 and
-  "Executable cmds" only gain a pointer to the run endpoints.
+  "Executable cmds" only gain a pointer to the run endpoints, and
+  "Executable cmds" also lists the previously omitted `cycle undo-run`.
 - 1.4.0 (2026-09-27) — MINOR: new principle, Code & Git #12, requiring the
   checked-out branch's freshness to be verified *before* any file is edited
   for a new task, not discovered after the fact — a leftover, already-merged

@@ -232,6 +232,15 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
      `cycle undo-run` (it reverts writes to the live book). `coverage` is also not exposed: it persists a
      `universe_coverage` row per member (FR-013), so it is not a read endpoint; a later HTTP form would be a run
      endpoint, or a read form that skips the persist. Adding more is its own change.
+   - **Request contract (user, 2026-10-06).** The orchestrator and the `cycle select` step endpoint accept
+     `analysis_date` plus optional construction settings `top_n`, `weight_scheme`, `max_name_weight` and
+     `max_sector_weight`, with the CLI's defaults and the same fields on the CLI wrapper, so the same `D` from
+     HTTP and from the CLI doesn't hit `ConstructionMismatch`. The preference flags (`--pin`, `--exclude`,
+     `--exclude-sectors`, `--only-sectors`) are rejected on the writing path (FR-007). Every `--allow-*`
+     override and every `migrate` stay CLI-only and are never exposed over HTTP. The other step endpoints take
+     `analysis_date` plus only their package's routine parameters.
+   - **Access control is deferred (user, 2026-10-06)**: this is not a production deployment, so the run
+     endpoints are for the dev container / pilot until Work item 20 (`SPEC.md` FR-015) adds it.
    - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
      package still has to meet Project structure #1's bar.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
@@ -268,7 +277,8 @@ touching the endpoints.
 - Killing the orchestrator mid-run and re-invoking it (over HTTP or the CLI) does not re-do a step that already
   completed and wrote its output (delegates to each package's own idempotency, per step 2 above).
 - **Run endpoints** (`T-019`): there is one endpoint per step listed in step 1; a run endpoint returns a run
-  handle and does not hold the request open; the status endpoint is a `GET` that only reads provenance; write
+  handle and does not hold the request open; the request contract in step 1 holds (preference flags rejected
+  on the writing path, no `--allow-*` override or `migrate` reachable over HTTP); the status endpoint is a `GET` that only reads provenance; write
   connections are opened only in the run routers, and no read router imports a run router (`grep`-checkable);
   no `migrate` or `cycle backfill` endpoint exists.
 - **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks for
@@ -287,6 +297,9 @@ touching the endpoints.
     `ConstructionMismatch` if its construction settings (N, scheme, caps, preferences) differ from the recorded
     run's. When only some steps are pending, it runs those and their downstream dependents (step 5), then
     `cycle select`.
+  - **Every orchestrated run writes the live book.** Invoking the orchestrator against a database is the
+    user's direction to run `select` there (see Work item 18's out-of-scope line). A run on a **new** `D` opens a
+    new SELECTION run, i.e. a rebalance with turnover against the previous book, not only on a fresh database.
   - **The semantic check is blocked on an open question**: which artifact it reads — `portfolio-nlp`'s
     per-article rows, or a per-`(asset, day)` SEMANTIC score — depends on who writes that score, which is
     disputed (this repo's `docs/semantic-score-boundary.md` names the integration repo; the knowledge-graph
@@ -1838,7 +1851,9 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
    artifacts (constitution AI behavior #11), and `SPEC.md` FR-001's older "re-run on the same
    `(asset, form, fiscal_period)`" sentence, which should say the period end (`T-140`).
 
-**Out of scope**: re-running `cycle select` on production (a write, only at the user's direction), the
+**Out of scope**: re-running `cycle select` on production (a write, only at the user's direction — from Work
+item 2 on, invoking the orchestrator against production is that direction, since its cycle step is always
+`select`), the
 composite-weights question (`TASKS.md` N11), any change to the `v_*` views, a user-facing API endpoint (a
 later task with an FR-014 amendment — made by `T-018`, 2026-10-06, for Work item 2's run endpoints, which will be `api`'s first import of `cycle` code) and the investment
 amount (the app).
@@ -1892,6 +1907,20 @@ approves them; until then nothing about them is planned.
 - `T-142` (a)–(c): each has a regression test that fails before the change and passes after; (d) is present
   in both documents.
 - `uv run pytest -q`, `ruff` and `mypy` are green; no `v_*` view changes (constitution AI behavior #10).
+
+## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100` (added 2026-10-06)
+
+**Deferred (user, 2026-10-06): this repo is not a production version yet.** Work item 2's review found that the
+`api/` run endpoints write the live `portfolio_position` book, spend LLM budget (`fundamental_agent run`) and
+hit the EDGAR and pricing gateways, while `api/` binds `0.0.0.0` by default and nothing authenticates a caller.
+That is acceptable for the dev container and the pilot, not for a production deployment.
+
+**Approach**: implement `SPEC.md` FR-015 — run routers mounted only when `API_ENABLE_RUNS` is set and guarded by a
+bearer token from the environment, refusing when none is configured (the proposed shape; confirm it when this
+work item starts). Read endpoints are untouched.
+
+**Acceptance criteria**: FR-015's acceptance column, as tests (`T-144`); the read endpoints behave identically
+with and without the settings; `docs/api.md` documents both settings.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
