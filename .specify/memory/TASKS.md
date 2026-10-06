@@ -42,48 +42,50 @@ now the only durable record. See `PLAN.md`'s "🔴 Priority Override" section fo
 
 Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143` (Work item 12).
 
-- [x] **T-010** Design decision: a new `orchestrator/`-style package vs. a
-      `python -m cycle run-all`-style entrypoint on an existing package —
-      pick one, consistent with constitution: Project structure #1's bar
-      for a new top-level package. → `PLAN.md` Work item 2, step 1.
-      *(Closed 2026-10-06, user: the repo gets a **single entry point** — the orchestrator, exposed via
-      FastAPI/Swagger, with every intermediate step also an endpoint. Needs `T-018` before `T-011`.)*
-- [ ] **T-018** Amend the constitution (Tech stack #3's "read-only `api/`") and `SPEC.md` FR-014 ("never
-      triggers an agent run", all connections `mode=ro`) so `api/` may host the run endpoints; the existing
-      `GET` views stay read-only and FR-014's acceptance check is re-scoped to them. Must land before
-      `T-011` (a plan that conflicts with the constitution amends it first). → `PLAN.md` Work item 2,
-      step 1 *(added 2026-10-06)*.
-- [ ] **T-011** Implement the sequencing runner: pricing_agent →
-      fundamental_agent → entity_resolution → cycle → quant, one
-      `--analysis-date` fanned out to each step's own CLI/entrypoint,
-      relying on each package's existing idempotency rather than
-      re-implementing skip logic. → step 2.
-- [ ] **T-012** Record orchestrator-level provenance (step, run_id,
-      start/end, status) reusing the existing run-log `v_*` pattern. →
-      step 3.
-- [ ] **T-013** Per-step failure isolation: an independent step's failure
-      (e.g. `entity_resolution`) does not block steps with no real
-      dependency on it; a dependent step (`cycle` on
-      `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent`) does
-      hard-block. → step 4.
-- [ ] **T-014** Verify: a single command completes pricing → fundamental →
-      entity_resolution → cycle → quant for one `--analysis-date` on a
-      fresh universe with no pre-existing data. → `PLAN.md` acceptance
-      criteria, first bullet. *(2026-10-05: the final pilot, `T-143`, doubles as this check —
-      one command runs everything on a fresh database.)*
-- [ ] **T-015** Verify: killing the orchestrator mid-run and re-invoking it
-      does not redo an already-completed step. → second acceptance
-      criterion.
-- [ ] **T-017** Implement the incremental, upstream-aware run: detect pending SEC filings, prices and
-      (read-only) `portfolio-nlp` semantic output as of `--analysis-date`; append only; when nothing is
-      pending, run only `cycle`. Semantic check degrades to "no source configured" until Work item 4's
-      `KG_NLP_DB` seam exists. Document the cross-repo order (`portfolio-nlp` first, then this repo) per
-      the Portfolio Thesis artifact. → `PLAN.md` acceptance criteria, "Incremental, upstream-aware run"
+- [x] **T-010** Design decision: where the orchestrator is exposed and how it relates to the per-package CLIs.
+      → `PLAN.md` Work item 2, step 1. *(Closed 2026-10-06, user: `api/` is the repo's single entry point for
+      orchestrated and remote runs, via FastAPI/Swagger, with the orchestrator and each listed step as an
+      endpoint; the per-package CLIs stay; acceptance is through both HTTP and a CLI wrapper. The package
+      location question moved to `T-011`; `T-018` must land before it.)*
+- [ ] **T-018** Amend the constitution (Tech stack #3's "read-only `api/`", plus pointers in Project structure
+      #2 and "Executable cmds") and `SPEC.md` FR-014 ("never triggers an agent run", all connections
+      `mode=ro`) so `api/` may host the run endpoints; the read endpoints stay read-only and FR-014's
+      acceptance check is re-scoped to the read routers. Constitution 2.0.0 (MAJOR). Must land before `T-011`
+      (a plan that conflicts with the constitution amends it first). → `PLAN.md` Work item 2, step 1
       *(added 2026-10-06)*.
-- [ ] **T-016** Update `SPEC.md` §13 item 3 and §2.2's "out of scope"
-      hand-sequencing line to reflect the resolved state. Also update the
-      two architecture artifacts per constitution AI behavior #11 —
-      reconcile, never rename.
+- [ ] **T-011** Implement the sequencing runner: pricing_agent → fundamental_agent → entity_resolution →
+      cycle → quant, one `--analysis-date`, exposed as the orchestrator endpoint, the per-step endpoints listed
+      in `PLAN.md` step 1 (run handle + a read-only status endpoint), and a CLI wrapper over the same code.
+      Relies on each package's existing idempotency rather than re-implementing skip logic. **Also decides where
+      the orchestration code lives** (a new top-level package vs. inside `api/`, against Project structure #1's
+      bar). → steps 1 and 2.
+- [ ] **T-012** Record orchestrator-level provenance (step, run_id, start/end, status) reusing the existing
+      run-log `v_*` pattern; every run endpoint, single-step included, writes a row; the status endpoint reads
+      it. → step 3.
+- [ ] **T-013** Per-step failure isolation: an independent step's failure (e.g. `entity_resolution`) does not
+      block steps with no real dependency on it; a dependent step (`cycle` on
+      `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent`) does hard-block. → step 4.
+- [ ] **T-017** Implement the incremental, upstream-aware run: define each step's pending signal (including
+      `entity_resolution`'s news and `quant`'s corporate actions), run the pending steps plus their downstream
+      dependents, append only (NR-007); when nothing is pending, run only `cycle monitor`. The semantic check
+      degrades to "no source configured" until Work item 4's `KG_NLP_DB` seam exists and the SEMANTIC-score
+      writer question (KG `T-158`) is answered. → steps 2, 4 and 5; `PLAN.md` acceptance criteria,
+      "Incremental, upstream-aware run" *(added 2026-10-06)*.
+- [ ] **T-019** Verify the run endpoints: one endpoint per step in `PLAN.md` step 1; run handle, no held
+      request; the status endpoint is a read-only `GET`; write connections only in the run routers and no read
+      router imports a run router (`grep`); no `migrate`/`cycle backfill` endpoint. → `PLAN.md` acceptance
+      criteria, "Run endpoints"; `SPEC.md` FR-014 *(added 2026-10-06)*.
+- [ ] **T-014** Verify: a single call (the orchestrator endpoint + poll, and the CLI wrapper) completes
+      pricing → fundamental → entity_resolution → cycle → quant for one `--analysis-date` on a fresh universe
+      with no pre-existing data. → `PLAN.md` acceptance criteria, first bullet. *(2026-10-05: the final pilot,
+      `T-143`, doubles as this check — one orchestrator run on a fresh database, through both surfaces.)*
+- [ ] **T-015** Verify: killing the orchestrator mid-run and re-invoking it (over HTTP and the CLI) does not
+      redo an already-completed step. → second acceptance criterion.
+- [ ] **T-016** Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
+      only before the orchestrator ships, in the same change as the code: `SPEC.md` §3 diagram label
+      (`read-only FastAPI`) and §11 step 3 (`no scheduler or orchestrator is wired in today… read-only
+      service`); `README.md` "Read-only HTTP API" section and `docs/README.md`'s `api/` row; `docs/api.md`.
+      Also update the two architecture artifacts per constitution AI behavior #11 — reconcile, never rename.
 
 ## Work item 4 — SEMANTIC boundary: this repo's half — DEFERRED until after `T-100`
 
@@ -340,9 +342,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 - [ ] **T-143** Final pilot (user, 2026-10-05): the 20-ticker sample on a **fresh database**, run through
       the Work item 2 orchestrator from a **tagged clean commit**, after Work items 8, 19 and 2 have
       merged. Accepted at `scripts/verify_pilot.py` **0 FAIL** (the reviewer extends the script for each
-      merged change). It measures `T-140`'s acceptance and doubles as `T-014`'s check (one command runs
-      everything on a fresh database). If it fails, fix and re-run before `T-100`. → `PLAN.md`
-      Work item 12.
+      merged change). It measures `T-140`'s acceptance and doubles as `T-014`'s check (one orchestrator
+      run, through both HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix
+      and re-run before `T-100`. → `PLAN.md` Work item 12.
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final
       prompts)* Run the whole

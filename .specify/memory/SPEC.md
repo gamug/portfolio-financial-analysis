@@ -100,9 +100,6 @@ that downstream decision.
   (`portfolio-knowledge-graph`) — this repo emits no RDF itself, only the
   `v_*` relational read contract that repo consumes.
 - Report rendering or any UI (`portfolio-reports`, `portfolio-app`).
-- Cross-module orchestration of this repo's own packages into one sequenced
-  run (`pricing` → `fundamental` → `entity_resolution` → `cycle` → `quant`
-  is sequenced by hand today — see §13).
 
 ### 2.3 Functional requirements
 
@@ -121,7 +118,7 @@ that downstream decision.
 | **FR-011** | `kg_schema` (vendored at `src/kg_schema/`, not an external dependency — see §3) is the single schema entrypoint every package calls from its own `ensure_schema`: additive `CREATE TABLE/INDEX IF NOT EXISTS` DDL plus nullable `ADD COLUMN`s run unconditionally and safely against the shared production DB; non-additive migrations (widening a `CHECK`, renaming a column's semantic value, promoting a table to a view) run only via an explicit `python -m <agent> migrate`, advancing a monotonic `schema_version` floor other repos can assert against. | `kg_schema.ensure(db)` run twice in a row is a no-op the second time (no error, no duplicate DDL effect); `python -m fundamental_agent migrate` run twice is idempotent (the second run applies zero migrations); `schema_version` only ever increases. |
 | **FR-012** | Every agent takes an optional `--analysis-date YYYY-MM-DD` (default: today) that selects the S&P 500 universe point-in-time from `universe.db` as of that date (predicate `valid_from <= D AND (valid_to IS NULL OR valid_to > D)`), bounds ingestion so nothing dated after it is written, and is recorded on the run-log row (`analysis_run`/`pricing_run`/`quant_run`/`cycle_run`) alongside a `code_version` git tag. | For a fixed `--analysis-date D`, no row written by that run has an `event_time`/`filing_date`/`pub_date`/obs date after `D`, and no fundamental value it reads (`cycle`'s metrics, data-quality verdicts, FUNDAMENTAL scores; the market cap `cycle` and `quant` both read from the shared `kg_schema.market_cap` reader) comes from a filing whose `available_at` — the first NYSE trading day after its `filing_date` — is after `D`, or that has none (T-106, T-107); every such row carries a non-null `available_at`, and no as-of reader filters them by `event_time`; the corresponding run-log row's `as_of` equals `D` and `code_version` is a non-empty git SHA/tag string. `quant`/`cycle` additionally refuse a `D` past the last date `price_daily` actually holds a bar for (the price spine), unless `--allow-stale-prices`, which records why on the run (T-110). Every agent (`fundamental_agent`/`quant`/`cycle`/`entity_resolution`/`pricing_agent`) additionally refuses to write its run-log row at all when its own `code_version()` is dirty, unless `--allow-dirty`, which records why on the run (T-114); "dirty" means an uncommitted change under `src/`, `skills/`, `pyproject.toml`, or `uv.lock` specifically (`kg_schema.provenance._DIRTY_SCOPE`), not any uncommitted file in the checkout — an untracked file outside that scope leaves `code_version` clean and is never refused over (T-114, PR #92 review). |
 | **FR-013** | A `coverage` command (shared implementation in `kg_schema.cli`, exposed on `fundamental_agent`/`pricing_agent`/`quant`) reports, for the as-of universe, which members have core EDGAR/pricing/observation data, persisting one `universe_coverage` row per member; default behavior is warn (report + exit 0), `--strict` exits 1 below `--min-fraction`. | `python -m quant coverage --analysis-date D` upserts exactly one `universe_coverage` row per `(D, universe, symbol)`; `--strict` with `--min-fraction 1.0` against a universe with any uncovered member exits non-zero. |
-| **FR-014** | `api/` exposes the `v_*` read-contract views and the point-in-time universe over HTTP (`/api/v1/health`, `/health/db`, `/runs`, `/universe`, `/universe/coverage`, `/scores`, `/portfolio/positions`, `/portfolio/ranking`). These **read endpoints** open every database `mode=ro` and never trigger an agent run. From Work item 2 (decided 2026-10-06, constitution 1.5.0) `api/` is also the repo's single entry point and adds **run endpoints** — the orchestrator and each of its steps — which are the only `api/` code that may start a run or open a write-capable connection; they live in router module(s) separate from the read routers. | Every `KG_FINANCIAL_DB`/`universe.db` connection opened by the read routers is `mode=ro` (`grep` for a write-capable `connect(` call in the read routers' modules returns none, and no read router imports a run router); a request against a view whose base table doesn't exist in a partial DB returns an empty list, not a `500`. The run endpoints' own acceptance criteria are in `PLAN.md` Work item 2. |
+| **FR-014** | `api/` exposes the `v_*` read-contract views and the point-in-time universe over HTTP (`/api/v1/health`, `/health/db`, `/runs`, `/universe`, `/universe/coverage`, `/scores`, `/portfolio/positions`, `/portfolio/ranking`). These **read endpoints** open every database `mode=ro` and never trigger an agent run. From Work item 2 (decided 2026-10-06, constitution 2.0.0) `api/` is also the repo's single entry point for orchestrated and remote runs (the per-package CLIs stay) and adds **run endpoints** — the orchestrator and each of its steps — which are the only `api/` code that may start a run or open a write-capable connection; they live in router module(s) separate from the read routers. The run-status (poll) endpoint only reads provenance, so it is a **read** endpoint: `GET`, `mode=ro`, in a read router. | Every `KG_FINANCIAL_DB`/`universe.db` connection opened by the read routers is `mode=ro` (`grep` for a write-capable `connect(` call in the read routers' modules returns none, and no read router imports a run router); a request against a view whose base table doesn't exist in a partial DB returns an empty list, not a `500`. The run endpoints' acceptance criteria are `PLAN.md` Work item 2's "Run endpoints" bullets, verified by `T-019`. |
 
 ### 2.4 Non-functional requirements
 
@@ -349,9 +346,9 @@ have core EDGAR/pricing/observation data, persisted to `universe_coverage`.
 **Serving** (`api/`): a read request opens `KG_FINANCIAL_DB`/`universe.db`
 `mode=ro` and reads the `v_*` views / point-in-time universe directly — read
 endpoints never trigger an agent run. From Work item 2 (decided 2026-10-06)
-`api/` is also this repo's single entry point: separate run endpoints start
-the orchestrator or any one step (see FR-014), and are the only part with
-write access.
+`api/` is also this repo's single entry point for orchestrated and remote runs
+(the per-package CLIs stay): separate run endpoints start the orchestrator or
+any one step (see FR-014), and are the only part with write access.
 
 ## 7. Business Logic & Algorithms
 
@@ -530,6 +527,11 @@ There is no formal CD pipeline for this repo yet; what exists:
   `fundamental_agent run --sections`; an OpenAI-compatible LLM endpoint
   (`LLM_API_KEY`/`LLM_MODEL`/`LLM_URL`, today DeepSeek) for the metrics-
   master synthesis.
+- **Execution order across the data repositories**: `portfolio-data-mining` →
+  `portfolio-nlp` → `portfolio-financial-analysis`. This repo's orchestrator
+  (Work item 2) assumes `portfolio-nlp` has already run for the same date;
+  it only checks for its output, never triggers it, and does not enforce the
+  order across repositories. The architecture artifacts follow this statement.
 - **Upstream (required, read-only data)**: `universe.db` (`KG_UNIVERSE_DB`,
   `portfolio-data-mining`'s point-in-time S&P 500 membership — every agent's
   as-of universe source, FR-012); `urls.db` (`KG_NEWS_DB`,
@@ -710,4 +712,4 @@ than silently diverging (constitution: Governance).
 | Author | Dovaribi Carupia Yagari | | Universidad Pontificia Bolivariana (UPB) |
 | Reviewer | Camilo Andrés Soto Montoya | | Universidad Pontificia Bolivariana (UPB) |
 
-**Version**: 1.2.0 | **Last Amended**: 2026-10-06 (FR-014 and §4 "Serving": run endpoints, T-018)
+**Version**: 1.2.0 | **Last Amended**: 2026-10-06 (FR-014, §2.2 and §4 "Serving": run endpoints, T-018). Amendments between 2026-09-12 and 2026-10-06 (e.g. FR-001, FR-007, FR-012) were not versioned; 1.2.0 is the first bump since 1.1.0 and covers them too.

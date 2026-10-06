@@ -213,60 +213,85 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
 
 **Approach**:
 
-1. **Decided 2026-10-06 (`T-010`, user): this repo gets a single entry point.** The orchestrator is that
-   entry point — one `--analysis-date` sequences the five steps — and it is exposed through the FastAPI app
-   (Swagger at `/docs`), which also exposes **each intermediate step as its own endpoint**
-   (`pricing_agent`, `fundamental_agent`, `entity_resolution`, `cycle`, `quant`), so a caller can run the
-   whole pipeline or any single step through the same surface. Consequences to resolve before `T-011`
-   (`T-018`):
-   - The constitution (Tech stack #3, "read-only `api/`") and `SPEC.md` FR-014 ("never triggers an agent
-     run", every connection `mode=ro`) currently forbid this. They must be amended first, not overridden.
-     The existing `GET` read-contract endpoints stay read-only; only the new run endpoints get write-capable
-     connections, and FR-014's `grep`-for-`connect(` acceptance check is re-scoped accordingly.
-   - Runs are long (LLM and gateway calls), so run endpoints return a run handle and are polled, rather
-     than holding the request open; the orchestrator's provenance rows (step 3) are what the poll reads.
-   - Where the orchestration code lives (a new top-level package vs. inside `api/`) is left to `T-011`; a
-     new package still has to meet Project structure #1's bar.
+1. **Decided 2026-10-06 (`T-010`, user): `api/` is the repo's single entry point for orchestrated and remote
+   runs.** The per-package `python -m <package>` CLIs stay (constitution Project structure #2). The orchestrator
+   — one `--analysis-date` sequences the five steps — is exposed through the FastAPI app (Swagger at `/docs`),
+   which also exposes **each intermediate step as its own endpoint**, so a caller can run the whole pipeline or
+   any single step through the same surface. Consequences (the first is `T-018`, merged before `T-011`):
+   - The constitution (Tech stack #3) and `SPEC.md` FR-014 used to forbid this. They are amended (constitution
+     2.0.0): the `GET` read-contract endpoints stay read-only; only the run endpoints get write-capable
+     connections; FR-014's `grep`-for-`connect(` check is re-scoped to the read routers.
+   - Runs are long (LLM and gateway calls), so run endpoints return a run handle and are polled, rather than
+     holding the request open. **The status (poll) endpoint is a read endpoint** (`GET`, `mode=ro`, in a read
+     router) over the orchestrator's provenance view (step 3). **Every run endpoint — the orchestrator and each
+     single step — writes a provenance row**, so any run has something to poll.
+   - **Endpoints for this work item**: the orchestrator, plus `pricing_agent run`, `fundamental_agent run`,
+     `entity_resolution build`, `cycle monitor`, `cycle select`, and `quant` `backfill-actions`,
+     `build-returns`, `build-risk-model`, `optimize`, `evaluate`. **Not exposed over HTTP**: every `migrate`
+     (FR-011's non-additive migrations stay a deliberate CLI action) and `cycle backfill` (a REPLAY write).
+     `coverage` is read-only and is left for a later read endpoint. Adding more is its own change.
+   - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
+     package still has to meet Project structure #1's bar.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
    than re-implementing skip logic — the orchestrator's job is sequencing
    and failure surfacing, not duplicating each package's resume state.
 3. Record orchestrator-level provenance (which step ran, its own run-log
    row's `run_id`, start/end time, status) so a report can trace "was
    everything as of D actually rebuilt, and when" from one place — reuse the
-   existing run-log `v_*` view pattern rather than inventing a new one.
+   existing run-log `v_*` view pattern rather than inventing a new one. A
+   single-step run records a row the same way (step 1).
 4. Surface a per-step failure without aborting steps that don't depend on
    the failed one (`pricing_agent` and `fundamental_agent` are independent;
    `entity_resolution` doesn't depend on either) — only `cycle`/`quant`
    should hard-block on their real upstream dependencies.
+5. **Incremental detection (`T-017`) composes with steps 2 and 4.** Each step has a pending signal ("is there
+   upstream data for `--analysis-date` that this step has not processed?"). A run executes the steps that are
+   pending **plus their downstream dependents** (step 4's graph), and skips the rest; step 2's idempotency still
+   protects a step that runs. The signal is defined per step in `T-017`'s design, including the two without an
+   obvious one today: `entity_resolution` (news in `urls.db` after its last run) and `quant` (corporate actions
+   from the pricing gateway, not just prices).
+
+**Acceptance surface (user, 2026-10-06)**: both the HTTP API and a CLI wrapper over the same orchestrator code.
+`T-014`, `T-015` and the final pilot `T-143` are each accepted through **both**, so neither can pass without
+touching the endpoints.
 
 **Acceptance criteria**:
 
-- A single command runs pricing → fundamental → entity_resolution → cycle →
-  quant for one `--analysis-date`, in the correct dependency order, and
-  completes on a fresh universe with no pre-existing data.
-- Killing the orchestrator mid-run and re-invoking it does not re-do a step
-  that already completed and wrote its output (delegates to each package's
-  own idempotency, per step 2 above).
-- **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks
-  for new upstream information as of `--analysis-date`: new SEC filings and new stock prices from
-  `portfolio-data-mining` (via the existing gateways), and new semantic information from `portfolio-nlp`
-  (assumed to have already run — see the execution order below — so the orchestrator only *checks* for its
-  output, never triggers it). Specifically:
-  - Runs **append** to the shared database, never erase or rebuild it (consistent with the append-only,
-    idempotent-writes invariant); each step processes only the pending data.
-  - If **no** step has pending data, the orchestrator runs only `cycle` (the scoring/ranking lane), and
-    skips `pricing_agent`, `fundamental_agent`, `entity_resolution` and `quant`.
-  - The semantic check is read-only. Until Work item 4 lands (the `KG_NLP_DB` seam, `T-030`; `SEMANTIC` is
-    out of the composite weights until then per `T-141`), it reports "no semantic source configured"
-    instead of failing, and does not count toward "pending data".
-  - **Execution order across the data repositories** is set by the system-wide
-    [Portfolio Thesis](https://claude.ai/code/artifact/d3865a63-2894-4e20-b38a-7e50cf0d4040) artifact:
-    `portfolio-data-mining` → **`portfolio-nlp`** first, then **`portfolio-financial-analysis`**. This
-    repo's orchestrator therefore never runs before `portfolio-nlp` has finished its own run for the same
-    date. The orchestrator documents this ordering and does not enforce it across repositories.
-- `SPEC.md` §13 item 3 updated to reflect the resolved state, and §2.2's
-  "out of scope" line about hand-sequencing removed/updated to match. Also
-  update the two architecture artifacts per constitution AI behavior #11.
+- A single call — `POST` the orchestrator endpoint, then poll its status; or the equivalent CLI wrapper
+  (`--analysis-date D`) — runs pricing → fundamental → entity_resolution → cycle → quant, in the correct
+  dependency order, and completes on a fresh universe with no pre-existing data.
+- Killing the orchestrator mid-run and re-invoking it (over HTTP or the CLI) does not re-do a step that already
+  completed and wrote its output (delegates to each package's own idempotency, per step 2 above).
+- **Run endpoints** (`T-019`): there is one endpoint per step listed in step 1; a run endpoint returns a run
+  handle and does not hold the request open; the status endpoint is a `GET` that only reads provenance; write
+  connections are opened only in the run routers, and no read router imports a run router (`grep`-checkable);
+  no `migrate` or `cycle backfill` endpoint exists.
+- **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks for
+  new upstream information as of `--analysis-date`: new SEC filings and prices from `portfolio-data-mining`
+  (via the existing gateways), and new semantic information from `portfolio-nlp` (assumed to have already run —
+  see the execution order below — so the orchestrator only *checks* for its output, never triggers it).
+  - Writes follow NR-007 (append-only, with its `price_observation`/`quant_return_daily` exceptions, `T-131`)
+    and the existing upserts; the orchestrator never deletes or truncates. Each step processes only its pending
+    data.
+  - Every step has a defined pending signal (step 5). When **no** step is pending, the orchestrator runs only
+    **`cycle monitor`** for `D` and skips the other four steps; `cycle select` stays an explicit, separate call
+    (a repeat `select` for the same date is a no-op under `UNIQUE(cycle_type, cycle_date)`). When only some
+    steps are pending, it runs those and their downstream dependents (step 5).
+  - **The semantic check is blocked on an open question**: which artifact it reads — `portfolio-nlp`'s
+    per-article rows, or a per-`(asset, day)` SEMANTIC score — depends on who writes that score, which is
+    disputed (this repo's `docs/semantic-score-boundary.md` names the integration repo; the knowledge-graph
+    repo's SPEC §13 item 11 / §2.6 D14 says `portfolio-nlp` computes it and this repo materializes it; open as KG
+    `T-158`). Until Work item 4 lands (`T-030`'s `KG_NLP_DB` seam; `SEMANTIC` is out of the composite per
+    `T-141`), the check reports "no semantic source configured", does not fail, and does not count as pending.
+    **Consequence**: Work item 2, `T-143` and `T-100` consume no `portfolio-nlp` output, so the "nlp first" order
+    constrains nothing yet and the pilot is not blocked waiting on an nlp run.
+  - **Execution order across the data repositories**: `portfolio-data-mining` → `portfolio-nlp` →
+    `portfolio-financial-analysis`. It is stated in `SPEC.md` §12 (the authority); the Portfolio Thesis artifact
+    follows it (constitution AI behavior #11). The orchestrator documents the order and does not enforce it
+    across repositories.
+- `SPEC.md` §13 item 3 updated to reflect the resolved state, and the stale "read-only"/"no orchestrator"
+  statements listed in `T-016` reconciled with what shipped. Also update the two architecture artifacts per
+  constitution AI behavior #11.
 
 ## Work item 3 — `quant`: a factor-aware μ estimator — SUPERSEDED, see Work item 8
 
@@ -1805,7 +1830,7 @@ FR-007 as "(T-134 decision; implemented by T-135–T-137)"):
 
 **Out of scope**: re-running `cycle select` on production (a write, only at the user's direction), the
 composite-weights question (`TASKS.md` N11), any change to the `v_*` views, a user-facing API endpoint (a
-later task with an FR-014 amendment; it would be `api`'s first import of `cycle` code) and the investment
+later task with an FR-014 amendment — made by `T-018`, 2026-10-06, for Work item 2's run endpoints, which will be `api`'s first import of `cycle` code) and the investment
 amount (the app).
 
 **Acceptance criteria**:
@@ -1882,7 +1907,7 @@ superseded/moved/deferred.
 through the Work item 2 orchestrator from a **tagged clean commit**, after Work items 8, 19 and 2 have
 merged. It is accepted at `scripts/verify_pilot.py` **0 FAIL**, the reviewer extending the script for each
 merged change. It measures `T-140`'s acceptance (Work item 8, step 8) and doubles as `T-014`'s check (one
-command runs everything on a fresh database). If it fails, fix and re-run before `T-100`, so a defect found
+orchestrator run, over HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix and re-run before `T-100`, so a defect found
 at sample size never costs a full-universe LLM run. `T-100` also runs the LLM on every filing with the final
 prompts, which is why `T-079`'s separate bundled re-run is superseded.
 
