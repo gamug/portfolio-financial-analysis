@@ -84,8 +84,10 @@ that downstream decision.
 - A point-in-time S&P 500 universe read from a companion `universe.db`
   (read-only), plus a `coverage` command reporting which as-of members
   actually have core data.
-- A read-only FastAPI serving layer (`api/`) over the `v_*` read-contract
-  views and `universe.db`.
+- A FastAPI layer (`api/`): read-only endpoints over the `v_*` read-contract
+  views and `universe.db`, plus (from Work item 2) the run endpoints of the
+  repo's single entry point for orchestrated and remote runs (the per-package
+  CLIs stay).
 - A rule-driven veto lane (`rule_catalog` → `veto`) with a T-1 contagion lag,
   and a Markowitz mean-variance benchmark book (`quant`) to grade the
   blended-score portfolio against.
@@ -99,9 +101,6 @@ that downstream decision.
   (`portfolio-knowledge-graph`) — this repo emits no RDF itself, only the
   `v_*` relational read contract that repo consumes.
 - Report rendering or any UI (`portfolio-reports`, `portfolio-app`).
-- Cross-module orchestration of this repo's own packages into one sequenced
-  run (`pricing` → `fundamental` → `entity_resolution` → `cycle` → `quant`
-  is sequenced by hand today — see §13).
 
 ### 2.3 Functional requirements
 
@@ -120,7 +119,8 @@ that downstream decision.
 | **FR-011** | `kg_schema` (vendored at `src/kg_schema/`, not an external dependency — see §3) is the single schema entrypoint every package calls from its own `ensure_schema`: additive `CREATE TABLE/INDEX IF NOT EXISTS` DDL plus nullable `ADD COLUMN`s run unconditionally and safely against the shared production DB; non-additive migrations (widening a `CHECK`, renaming a column's semantic value, promoting a table to a view) run only via an explicit `python -m <agent> migrate`, advancing a monotonic `schema_version` floor other repos can assert against. | `kg_schema.ensure(db)` run twice in a row is a no-op the second time (no error, no duplicate DDL effect); `python -m fundamental_agent migrate` run twice is idempotent (the second run applies zero migrations); `schema_version` only ever increases. |
 | **FR-012** | Every agent takes an optional `--analysis-date YYYY-MM-DD` (default: today) that selects the S&P 500 universe point-in-time from `universe.db` as of that date (predicate `valid_from <= D AND (valid_to IS NULL OR valid_to > D)`), bounds ingestion so nothing dated after it is written, and is recorded on the run-log row (`analysis_run`/`pricing_run`/`quant_run`/`cycle_run`) alongside a `code_version` git tag. | For a fixed `--analysis-date D`, no row written by that run has an `event_time`/`filing_date`/`pub_date`/obs date after `D`, and no fundamental value it reads (`cycle`'s metrics, data-quality verdicts, FUNDAMENTAL scores; the market cap `cycle` and `quant` both read from the shared `kg_schema.market_cap` reader) comes from a filing whose `available_at` — the first NYSE trading day after its `filing_date` — is after `D`, or that has none (T-106, T-107); every such row carries a non-null `available_at`, and no as-of reader filters them by `event_time`; the corresponding run-log row's `as_of` equals `D` and `code_version` is a non-empty git SHA/tag string. `quant`/`cycle` additionally refuse a `D` past the last date `price_daily` actually holds a bar for (the price spine), unless `--allow-stale-prices`, which records why on the run (T-110). Every agent (`fundamental_agent`/`quant`/`cycle`/`entity_resolution`/`pricing_agent`) additionally refuses to write its run-log row at all when its own `code_version()` is dirty, unless `--allow-dirty`, which records why on the run (T-114); "dirty" means an uncommitted change under `src/`, `skills/`, `pyproject.toml`, or `uv.lock` specifically (`kg_schema.provenance._DIRTY_SCOPE`), not any uncommitted file in the checkout — an untracked file outside that scope leaves `code_version` clean and is never refused over (T-114, PR #92 review). |
 | **FR-013** | A `coverage` command (shared implementation in `kg_schema.cli`, exposed on `fundamental_agent`/`pricing_agent`/`quant`) reports, for the as-of universe, which members have core EDGAR/pricing/observation data, persisting one `universe_coverage` row per member; default behavior is warn (report + exit 0), `--strict` exits 1 below `--min-fraction`. | `python -m quant coverage --analysis-date D` upserts exactly one `universe_coverage` row per `(D, universe, symbol)`; `--strict` with `--min-fraction 1.0` against a universe with any uncovered member exits non-zero. |
-| **FR-014** | `api/` exposes the `v_*` read-contract views and the point-in-time universe over HTTP (`/api/v1/health`, `/health/db`, `/runs`, `/universe`, `/universe/coverage`, `/scores`, `/portfolio/positions`, `/portfolio/ranking`), opening every database `mode=ro`, and never triggers an agent run itself. | Every `KG_FINANCIAL_DB`/`universe.db` connection opened by `api/` code is `mode=ro` (`grep` for a write-capable `connect(` call under `src/api/` returns none); a request against a view whose base table doesn't exist in a partial DB returns an empty list, not a `500`. |
+| **FR-014** | `api/` exposes the `v_*` read-contract views and the point-in-time universe over HTTP (`/api/v1/health`, `/health/db`, `/runs`, `/universe`, `/universe/coverage`, `/scores`, `/portfolio/positions`, `/portfolio/ranking`). These **read endpoints** open every database `mode=ro` and never trigger an agent run. From Work item 2 (decided 2026-10-06, constitution 2.0.0) `api/` is also the repo's single entry point for orchestrated and remote runs (the per-package CLIs stay) and adds **run endpoints** — the orchestrator and each of its steps — which are the only `api/` code that may start a run or open a write-capable connection; they live in router module(s) separate from the read routers. The run-status (poll) endpoint only reads provenance, so it is a **read** endpoint: `GET`, `mode=ro`, in a read router. | Every `KG_FINANCIAL_DB`/`universe.db` connection opened by the read routers is `mode=ro` (`grep` for a write-capable `connect(` call in the read routers' modules returns none, and no read router imports a run router); a request against a view whose base table doesn't exist in a partial DB returns an empty list, not a `500`. The run endpoints' acceptance criteria are `PLAN.md` Work item 2's "Run endpoints" bullets, verified by `T-019`. |
+| **FR-015** | **Deferred (Work item 20, after `T-100`; this repo is not yet a production deployment).** The `api/` run endpoints (FR-014) require access control: the run routers are mounted only when `API_ENABLE_RUNS` is set and require a bearer token from the environment (`API_RUN_TOKEN`), refusing every call when none is configured; the read endpoints are unaffected. The mechanism is the proposed shape and is confirmed when Work item 20 starts. Until this lands, the run endpoints are for the dev container / pilot only and must not be reachable from an untrusted network (the API binds `0.0.0.0` by default). | With `API_ENABLE_RUNS` unset, every run route is absent (`404`); with it set and no `API_RUN_TOKEN`, a run call is refused; a missing or wrong token is rejected (`401`) and nothing is started or written; a correct token runs. A read endpoint answers identically with and without these settings. Covered by `T-144`. |
 
 ### 2.4 Non-functional requirements
 
@@ -146,8 +146,8 @@ stock. Summary for traceability:
   already-computed ratios. No trained model, no `transformers`/`torch`.
 - **Numeric leaf**: `quant`'s Markowitz benchmark (numpy/scipy/cvxpy/
   clarabel) — the repo's only heavy numeric dependency, import-isolated.
-- **Serving**: FastAPI + `uvicorn`, read-only, `pydantic` request/response
-  models; `httpx` for the EDGAR/pricing gateway calls.
+- **Serving**: FastAPI + `uvicorn`, read endpoints read-only and run endpoints
+  write-capable (FR-014), `pydantic` request/response models; `httpx` for the EDGAR/pricing gateway calls.
 - **Storage**: SQLite, one shared `KG_FINANCIAL_DB` via `kg_schema.db`
   (wrapping git-tag-pinned `portfolio_common.db.Database`, `v1.2.1`) — no raw
   `sqlite3` driver usage outside that seam (NR-004); the remaining
@@ -236,7 +236,7 @@ Every agent takes `--analysis-date` and resolves its as-of cohort from
 `universe.db`; `kg_schema` is the one shared schema/connection seam every
 package calls into. The `v_*` views are the one contract
 `portfolio-knowledge-graph` depends on; everything behind them can change,
-and the read-only `api/` serves those same views over HTTP for
+and the `api/` read endpoints serve those same views over HTTP for
 `portfolio-reports`/`portfolio-app`.
 
 Full detail, with hover tooltips per component, the shipped/partial/critical
@@ -342,13 +342,16 @@ persist the book → later, evaluate its forward realized/active return
 against a chosen benchmark.
 
 **Coverage check** (`fundamental_agent`/`pricing_agent`/`quant coverage`): a
-standalone, read-only pre-run check reporting which as-of universe members
-have core EDGAR/pricing/observation data, persisted to `universe_coverage`.
+standalone pre-run check reporting which as-of universe members have core
+EDGAR/pricing/observation data. It reads the data tables but persists its
+result to `universe_coverage` (FR-013), so it is not a read-only operation.
 
-**Serving** (`api/`, no write access): a request opens `KG_FINANCIAL_DB`/
-`universe.db` `mode=ro` and reads the `v_*` views / point-in-time universe
-directly — it never triggers an agent run; that stays `portfolio-reports`'
-job.
+**Serving** (`api/`): a read request opens `KG_FINANCIAL_DB`/`universe.db`
+`mode=ro` and reads the `v_*` views / point-in-time universe directly — read
+endpoints never trigger an agent run. From Work item 2 (decided 2026-10-06)
+`api/` is also this repo's single entry point for orchestrated and remote runs
+(the per-package CLIs stay): separate run endpoints start the orchestrator or
+any one step (see FR-014), and are the only part with write access.
 
 ## 7. Business Logic & Algorithms
 
@@ -527,6 +530,13 @@ There is no formal CD pipeline for this repo yet; what exists:
   `fundamental_agent run --sections`; an OpenAI-compatible LLM endpoint
   (`LLM_API_KEY`/`LLM_MODEL`/`LLM_URL`, today DeepSeek) for the metrics-
   master synthesis.
+- **Execution order across the data repositories**: `portfolio-data-mining` →
+  `portfolio-nlp` → `portfolio-financial-analysis`. This repo's orchestrator
+  (Work item 2) assumes `portfolio-nlp` has already run for the same date;
+  it only checks for its output, never triggers it, and does not enforce the
+  order across repositories. **Inert until Work item 4 lands**: until then this
+  repo reads no `portfolio-nlp` output (`PLAN.md` Work item 2), so nothing has
+  to wait for an nlp run. The architecture artifacts follow this statement.
 - **Upstream (required, read-only data)**: `universe.db` (`KG_UNIVERSE_DB`,
   `portfolio-data-mining`'s point-in-time S&P 500 membership — every agent's
   as-of universe source, FR-012); `urls.db` (`KG_NEWS_DB`,
@@ -707,4 +717,4 @@ than silently diverging (constitution: Governance).
 | Author | Dovaribi Carupia Yagari | | Universidad Pontificia Bolivariana (UPB) |
 | Reviewer | Camilo Andrés Soto Montoya | | Universidad Pontificia Bolivariana (UPB) |
 
-**Version**: 1.1.0 | **Last Amended**: 2026-09-12
+**Version**: 1.2.0 | **Last Amended**: 2026-10-06 (FR-014 and the new deferred FR-015, §2.1, §2.2, §4 "Serving" and "Coverage check", §12 execution order: run endpoints, T-018). Amendments between 2026-09-12 and 2026-10-06 (e.g. FR-001, FR-007, FR-012) were not versioned; 1.2.0 is the first bump since 1.1.0 and covers them too.

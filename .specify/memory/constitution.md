@@ -9,7 +9,8 @@ Governance) rather than override it silently.
 ## Technological stock
 
 `portfolio-financial-analysis` is a headless Python service — six CLI-driven
-packages plus a read-only FastAPI surface, no UI of its own; every rule below
+packages plus a FastAPI surface (read-only views, and the run endpoints for
+orchestrated runs, Tech stack #3), no UI of its own; every rule below
 assumes the stack actually pinned in `pyproject.toml`.
 
 1. **Runtime**: Python `>=3.12,<3.13`, dependency-managed with `uv` (lockfile
@@ -28,8 +29,20 @@ assumes the stack actually pinned in `pyproject.toml`.
    scipy / cvxpy / clarabel) is the repo's only heavy numeric dependency,
    confined to that one leaf package and pinned there by
    `tests/test_quant_import_isolation.py` — no other package may import it.
-3. **Web/service layer**: FastAPI + `uvicorn[standard]` for the read-only
-   `api/` package (`:8010`); `httpx` for the EDGAR and pricing gateway calls;
+3. **Web/service layer**: FastAPI + `uvicorn[standard]` for the `api/`
+   package (`:8010`), the repo's single entry point for orchestrated and remote
+   runs (Work item 2, decided 2026-10-06); the per-package `python -m <package>`
+   CLIs stay (Project structure #2). It has two kinds of endpoint. The **read endpoints** (the
+   `v_*` read-contract views and `universe.db`) stay strictly read-only:
+   every connection is `mode=ro` and they never trigger a run. The **run
+   endpoints** (the orchestrator and each of its steps) are the only part of
+   `api/` that may start an agent run and open a write-capable connection to
+   `KG_FINANCIAL_DB`; they live in their own router module(s), apart from the
+   read routers, and a read router never imports them. Access control for the
+   run endpoints is required before any non-dev deployment (SPEC FR-015, Work
+   item 20, deferred); until then they are for the dev container / pilot only.
+   `httpx` for the EDGAR
+   and pricing gateway calls;
    `pydantic>=2.6` for request/response and settings models;
    `beautifulsoup4`/`lxml` for narrative SEC filing HTML (`fundamental_agent
    run --sections`).
@@ -83,7 +96,9 @@ assumes the stack actually pinned in `pyproject.toml`.
 2. **Every package is a `python -m <package>` CLI** (argparse), installed
    editable via the `[tool.hatch.build.targets.wheel]` list in
    `pyproject.toml` — except `api/`, which is also runnable as
-   `python -m api` or `uvicorn --factory api.app:create_app`. Don't invent a
+   `python -m api` or `uvicorn --factory api.app:create_app`; the CLIs stay
+   the per-package way to run a package, and `api/`'s run endpoints are the
+   orchestrated path over the same code. Don't invent a
    second entrypoint convention (an `apps/`/`cli/`/`scripts/` split, an
    installed console-script) for a new package; match this one.
 3. **Tests live flat under `tests/`** (`test_<module_or_feature>.py`, not
@@ -259,8 +274,9 @@ assumes the stack actually pinned in `pyproject.toml`.
 
 ## Executable cmds
 
-Canonical commands — a spec/plan should reference these, not invent new
-ad-hoc invocations:
+Canonical per-package commands — a spec/plan should reference these, not
+invent new ad-hoc invocations (they stay valid; `api/`'s run endpoints are
+the orchestrated, remote path over the same code, Tech stack #3):
 
 ```bash
 uv sync --group dev                                   # install deps
@@ -280,6 +296,7 @@ uv run python -m entity_resolution build --min-weight N [--analysis-date D]
 uv run python -m cycle select  --analysis-date D [--top-n 30]
 uv run python -m cycle monitor --analysis-date D
 uv run python -m cycle backfill --from D1 --to D2 --step-days N
+uv run python -m cycle undo-run --cycle-run N [--apply]
 
 uv run python -m quant backfill-actions      # dividends/splits from the pricing gateway (its only source)
 uv run python -m quant build-returns         # refuses without a clean backfill-actions covering the window
@@ -420,9 +437,23 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-27
+**Version**: 2.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-06
 
 **Amendment log**:
+- 2.0.0 (2026-10-06) — MAJOR: Tech stack #3 no longer defines `api/` as
+  read-only. It splits `api/` into read endpoints (the read-only, `mode=ro`,
+  never-starts-a-run guarantee is kept for each of them) and run endpoints
+  (may start a run and write `KG_FINANCIAL_DB`), because Work item 2 makes
+  `api/` the repo's single entry point for orchestrated and remote runs, with
+  the orchestrator and each step also exposed as an endpoint. A MAJOR bump
+  because a principle is redefined: a consumer relying on "`api/` never
+  writes" (`portfolio-reports`, `portfolio-app`) loses that guarantee for the
+  package as a whole. The per-package CLIs stay; Project structure #2 and
+  "Executable cmds" only gain a pointer to the run endpoints, and
+  "Executable cmds" also lists the previously omitted `cycle undo-run`. Tech
+  stack #3 also states that run-endpoint access control (SPEC FR-015, Work item
+  20, deferred) is required before any non-dev deployment, and until then the
+  run endpoints are for the dev container / pilot only.
 - 1.4.0 (2026-09-27) — MINOR: new principle, Code & Git #12, requiring the
   checked-out branch's freshness to be verified *before* any file is edited
   for a new task, not discovered after the fact — a leftover, already-merged
