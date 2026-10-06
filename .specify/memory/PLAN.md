@@ -228,8 +228,10 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    - **Endpoints for this work item**: the orchestrator, plus `pricing_agent run`, `fundamental_agent run`,
      `entity_resolution build`, `cycle monitor`, `cycle select`, and `quant` `backfill-actions`,
      `build-returns`, `build-risk-model`, `optimize`, `evaluate`. **Not exposed over HTTP**: every `migrate`
-     (FR-011's non-additive migrations stay a deliberate CLI action) and `cycle backfill` (a REPLAY write).
-     `coverage` is read-only and is left for a later read endpoint. Adding more is its own change.
+     (FR-011's non-additive migrations stay a deliberate CLI action), `cycle backfill` (a REPLAY write) and
+     `cycle undo-run` (it reverts writes to the live book). `coverage` is also not exposed: it persists a
+     `universe_coverage` row per member (FR-013), so it is not a read endpoint; a later HTTP form would be a run
+     endpoint, or a read form that skips the persist. Adding more is its own change.
    - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
      package still has to meet Project structure #1's bar.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
@@ -243,7 +245,10 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
 4. Surface a per-step failure without aborting steps that don't depend on
    the failed one (`pricing_agent` and `fundamental_agent` are independent;
    `entity_resolution` doesn't depend on either) — only `cycle`/`quant`
-   should hard-block on their real upstream dependencies.
+   should hard-block on their real upstream dependencies. The full edge set: `cycle` ← `pricing_agent` +
+   `fundamental_agent`; `quant` ← `pricing_agent` **+ `fundamental_agent`** (its market cap reads the cover-page
+   share count that `fundamental_agent` writes to `filing_cover_shares`, via `kg_schema.market_cap`; staleness
+   is bounded by `market_cap_max_share_age_days`); `entity_resolution` ← nothing in this repo.
 5. **Incremental detection (`T-017`) composes with steps 2 and 4.** Each step has a pending signal ("is there
    upstream data for `--analysis-date` that this step has not processed?"). A run executes the steps that are
    pending **plus their downstream dependents** (step 4's graph), and skips the rest; step 2's idempotency still

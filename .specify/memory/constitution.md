@@ -293,6 +293,7 @@ uv run python -m entity_resolution build --min-weight N [--analysis-date D]
 uv run python -m cycle select  --analysis-date D [--top-n 30]
 uv run python -m cycle monitor --analysis-date D
 uv run python -m cycle backfill --from D1 --to D2 --step-days N
+uv run python -m cycle undo-run --cycle-run N [--apply]
 
 uv run python -m quant backfill-actions      # dividends/splits from the pricing gateway (its only source)
 uv run python -m quant build-returns         # refuses without a clean backfill-actions covering the window

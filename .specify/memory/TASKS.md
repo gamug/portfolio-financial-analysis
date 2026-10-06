@@ -64,7 +64,8 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       it. → step 3.
 - [ ] **T-013** Per-step failure isolation: an independent step's failure (e.g. `entity_resolution`) does not
       block steps with no real dependency on it; a dependent step (`cycle` on
-      `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent`) does hard-block. → step 4.
+      `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent` and `fundamental_agent`, the latter for
+      the cover-page share count behind market cap) does hard-block. → step 4.
 - [ ] **T-017** Implement the incremental, upstream-aware run: define each step's pending signal (including
       `entity_resolution`'s news and `quant`'s corporate actions), run the pending steps plus their downstream
       dependents, append only (NR-007); when nothing is pending, run only `cycle monitor`. The semantic check

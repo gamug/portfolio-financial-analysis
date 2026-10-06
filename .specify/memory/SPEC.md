@@ -86,7 +86,8 @@ that downstream decision.
   actually have core data.
 - A FastAPI layer (`api/`): read-only endpoints over the `v_*` read-contract
   views and `universe.db`, plus (from Work item 2) the run endpoints of the
-  repo's single entry point.
+  repo's single entry point for orchestrated and remote runs (the per-package
+  CLIs stay).
 - A rule-driven veto lane (`rule_catalog` → `veto`) with a T-1 contagion lag,
   and a Markowitz mean-variance benchmark book (`quant`) to grade the
   blended-score portfolio against.
@@ -340,8 +341,9 @@ persist the book → later, evaluate its forward realized/active return
 against a chosen benchmark.
 
 **Coverage check** (`fundamental_agent`/`pricing_agent`/`quant coverage`): a
-standalone, read-only pre-run check reporting which as-of universe members
-have core EDGAR/pricing/observation data, persisted to `universe_coverage`.
+standalone pre-run check reporting which as-of universe members have core
+EDGAR/pricing/observation data. It reads the data tables but persists its
+result to `universe_coverage` (FR-013), so it is not a read-only operation.
 
 **Serving** (`api/`): a read request opens `KG_FINANCIAL_DB`/`universe.db`
 `mode=ro` and reads the `v_*` views / point-in-time universe directly — read
@@ -531,7 +533,9 @@ There is no formal CD pipeline for this repo yet; what exists:
   `portfolio-nlp` → `portfolio-financial-analysis`. This repo's orchestrator
   (Work item 2) assumes `portfolio-nlp` has already run for the same date;
   it only checks for its output, never triggers it, and does not enforce the
-  order across repositories. The architecture artifacts follow this statement.
+  order across repositories. **Inert until Work item 4 lands**: until then this
+  repo reads no `portfolio-nlp` output (`PLAN.md` Work item 2), so nothing has
+  to wait for an nlp run. The architecture artifacts follow this statement.
 - **Upstream (required, read-only data)**: `universe.db` (`KG_UNIVERSE_DB`,
   `portfolio-data-mining`'s point-in-time S&P 500 membership — every agent's
   as-of universe source, FR-012); `urls.db` (`KG_NEWS_DB`,
