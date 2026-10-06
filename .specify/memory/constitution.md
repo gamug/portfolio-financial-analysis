@@ -9,7 +9,8 @@ Governance) rather than override it silently.
 ## Technological stock
 
 `portfolio-financial-analysis` is a headless Python service — six CLI-driven
-packages plus a read-only FastAPI surface, no UI of its own; every rule below
+packages plus a FastAPI surface (read-only views, and the run endpoints of
+the single entry point, Tech stack #3), no UI of its own; every rule below
 assumes the stack actually pinned in `pyproject.toml`.
 
 1. **Runtime**: Python `>=3.12,<3.13`, dependency-managed with `uv` (lockfile
@@ -28,8 +29,16 @@ assumes the stack actually pinned in `pyproject.toml`.
    scipy / cvxpy / clarabel) is the repo's only heavy numeric dependency,
    confined to that one leaf package and pinned there by
    `tests/test_quant_import_isolation.py` — no other package may import it.
-3. **Web/service layer**: FastAPI + `uvicorn[standard]` for the read-only
-   `api/` package (`:8010`); `httpx` for the EDGAR and pricing gateway calls;
+3. **Web/service layer**: FastAPI + `uvicorn[standard]` for the `api/`
+   package (`:8010`), the repo's single entry point (Work item 2, decided
+   2026-10-06). It has two kinds of endpoint. The **read endpoints** (the
+   `v_*` read-contract views and `universe.db`) stay strictly read-only:
+   every connection is `mode=ro` and they never trigger a run. The **run
+   endpoints** (the orchestrator and each of its steps) are the only part of
+   `api/` that may start an agent run and open a write-capable connection to
+   `KG_FINANCIAL_DB`; they live in their own router module(s), apart from the
+   read routers, and a read router never imports them. `httpx` for the EDGAR
+   and pricing gateway calls;
    `pydantic>=2.6` for request/response and settings models;
    `beautifulsoup4`/`lxml` for narrative SEC filing HTML (`fundamental_agent
    run --sections`).
@@ -420,9 +429,17 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 1.4.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-09-27
+**Version**: 1.5.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-06
 
 **Amendment log**:
+- 1.5.0 (2026-10-06) — MINOR: Tech stack #3 no longer calls `api/` read-only
+  as a whole. It splits `api/` into read endpoints (unchanged guarantees) and
+  run endpoints (may start a run and write `KG_FINANCIAL_DB`), because Work
+  item 2 makes `api/` the repo's single entry point, with the orchestrator and
+  each step also exposed as an endpoint. Versioned MINOR, not MAJOR: the
+  read-only guarantee is kept intact for every read endpoint and the change
+  only adds a separately-scoped write surface. A reviewer who reads this as a
+  redefined principle may bump it to 2.0.0.
 - 1.4.0 (2026-09-27) — MINOR: new principle, Code & Git #12, requiring the
   checked-out branch's freshness to be verified *before* any file is edited
   for a new task, not discovered after the fact — a leftover, already-merged
