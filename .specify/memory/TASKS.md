@@ -68,7 +68,7 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       the cover-page share count behind market cap) does hard-block. → step 4.
 - [ ] **T-017** Implement the incremental, upstream-aware run: define each step's pending signal (including
       `entity_resolution`'s news and `quant`'s corporate actions), run the pending steps plus their downstream
-      dependents, append only (NR-007); when nothing is pending, run only `cycle monitor`. The semantic check
+      dependents, append only (NR-007); when nothing is pending, run only `cycle select` (the orchestrator's cycle step is always `select`). The semantic check
       degrades to "no source configured" until Work item 4's `KG_NLP_DB` seam exists and the SEMANTIC-score
       writer question (KG `T-158`) is answered. → steps 2, 4 and 5; `PLAN.md` acceptance criteria,
       "Incremental, upstream-aware run" *(added 2026-10-06)*.

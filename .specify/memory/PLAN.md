@@ -278,10 +278,15 @@ touching the endpoints.
   - Writes follow NR-007 (append-only, with its `price_observation`/`quant_return_daily` exceptions, `T-131`)
     and the existing upserts; the orchestrator never deletes or truncates. Each step processes only its pending
     data.
-  - Every step has a defined pending signal (step 5). When **no** step is pending, the orchestrator runs only
-    **`cycle monitor`** for `D` and skips the other four steps; `cycle select` stays an explicit, separate call
-    (a repeat `select` for the same date is a no-op under `UNIQUE(cycle_type, cycle_date)`). When only some
-    steps are pending, it runs those and their downstream dependents (step 5).
+  - **The orchestrator's `cycle` step is always `cycle select`** (user, 2026-10-06), so every orchestrated run
+    ends with a selected book for `D` (T-014/T-143 therefore have a selection run and `portfolio_position` rows
+    to check). `cycle monitor` stays available as its own step endpoint, never as the orchestrator's cycle step.
+  - Every step has a defined pending signal (step 5). When **no** step is pending, the orchestrator skips the
+    other four steps and runs only `cycle select` for `D`. A repeat `select` for the same date resumes the
+    recorded run through `cycle_checkpoint` (steps already `done` write nothing new), or is refused with
+    `ConstructionMismatch` if its construction settings (N, scheme, caps, preferences) differ from the recorded
+    run's. When only some steps are pending, it runs those and their downstream dependents (step 5), then
+    `cycle select`.
   - **The semantic check is blocked on an open question**: which artifact it reads — `portfolio-nlp`'s
     per-article rows, or a per-`(asset, day)` SEMANTIC score — depends on who writes that score, which is
     disputed (this repo's `docs/semantic-score-boundary.md` names the integration repo; the knowledge-graph
