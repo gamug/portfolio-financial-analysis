@@ -1952,10 +1952,13 @@ orchestrator run, over HTTP and the CLI wrapper, runs everything on a fresh data
 at sample size never costs a full-universe LLM run. `T-100` also runs the LLM on every filing with the final
 prompts, which is why `T-079`'s separate bundled re-run is superseded.
 
-**Approach**: purge the sample-era derived data if a version bump requires it (same
-mechanism as `T-088`) → `fundamental_agent run` over the full as-of universe →
-Ring-1 `data_quality_issue` backfill (`T-065`) → `cycle select` → `quant
-backfill-actions` → `build-returns` → `build-risk-model` → `optimize` → `evaluate`.
+**Approach**: purge the sample-era derived data only if a version bump requires it (same mechanism as
+`T-088`; outside the orchestrator, and moot on the fresh database this task needs) → **one orchestrator run
+through the CLI wrapper** over the full as-of universe: `pricing_agent run` → `fundamental_agent run` →
+`entity_resolution build` → `cycle select` → `quant backfill-actions` → `build-returns` →
+`build-risk-model` → `optimize` → `evaluate`. The Ring-1 `data_quality_issue` gates (`T-065`) run inline in
+`fundamental_agent run`, so there is no separate backfill step and the orchestrator does not need a `quality`
+step; `fundamental_agent quality` stays a CLI-only maintenance command for older filings.
 
 **Acceptance criteria**:
 - `T-143`: the final pilot reaches `verify_pilot.py` 0 FAIL on a fresh database, via the orchestrator, from

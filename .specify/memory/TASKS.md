@@ -363,10 +363,13 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       prompts)* Run the whole
       pipeline over the **entire as-of S&P 500 universe** (all 503 assets, not a
       sample) as the very last step of the repository setup: purge the sample-era
-      derived data first if a version bump requires it (same mechanism as `T-088`) →
-      `fundamental_agent run` for every asset → Ring-1 `data_quality_issue` backfill →
-      `cycle select` → `quant backfill-actions`/`build-returns`/`build-risk-model`/
-      `optimize`/`evaluate`. **Depends on every other task in `TASKS.md` — every task
+      derived data first only if a version bump requires it (same mechanism as `T-088`; outside the
+      orchestrator, and moot on the fresh database this task needs anyway) → **one orchestrator run through
+      the CLI wrapper**: `pricing_agent run` → `fundamental_agent run` for every asset → `entity_resolution
+      build` → `cycle select` → `quant backfill-actions`/`build-returns`/`build-risk-model`/`optimize`/
+      `evaluate`. The Ring-1 `data_quality_issue` gates run inline in `fundamental_agent run`
+      (`quality.gate_version`), so no separate backfill step; `fundamental_agent quality` stays a CLI-only
+      maintenance command for older filings. **Depends on every other task in `TASKS.md` — every task
       open today and every task added later — except those the user deferred or superseded
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-144` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by this task.
