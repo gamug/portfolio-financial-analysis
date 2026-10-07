@@ -1888,7 +1888,7 @@ amount (the app).
 **Why**: the user's 2026-10-05 scope decision is to finish this repo before touching the knowledge-graph
 side. Work item 9's `T-083` is the one local piece of that item (our API reading the rewritten
 `v_quant_vs_live`), and PR #112's review left four follow-ups in code that the final pilot will exercise. The
-knowledge-graph repo's two handoff rounds (`docs/kg_handoff_financial_analysis.md`,
+knowledge-graph repo's two handoff rounds (local, untracked sources: `docs/kg_handoff_financial_analysis.md`,
 `docs/kg_handoff_second_followup.md`, and our replies in `docs/kg_handoff_reply.md` and
 `docs/kg_handoff_second_reply.md`, section 3 of each) produced two more, which the user approved 2026-10-06:
 the view contract (`T-144`) and non-reusable ids (`T-145`). All land before the orchestrator (Work item 2) and
@@ -1935,8 +1935,9 @@ approval.
      `configured_weight`, `effective_weight`; one row for every non-null component of every ranking row,
      vetoed or not (`rank` excludes no one; exclusion happens later, in `positions`). The only ranking rows
      without component rows are the no-component ones (all components null; today 0).
-   - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus 15 per SOFT veto (can go below 0), and 0.0
-     with no components; SECTOR `raw_value` is the asset's TECHNICAL raw score minus its sector's mean, in
+   - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus the run's `soft_veto_penalty` (15 by
+     default; `v_weight_scheme`) per SOFT veto, so it can go below 0, and with no components it is 0.0 minus
+     that deduction; SECTOR `raw_value` is the asset's TECHNICAL raw score minus its sector's mean, in
      TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z over the cohort (2% winsorization), clamped
      to [0, 100], the same function for SECTOR, with a cohort mean near 50 but not exactly 50;
      FUNDAMENTAL's `normalized_score` is rewritten by every cycle (T-106), so the stored value is the last
@@ -1949,12 +1950,20 @@ approval.
      timezones of the `*_at` columns (`computed_at` is ISO 8601 UTC, written with `+00:00`); the forensic-flag
      keys (the four booleans; the codes are the keys that are `true`).
    - A marker migration that bumps `schema_version`, since view changes are not migrations and the knowledge
-     graph asserts a floor (run through `migrate`, FR-011). Send the knowledge-graph repo the commit, the new
-     `schema_version` and the doc section when it lands.
+     graph asserts a floor (run through `migrate`, FR-011). `ensure_views` drops and recreates every view from
+     the running code's definitions on every `ensure`, so an older process that opens a migrated database would
+     remove the new columns and views. Deployment rule: every process that opens the database is upgraded (or
+     stopped) before `migrate` runs. In code, `ensure_views` skips its rebuild when the database's
+     `schema_version` is above the highest migration the code knows, which protects later code from the next
+     contract change but cannot retrofit code that predates it. Send the knowledge-graph repo the commit, the
+     new `schema_version` and the doc section when it lands.
 4. **`T-145`**, non-reusable ids:
    - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the DDL,
      plus a migration for existing databases (a table rebuild, so a non-additive migration run only through
      `migrate`, FR-011), tested on a copy of the database: foreign keys, `T-107` triggers and views intact.
+     A rebuild alone sets the sequence from the surviving rows, so an id deleted before the migration would be
+     reused; the migration instead seeds `sqlite_sequence` with the highest id referenced anywhere (the table's
+     own rows and every `run_id`/`filing_id` column that points to it).
      Why: production's `cycle_run` was emptied by hand and ids were reused, and `sec_filings` ids can be reused
      too (the `T-120` repair deletes stale filing rows).
    - `scripts/verify_pilot.py` checks that every `run_id` resolves to a
@@ -1973,16 +1982,22 @@ approval.
   in both documents.
 - `T-144`:
   - the views build on a copy of production and on the pilot database;
-  - `available_at` ≥ `event_time` on every row of `v_fundamental_metric` and `v_score_snapshot`;
+  - `available_at` ≥ `event_time` on every non-NULL value of `v_fundamental_metric` and of
+    `v_score_snapshot`'s FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written
+    until Work item 4, which sets their `available_at`);
   - at most one `is_current` row per key, in `v_fundamental_metric`, `v_quant_vs_live` and
     `v_quant_portfolio`;
-  - per `(run, asset)`, the effective weights sum to 1 and Σ(effective weight × `component_value`) − 15 ×
-    (number of SOFT vetoes) = `blended_score`;
+  - for a `(run, asset)` with at least one component, the effective weights sum to 1 and Σ(effective weight ×
+    `component_value`) − `soft_veto_penalty` × (number of SOFT vetoes) = `blended_score`, where
+    `soft_veto_penalty` is the run's (`params_json`, exposed by `v_weight_scheme`) and the SOFT count is the
+    `veto_rules_json` entries other than `HARD` and `UNSCORED`;
   - every non-null component of every ranking row has a row in `v_cycle_ranking_component`, vetoed or not;
-  - every column the views had before is unchanged (names, order, values);
+  - every column the views had before is unchanged in names, order and values, except
+    `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR rows (NULL → the cycle date, step 3);
   - `docs/kg_schema.md` carries each definition listed in step 3; `schema_version` advanced.
-- `T-145`: the migration, run on a copy, leaves foreign keys, `T-107` triggers and views intact, and a deleted
-  highest id is not reused by the next insert in each of the five tables; `verify_pilot.py` fails on a
+- `T-145`: the migration, run on a copy, leaves foreign keys, `T-107` triggers and views intact, and the next
+  insert in each of the five tables gets an id above every id ever referenced, including a highest row deleted
+  before the migration; `verify_pilot.py` fails on a
   dangling or wrong-type `run_id`, a NULL accession and a duplicate accession, and passes on a database built by
   the current code.
 - `T-083` and `T-142` change no `v_*` view (constitution AI behavior #10); `T-144` is the one approved view
@@ -1990,7 +2005,9 @@ approval.
 
 ## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100` (added 2026-10-06)
 
-**Deferred (user, 2026-10-06): this repo is not a production version yet.** Work item 2's review found that the
+**Deferred (user, 2026-10-06): this repo is not a production version yet.** Its task is `T-146` (numbered `T-144`
+in PR #124; renumbered 2026-10-06, before any work started, because the knowledge-graph repo already referenced
+`T-144`/`T-145` as the view tasks — a one-time exception to the stable-ID rule). Work item 2's review found that the
 `api/` run endpoints write the live `portfolio_position` book, spend LLM budget (`fundamental_agent run`) and
 hit the EDGAR and pricing gateways, while `api/` binds `0.0.0.0` by default and nothing authenticates a caller.
 That is acceptable for the dev container and the pilot, not for a production deployment.

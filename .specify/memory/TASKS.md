@@ -356,23 +356,37 @@ that constitution AI behavior #10 asks to be approved first.
       - `v_cycle_ranking_component` (new): `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
         `configured_weight`, `effective_weight`; one row for every non-null component of every ranking row,
         vetoed or not.
-      - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus 15 per SOFT veto, and 0.0 with no
-        components; SECTOR `raw_value` is in TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z
-        over the cohort, clamped to [0, 100], the same for SECTOR; FUNDAMENTAL's `normalized_score` is
+      - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus the run's `soft_veto_penalty` (15 by
+        default) per SOFT veto, and 0.0 minus that deduction with no components; SECTOR `raw_value` is in
+        TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z over the cohort, clamped to [0, 100], the same for SECTOR; FUNDAMENTAL's `normalized_score` is
         rewritten by every cycle, so the per-cycle value is `component_value`; the units (`ratio`, `x`,
         `usd`); weights and caps are fractions of the book, caps are effective on SELECTION runs and
         configured (possibly NULL) on MONITORING runs; `scheme_id` is the position-weighting rule, not the
         blend; no component means all components null; `vetoed` is HARD or UNSCORED only; the timezones of
         the `*_at` columns; the forensic-flag keys.
-      - A marker migration that bumps `schema_version` (run through `migrate`, FR-011).
+      - A marker migration that bumps `schema_version` (run through `migrate`, FR-011). `ensure_views` drops
+        and recreates every view from the running code's definitions, so an older process that runs `ensure`
+        against a migrated database would remove the new columns and views: every process that opens the
+        database is upgraded (or stopped) before `migrate` runs, and `ensure_views` skips its rebuild when
+        the database's `schema_version` is above the highest migration the code knows (protects later code
+        from the next contract change; it cannot retrofit code that predates it).
       - **Acceptance**: the views build on a copy of production and on the pilot; `available_at` ≥
-        `event_time`; at most one `is_current` row per key; per (run, asset) the effective weights sum to 1
-        and Σ(effective weight × `component_value`) − 15 × (number of SOFT vetoes) = `blended_score`; every
-        non-null component has a row; existing view columns are unchanged.
+        `event_time` on every non-NULL value of `v_fundamental_metric` and of `v_score_snapshot`'s
+        FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written until Work item
+        4, which sets their `available_at`); at most one `is_current` row per key; for a (run, asset) with
+        at least one component, the effective weights sum to 1 and Σ(effective weight × `component_value`) −
+        `soft_veto_penalty` × (number of SOFT vetoes) = `blended_score`, where `soft_veto_penalty` is the
+        run's (`params_json`, `v_weight_scheme`) and the SOFT count is the `veto_rules_json` entries other than
+        `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
+        names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
+        rows (NULL → the cycle date).
 - [ ] **T-145** Non-reusable ids. → `PLAN.md` Work item 19, step 4.
       - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the
         DDL, plus a migration for existing databases (`migrate`, FR-011), tested on a copy — foreign keys,
-        `T-107` triggers and views intact.
+        `T-107` triggers and views intact. The rebuild seeds `sqlite_sequence` with the highest id referenced
+        anywhere (each table's own rows and every `run_id`/`filing_id` column that points to it), so an id
+        deleted before the migration is not reused; the test deletes a referenced highest row and checks that
+        the next id exceeds it.
       - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
         `sec_filings.accession_number` is never NULL and is unique.
       - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.
@@ -383,7 +397,10 @@ that constitution AI behavior #10 asks to be approved first.
 
 - [ ] **T-146** Gate the `api/` run routers: mounted only when `API_ENABLE_RUNS` is set, bearer token from
       `API_RUN_TOKEN`, refuse when none is configured; read endpoints unaffected; tests per FR-015's acceptance
-      column; document in `docs/api.md`. *(Added 2026-10-06; the mechanism is confirmed when this starts.)*
+      column; document in `docs/api.md`. *(Added 2026-10-06; the mechanism is confirmed when this starts.
+      Numbered `T-144` in PR #124; renumbered 2026-10-06, before any work started, because the
+      knowledge-graph repo already referenced `T-144`/`T-145` as the view tasks — a one-time exception to the
+      stable-ID rule.)*
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
