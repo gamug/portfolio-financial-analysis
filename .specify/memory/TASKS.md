@@ -370,10 +370,10 @@ that constitution AI behavior #10 asks to be approved first.
         database is upgraded (or stopped) before `migrate` runs, and `ensure_views` skips its rebuild when
         the database's `schema_version` is above the highest migration the code knows (protects later code
         from the next contract change; it cannot retrofit code that predates it).
-      - **Acceptance**: the views build on a copy of production and on the pilot; `available_at` ≥
-        `event_time` on every non-NULL value of `v_fundamental_metric` and of `v_score_snapshot`'s
+      - **Acceptance**: the views build on a copy of production and on the pilot; `available_at` is
+        non-NULL and ≥ `event_time` on every row of `v_fundamental_metric` and of `v_score_snapshot`'s
         FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written until Work item
-        4, which sets their `available_at`); at most one `is_current` row per key; for a (run, asset) with
+        4); at most one `is_current` row per key; for a (run, asset) with
         at least one component, the effective weights sum to 1 and Σ(effective weight × `component_value`) −
         `soft_veto_penalty` × (number of SOFT vetoes) = `blended_score`, where `soft_veto_penalty` is the
         run's (`params_json`, `v_weight_scheme`) and the SOFT count is the `veto_rules_json` entries other than
@@ -386,7 +386,9 @@ that constitution AI behavior #10 asks to be approved first.
         `T-107` triggers and views intact. The rebuild seeds `sqlite_sequence` with the highest id referenced
         anywhere (each table's own rows and every `run_id`/`filing_id` column that points to it), so an id
         deleted before the migration is not reused; the test deletes a referenced highest row and checks that
-        the next id exceeds it.
+        the next id exceeds it. The seeding and `verify_pilot.py`'s run-type check share one explicit map
+        from each `run_id` column to its run table (`score_snapshot.run_id` depends on `run_kind`;
+        `shared_executive_edge.run_id` points to `cycle_run`).
       - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
         `sec_filings.accession_number` is never NULL and is unique.
       - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.

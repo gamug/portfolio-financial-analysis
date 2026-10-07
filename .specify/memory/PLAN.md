@@ -1963,7 +1963,9 @@ approval.
      `migrate`, FR-011), tested on a copy of the database: foreign keys, `T-107` triggers and views intact.
      A rebuild alone sets the sequence from the surviving rows, so an id deleted before the migration would be
      reused; the migration instead seeds `sqlite_sequence` with the highest id referenced anywhere (the table's
-     own rows and every `run_id`/`filing_id` column that points to it).
+     own rows and every `run_id`/`filing_id` column that points to it). The seeding and `verify_pilot.py`'s
+     run-type check share one explicit map from each `run_id` column to its run table (`score_snapshot.run_id`
+     depends on `run_kind`; `shared_executive_edge.run_id` points to `cycle_run`).
      Why: production's `cycle_run` was emptied by hand and ids were reused, and `sec_filings` ids can be reused
      too (the `T-120` repair deletes stale filing rows).
    - `scripts/verify_pilot.py` checks that every `run_id` resolves to a
@@ -1982,9 +1984,9 @@ approval.
   in both documents.
 - `T-144`:
   - the views build on a copy of production and on the pilot database;
-  - `available_at` ≥ `event_time` on every non-NULL value of `v_fundamental_metric` and of
+  - `available_at` is non-NULL and ≥ `event_time` on every row of `v_fundamental_metric` and of
     `v_score_snapshot`'s FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written
-    until Work item 4, which sets their `available_at`);
+    until Work item 4; the knowledge graph drops rows without `availableAt`);
   - at most one `is_current` row per key, in `v_fundamental_metric`, `v_quant_vs_live` and
     `v_quant_portfolio`;
   - for a `(run, asset)` with at least one component, the effective weights sum to 1 and Σ(effective weight ×
