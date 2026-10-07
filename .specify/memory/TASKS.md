@@ -13,15 +13,15 @@ Task IDs are stable, same rule as `SPEC.md`'s `FR-0xx`/`NR-0xx`: don't
 renumber; mark a cancelled/superseded task in place instead.
 
 **🔴 Priority override (2026-09-08 forensic audit; order re-set by the user 2026-10-05)**: Work item 8
-(`T-141`, `T-070`–`T-077`) is the current top priority — a direct audit against production data
+(`T-141`, `T-070`–`T-077`, `T-147`, `T-148`) is the current top priority — a direct audit against production data
 (`data/financial.db`) found live correctness bugs, not open design work. (Closed Work items 1, 3, 5, 6, 7,
 10, 11, 13, 14, 15, 16, 17 and 18 are in `CHANGELOG.md`.) Work item 14 (P0/P1, the second audit's live
 defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-02; Work item 18 (the N-ticker
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
 
-**Order (user, 2026-10-05; scope: finish this repo first):** Work item 8 (`T-141` → `T-072` → `T-076` → `T-073`
-→ `T-074` → `T-070` → `T-071` → `T-077`) → **Work item 19** (local follow-ups: `T-083` → `T-142` → `T-144` →
-`T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
+**Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07; scope: finish this repo first):** Work item 8
+(`T-141` → `T-077` → `T-070` → `T-147` → `T-148` → `T-072` → `T-076` → `T-073` → `T-074` → `T-071`) →
+**Work item 19** (local follow-ups: `T-083` → `T-142` → `T-144` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
 `portfolio-nlp`) and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph
@@ -135,7 +135,17 @@ knowledge graph.
 
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
-**Order (user, 2026-10-05):** `T-141` → `T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`.
+**Order (user, 2026-10-07; replaces the 2026-10-05 order):** `T-141` → `T-077` → `T-070` → `T-147` → `T-148` →
+`T-072` → `T-076` → `T-073` → `T-074` → `T-071`.
+- **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
+  technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
+  (`T-147`'s input). The tasks that build on SEC-derived metrics (`T-072`, `T-076`, `T-073`, `T-074`, `T-071`) wait
+  for `T-148`'s fixes.
+- **`T-147` may start earlier** if the user approves `checklist_v1.md` before `T-070` merges: it then follows the
+  task in progress.
+- **Safety valve:** if the checklist is not ready when `T-070` merges, `T-148` goes ahead with D1–D4 only
+  (confirmed against the SEC), and the checklist's later findings become `T-149`+.
+
 One task per PR, each ending with its status commit after approval. `T-075` and `T-079` are superseded by
 `T-100` (see their entries); `T-078` stays deprecated; `T-140` is merged and its acceptance is measured by
 the final pilot, `T-143`.
@@ -164,6 +174,63 @@ the final pilot, `T-143`.
       structurally healthy PG, NEE, PM, T, STZ, APA and SBAC (7 of 20); combine it with cash
       coverage (e.g. OCF / current liabilities, interest coverage) and exempt utilities and
       financials. Also add a minimum signal-coverage floor to TECHNICAL (audit C5).)*
+- [ ] **T-147** SEC data-treatment checklist audit (user, 2026-10-07; docs, a script and tests -- **no change
+      under `src/`**). Audit the data path (EDGAR → `portfolio-data-mining` gateway → `fundamental_agent` →
+      `cycle`/`quant`) against the SEC data-treatment checklist. **Starts when the user approves
+      `checklist_v1.md`**, built from SEC, FASB, XBRL US DQC, Nareit, academic and edgartools sources (the user
+      owns the sources and the NotebookLM rounds; Claude reviews the draft). → `PLAN.md` Work item 8, step 10.
+      **Deliverables:**
+      - `docs/sec_data_checklist.md` (tracked). Per rule ID: the implementing file/function, or `none`; status
+        ✓ / partial / ✗ / not applicable (with the reason); evidence (the companies and filings violating it, up
+        to 5 example tickers); the check that tests it.
+      - `scripts/audit_sec_checklist.py`: network; read-only; SEC User-Agent `research@example.com`; at most 10
+        requests per second; every response cached.
+      - Hermetic tests of the check logic, on fixtures (no network in `tests/`).
+      **Two evidence levels, kept separate in every table:**
+      - (a) Prevalence at the source: SEC `companyfacts` for the 503 CIKs in production `assets` (plus
+        predecessor CIKs), filtered to the accessions of our filings.
+      - (b) Our resolver: today's `statements.py` re-run over production's stored `financial_facts`, read-only
+        (`mode=ro`) with `shasum` before and after, plus the pilot database and a live-gateway sample.
+        Caveat, recorded: production predates some gateway fixes and stores no `preferred_sign`.
+      **Also delivers:**
+      - Conflicts with how facts are selected today: point in time vs latest-filed, growth comparatives, the TTM
+        vintage mix, edgartools' `preferred_sign` and standardization.
+      - Rules the agent disagrees with, with reasoning (nothing dropped silently).
+      - A map of every defect fixed so far to a rule ID, and the fixed defects no rule covers.
+      - A golden set: the pilot's 20 tickers plus an insurer, GOOGL and BRK.B. It checks semantic choices (which
+        line is revenue for a bank, whether FFO is computable, which capex lines count for a utility), not
+        numbers.
+      - Type-based (GICS/SIC) treatment; a ticker-override format (ticker, rule ID, treatment, reason, source,
+        valid-from date) only as a last resort, each entry justified.
+      - A prevalence table sorted by severity × companies affected.
+      - A prioritized fix plan for `T-148`+.
+      **Acceptance:** the PR delivers all of the above; the `shasum` of production's database before and after is
+      in the PR; a sample of the counts re-runs independently; every ✓ cites code that enforces the rule.
+- [ ] **T-148** Line-item resolution and sign correctness (engine `metrics-v6`; `fundamental_agent`). D1–D4 below,
+      plus whatever `T-147` prioritizes. **Follows `T-147`'s approval**, except under the safety valve (`T-148`
+      then goes ahead with D1–D4 only). → `PLAN.md` Work item 8, step 11.
+      - (a) **Filed sign.** Store edgartools' `preferred_sign` (an additive column on `financial_facts`).
+        `Statements.get` returns line items in the filed XBRL sign; the `T-117`/`T-140` rebuild arithmetic stays
+        on displayed values; keep the `abs()` guards. Evidence (2026-10-06): 86 pilot filings have income tax
+        with the wrong sign (`effective_tax_rate` forced to 0, feeding ROIC and enterprise FCF yield), and one
+        company's COGS has the wrong sign. `preferred_sign = −1` matched the flipped rows 200/200 on live
+        payloads.
+      - (b) **Precedence.** Exact concepts first, in the spec's order, then `standard`, then `label_contains`.
+        Net income: `NetIncomeLoss` (attributable to the parent) before `ProfitLoss`, a methodology decision,
+        recorded. Equity: `StockholdersEquity` first. Evidence: 37 filings read equity "before treasury stock"
+        (PM +22.6B vs −12.6B); 237 filings read net income including non-controlling interests.
+      - (c) **Income tax.** Never a single component through `standard`. When the total is absent: Current +
+        Deferred when both are filed, else None (the default rate applies). Evidence: APA, 22 filings, deferred
+        only.
+      - (d) **Short-term debt.** `DebtCurrent` when it is filed; else `LongTermDebtCurrent` +
+        `ShortTermBorrowings`, plus `CommercialPaper` only when it is not already included in
+        `ShortTermBorrowings`. Verified against the SEC. Evidence: 60 filings read one partial line.
+      - (e) **Records.** Engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and
+        their sources (constitution AI behavior #12); regression tests (PM equity, the STZ/APO tax sign, the APA
+        tax component, the STZ COGS sign, short-term debt).
+      - (f) **Acceptance.** On a database rebuilt with the branch, the scripts in
+        `docs/checklist_sec/sec_xcheck/` (`itemcheck.py`, `signcheck.py`, `precedence.py`) report 0 FLIPPED and
+        no OTHER_CONCEPT for income tax and equity, with every number in the PR.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,
@@ -430,6 +497,10 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       merged change). It measures `T-140`'s acceptance and doubles as `T-014`'s check (one orchestrator
       run, through both HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix
       and re-run before `T-100`. → `PLAN.md` Work item 12.
+      **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
+      SEC, with network allowed, beside the offline `verify_pilot.py`. **FAIL** on any value mismatch, on any
+      resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
+      any flipped sign. **WARN** on documented not-applicable cases.
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final
       prompts)* Run the whole
@@ -474,8 +545,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current priority order (user's, 2026-10-05; scope: finish this repo first):** Work item 8 (`T-141` →
-`T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) → Work item 19 (`T-083` → `T-142` →
+**🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; scope: finish this repo
+first):** Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-148` → `T-072` → `T-076` → `T-073` → `T-074` →
+`T-071`) → Work item 19 (`T-083` → `T-142` →
 `T-144` → `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
