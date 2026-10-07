@@ -32,13 +32,13 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; scope: finish this repo first):**
-**Work item 8** (`T-141` → `T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) →
-**Work item 19** (local follow-ups before the final pilot: `T-083`, `T-142`) → **Work item 2** (the
+**Work item 8** (`T-141` → `T-072` → `T-076` → `T-073` → `T-074` → `T-070` → `T-071` → `T-077`) → **Work item
+19** (local follow-ups before the final pilot: `T-083` → `T-142` → `T-144` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
-- **Deferred until after `T-100`**: Work item 20 (run-endpoint access control, `T-144`; deferred 2026-10-06, the
+- **Deferred until after `T-100`**: Work item 20 (run-endpoint access control, `T-146`; deferred 2026-10-06, the
   repo is not a production version yet), Work item 4 (SEMANTIC; depends on `portfolio-nlp`) and Work item 9's
   `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph consumes, and `T-084` waits on
   data-mining's `urls.db`). They are no longer prerequisites of `T-100`. `T-083` (our API reading
@@ -265,7 +265,9 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    pending **plus their downstream dependents** (step 4's graph), and skips the rest; step 2's idempotency still
    protects a step that runs. The signal is defined per step in `T-017`'s design, including the two without an
    obvious one today: `entity_resolution` (news in `urls.db` after its last run) and `quant` (corporate actions
-   from the pricing gateway, not just prices).
+   from the pricing gateway, not just prices). When `KG_NEWS_DB` is not configured or does not exist,
+   `entity_resolution` reports "no news source configured", is not pending, and does not fail (the same rule as
+   the semantic check).
 
 **Acceptance surface (user, 2026-10-06)**: both the HTTP API and a CLI wrapper over the same orchestrator code.
 `T-014`, `T-015` and the final pilot `T-143` are each accepted through **both**, so neither can pass without
@@ -302,12 +304,12 @@ touching the endpoints.
   - **Every orchestrated run writes the live book.** Invoking the orchestrator against a database is the
     user's direction to run `select` there (see Work item 18's out-of-scope line). A run on a **new** `D` opens a
     new SELECTION run, i.e. a rebalance with turnover against the previous book, not only on a fresh database.
-  - **The semantic check is blocked on an open question**: which artifact it reads — `portfolio-nlp`'s
-    per-article rows, or a per-`(asset, day)` SEMANTIC score — depends on who writes that score, which is
-    disputed (this repo's `docs/semantic-score-boundary.md` names the integration repo; the knowledge-graph
-    repo's SPEC §13 item 11 / §2.6 D14 says `portfolio-nlp` computes it and this repo materializes it; open as KG
-    `T-158`). Until Work item 4 lands (`T-030`'s `KG_NLP_DB` seam; `SEMANTIC` is out of the composite per
-    `T-141`), the check reports "no semantic source configured", does not fail, and does not count as pending.
+  - **The semantic check has no source until Work item 4.** The writer is not in question: per
+    `docs/semantic-score-boundary.md`'s target column and the knowledge graph's D14 (SPEC §2.6), `portfolio-nlp`
+    computes the per-`(asset, day)` measure and this repo writes `score_snapshot[SEMANTIC]` (Work item 4). KG
+    `T-158` is only the `score_method` value. Until Work item 4 lands (`T-030`'s `KG_NLP_DB` seam; `SEMANTIC` is
+    out of the composite per `T-141`), the check reports "no semantic source configured", does not fail, and
+    does not count as pending.
     **Consequence**: Work item 2, `T-143` and `T-100` consume no `portfolio-nlp` output, so the "nlp first" order
     constrains nothing yet and the pilot is not blocked waiting on an nlp run.
   - **Execution order across the data repositories**: `portfolio-data-mining` → `portfolio-nlp` →
@@ -315,7 +317,9 @@ touching the endpoints.
     follows it (constitution AI behavior #11). The orchestrator documents the order and does not enforce it
     across repositories.
 - `SPEC.md` §13 item 3 updated to reflect the resolved state, and the stale "read-only"/"no orchestrator"
-  statements listed in `T-016` reconciled with what shipped. Also update the two architecture artifacts per
+  statements listed in `T-016` reconciled with what shipped, including `SPEC.md` §1's "portfolio-reports (as-of
+  run engine)": `portfolio-app` triggers runs (the run endpoints or the CLI wrapper) and `portfolio-reports`
+  reads (the knowledge-graph agreement, 2026-10-06). Also update the two architecture artifacts per
   constitution AI behavior #11.
 
 ## Work item 3 — `quant`: a factor-aware μ estimator — SUPERSEDED, see Work item 8
@@ -407,6 +411,8 @@ blocked end-to-end on the other repo's timeline.
    ships a labelled/judged eval for its sentiment stage (the gate
    `docs/semantic-score-boundary.md`'s W4 already specifies) — this is a
    cross-repo decision, not something to flip unilaterally here.
+5. Name the SEMANTIC `score_method` value for the knowledge graph (its request, 2026-10-06; the knowledge-graph
+   repo's `T-158` is only that value, not the writer).
 
 **Acceptance criteria**:
 
@@ -835,7 +841,9 @@ filing from a fresh database, with the final prompts.
    first: extend `FundamentalAssessment`/the synthesis JSON schema with the
    4-boolean `forensic_flags` object (`data_error_suspected`,
    `negative_equity_buyback`, `value_destroyer_sub_wacc`,
-   `severe_sbc_dilution`), write it to `score_snapshot.forensic_flags_json`,
+   `severe_sbc_dilution`), write it to `score_snapshot.forensic_flags_json`
+   (NULL when the flags were not evaluated and on every row other than FUNDAMENTAL; the object with all four
+   `false` means evaluated, none fired — not `[]`),
    and have `cycle` consume `data_error_suspected = true` as an active
    data-quality veto — this is what closes the "LLM caught it, `cycle`/
    `quant` ignored it" architecture-bypass finding (verified: 7 filings —
@@ -982,6 +990,8 @@ Work item 5 (A3) once it exists.
    genuine media co-occurrence into the new `media_cooccurrence` table
    (Work item 5's A4) rather than dropping the signal outright — table
    separation, not a boolean flag, per the audit's own recommendation.
+   Also add `v_media_cooccurrence_edge` (the knowledge-graph repo's request, 2026-10-06), and fill
+   `first_seen`/`last_seen` or document that they stay NULL.
 4. Update `api`/`kg_schema` read paths to consume the rewritten
    `v_quant_vs_live` (Work item 5's A3) so live-only positions (the MA/SNDK
    pattern) are no longer silently absent from the API surface.
@@ -1877,9 +1887,14 @@ amount (the app).
 
 **Why**: the user's 2026-10-05 scope decision is to finish this repo before touching the knowledge-graph
 side. Work item 9's `T-083` is the one local piece of that item (our API reading the rewritten
-`v_quant_vs_live`), and PR #112's review left four follow-ups in code that the final pilot will exercise.
-Both land before the orchestrator (Work item 2) and the final pilot (`T-143`), so the pilot measures the
-corrected code. One task per PR, in order, each ending with its status commit after approval.
+`v_quant_vs_live`), and PR #112's review left four follow-ups in code that the final pilot will exercise. The
+knowledge-graph repo's two handoff rounds (`docs/kg_handoff_financial_analysis.md`,
+`docs/kg_handoff_second_followup.md`, and our replies in `docs/kg_handoff_reply.md` and
+`docs/kg_handoff_second_reply.md`, section 3 of each) produced two more, which the user approved 2026-10-06:
+the view contract (`T-144`) and non-reusable ids (`T-145`). All land before the orchestrator (Work item 2) and
+the final pilot (`T-143`), so the pilot measures the corrected code and the contract the knowledge graph
+reads. Order: `T-083` → `T-142` → `T-144` → `T-145`. One task per PR, each ending with its status commit after
+approval.
 
 **Approach**:
 
@@ -1898,9 +1913,57 @@ corrected code. One task per PR, in order, each ending with its status commit af
      `v_cycle_run`; no view change).
    - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and `failed_units` in
      `docs/fundamental_agent.md` and the `v_analysis_run` notes (documentation only; no test).
-
-**Not in this work item (yet)**: the knowledge-graph view changes. They become a task here once the user
-approves them; until then nothing about them is planned.
+3. **`T-144`**, the knowledge-graph view contract, **one additive change** to `kg_schema`'s views (existing
+   columns unchanged), approved by the user 2026-10-06 as constitution AI behavior #10 requires:
+   - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
+     `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`
+     (`ratio` is a fraction, `x` a multiple, `usd` US dollars; already stored per row), `value`,
+     `engine_version`, `is_current`, `event_time`, `available_at`, `run_id`.
+   - `v_score_snapshot`: add `forensic_flags_json` and `prompt_hash`. `available_at` returns the cycle date for
+     TECHNICAL, VALORIZATION and SECTOR rows (a cycle-computed score is usable from its cycle date, which is its
+     `event_time`); the stored column, NULL on those rows today, and FUNDAMENTAL rows are unchanged.
+   - `v_shared_executive_edge`: add `computed_at` (`MAX`) and `run_id`.
+   - `v_cycle_ranking`: add `cr.status`, and fix its docstring.
+   - `v_quant_vs_live`: add `engine_version` and `is_current`, and drop `equal_weight`/`cap_weight` from its
+     filters (dead kind names). `v_quant_portfolio`: add `is_current`.
+   - **`is_current` means what our own readers read** and is at most one row per key, not exactly one: for
+     metrics, the version `resolve_metric_versions` (`kg_schema/versions.py`) picks with no explicit selection
+     (the newest version per metric group, by an explicit version order, not `computed_at`; a filing not
+     recomputed under it has no current row); for quant, the newest `opt-v*` per `(as_of, kind)`.
+     `engine_version` stays an opaque string (quant carries a suffix such as `opt-v1+9d34ff69`).
+   - `v_cycle_ranking_component` (new): `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
+     `configured_weight`, `effective_weight`; one row for every non-null component of every ranking row,
+     vetoed or not (`rank` excludes no one; exclusion happens later, in `positions`). The only ranking rows
+     without component rows are the no-component ones (all components null; today 0).
+   - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus 15 per SOFT veto (can go below 0), and 0.0
+     with no components; SECTOR `raw_value` is the asset's TECHNICAL raw score minus its sector's mean, in
+     TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z over the cohort (2% winsorization), clamped
+     to [0, 100], the same function for SECTOR, with a cohort mean near 50 but not exactly 50;
+     FUNDAMENTAL's `normalized_score` is rewritten by every cycle (T-106), so the stored value is the last
+     cycle's and the per-cycle value is `component_value`; the units (`ratio`, `x`, `usd`); weights and caps
+     are fractions of the book (0.05 = 5%), caps are the effective ones on SELECTION runs (since Work item 18)
+     and the configured, possibly NULL, ones on MONITORING runs; `scheme_id` is the position-weighting rule
+     (`score_proportional`, `score_tilt`), not the blend (a blend is identified by its `cycle_run`; its
+     configured weights are `v_weight_component`); no component means all components null; `vetoed` is true
+     only for a HARD veto (with the T-1 lag) or `UNSCORED`, and a SOFT veto only lowers `blended_score`; the
+     timezones of the `*_at` columns (`computed_at` is ISO 8601 UTC, written with `+00:00`); the forensic-flag
+     keys (the four booleans; the codes are the keys that are `true`).
+   - A marker migration that bumps `schema_version`, since view changes are not migrations and the knowledge
+     graph asserts a floor (run through `migrate`, FR-011). Send the knowledge-graph repo the commit, the new
+     `schema_version` and the doc section when it lands.
+4. **`T-145`**, non-reusable ids:
+   - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the DDL,
+     plus a migration for existing databases (a table rebuild, so a non-additive migration run only through
+     `migrate`, FR-011), tested on a copy of the database: foreign keys, `T-107` triggers and views intact.
+     Why: production's `cycle_run` was emptied by hand and ids were reused, and `sec_filings` ids can be reused
+     too (the `T-120` repair deletes stale filing rows).
+   - `scripts/verify_pilot.py` checks that every `run_id` resolves to a
+     run of the right type, and that `sec_filings.accession_number` is never NULL and is unique. Production
+     has 30 accession numbers shared by 60 legacy rows (pre-`T-091` 10-Q quarters, `T-120`'s case), so the
+     uniqueness check is for databases built by the current code, such as the pilot.
+   - **No production write**: the orphaned `run_id = 1` on the 14,172 edges needs no write, because `T-100`
+     builds a fresh database and they disappear with the current one.
+   - Send the knowledge-graph repo the commit when it lands.
 
 **Acceptance criteria**:
 
@@ -1908,7 +1971,22 @@ approves them; until then nothing about them is planned.
   position.
 - `T-142` (a)–(c): each has a regression test that fails before the change and passes after; (d) is present
   in both documents.
-- `uv run pytest -q`, `ruff` and `mypy` are green; no `v_*` view changes (constitution AI behavior #10).
+- `T-144`:
+  - the views build on a copy of production and on the pilot database;
+  - `available_at` ≥ `event_time` on every row of `v_fundamental_metric` and `v_score_snapshot`;
+  - at most one `is_current` row per key, in `v_fundamental_metric`, `v_quant_vs_live` and
+    `v_quant_portfolio`;
+  - per `(run, asset)`, the effective weights sum to 1 and Σ(effective weight × `component_value`) − 15 ×
+    (number of SOFT vetoes) = `blended_score`;
+  - every non-null component of every ranking row has a row in `v_cycle_ranking_component`, vetoed or not;
+  - every column the views had before is unchanged (names, order, values);
+  - `docs/kg_schema.md` carries each definition listed in step 3; `schema_version` advanced.
+- `T-145`: the migration, run on a copy, leaves foreign keys, `T-107` triggers and views intact, and a deleted
+  highest id is not reused by the next insert in each of the five tables; `verify_pilot.py` fails on a
+  dangling or wrong-type `run_id`, a NULL accession and a duplicate accession, and passes on a database built by
+  the current code.
+- `T-083` and `T-142` change no `v_*` view (constitution AI behavior #10); `T-144` is the one approved view
+  change. `uv run pytest -q`, `ruff` and `mypy` are green for each.
 
 ## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100` (added 2026-10-06)
 
@@ -1921,7 +1999,7 @@ That is acceptable for the dev container and the pilot, not for a production dep
 bearer token from the environment, refusing when none is configured (the proposed shape; confirm it when this
 work item starts). Read endpoints are untouched.
 
-**Acceptance criteria**: FR-015's acceptance column, as tests (`T-144`); the read endpoints behave identically
+**Acceptance criteria**: FR-015's acceptance column, as tests (`T-146`); the read endpoints behave identically
 with and without the settings; `docs/api.md` documents both settings.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
@@ -1938,10 +2016,10 @@ full-universe scope, which was never that task's real purpose.)
 
 **Dependency rule**: `T-100` depends on **every other task in `TASKS.md` — every task
 open today and every task added later — except those the user deferred or superseded (2026-10-05,
-2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20's `T-144` are
-deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself. `T-083` and
-`T-142` (Work item 19) and the final pilot `T-143` are prerequisites. A new work item goes above this one,
-never below; `T-100` stays unchecked until every other box is checked, or explicitly
+2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20's `T-146` are
+deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself.
+`T-083`, `T-142`, `T-144` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A new work
+item goes above this one, never below; `T-100` stays unchecked until every other box is checked, or explicitly
 superseded/moved/deferred.
 
 **The final pilot (`T-143`, user, 2026-10-05) comes first.** The 20-ticker sample on a fresh database, run
@@ -2042,8 +2120,8 @@ this document.** Their internal sequencing:
   7/8 and its `entity_resolution` half is additionally blocked on the
   `urls.db` transfer noted in its own section, independent of any other
   work item here. **Deferred until after `T-100`** (2026-10-05), except `T-083`, which moved to Work item 19.
-- Work item 19 (local follow-ups: `T-083`, `T-142`) follows Work item 8 and precedes Work item 2, so the
-  orchestrator and the final pilot run on the corrected code.
+- Work item 19 (local follow-ups: `T-083` → `T-142` → `T-144` → `T-145`) follows Work item 8 and precedes Work
+  item 2, so the orchestrator and the final pilot run on the corrected code.
 - Work item 2 (orchestrator) follows Work item 19; the final pilot `T-143` runs through it. Work item 4
   (SEMANTIC boundary) is **deferred until after `T-100`** (2026-10-05), as is Work item 20 (run-endpoint access
   control, 2026-10-06).
