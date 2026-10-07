@@ -183,12 +183,22 @@ the final pilot, `T-143`.
       - `docs/sec_data_checklist.md` (tracked). Per rule ID: the implementing file/function, or `none`; status
         ✓ / partial / ✗ / not applicable (with the reason); evidence (the companies and filings violating it, up
         to 5 example tickers); the check that tests it.
-      - `scripts/audit_sec_checklist.py`: network; read-only; SEC User-Agent `research@example.com`; at most 10
-        requests per second; every response cached.
+      - `scripts/audit_sec_checklist.py`: network; read-only; at most 10 requests per second; every response
+        cached. SEC User-Agent: `SEC_USER_AGENT` when set (the convention of
+        `fundamental_agent/filing_text.py`), else the default `research@example.com`; the PR records the
+        contact used for the real run.
+      - The cross-check scripts the acceptance of `T-148` and `T-143` rely on (`itemcheck.py`, `signcheck.py`,
+        `precedence.py`, today untracked under `docs/checklist_sec/sec_xcheck/`) are promoted to **tracked**
+        `scripts/sec_xcheck/`, with the paths `T-148` and `T-143` name updated, so a clean checkout can reproduce
+        their results. Their SEC data is fetched into the cache, not committed.
       - Hermetic tests of the check logic, on fixtures (no network in `tests/`).
       **Two evidence levels, kept separate in every table:**
       - (a) Prevalence at the source: SEC `companyfacts` for the 503 CIKs in production `assets` (plus
-        predecessor CIKs), filtered to the accessions of our filings.
+        predecessor CIKs), filtered to the accessions of our filings. `companyfacts` carries only
+        non-dimensional facts of standard taxonomies, so the counts are scoped to those. A rule that depends on
+        a dimensional fact or on an issuer-specific (custom) concept is marked **source prevalence incomplete**
+        in the table, never counted as zero; the custom concepts present in our own `financial_facts`
+        (9,271 on the pilot) are reported at level (b), and a filing-level XBRL sample may measure them.
       - (b) Our resolver: today's `statements.py` re-run over production's stored `financial_facts`, read-only
         (`mode=ro`) with `shasum` before and after, plus the pilot database and a live-gateway sample.
         Caveat, recorded: production predates some gateway fixes and stores no `preferred_sign`.
@@ -214,10 +224,14 @@ the final pilot, `T-143`.
         on displayed values; keep the `abs()` guards. Evidence (2026-10-06): 86 pilot filings have income tax
         with the wrong sign (`effective_tax_rate` forced to 0, feeding ROIC and enterprise FCF yield), and one
         company's COGS has the wrong sign. `preferred_sign = −1` matched the flipped rows 200/200 on live
-        payloads.
+        payloads. **Existing databases:** `financial_facts` is append-only on `(filing_id, statement, concept,
+        period_key, filing_version)`, so a same-accession re-run leaves old rows without `preferred_sign`
+        (NULL). There is no in-place backfill: a NULL reads as today's displayed sign (recorded), the fix takes
+        effect on a database rebuilt with the branch, and the pilot `T-143` and `T-100` both start from fresh
+        databases. The `model_fixes.md` entry states this.
       - (b) **Precedence.** Exact concepts first, in the spec's order, then `standard`, then `label_contains`.
         Net income: `NetIncomeLoss` (attributable to the parent) before `ProfitLoss`, a methodology decision,
-        recorded. Equity: `StockholdersEquity` first. Evidence: 37 filings read equity "before treasury stock"
+        recorded, with its own regression test (a filing that files both). Equity: `StockholdersEquity` first. Evidence: 37 filings read equity "before treasury stock"
         (PM +22.6B vs −12.6B); 237 filings read net income including non-controlling interests.
       - (c) **Income tax.** Never a single component through `standard`. When the total is absent: Current +
         Deferred when both are filed, else None (the default rate applies). Evidence: APA, 22 filings, deferred
@@ -227,10 +241,14 @@ the final pilot, `T-143`.
         `ShortTermBorrowings`. Verified against the SEC. Evidence: 60 filings read one partial line.
       - (e) **Records.** Engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and
         their sources (constitution AI behavior #12); regression tests (PM equity, the STZ/APO tax sign, the APA
-        tax component, the STZ COGS sign, short-term debt).
-      - (f) **Acceptance.** On a database rebuilt with the branch, the scripts in
-        `docs/checklist_sec/sec_xcheck/` (`itemcheck.py`, `signcheck.py`, `precedence.py`) report 0 FLIPPED and
-        no OTHER_CONCEPT for income tax and equity, with every number in the PR.
+        tax component, the STZ COGS sign, net income parent-vs-NCI, short-term debt).
+      - (f) **Acceptance.** On a database rebuilt with the branch, the tracked cross-check scripts (`T-147`
+        promotes `itemcheck.py`, `signcheck.py` and `precedence.py` from `docs/checklist_sec/sec_xcheck/` to
+        `scripts/sec_xcheck/`) report 0 FLIPPED and no OTHER_CONCEPT for income tax, equity and net income
+        (the 237 NCI filings resolve to `NetIncomeLoss`), with every number in the PR.
+      - (g) **Overlap with `T-070`.** `T-070` (earlier in the order) recalibrates `LIQUIDITY_DISTRESS`. `T-147`
+        states whether any input of that rule, or of another score or veto `T-070` touches, is changed by
+        `T-148`; if so, `T-148` repeats `T-070`'s calibration check on the rebuilt data and reports it.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,
@@ -498,7 +516,8 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       run, through both HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix
       and re-run before `T-100`. → `PLAN.md` Work item 12.
       **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
-      SEC, with network allowed, beside the offline `verify_pilot.py`. **FAIL** on any value mismatch, on any
+      SEC, with network allowed, beside the offline `verify_pilot.py` (built on the tracked `scripts/sec_xcheck/` that `T-147`
+      delivers). **FAIL** on any value mismatch, on any
       resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
       any flipped sign. **WARN** on documented not-applicable cases.
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
