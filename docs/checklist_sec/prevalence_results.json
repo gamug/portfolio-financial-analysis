@@ -2935,6 +2935,292 @@
   "target_companies": 215
  },
  {
+  "key": "N22.og_tier_displaces_capex_line",
+  "rules": [
+   "MET-08",
+   "ID-02b"
+  ],
+  "title": "Capex resolved through an oil & gas fallback tier while a PP&E-family line or a 'capital expenditure(s)' caption is filed",
+  "level": "b",
+  "count": 31,
+  "total": 126,
+  "companies": 2,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021"
+   ],
+   [
+    "KKR",
+    "0001404912-22-000004",
+    "10-K FY2021"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [prior 2020-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [cagr_base 2019-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000131",
+    "10-Q 2022Q3 [ytd 2022-09-30]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "gap filed less resolved: n=31, median 1,409M, max 2,737M; DOW FY2025 (0001751788-26-000018): 0.157B resolved against 2.48B filed as PaymentsToAcquireMachineryAndEquipment",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 12,
+  "target_count": 7,
+  "target_total": 28,
+  "target_companies": 2
+ },
+ {
+  "key": "N22.og_tier_with_ppe_family_line",
+  "rules": [
+   "MET-08"
+  ],
+  "title": "Oil & gas tier resolved while PaymentsToAcquireMachineryAndEquipment, ...OtherProductiveAssets or ...FurnitureAndFixtures is filed",
+  "level": "b",
+  "count": 31,
+  "total": 126,
+  "companies": 2,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021"
+   ],
+   [
+    "KKR",
+    "0001404912-22-000004",
+    "10-K FY2021"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [prior 2020-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [cagr_base 2019-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000131",
+    "10-Q 2022Q3 [ytd 2022-09-30]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "PaymentsToAcquireOtherPropertyPlantAndEquipment is not counted: the O&G tiers add it by design (EOG)",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 12,
+  "target_count": 7,
+  "target_total": 28,
+  "target_companies": 2
+ },
+ {
+  "key": "N22.og_tier_with_capex_caption",
+  "rules": [
+   "MET-08",
+   "ID-01"
+  ],
+  "title": "Oil & gas tier resolved while a line captioned 'capital expenditure(s)' is filed",
+  "level": "b",
+  "count": 25,
+  "total": 126,
+  "companies": 1,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [prior 2020-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [cagr_base 2019-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000131",
+    "10-Q 2022Q3 [ytd 2022-09-30]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000131",
+    "10-Q 2022Q3 [ytd_prior 2021-09-30]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "gap filed less resolved: n=25, median 1,633M, max 2,737M",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 10,
+  "target_count": 5,
+  "target_total": 28,
+  "target_companies": 1
+ },
+ {
+  "key": "N22.og_tier_non_og_filer",
+  "rules": [
+   "MET-08",
+   "APP-04b"
+  ],
+  "title": "Oil & gas tier resolved for a filer whose GICS sub-industry is not oil & gas",
+  "level": "b",
+  "count": 31,
+  "total": 126,
+  "companies": 2,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021"
+   ],
+   [
+    "KKR",
+    "0001404912-22-000004",
+    "10-K FY2021"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [prior 2020-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000011",
+    "10-K FY2021 [cagr_base 2019-12-31]"
+   ],
+   [
+    "DOW",
+    "0001751788-22-000131",
+    "10-Q 2022Q3 [ytd 2022-09-30]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 12,
+  "target_count": 7,
+  "target_total": 28,
+  "target_companies": 2
+ },
+ {
+  "key": "N22.ppe_family_resolved_by_caption",
+  "rules": [
+   "MET-08",
+   "ID-01"
+  ],
+  "title": "A PP&E-family line outside the registry is filed and capex is found by its caption (right value, unflagged)",
+  "level": "b",
+  "count": 165,
+  "total": 17350,
+  "companies": 11,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "ADP",
+    "0000008670-22-000038",
+    "10-K FY2022"
+   ],
+   [
+    "BAX",
+    "0001628280-24-047221",
+    "10-Q 2024Q3 [ytd 2024-09-30]"
+   ],
+   [
+    "CPT",
+    "0000906345-22-000009",
+    "10-K FY2021"
+   ],
+   [
+    "INCY",
+    "0000879169-23-000041",
+    "10-Q 2023Q3 [ytd 2023-09-30]"
+   ],
+   [
+    "INVH",
+    "0001687229-26-000045",
+    "10-Q 2026Q2 [ytd 2026-06-30]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 65,
+  "target_count": 37,
+  "target_total": 5075,
+  "target_companies": 8
+ },
+ {
+  "key": "N22.ppe_family_capex_absent",
+  "rules": [
+   "MET-08"
+  ],
+  "title": "A PP&E-family line outside the registry is filed and no capex resolves",
+  "level": "b",
+  "count": 252,
+  "total": 17350,
+  "companies": 12,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "ARES",
+    "0001628280-22-004289",
+    "10-K FY2021"
+   ],
+   [
+    "COIN",
+    "0001679788-24-000022",
+    "10-K FY2023 [cagr_base 2021-12-31]"
+   ],
+   [
+    "DAL",
+    "0000027904-22-000003",
+    "10-K FY2021"
+   ],
+   [
+    "EQIX",
+    "0001628280-22-003171",
+    "10-K FY2021"
+   ],
+   [
+    "EXR",
+    "0001628280-22-004274",
+    "10-K FY2021"
+   ]
+  ],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "production",
+  "filings": 104,
+  "target_count": 55,
+  "target_total": 5075,
+  "target_companies": 11
+ },
+ {
   "key": "N10.tax_rate_21_on_nonpositive_pretax",
   "rules": [
    "MET-03",
@@ -10395,6 +10681,188 @@
   "target_count": 19,
   "target_total": 449,
   "target_companies": 8
+ },
+ {
+  "key": "N22.og_tier_displaces_capex_line",
+  "rules": [
+   "MET-08",
+   "ID-02b"
+  ],
+  "title": "Capex resolved through an oil & gas fallback tier while a PP&E-family line or a 'capital expenditure(s)' caption is filed",
+  "level": "b",
+  "count": 0,
+  "total": 49,
+  "companies": 0,
+  "unit": "filing-columns",
+  "examples": [],
+  "incomplete": false,
+  "note": "; DOW FY2025 (0001751788-26-000018): 0.157B resolved against 2.48B filed as PaymentsToAcquireMachineryAndEquipment",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 0,
+  "target_count": 0,
+  "target_total": 11,
+  "target_companies": 0
+ },
+ {
+  "key": "N22.og_tier_with_ppe_family_line",
+  "rules": [
+   "MET-08"
+  ],
+  "title": "Oil & gas tier resolved while PaymentsToAcquireMachineryAndEquipment, ...OtherProductiveAssets or ...FurnitureAndFixtures is filed",
+  "level": "b",
+  "count": 0,
+  "total": 49,
+  "companies": 0,
+  "unit": "filing-columns",
+  "examples": [],
+  "incomplete": false,
+  "note": "PaymentsToAcquireOtherPropertyPlantAndEquipment is not counted: the O&G tiers add it by design (EOG)",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 0,
+  "target_count": 0,
+  "target_total": 11,
+  "target_companies": 0
+ },
+ {
+  "key": "N22.og_tier_with_capex_caption",
+  "rules": [
+   "MET-08",
+   "ID-01"
+  ],
+  "title": "Oil & gas tier resolved while a line captioned 'capital expenditure(s)' is filed",
+  "level": "b",
+  "count": 0,
+  "total": 49,
+  "companies": 0,
+  "unit": "filing-columns",
+  "examples": [],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 0,
+  "target_count": 0,
+  "target_total": 11,
+  "target_companies": 0
+ },
+ {
+  "key": "N22.og_tier_non_og_filer",
+  "rules": [
+   "MET-08",
+   "APP-04b"
+  ],
+  "title": "Oil & gas tier resolved for a filer whose GICS sub-industry is not oil & gas",
+  "level": "b",
+  "count": 0,
+  "total": 49,
+  "companies": 0,
+  "unit": "filing-columns",
+  "examples": [],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 0,
+  "target_count": 0,
+  "target_total": 11,
+  "target_companies": 0
+ },
+ {
+  "key": "N22.ppe_family_resolved_by_caption",
+  "rules": [
+   "MET-08",
+   "ID-01"
+  ],
+  "title": "A PP&E-family line outside the registry is filed and capex is found by its caption (right value, unflagged)",
+  "level": "b",
+  "count": 32,
+  "total": 1449,
+  "companies": 1,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "CPT",
+    "0000906345-21-000010",
+    "10-K FY2020"
+   ],
+   [
+    "CPT",
+    "0000906345-21-000010",
+    "10-K FY2020 [prior 2019-12-31]"
+   ],
+   [
+    "CPT",
+    "0000906345-21-000010",
+    "10-K FY2020 [cagr_base 2018-12-31]"
+   ],
+   [
+    "CPT",
+    "0000906345-21-000026",
+    "10-Q 2021Q1"
+   ],
+   [
+    "CPT",
+    "0000906345-21-000026",
+    "10-Q 2021Q1 [prior 2020-03-31]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 13,
+  "target_count": 7,
+  "target_total": 449,
+  "target_companies": 1
+ },
+ {
+  "key": "N22.ppe_family_capex_absent",
+  "rules": [
+   "MET-08"
+  ],
+  "title": "A PP&E-family line outside the registry is filed and no capex resolves",
+  "level": "b",
+  "count": 25,
+  "total": 1449,
+  "companies": 1,
+  "unit": "filing-columns",
+  "examples": [
+   [
+    "HOOD",
+    "0001783879-21-000029",
+    "10-Q 2021Q2 [ytd 2021-06-30]"
+   ],
+   [
+    "HOOD",
+    "0001783879-21-000029",
+    "10-Q 2021Q2 [ytd_prior 2020-06-30]"
+   ],
+   [
+    "HOOD",
+    "0001783879-24-000054",
+    "10-K FY2023"
+   ],
+   [
+    "HOOD",
+    "0001783879-24-000054",
+    "10-K FY2023 [prior 2022-12-31]"
+   ],
+   [
+    "HOOD",
+    "0001783879-24-000054",
+    "10-K FY2023 [cagr_base 2021-12-31]"
+   ]
+  ],
+  "incomplete": false,
+  "note": "",
+  "command": "uv run python scripts/audit_sec_checklist.py measure --only capex",
+  "db": "pilot",
+  "filings": 12,
+  "target_count": 6,
+  "target_total": 449,
+  "target_companies": 1
  },
  {
   "key": "N10.tax_rate_21_on_nonpositive_pretax",

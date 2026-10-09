@@ -24,6 +24,15 @@ OG_PROP = G + "PaymentsToAcquireOilAndGasProperty"
 OG_EQUIP = G + "PaymentsToAcquireOilAndGasEquipment"
 NET = G + "PaymentsForProceedsFromProductiveAssets"
 OTHER_PPE = G + "PaymentsToAcquireOtherPropertyPlantAndEquipment"
+MACHINERY = G + "PaymentsToAcquireMachineryAndEquipment"
+OTHER_PRODUCTIVE = G + "PaymentsToAcquireOtherProductiveAssets"
+FURNITURE = G + "PaymentsToAcquireFurnitureAndFixtures"
+# the PP&E-family lines the resolver's registry does not know (B6 defines each); the review of PR #127 (R4, N22)
+PPE_FAMILY = (MACHINERY, OTHER_PRODUCTIVE, OTHER_PPE, FURNITURE)
+# the O&G tiers already add OtherPropertyPlantAndEquipment (EOG's non-field spending), so a filing carrying it is not
+# *displaced* by those tiers; the other three lines are never added
+NOT_ADDED = (MACHINERY, OTHER_PRODUCTIVE, FURNITURE)
+OG_TIERS = (OG_ED, OG_PPE, OG_PROP)
 BUSINESSES = G + "PaymentsToAcquireBusinessesNetOfCashAcquired"
 REAL_ESTATE = (
     G + "PaymentsToAcquireRealEstate",
@@ -308,7 +317,130 @@ def m_capex(recs: list[Rec]) -> list[Finding]:
             note="carried by PaymentsToAcquireBusinessesNetOfCashAcquired; not in today's capex tiers, so no change",
         )
     )
+    return [*out, *m_capex_n22(recs)]
+
+
+def _resolved_by_og_tier(r: Rec) -> bool:
+    """Today's capex came from one of the three oil & gas fallback tiers (the T-133 tiers that precede the caption)."""
+    item = r.item("capital_expenditure")
+    return item["how"] in {"fallback1", "fallback2", "fallback3"} and item["concept"] in OG_TIERS
+
+
+def _ppe_family_lines(r: Rec, concepts: tuple[str, ...] = NOT_ADDED) -> list[str]:
+    return [k for k in concepts if r.f["capex"].get(k)]
+
+
+def filed_gap(r: Rec) -> float:
+    """The largest PP&E-family or captioned amount the filing carries, less the capex the resolver returned (USD)."""
+    filed = [abs(v) for k, v in r.f["capex"].items() if k in NOT_ADDED] + [
+        abs(v) for v in _other_captions(r).values()
+    ]
+    return max(filed, default=0.0) - (resolved_capex(r) or 0.0)
+
+
+def _other_captions(r: Rec) -> dict[str, float]:
+    """The 'capital expenditure(s)' captioned lines on a concept other than the one the resolver returned (EXE's caption
+    is the oil & gas line itself, which is no competing line)."""
+    resolved = r.item("capital_expenditure")["concept"]
+    return {k: v for k, v in r.f.get("capex_captions", {}).items() if k != resolved}
+
+
+def _is_og_filer(r: Rec) -> bool:
+    return "Oil & Gas" in r.sub_industry
+
+
+def displaced_by_og_tier(r: Rec) -> bool:
+    """N22: the oil & gas tiers fired although the filer also files a PP&E-family line or a "capital expenditure(s)" caption."""
+    return _resolved_by_og_tier(r) and bool(_ppe_family_lines(r) or _other_captions(r))
+
+
+def m_capex_n22(recs: list[Rec]) -> list[Finding]:
+    """N22 (review of PR #127, DOW): the oil & gas fallback tiers fire before the caption fallback, so a non-producer's
+    "Investment in gas field developments" line displaces its real "Capital expenditures" line."""
+    out: list[Finding] = []
+    pool = [r for r in recs if _resolved_by_og_tier(r)]
+    gaps = [filed_gap(r) for r in pool if displaced_by_og_tier(r)]
+    out.append(
+        count(
+            "N22.og_tier_displaces_capex_line",
+            ["MET-08", "ID-02b"],
+            "Capex resolved through an oil & gas fallback tier while a PP&E-family line or a 'capital expenditure(s)' caption is filed",
+            recs,
+            displaced_by_og_tier,
+            population=_resolved_by_og_tier,
+            command=CMD,
+            note=amounts_note_of(gaps)
+            + "; DOW FY2025 (0001751788-26-000018): 0.157B resolved against 2.48B filed as PaymentsToAcquireMachineryAndEquipment",
+        )
+    )
+    out.append(
+        count(
+            "N22.og_tier_with_ppe_family_line",
+            ["MET-08"],
+            "Oil & gas tier resolved while PaymentsToAcquireMachineryAndEquipment, ...OtherProductiveAssets or ...FurnitureAndFixtures is filed",
+            recs,
+            lambda r: _resolved_by_og_tier(r) and bool(_ppe_family_lines(r)),
+            population=_resolved_by_og_tier,
+            command=CMD,
+            note="PaymentsToAcquireOtherPropertyPlantAndEquipment is not counted: the O&G tiers add it by design (EOG)",
+        )
+    )
+    out.append(
+        count(
+            "N22.og_tier_with_capex_caption",
+            ["MET-08", "ID-01"],
+            "Oil & gas tier resolved while a line captioned 'capital expenditure(s)' is filed",
+            recs,
+            lambda r: _resolved_by_og_tier(r) and bool(_other_captions(r)),
+            population=_resolved_by_og_tier,
+            command=CMD,
+            note=amounts_note_of([filed_gap(r) for r in pool if _other_captions(r)]),
+        )
+    )
+    out.append(
+        count(
+            "N22.og_tier_non_og_filer",
+            ["MET-08", "APP-04b"],
+            "Oil & gas tier resolved for a filer whose GICS sub-industry is not oil & gas",
+            recs,
+            lambda r: _resolved_by_og_tier(r) and not _is_og_filer(r),
+            population=_resolved_by_og_tier,
+            command=CMD,
+        )
+    )
+    out.append(
+        count(
+            "N22.ppe_family_resolved_by_caption",
+            ["MET-08", "ID-01"],
+            "A PP&E-family line outside the registry is filed and capex is found by its caption (right value, unflagged)",
+            recs,
+            lambda r: (
+                bool(_ppe_family_lines(r, PPE_FAMILY))
+                and r.item("capital_expenditure")["how"] == "label_fallback"
+            ),
+            command=CMD,
+        )
+    )
+    out.append(
+        count(
+            "N22.ppe_family_capex_absent",
+            ["MET-08"],
+            "A PP&E-family line outside the registry is filed and no capex resolves",
+            recs,
+            lambda r: (
+                bool(_ppe_family_lines(r, PPE_FAMILY)) and r.value("capital_expenditure") is None
+            ),
+            command=CMD,
+        )
+    )
     return out
+
+
+def amounts_note_of(values: list[float]) -> str:
+    """Count, median and maximum of the gap between the filed capex line and the value the resolver returned."""
+    if not values:
+        return ""
+    return f"gap filed less resolved: n={len(values)}, median {statistics.median(values) / 1e6:,.0f}M, max {max(values) / 1e6:,.0f}M"
 
 
 Metadata = dict[str, Any]

@@ -65,3 +65,34 @@ def test_the_ranking_orders_by_severity_companies_and_reach() -> None:
     scores = [int(row.split("|")[2]) for row in lines[2:]]
     assert scores == sorted(scores, reverse=True)
     assert len(scores) == len(cd.HEADLINES)
+
+
+def test_a_pipe_inside_a_cell_is_escaped_so_it_does_not_split_the_row() -> None:
+    assert cd.row("a", "divides by |prior|", "b") == "| a | divides by \\|prior\\| | b |"
+    assert cd.cell("already \\| escaped") == "already \\| escaped"
+
+
+def test_every_row_of_the_rendered_document_has_as_many_cells_as_its_table_header() -> None:
+    """The MET-04 row once rendered broken on GitHub (an unescaped `|prior|`)."""
+    text = cd.render(cd.Results())
+    width = 0
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            width = 0
+            continue
+        cells = len(cd.re.split(r"(?<!\\)\|", line)) - 2
+        if set(line) <= set("|-: "):
+            continue
+        width = width or cells
+        assert cells == width, line[:120]
+
+
+def test_the_defect_map_has_n22_and_d6_follows_t148() -> None:
+    open_ = {d[0]: d for d in defects.OPEN}
+    assert open_["N22"][5] == "T-148(f)"
+    assert open_["D6"][5] == "T-148"
+
+
+def test_d07_says_the_pilot_replay_is_not_representative() -> None:
+    text = cd.render(cd.Results())
+    assert text.count("not representative") >= 2

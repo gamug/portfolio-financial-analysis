@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sec_xcheck import capex_measures as cx
 from sec_xcheck import resolver_measures as rm
-from sec_xcheck.features import extract
+from sec_xcheck.features import capex_captions, extract
 from sec_xcheck.records import count
 from sec_xcheck_support import rec
 
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import Period, Statements
 
 G = "us-gaap_"
 
@@ -197,3 +199,85 @@ def test_features_extract_runs_on_a_real_filing(aapl_10k: Statements) -> None:
     assert record["items"]["equity"]["concept"] == "us-gaap_StockholdersEquity"
     assert record["metrics"]["net_margin"]["group"] == "profitability"
     assert record["instant_exact"] is True
+
+
+# -- N22 (review of PR #127): DOW FY2025, accession 0001751788-26-000018 -------------------------------------------
+DOW_CASH_FLOW = [
+    {
+        "concept": "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+        "label": "Capital expenditures",
+        "2025-12-31 (FY)": -2479000000.0,
+        "abstract": False,
+        "dimension": False,
+    },
+    {
+        "concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+        "label": "Investment in gas field developments",
+        "2025-12-31 (FY)": -157000000.0,
+        "abstract": False,
+        "dimension": False,
+    },
+    {
+        "concept": "dow_CashFlowHedgingRelatedToCapitalExpenditures",
+        "label": "Cash flow hedging related to capital expenditures",
+        "2025-12-31 (FY)": -40000000.0,
+        "abstract": False,
+        "dimension": False,
+    },
+]
+
+
+def _dow_record() -> tuple[Statements, Period, dict[str, Any]]:
+    stmts = Statements.from_payload({"cash_flow": DOW_CASH_FLOW})
+    period = stmts.latest_fy()
+    assert period is not None
+    return stmts, period, extract(stmts, period.key, metrics=False)
+
+
+def test_n22_dow_capex_resolves_to_the_gas_field_line_not_the_capital_expenditures_line() -> None:
+    """The defect as it stands: the oil & gas tier precedes the caption fallback, so 0.157B displaces 2.479B.
+    ``T-148``(f) fixes the resolver and then replaces the asserted value with 2,479,000,000."""
+    _, _, record = _dow_record()
+    capex = record["items"]["capital_expenditure"]
+    assert capex["concept"] == cx.OG_ED and capex["how"] == "fallback1"
+    assert abs(capex["value"]) == 157_000_000.0
+    assert record["capex"][cx.MACHINERY] == -2_479_000_000.0
+    # two captions match (the hedging row has no accrual word), so the caption fallback would refuse anyway:
+    # putting the O&G tiers behind the caption is not enough, the concept itself has to be in the registry
+    assert set(
+        capex_captions(Statements.from_payload({"cash_flow": DOW_CASH_FLOW}), "2025-12-31 (FY)")
+    ) == {
+        cx.MACHINERY,
+        "dow_CashFlowHedgingRelatedToCapitalExpenditures",
+    }
+
+
+def test_n22_the_measurement_counts_dow_and_not_a_producer_without_a_competing_line() -> None:
+    _, _, features = _dow_record()
+    dow = rec(ticker="DOW", sub_industry="Commodity Chemicals")
+    dow.f.update(features)
+    assert cx.displaced_by_og_tier(dow) and not cx._is_og_filer(dow)
+    assert cx.filed_gap(dow) == 2_479_000_000.0 - 157_000_000.0
+    fang = rec(
+        ticker="FANG",
+        sub_industry="Oil & Gas Exploration & Production",
+        capex={cx.OG_ED: -2870.0},
+    )
+    fang.f["items"]["capital_expenditure"] = {
+        "value": -2870.0,
+        "concept": cx.OG_ED,
+        "how": "fallback1",
+    }
+    assert not cx.displaced_by_og_tier(fang)
+    # EOG-style: the registry's own addend is by design and does not count as a displaced line
+    eog = rec(ticker="EOG", capex={cx.OG_ED: -6115.0, cx.OTHER_PPE: -479.0})
+    eog.f["items"]["capital_expenditure"] = {
+        "value": -6594.0,
+        "concept": cx.OG_ED,
+        "how": "fallback1",
+    }
+    assert not cx.displaced_by_og_tier(eog)
+    found = {f.key: f for f in cx.m_capex_n22([dow, fang, eog])}
+    assert found["N22.og_tier_displaces_capex_line"].count == 1
+    assert found["N22.og_tier_displaces_capex_line"].total == 3
+    assert found["N22.og_tier_non_og_filer"].count == 2  # DOW and the unclassified EOG record

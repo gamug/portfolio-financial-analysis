@@ -12,6 +12,7 @@ from __future__ import annotations
 import collections
 import csv
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,15 @@ def severities() -> dict[str, tuple[str, str]]:
     return {rid: (cells[7], cells[1]) for rid, cells in quotecheck.rows(text)}
 
 
+def cell(value: object) -> str:
+    """A table cell: a literal ``|`` would split the row on GitHub, so it is escaped (an escaped one is left alone)."""
+    return re.sub(r"(?<!\\)\|", r"\\|", str(value))
+
+
+def row(*cells: object) -> str:
+    return "| " + " | ".join(cell(c) for c in cells) + " |"
+
+
 def short(text: str, width: int = 130) -> str:
     text = text.replace("|", "/")
     return text if len(text) <= width else text[: width - 1].rstrip() + "…"
@@ -134,8 +144,11 @@ def rule_table(res: Results) -> list[str]:
         b = evidence(res, entry.b, "b")
         note = f" *{entry.note}*" if entry.note else ""
         lines.append(
-            f"| {rid} | {severity} | {short(text)} | {entry.impl} | {entry.status} | {entry.test} | {a} | {b}{note} | {entry.cls or '—'} | {entry.task or '—'} |"
-        )
+            row(
+                rid, severity, short(text), entry.impl, entry.status, entry.test, a, f"{b}{note}",
+                entry.cls or "—", entry.task or "—",
+            )
+        )  # fmt: skip
     missing = sorted(set(sev) - set(RULES)) + sorted(set(RULES) - set(sev))
     if missing:
         raise KeyError(f"rules out of step with the checklist: {missing}")
@@ -255,6 +268,16 @@ HEADLINES: list[tuple[str, str, str, str, str, str, str, int]] = [
     (
         "Capex found by a caption (a custom concept), software not excluded",
         "MET08.custom_caption_fallback",
+        "MET-08",
+        "BLOCK",
+        "veto",
+        "T-148",
+        "FCF → NEGATIVE_FCF, FCF yields",
+        0,
+    ),
+    (
+        "An oil & gas fallback tier displaces the filer's real capital-expenditures line (DOW: 0.157B for 2.48B)",
+        "N22.og_tier_displaces_capex_line",
         "MET-08",
         "BLOCK",
         "veto",
@@ -540,8 +563,11 @@ def ranking(res: Results) -> list[str]:
     ]
     for i, (score, what, f, rule, sev, reach, task, feeds, companies) in enumerate(rows, 1):
         lines.append(
-            f"| {i} | {score} | {what} | {rule} | {sev} | {n(companies)} | {REACH_TEXT[reach]} | {feeds} | {fmt(f)} ({f.level}, {f.db}) | {task} |"
-        )
+            row(
+                i, score, what, rule, sev, n(companies), REACH_TEXT[reach], feeds,
+                f"{fmt(f)} ({f.level}, {f.db})", task,
+            )
+        )  # fmt: skip
     return lines
 
 
@@ -554,7 +580,7 @@ def defect_tables(res: Results) -> list[str]:
     ]
     for did, text, rules, keys, verdict, task in defects.OPEN:
         ev = "; ".join(fmt(res.get(k)) for k in keys) or "—"
-        lines.append(f"| {did} | {text} | {rules} | {ev} | {verdict} | {task} |")
+        lines.append(row(did, text, rules, ev, verdict, task))
     lines += [
         "",
         "### Defects fixed so far (`docs/model_fixes.md`) and the rules they support",
@@ -562,7 +588,7 @@ def defect_tables(res: Results) -> list[str]:
         "| Fix | Rules | What it fixed |",
         "|---|---|---|",
     ]
-    lines += [f"| {a} | {b} | {c} |" for a, b, c in defects.FIXED]
+    lines += [row(a, b, c) for a, b, c in defects.FIXED]
     lines += [
         "",
         "### Fixed defects that no checklist rule covers",
@@ -570,7 +596,7 @@ def defect_tables(res: Results) -> list[str]:
         "| Fix | Why no rule |",
         "|---|---|",
     ]
-    lines += [f"| {a} | {b} |" for a, b in defects.UNCOVERED]
+    lines += [row(a, b) for a, b in defects.UNCOVERED]
     return lines
 
 
@@ -610,6 +636,8 @@ def supplement_tables(res: Results) -> list[str]:
     lines += [
         f"Excluded: {', '.join(res.d07['excluded'])} (the pilot's financial firms under APP-00; MA is a payment processor, an operating company). {res.d07['dates'][0]} weekly replay dates, top 10 names; the original databases were not opened for writing.",
         "",
+        f"**This table is the pilot's {len(res.d07['excluded'])} financial firms among its 20 names, so it is not representative of the S&P 500 book.** Production has stored metrics for only {res.get('N16.fundamental_fallback_scores').total} filings, so a full-universe replay is not possible before `T-100`. The universe-level inputs for the decision are the market-capitalization share ({res.get('D07.financial_firms_cap_share').count / 100:.1f}%) and the veto counts ({res.get('N8.financial_firms_hard_vetoed').count} of {res.get('N8.financial_firms_hard_vetoed').total}).",
+        "",
         "| Sector | With | Without |",
         "|---|---|---|",
     ]
@@ -621,6 +649,8 @@ def supplement_tables(res: Results) -> list[str]:
         "",
         "### MET-08 (a): mineral-interest purchases beside exploration & development, by producer and year",
         "",
+        "DOW and KKR appear here although neither is a producer: each files a small `PaymentsToExploreAndDevelopOilAndGasProperties` line (DOW: 'Investment in gas field developments'; KKR: zero), which the resolver's oil & gas tier reads as capex. That is the symptom of N22, not a producer's recurring spend.",
+        "",
         "| Ticker | FY end | Exploration & development (USD bn) | O&G equipment | Mineral-interest purchases | Business acquisitions | Mineral / development | Resolved capex | Resolved concept |",
         "|---|---|---|---|---|---|---|---|---|",
     ]
@@ -628,7 +658,17 @@ def supplement_tables(res: Results) -> list[str]:
         cap = "—" if r["resolved_capex"] is None else f"{r['resolved_capex'] / 1e9:.2f}"
         ratio = "—" if r["mineral_to_development"] is None else f"{r['mineral_to_development']:.2f}"
         lines.append(
-            f"| {r['ticker']} | {r['fiscal_year_end']} | {r['exploration_development'] / 1e9:.2f} | {r['oil_gas_equipment'] / 1e9:.2f} | {r['mineral_interest_purchases'] / 1e9:.2f} | {r['business_acquisitions'] / 1e9:.2f} | {ratio} | {cap} | {r['resolved_concept']} |"
+            row(
+                r["ticker"],
+                r["fiscal_year_end"],
+                f"{r['exploration_development'] / 1e9:.2f}",
+                f"{r['oil_gas_equipment'] / 1e9:.2f}",
+                f"{r['mineral_interest_purchases'] / 1e9:.2f}",
+                f"{r['business_acquisitions'] / 1e9:.2f}",
+                ratio,
+                cap,
+                r["resolved_concept"],
+            )
         )
     return lines
 
@@ -710,11 +750,9 @@ def render(res: Results) -> str:
         "|---|---|---|---|",
     ]
     for lid, (verdict, text, keys) in LIMITATIONS.items():
-        lines.append(
-            f"| {lid} | {verdict} | {text} | {'; '.join(fmt(g(k)) for k in keys) or '—'} |"
-        )
+        lines.append(row(lid, verdict, text, "; ".join(fmt(g(k)) for k in keys) or "—"))
     lines += ["", "| Annex A | Project gate | State |", "|---|---|---|"]
-    lines += [f"| {k} | `{gate}` | {state} |" for k, (gate, state) in ANNEX_A.items()]
+    lines += [row(k, f"`{gate}`", state) for k, (gate, state) in ANNEX_A.items()]
     lines += [
         "",
         "Annex A asks for the per-cycle count of vetoed companies by sector: it is the first table of section 7. `DQ_NEG_EQUITY` and `DQ_MARGIN_REVIEW` and `TTM_CROSSCHECK` are project gates outside Annex A (Phase 1); with D-04 accepted, `DQ_NEG_EQUITY` becomes quarantine-only and needs no A-06.",
@@ -729,7 +767,7 @@ def render(res: Results) -> str:
         "",
         "## 6. Defect map",
         "",
-        "D1-D10 and N1-N18 map to rule IDs; N19, N20 and N21 are this audit's own.",
+        "D1-D10 and N1-N18 map to rule IDs; N19, N20, N21 and N22 are this audit's own.",
         "",
         *defect_tables(res),
         "",
@@ -762,7 +800,7 @@ def render(res: Results) -> str:
         f"4. **PER-06 (D-09).** On the pilot (`metrics-v4`) {n(g('PER06.metrics_built_on_x4', 'pilot').count)} of {n(g('PER06.metrics_built_on_x4', 'pilot').total)} 10-Q metric rows are built on x4; production's engine predates the flags.",
         "5. **Metric dictionary annex (D-05).** Three formulas stay `source pending`: the quick ratio, the cash ratio and the CFO-based FCF to the firm.",
         f"6. **Annex A / D-04.** {g('D04.negative_equity_companies').count} companies have negative equity (latest 10-Ks, 2026-09-22); T-116's conditions flag {g('D04.flagged_with_condition_2').count}, and the same {g('D04.flagged_without_condition_2').count} without the EBITDA <= 0 condition. The per-cycle veto count by sector is in section 7: utilities are the largest cluster ({g('F4.utilities_hard_vetoed').count} of {g('F4.utilities_hard_vetoed').total}).",
-        f"7. **D-07.** Financial firms (APP-00: {types['article_9']} Article 9, {types['article_7']} Article 7, {types['other_financial']} other) are about {g('D07.financial_firms_cap_share').count / 100:.1f}% of the approximate market capitalization ({g('D07.cap_coverage').count} of {g('D07.cap_coverage').total} CIKs covered; total, not float-adjusted). {g('N8.financial_firms_hard_vetoed').count} of {g('N8.financial_firms_hard_vetoed').total} are hard-vetoed. In the pilot replay the Financials sector averages {res.d07['with'].get('Financials', 0) * 100:.1f}% of the book, {res.d07['without'].get('Financials', 0) * 100:.1f}% without them. By the decision rule in `phase3_decisions.md` §7: the vetoes do not exclude almost all of them, so excluding them is a choice, not a consequence.",
+        f"7. **D-07.** Financial firms (APP-00: {types['article_9']} Article 9, {types['article_7']} Article 7, {types['other_financial']} other) are about {g('D07.financial_firms_cap_share').count / 100:.1f}% of the approximate market capitalization ({g('D07.cap_coverage').count} of {g('D07.cap_coverage').total} CIKs covered; total, not float-adjusted). {g('N8.financial_firms_hard_vetoed').count} of {g('N8.financial_firms_hard_vetoed').total} are hard-vetoed. The decision rests on those two universe-level figures: the market-capitalization share and the veto counts. The pilot replay (20 names, {len(res.d07['excluded'])} of them financial firms) is not representative of the universe and is shown only as an illustration: the Financials sector averages {res.d07['with'].get('Financials', 0) * 100:.1f}% of its book, {res.d07['without'].get('Financials', 0) * 100:.1f}% without them. By the decision rule in `phase3_decisions.md` §7: the vetoes do not exclude almost all of them, so excluding them is a choice, not a consequence.",
         "8. **Rule text where a prevalence statement changes.** ID-20 (the dead names cost nothing in the window); L-04 and L-05 (contradicted); MET-07's 1,329 (reproduced as 1,375); PER-12 to PER-14 (executable, small); APP-01 (the defect is missing revenue); PER-11 (unmeasurable); ID-13 to ID-15 (lists registered; measured).",
         "",
         "## 10. Files",

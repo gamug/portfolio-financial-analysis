@@ -41,7 +41,22 @@ def rec(  # noqa: PLR0913 - one record, every part a test may set
         "metrics": metrics or {},
         "periods": {"tag": "FY", "prior_key": None, "prior_gap_days": None, "fy_dates": []},
         "identity": {},
-        **{k: {} for k in ("ocf", "lt", "st", "cash", "sti", "da", "equity", "ni", "tax", "capex")},
+        **{
+            k: {}
+            for k in (
+                "ocf",
+                "lt",
+                "st",
+                "cash",
+                "sti",
+                "da",
+                "equity",
+                "ni",
+                "tax",
+                "capex",
+                "capex_captions",
+            )
+        },
         "dead": {"income_statement": {}, "balance_sheet": {}, "cash_flow": {}},
     }
     f.update(parts)

@@ -1,8 +1,9 @@
 """The defect map of T-147: every known defect to the checklist rules it breaks, with its measured extent and its task.
 
-* ``OPEN``: D1-D10 (``reply_checklist_v1.md`` §3.6 and §4), N1-N18 (``code_comparison_v1.md`` §2) and the three the audit
-  adds: N19 (the ``cost``/``costs`` label regex), N20 (T-140's ICE rebuild) and N21 (10-Ks lost to a repeated period label
-  or to a recorded gateway failure).
+* ``OPEN``: D1-D10 (``reply_checklist_v1.md`` §3.6 and §4), N1-N18 (``code_comparison_v1.md`` §2) and the four the audit
+  adds: N19 (the ``cost``/``costs`` label regex), N20 (T-140's ICE rebuild), N21 (10-Ks lost to a repeated period label
+  or to a recorded gateway failure) and N22 (an oil & gas fallback tier that displaces a filer's real capex line; found by
+  the review of PR #127).
 * ``FIXED``: every defect of ``docs/model_fixes.md`` (F1, F2, C2, T-0xx, ...) and the rules it supports.
 * ``UNCOVERED``: fixed defects no checklist rule covers (portfolio construction, quant, provenance).
 
@@ -59,7 +60,7 @@ OPEN: list[tuple[str, str, str, tuple[str, ...], str, str]] = [
         "MKT-02, MKT-01",
         ("MKT04.shares_not_from_cover_page",),
         "not re-measured (production's 258 valuation filings are metrics-v2 and use a balance-sheet or diluted count)",
-        "T-071",
+        "T-148",
     ),
     (
         "D7",
@@ -275,6 +276,20 @@ OPEN: list[tuple[str, str, str, tuple[str, ...], str, str]] = [
         ),
         "9 labels collided (AVY, CDNS, DPZ, JNJ, RVTY, SNA, SWK, TDY, TXT): T-140's fix, absent from this database; 3 gateway failures (GEHC, CSCO, SMCI); 2 unexplained (EXE: a FY2021 10-K stored as FY2020; SMCI FY2024)",
         "rebuild (T-143); T-149 for EXE",
+    ),
+    (
+        "N22",
+        "The oil & gas fallback tiers fire before the caption fallback, so a gas-field line displaces the filer's real capital-expenditures line (DOW) or a zero oil & gas line hides a filed PP&E-family line (KKR)",
+        "MET-08, ID-02b",
+        (
+            "N22.og_tier_displaces_capex_line",
+            "N22.og_tier_with_ppe_family_line",
+            "N22.og_tier_with_capex_caption",
+            "N22.ppe_family_resolved_by_caption",
+            "N22.ppe_family_capex_absent",
+        ),
+        "DOW FY2025 (0001751788-26-000018): 0.157B (`PaymentsToExploreAndDevelopOilAndGasProperties`, 'Investment in gas field developments') resolved against 2.479B filed as `PaymentsToAcquireMachineryAndEquipment` ('Capital expenditures'), so free cash flow is overstated by about 2.3B (DOW's five 10-Ks, FY2021 to FY2025: 1.4B to 2.7B a year). KKR's FY2021 and FY2022 10-Ks resolve 0 from a zero `PaymentsToExploreAndDevelopOilAndGasProperties` beside 0.10B and 0.09B of `PaymentsToAcquireFurnitureAndFixtures`. The caption fallback would not rescue it: the 'Cash flow hedging related to capital expenditures' row also matches, and the fallback refuses two captions. Filings whose capex is one of `PaymentsToAcquireMachineryAndEquipment`, `...OtherProductiveAssets`, `...OtherPropertyPlantAndEquipment` or `...FurnitureAndFixtures` (outside the registry) reach the right value only through the caption fallback, unflagged, at ADP, BAX, CPT, INCY, INVH, ROP, RL, VTR, VZ, WDAY and WEC; at COIN, DAL, HOOD, LNT, RF, ARES, EQIX, IP, LLY, VICI, EXR and KKR a filing of that kind resolves no capex at all",
+        "T-148(f)",
     ),
 ]
 

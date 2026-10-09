@@ -13,6 +13,7 @@ that depends on a dimensional fact is outside level (b) and is reported ``source
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 
 from fundamental_agent.metrics import COMPUTERS
@@ -54,6 +55,9 @@ CAPEX_CONCEPTS = tuple(
         "PaymentsToAcquireOilAndGasEquipment",
         "PaymentsForProceedsFromProductiveAssets",
         "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "PaymentsToAcquireMachineryAndEquipment",
+        "PaymentsToAcquireOtherProductiveAssets",
+        "PaymentsToAcquireFurnitureAndFixtures",
         "PaymentsForConstructionInProcess",
         "PaymentsToAcquireBusinessesNetOfCashAcquired",
         "PaymentsToAcquireRealEstate",
@@ -109,6 +113,26 @@ def any_statement(
     for statement in ("income_statement", "balance_sheet", "cash_flow"):
         for concept, value in concept_values(stmts, statement, concepts, column).items():
             out.setdefault(concept, value)
+    return out
+
+
+def capex_captions(stmts: Statements, column: str | None) -> dict[str, float]:
+    """``{concept: value}`` of the cash-flow rows the resolver's capex caption fallback would read: a label that reads
+    "capital expenditure(s)" without an accrual word (``REGISTRY["capital_expenditure"].label_fallback`` and its
+    exclusion), whatever the concept. The resolver uses the caption only when exactly one such concept exists."""
+    spec = REGISTRY["capital_expenditure"]
+    wanted = re.compile(spec.label_fallback, re.IGNORECASE)
+    unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
+    out: dict[str, float] = {}
+    if column is None:
+        return out
+    for row in stmts.raw.get("cash_flow", []):
+        label = str(row.get("label") or "")
+        if row.get("abstract") or row.get("dimension") or not wanted.search(label):
+            continue
+        value = numeric(row.get(column)) if not unwanted.search(label) else None
+        if value is not None:
+            out.setdefault(str(row.get("concept")), value)
     return out
 
 
@@ -270,6 +294,7 @@ def extract(stmts: Statements, key: str, *, metrics: bool = True) -> dict[str, A
     record["ni"] = concept_values(stmts, "income_statement", NI_CONCEPTS, key)
     record["tax"] = concept_values(stmts, "income_statement", TAX_CONCEPTS, key)
     record["capex"] = concept_values(stmts, "cash_flow", CAPEX_CONCEPTS, key)
+    record["capex_captions"] = capex_captions(stmts, key)
     record["dead"] = {
         s: concept_values(stmts, s, DEAD_CONCEPTS, key if s != "balance_sheet" else inst)
         for s in ("income_statement", "balance_sheet", "cash_flow")
