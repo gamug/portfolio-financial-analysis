@@ -62,7 +62,11 @@ The single entrypoint. Sequence:
    (`ddl.AVAILABILITY_TRIGGERS`), once `sec_filings`, `fundamental_metrics` and
    `score_snapshot` all carry the column. They check only rows written from then on;
    existing rows are filled by `m008`.
-5. `views.ensure_views(db)` — drop + recreate every `v_*` view.
+5. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
+   when the database's `schema_version` is above the highest migration this code knows**
+   (T-144): a later contract may have added columns and views this code does not define, and
+   rebuilding would remove them. It protects later code from the next contract change; it
+   cannot retrofit code that predates it.
 6. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
 
 Steps 1–5 are safe to run against the shared production DB at any time,
@@ -147,7 +151,9 @@ MarketCapResult` = the latest `filing_cover_shares` count from a filing already 
 metric accumulate. This module is the **one place that chooses among them**; every
 reader goes through it (`cycle.data.latest_metrics`; market caps no longer read a stored
 metric, see `market_cap.py` below), and `tests/test_metric_versions.py` fails on any raw
-`fundamental_metrics` read in `src/` that lacks the filter.
+`fundamental_metrics` read in `src/` that lacks the filter. The one allowed exception is
+`v_fundamental_metric` (T-144): it returns every version, flags the one this resolver picks
+as `is_current`, and `tests/test_kg_view_contract.py` fails if the two ever disagree.
 
 - `resolve_metric_versions(db, selection=None, *, groups=METRIC_GROUPS) -> MetricVersions`
   resolves a user selection against what is stored, **per metric group** (profitability,
@@ -204,6 +210,7 @@ are present / it hasn't already run).
 | m007 | `quant_portfolio` book key made NULL-safe (`T-101`): per duplicate `(as_of, kind, IFNULL(frontier_k, -1), engine_version)` group keep the oldest id (it holds the positions), refresh it with the newest copy's metadata, move `quant_frontier_point` references onto it, drop the newer copies with their positions and forward-performance rows; then `CREATE UNIQUE INDEX ux_quant_portfolio_book` on that NULL-safe key |
 | m008 | `available_at` (`T-107`): re-adds the column to `sec_filings` / `fundamental_metrics` / `score_snapshot` (older rebuilds drop it), backfills each dated filing with the first NYSE trading day after its `filing_date` (`kg_schema.trading_calendar.available_from`) and copies it onto the filing's metrics and FUNDAMENTAL scores, then restores the `AVAILABILITY_TRIGGERS` guards. Refuses (rolls back) if a metric or FUNDAMENTAL score is left without one. `apply_migrations` drops those guards while any migration runs and restores them afterwards |
 | m009 | `veto` stints (`T-125`): collapses the old per-`(asset, rule, cycle_date)` hit rows into `raised_on`/`cleared_on`/`last_seen_on` stints, using the cycle dates the `"veto"` checkpoint step actually completed on (any `cycle_run`, any `cycle_type`) as the evaluation timeline — a stint opens on a pair's first hit date, extends across consecutive hit dates, and closes at the first evaluation date with no hit row for that pair, reopening a new stint if hit again later. `kg_schema._ensure_veto_indexes` (not this migration) then creates the two indexes naming the new columns, since they cannot ship inline in `ADDITIVE_DDL` without breaking its no-op safety against a still-unmigrated database |
+| m010 | marker for the knowledge-graph view contract (`T-144`): changes no table. The new views and appended columns come from `views.py` on every `ensure`; this raises the `schema_version` floor to 10 so the knowledge-graph repo can assert it and `ensure_views` can tell a database that is ahead of the running code (see "The knowledge-graph view contract" below) |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -214,7 +221,8 @@ table is absent in this (partial / single-agent) DB — a dangling view would
 otherwise break the view re-parse a later `ALTER TABLE … RENAME` in a migration
 performs. The module docstring is the **projection contract** — column list +
 semantics per view. Views:
-`v_score_snapshot`, `v_sector` (GICS sector rollup with
+`v_score_snapshot`, `v_fundamental_metric` (every stored metric with `is_current`, T-144),
+`v_sector` (GICS sector rollup with
 member/sub-industry counts), `v_industry` (sub-industry → sector; the scrape has
 no middle industry-group tier), `v_price_observation` (newest `engine_version` per
 asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section` (carries
@@ -225,6 +233,7 @@ asset/day), `v_sec_filing` (one row per filing), `v_sec_filing_section` (carries
 `param_metric` / `param_operator` / `param_threshold`), `v_data_quality_issue` (Ring-1
 `DQ_*` gate hits with the filing's form / period, T-065), `v_portfolio_position`,
 `v_shared_executive_edge` (pair-level aggregate), `v_cycle_ranking`,
+`v_cycle_ranking_component` (one row per non-null component of every ranking row, T-144),
 `v_weight_scheme` (one row per `cycle_run` that recorded a blend — scheme id +
 scalar knobs), `v_weight_component` (that blend exploded to one row per
 `(cycle_run, score_type)`), `v_sector_aggregate_snapshot` (per-cycle mean of
@@ -262,6 +271,109 @@ universe with no data to analyse.
 Shared `migrate` / `coverage` implementations. `run_migrate` opens a
 connection, calls `ensure(db, run_migrations=True)`, prints the
 `schema_version` table.
+
+## The knowledge-graph view contract (T-144)
+
+One additive change to the `v_*` views, for the knowledge-graph repo. **Rule:** every column a
+view already had keeps its name, position and values; new columns go at the end. The one value
+change is `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR rows (below).
+`tests/test_kg_view_contract.py` pins every pre-existing view's column list and order.
+
+### Versions and deployment
+
+- `schema_version` **10** (`m010`, a marker: no table changes). The views themselves are rebuilt
+  by every `ensure`, so a database gets them as soon as any process on the new code opens it,
+  whether or not it has been migrated; `migrate` is what raises the floor.
+- **Every process that opens the database is upgraded (or stopped) before `migrate` runs.**
+  An older process that runs `ensure` against a migrated database drops and recreates the views
+  from its own, older definitions and so removes the new columns and views. The new code's
+  `ensure_views` guard (skip when `schema_version` is above the highest migration it knows)
+  protects *later* code from the *next* contract change; it cannot retrofit code that predates it.
+- The production database (`/workspaces/thesis/data/financial.db`) is frozen until `T-100` and
+  stays at its current `schema_version`; a consumer must not raise its floor to 10 for it.
+
+### New views
+
+- **`v_fundamental_metric`**: `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
+  `metric_id` (`metric_group || '.' || metric_name`; joins to `v_rule_catalog.param_metric`),
+  `unit`, `value`, `engine_version`, `is_current`, `event_time`, `available_at`, `run_id`. One row
+  per (filing, metric_group, metric_name, engine_version); `available_at` is the filing's.
+  `is_current` is 1 for the engine version that `kg_schema.versions.resolve_metric_versions` picks
+  with no explicit selection: the newest version **per metric group** by the explicit order
+  (`pre-v1` < `metrics-v1` < `metrics-v2` < `metrics-v10`), never by `computed_at`. A filing that
+  was not recomputed under it has no current row; a version string that does not parse is never
+  current. At most one current version per group, so at most one current row per
+  (filing, metric_group, metric_name).
+- **`v_cycle_ranking_component`**: `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
+  `configured_weight`, `effective_weight`. One row for every **non-null** component of every
+  `v_cycle_ranking` row, vetoed or not (`rank` excludes no one; exclusion happens later, in
+  `positions`). `configured_weight` is the run's weight for that score type
+  (`v_weight_component.weight`; NULL when the run recorded no blend). `effective_weight` is
+  `configured_weight` over the sum of the configured weights of that row's non-null components,
+  so the row's effective weights sum to 1 (NULL when that sum is 0). The identity, for a row with
+  at least one component:
+  `blended_score = sum(effective_weight * component_value) - soft_veto_penalty * (SOFT vetoes)`,
+  where `soft_veto_penalty` is the run's (`v_weight_scheme.soft_veto_penalty`) and the SOFT vetoes
+  are the `veto_rules_json` entries other than `HARD` and `UNSCORED`.
+
+### Columns added to existing views
+
+| View | New columns (at the end) |
+|---|---|
+| `v_score_snapshot` | `forensic_flags_json`, `prompt_hash` (FUNDAMENTAL only; NULL on every other `score_type`) |
+| `v_shared_executive_edge` | `computed_at` (`MAX` over the pair's person rows), `run_id` (`MAX`; one `entity_resolution build` writes one `run_id` per `method`) |
+| `v_cycle_ranking` | `status` (the `cycle_run`'s) |
+| `v_quant_vs_live` | `engine_version`, `is_current` |
+| `v_quant_portfolio` | `is_current` |
+
+- `v_score_snapshot.available_at` is the cycle date (= `event_time`) for TECHNICAL, VALORIZATION and
+  SECTOR rows: a cycle-computed score is usable from its cycle date. The stored column (NULL on those
+  rows) and FUNDAMENTAL rows (the filing's, `T-107`) are unchanged; SEMANTIC rows are not written
+  until Work item 4.
+- `v_quant_portfolio.is_current` is 1 for the newest `opt-v<N>` book per (`as_of`, `kind`,
+  `frontier_k`): by `N` numerically, then `computed_at`, then `id`. `frontier_k` is part of the key
+  because every `frontier_k` book of one `as_of` is its own book; for every other kind it is NULL.
+  A book whose `engine_version` is not `opt-v<N>[+tag]` is never current. At most one current book
+  per key.
+- `v_quant_vs_live` is now every book except `kind = 'live_book'`: the dead `equal_weight` and
+  `cap_weight` filters are gone (no code writes those kinds, so no existing row appears or goes).
+  `engine_version` / `is_current` are the book's. A `LIVE_ONLY` row belongs to no book version: its
+  `engine_version` is NULL and `is_current` is 1. Filter `is_current = 1` for one row per
+  (`as_of`, `kind`, name).
+- `v_cycle_ranking` is **every** run's ranking, whatever its `status`, not "the latest cycle per
+  `cycle_type`" as its old docstring said. Filter `status = 'completed'` and choose the run.
+
+### Definitions
+
+- **`blended_score`** is 0-100 minus the run's `soft_veto_penalty` (15 by default) per SOFT veto, so
+  it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
+  mean over the non-null components, i.e. weights renormalized (`effective_weight` above).
+- **`normalized_score`** is `50 + 10z` over the cohort (z against the 2%-winsorized mean and standard
+  deviation), clamped to [0, 100]; the same function for SECTOR. The cohort mean is near 50, not
+  exactly 50. FUNDAMENTAL's `normalized_score` is **rewritten by every cycle** (`T-106`), so the stored
+  value is the last cycle's; the per-cycle value is `component_value`.
+- **SECTOR `raw_value`** is the asset's TECHNICAL raw score minus its sector's mean, in TECHNICAL
+  points, [-100, 100] (TECHNICAL raw is 0-100).
+- **Units** (`fundamental_metrics.unit`, `v_fundamental_metric.unit`): `ratio` is a fraction (0.05 =
+  5%), `x` a multiple, `usd` US dollars.
+- **Weights and caps are fractions of the book** (0.05 = 5%). `max_name_weight` /
+  `max_sector_weight` in `v_weight_scheme` are the **effective** caps on SELECTION runs (since Work
+  item 18) and the **configured**, possibly NULL, ones on MONITORING runs.
+- **`scheme_id`** (`v_weight_scheme`) is the position-weighting rule (`score_proportional`,
+  `score_tilt`, ...), not the blend. A blend is identified by its `cycle_run`; its configured weights
+  are `v_weight_component`.
+- **No component** means all components are null (`blended_score` 0.0 before the penalty). Such a
+  ranking row has no `v_cycle_ranking_component` rows.
+- **`vetoed`** is true only for a HARD veto (with the T-1 lag) or `UNSCORED`; a SOFT veto only lowers
+  `blended_score`.
+- **Timestamps.** Every `*_at` timestamp that a view exposes (`computed_at`, `detected_at`,
+  `cleared_at`, `retrieved_at`, `started_at`, `finished_at`, `ingested_at`, `created_at`) is ISO 8601
+  UTC written with a `+00:00` offset (`2026-10-04T18:28:56+00:00`). `event_time`, `available_at`,
+  `raised_on`, `cleared_on`, `last_seen_on`, `cycle_date`, `as_of` and `obs_date` are plain dates
+  (`YYYY-MM-DD`): `available_at` is a trading date, not a moment.
+- **Forensic flags** (`forensic_flags_json`, `T-041`; written by Work item 8's `T-074`, NULL until
+  then): a JSON object of four booleans, `data_error_suspected`, `negative_equity_buyback`,
+  `value_destroyer_sub_wacc`, `severe_sbc_dilution`. The codes of a row are the keys that are `true`.
 
 ## Tables added
 

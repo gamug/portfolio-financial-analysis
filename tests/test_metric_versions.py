@@ -29,6 +29,7 @@ from kg_schema.versions import (
     sort_versions,
     version_key,
 )
+from kg_schema.views import VIEWS
 
 SRC = Path(__file__).parent.parent / "src"
 
@@ -256,6 +257,10 @@ _UNFILTERED_OK = {
     "kg_schema/migrations.py": "schema rebuilds copy the whole table",
     "fundamental_agent/repair.py": "existence check: a stale filing with metrics of any version is refused",
     "kg_schema/availability.py": "available_at backfill and completeness counts cover every version",
+    "kg_schema/views.py": (
+        "v_fundamental_metric (T-144) lists every version with an is_current flag; "
+        "tests/test_kg_view_contract.py pins that flag to resolve_metric_versions"
+    ),
 }
 _READ = re.compile(r"\b(?:FROM|JOIN)\s+fundamental_metrics\b", re.IGNORECASE)
 
@@ -285,9 +290,14 @@ def test_the_known_readers_are_actually_covered_by_that_guard() -> None:
         assert text.count(VERSION_FILTER_SQL) == reads, rel
 
 
-def test_no_view_reads_fundamental_metrics_on_its_own() -> None:
-    """A view that resolved "latest" itself would be a second, hidden resolver."""
-    assert "fundamental_metrics" not in (SRC / "kg_schema" / "views.py").read_text()
+def test_no_view_but_v_fundamental_metric_reads_fundamental_metrics() -> None:
+    """A view that resolved "latest" itself would be a second, hidden resolver. The one
+    exception is the knowledge-graph contract's ``v_fundamental_metric`` (T-144): it returns
+    every version, flagging the one ``resolve_metric_versions`` picks, and its test fails if
+    the two ever disagree."""
+    assert [n for n, ddl in VIEWS.items() if "fundamental_metrics" in ddl] == [
+        "v_fundamental_metric"
+    ]
 
 
 def test_the_allow_list_only_names_files_that_exist() -> None:

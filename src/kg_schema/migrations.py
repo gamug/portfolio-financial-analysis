@@ -108,6 +108,7 @@ def _m003_fundamental_metrics(db: Database) -> None:
     db.execute("PRAGMA foreign_keys = OFF")
     db.create_schema(
         """
+        DROP VIEW IF EXISTS v_fundamental_metric;
         CREATE TABLE fundamental_metrics__new (
             id           INTEGER PRIMARY KEY,
             filing_id    INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
@@ -557,6 +558,16 @@ def _m009_veto_stints(db: Database) -> None:
     db.execute("PRAGMA foreign_keys = ON")
 
 
+# -- m010: the knowledge-graph view contract (T-144) ---------------------------
+
+
+def _m010_view_contract(db: Database) -> None:
+    """No structural change: T-144's contract (new views and appended columns) lives in
+    ``kg_schema.views`` and is rebuilt by every ``ensure``. This only raises the floor to 10,
+    so the knowledge-graph repo can assert it and ``ensure_views`` can tell a database that
+    is ahead of the running code."""
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -588,6 +599,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "veto: per-(asset, rule, cycle_date) hit rows collapsed into raised_on/cleared_on/"
         "last_seen_on stints (T-125)",
         _m009_veto_stints,
+    ),
+    (
+        10,
+        "marker: the knowledge-graph view contract -- v_fundamental_metric, "
+        "v_cycle_ranking_component and the appended view columns (T-144)",
+        _m010_view_contract,
     ),
 ]
 

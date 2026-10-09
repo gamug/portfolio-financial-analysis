@@ -692,6 +692,10 @@ that constitution AI behavior #10 asks to be approved first.
         `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
         names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
         rows (NULL → the cycle date).
+      - **Status (2026-10-09): implemented on `feat/t144-kg-view-contract`, awaiting review** (not closed: the item
+        moves to `CHANGELOG.md` with the approval commit). Marker migration is `m010` (`schema_version` 10).
+        Production's `financial.db` is at `schema_version` **8**, not 9 (`m009`, the veto stints, was never
+        applied to it); it stays frozen until `T-100`.
 - [ ] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
       `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
       Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.
