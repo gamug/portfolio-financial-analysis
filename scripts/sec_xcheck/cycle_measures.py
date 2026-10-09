@@ -223,7 +223,7 @@ def veto_findings(
     by_gate = collections.Counter(g for c in fin_hard for g in gates(c))
     note_date = f"annual basis on {as_of}: each company's latest 10-K; DQ_MCAP_SCALE, DQ_FCF_YIELD, PRICE_CRASH and EARNINGS_MISSING are not replayed"
     return [
-        Finding("F4.utilities_hard_vetoed", ["Annex A"], "Utilities hard-vetoed (the largest sector cluster)", "b", len(util_hard), len(utilities), len(util_hard), unit="companies", examples=ex(util_hard), command=CMD, note=f"{note_date}; rules: {dict(collections.Counter(g for c in util_hard for g in gates(c)))}"),
-        Finding("N8.financial_firms_hard_vetoed", ["APP-02", "APP-02b", "D-07"], "Financial firms (APP-00) hard-vetoed", "b", len(fin_hard), len(fin_in), len(fin_hard), unit="companies", examples=ex(fin_hard), command=CMD, note=f"{note_date}; by gate: {dict(by_gate)}; LEVERAGE_EXTREME fires on none (debt/equity reads debt lines only, not deposits)"),
+        Finding("F4.utilities_hard_vetoed", ["Annex A"], "Utilities hard-vetoed (the largest sector cluster)", "b", len(util_hard), len(utilities), len(util_hard), unit="companies", examples=ex(util_hard), command=CMD, note=f"{note_date}; rules: {dict(sorted(collections.Counter(g for c in util_hard for g in gates(c)).items()))}"),
+        Finding("N8.financial_firms_hard_vetoed", ["APP-02", "APP-02b", "D-07"], "Financial firms (APP-00) hard-vetoed", "b", len(fin_hard), len(fin_in), len(fin_hard), unit="companies", examples=ex(fin_hard), command=CMD, note=f"{note_date}; by gate: {dict(sorted(by_gate.items()))}; LEVERAGE_EXTREME fires on none (debt/equity reads debt lines only, not deposits)"),
         Finding("F5.article9_vetoed_by_missing_revenue", ["APP-01", "CON-11"], "Article 9 filers vetoed by DQ_REVENUE_POS: their revenue does not resolve", "b", len(rev_pos), len(art9), len(rev_pos), unit="companies", examples=ex(rev_pos), command=CMD, note=note_date),
     ]  # fmt: skip
