@@ -519,10 +519,16 @@ VIEWS: dict[str, str] = {
 }
 
 
-def _schema_version(db: Database) -> int:
+# The views no agent writes to any more: kept for back-compat, documented as frozen above and
+# published as ``frozen`` by the API's ``/contract`` (T-152). Every name must be a key of VIEWS.
+FROZEN_VIEWS: frozenset[str] = frozenset({"v_universe_membership"})
+
+
+def schema_version(db: Database) -> int:
     """The highest recorded ``schema_version``; 0 when the table is missing or empty. Never
-    creates the table (``kg_schema.queries.current_version`` does). Any other read error
-    propagates: guessing 0 would let the rebuild remove a newer contract's views."""
+    creates the table (``kg_schema.queries.current_version`` does), so it is safe on a
+    read-only connection. Any other read error propagates: guessing 0 would let the rebuild
+    remove a newer contract's views."""
     if not db.relation_exists("schema_version"):
         return 0
     row = db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
@@ -544,7 +550,7 @@ def ensure_views(db: Database) -> None:
     contract change; it cannot retrofit code that predates it.
     """
     known = max(ver for ver, _, _ in MIGRATIONS)
-    found = _schema_version(db)
+    found = schema_version(db)
     if found > known:
         log.warning(
             "schema_version %d is above the highest migration this code knows (%d): "

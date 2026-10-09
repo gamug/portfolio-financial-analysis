@@ -254,7 +254,13 @@ live name that no optimized book of that as-of date holds — T-042).
 **`v_universe_membership` is frozen.** The agents no longer write
 `universe_membership` (the universe is read point-in-time from `universe.db`), so
 this view is stale unless something else populates the table. Downstream readers
-(the KG projection) should move to `universe.db` / `kg_schema.queries`.
+(the KG projection) should move to `universe.db` / `kg_schema.queries`. The set is machine-readable as
+`kg_schema.views.FROZEN_VIEWS` (a test fails on a name that is not in `VIEWS`) and is published as `frozen` by
+the API's `/contract`.
+
+`schema_version(db)` is the public read of the recorded floor: `MAX(version)`, `0` when the table is missing or
+empty, and it never creates the table (`queries.current_version` does), so it works on a `mode=ro`
+connection. `ensure_views` and the API's `/contract/database` both use it.
 
 ### `coverage` command
 
@@ -278,6 +284,17 @@ One additive change to the `v_*` views, for the knowledge-graph repo. **Rule:** 
 view already had keeps its name, position and values; new columns go at the end. The one value
 change is `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR rows (below).
 `tests/test_kg_view_contract.py` pins every pre-existing view's column list and order.
+
+### The contract's versioning rule
+
+Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/api.md`, T-152):
+
+- Within one `contract_version` (the highest version in `MIGRATIONS`), a view's columns are **only added, at
+  the end**; never renamed, removed or reordered. A change that does any of those needs a new version.
+- **Every migration raises `contract_version`**, whether or not it changes a view — so a consumer asserting
+  a floor always has a version to assert.
+- A database whose `schema_version` is below the code's `contract_version` **lags its code**. The views follow
+  the code on every `ensure`, the floor follows `migrate`; `/contract/database` shows the difference.
 
 ### Versions and deployment
 
