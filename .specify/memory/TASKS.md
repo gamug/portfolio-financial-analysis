@@ -19,9 +19,9 @@ renumber; mark a cancelled/superseded task in place instead.
 defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-02; Work item 18 (the N-ticker
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
 
-**Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07; scope: finish this repo first):** Work item 8
-(`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-073` → `T-074` → `T-071`) →
-**Work item 19** (local follow-ups: `T-083` → `T-142` → `T-144` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
+**Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) →
+**Work item 19** (local follow-ups: `T-083` → `T-142` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
 `portfolio-nlp`) and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph
@@ -627,8 +627,9 @@ of `T-100`. `T-083` (local: our API reading `v_quant_vs_live`) moved to Work ite
 
 Added 2026-10-05, at the user's direction (scope: finish this repo first). Local work that needs nothing
 from another repo, placed above Work item 12 so it merges before the final pilot (`T-143`). One task per PR,
-each ending with its status commit after approval. → `PLAN.md` Work item 19. Order: `T-083` → `T-142` →
-`T-144` → `T-145`. `T-144` and `T-145` record the knowledge-graph view changes the user approved 2026-10-06
+each ending with its status commit after approval. → `PLAN.md` Work item 19. Order: `T-144` → `T-152` first (moved ahead of Work
+item 8 on 2026-10-09: the knowledge-graph repo is waiting on the contract), then `T-083` → `T-142` → `T-145` after
+Work item 8. `T-144` and `T-145` record the knowledge-graph view changes the user approved 2026-10-06
 (the knowledge-graph repo already references these two ids); they are the schema and `v_*` contract changes
 that constitution AI behavior #10 asks to be approved first.
 
@@ -647,6 +648,11 @@ that constitution AI behavior #10 asks to be approved first.
         `failed_units` in `docs/fundamental_agent.md` and the `v_analysis_run` notes.
 - [ ] **T-144** The knowledge-graph view contract, one additive change (`kg_schema` views, DDL notes and
       `docs/kg_schema.md`). → `PLAN.md` Work item 19, step 3.
+      **Moved first, 2026-10-09** (with `T-152`, ahead of Work item 8; nothing in Work item 8 changes a view).
+      Production is frozen until `T-100` and stays at `schema_version` 9: the acceptance builds the views on a
+      *copy* of it and on the pilot, and the knowledge-graph repo is told not to raise its floor above 9 for the
+      production database. `v_quant_vs_live` loses two filters, so it returns more rows: the PR lists every reader
+      (today only tests, e.g. `tests/test_quant_pipeline.py`) and shows each one updated or unaffected.
       - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
         `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`,
         `value`, `engine_version`, `is_current`, `event_time`, `available_at`, `run_id`.
@@ -686,6 +692,30 @@ that constitution AI behavior #10 asks to be approved first.
         `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
         names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
         rows (NULL → the cycle date).
+- [ ] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
+      `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
+      Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.
+      - `GET /api/v1/contract`: `contract_version` (the highest migration version the running code knows,
+        `kg_schema.migrations.MIGRATIONS`), `code_version` (`kg_schema.provenance.code_version()`), and `views`:
+        every view of `kg_schema.views.VIEWS`, in its order, each with `name`, `frozen` and its `columns` in order
+        (names; a type only if it is free). Built from the code, by building the views in an in-memory database the
+        way `tests/test_kg_schema.py` does and reading each view's columns, never from a hand-kept list. `frozen`
+        comes from a machine-readable set in `views.py` (today `v_universe_membership` is frozen only in a
+        docstring).
+      - `GET /api/v1/contract/database`: `schema_version` (`MAX(version)` of `schema_version`; 0 when the table is
+        missing or empty), `views_present` and `views_missing` against `VIEWS`, the database opened `mode=ro`.
+      - Both in a read router (FR-014): `mode=ro`, no side effects, the read routes' authentication and nothing more.
+      - The rule, in `docs/api.md` and `docs/kg_schema.md`: within one `contract_version` columns are only added,
+        never renamed, removed or reordered; every migration raises `contract_version`, whether or not it changes a
+        view.
+      - Tests: the response lists exactly the views and columns of the in-memory build, in order (a view added to
+        `VIEWS` and missing from the response fails); `contract_version` equals the highest migration;
+        `/contract/database` on a partial database names the missing views; no write-capable connection in the
+        router module (FR-014's check).
+      - The PR carries a sample response of each route; the knowledge-graph repo gets the commit, the routes and
+        the sample.
+      **Acceptance:** the tests above; a `GET /api/v1/contract` against a running instance returns every view with
+      its columns in order and `contract_version` (10 once `T-144`'s marker migration has landed).
 - [ ] **T-145** Non-reusable ids. → `PLAN.md` Work item 19, step 4.
       - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the
         DDL, plus a migration for existing databases (`migrate`, FR-011), tested on a copy — foreign keys,
@@ -757,7 +787,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -785,10 +815,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 ## Status
 
-**🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; scope: finish this repo
-first):** Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` →
-`T-073` → `T-074` → `T-071`) → Work item 19 (`T-083` → `T-142` →
-`T-144` → `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
+**🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → Work item 19 (`T-083` → `T-142` →
+`T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per
