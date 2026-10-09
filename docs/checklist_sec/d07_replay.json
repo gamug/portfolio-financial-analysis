@@ -1,0 +1,37 @@
+{
+ "with": {
+  "Real Estate": 0.2786814176457027,
+  "Health Care": 0.10728935391836619,
+  "Financials": 0.22755402101186645,
+  "Consumer Discretionary": 0.08722305223869825,
+  "Consumer Staples": 0.12822937001921064,
+  "Energy": 0.1639313966062267,
+  "Communication Services": 0.007091388559928709
+ },
+ "without": {
+  "Real Estate": 0.2875729644528116,
+  "Health Care": 0.11987485228565925,
+  "Financials": 0.13663996972624246,
+  "Consumer Discretionary": 0.09088459773350467,
+  "Consumer Staples": 0.17332555109091605,
+  "Energy": 0.18303673207286195,
+  "Communication Services": 0.008665332638003996
+ },
+ "names": [
+  {
+   "names_per_date": 10.0
+  },
+  {
+   "names_per_date": 10.0
+  }
+ ],
+ "dates": [
+  144,
+  144
+ ],
+ "excluded": [
+  "APO",
+  "HOOD",
+  "WFC"
+ ]
+}

@@ -1,0 +1,47 @@
+{
+ "production": {
+  "engine_versions": [
+   "metrics-v2"
+  ],
+  "filings_compared": 377,
+  "filings_all_match": 377,
+  "filings_without_metrics": 4699,
+  "raw_counts": {
+   "MATCH": 46169,
+   "VALUE_DIFFERS": 308,
+   "REPLAY_ONLY": 990
+  },
+  "raw_match_rate": 0.9933730662478215,
+  "classified_rate_stored_side": 1.0,
+  "classified_rate_strict": 1.0,
+  "drift": {
+   "DRIFT:T-128": 27,
+   "DRIFT:T-133": 600,
+   "DRIFT:T-117": 281,
+   "DRIFT:T-102": 390
+  },
+  "ttm_path_pairs": 0,
+  "unexplained": 0
+ },
+ "pilot": {
+  "engine_versions": [
+   "metrics-v4"
+  ],
+  "filings_compared": 449,
+  "filings_all_match": 449,
+  "filings_without_metrics": 0,
+  "raw_counts": {
+   "MATCH": 55715,
+   "VALUE_DIFFERS": 32,
+   "REPLAY_ONLY": 148
+  },
+  "raw_match_rate": 0.9994259780795379,
+  "classified_rate_stored_side": 1.0,
+  "classified_rate_strict": 1.0,
+  "drift": {
+   "DRIFT:T-140": 180
+  },
+  "ttm_path_pairs": 11895,
+  "unexplained": 0
+ }
+}

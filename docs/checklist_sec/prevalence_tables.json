@@ -1,0 +1,5173 @@
+{
+ "marketcap": {
+  "0001090872": {
+   "tickers": [
+    "A"
+   ],
+   "cap": 47155418571.35855,
+   "reason": null,
+   "shares": 281928854.0
+  },
+  "0000320193": {
+   "tickers": [
+    "AAPL"
+   ],
+   "cap": 4958372655000.0,
+   "reason": null,
+   "shares": 14594180000.0
+  },
+  "0001551152": {
+   "tickers": [
+    "ABBV"
+   ],
+   "cap": 468657160054.9708,
+   "reason": null,
+   "shares": 1767117285.0
+  },
+  "0001559720": {
+   "tickers": [
+    "ABNB"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000001800": {
+   "tickers": [
+    "ABT"
+   ],
+   "cap": 180608535015.48175,
+   "reason": null,
+   "shares": 1741812429.0
+  },
+  "0000947484": {
+   "tickers": [
+    "ACGL"
+   ],
+   "cap": 32399704472.35135,
+   "reason": null,
+   "shares": 341229126.0
+  },
+  "0001467373": {
+   "tickers": [
+    "ACN"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000796343": {
+   "tickers": [
+    "ADBE"
+   ],
+   "cap": 92726900000.0,
+   "reason": null,
+   "shares": 389200000.0
+  },
+  "0000006281": {
+   "tickers": [
+    "ADI"
+   ],
+   "cap": 189159818206.0077,
+   "reason": null,
+   "shares": 484565465.0
+  },
+  "0000007084": {
+   "tickers": [
+    "ADM"
+   ],
+   "cap": 39684550299.23129,
+   "reason": null,
+   "shares": 481959583.0
+  },
+  "0000008670": {
+   "tickers": [
+    "ADP"
+   ],
+   "cap": 107117930223.95837,
+   "reason": null,
+   "shares": 397262737.0
+  },
+  "0000769397": {
+   "tickers": [
+    "ADSK"
+   ],
+   "cap": 45900578979.49219,
+   "reason": null,
+   "shares": 209000000.0
+  },
+  "0001002910": {
+   "tickers": [
+    "AEE"
+   ],
+   "cap": 28143885910.490265,
+   "reason": null,
+   "shares": 276843251.0
+  },
+  "0000004904": {
+   "tickers": [
+    "AEP"
+   ],
+   "cap": 65439501111.3258,
+   "reason": null,
+   "shares": 544104955.0
+  },
+  "0000874761": {
+   "tickers": [
+    "AES"
+   ],
+   "cap": 10573160278.875809,
+   "reason": null,
+   "shares": 713438630.0
+  },
+  "0000004977": {
+   "tickers": [
+    "AFL"
+   ],
+   "cap": 57453941185.81084,
+   "reason": null,
+   "shares": 501343298.0
+  },
+  "0000005272": {
+   "tickers": [
+    "AIG"
+   ],
+   "cap": 39311108604.99433,
+   "reason": null,
+   "shares": 522893169.0
+  },
+  "0001267238": {
+   "tickers": [
+    "AIZ"
+   ],
+   "cap": 13370686096.053558,
+   "reason": null,
+   "shares": 49323767.0
+  },
+  "0000354190": {
+   "tickers": [
+    "AJG"
+   ],
+   "cap": 59064334217.83447,
+   "reason": null,
+   "shares": 256300000.0
+  },
+  "0001086222": {
+   "tickers": [
+    "AKAM"
+   ],
+   "cap": 17007422982.754059,
+   "reason": null,
+   "shares": 143716609.0
+  },
+  "0000915913": {
+   "tickers": [
+    "ALB"
+   ],
+   "cap": 13782991017.722855,
+   "reason": null,
+   "shares": 118005057.0
+  },
+  "0001097149": {
+   "tickers": [
+    "ALGN"
+   ],
+   "cap": 10889698436.127869,
+   "reason": null,
+   "shares": 71039852.0
+  },
+  "0000899051": {
+   "tickers": [
+    "ALL"
+   ],
+   "cap": 58030899525.0,
+   "reason": null,
+   "shares": 252857950.0
+  },
+  "0001579241": {
+   "tickers": [
+    "ALLE"
+   ],
+   "cap": 13091412945.188324,
+   "reason": null,
+   "shares": 85036786.0
+  },
+  "0000006951": {
+   "tickers": [
+    "AMAT"
+   ],
+   "cap": 374943041138.5519,
+   "reason": null,
+   "shares": 793597443.0
+  },
+  "0001748790": {
+   "tickers": [
+    "AMCR"
+   ],
+   "cap": 19991828411.63189,
+   "reason": null,
+   "shares": 462345690.0
+  },
+  "0000002488": {
+   "tickers": [
+    "AMD"
+   ],
+   "cap": 1018288988832.6182,
+   "reason": null,
+   "shares": 1632475042.0
+  },
+  "0001037868": {
+   "tickers": [
+    "AME"
+   ],
+   "cap": 56263002729.61975,
+   "reason": null,
+   "shares": 229261244.0
+  },
+  "0000318154": {
+   "tickers": [
+    "AMGN"
+   ],
+   "cap": 221788868451.59058,
+   "reason": null,
+   "shares": 540632005.0
+  },
+  "0000820027": {
+   "tickers": [
+    "AMP"
+   ],
+   "cap": 45259290987.715454,
+   "reason": null,
+   "shares": 88333219.0
+  },
+  "0001053507": {
+   "tickers": [
+    "AMT"
+   ],
+   "cap": 81659498412.0,
+   "reason": null,
+   "shares": 465960048.0
+  },
+  "0001018724": {
+   "tickers": [
+    "AMZN"
+   ],
+   "cap": 2750294188504.4565,
+   "reason": null,
+   "shares": 10786313572.0
+  },
+  "0001596532": {
+   "tickers": [
+    "ANET"
+   ],
+   "cap": 258790688602.28174,
+   "reason": null,
+   "shares": 1261224648.0
+  },
+  "0000315293": {
+   "tickers": [
+    "AON"
+   ],
+   "cap": 60689087962.1109,
+   "reason": null,
+   "shares": 212125434.0
+  },
+  "0000091142": {
+   "tickers": [
+    "AOS"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001841666": {
+   "tickers": [
+    "APA"
+   ],
+   "cap": 14819868605.70301,
+   "reason": null,
+   "shares": 350351510.0
+  },
+  "0000002969": {
+   "tickers": [
+    "APD"
+   ],
+   "cap": 64102253403.80493,
+   "reason": null,
+   "shares": 222685530.0
+  },
+  "0000820313": {
+   "tickers": [
+    "APH"
+   ],
+   "cap": 102140345062.55972,
+   "reason": null,
+   "shares": 1232983457.0
+  },
+  "0001858681": {
+   "tickers": [
+    "APO"
+   ],
+   "cap": 73315934090.94736,
+   "reason": null,
+   "shares": 590543159.0
+  },
+  "0001751008": {
+   "tickers": [
+    "APP"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001521332": {
+   "tickers": [
+    "APTV"
+   ],
+   "cap": 9262523022.639328,
+   "reason": null,
+   "shares": 207633331.0
+  },
+  "0001035443": {
+   "tickers": [
+    "ARE"
+   ],
+   "cap": 9383231378.619308,
+   "reason": null,
+   "shares": 174247570.0
+  },
+  "0001176948": {
+   "tickers": [
+    "ARES"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000731802": {
+   "tickers": [
+    "ATO"
+   ],
+   "cap": 26588658310.165436,
+   "reason": null,
+   "shares": 168988553.0
+  },
+  "0001730168": {
+   "tickers": [
+    "AVGO"
+   ],
+   "cap": 1740179071777.3943,
+   "reason": null,
+   "shares": 4773629865.0
+  },
+  "0000008818": {
+   "tickers": [
+    "AVY"
+   ],
+   "cap": 13042381079.235535,
+   "reason": null,
+   "shares": 75788142.0
+  },
+  "0001410636": {
+   "tickers": [
+    "AWK"
+   ],
+   "cap": 26593914763.514587,
+   "reason": null,
+   "shares": 198728989.0
+  },
+  "0001069183": {
+   "tickers": [
+    "AXON"
+   ],
+   "cap": 37313970052.8006,
+   "reason": null,
+   "shares": 81237415.0
+  },
+  "0000004962": {
+   "tickers": [
+    "AXP"
+   ],
+   "cap": 206016775699.42694,
+   "reason": null,
+   "shares": 675309833.0
+  },
+  "0000866787": {
+   "tickers": [
+    "AZO"
+   ],
+   "cap": 47257494560.29541,
+   "reason": null,
+   "shares": 16325355.0
+  },
+  "0000012927": {
+   "tickers": [
+    "BA"
+   ],
+   "cap": 156271961319.20715,
+   "reason": null,
+   "shares": 790370020.0
+  },
+  "0000070858": {
+   "tickers": [
+    "BAC"
+   ],
+   "cap": 392992463448.04364,
+   "reason": null,
+   "shares": 6992748365.0
+  },
+  "0000009389": {
+   "tickers": [
+    "BALL"
+   ],
+   "cap": 15874260642.414215,
+   "reason": null,
+   "shares": 264703357.0
+  },
+  "0000010456": {
+   "tickers": [
+    "BAX"
+   ],
+   "cap": 12242465414.094658,
+   "reason": null,
+   "shares": 516995999.0
+  },
+  "0000764478": {
+   "tickers": [
+    "BBY"
+   ],
+   "cap": 19886380260.356186,
+   "reason": null,
+   "shares": 209727698.0
+  },
+  "0000010795": {
+   "tickers": [
+    "BDX"
+   ],
+   "cap": 49846784400.0,
+   "reason": null,
+   "shares": 272386800.0
+  },
+  "0000038777": {
+   "tickers": [
+    "BEN"
+   ],
+   "cap": 16832588570.984688,
+   "reason": null,
+   "shares": 508076910.0
+  },
+  "0000014693": {
+   "tickers": [
+    "BF.B"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001996862": {
+   "tickers": [
+    "BG"
+   ],
+   "cap": 21341992650.0,
+   "reason": null,
+   "shares": 194018115.0
+  },
+  "0000875045": {
+   "tickers": [
+    "BIIB"
+   ],
+   "cap": 33271500777.230545,
+   "reason": null,
+   "shares": 147637117.0
+  },
+  "0001075531": {
+   "tickers": [
+    "BKNG"
+   ],
+   "cap": 123391706627.21252,
+   "reason": null,
+   "shares": 751380500.0
+  },
+  "0001701605": {
+   "tickers": [
+    "BKR"
+   ],
+   "cap": 56840515639.289536,
+   "reason": null,
+   "shares": 992674071.0
+  },
+  "0001316835": {
+   "tickers": [
+    "BLDR"
+   ],
+   "cap": 6549396222.664585,
+   "reason": null,
+   "shares": 107596457.0
+  },
+  "0002012383": {
+   "tickers": [
+    "BLK"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000014272": {
+   "tickers": [
+    "BMY"
+   ],
+   "cap": 127158987336.0,
+   "reason": null,
+   "shares": 2042714656.0
+  },
+  "0001390777": {
+   "tickers": [
+    "BNY"
+   ],
+   "cap": 101890965761.76181,
+   "reason": null,
+   "shares": 678504142.0
+  },
+  "0001383312": {
+   "tickers": [
+    "BR"
+   ],
+   "cap": 18587833997.113678,
+   "reason": null,
+   "shares": 114021798.0
+  },
+  "0001067983": {
+   "tickers": [
+    "BRK.B"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000079282": {
+   "tickers": [
+    "BRO"
+   ],
+   "cap": 20893070231.562603,
+   "reason": null,
+   "shares": 334610357.0
+  },
+  "0000885725": {
+   "tickers": [
+    "BSX"
+   ],
+   "cap": 65099387654.30148,
+   "reason": null,
+   "shares": 1449229526.0
+  },
+  "0001393818": {
+   "tickers": [
+    "BX"
+   ],
+   "cap": 93085021990.64824,
+   "reason": null,
+   "shares": 750625114.0
+  },
+  "0001037540": {
+   "tickers": [
+    "BXP"
+   ],
+   "cap": 10267834276.56128,
+   "reason": null,
+   "shares": 159661556.0
+  },
+  "0000831001": {
+   "tickers": [
+    "C"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000721371": {
+   "tickers": [
+    "CAH"
+   ],
+   "cap": 51641113083.63745,
+   "reason": null,
+   "shares": 232575728.0
+  },
+  "0001783180": {
+   "tickers": [
+    "CARR"
+   ],
+   "cap": 45897872780.87834,
+   "reason": null,
+   "shares": 830580423.0
+  },
+  "0000726958": {
+   "tickers": [
+    "CASY"
+   ],
+   "cap": 21615415098.25348,
+   "reason": null,
+   "shares": 36960167.0
+  },
+  "0000018230": {
+   "tickers": [
+    "CAT"
+   ],
+   "cap": 371421911549.9026,
+   "reason": null,
+   "shares": 459674889.0
+  },
+  "0000896159": {
+   "tickers": [
+    "CB"
+   ],
+   "cap": 130231783530.46161,
+   "reason": null,
+   "shares": 387860106.0
+  },
+  "0001374310": {
+   "tickers": [
+    "CBOE"
+   ],
+   "cap": 27865327397.498016,
+   "reason": null,
+   "shares": 104431019.0
+  },
+  "0001138118": {
+   "tickers": [
+    "CBRE"
+   ],
+   "cap": 40844596666.61368,
+   "reason": null,
+   "shares": 289575298.0
+  },
+  "0001051470": {
+   "tickers": [
+    "CCI"
+   ],
+   "cap": 30790211288.978264,
+   "reason": null,
+   "shares": 425455439.0
+  },
+  "0000815097": {
+   "tickers": [
+    "CCL"
+   ],
+   "cap": 30515783311.783417,
+   "reason": null,
+   "shares": 1369649119.0
+  },
+  "0000813672": {
+   "tickers": [
+    "CDNS"
+   ],
+   "cap": 83558460566.89453,
+   "reason": null,
+   "shares": 275816000.0
+  },
+  "0001402057": {
+   "tickers": [
+    "CDW"
+   ],
+   "cap": 18431318199.525024,
+   "reason": null,
+   "shares": 125017426.0
+  },
+  "0001868275": {
+   "tickers": [
+    "CEG"
+   ],
+   "cap": 93345819043.81113,
+   "reason": null,
+   "shares": 354307379.0
+  },
+  "0001324404": {
+   "tickers": [
+    "CF"
+   ],
+   "cap": 18249864542.483215,
+   "reason": null,
+   "shares": 151338130.0
+  },
+  "0000759944": {
+   "tickers": [
+    "CFG"
+   ],
+   "cap": 27582866946.389313,
+   "reason": null,
+   "shares": 421176788.0
+  },
+  "0000313927": {
+   "tickers": [
+    "CHD"
+   ],
+   "cap": 22800040192.33999,
+   "reason": null,
+   "shares": 237203907.0
+  },
+  "0001043277": {
+   "tickers": [
+    "CHRW"
+   ],
+   "cap": 17476273861.19861,
+   "reason": null,
+   "shares": 116851258.0
+  },
+  "0001091667": {
+   "tickers": [
+    "CHTR"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001739940": {
+   "tickers": [
+    "CI"
+   ],
+   "cap": 72333188057.1665,
+   "reason": null,
+   "shares": 264240486.0
+  },
+  "0000936395": {
+   "tickers": [
+    "CIEN"
+   ],
+   "cap": 52264949627.78778,
+   "reason": null,
+   "shares": 141808525.0
+  },
+  "0000020286": {
+   "tickers": [
+    "CINF"
+   ],
+   "cap": 25451264483.376694,
+   "reason": null,
+   "shares": 153478045.0
+  },
+  "0000021665": {
+   "tickers": [
+    "CL"
+   ],
+   "cap": 69393897197.22841,
+   "reason": null,
+   "shares": 797172829.0
+  },
+  "0000021076": {
+   "tickers": [
+    "CLX"
+   ],
+   "cap": 10538295924.161339,
+   "reason": null,
+   "shares": 120921351.0
+  },
+  "0001166691": {
+   "tickers": [
+    "CMCSA"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001156375": {
+   "tickers": [
+    "CME"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001058090": {
+   "tickers": [
+    "CMG"
+   ],
+   "cap": 41290590691.61224,
+   "reason": null,
+   "shares": 1265418000.0
+  },
+  "0000026172": {
+   "tickers": [
+    "CMI"
+   ],
+   "cap": 72429417217.49988,
+   "reason": null,
+   "shares": 137664487.0
+  },
+  "0000811156": {
+   "tickers": [
+    "CMS"
+   ],
+   "cap": 20153601478.062378,
+   "reason": null,
+   "shares": 313577136.0
+  },
+  "0001071739": {
+   "tickers": [
+    "CNC"
+   ],
+   "cap": 31269883123.111725,
+   "reason": null,
+   "shares": 493995000.0
+  },
+  "0001130310": {
+   "tickers": [
+    "CNP"
+   ],
+   "cap": 24760313819.81659,
+   "reason": null,
+   "shares": 654169480.0
+  },
+  "0000927628": {
+   "tickers": [
+    "COF"
+   ],
+   "cap": 123034385732.00714,
+   "reason": null,
+   "shares": 613484836.0
+  },
+  "0000820318": {
+   "tickers": [
+    "COHR"
+   ],
+   "cap": 60784373704.576416,
+   "reason": null,
+   "shares": 195832246.0
+  },
+  "0001679788": {
+   "tickers": [
+    "COIN"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000711404": {
+   "tickers": [
+    "COO"
+   ],
+   "cap": 10513686379.352371,
+   "reason": null,
+   "shares": 190155294.0
+  },
+  "0001163165": {
+   "tickers": [
+    "COP"
+   ],
+   "cap": 150491541961.51987,
+   "reason": null,
+   "shares": 1201337479.0
+  },
+  "0001140859": {
+   "tickers": [
+    "COR"
+   ],
+   "cap": 60001784093.2901,
+   "reason": null,
+   "shares": 190827165.0
+  },
+  "0000909832": {
+   "tickers": [
+    "COST"
+   ],
+   "cap": 398869259195.80884,
+   "reason": null,
+   "shares": 443478804.0
+  },
+  "0001175454": {
+   "tickers": [
+    "CPAY"
+   ],
+   "cap": 25800940228.558777,
+   "reason": null,
+   "shares": 65659599.0
+  },
+  "0000900075": {
+   "tickers": [
+    "CPRT"
+   ],
+   "cap": 26663369975.261894,
+   "reason": null,
+   "shares": 925811482.0
+  },
+  "0000906345": {
+   "tickers": [
+    "CPT"
+   ],
+   "cap": 9984562603.042603,
+   "reason": null,
+   "shares": 100539350.0
+  },
+  "0000849395": {
+   "tickers": [
+    "CRH"
+   ],
+   "cap": 58571648957.52616,
+   "reason": null,
+   "shares": 665284511.0
+  },
+  "0001100682": {
+   "tickers": [
+    "CRL"
+   ],
+   "cap": 13610829096.620117,
+   "reason": null,
+   "shares": 47738872.0
+  },
+  "0001108524": {
+   "tickers": [
+    "CRM"
+   ],
+   "cap": 191989438995.36133,
+   "reason": null,
+   "shares": 823000000.0
+  },
+  "0001535527": {
+   "tickers": [
+    "CRWD"
+   ],
+   "cap": 256045144090.67908,
+   "reason": null,
+   "shares": 1023934842.0
+  },
+  "0000858877": {
+   "tickers": [
+    "CSCO"
+   ],
+   "cap": 419648956387.57623,
+   "reason": null,
+   "shares": 3942586873.0
+  },
+  "0001057352": {
+   "tickers": [
+    "CSGP"
+   ],
+   "cap": 11657534792.244736,
+   "reason": null,
+   "shares": 405197588.0
+  },
+  "0000277948": {
+   "tickers": [
+    "CSX"
+   ],
+   "cap": 86306806665.69524,
+   "reason": null,
+   "shares": 1852474917.0
+  },
+  "0000723254": {
+   "tickers": [
+    "CTAS"
+   ],
+   "cap": 79553709948.02058,
+   "reason": null,
+   "shares": 400169561.0
+  },
+  "0001058290": {
+   "tickers": [
+    "CTSH"
+   ],
+   "cap": 27806660585.533485,
+   "reason": null,
+   "shares": 473869469.0
+  },
+  "0001755672": {
+   "tickers": [
+    "CTVA"
+   ],
+   "cap": 53602524196.65527,
+   "reason": null,
+   "shares": 667196000.0
+  },
+  "0001690820": {
+   "tickers": [
+    "CVNA"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000064803": {
+   "tickers": [
+    "CVS"
+   ],
+   "cap": 111398317188.3461,
+   "reason": null,
+   "shares": 1278970369.0
+  },
+  "0000093410": {
+   "tickers": [
+    "CVX"
+   ],
+   "cap": 399915870805.8305,
+   "reason": null,
+   "shares": 1975771274.0
+  },
+  "0000715957": {
+   "tickers": [
+    "D"
+   ],
+   "cap": 54904401077.67849,
+   "reason": null,
+   "shares": 879455403.0
+  },
+  "0000027904": {
+   "tickers": [
+    "DAL"
+   ],
+   "cap": 55187723473.45627,
+   "reason": null,
+   "shares": 657623030.0
+  },
+  "0001792789": {
+   "tickers": [
+    "DASH"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001666700": {
+   "tickers": [
+    "DD"
+   ],
+   "cap": 17798664517.118454,
+   "reason": null,
+   "shares": 135042975.0
+  },
+  "0001561550": {
+   "tickers": [
+    "DDOG"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000315189": {
+   "tickers": [
+    "DE"
+   ],
+   "cap": 189579018368.90967,
+   "reason": null,
+   "shares": 269625412.0
+  },
+  "0000910521": {
+   "tickers": [
+    "DECK"
+   ],
+   "cap": 10889947991.19191,
+   "reason": null,
+   "shares": 136414227.0
+  },
+  "0001571996": {
+   "tickers": [
+    "DELL"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000029534": {
+   "tickers": [
+    "DG"
+   ],
+   "cap": 27054236351.75789,
+   "reason": null,
+   "shares": 220616790.0
+  },
+  "0001022079": {
+   "tickers": [
+    "DGX"
+   ],
+   "cap": 25911249387.301025,
+   "reason": null,
+   "shares": 110373360.0
+  },
+  "0000882184": {
+   "tickers": [
+    "DHI"
+   ],
+   "cap": 40307749758.086105,
+   "reason": null,
+   "shares": 279701267.0
+  },
+  "0000313616": {
+   "tickers": [
+    "DHR"
+   ],
+   "cap": 155423184104.44818,
+   "reason": null,
+   "shares": 702986054.0
+  },
+  "0001744489": {
+   "tickers": [
+    "DIS"
+   ],
+   "cap": 179264633638.69696,
+   "reason": null,
+   "shares": 1726686902.0
+  },
+  "0001297996": {
+   "tickers": [
+    "DLR"
+   ],
+   "cap": 65238534750.68756,
+   "reason": null,
+   "shares": 351406070.0
+  },
+  "0000935703": {
+   "tickers": [
+    "DLTR"
+   ],
+   "cap": 21584989768.74067,
+   "reason": null,
+   "shares": 187630299.0
+  },
+  "0000765880": {
+   "tickers": [
+    "DOC"
+   ],
+   "cap": 14204261819.033775,
+   "reason": null,
+   "shares": 689527260.0
+  },
+  "0000029905": {
+   "tickers": [
+    "DOV"
+   ],
+   "cap": 25123248267.274857,
+   "reason": null,
+   "shares": 134680225.0
+  },
+  "0001751788": {
+   "tickers": [
+    "DOW"
+   ],
+   "cap": 20324909101.48208,
+   "reason": null,
+   "shares": 720741438.0
+  },
+  "0001286681": {
+   "tickers": [
+    "DPZ"
+   ],
+   "cap": 9829244941.66809,
+   "reason": null,
+   "shares": 33081735.0
+  },
+  "0000940944": {
+   "tickers": [
+    "DRI"
+   ],
+   "cap": 24360208734.355667,
+   "reason": null,
+   "shares": 114077969.0
+  },
+  "0000936340": {
+   "tickers": [
+    "DTE"
+   ],
+   "cap": 26088831495.152435,
+   "reason": null,
+   "shares": 208028313.0
+  },
+  "0001326160": {
+   "tickers": [
+    "DUK"
+   ],
+   "cap": 90674834095.95892,
+   "reason": null,
+   "shares": 779596217.0
+  },
+  "0000927066": {
+   "tickers": [
+    "DVA"
+   ],
+   "cap": 11721336077.88086,
+   "reason": null,
+   "shares": 63800000.0
+  },
+  "0001090012": {
+   "tickers": [
+    "DVN"
+   ],
+   "cap": 51623000335.69336,
+   "reason": null,
+   "shares": 1100000000.0
+  },
+  "0001093557": {
+   "tickers": [
+    "DXCM"
+   ],
+   "cap": 33785108829.804535,
+   "reason": null,
+   "shares": 377360765.0
+  },
+  "0001065088": {
+   "tickers": [
+    "EBAY"
+   ],
+   "cap": 48629599456.78711,
+   "reason": null,
+   "shares": 445000000.0
+  },
+  "0001415404": {
+   "tickers": [
+    "ECHO"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000031462": {
+   "tickers": [
+    "ECL"
+   ],
+   "cap": 77432367062.858,
+   "reason": null,
+   "shares": 280328603.0
+  },
+  "0001047862": {
+   "tickers": [
+    "ED"
+   ],
+   "cap": 38268123217.60391,
+   "reason": null,
+   "shares": 368529705.0
+  },
+  "0000033185": {
+   "tickers": [
+    "EFX"
+   ],
+   "cap": 18771736539.46582,
+   "reason": null,
+   "shares": 117484896.0
+  },
+  "0001095073": {
+   "tickers": [
+    "EG"
+   ],
+   "cap": 14223620277.004333,
+   "reason": null,
+   "shares": 38342734.0
+  },
+  "0000827052": {
+   "tickers": [
+    "EIX"
+   ],
+   "cap": 21182906158.47552,
+   "reason": null,
+   "shares": 384793941.0
+  },
+  "0001001250": {
+   "tickers": [
+    "EL"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001156039": {
+   "tickers": [
+    "ELV"
+   ],
+   "cap": 87274706786.30188,
+   "reason": null,
+   "shares": 216869290.0
+  },
+  "0000105634": {
+   "tickers": [
+    "EME"
+   ],
+   "cap": 33369140106.5,
+   "reason": null,
+   "shares": 44109901.0
+  },
+  "0000032604": {
+   "tickers": [
+    "EMR"
+   ],
+   "cap": 86007183361.8164,
+   "reason": null,
+   "shares": 557800000.0
+  },
+  "0000821189": {
+   "tickers": [
+    "EOG"
+   ],
+   "cap": 73182312876.55042,
+   "reason": null,
+   "shares": 524529176.0
+  },
+  "0001101239": {
+   "tickers": [
+    "EQIX"
+   ],
+   "cap": 104518971075.95068,
+   "reason": null,
+   "shares": 98671686.0
+  },
+  "0000033213": {
+   "tickers": [
+    "EQT"
+   ],
+   "cap": 31782468819.015503,
+   "reason": null,
+   "shares": 625516000.0
+  },
+  "0000922621": {
+   "tickers": [
+    "ERIE"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000072741": {
+   "tickers": [
+    "ES"
+   ],
+   "cap": 25003669135.95189,
+   "reason": null,
+   "shares": 376674754.0
+  },
+  "0000920522": {
+   "tickers": [
+    "ESS"
+   ],
+   "cap": 17658396927.261475,
+   "reason": null,
+   "shares": 64268439.0
+  },
+  "0001551182": {
+   "tickers": [
+    "ETN"
+   ],
+   "cap": 171863112207.03125,
+   "reason": null,
+   "shares": 388400000.0
+  },
+  "0000065984": {
+   "tickers": [
+    "ETR"
+   ],
+   "cap": 46314293877.831116,
+   "reason": null,
+   "shares": 457832070.0
+  },
+  "0001711269": {
+   "tickers": [
+    "EVRG"
+   ],
+   "cap": 18272766717.933083,
+   "reason": null,
+   "shares": 230513025.0
+  },
+  "0001099800": {
+   "tickers": [
+    "EW"
+   ],
+   "cap": 51172791296.38672,
+   "reason": null,
+   "shares": 576400000.0
+  },
+  "0001109357": {
+   "tickers": [
+    "EXC"
+   ],
+   "cap": 42770099554.95414,
+   "reason": null,
+   "shares": 1023208142.0
+  },
+  "0000895126": {
+   "tickers": [
+    "EXE"
+   ],
+   "cap": 20147774474.0726,
+   "reason": null,
+   "shares": 231503789.0
+  },
+  "0000746515": {
+   "tickers": [
+    "EXPD"
+   ],
+   "cap": 24374540817.160187,
+   "reason": null,
+   "shares": 129990622.0
+  },
+  "0001324424": {
+   "tickers": [
+    "EXPE"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001289490": {
+   "tickers": [
+    "EXR"
+   ],
+   "cap": 28519278794.958344,
+   "reason": null,
+   "shares": 211269558.0
+  },
+  "0000037996": {
+   "tickers": [
+    "F"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001539838": {
+   "tickers": [
+    "FANG"
+   ],
+   "cap": 51664493128.5,
+   "reason": null,
+   "shares": 280024353.0
+  },
+  "0000815556": {
+   "tickers": [
+    "FAST"
+   ],
+   "cap": 57466680556.97081,
+   "reason": null,
+   "shares": 1147497573.0
+  },
+  "0000831259": {
+   "tickers": [
+    "FCX"
+   ],
+   "cap": 106767900643.86115,
+   "reason": null,
+   "shares": 1436017523.0
+  },
+  "0001013237": {
+   "tickers": [
+    "FDS"
+   ],
+   "cap": 9831027873.624664,
+   "reason": null,
+   "shares": 35565543.0
+  },
+  "0001048911": {
+   "tickers": [
+    "FDX"
+   ],
+   "cap": 70013837354.31079,
+   "reason": null,
+   "shares": 236581188.0
+  },
+  "0002082247": {
+   "tickers": [
+    "FDXF"
+   ],
+   "cap": 17792657827.0,
+   "reason": null,
+   "shares": 149518133.0
+  },
+  "0001031296": {
+   "tickers": [
+    "FE"
+   ],
+   "cap": 25873226192.96522,
+   "reason": null,
+   "shares": 578431175.0
+  },
+  "0002011641": {
+   "tickers": [
+    "FERG"
+   ],
+   "cap": 42785937064.667496,
+   "reason": null,
+   "shares": 193452717.0
+  },
+  "0001048695": {
+   "tickers": [
+    "FFIV"
+   ],
+   "cap": 25670799655.68524,
+   "reason": null,
+   "shares": 56627182.0
+  },
+  "0000814547": {
+   "tickers": [
+    "FICO"
+   ],
+   "cap": 19750604832.97119,
+   "reason": null,
+   "shares": 21597635.0
+  },
+  "0001136893": {
+   "tickers": [
+    "FIS"
+   ],
+   "cap": 18029078386.17713,
+   "reason": null,
+   "shares": 515705917.0
+  },
+  "0000798354": {
+   "tickers": [
+    "FISV"
+   ],
+   "cap": 24514445026.688377,
+   "reason": null,
+   "shares": 531766721.0
+  },
+  "0000035527": {
+   "tickers": [
+    "FITB"
+   ],
+   "cap": 47847650154.45094,
+   "reason": null,
+   "shares": 906892564.0
+  },
+  "0001035983": {
+   "tickers": [
+    "FIX"
+   ],
+   "cap": 57195360059.61731,
+   "reason": null,
+   "shares": 35194329.0
+  },
+  "0000866374": {
+   "tickers": [
+    "FLEX"
+   ],
+   "cap": 42278169704.771576,
+   "reason": null,
+   "shares": 369402978.0
+  },
+  "0001754301": {
+   "tickers": [
+    "FOX",
+    "FOXA"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000034903": {
+   "tickers": [
+    "FRT"
+   ],
+   "cap": 9542550621.528328,
+   "reason": null,
+   "shares": 86389197.0
+  },
+  "0001274494": {
+   "tickers": [
+    "FSLR"
+   ],
+   "cap": 21577783903.451294,
+   "reason": null,
+   "shares": 107469788.0
+  },
+  "0001262039": {
+   "tickers": [
+    "FTNT"
+   ],
+   "cap": 127856937141.37053,
+   "reason": null,
+   "shares": 733713653.0
+  },
+  "0001659166": {
+   "tickers": [
+    "FTV"
+   ],
+   "cap": 17056974357.5405,
+   "reason": null,
+   "shares": 304861021.0
+  },
+  "0000040533": {
+   "tickers": [
+    "GD"
+   ],
+   "cap": 92863025875.3097,
+   "reason": null,
+   "shares": 270430187.0
+  },
+  "0001609711": {
+   "tickers": [
+    "GDDY"
+   ],
+   "cap": 12441870170.411316,
+   "reason": null,
+   "shares": 126647704.0
+  },
+  "0000040545": {
+   "tickers": [
+    "GE"
+   ],
+   "cap": 331210706666.4158,
+   "reason": null,
+   "shares": 1037562513.0
+  },
+  "0001932393": {
+   "tickers": [
+    "GEHC"
+   ],
+   "cap": 30145677131.178482,
+   "reason": null,
+   "shares": 454891786.0
+  },
+  "0000849399": {
+   "tickers": [
+    "GEN"
+   ],
+   "cap": 16335440651.302795,
+   "reason": null,
+   "shares": 598587032.0
+  },
+  "0001996810": {
+   "tickers": [
+    "GEV"
+   ],
+   "cap": 253091483155.42163,
+   "reason": null,
+   "shares": 266333581.0
+  },
+  "0000882095": {
+   "tickers": [
+    "GILD"
+   ],
+   "cap": 189303951243.42432,
+   "reason": null,
+   "shares": 1239955155.0
+  },
+  "0000040704": {
+   "tickers": [
+    "GIS"
+   ],
+   "cap": 18919963045.38719,
+   "reason": null,
+   "shares": 533708396.0
+  },
+  "0000320335": {
+   "tickers": [
+    "GL"
+   ],
+   "cap": 13020601242.34784,
+   "reason": null,
+   "shares": 76849447.0
+  },
+  "0000024741": {
+   "tickers": [
+    "GLW"
+   ],
+   "cap": 137555104680.38885,
+   "reason": null,
+   "shares": 861388331.0
+  },
+  "0001467858": {
+   "tickers": [
+    "GM"
+   ],
+   "cap": 73223328418.6804,
+   "reason": null,
+   "shares": 877451541.0
+  },
+  "0001474735": {
+   "tickers": [
+    "GNRC"
+   ],
+   "cap": 12165341339.326126,
+   "reason": null,
+   "shares": 59006361.0
+  },
+  "0001652044": {
+   "tickers": [
+    "GOOG",
+    "GOOGL"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000040987": {
+   "tickers": [
+    "GPC"
+   ],
+   "cap": 17865245534.362488,
+   "reason": null,
+   "shares": 137859758.0
+  },
+  "0001123360": {
+   "tickers": [
+    "GPN"
+   ],
+   "cap": 22434346781.179504,
+   "reason": null,
+   "shares": 264618390.0
+  },
+  "0001121788": {
+   "tickers": [
+    "GRMN"
+   ],
+   "cap": 54900378751.64191,
+   "reason": null,
+   "shares": 192856206.0
+  },
+  "0000886982": {
+   "tickers": [
+    "GS"
+   ],
+   "cap": 276464337338.4492,
+   "reason": null,
+   "shares": 291171408.0
+  },
+  "0000277135": {
+   "tickers": [
+    "GWW"
+   ],
+   "cap": 59753196810.05493,
+   "reason": null,
+   "shares": 47100942.0
+  },
+  "0000045012": {
+   "tickers": [
+    "HAL"
+   ],
+   "cap": 27368331284.693947,
+   "reason": null,
+   "shares": 833130367.0
+  },
+  "0000046080": {
+   "tickers": [
+    "HAS"
+   ],
+   "cap": 12258175143.490265,
+   "reason": null,
+   "shares": 141044467.0
+  },
+  "0000049196": {
+   "tickers": [
+    "HBAN"
+   ],
+   "cap": 31805678059.412155,
+   "reason": null,
+   "shares": 2027130587.0
+  },
+  "0000860730": {
+   "tickers": [
+    "HCA"
+   ],
+   "cap": 97192452092.79785,
+   "reason": null,
+   "shares": 221839800.0
+  },
+  "0000354950": {
+   "tickers": [
+    "HD"
+   ],
+   "cap": 304644533388.5142,
+   "reason": null,
+   "shares": 997689626.0
+  },
+  "0000874766": {
+   "tickers": [
+    "HIG"
+   ],
+   "cap": 34869351660.16995,
+   "reason": null,
+   "shares": 270872002.0
+  },
+  "0001501585": {
+   "tickers": [
+    "HII"
+   ],
+   "cap": 10676676309.11316,
+   "reason": null,
+   "shares": 39404598.0
+  },
+  "0001585689": {
+   "tickers": [
+    "HLT"
+   ],
+   "cap": 69419021389.87488,
+   "reason": null,
+   "shares": 225064910.0
+  },
+  "0000773840": {
+   "tickers": [
+    "HON"
+   ],
+   "cap": 67143743052.9483,
+   "reason": null,
+   "shares": 316940010.0
+  },
+  "0002089271": {
+   "tickers": [
+    "HONA"
+   ],
+   "cap": 53032532268.43109,
+   "reason": null,
+   "shares": 316952725.0
+  },
+  "0001783879": {
+   "tickers": [
+    "HOOD"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001645590": {
+   "tickers": [
+    "HPE"
+   ],
+   "cap": 81015173841.9296,
+   "reason": null,
+   "shares": 1327464779.0
+  },
+  "0000047217": {
+   "tickers": [
+    "HPQ"
+   ],
+   "cap": 28893383472.37429,
+   "reason": null,
+   "shares": 901790969.0
+  },
+  "0000048465": {
+   "tickers": [
+    "HRL"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001000228": {
+   "tickers": [
+    "HSIC"
+   ],
+   "cap": 9743771201.070786,
+   "reason": null,
+   "shares": 111446542.0
+  },
+  "0001070750": {
+   "tickers": [
+    "HST"
+   ],
+   "cap": 15264572080.15759,
+   "reason": null,
+   "shares": 685124399.0
+  },
+  "0000047111": {
+   "tickers": [
+    "HSY"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000048898": {
+   "tickers": [
+    "HUBB"
+   ],
+   "cap": 24245391831.364655,
+   "reason": null,
+   "shares": 52841777.0
+  },
+  "0000049071": {
+   "tickers": [
+    "HUM"
+   ],
+   "cap": 44662878000.0,
+   "reason": null,
+   "shares": 120061500.0
+  },
+  "0000004281": {
+   "tickers": [
+    "HWM"
+   ],
+   "cap": 89873883522.04906,
+   "reason": null,
+   "shares": 398801399.0
+  },
+  "0001381197": {
+   "tickers": [
+    "IBKR"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000051143": {
+   "tickers": [
+    "IBM"
+   ],
+   "cap": 217991059758.46558,
+   "reason": null,
+   "shares": 942134390.0
+  },
+  "0001571949": {
+   "tickers": [
+    "ICE"
+   ],
+   "cap": 85854054785.13397,
+   "reason": null,
+   "shares": 561394487.0
+  },
+  "0000874716": {
+   "tickers": [
+    "IDXX"
+   ],
+   "cap": 41084351994.0,
+   "reason": null,
+   "shares": 78781116.0
+  },
+  "0000832101": {
+   "tickers": [
+    "IEX"
+   ],
+   "cap": 16637843508.220215,
+   "reason": null,
+   "shares": 73719896.0
+  },
+  "0000051253": {
+   "tickers": [
+    "IFF"
+   ],
+   "cap": 21889315559.366768,
+   "reason": null,
+   "shares": 255149963.0
+  },
+  "0000879169": {
+   "tickers": [
+    "INCY"
+   ],
+   "cap": 25358348995.118675,
+   "reason": null,
+   "shares": 199782155.0
+  },
+  "0000050863": {
+   "tickers": [
+    "INTC"
+   ],
+   "cap": 624749843078.6133,
+   "reason": null,
+   "shares": 5044000000.0
+  },
+  "0000896878": {
+   "tickers": [
+    "INTU"
+   ],
+   "cap": 78126446231.0791,
+   "reason": null,
+   "shares": 267236000.0
+  },
+  "0001687229": {
+   "tickers": [
+    "INVH"
+   ],
+   "cap": 16029513993.152191,
+   "reason": null,
+   "shares": 590623226.0
+  },
+  "0000051434": {
+   "tickers": [
+    "IP"
+   ],
+   "cap": 18910940465.61428,
+   "reason": null,
+   "shares": 529569895.0
+  },
+  "0001478242": {
+   "tickers": [
+    "IQV"
+   ],
+   "cap": 45078020388.793945,
+   "reason": null,
+   "shares": 166900000.0
+  },
+  "0001699150": {
+   "tickers": [
+    "IR"
+   ],
+   "cap": 28653757239.609856,
+   "reason": null,
+   "shares": 387999429.0
+  },
+  "0001020569": {
+   "tickers": [
+    "IRM"
+   ],
+   "cap": 35167632363.894806,
+   "reason": null,
+   "shares": 297702812.0
+  },
+  "0001035267": {
+   "tickers": [
+    "ISRG"
+   ],
+   "cap": 142049565005.6772,
+   "reason": null,
+   "shares": 353278038.0
+  },
+  "0000749251": {
+   "tickers": [
+    "IT"
+   ],
+   "cap": 11287879460.0,
+   "reason": null,
+   "shares": 63148976.0
+  },
+  "0000049826": {
+   "tickers": [
+    "ITW"
+   ],
+   "cap": 77029856347.65625,
+   "reason": null,
+   "shares": 284800000.0
+  },
+  "0000914208": {
+   "tickers": [
+    "IVZ"
+   ],
+   "cap": 13620268381.4188,
+   "reason": null,
+   "shares": 441499780.0
+  },
+  "0000052988": {
+   "tickers": [
+    "J"
+   ],
+   "cap": 16750565434.842407,
+   "reason": null,
+   "shares": 117038611.0
+  },
+  "0000728535": {
+   "tickers": [
+    "JBHT"
+   ],
+   "cap": 22296346011.91678,
+   "reason": null,
+   "shares": 93914939.0
+  },
+  "0000898293": {
+   "tickers": [
+    "JBL"
+   ],
+   "cap": 32377115910.445343,
+   "reason": null,
+   "shares": 104787089.0
+  },
+  "0000833444": {
+   "tickers": [
+    "JCI"
+   ],
+   "cap": 89345330392.86005,
+   "reason": null,
+   "shares": 610115603.0
+  },
+  "0000779152": {
+   "tickers": [
+    "JKHY"
+   ],
+   "cap": 10453790280.733398,
+   "reason": null,
+   "shares": 70112608.0
+  },
+  "0000200406": {
+   "tickers": [
+    "JNJ"
+   ],
+   "cap": 648720609209.9714,
+   "reason": null,
+   "shares": 2409898597.0
+  },
+  "0000019617": {
+   "tickers": [
+    "JPM"
+   ],
+   "cap": 903783306300.0,
+   "reason": null,
+   "shares": 2658186195.0
+  },
+  "0001418135": {
+   "tickers": [
+    "KDP"
+   ],
+   "cap": 42879628768.84836,
+   "reason": null,
+   "shares": 1360826038.0
+  },
+  "0000091576": {
+   "tickers": [
+    "KEY"
+   ],
+   "cap": 21854792297.427315,
+   "reason": null,
+   "shares": 1067128554.0
+  },
+  "0001601046": {
+   "tickers": [
+    "KEYS"
+   ],
+   "cap": 59129406080.30975,
+   "reason": null,
+   "shares": 170244745.0
+  },
+  "0001637459": {
+   "tickers": [
+    "KHC"
+   ],
+   "cap": 28459770192.0,
+   "reason": null,
+   "shares": 1185823758.0
+  },
+  "0000879101": {
+   "tickers": [
+    "KIM"
+   ],
+   "cap": 15126299849.378323,
+   "reason": null,
+   "shares": 670789373.0
+  },
+  "0001404912": {
+   "tickers": [
+    "KKR"
+   ],
+   "cap": 88363250753.93317,
+   "reason": null,
+   "shares": 897635601.0
+  },
+  "0000319201": {
+   "tickers": [
+    "KLAC"
+   ],
+   "cap": 246048899743.99445,
+   "reason": null,
+   "shares": 1306546783.0
+  },
+  "0000055785": {
+   "tickers": [
+    "KMB"
+   ],
+   "cap": 32895393866.520813,
+   "reason": null,
+   "shares": 332579038.0
+  },
+  "0001506307": {
+   "tickers": [
+    "KMI"
+   ],
+   "cap": 69632102342.3791,
+   "reason": null,
+   "shares": 2226802089.0
+  },
+  "0000021344": {
+   "tickers": [
+    "KO"
+   ],
+   "cap": 381242969685.00684,
+   "reason": null,
+   "shares": 4302482418.0
+  },
+  "0000056873": {
+   "tickers": [
+    "KR"
+   ],
+   "cap": 34584875083.050156,
+   "reason": null,
+   "shares": 590588700.0
+  },
+  "0001944048": {
+   "tickers": [
+    "KVUE"
+   ],
+   "cap": 34305015292.967087,
+   "reason": null,
+   "shares": 1920773467.0
+  },
+  "0000060086": {
+   "tickers": [
+    "L"
+   ],
+   "cap": 21650940573.83667,
+   "reason": null,
+   "shares": 204427720.0
+  },
+  "0001336920": {
+   "tickers": [
+    "LDOS"
+   ],
+   "cap": 15474443985.412537,
+   "reason": null,
+   "shares": 125492209.0
+  },
+  "0000920760": {
+   "tickers": [
+    "LEN"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000920148": {
+   "tickers": [
+    "LH"
+   ],
+   "cap": 25265894692.993164,
+   "reason": null,
+   "shares": 81100000.0
+  },
+  "0000202058": {
+   "tickers": [
+    "LHX"
+   ],
+   "cap": 44671024118.58362,
+   "reason": null,
+   "shares": 186214616.0
+  },
+  "0001069202": {
+   "tickers": [
+    "LII"
+   ],
+   "cap": 12934451851.357422,
+   "reason": null,
+   "shares": 34799968.0
+  },
+  "0001707925": {
+   "tickers": [
+    "LIN"
+   ],
+   "cap": 214314289268.48978,
+   "reason": null,
+   "shares": 460980163.0
+  },
+  "0001633978": {
+   "tickers": [
+    "LITE"
+   ],
+   "cap": 84826597467.04102,
+   "reason": null,
+   "shares": 89700000.0
+  },
+  "0000059478": {
+   "tickers": [
+    "LLY"
+   ],
+   "cap": 1101519569828.5103,
+   "reason": null,
+   "shares": 941357065.0
+  },
+  "0000936468": {
+   "tickers": [
+    "LMT"
+   ],
+   "cap": 120551248120.01385,
+   "reason": null,
+   "shares": 230790753.0
+  },
+  "0000352541": {
+   "tickers": [
+    "LNT"
+   ],
+   "cap": 16689862840.319069,
+   "reason": null,
+   "shares": 258277037.0
+  },
+  "0000060667": {
+   "tickers": [
+    "LOW"
+   ],
+   "cap": 110011473072.84059,
+   "reason": null,
+   "shares": 561054019.0
+  },
+  "0000707549": {
+   "tickers": [
+    "LRCX"
+   ],
+   "cap": 389110767467.5598,
+   "reason": null,
+   "shares": 1251321000.0
+  },
+  "0001397187": {
+   "tickers": [
+    "LULU"
+   ],
+   "cap": 10953272613.19226,
+   "reason": null,
+   "shares": 105594064.0
+  },
+  "0000092380": {
+   "tickers": [
+    "LUV"
+   ],
+   "cap": 20585881993.84697,
+   "reason": null,
+   "shares": 489208201.0
+  },
+  "0001300514": {
+   "tickers": [
+    "LVS"
+   ],
+   "cap": 25713737498.956787,
+   "reason": null,
+   "shares": 647701184.0
+  },
+  "0001489393": {
+   "tickers": [
+    "LYB"
+   ],
+   "cap": 19136768818.688477,
+   "reason": null,
+   "shares": 323037952.0
+  },
+  "0001335258": {
+   "tickers": [
+    "LYV"
+   ],
+   "cap": 40020053919.48303,
+   "reason": null,
+   "shares": 235633860.0
+  },
+  "0001141391": {
+   "tickers": [
+    "MA"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000912595": {
+   "tickers": [
+    "MAA"
+   ],
+   "cap": 13867249335.889114,
+   "reason": null,
+   "shares": 116384802.0
+  },
+  "0001048286": {
+   "tickers": [
+    "MAR"
+   ],
+   "cap": 90762313564.64355,
+   "reason": null,
+   "shares": 260766288.0
+  },
+  "0000062996": {
+   "tickers": [
+    "MAS"
+   ],
+   "cap": 14113341027.826607,
+   "reason": null,
+   "shares": 201734437.0
+  },
+  "0000063908": {
+   "tickers": [
+    "MCD"
+   ],
+   "cap": 177158061604.95114,
+   "reason": null,
+   "shares": 707641531.0
+  },
+  "0000827054": {
+   "tickers": [
+    "MCHP"
+   ],
+   "cap": 41170918785.9069,
+   "reason": null,
+   "shares": 543008691.0
+  },
+  "0000927653": {
+   "tickers": [
+    "MCK"
+   ],
+   "cap": 103908826939.33447,
+   "reason": null,
+   "shares": 116590363.0
+  },
+  "0001059556": {
+   "tickers": [
+    "MCO"
+   ],
+   "cap": 81274100000.0,
+   "reason": null,
+   "shares": 173200000.0
+  },
+  "0001103982": {
+   "tickers": [
+    "MDLZ"
+   ],
+   "cap": 78405330057.71292,
+   "reason": null,
+   "shares": 1283649766.0
+  },
+  "0001613103": {
+   "tickers": [
+    "MDT"
+   ],
+   "cap": 116107341981.31905,
+   "reason": null,
+   "shares": 1279137890.0
+  },
+  "0001099219": {
+   "tickers": [
+    "MET"
+   ],
+   "cap": 60954945674.246994,
+   "reason": null,
+   "shares": 635476927.0
+  },
+  "0001326801": {
+   "tickers": [
+    "META"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000789570": {
+   "tickers": [
+    "MGM"
+   ],
+   "cap": 9786958592.30008,
+   "reason": null,
+   "shares": 251592756.0
+  },
+  "0000063754": {
+   "tickers": [
+    "MKC"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000916076": {
+   "tickers": [
+    "MLM"
+   ],
+   "cap": 29993275826.292328,
+   "reason": null,
+   "shares": 60065839.0
+  },
+  "0000066740": {
+   "tickers": [
+    "MMM"
+   ],
+   "cap": 87311806771.95992,
+   "reason": null,
+   "shares": 515722417.0
+  },
+  "0000865752": {
+   "tickers": [
+    "MNST"
+   ],
+   "cap": 43363611244.531364,
+   "reason": null,
+   "shares": 979525882.0
+  },
+  "0000764180": {
+   "tickers": [
+    "MO"
+   ],
+   "cap": 114611222061.50919,
+   "reason": null,
+   "shares": 1669743926.0
+  },
+  "0001285785": {
+   "tickers": [
+    "MOS"
+   ],
+   "cap": 7861559180.058922,
+   "reason": null,
+   "shares": 317895646.0
+  },
+  "0001510295": {
+   "tickers": [
+    "MPC"
+   ],
+   "cap": 109431791589.018,
+   "reason": null,
+   "shares": 280824763.0
+  },
+  "0001280452": {
+   "tickers": [
+    "MPWR"
+   ],
+   "cap": 67847808420.043945,
+   "reason": null,
+   "shares": 49143000.0
+  },
+  "0000310158": {
+   "tickers": [
+    "MRK"
+   ],
+   "cap": 372320880925.6324,
+   "reason": null,
+   "shares": 2467171638.0
+  },
+  "0001682852": {
+   "tickers": [
+    "MRNA"
+   ],
+   "cap": 72884502921.143,
+   "reason": null,
+   "shares": 399235889.0
+  },
+  "0000062709": {
+   "tickers": [
+    "MRSH"
+   ],
+   "cap": 81130685051.28021,
+   "reason": null,
+   "shares": 477211268.0
+  },
+  "0001835632": {
+   "tickers": [
+    "MRVL"
+   ],
+   "cap": 230063471154.78516,
+   "reason": null,
+   "shares": 876900000.0
+  },
+  "0000895421": {
+   "tickers": [
+    "MS"
+   ],
+   "cap": 314395948829.3889,
+   "reason": null,
+   "shares": 1570566292.0
+  },
+  "0001408198": {
+   "tickers": [
+    "MSCI"
+   ],
+   "cap": 39903576354.98047,
+   "reason": null,
+   "shares": 72700000.0
+  },
+  "0000789019": {
+   "tickers": [
+    "MSFT"
+   ],
+   "cap": 3697921654518.0,
+   "reason": null,
+   "shares": 7425545491.0
+  },
+  "0000068505": {
+   "tickers": [
+    "MSI"
+   ],
+   "cap": 75581014999.78784,
+   "reason": null,
+   "shares": 165493788.0
+  },
+  "0000036270": {
+   "tickers": [
+    "MTB"
+   ],
+   "cap": 32265480991.605927,
+   "reason": null,
+   "shares": 144416262.0
+  },
+  "0001037646": {
+   "tickers": [
+    "MTD"
+   ],
+   "cap": 29869700890.50952,
+   "reason": null,
+   "shares": 20036559.0
+  },
+  "0000723125": {
+   "tickers": [
+    "MU"
+   ],
+   "cap": 1237995635002.4648,
+   "reason": null,
+   "shares": 1129393151.0
+  },
+  "0001513761": {
+   "tickers": [
+    "NCLH"
+   ],
+   "cap": 6529651292.736383,
+   "reason": null,
+   "shares": 459187846.0
+  },
+  "0001120193": {
+   "tickers": [
+    "NDAQ"
+   ],
+   "cap": 52823361654.0,
+   "reason": null,
+   "shares": 558977372.0
+  },
+  "0000072331": {
+   "tickers": [
+    "NDSN"
+   ],
+   "cap": 17805417077.13629,
+   "reason": null,
+   "shares": 55699366.0
+  },
+  "0000753308": {
+   "tickers": [
+    "NEE"
+   ],
+   "cap": 165284168257.32996,
+   "reason": null,
+   "shares": 2085341456.0
+  },
+  "0001164727": {
+   "tickers": [
+    "NEM"
+   ],
+   "cap": 134092880658.38953,
+   "reason": null,
+   "shares": 1053692271.0
+  },
+  "0001065280": {
+   "tickers": [
+    "NFLX"
+   ],
+   "cap": 300469902268.9625,
+   "reason": null,
+   "shares": 4163939676.0
+  },
+  "0001111711": {
+   "tickers": [
+    "NI"
+   ],
+   "cap": 19124857300.22545,
+   "reason": null,
+   "shares": 479560100.0
+  },
+  "0000320187": {
+   "tickers": [
+    "NKE"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001133421": {
+   "tickers": [
+    "NOC"
+   ],
+   "cap": 72432252355.35864,
+   "reason": null,
+   "shares": 142063026.0
+  },
+  "0001373715": {
+   "tickers": [
+    "NOW"
+   ],
+   "cap": 141658000000.0,
+   "reason": null,
+   "shares": 1034000000.0
+  },
+  "0001013871": {
+   "tickers": [
+    "NRG"
+   ],
+   "cap": 21599127128.25,
+   "reason": null,
+   "shares": 210210483.0
+  },
+  "0000702165": {
+   "tickers": [
+    "NSC"
+   ],
+   "cap": 70527029122.0,
+   "reason": null,
+   "shares": 224608373.0
+  },
+  "0001002047": {
+   "tickers": [
+    "NTAP"
+   ],
+   "cap": 37891190973.85788,
+   "reason": null,
+   "shares": 196419005.0
+  },
+  "0000073124": {
+   "tickers": [
+    "NTRS"
+   ],
+   "cap": 31724509113.527313,
+   "reason": null,
+   "shares": 182955653.0
+  },
+  "0000073309": {
+   "tickers": [
+    "NUE"
+   ],
+   "cap": 55734279397.00354,
+   "reason": null,
+   "shares": 226875676.0
+  },
+  "0001045810": {
+   "tickers": [
+    "NVDA"
+   ],
+   "cap": 5515766882324.219,
+   "reason": null,
+   "shares": 24100000000.0
+  },
+  "0000906163": {
+   "tickers": [
+    "NVR"
+   ],
+   "cap": 16892334143.007812,
+   "reason": null,
+   "shares": 2664860.0
+  },
+  "0001564708": {
+   "tickers": [
+    "NWS",
+    "NWSA"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001413447": {
+   "tickers": [
+    "NXPI"
+   ],
+   "cap": 59979556087.18341,
+   "reason": null,
+   "shares": 252471079.0
+  },
+  "0000726728": {
+   "tickers": [
+    "O"
+   ],
+   "cap": 53489704250.43869,
+   "reason": null,
+   "shares": 946218033.0
+  },
+  "0000878927": {
+   "tickers": [
+    "ODFL"
+   ],
+   "cap": 36766402140.57825,
+   "reason": null,
+   "shares": 207356622.0
+  },
+  "0001039684": {
+   "tickers": [
+    "OKE"
+   ],
+   "cap": 56790000991.54733,
+   "reason": null,
+   "shares": 630369667.0
+  },
+  "0000029989": {
+   "tickers": [
+    "OMC"
+   ],
+   "cap": 21472365762.916138,
+   "reason": null,
+   "shares": 285006196.0
+  },
+  "0001097864": {
+   "tickers": [
+    "ON"
+   ],
+   "cap": 28653342071.557457,
+   "reason": null,
+   "shares": 389311721.0
+  },
+  "0001341439": {
+   "tickers": [
+    "ORCL"
+   ],
+   "cap": 451141401972.29004,
+   "reason": null,
+   "shares": 3023736000.0
+  },
+  "0000898173": {
+   "tickers": [
+    "ORLY"
+   ],
+   "cap": 69425014922.56476,
+   "reason": null,
+   "shares": 808960792.0
+  },
+  "0001781335": {
+   "tickers": [
+    "OTIS"
+   ],
+   "cap": 25915969296.146378,
+   "reason": null,
+   "shares": 380669339.0
+  },
+  "0000797468": {
+   "tickers": [
+    "OXY"
+   ],
+   "cap": 56289581733.803024,
+   "reason": null,
+   "shares": 999637371.0
+  },
+  "0001327567": {
+   "tickers": [
+    "PANW"
+   ],
+   "cap": 306398265991.21094,
+   "reason": null,
+   "shares": 818000000.0
+  },
+  "0000723531": {
+   "tickers": [
+    "PAYX"
+   ],
+   "cap": 40736357521.61682,
+   "reason": null,
+   "shares": 355682860.0
+  },
+  "0000075362": {
+   "tickers": [
+    "PCAR"
+   ],
+   "cap": 59952968949.86918,
+   "reason": null,
+   "shares": 526364953.0
+  },
+  "0001004980": {
+   "tickers": [
+    "PCG"
+   ],
+   "cap": 34519823495.194305,
+   "reason": null,
+   "shares": 2680110496.0
+  },
+  "0000788784": {
+   "tickers": [
+    "PEG"
+   ],
+   "cap": 34450793842.5515,
+   "reason": null,
+   "shares": 498420030.0
+  },
+  "0000077476": {
+   "tickers": [
+    "PEP"
+   ],
+   "cap": 179060126826.27478,
+   "reason": null,
+   "shares": 1364891558.0
+  },
+  "0000078003": {
+   "tickers": [
+    "PFE"
+   ],
+   "cap": 159191885080.17233,
+   "reason": null,
+   "shares": 5699673589.0
+  },
+  "0001126328": {
+   "tickers": [
+    "PFG"
+   ],
+   "cap": 24536845907.499023,
+   "reason": null,
+   "shares": 216012384.0
+  },
+  "0000080424": {
+   "tickers": [
+    "PG"
+   ],
+   "cap": 344527470990.6427,
+   "reason": null,
+   "shares": 2324433060.0
+  },
+  "0000080661": {
+   "tickers": [
+    "PGR"
+   ],
+   "cap": 120309075503.16467,
+   "reason": null,
+   "shares": 581371770.0
+  },
+  "0000076334": {
+   "tickers": [
+    "PH"
+   ],
+   "cap": 121616897387.31921,
+   "reason": null,
+   "shares": 126047469.0
+  },
+  "0000822416": {
+   "tickers": [
+    "PHM"
+   ],
+   "cap": 22923571288.217926,
+   "reason": null,
+   "shares": 187452540.0
+  },
+  "0000075677": {
+   "tickers": [
+    "PKG"
+   ],
+   "cap": 21225887390.100998,
+   "reason": null,
+   "shares": 89098299.0
+  },
+  "0001045609": {
+   "tickers": [
+    "PLD"
+   ],
+   "cap": 126686091992.43164,
+   "reason": null,
+   "shares": 932338000.0
+  },
+  "0001321655": {
+   "tickers": [
+    "PLTR"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001413329": {
+   "tickers": [
+    "PM"
+   ],
+   "cap": 296495027841.855,
+   "reason": null,
+   "shares": 1558613439.0
+  },
+  "0000713676": {
+   "tickers": [
+    "PNC"
+   ],
+   "cap": 90943201007.7748,
+   "reason": null,
+   "shares": 398943667.0
+  },
+  "0000077360": {
+   "tickers": [
+    "PNR"
+   ],
+   "cap": 8967491741.339535,
+   "reason": null,
+   "shares": 161605541.0
+  },
+  "0000764622": {
+   "tickers": [
+    "PNW"
+   ],
+   "cap": 11290734763.277527,
+   "reason": null,
+   "shares": 121197234.0
+  },
+  "0001145197": {
+   "tickers": [
+    "PODD"
+   ],
+   "cap": 9666588595.26355,
+   "reason": null,
+   "shares": 69354199.0
+  },
+  "0000079879": {
+   "tickers": [
+    "PPG"
+   ],
+   "cap": 24021932251.739502,
+   "reason": null,
+   "shares": 222900000.0
+  },
+  "0000922224": {
+   "tickers": [
+    "PPL"
+   ],
+   "cap": 24737280706.156883,
+   "reason": null,
+   "shares": 752350362.0
+  },
+  "0001137774": {
+   "tickers": [
+    "PRU"
+   ],
+   "cap": 40592701263.427734,
+   "reason": null,
+   "shares": 345000000.0
+  },
+  "0001393311": {
+   "tickers": [
+    "PSA"
+   ],
+   "cap": 50879197230.47113,
+   "reason": null,
+   "shares": 175621134.0
+  },
+  "0002041610": {
+   "tickers": [
+    "PSKY"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001534701": {
+   "tickers": [
+    "PSX"
+   ],
+   "cap": 102460590323.39392,
+   "reason": null,
+   "shares": 399020916.0
+  },
+  "0000857005": {
+   "tickers": [
+    "PTC"
+   ],
+   "cap": 15190876540.0,
+   "reason": null,
+   "shares": 108506261.0
+  },
+  "0001050915": {
+   "tickers": [
+    "PWR"
+   ],
+   "cap": 96615175377.6886,
+   "reason": null,
+   "shares": 150343393.0
+  },
+  "0001633917": {
+   "tickers": [
+    "PYPL"
+   ],
+   "cap": 46654558986.375534,
+   "reason": null,
+   "shares": 882105493.0
+  },
+  "0002058873": {
+   "tickers": [
+    "Q"
+   ],
+   "cap": 26121778806.67076,
+   "reason": null,
+   "shares": 209208543.0
+  },
+  "0000804328": {
+   "tickers": [
+    "QCOM"
+   ],
+   "cap": 208183504486.08398,
+   "reason": null,
+   "shares": 1050000000.0
+  },
+  "0000884887": {
+   "tickers": [
+    "RCL"
+   ],
+   "cap": 62821819847.5202,
+   "reason": null,
+   "shares": 267452084.0
+  },
+  "0001713445": {
+   "tickers": [
+    "RDDT"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000910606": {
+   "tickers": [
+    "REG"
+   ],
+   "cap": 13463106745.193176,
+   "reason": null,
+   "shares": 183096790.0
+  },
+  "0000872589": {
+   "tickers": [
+    "REGN"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001281761": {
+   "tickers": [
+    "RF"
+   ],
+   "cap": 23777352382.465874,
+   "reason": null,
+   "shares": 851929506.0
+  },
+  "0000720005": {
+   "tickers": [
+    "RJF"
+   ],
+   "cap": 30660532998.88173,
+   "reason": null,
+   "shares": 192361711.0
+  },
+  "0001037038": {
+   "tickers": [
+    "RL"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000943819": {
+   "tickers": [
+    "RMD"
+   ],
+   "cap": 32019684538.90924,
+   "reason": null,
+   "shares": 144252306.0
+  },
+  "0001024478": {
+   "tickers": [
+    "ROK"
+   ],
+   "cap": 47438884171.55493,
+   "reason": null,
+   "shares": 111048676.0
+  },
+  "0000084839": {
+   "tickers": [
+    "ROL"
+   ],
+   "cap": 15810438269.10785,
+   "reason": null,
+   "shares": 481145404.0
+  },
+  "0000882835": {
+   "tickers": [
+    "ROP"
+   ],
+   "cap": 35985083608.54303,
+   "reason": null,
+   "shares": 98900874.0
+  },
+  "0000745732": {
+   "tickers": [
+    "ROST"
+   ],
+   "cap": 74276040851.29166,
+   "reason": null,
+   "shares": 319453110.0
+  },
+  "0001060391": {
+   "tickers": [
+    "RSG"
+   ],
+   "cap": 65492833229.82056,
+   "reason": null,
+   "shares": 306212978.0
+  },
+  "0000101829": {
+   "tickers": [
+    "RTX"
+   ],
+   "cap": 257408335326.0166,
+   "reason": null,
+   "shares": 1347758144.0
+  },
+  "0000031791": {
+   "tickers": [
+    "RVTY"
+   ],
+   "cap": 15991446854.882263,
+   "reason": null,
+   "shares": 111586401.0
+  },
+  "0001034054": {
+   "tickers": [
+    "SBAC"
+   ],
+   "cap": 18654532873.893738,
+   "reason": null,
+   "shares": 106088110.0
+  },
+  "0000829224": {
+   "tickers": [
+    "SBUX"
+   ],
+   "cap": 108425400695.80078,
+   "reason": null,
+   "shares": 1140000000.0
+  },
+  "0000316709": {
+   "tickers": [
+    "SCHW"
+   ],
+   "cap": 173538836261.14313,
+   "reason": null,
+   "shares": 1729335714.0
+  },
+  "0000089800": {
+   "tickers": [
+    "SHW"
+   ],
+   "cap": 79709640362.52817,
+   "reason": null,
+   "shares": 242758151.0
+  },
+  "0000091419": {
+   "tickers": [
+    "SJM"
+   ],
+   "cap": 12937355758.329697,
+   "reason": null,
+   "shares": 106823183.0
+  },
+  "0000087347": {
+   "tickers": [
+    "SLB"
+   ],
+   "cap": 77353543614.48401,
+   "reason": null,
+   "shares": 1484143231.0
+  },
+  "0001375365": {
+   "tickers": [
+    "SMCI"
+   ],
+   "cap": 27290342652.829773,
+   "reason": null,
+   "shares": 656965384.0
+  },
+  "0000091440": {
+   "tickers": [
+    "SNA"
+   ],
+   "cap": 19232144071.76538,
+   "reason": null,
+   "shares": 51727124.0
+  },
+  "0002023554": {
+   "tickers": [
+    "SNDK"
+   ],
+   "cap": 276298517366.5322,
+   "reason": null,
+   "shares": 146419001.0
+  },
+  "0000883241": {
+   "tickers": [
+    "SNPS"
+   ],
+   "cap": 78425379137.58838,
+   "reason": null,
+   "shares": 191636646.0
+  },
+  "0000092122": {
+   "tickers": [
+    "SO"
+   ],
+   "cap": 95989690214.82497,
+   "reason": null,
+   "shares": 1127301098.0
+  },
+  "0001964738": {
+   "tickers": [
+    "SOLV"
+   ],
+   "cap": 15107355948.75,
+   "reason": null,
+   "shares": 170223729.0
+  },
+  "0001063761": {
+   "tickers": [
+    "SPG"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000064040": {
+   "tickers": [
+    "SPGI"
+   ],
+   "cap": 119122240722.65625,
+   "reason": null,
+   "shares": 296000000.0
+  },
+  "0001032208": {
+   "tickers": [
+    "SRE"
+   ],
+   "cap": 52935822119.474075,
+   "reason": null,
+   "shares": 653690046.0
+  },
+  "0001757898": {
+   "tickers": [
+    "STE"
+   ],
+   "cap": 20357047312.29721,
+   "reason": null,
+   "shares": 97500110.0
+  },
+  "0001022671": {
+   "tickers": [
+    "STLD"
+   ],
+   "cap": 33537340098.444702,
+   "reason": null,
+   "shares": 143328088.0
+  },
+  "0000093751": {
+   "tickers": [
+    "STT"
+   ],
+   "cap": 49514993141.25,
+   "reason": null,
+   "shares": 274701765.0
+  },
+  "0001137789": {
+   "tickers": [
+    "STX"
+   ],
+   "cap": 208476699523.76477,
+   "reason": null,
+   "shares": 226644518.0
+  },
+  "0000016918": {
+   "tickers": [
+    "STZ"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0002005951": {
+   "tickers": [
+    "SW"
+   ],
+   "cap": 24364089476.77922,
+   "reason": null,
+   "shares": 524522908.0
+  },
+  "0000093556": {
+   "tickers": [
+    "SWK"
+   ],
+   "cap": 13913162720.550407,
+   "reason": null,
+   "shares": 151016641.0
+  },
+  "0000004127": {
+   "tickers": [
+    "SWKS"
+   ],
+   "cap": 13536531330.958054,
+   "reason": null,
+   "shares": 150472782.0
+  },
+  "0001601712": {
+   "tickers": [
+    "SYF"
+   ],
+   "cap": 23644698347.0282,
+   "reason": null,
+   "shares": 325370840.0
+  },
+  "0000310764": {
+   "tickers": [
+    "SYK"
+   ],
+   "cap": 105517107819.45355,
+   "reason": null,
+   "shares": 383573046.0
+  },
+  "0000096021": {
+   "tickers": [
+    "SYY"
+   ],
+   "cap": 37690482701.468994,
+   "reason": null,
+   "shares": 479096016.0
+  },
+  "0000732717": {
+   "tickers": [
+    "T"
+   ],
+   "cap": 171994882428.9777,
+   "reason": null,
+   "shares": 6852385650.0
+  },
+  "0000024545": {
+   "tickers": [
+    "TAP"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001260221": {
+   "tickers": [
+    "TDG"
+   ],
+   "cap": 61490714369.644165,
+   "reason": null,
+   "shares": 55276525.0
+  },
+  "0001094285": {
+   "tickers": [
+    "TDY"
+   ],
+   "cap": 28403974621.32788,
+   "reason": null,
+   "shares": 46355673.0
+  },
+  "0000842023": {
+   "tickers": [
+    "TECH"
+   ],
+   "cap": 11377163645.471283,
+   "reason": null,
+   "shares": 156818238.0
+  },
+  "0001385157": {
+   "tickers": [
+    "TEL"
+   ],
+   "cap": 61805282676.50604,
+   "reason": null,
+   "shares": 289513228.0
+  },
+  "0000097210": {
+   "tickers": [
+    "TER"
+   ],
+   "cap": 62331493999.191284,
+   "reason": null,
+   "shares": 156340750.0
+  },
+  "0000092230": {
+   "tickers": [
+    "TFC"
+   ],
+   "cap": 58723570484.34927,
+   "reason": null,
+   "shares": 1221626188.0
+  },
+  "0000027419": {
+   "tickers": [
+    "TGT"
+   ],
+   "cap": 72242268899.68506,
+   "reason": null,
+   "shares": 454296736.0
+  },
+  "0000109198": {
+   "tickers": [
+    "TJX"
+   ],
+   "cap": 143865600053.11023,
+   "reason": null,
+   "shares": 1099974061.0
+  },
+  "0001973266": {
+   "tickers": [
+    "TKO"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000097745": {
+   "tickers": [
+    "TMO"
+   ],
+   "cap": 243485989998.34668,
+   "reason": null,
+   "shares": 369747286.0
+  },
+  "0001283699": {
+   "tickers": [
+    "TMUS"
+   ],
+   "cap": 174212600595.57077,
+   "reason": null,
+   "shares": 1072671613.0
+  },
+  "0001811074": {
+   "tickers": [
+    "TPL"
+   ],
+   "cap": 24502565715.33911,
+   "reason": null,
+   "shares": 68974683.0
+  },
+  "0001116132": {
+   "tickers": [
+    "TPR"
+   ],
+   "cap": 22449508295.825867,
+   "reason": null,
+   "shares": 199391678.0
+  },
+  "0001389170": {
+   "tickers": [
+    "TRGP"
+   ],
+   "cap": 60501711266.36691,
+   "reason": null,
+   "shares": 214431021.0
+  },
+  "0000864749": {
+   "tickers": [
+    "TRMB"
+   ],
+   "cap": 13827564808.497894,
+   "reason": null,
+   "shares": 233179848.0
+  },
+  "0001113169": {
+   "tickers": [
+    "TROW"
+   ],
+   "cap": 22221111703.907013,
+   "reason": null,
+   "shares": 213315850.0
+  },
+  "0000086312": {
+   "tickers": [
+    "TRV"
+   ],
+   "cap": 75506245751.08545,
+   "reason": null,
+   "shares": 208575022.0
+  },
+  "0000916365": {
+   "tickers": [
+    "TSCO"
+   ],
+   "cap": 17110958178.584415,
+   "reason": null,
+   "shares": 521040137.0
+  },
+  "0001318605": {
+   "tickers": [
+    "TSLA"
+   ],
+   "cap": 1496483483480.4758,
+   "reason": null,
+   "shares": 3949547394.0
+  },
+  "0000100493": {
+   "tickers": [
+    "TSN"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001466258": {
+   "tickers": [
+    "TT"
+   ],
+   "cap": 96330548965.63788,
+   "reason": null,
+   "shares": 220023177.0
+  },
+  "0001671933": {
+   "tickers": [
+    "TTD"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000946581": {
+   "tickers": [
+    "TTWO"
+   ],
+   "cap": 38430090221.54239,
+   "reason": null,
+   "shares": 186980443.0
+  },
+  "0000097476": {
+   "tickers": [
+    "TXN"
+   ],
+   "cap": 247864557801.6729,
+   "reason": null,
+   "shares": 913247686.0
+  },
+  "0000217346": {
+   "tickers": [
+    "TXT"
+   ],
+   "cap": 13394340623.583824,
+   "reason": null,
+   "shares": 171986917.0
+  },
+  "0000860731": {
+   "tickers": [
+    "TYL"
+   ],
+   "cap": 13557249807.794312,
+   "reason": null,
+   "shares": 40952274.0
+  },
+  "0000100517": {
+   "tickers": [
+    "UAL"
+   ],
+   "cap": 37395296074.95468,
+   "reason": null,
+   "shares": 324583772.0
+  },
+  "0001543151": {
+   "tickers": [
+    "UBER"
+   ],
+   "cap": 142754525610.01025,
+   "reason": null,
+   "shares": 2042560121.0
+  },
+  "0000074208": {
+   "tickers": [
+    "UDR"
+   ],
+   "cap": 11079623271.518059,
+   "reason": null,
+   "shares": 324915653.0
+  },
+  "0000352915": {
+   "tickers": [
+    "UHS"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001403568": {
+   "tickers": [
+    "ULTA"
+   ],
+   "cap": 23681652261.72986,
+   "reason": null,
+   "shares": 42757471.0
+  },
+  "0000731766": {
+   "tickers": [
+    "UNH"
+   ],
+   "cap": 334758009145.61835,
+   "reason": null,
+   "shares": 897594847.0
+  },
+  "0000100885": {
+   "tickers": [
+    "UNP"
+   ],
+   "cap": 163020259581.74945,
+   "reason": null,
+   "shares": 594075498.0
+  },
+  "0001090727": {
+   "tickers": [
+    "UPS"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001067701": {
+   "tickers": [
+    "URI"
+   ],
+   "cap": 65342867260.41113,
+   "reason": null,
+   "shares": 62646557.0
+  },
+  "0000036104": {
+   "tickers": [
+    "USB"
+   ],
+   "cap": 92610575810.58194,
+   "reason": null,
+   "shares": 1558051446.0
+  },
+  "0001403161": {
+   "tickers": [
+    "V"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001393052": {
+   "tickers": [
+    "VEEV"
+   ],
+   "cap": 42243638646.42792,
+   "reason": null,
+   "shares": 161908850.0
+  },
+  "0001705696": {
+   "tickers": [
+    "VICI"
+   ],
+   "cap": 26403839432.726692,
+   "reason": null,
+   "shares": 1101077562.0
+  },
+  "0001035002": {
+   "tickers": [
+    "VLO"
+   ],
+   "cap": 108588966859.22742,
+   "reason": null,
+   "shares": 287927461.0
+  },
+  "0001967680": {
+   "tickers": [
+    "VLTO"
+   ],
+   "cap": 23525953914.992844,
+   "reason": null,
+   "shares": 245599266.0
+  },
+  "0001396009": {
+   "tickers": [
+    "VMC"
+   ],
+   "cap": 32162342711.381226,
+   "reason": null,
+   "shares": 129754885.0
+  },
+  "0000906107": {
+   "tickers": [
+    "VMRK"
+   ],
+   "cap": 23377783329.030235,
+   "reason": null,
+   "shares": 374944409.0
+  },
+  "0001442145": {
+   "tickers": [
+    "VRSK"
+   ],
+   "cap": 22527895489.47754,
+   "reason": null,
+   "shares": 131021840.0
+  },
+  "0001014473": {
+   "tickers": [
+    "VRSN"
+   ],
+   "cap": 27037627212.524414,
+   "reason": null,
+   "shares": 90300000.0
+  },
+  "0001674101": {
+   "tickers": [
+    "VRT"
+   ],
+   "cap": 97579104913.33946,
+   "reason": null,
+   "shares": 384988173.0
+  },
+  "0000875320": {
+   "tickers": [
+    "VRTX"
+   ],
+   "cap": 130529838775.55566,
+   "reason": null,
+   "shares": 253460924.0
+  },
+  "0001692819": {
+   "tickers": [
+    "VST"
+   ],
+   "cap": 47126538959.082794,
+   "reason": null,
+   "shares": 335635195.0
+  },
+  "0000740260": {
+   "tickers": [
+    "VTR"
+   ],
+   "cap": 44554521055.81761,
+   "reason": null,
+   "shares": 512946359.0
+  },
+  "0001792044": {
+   "tickers": [
+    "VTRS"
+   ],
+   "cap": 19732791394.042114,
+   "reason": null,
+   "shares": 1148590864.0
+  },
+  "0000732712": {
+   "tickers": [
+    "VZ"
+   ],
+   "cap": 192989311302.7419,
+   "reason": null,
+   "shares": 4154775202.0
+  },
+  "0000943452": {
+   "tickers": [
+    "WAB"
+   ],
+   "cap": 48935161199.879974,
+   "reason": null,
+   "shares": 168910851.0
+  },
+  "0001000697": {
+   "tickers": [
+    "WAT"
+   ],
+   "cap": 41828149817.68579,
+   "reason": null,
+   "shares": 98248111.0
+  },
+  "0001437107": {
+   "tickers": [
+    "WBD"
+   ],
+   "cap": 77404982979.06854,
+   "reason": null,
+   "shares": 2510703314.0
+  },
+  "0001327811": {
+   "tickers": [
+    "WDAY"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0000106040": {
+   "tickers": [
+    "WDC"
+   ],
+   "cap": 167507324782.9673,
+   "reason": null,
+   "shares": 360540944.0
+  },
+  "0000783325": {
+   "tickers": [
+    "WEC"
+   ],
+   "cap": 33507092650.53804,
+   "reason": null,
+   "shares": 325849383.0
+  },
+  "0000766704": {
+   "tickers": [
+    "WELL"
+   ],
+   "cap": 162635629704.644,
+   "reason": null,
+   "shares": 705914450.0
+  },
+  "0000072971": {
+   "tickers": [
+    "WFC"
+   ],
+   "cap": 251445549402.6568,
+   "reason": null,
+   "shares": 3023999336.0
+  },
+  "0000823768": {
+   "tickers": [
+    "WM"
+   ],
+   "cap": 83012846485.51855,
+   "reason": null,
+   "shares": 399715184.0
+  },
+  "0000107263": {
+   "tickers": [
+    "WMB"
+   ],
+   "cap": 86820431268.65198,
+   "reason": null,
+   "shares": 1223167472.0
+  },
+  "0000104169": {
+   "tickers": [
+    "WMT"
+   ],
+   "cap": 873664157849.6049,
+   "reason": null,
+   "shares": 7933746241.0
+  },
+  "0000011544": {
+   "tickers": [
+    "WRB"
+   ],
+   "cap": 25306579972.192093,
+   "reason": null,
+   "shares": 371227529.0
+  },
+  "0000719955": {
+   "tickers": [
+    "WSM"
+   ],
+   "cap": 27406036052.91681,
+   "reason": null,
+   "shares": 117779173.0
+  },
+  "0000105770": {
+   "tickers": [
+    "WST"
+   ],
+   "cap": 26115741262.856262,
+   "reason": null,
+   "shares": 70375762.0
+  },
+  "0001140536": {
+   "tickers": [
+    "WTW"
+   ],
+   "cap": 28022250571.331573,
+   "reason": null,
+   "shares": 92871937.0
+  },
+  "0000106535": {
+   "tickers": [
+    "WY"
+   ],
+   "cap": 15524654099.853516,
+   "reason": null,
+   "shares": 720736000.0
+  },
+  "0001174922": {
+   "tickers": [
+    "WYNN"
+   ],
+   "cap": 8496375966.385963,
+   "reason": null,
+   "shares": 102973891.0
+  },
+  "0000072903": {
+   "tickers": [
+    "XEL"
+   ],
+   "cap": 45011146565.3739,
+   "reason": null,
+   "shares": 624634306.0
+  },
+  "0002115436": {
+   "tickers": [
+    "XOM"
+   ],
+   "cap": 652601574778.4308,
+   "reason": null,
+   "shares": 4111911960.0
+  },
+  "0001524472": {
+   "tickers": [
+    "XYL"
+   ],
+   "cap": 25181552317.9274,
+   "reason": null,
+   "shares": 233486812.0
+  },
+  "0001512673": {
+   "tickers": [
+    "XYZ"
+   ],
+   "cap": null,
+   "reason": "no non-dimensional cover count in companyfacts",
+   "shares": null
+  },
+  "0001041061": {
+   "tickers": [
+    "YUM"
+   ],
+   "cap": 38127012417.57164,
+   "reason": null,
+   "shares": 272901085.0
+  },
+  "0001136869": {
+   "tickers": [
+    "ZBH"
+   ],
+   "cap": 17925528652.513756,
+   "reason": null,
+   "shares": 190737689.0
+  },
+  "0000877212": {
+   "tickers": [
+    "ZBRA"
+   ],
+   "cap": 17108007069.572754,
+   "reason": null,
+   "shares": 47310660.0
+  },
+  "0001555280": {
+   "tickers": [
+    "ZTS"
+   ],
+   "cap": 30107471893.93167,
+   "reason": null,
+   "shares": 413223602.0
+  }
+ },
+ "og_capex_years": [
+  {
+   "ticker": "APA",
+   "accession": "0001784031-22-000009",
+   "fiscal_year_end": "2021-12-31",
+   "exploration_development": 1101000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 9000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.008,
+   "resolved_capex": 1101000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "APA",
+   "accession": "0001784031-23-000007",
+   "fiscal_year_end": "2022-12-31",
+   "exploration_development": 1770000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 1770000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "APA",
+   "accession": "0001784031-24-000003",
+   "fiscal_year_end": "2023-12-31",
+   "exploration_development": 2313000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 2313000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "APA",
+   "accession": "0002040266-25-000007",
+   "fiscal_year_end": "2024-12-31",
+   "exploration_development": 2851000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 2851000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "APA",
+   "accession": "0001841666-26-000015",
+   "fiscal_year_end": "2025-12-31",
+   "exploration_development": 2740000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 2740000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "DOW",
+   "accession": "0001751788-22-000011",
+   "fiscal_year_end": "2021-12-31",
+   "exploration_development": 92000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 129000000.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 92000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "DOW",
+   "accession": "0001751788-23-000014",
+   "fiscal_year_end": "2022-12-31",
+   "exploration_development": 190000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 228000000.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 190000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "DOW",
+   "accession": "0001751788-24-000010",
+   "fiscal_year_end": "2023-12-31",
+   "exploration_development": 215000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 114000000.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 215000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "DOW",
+   "accession": "0001751788-25-000012",
+   "fiscal_year_end": "2024-12-31",
+   "exploration_development": 203000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 125000000.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 203000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "DOW",
+   "accession": "0001751788-26-000018",
+   "fiscal_year_end": "2025-12-31",
+   "exploration_development": 157000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 157000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "EXE",
+   "accession": "0000895126-22-000029",
+   "fiscal_year_end": "2020-12-31",
+   "exploration_development": 1142000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.0,
+   "resolved_capex": 1142000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "FANG",
+   "accession": "0001539838-22-000008",
+   "fiscal_year_end": "2021-12-31",
+   "exploration_development": 1457000000.0,
+   "oil_gas_equipment": 30000000.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 812000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.557,
+   "resolved_capex": 1457000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "FANG",
+   "accession": "0001539838-23-000022",
+   "fiscal_year_end": "2022-12-31",
+   "exploration_development": 1854000000.0,
+   "oil_gas_equipment": 84000000.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 1567000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.845,
+   "resolved_capex": 1854000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "FANG",
+   "accession": "0001539838-24-000019",
+   "fiscal_year_end": "2023-12-31",
+   "exploration_development": 2582000000.0,
+   "oil_gas_equipment": 119000000.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 2013000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 0.78,
+   "resolved_capex": 2582000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "FANG",
+   "accession": "0001539838-25-000021",
+   "fiscal_year_end": "2024-12-31",
+   "exploration_development": 2867000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 8920000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 3.111,
+   "resolved_capex": 2867000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "FANG",
+   "accession": "0001539838-26-000010",
+   "fiscal_year_end": "2025-12-31",
+   "exploration_development": 3523000000.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 5938000000.0,
+   "business_acquisitions": 0.0,
+   "mineral_to_development": 1.685,
+   "resolved_capex": 3523000000.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "KKR",
+   "accession": "0001404912-22-000004",
+   "fiscal_year_end": "2021-12-31",
+   "exploration_development": 0.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 473779000.0,
+   "mineral_to_development": null,
+   "resolved_capex": 0.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  },
+  {
+   "ticker": "KKR",
+   "accession": "0001404912-23-000005",
+   "fiscal_year_end": "2022-12-31",
+   "exploration_development": 0.0,
+   "oil_gas_equipment": 0.0,
+   "oil_gas_property_and_equipment": 0.0,
+   "mineral_interest_purchases": 0.0,
+   "business_acquisitions": 1690702000.0,
+   "mineral_to_development": null,
+   "resolved_capex": 0.0,
+   "resolved_concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+  }
+ ],
+ "negative_equity": [
+  {
+   "ticker": "ABBV",
+   "accession": "0001551152-26-000008",
+   "equity": -3270000000.0,
+   "net_debt_to_ebitda": 3.549346467133927,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "AZO",
+   "accession": "0001104659-25-102611",
+   "equity": -3414313000.0,
+   "net_debt_to_ebitda": 2.0192411009730415,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "BKNG",
+   "accession": "0001075531-26-000009",
+   "equity": -5578000000.0,
+   "net_debt_to_ebitda": 0.16225656223539373,
+   "interest_coverage": 5.457637600494744,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "CAH",
+   "accession": "0000721371-26-000038",
+   "equity": -2883000000.0,
+   "net_debt_to_ebitda": 0.6018492574950967,
+   "interest_coverage": 7.508620689655173,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "CCI",
+   "accession": "0001051470-26-000016",
+   "equity": -1635000000.0,
+   "net_debt_to_ebitda": 8.766003616636528,
+   "interest_coverage": null,
+   "c1_ndte_above_5": true,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": true,
+   "flagged_without_c2": true
+  },
+  {
+   "ticker": "DELL",
+   "accession": "0001571996-26-000008",
+   "equity": -2470000000.0,
+   "net_debt_to_ebitda": 1.7869923063159778,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "DPZ",
+   "accession": "0001193125-26-062321",
+   "equity": -3901142000.0,
+   "net_debt_to_ebitda": 4.492715292754801,
+   "interest_coverage": 4.867909701385912,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "DVA",
+   "accession": "0000927066-26-000012",
+   "equity": -651082000.0,
+   "net_debt_to_ebitda": 3.438810161644067,
+   "interest_coverage": 3.5239237419946683,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "FDXF",
+   "accession": "0001628280-26-053359",
+   "equity": -497000000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": 9.473684210526315,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "FICO",
+   "accession": "0000814547-25-000030",
+   "equity": -1745784000.0,
+   "net_debt_to_ebitda": 3.1086920436432357,
+   "interest_coverage": 6.9200954753941355,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "HCA",
+   "accession": "0001193125-26-044769",
+   "equity": -6027000000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": null,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "HLT",
+   "accession": "0001585689-26-000007",
+   "equity": -5388000000.0,
+   "net_debt_to_ebitda": 3.9790940766550524,
+   "interest_coverage": 4.343548387096774,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "HPQ",
+   "accession": "0000047217-25-000071",
+   "equity": -346000000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": null,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "IRM",
+   "accession": "0001020569-26-000013",
+   "equity": -981007000.0,
+   "net_debt_to_ebitda": 8.474845978824167,
+   "interest_coverage": null,
+   "c1_ndte_above_5": true,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": true,
+   "flagged_without_c2": true
+  },
+  {
+   "ticker": "LOW",
+   "accession": "0000060667-26-000029",
+   "equity": -9917000000.0,
+   "net_debt_to_ebitda": 2.956831619016765,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MAR",
+   "accession": "0001048286-26-000007",
+   "equity": -3771000000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": 5.118665018541409,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MAS",
+   "accession": "0000062996-26-000005",
+   "equity": -185000000.0,
+   "net_debt_to_ebitda": 1.646131805157593,
+   "interest_coverage": 12.356435643564357,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MCD",
+   "accession": "0000063908-26-000035",
+   "equity": -1791000000.0,
+   "net_debt_to_ebitda": 2.6863349780701755,
+   "interest_coverage": 7.833754740834387,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MCK",
+   "accession": "0000927653-26-000069",
+   "equity": -2172000000.0,
+   "net_debt_to_ebitda": 0.19851576994434136,
+   "interest_coverage": 25.149797570850204,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MSCI",
+   "accession": "0001408198-26-000011",
+   "equity": -2654540000.0,
+   "net_debt_to_ebitda": 3.274061988333721,
+   "interest_coverage": 8.164158197904607,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "MTD",
+   "accession": "0001037646-26-000011",
+   "equity": -23636000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": null,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "ORLY",
+   "accession": "0000898173-26-000009",
+   "equity": -763352000.0,
+   "net_debt_to_ebitda": 1.4660983493301094,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "OTIS",
+   "accession": "0001781335-26-000011",
+   "equity": -5392000000.0,
+   "net_debt_to_ebitda": 2.972270363951473,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "SBAC",
+   "accession": "0001034054-26-000002",
+   "equity": -4853519000.0,
+   "net_debt_to_ebitda": 7.727921295160883,
+   "interest_coverage": null,
+   "c1_ndte_above_5": true,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": true,
+   "flagged_without_c2": true
+  },
+  {
+   "ticker": "SBUX",
+   "accession": "0000829224-25-000114",
+   "equity": -8096600000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": 5.412089937338739,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "TDG",
+   "accession": "0001260221-25-000081",
+   "equity": -9686000000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": null,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "VRSN",
+   "accession": "0001014473-26-000006",
+   "equity": -2154200000.0,
+   "net_debt_to_ebitda": null,
+   "interest_coverage": 14.558441558441558,
+   "c1_ndte_above_5": null,
+   "c2_ebitda_nonpositive_with_net_debt": null,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  },
+  {
+   "ticker": "WYNN",
+   "accession": "0001174922-26-000013",
+   "equity": -275492000.0,
+   "net_debt_to_ebitda": 5.22327843833614,
+   "interest_coverage": 1.7878239518124677,
+   "c1_ndte_above_5": true,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": false,
+   "flagged_with_c2": true,
+   "flagged_without_c2": true
+  },
+  {
+   "ticker": "YUM",
+   "accession": "0001041061-26-000084",
+   "equity": -7325000000.0,
+   "net_debt_to_ebitda": 4.029136690647482,
+   "interest_coverage": null,
+   "c1_ndte_above_5": false,
+   "c2_ebitda_nonpositive_with_net_debt": false,
+   "c3_coverage_below_1_5": null,
+   "flagged_with_c2": false,
+   "flagged_without_c2": false
+  }
+ ],
+ "veto_replay": [
+  {
+   "date": "2022-03-31",
+   "evaluated": 382,
+   "hard_assets": 77,
+   "financial_evaluated": 47,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 25,
+    "NEGATIVE_FCF/HARD": 41,
+    "LIQUIDITY_DISTRESS/SOFT": 91,
+    "DATA_QUALITY/HARD": 19
+   },
+   "hard_by_sector": {
+    "Health Care": 6,
+    "Real Estate": 5,
+    "Financials": 15,
+    "Information Technology": 4,
+    "Communication Services": 3,
+    "Consumer Staples": 2,
+    "Consumer Discretionary": 17,
+    "Industrials": 7,
+    "Materials": 1,
+    "Energy": 3,
+    "Utilities": 22
+   }
+  },
+  {
+   "date": "2022-06-30",
+   "evaluated": 397,
+   "hard_assets": 78,
+   "financial_evaluated": 47,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 26,
+    "NEGATIVE_FCF/HARD": 41,
+    "LIQUIDITY_DISTRESS/SOFT": 94,
+    "DATA_QUALITY/HARD": 19
+   },
+   "hard_by_sector": {
+    "Health Care": 6,
+    "Real Estate": 5,
+    "Financials": 15,
+    "Information Technology": 5,
+    "Communication Services": 3,
+    "Consumer Staples": 2,
+    "Consumer Discretionary": 17,
+    "Industrials": 7,
+    "Materials": 1,
+    "Energy": 3,
+    "Utilities": 22
+   }
+  },
+  {
+   "date": "2022-09-30",
+   "evaluated": 430,
+   "hard_assets": 85,
+   "financial_evaluated": 47,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 31,
+    "NEGATIVE_FCF/HARD": 42,
+    "LIQUIDITY_DISTRESS/SOFT": 100,
+    "DATA_QUALITY/HARD": 20
+   },
+   "hard_by_sector": {
+    "Health Care": 7,
+    "Real Estate": 5,
+    "Financials": 15,
+    "Information Technology": 8,
+    "Communication Services": 3,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 17,
+    "Industrials": 7,
+    "Materials": 1,
+    "Energy": 3,
+    "Utilities": 22
+   }
+  },
+  {
+   "date": "2022-12-31",
+   "evaluated": 472,
+   "hard_assets": 89,
+   "financial_evaluated": 49,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 5,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 31,
+    "NEGATIVE_FCF/HARD": 45,
+    "LIQUIDITY_DISTRESS/SOFT": 107,
+    "DATA_QUALITY/HARD": 21
+   },
+   "hard_by_sector": {
+    "Health Care": 7,
+    "Real Estate": 5,
+    "Financials": 16,
+    "Information Technology": 9,
+    "Communication Services": 3,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 17,
+    "Industrials": 8,
+    "Materials": 1,
+    "Energy": 3,
+    "Utilities": 23
+   }
+  },
+  {
+   "date": "2023-03-31",
+   "evaluated": 479,
+   "hard_assets": 96,
+   "financial_evaluated": 50,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "LEVERAGE_EXTREME": 1,
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 34,
+    "NEGATIVE_FCF/HARD": 51,
+    "LIQUIDITY_DISTRESS/SOFT": 118,
+    "DATA_QUALITY/HARD": 16
+   },
+   "hard_by_sector": {
+    "Health Care": 7,
+    "Real Estate": 4,
+    "Energy": 2,
+    "Financials": 16,
+    "Consumer Discretionary": 17,
+    "Industrials": 9,
+    "Information Technology": 10,
+    "Communication Services": 1,
+    "Consumer Staples": 6,
+    "Materials": 3,
+    "Utilities": 26
+   }
+  },
+  {
+   "date": "2023-06-30",
+   "evaluated": 479,
+   "hard_assets": 97,
+   "financial_evaluated": 50,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "LEVERAGE_EXTREME": 1,
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 34,
+    "NEGATIVE_FCF/HARD": 52,
+    "LIQUIDITY_DISTRESS/SOFT": 121,
+    "DATA_QUALITY/HARD": 16
+   },
+   "hard_by_sector": {
+    "Health Care": 7,
+    "Real Estate": 4,
+    "Energy": 2,
+    "Financials": 16,
+    "Consumer Discretionary": 17,
+    "Industrials": 9,
+    "Information Technology": 10,
+    "Communication Services": 2,
+    "Consumer Staples": 6,
+    "Materials": 3,
+    "Utilities": 26
+   }
+  },
+  {
+   "date": "2023-09-30",
+   "evaluated": 479,
+   "hard_assets": 95,
+   "financial_evaluated": 50,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "LEVERAGE_EXTREME": 1,
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 32,
+    "NEGATIVE_FCF/HARD": 52,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 16
+   },
+   "hard_by_sector": {
+    "Health Care": 6,
+    "Real Estate": 4,
+    "Energy": 2,
+    "Financials": 16,
+    "Consumer Discretionary": 17,
+    "Industrials": 9,
+    "Information Technology": 9,
+    "Communication Services": 2,
+    "Consumer Staples": 6,
+    "Materials": 3,
+    "Utilities": 26
+   }
+  },
+  {
+   "date": "2023-12-31",
+   "evaluated": 479,
+   "hard_assets": 96,
+   "financial_evaluated": 50,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "LEVERAGE_EXTREME": 1,
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 33,
+    "NEGATIVE_FCF/HARD": 53,
+    "LIQUIDITY_DISTRESS/SOFT": 125,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 7,
+    "Real Estate": 4,
+    "Energy": 2,
+    "Financials": 16,
+    "Consumer Discretionary": 17,
+    "Industrials": 8,
+    "Information Technology": 9,
+    "Communication Services": 2,
+    "Consumer Staples": 7,
+    "Materials": 4,
+    "Utilities": 25
+   }
+  },
+  {
+   "date": "2024-03-31",
+   "evaluated": 484,
+   "hard_assets": 82,
+   "financial_evaluated": 50,
+   "financial_hard": 13,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 9
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 30,
+    "NEGATIVE_FCF/HARD": 42,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 5,
+    "Real Estate": 6,
+    "Consumer Discretionary": 9,
+    "Communication Services": 3,
+    "Consumer Staples": 6,
+    "Information Technology": 10,
+    "Industrials": 8,
+    "Utilities": 23,
+    "Energy": 1,
+    "Materials": 1,
+    "Financials": 14
+   }
+  },
+  {
+   "date": "2024-06-30",
+   "evaluated": 484,
+   "hard_assets": 82,
+   "financial_evaluated": 50,
+   "financial_hard": 13,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 9
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 30,
+    "NEGATIVE_FCF/HARD": 42,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 5,
+    "Real Estate": 6,
+    "Consumer Discretionary": 9,
+    "Communication Services": 3,
+    "Consumer Staples": 6,
+    "Information Technology": 10,
+    "Industrials": 8,
+    "Utilities": 23,
+    "Energy": 1,
+    "Materials": 1,
+    "Financials": 14
+   }
+  },
+  {
+   "date": "2024-09-30",
+   "evaluated": 485,
+   "hard_assets": 83,
+   "financial_evaluated": 50,
+   "financial_hard": 13,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 4,
+    "DATA_QUALITY": 9
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 30,
+    "NEGATIVE_FCF/HARD": 43,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 5,
+    "Real Estate": 6,
+    "Consumer Discretionary": 9,
+    "Communication Services": 3,
+    "Consumer Staples": 6,
+    "Information Technology": 11,
+    "Industrials": 8,
+    "Utilities": 23,
+    "Energy": 1,
+    "Materials": 1,
+    "Financials": 14
+   }
+  },
+  {
+   "date": "2024-12-31",
+   "evaluated": 485,
+   "hard_assets": 81,
+   "financial_evaluated": 50,
+   "financial_hard": 12,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 3,
+    "DATA_QUALITY": 9
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 30,
+    "NEGATIVE_FCF/HARD": 41,
+    "LIQUIDITY_DISTRESS/SOFT": 124,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 5,
+    "Real Estate": 6,
+    "Consumer Discretionary": 9,
+    "Communication Services": 3,
+    "Consumer Staples": 5,
+    "Information Technology": 10,
+    "Industrials": 8,
+    "Utilities": 24,
+    "Energy": 1,
+    "Materials": 1,
+    "Financials": 13
+   }
+  },
+  {
+   "date": "2025-03-31",
+   "evaluated": 491,
+   "hard_assets": 83,
+   "financial_evaluated": 51,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 5,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 28,
+    "NEGATIVE_FCF/HARD": 42,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 8,
+    "Real Estate": 7,
+    "Communication Services": 5,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 5,
+    "Information Technology": 8,
+    "Industrials": 6,
+    "Utilities": 22,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 15
+   }
+  },
+  {
+   "date": "2025-06-30",
+   "evaluated": 491,
+   "hard_assets": 84,
+   "financial_evaluated": 51,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 5,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 28,
+    "NEGATIVE_FCF/HARD": 43,
+    "LIQUIDITY_DISTRESS/SOFT": 124,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 8,
+    "Real Estate": 7,
+    "Communication Services": 5,
+    "Consumer Staples": 4,
+    "Consumer Discretionary": 5,
+    "Information Technology": 10,
+    "Industrials": 6,
+    "Utilities": 22,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 15
+   }
+  },
+  {
+   "date": "2025-09-30",
+   "evaluated": 492,
+   "hard_assets": 83,
+   "financial_evaluated": 51,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 5,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 28,
+    "NEGATIVE_FCF/HARD": 43,
+    "LIQUIDITY_DISTRESS/SOFT": 124,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 8,
+    "Real Estate": 7,
+    "Communication Services": 5,
+    "Consumer Staples": 4,
+    "Consumer Discretionary": 5,
+    "Information Technology": 9,
+    "Industrials": 6,
+    "Utilities": 22,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 15
+   }
+  },
+  {
+   "date": "2025-12-31",
+   "evaluated": 492,
+   "hard_assets": 83,
+   "financial_evaluated": 51,
+   "financial_hard": 15,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 5,
+    "DATA_QUALITY": 10
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 28,
+    "NEGATIVE_FCF/HARD": 43,
+    "LIQUIDITY_DISTRESS/SOFT": 124,
+    "DATA_QUALITY/HARD": 14
+   },
+   "hard_by_sector": {
+    "Health Care": 8,
+    "Real Estate": 7,
+    "Communication Services": 5,
+    "Consumer Staples": 4,
+    "Consumer Discretionary": 5,
+    "Information Technology": 9,
+    "Industrials": 6,
+    "Utilities": 22,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 15
+   }
+  },
+  {
+   "date": "2026-03-31",
+   "evaluated": 495,
+   "hard_assets": 80,
+   "financial_evaluated": 51,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 3,
+    "DATA_QUALITY": 11
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 27,
+    "NEGATIVE_FCF/HARD": 41,
+    "LIQUIDITY_DISTRESS/SOFT": 127,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 4,
+    "Real Estate": 6,
+    "Industrials": 5,
+    "Communication Services": 4,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 8,
+    "Information Technology": 9,
+    "Utilities": 24,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 14
+   }
+  },
+  {
+   "date": "2026-06-30",
+   "evaluated": 495,
+   "hard_assets": 78,
+   "financial_evaluated": 51,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 3,
+    "DATA_QUALITY": 11
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 26,
+    "NEGATIVE_FCF/HARD": 40,
+    "LIQUIDITY_DISTRESS/SOFT": 123,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 4,
+    "Real Estate": 6,
+    "Industrials": 5,
+    "Communication Services": 3,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 8,
+    "Information Technology": 8,
+    "Utilities": 24,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 14
+   }
+  },
+  {
+   "date": "2026-09-22",
+   "evaluated": 496,
+   "hard_assets": 79,
+   "financial_evaluated": 51,
+   "financial_hard": 14,
+   "financial_by_rule": {
+    "NEGATIVE_FCF": 3,
+    "DATA_QUALITY": 11
+   },
+   "by_rule": {
+    "LEVERAGE_EXTREME/HARD": 27,
+    "NEGATIVE_FCF/HARD": 40,
+    "LIQUIDITY_DISTRESS/SOFT": 122,
+    "DATA_QUALITY/HARD": 15
+   },
+   "hard_by_sector": {
+    "Health Care": 4,
+    "Real Estate": 6,
+    "Industrials": 6,
+    "Communication Services": 3,
+    "Consumer Staples": 5,
+    "Consumer Discretionary": 9,
+    "Information Technology": 7,
+    "Utilities": 24,
+    "Energy": 1,
+    "Materials": 3,
+    "Financials": 14
+   }
+  }
+ ],
+ "recs": {
+  "target": 5075,
+  "columns": 17350
+ }
+}
