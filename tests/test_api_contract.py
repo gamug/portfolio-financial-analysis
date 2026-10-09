@@ -230,6 +230,29 @@ def test_the_read_router_opens_no_write_capable_connection() -> None:
     assert "connect_ro" in deps and "connect" not in deps
 
 
+def test_every_connect_in_contract_is_memory_and_no_other_api_module_calls_connect() -> None:
+    contract_py = _SRC / "api" / "contract.py"
+    tree = ast.parse(contract_py.read_text())
+    connect_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            getattr(node.func, "attr", "") == "connect" or getattr(node.func, "id", "") == "connect"
+        )
+    ]
+    assert connect_calls, "expected at least one connect() call in contract.py"
+    for call in connect_calls:
+        assert call.args, "connect() called with no arguments"
+        first = call.args[0]
+        assert isinstance(first, ast.Constant) and first.value == ":memory:"
+
+    for path in sorted((_SRC / "api").rglob("*.py")):
+        if path.name == "contract.py":
+            continue
+        assert "connect" not in _calls(path), f"{path} calls connect()"
+
+
 def test_both_routes_leave_the_databases_bytes_unchanged(
     migrated_path: Path, tmp_path: Path
 ) -> None:

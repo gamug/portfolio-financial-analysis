@@ -3,6 +3,9 @@
 The columns of every view in :data:`kg_schema.views.VIEWS` are read from an in-memory
 database in which the views have been created -- the way the tests build them -- never from a
 second, hand-kept list. The build is a pure function of the code, so it runs once per process.
+The only connection that isn't ``mode=ro`` on a read path is a private ``:memory:`` database. It
+holds no data, is opened and closed inside ``build_contract``, and never touches
+``KG_FINANCIAL_DB`` or any other file.
 
 The agents' base tables come from ``fundamental_agent`` and ``pricing_agent``. ``quant`` is a
 leaf package no other package may import (NR-002, ``tests/test_quant_import_isolation.py``), so

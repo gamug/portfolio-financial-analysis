@@ -59,7 +59,9 @@ Two read routes that publish the `v_*` contract as **metadata, never rows**, so 
 knowledge-graph repo) can check a running service instead of a checkout of this repo. They are
 ordinary read routes: the database is opened `mode=ro` through the same dependency as the others, nothing is
 written, and they carry no authentication beyond what the other read routes have (access control is the
-deferred Work item 20). Unlike the pass-through data routes, their responses are pydantic models
+deferred Work item 20). The only connection that isn't `mode=ro` on a read path is a private `:memory:`
+database. It holds no data, is opened and closed inside `build_contract`, and never touches
+`KG_FINANCIAL_DB` or any other file. Unlike the pass-through data routes, their responses are pydantic models
 (`models.py`): the shape is itself the contract.
 
 ### `GET /api/v1/contract` — what the code defines
@@ -118,6 +120,13 @@ import, so `api/contract.py` declares its one table a view reads, `quant_run`;
   are rebuilt by every `ensure`, so it may already show the new views and columns, but the floor has not been
   raised (`migrate` has not run). A `schema_version` **above** the code's is a newer database than the code
   that is serving it.
+- **`/contract/database` reports which views exist, not their columns.** A database that lags its code can
+  have views whose columns differ from `/contract`'s lists. For example, on a production copy at
+  `schema_version` 8:
+  - `v_veto` there still has `cycle_date` and lacks `raised_on`, `cleared_on` and `last_seen_on`. Migration
+    `m009` made that change, which is why it raised the version to 9.
+  - Five views lack only T-144's appended columns.
+  So a consumer of a lagging database reads only the columns its version has.
 
 ## Extending it
 
