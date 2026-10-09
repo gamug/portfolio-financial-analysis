@@ -136,7 +136,7 @@ knowledge graph.
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
 **Order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit and `phase3_decisions.md`):** `T-141` → `T-077` →
-`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-073` → `T-074` → `T-071`.
+`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`.
 - **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
   technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
   (`T-147`'s input). The audit (`T-147`) then sorts the defects into four tasks, in the order of their dependencies:
@@ -144,10 +144,12 @@ knowledge graph.
   one fix that changes results already produced) → **`T-148`** (which line item and which sign) → **`T-150`** (the
   accounting identities, which check `T-148`'s equity and net-income choices, so they run once, after it) →
   **`T-151`** (the metric definitions, which absorb `T-072`'s EBITDA and `T-076`'s growth item). The tasks that
-  build on SEC-derived metrics (`T-073`, `T-074`, `T-071`) wait for them.
-- **`T-072` and `T-076`:** `T-072` (EBITDA persisted; net debt net of short-term investments) is absorbed by `T-151`;
-  `T-076` keeps its skills redesign, and its YoY-growth item (audit F8) is absorbed by `T-151`. Neither is
-  implemented separately.
+  build on SEC-derived metrics (`T-076`, `T-073`, `T-074`, `T-071`) wait for them.
+- **`T-072` and `T-076`:** `T-072` (EBITDA persisted; net debt net of short-term investments) is fully absorbed by
+  `T-151` and is not implemented separately. `T-076` is **not** absorbed: only its YoY-growth item (audit F8) moves
+  to `T-151`; the rest (the 10-Q preamble, the valuation magnitude gate, the profitability skill, the quick-ratio
+  definition, the `SKILL.md` trim) runs as its own task after `T-151`, and its quick-ratio item follows `T-151`'s
+  dictionary (D-05: "source pending").
 - **Decisions in force:** `docs/checklist_sec/phase3_decisions.md` (D-01 to D-12 and §7); the audit's numbers are in
   `docs/sec_data_checklist.md`.
 
@@ -229,7 +231,8 @@ the final pilot, `T-143`.
 - [ ] **T-148** Line-item resolution and sign correctness (engine `metrics-v6`; `fundamental_agent`; the gateway repo
       for the `preferred_sign` and `unit` fields). D1–D4 below, plus what `T-147`'s audit measured
       (`docs/sec_data_checklist.md`). **Follows `T-149`.** → `PLAN.md` Work item 8, step 11. *Text amended
-      2026-10-08 by `T-147`'s PR: D-01, D-02, D-06 and D-09 of `phase3_decisions.md`, and the audit's measured scope.
+      2026-10-08 by `T-147`'s PR: D-01, D-02, D-06 and D-09 of `phase3_decisions.md`, and the audit's measured scope;
+      2026-10-09 by the PR #127 review: (f) gains N22 and the residual capex item of `T-071`, and D6 is carried by (g).
       Numbers are production's 5,075 filings and the 17,350 filing-columns the pipeline reads (the target, the prior,
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
       - (a) **Filed sign (ID-11, ID-12).** Store edgartools' `preferred_sign` (an additive column on `financial_facts`).
@@ -300,6 +303,27 @@ the final pilot, `T-143`.
         `PaymentsForCapitalImprovements` overlaps an acquisition line in 4; capex is absent where a cash-flow statement is
         present in 490 filings. The FANG/APA table of `docs/sec_data_checklist.md` is the cost of excluding routine
         leasehold purchases.
+        **N22 (review of PR #127; DOW).** The oil & gas fallback tiers fire before the caption fallback, so a filer that
+        also files a PP&E-family line resolves the wrong capex: DOW FY2025 (`0001751788-26-000018`) resolves 0.157B
+        (`PaymentsToExploreAndDevelopOilAndGasProperties`, "Investment in gas field developments") against 2.479B filed as
+        `PaymentsToAcquireMachineryAndEquipment` ("Capital expenditures"), so its free cash flow is overstated by about
+        2.3B (1.4B to 2.7B a year over FY2021 to FY2025) and the error reaches `NEGATIVE_FCF` and the FCF yields; KKR's
+        FY2021 and FY2022 10-Ks resolve 0 from a zero oil & gas line beside a filed `PaymentsToAcquireFurnitureAndFixtures`.
+        Moving the tiers behind the caption would not be enough: DOW's FY2025 statement carries a second
+        "capital expenditures" caption (a cash-flow hedging row), and the caption fallback refuses two. Measured
+        (`audit_sec_checklist.py measure --only capex`, `N22.*`): 31 filing-columns (7 own-period) of DOW and KKR where the
+        oil & gas tiers displace a line; 165 filing-columns (11 companies: ADP, BAX, CPT, INCY, INVH, ROP, RL, VTR, VZ,
+        WDAY and WEC) where the same kind of line reaches the right value only through the caption fallback, unflagged,
+        and 252 (12 companies) where it resolves no capex at all. **Fix:**
+        - the oil & gas tiers apply only when no PP&E-family line is filed;
+        - add `PaymentsToAcquireMachineryAndEquipment`, `PaymentsToAcquireOtherProductiveAssets`,
+          `PaymentsToAcquireOtherPropertyPlantAndEquipment` (alone; the oil & gas tiers keep adding it, EOG) and
+          `PaymentsToAcquireFurnitureAndFixtures` under MET-08 (b), each with its B6 definition (B6 holds all four since
+          2026-10-09, from the FASB 2026 release; a concept whose definition is missing from B6 is added there first,
+          no rule without a source);
+        - the residual capex item that stood under `T-071` since `T-133`'s review (2026-10-02: filers whose capex is
+          `PaymentsToAcquireOtherPropertyPlantAndEquipment` / `...OtherProductiveAssets`, which `T-133`'s single-line
+          lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope.
       - (g) **Share counts and the other flags (ID-18, MKT-01 to MKT-04, ID-01, ID-09/16, ID-20, ID-13 to ID-15, PER-06).**
         The share-scale corrector **quarantines instead of correcting** (ID-18): Annex A-03 catches the MCD 10⁶ case
         without the correction (6 of 6 corrected filings). Stored valuation: remove the balance-sheet and diluted
@@ -314,14 +338,15 @@ the final pilot, `T-143`.
       - (h) **Records.** Engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and their
         sources (constitution AI behavior #12); regression tests: PM equity, the STZ/APO tax sign, the APA tax
         component, the STZ COGS sign, net income parent-vs-NCI, short-term debt, the N3 total-before-continuing
-        order, the ICE case (left empty), a bank's revenue, and the tests that **today pin the wrong behaviour** and are
+        order, the ICE case (left empty), a bank's revenue, **DOW's capex (N22: `tests/test_sec_xcheck_resolver_measures.py` pins the
+        wrong 0.157B today; the resolver test asserts 2.479B)**, and the tests that **today pin the wrong behaviour** and are
         replaced: `tests/test_share_scale.py` (it pins the correction), `tests/test_metrics_valuation.py` (it pins the
         diluted fallback), and the map-pinning cases of `tests/test_revenue_rebuild.py` and `tests/test_statements.py`.
       - (i) **Acceptance.** On a database rebuilt with the branch, the tracked cross-check scripts
         (`uv run python scripts/sec_xcheck/itemcheck.py --db <rebuilt>`, `signcheck.py`, `precedence.py`; the SEC cache from
         `audit_sec_checklist.py fetch`) report 0 FLIPPED and no OTHER_CONCEPT for income tax, equity and net income
         (the 237 NCI filings resolve to `NetIncomeLoss`), and `uv run python scripts/audit_sec_checklist.py measure
-        --only resolver,capex,source` shows 0 for N3, N4, N5, N6, N14 and the D2/D3 rows, with every number in the PR.
+        --only resolver,capex,source` shows 0 for N3, N4, N5, N6, N14, N22 (`N22.og_tier_displaces_capex_line`) and the D2/D3 rows, with every number in the PR.
         The L-09 register (`audit_sec_checklist.py l09`) has no value that fails its ex-post audit.
       - (j) **Overlap with `T-070`.** `T-070` (earlier in the order) recalibrates `LIQUIDITY_DISTRESS`. `T-147` states
         whether any input of that rule, or of another score or veto `T-070` touches, is changed by `T-148`: yes. The
@@ -338,8 +363,12 @@ the final pilot, `T-143`.
         (36 companies); 8 stored accessions are amendments; 48 original 10-Ks of
         30 companies are missing because a 10-K/A exists (a Part III-only amendment has no statements, so the run recorded an
         extraction failure and the year was lost); 18 10-Q/A filings of 15 companies share a
-        quarter label with their original. Keep the original; ingest an amendment only under its own key, never over the
-        original (a restatement is out of scope, L-04). **Test:** replaces
+        quarter label with their original. **10-K/A and 10-Q/A are never ingested** (L-04: filings are taken as originally
+        reported; a restatement is out of scope): `_select_filings` drops a reference whose form ends in `/A`, and the
+        original filing of the period is selected even when an amendment of the same year exists. Storing an amendment
+        under its own key would not work: `cycle/data.py`'s `latest_metrics` and `data_quality` order a company's
+        filings by `period_end DESC, available_at DESC`, so an amendment of the same period end with a later
+        `available_at` would still replace the original in every read. **Test:** replaces
         `tests/test_pipeline_multi_filing.py::test_a_10k_keeps_only_the_most_recent_of_several_matches`, which pins the
         replacement.
       - (b) **Lost filings that are not amendments (N21).** 9 10-Ks of 52/53-week filers (AVY, CDNS, DPZ, JNJ, RVTY,
@@ -429,7 +458,8 @@ the final pilot, `T-143`.
       (`PaymentsForConstructionInProcess`, utility/non-utility split lines) and REITs, and for filers
       whose capex is `PaymentsToAcquireOtherPropertyPlantAndEquipment`/`...OtherProductiveAssets`, which
       `T-133`'s single-line lookup leaves empty rather than partial; see `docs/model_fixes.md` T-133
-      "Residual scope".)*
+      "Residual scope". **The last item (the `OtherPropertyPlantAndEquipment` / `OtherProductiveAssets` filers) moved
+      to `T-148`(f) on 2026-10-09, with N22: capex is `T-148`'s scope; the utility and REIT items stay here.**)*
       *(2026-10-08, `T-147`'s audit and `phase3_decisions.md` D-04, D-07: scope addition.)*
       **D-04 (accepted):** `DQ_NEG_EQUITY` becomes **quarantine only** (D/E and ROE read NA, as APP-07 says) and is
       never a HARD data-quality veto; the distress test for negative-equity firms moves to `LEVERAGE_EXTREME`, keyed on
@@ -446,8 +476,11 @@ the final pilot, `T-143`.
       with sector-specific factors and corrected vetoes — the current accidental state is kept in neither case.
       Audit input: 51 financial firms (24 Article 9, 17 Article 7, 10 other) are about 7.5% of the approximate market
       capitalization; 14 of 51 are hard-vetoed (10 Article 9 filers by `DQ_REVENUE_POS`, 3 by `NEGATIVE_FCF`, KEY by two
-      margin gates), so the vetoes do not exclude almost all of them; in the pilot replay the Financials sector averages
-      22.8% of the book, 13.7% without them. The decision rule (§7 of `phase3_decisions.md`): if the vetoes already
+      margin gates), so the vetoes do not exclude almost all of them. The decision rests on those universe-level figures (the
+      market-capitalization share and the veto counts): the pilot replay (the Financials sector averages 22.8% of its
+      book, 13.7% without them) covers 20 names, 3 of them financial firms, so it is not representative of the
+      universe, and production has stored metrics for only 377 filings, so a full-universe replay is not possible
+      before `T-100`. The decision rule (§7 of `phase3_decisions.md`): if the vetoes already
       exclude almost all and the sector factors are costly, exclude; if the thesis benchmarks against the full S&P
       500, keep them.
       **Also here:** the APP-00 overlays and the NA matrix in scoring (APP-01 to APP-04c); DQ-02's one constant,
@@ -479,7 +512,7 @@ the final pilot, `T-143`.
       narratives for "data error"/"accounting artifact"/"nonsensical" and
       raise the data-quality veto immediately, ahead of T-073/T-074's full
       re-run. → step 4 (bridge sub-task).
-- [ ] **T-076** *(Its YoY-growth item, audit F8, is absorbed by `T-151` 2026-10-08; the rest stays.)* Skills redesign: 10-Q frequency preamble, tightened
+- [ ] **T-076** *(Its YoY-growth item, audit F8, is absorbed by `T-151` 2026-10-08; the rest stays and runs after `T-151` (PR #127 review, 2026-10-09), its quick-ratio item following `T-151`'s dictionary: D-05, "source pending".)* Skills redesign: 10-Q frequency preamble, tightened
       valuation magnitude gate (`DATA_ERROR_SUSPECTED` on `|FCF yield| >
       50%` or scale mismatch), new dedicated `profitability` skill
       (DuPont, annualization, ROE→ROIC fallback), cost-hygiene trim of
@@ -753,8 +786,8 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; scope: finish this repo
-first):** Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-148` → `T-072` → `T-076` → `T-073` → `T-074` →
-`T-071`) → Work item 19 (`T-083` → `T-142` →
+first):** Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` →
+`T-073` → `T-074` → `T-071`) → Work item 19 (`T-083` → `T-142` →
 `T-144` → `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3

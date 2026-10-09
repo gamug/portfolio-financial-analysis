@@ -32,7 +32,7 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; scope: finish this repo first):**
-**Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-073` → `T-074` →
+**Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` →
 `T-071`) → **Work item 19** (local follow-ups before the final pilot: `T-083` → `T-142` → `T-144` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
@@ -43,7 +43,8 @@ each ending with its status commit after approval.
   builds the SEC data-treatment checklist. `T-147` (the audit against the checklist) follows, and sorts the defects
   into `T-149` (which filing and period; it also fixes `earnings_yield`), `T-148` (which line item and sign), `T-150`
   (the accounting identities, which verify `T-148`'s choices) and `T-151` (the metric definitions, which absorb
-  `T-072`'s EBITDA and `T-076`'s growth item), ahead of the tasks that build on SEC-derived metrics (`T-073`, `T-074`,
+  `T-072`'s EBITDA and `T-076`'s growth item), then `T-076` (the rest of its skills redesign), ahead of the tasks
+  that build on SEC-derived metrics (`T-073`, `T-074`,
   `T-071`).
 - **Deferred until after `T-100`**: Work item 20 (run-endpoint access control, `T-146`; deferred 2026-10-06, the
   repo is not a production version yet), Work item 4 (SEMANTIC; depends on `portfolio-nlp`) and Work item 9's
@@ -802,7 +803,8 @@ as task `T-077`.
 
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
-`T-151` (step 14, which absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-073` (step 3) → `T-074`
+`T-151` (step 14, which absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, without its
+growth item; its quick-ratio item follows `T-151`'s dictionary) → `T-073` (step 3) → `T-074`
 (step 4) → `T-071` (step 2). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
@@ -988,7 +990,8 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
     (the default rate applies). Evidence: APA, 22 filings, deferred only. (d) **Short-term debt**: `DebtCurrent`
     when filed; else `LongTermDebtCurrent` + `ShortTermBorrowings`, plus `CommercialPaper` only when it is not
     already included in `ShortTermBorrowings`; verified against the SEC. Evidence: 60 filings read one partial
-    line. (e) **Records**: engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and
+    line. **Capex (N22, added by PR #127's review; `TASKS.md` `T-148`(f))**: the oil & gas fallback tiers apply only
+    when no PP&E-family line is filed (DOW: 0.157B resolved against 2.48B). (e) **Records**: engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and
     their sources (constitution AI behavior #12); regression tests (PM equity, the STZ/APO tax sign, the APA tax
     component, the STZ COGS sign, net income parent-vs-NCI, short-term debt). (f) **Overlap with `T-070`**:
     `T-147` states whether any input of the `LIQUIDITY_DISTRESS` recalibration (or of another score or veto
@@ -2246,8 +2249,8 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` → `T-073` → `T-074` → `T-071` (`T-072` and `T-076`'s growth item are absorbed
-  by `T-151`). `T-100`'s dependency rule covers the new tasks as tasks added later.
+  `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071` (`T-072` and `T-076`'s growth item are
+  absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all** — after
   every other task in `TASKS.md` that is not deferred or superseded, including any task added later.
 
