@@ -696,7 +696,7 @@ that constitution AI behavior #10 asks to be approved first.
         Production's `financial.db` is at `schema_version` **8**, not 9 (`m009`, the veto stints, was never
         applied to it); it stays frozen until `T-100`. Work item 19 still has open tasks, so nothing moves to
         `CHANGELOG.md`.
-- [ ] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
+- [x] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
       `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
       Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.
       - `GET /api/v1/contract`: `contract_version` (the highest migration version the running code knows,
@@ -718,6 +718,9 @@ that constitution AI behavior #10 asks to be approved first.
         router module (FR-014's check).
       - The PR carries a sample response of each route; the knowledge-graph repo gets the commit, the routes and
         the sample.
+      - **Status (2026-10-09): done, PR #130** (approved 2026-10-09). Both routes (`/contract` and
+        `/contract/database`), 10-column `quant_run` pin, hermetic tests. Work item 19 still has open tasks
+        (`T-083`, `T-142`, `T-145`), so nothing moves to `CHANGELOG.md`.
       **Acceptance:** the tests above; a `GET /api/v1/contract` against a running instance returns every view with
       its columns in order and `contract_version` (10 once `T-144`'s marker migration has landed).
 - [ ] **T-145** Non-reusable ids. → `PLAN.md` Work item 19, step 4.
