@@ -181,13 +181,13 @@ the final pilot, `T-143`.
       structurally healthy PG, NEE, PM, T, STZ, APA and SBAC (7 of 20); combine it with cash
       coverage (e.g. OCF / current liabilities, interest coverage) and exempt utilities and
       financials. Also add a minimum signal-coverage floor to TECHNICAL (audit C5).)*
-- [ ] **T-147** SEC data-treatment checklist audit (user, 2026-10-07; docs, a script and tests -- **no change
+- [x] **T-147** — **done, PR #127; checklist v1.3 follows from `docs/sec_data_checklist.md` §9.** SEC data-treatment checklist audit (user, 2026-10-07; docs, a script and tests -- **no change
       under `src/`**). Audit the data path (EDGAR → `portfolio-data-mining` gateway → `fundamental_agent` →
       `cycle`/`quant`) against the SEC data-treatment checklist. **Audits `checklist_v1.2.2.md`** (frozen and approved
       2026-10-08), built from SEC, FASB, XBRL US DQC, Nareit, academic and edgartools sources (the user
       owns the sources and the NotebookLM rounds; Claude reviews the draft). → `PLAN.md` Work item 8, step 10.
-      **Delivered 2026-10-08 on `docs/t147-sec-checklist-audit`, awaiting review** (the box closes with the
-      status commit after approval): `docs/sec_data_checklist.md`, `scripts/audit_sec_checklist.py`,
+      **Delivered 2026-10-08 on `docs/t147-sec-checklist-audit`; approved 2026-10-09 after the review's R1-R6** (PR #127):
+      `docs/sec_data_checklist.md`, `scripts/audit_sec_checklist.py`,
       `scripts/sec_xcheck/` (the cross-check scripts, promoted and tracked), `tests/test_sec_xcheck_*.py`, the
       company-type table, the L-09 register, the golden set and the fix plan below.
       **Deliverables:**

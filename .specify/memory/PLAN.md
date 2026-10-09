@@ -942,7 +942,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    the new weights, the rank correlation and the top-N overlap on the replay. Amend `SPEC.md` FR-007's
    default text and `docs/cycle.md`, and add a `docs/model_fixes.md` entry (constitution AI behavior #12).
 
-10. **SEC data-treatment checklist audit (`T-147`, user, 2026-10-07; after `T-070`, or earlier if the user
+10. **SEC data-treatment checklist audit (`T-147`, done, PR #127; user, 2026-10-07; after `T-070`, or earlier if the user
     approves `checklist_v1.md` sooner)** — docs, a script and tests; **no change under `src/`**. The user builds
     a checklist of yes/no rules for treating SEC XBRL financial data (every rule from an official or academic
     source with a literal quote: SEC, FASB, XBRL US DQC, Nareit, academic papers and edgartools; the working
