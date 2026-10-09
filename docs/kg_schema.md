@@ -301,8 +301,10 @@ change is `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR 
   `is_current` is 1 for the engine version that `kg_schema.versions.resolve_metric_versions` picks
   with no explicit selection: the newest version **per metric group** by the explicit order
   (`pre-v1` < `metrics-v1` < `metrics-v2` < `metrics-v10`), never by `computed_at`. A filing that
-  was not recomputed under it has no current row; a version string that does not parse is never
-  current. At most one current version per group, so at most one current row per
+  was not recomputed under it has no current row. Only exactly `<family>-v<digits>` of a group in
+  `versions.METRIC_GROUPS` can be current: a string with trailing text, an unregistered family, or a
+  group the resolver does not read never is. Two spellings of one number (`metrics-v02`,
+  `metrics-v2`) tie-break on the string. At most one current version per group, so at most one current row per
   (filing, metric_group, metric_name).
 - **`v_cycle_ranking_component`**: `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
   `configured_weight`, `effective_weight`. One row for every **non-null** component of every
@@ -320,7 +322,7 @@ change is `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR 
 
 | View | New columns (at the end) |
 |---|---|
-| `v_score_snapshot` | `forensic_flags_json`, `prompt_hash` (FUNDAMENTAL only; NULL on every other `score_type`) |
+| `v_score_snapshot` | `forensic_flags_json`, `prompt_hash` (FUNDAMENTAL only; the view returns NULL on every other `score_type`) |
 | `v_shared_executive_edge` | `computed_at` (`MAX` over the pair's person rows), `run_id` (`MAX`; one `entity_resolution build` writes one `run_id` per `method`) |
 | `v_cycle_ranking` | `status` (the `cycle_run`'s) |
 | `v_quant_vs_live` | `engine_version`, `is_current` |
@@ -333,12 +335,14 @@ change is `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR 
 - `v_quant_portfolio.is_current` is 1 for the newest `opt-v<N>` book per (`as_of`, `kind`,
   `frontier_k`): by `N` numerically, then `computed_at`, then `id`. `frontier_k` is part of the key
   because every `frontier_k` book of one `as_of` is its own book; for every other kind it is NULL.
-  A book whose `engine_version` is not `opt-v<N>[+tag]` is never current. At most one current book
+  A book whose `engine_version` is not exactly `opt-v<N>` or `opt-v<N>+<tag>` is never current. At most one current book
   per key.
 - `v_quant_vs_live` is now every book except `kind = 'live_book'`: the dead `equal_weight` and
   `cap_weight` filters are gone (no code writes those kinds, so no existing row appears or goes).
   `engine_version` / `is_current` are the book's. A `LIVE_ONLY` row belongs to no book version: its
-  `engine_version` is NULL and `is_current` is 1. Filter `is_current = 1` for one row per
+  `engine_version` is NULL and `is_current` is 1. A name is `LIVE_ONLY` when no **current** book of
+  that `as_of` holds it (an older version that still holds it does not count), so a reader of
+  `is_current = 1` rows never loses a live position. Filter `is_current = 1` for one row per
   (`as_of`, `kind`, name).
 - `v_cycle_ranking` is **every** run's ranking, whatever its `status`, not "the latest cycle per
   `cycle_type`" as its old docstring said. Filter `status = 'completed'` and choose the run.

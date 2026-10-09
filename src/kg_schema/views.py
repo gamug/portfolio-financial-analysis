@@ -154,28 +154,43 @@ VIEWS: dict[str, str] = {
                CASE WHEN s.score_type IN ('TECHNICAL', 'VALORIZATION', 'SECTOR')
                     THEN COALESCE(s.available_at, s.event_time)
                     ELSE s.available_at END AS available_at,
-               s.forensic_flags_json, s.prompt_hash
+               CASE WHEN s.score_type = 'FUNDAMENTAL' THEN s.forensic_flags_json END
+                   AS forensic_flags_json,
+               CASE WHEN s.score_type = 'FUNDAMENTAL' THEN s.prompt_hash END AS prompt_hash
         FROM score_snapshot s JOIN assets a ON a.id = s.asset_id
     """,
     "v_fundamental_metric": """
         CREATE VIEW v_fundamental_metric AS
         WITH versions AS (
+            -- the order of kg_schema.versions.version_key: family rank, then N. A string that is
+            -- not exactly '<family>-v<digits>', or of a group the resolver does not read, has no
+            -- rank and is never current. METRIC_GROUPS is pinned by tests/test_kg_view_contract.py.
             SELECT metric_group, engine_version,
-                   CASE WHEN engine_version GLOB 'pre-v[0-9]*' THEN 0
-                        WHEN engine_version GLOB 'metrics-v[0-9]*' THEN 1 END AS family_rank,
+                   CASE WHEN engine_version GLOB 'pre-v[0-9]*'
+                             AND substr(engine_version, 6) NOT GLOB '*[^0-9]*' THEN 0
+                        WHEN engine_version GLOB 'metrics-v[0-9]*'
+                             AND substr(engine_version, 10) NOT GLOB '*[^0-9]*' THEN 1 END
+                       AS family_rank,
                    CAST(substr(engine_version, instr(engine_version, '-v') + 2) AS INTEGER)
                        AS version_n
             FROM (SELECT DISTINCT metric_group, engine_version FROM fundamental_metrics
-                  WHERE engine_version IS NOT NULL)
+                  WHERE engine_version IS NOT NULL
+                    AND metric_group IN ('profitability', 'liquidity', 'leverage', 'efficiency',
+                                         'growth', 'cashflow', 'roic', 'cagr', 'valuation'))
         ),
         current_version AS (
+            -- equal ranks (metrics-v02 and metrics-v2) tie-break on the string, so at most one
+            -- version per group is current
             SELECT v.metric_group, v.engine_version FROM versions v
             WHERE v.family_rank IS NOT NULL
               AND NOT EXISTS (
                   SELECT 1 FROM versions v2
                   WHERE v2.metric_group = v.metric_group AND v2.family_rank IS NOT NULL
                     AND (v2.family_rank > v.family_rank
-                         OR (v2.family_rank = v.family_rank AND v2.version_n > v.version_n)))
+                         OR (v2.family_rank = v.family_rank
+                             AND (v2.version_n > v.version_n
+                                  OR (v2.version_n = v.version_n
+                                      AND v2.engine_version > v.engine_version)))))
         )
         SELECT a.ticker, f.asset_id, m.filing_id, m.metric_group, m.metric_name,
                m.metric_group || '.' || m.metric_name AS metric_id, m.unit, m.value,
@@ -429,11 +444,17 @@ VIEWS: dict[str, str] = {
                qp.expected_return, qp.expected_vol, qp.sharpe, qp.rf_annual, qp.n_positions,
                qp.turnover, qp.target_param, qp.model_id, qp.engine_version, qp.computed_at,
                qp.manifest_json,
-               CASE WHEN qp.engine_version GLOB 'opt-v[0-9]*' AND qp.id = (
+               CASE WHEN qp.engine_version GLOB 'opt-v[0-9]*'
+                         AND substr(qp.engine_version || '+', 6, instr(qp.engine_version || '+', '+') - 6)
+                             NOT GLOB '*[^0-9]*'
+                         AND qp.id = (
                         SELECT q2.id FROM quant_portfolio q2
                         WHERE q2.as_of = qp.as_of AND q2.kind = qp.kind
                           AND q2.frontier_k IS qp.frontier_k
                           AND q2.engine_version GLOB 'opt-v[0-9]*'
+                          AND substr(q2.engine_version || '+', 6,
+                                     instr(q2.engine_version || '+', '+') - 6)
+                              NOT GLOB '*[^0-9]*'
                         ORDER BY CAST(substr(q2.engine_version, 6) AS INTEGER) DESC,
                                  q2.computed_at DESC, q2.id DESC LIMIT 1)
                     THEN 1 ELSE 0 END AS is_current
@@ -490,21 +511,21 @@ VIEWS: dict[str, str] = {
              AND (pp.valid_to IS NULL OR pp.valid_to > b.as_of)
         JOIN assets a ON a.id = pp.asset_id
         WHERE NOT EXISTS (
-            SELECT 1 FROM quant_portfolio q2
+            SELECT 1 FROM v_quant_portfolio q2
             JOIN quant_position p2 ON p2.portfolio_id = q2.id AND p2.valid_to IS NULL
             WHERE q2.as_of = b.as_of AND p2.asset_id = pp.asset_id
-              AND q2.kind <> 'live_book')
+              AND q2.kind <> 'live_book' AND q2.is_current = 1)
     """,
 }
 
 
 def _schema_version(db: Database) -> int:
     """The highest recorded ``schema_version``; 0 when the table is missing or empty. Never
-    creates the table (``kg_schema.queries.current_version`` does)."""
-    try:
-        row = db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
-    except DatabaseError:
+    creates the table (``kg_schema.queries.current_version`` does). Any other read error
+    propagates: guessing 0 would let the rebuild remove a newer contract's views."""
+    if not db.relation_exists("schema_version"):
         return 0
+    row = db.execute("SELECT MAX(version) AS v FROM schema_version").fetchone()
     return int(row["v"]) if row is not None and row["v"] is not None else 0
 
 

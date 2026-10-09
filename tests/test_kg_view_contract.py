@@ -8,11 +8,12 @@ existing views; ``v_quant_vs_live`` loses two dead filters; a marker migration (
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
 from conftest import _memory_database, seed_filing
-from portfolio_common.db import Database
+from portfolio_common.db import Database, DatabaseError
 
 import kg_schema
 from fundamental_agent import db as fundamental_db
@@ -560,6 +561,18 @@ def test_ensure_views_rebuilds_at_the_code_version_and_below(conn: Database) -> 
     assert conn.relation_exists("v_cycle_ranking_component")
 
 
+def test_ensure_views_does_not_guess_when_schema_version_cannot_be_read() -> None:
+    """A read error is not "version 0": guessing would let the rebuild remove the views of a
+    newer contract."""
+    db = _memory_database()
+    db.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT, sub_industry TEXT)")
+    db.execute("CREATE TABLE schema_version (unexpected TEXT)")  # exists, but has no `version`
+    db.execute("CREATE VIEW v_sector AS SELECT 1 AS survives")
+    with pytest.raises(DatabaseError):
+        ensure_views(db)
+    assert _columns(db, "v_sector") == ("survives",)
+
+
 def test_ensure_views_on_a_database_without_schema_version_does_not_create_it() -> None:
     db = _memory_database()
     db.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT, sub_industry TEXT)")
@@ -629,6 +642,16 @@ def test_forensic_flags_and_prompt_hash_are_projected(conn: Database) -> None:
     assert rows["FUNDAMENTAL"]["prompt_hash"] == "abc123"
     assert rows["TECHNICAL"]["forensic_flags_json"] is None
     assert rows["TECHNICAL"]["prompt_hash"] is None
+
+
+def test_forensic_flags_and_prompt_hash_are_null_on_every_other_score_type(
+    conn: Database,
+) -> None:
+    """The contract says FUNDAMENTAL only: the view enforces it, whatever a writer stored."""
+    _score(conn, 1, "TECHNICAL", "2026-03-02", forensic_flags_json="{}", prompt_hash="stray")
+    conn.commit()
+    row = conn.execute("SELECT * FROM v_score_snapshot").fetchone()
+    assert (row["forensic_flags_json"], row["prompt_hash"]) == (None, None)
 
 
 # -- v_fundamental_metric -------------------------------------------------------------------
@@ -719,6 +742,29 @@ def test_is_current_is_the_newest_version_per_group_by_explicit_order(conn: Data
         "GROUP BY filing_id, metric_group, metric_name HAVING COUNT(*) > 1"
     ).fetchall()
     assert per_key == []
+
+
+def test_a_malformed_or_unregistered_version_is_never_current(conn: Database) -> None:
+    """Only exactly ``<family>-v<digits>`` of a group the resolver reads can be current; trailing
+    text, an unknown group, or a spelling tie never displace or duplicate the real choice."""
+    f = seed_filing(conn, 1, period_end="2025-12-31", filing_date="2026-02-10")
+    for version in ("metrics-v2", "metrics-v3x", "metrics-v9 ", "pre-v1a"):
+        _metric(conn, f, "profitability", "roe", version)
+    _metric(conn, f, "mystery_group", "m", "metrics-v1")  # the resolver reads no such group
+    _metric(conn, f, "leverage", "debt_to_equity", "metrics-v02")  # same N, other spelling
+    _metric(conn, f, "leverage", "debt_to_equity", "metrics-v2")
+    conn.commit()
+    current = {
+        (r["metric_group"], r["engine_version"])
+        for r in conn.execute("SELECT * FROM v_fundamental_metric WHERE is_current = 1")
+    }
+    assert current == {("profitability", "metrics-v2"), ("leverage", "metrics-v2")}
+
+
+def test_the_views_metric_groups_are_the_resolvers() -> None:
+    sql = VIEWS["v_fundamental_metric"]
+    listed = sql[sql.index("metric_group IN (") :].split(")")[0]
+    assert sorted(re.findall(r"'(\w+)'", listed)) == sorted(versions.METRIC_GROUPS)
 
 
 def test_is_current_matches_what_resolve_metric_versions_picks(conn: Database) -> None:
@@ -942,11 +988,13 @@ def _book(  # noqa: PLR0913 - one book, every column a test may pin
     return pid
 
 
-def _current_books(db: Database) -> set[tuple[str, int | None, str]]:
+def _current_books(db: Database) -> set[tuple[str, str, int | None, str]]:
+    """(as_of, kind, frontier_k, engine_version) of every current book, as_of included so a
+    stale book of the same version at another date cannot hide behind a current one."""
     return {
-        (r["kind"], r["frontier_k"], r["engine_version"])
+        (r["as_of"], r["kind"], r["frontier_k"], r["engine_version"])
         for r in db.execute(
-            "SELECT qp.kind, qp.frontier_k, v.engine_version FROM v_quant_portfolio v "
+            "SELECT v.as_of, qp.kind, qp.frontier_k, v.engine_version FROM v_quant_portfolio v "
             "JOIN quant_portfolio qp ON qp.id = v.id WHERE v.is_current = 1"
         )
     }
@@ -964,11 +1012,11 @@ def test_quant_is_current_is_the_newest_opt_version_per_key(conn: Database) -> N
     _book(conn, "min_var", "ext-v9+ffffffff", {1: 1.0}, as_of="2026-03-02")  # not an opt-v*
     conn.commit()
     assert _current_books(conn) == {
-        ("min_var", None, "opt-v10+cccccccc"),
-        ("tangency", None, "opt-v1+dddddddd"),  # same N: the later computed_at
-        ("min_var", None, "opt-v1+aaaaaaaa"),  # 2026-02-02's only book
-        ("frontier_k", 1, "opt-v1+eeeeeeee"),
-        ("frontier_k", 2, "opt-v1+eeeeeeee"),
+        ("2026-01-02", "min_var", None, "opt-v10+cccccccc"),
+        ("2026-01-02", "tangency", None, "opt-v1+dddddddd"),  # same N: the later computed_at
+        ("2026-02-02", "min_var", None, "opt-v1+aaaaaaaa"),  # that date's only book
+        ("2026-01-02", "frontier_k", 1, "opt-v1+eeeeeeee"),
+        ("2026-01-02", "frontier_k", 2, "opt-v1+eeeeeeee"),
     }
 
 
@@ -982,6 +1030,31 @@ def test_v_quant_vs_live_returns_every_kind_but_the_live_book(conn: Database) ->
     conn.commit()
     kinds = {r[0] for r in conn.execute("SELECT kind FROM v_quant_vs_live")}
     assert kinds == {"min_var", "equal_weight", "cap_weight"}
+
+
+def test_a_malformed_opt_version_is_never_current(conn: Database) -> None:
+    _book(conn, "min_var", "opt-v1+aaaaaaaa", {1: 1.0})
+    _book(conn, "min_var", "opt-v9x+bbbbbbbb", {1: 1.0})  # trailing text after the number
+    conn.commit()
+    assert _current_books(conn) == {("2026-01-02", "min_var", None, "opt-v1+aaaaaaaa")}
+
+
+def test_live_only_looks_at_current_books_only(conn: Database) -> None:
+    """An older version still holding a name the current one dropped must not hide that live
+    position from a reader of ``is_current = 1`` rows."""
+    _book(conn, "min_var", "opt-v1+aaaaaaaa", {1: 0.5, 3: 0.5})
+    _book(conn, "min_var", "opt-v2+bbbbbbbb", {1: 1.0})
+    conn.executemany(
+        "INSERT INTO portfolio_position (asset_id, valid_from, valid_to, weight) "
+        "VALUES (?, '2025-12-01', NULL, 0.2)",
+        [(1,), (3,)],
+    )
+    conn.commit()
+    current = {
+        (r["kind"], r["ticker"])
+        for r in conn.execute("SELECT * FROM v_quant_vs_live WHERE is_current = 1")
+    }
+    assert current == {("min_var", "AA"), ("LIVE_ONLY", "CC")}
 
 
 def test_v_quant_vs_live_carries_the_books_engine_version_and_is_current(
