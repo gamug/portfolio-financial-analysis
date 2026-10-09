@@ -31,9 +31,9 @@ additive, backward-compatible upstream schema/API change first (Work items
 16, 17 and 18 and Work items 5 and 6 are **closed** (see `CHANGELOG.md`; Work item 18, the N-ticker weight
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
-**The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; scope: finish this repo first):**
-**Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` →
-`T-071`) → **Work item 19** (local follow-ups before the final pilot: `T-083` → `T-142` → `T-144` → `T-145`) → **Work item 2** (the
+**The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **Work item 19** (local follow-ups before the
+final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
@@ -1990,7 +1990,10 @@ knowledge-graph repo's two handoff rounds (local, untracked sources: `docs/kg_ha
 `docs/kg_handoff_second_reply.md`, section 3 of each) produced two more, which the user approved 2026-10-06:
 the view contract (`T-144`) and non-reusable ids (`T-145`). All land before the orchestrator (Work item 2) and
 the final pilot (`T-143`), so the pilot measures the corrected code and the contract the knowledge graph
-reads. Order: `T-083` → `T-142` → `T-144` → `T-145`. One task per PR, each ending with its status commit after
+reads. Order: `T-144` → `T-152` first, moved ahead of Work item 8 on 2026-10-09 because the knowledge-graph repo
+waits on the contract and nothing in Work item 8 changes a view; then `T-083` → `T-142` → `T-145` after Work item 8.
+`T-152` (step 5) answers the knowledge-graph repo's third request (local
+`docs/kg_requirements/kg_handoff_view_contract_endpoint.md`), accepted by the user 2026-10-09. One task per PR, each ending with its status commit after
 approval.
 
 **Approach**:
@@ -2072,6 +2075,15 @@ approval.
    - **No production write**: the orphaned `run_id = 1` on the 14,172 edges needs no write, because `T-100`
      builds a fresh database and they disappear with the current one.
    - Send the knowledge-graph repo the commit when it lands.
+5. **`T-152`**, the view contract over the API (SPEC FR-014), right after `T-144`: two read routes in a read router,
+   metadata only. `GET /api/v1/contract` returns `contract_version` (the highest migration the code knows),
+   `code_version`, and every view of `VIEWS` in order with its `frozen` flag and its columns in order, built from the
+   code (the views built in an in-memory database), never from a second list. `GET /api/v1/contract/database`
+   returns the connected database's `schema_version` (0 when missing) and the views present and missing, `mode=ro`.
+   The rule, documented: within one `contract_version` columns are only added; every migration raises it. Why: the
+   knowledge-graph repo pins our columns by hand and its drift check needs a full checkout of this repo; with the
+   routes it checks a running service, and a lagging database becomes visible. Production stays at
+   `schema_version` 9 until `T-100`.
 
 **Acceptance criteria**:
 
@@ -2094,6 +2106,10 @@ approval.
   - every column the views had before is unchanged in names, order and values, except
     `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR rows (NULL → the cycle date, step 3);
   - `docs/kg_schema.md` carries each definition listed in step 3; `schema_version` advanced.
+- `T-152`: the response lists exactly the views and columns of the in-memory build, in order, and a view added to
+  `VIEWS` without appearing fails a test; `contract_version` equals the highest migration (10 after `T-144`);
+  `/contract/database` names the missing views of a partial database; the read router opens no write-capable
+  connection; `docs/api.md` documents both routes and the additive rule.
 - `T-145`: the migration, run on a copy, leaves foreign keys, `T-107` triggers and views intact, and the next
   insert in each of the five tables gets an id above every id ever referenced, including a highest row deleted
   before the migration; `verify_pilot.py` fails on a
@@ -2134,7 +2150,7 @@ full-universe scope, which was never that task's real purpose.)
 open today and every task added later — except those the user deferred or superseded (2026-10-05,
 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20's `T-146` are
 deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself.
-`T-083`, `T-142`, `T-144` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A new work
+`T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A new work
 item goes above this one, never below; `T-100` stays unchecked until every other box is checked, or explicitly
 superseded/moved/deferred.
 
@@ -2239,8 +2255,9 @@ this document.** Their internal sequencing:
   7/8 and its `entity_resolution` half is additionally blocked on the
   `urls.db` transfer noted in its own section, independent of any other
   work item here. **Deferred until after `T-100`** (2026-10-05), except `T-083`, which moved to Work item 19.
-- Work item 19 (local follow-ups: `T-083` → `T-142` → `T-144` → `T-145`) follows Work item 8 and precedes Work
-  item 2, so the orchestrator and the final pilot run on the corrected code.
+- Work item 19 (local follow-ups: `T-083` → `T-142` → `T-145`) follows Work item 8 and precedes Work item 2, so the
+  orchestrator and the final pilot run on the corrected code. Its `T-144` and `T-152` run first, before Work item 8
+  (user, 2026-10-09).
 - Work item 2 (orchestrator) follows Work item 19; the final pilot `T-143` runs through it. Work item 4
   (SEMANTIC boundary) is **deferred until after `T-100`** (2026-10-05), as is Work item 20 (run-endpoint access
   control, 2026-10-06).
