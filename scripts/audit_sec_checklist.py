@@ -101,7 +101,7 @@ def cmd_company_types(args: argparse.Namespace) -> int:
     rows = company_types.build_rows(conn, client, {c: v[1] for c, v in latest.items()})
     out = Path(args.out)
     with out.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=company_types.FIELDS)
+        writer = csv.DictWriter(fh, fieldnames=company_types.FIELDS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     kinds: dict[str, int] = {}

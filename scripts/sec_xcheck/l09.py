@@ -188,7 +188,7 @@ def build_register(conn: Any) -> list[dict[str, Any]]:
 
 def write_csv(rows: list[dict[str, Any]], path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=FIELDS)
+        w = csv.DictWriter(fh, fieldnames=FIELDS, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
 

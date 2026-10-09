@@ -154,7 +154,7 @@ def build(
 
 def write(rows: list[dict[str, Any]], csv_path: Path, md_path: Path) -> None:
     with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=FIELDS)
+        w = csv.DictWriter(fh, fieldnames=FIELDS, lineterminator="\n")
         w.writeheader()
         w.writerows(rows)
     lines = [
