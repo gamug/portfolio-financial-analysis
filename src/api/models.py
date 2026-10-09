@@ -56,3 +56,29 @@ class CoverageSummary(BaseModel):
     fraction: float
     source: Literal["persisted", "computed"]
     rows: list[CoverageRow]
+
+
+class ColumnContract(BaseModel):
+    name: str
+
+
+class ViewContract(BaseModel):
+    name: str
+    frozen: bool
+    columns: list[ColumnContract]
+
+
+class Contract(BaseModel):
+    """The ``v_*`` view contract the running code defines (``GET /contract``)."""
+
+    contract_version: int
+    code_version: str
+    views: list[ViewContract]
+
+
+class DatabaseContract(BaseModel):
+    """What the connected database has of that contract (``GET /contract/database``)."""
+
+    schema_version: int
+    views_present: list[str]
+    views_missing: list[str]

@@ -2075,7 +2075,7 @@ approval.
    - **No production write**: the orphaned `run_id = 1` on the 14,172 edges needs no write, because `T-100`
      builds a fresh database and they disappear with the current one.
    - Send the knowledge-graph repo the commit when it lands.
-5. **`T-152`**, the view contract over the API (SPEC FR-014), right after `T-144`: two read routes in a read router,
+5. **`T-152`** (done, PR #130), the view contract over the API (SPEC FR-014), right after `T-144`: two read routes in a read router,
    metadata only. `GET /api/v1/contract` returns `contract_version` (the highest migration the code knows),
    `code_version`, and every view of `VIEWS` in order with its `frozen` flag and its columns in order, built from the
    code (the views built in an in-memory database), never from a second list. `GET /api/v1/contract/database`

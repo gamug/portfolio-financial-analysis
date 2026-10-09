@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
-from api.routers import health, portfolio, runs, scores, universe
+from api.routers import contract, health, portfolio, runs, scores, universe
 
-ALL = (health.router, runs.router, universe.router, scores.router, portfolio.router)
+ALL = (
+    health.router,
+    runs.router,
+    universe.router,
+    scores.router,
+    portfolio.router,
+    contract.router,
+)
