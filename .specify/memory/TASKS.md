@@ -646,12 +646,12 @@ that constitution AI behavior #10 asks to be approved first.
         `status = 'completed'` (join `v_cycle_run`; no view change).
       - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and
         `failed_units` in `docs/fundamental_agent.md` and the `v_analysis_run` notes.
-- [ ] **T-144** The knowledge-graph view contract, one additive change (`kg_schema` views, DDL notes and
+- [x] **T-144** — **done, PR #129.** The knowledge-graph view contract, one additive change (`kg_schema` views, DDL notes and
       `docs/kg_schema.md`). → `PLAN.md` Work item 19, step 3.
       **Moved first, 2026-10-09** (with `T-152`, ahead of Work item 8; nothing in Work item 8 changes a view).
-      Production is frozen until `T-100` and stays at `schema_version` 9: the acceptance builds the views on a
-      *copy* of it and on the pilot, and the knowledge-graph repo is told not to raise its floor above 9 for the
-      production database. `v_quant_vs_live` loses two filters, so it returns more rows: the PR lists every reader
+      Production is frozen until `T-100` and stays at `schema_version` 8 (`m009`, the veto stints, was never
+      applied to it): the acceptance builds the views on a *copy* of it and on the pilot, and the knowledge-graph
+      repo keeps its floor at or below the database's own version for the production database. `v_quant_vs_live` loses two filters, so it returns more rows: the PR lists every reader
       (today only tests, e.g. `tests/test_quant_pipeline.py`) and shows each one updated or unaffected.
       - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
         `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`,
@@ -692,10 +692,10 @@ that constitution AI behavior #10 asks to be approved first.
         `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
         names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
         rows (NULL → the cycle date).
-      - **Status (2026-10-09): implemented in PR #129 (`feat/t144-kg-view-contract`), awaiting review** (not closed: the item
-        moves to `CHANGELOG.md` with the approval commit). Marker migration is `m010` (`schema_version` 10).
+      - **Status (2026-10-09): done, PR #129** (approved 2026-10-09). Marker migration is `m010` (`schema_version` 10).
         Production's `financial.db` is at `schema_version` **8**, not 9 (`m009`, the veto stints, was never
-        applied to it); it stays frozen until `T-100`.
+        applied to it); it stays frozen until `T-100`. Work item 19 still has open tasks, so nothing moves to
+        `CHANGELOG.md`.
 - [ ] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
       `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
       Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.

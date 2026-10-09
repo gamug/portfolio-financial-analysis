@@ -2013,7 +2013,7 @@ approval.
      `v_cycle_run`; no view change).
    - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and `failed_units` in
      `docs/fundamental_agent.md` and the `v_analysis_run` notes (documentation only; no test).
-3. **`T-144`**, the knowledge-graph view contract, **one additive change** to `kg_schema`'s views (existing
+3. **`T-144`** (done, PR #129), the knowledge-graph view contract, **one additive change** to `kg_schema`'s views (existing
    columns unchanged), approved by the user 2026-10-06 as constitution AI behavior #10 requires:
    - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
      `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`
@@ -2083,7 +2083,8 @@ approval.
    The rule, documented: within one `contract_version` columns are only added; every migration raises it. Why: the
    knowledge-graph repo pins our columns by hand and its drift check needs a full checkout of this repo; with the
    routes it checks a running service, and a lagging database becomes visible. Production stays at
-   `schema_version` 9 until `T-100`.
+   `schema_version` 8 until `T-100` (`m009`, the veto stints, was never applied to it); the knowledge-graph repo
+   keeps its floor at or below the database's own version for it.
 
 **Acceptance criteria**:
 
