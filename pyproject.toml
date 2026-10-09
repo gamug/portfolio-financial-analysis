@@ -68,7 +68,7 @@ packages = [
 portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.1" }
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "scripts"]  # `scripts/sec_xcheck` is imported by tests/test_sec_xcheck_*.py
 testpaths = ["tests"]
 
 [tool.commitizen]
