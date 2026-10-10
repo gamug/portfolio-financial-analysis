@@ -554,6 +554,20 @@ def test_plans_match_what_the_real_runs_then_write(db: Database) -> None:
     assert plan_build_risk_model(settings, as_of=as_of, conn=db).model_stored
 
 
+def test_the_optimize_plan_prints_the_variant_book_key(db: Database) -> None:
+    """T-077: a dry run under --mu / --turnover-cap names the key the book will really get."""
+    as_of = _as_of(db)
+    settings = _settings(ret_estimator="carhart", turnover_cap=0.5)
+    plan = plan_optimize(settings, as_of=as_of, conn=db)
+    res = run_optimize(
+        settings.model_copy(update={"ret_estimator": "hist_mean"}), as_of=as_of, conn=db
+    )
+    assert plan.book_version == f"opt-v2.mu-carhart.to-0.5+{res.manifest_tag}"
+    assert plan_optimize(_settings(), as_of=as_of, conn=db).book_version == (
+        f"opt-v2+{res.manifest_tag}"
+    )
+
+
 def test_an_unsatisfiable_flag_exits_1_with_the_reasons(
     cli_on: Database, capsys: pytest.CaptureFixture[str]
 ) -> None:

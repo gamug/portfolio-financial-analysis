@@ -701,7 +701,7 @@ def plan_optimize(settings: QuantSettings, *, as_of: str, conn: Database) -> Dry
         manifest,
         version,
         _model_stored(conn, as_of, version),
-        manifest.book_tagged(settings.optimizer_engine_version),
+        book_engine_version(settings, manifest),
     )
 
 
