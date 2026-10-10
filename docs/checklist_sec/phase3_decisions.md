@@ -126,3 +126,62 @@ The implementation goes to **T-071**, the cycle rules task, beside D-07. It need
 **Two new defects for T-148:**
 - N19: `_LABEL_TOTAL_EXCLUDE_RE` matches "cost" but not "costs".
 - N20: ICE's derived revenue.
+
+## 9. The reviewer's round on v1.3 (2026-10-09)
+
+**Batch 1, applied** (`sec_xcheck/make_v13_part3.py`): 3.1 ID-02b (debt = 0 only with no debt line, no interest
+concept and a complete balance sheet), 3.2 L-09 (real-time net-anchor test; the ex-post audit only reports), 3.3
+L-10 / DQ-01 (rounding term 0.5 × unit × terms), 3.5 MET-03 (robustness at both rates), D-13 in Scope, C13–C15
+registered. **Batch 2, applied** (`sec_xcheck/make_v13_part4.py`): 3.4 (MD-02, MD-35, MD-38; MD-03 already netted short-term
+investments), PER-10 and L-11, the changes table. **Next:** the reviewer's final round and the freeze.
+
+**D-13, regulated utilities (decided by the user, 2026-10-09).** Exempt GICS Electric, Gas, Multi- and Water
+Utilities from `NEGATIVE_FCF`; HARD veto instead when CFO pre-WC / total debt < 5% (Moody's scorecard, C13 PDF p.7:
+Ba 5%–13%, B 1%–5%). Sources, quoted from the PDFs:
+- C13 p.11: "In a sector that is typically free cash flow negative (due to large capital expenditures and dividends)"
+- C13 p.19: "the utility sector has experienced prolonged periods of negative free cash flow"
+- C13 p.14: "it captures the changes in long-term regulatory assets and liabilities"
+- C14 p.38: "The industry was able to access supportive stock and bond markets to finance over $178 billion in capital spending."
+- C15 p.2: "continued negative discretionary cash flow"
+
+Measured (agent, production copy): 20 of 25 evaluable utilities would fire `NEGATIVE_FCF`; CFO pre-WC / debt 12.2%
+to 47.7% (28 companies); 13% was rejected because CMS (12.58%) and CNP (12.16%) cross it depending on the
+working-capital definition. Implementation: `T-071`.
+
+**D-07:** re-measured after Work item 8 fixes bank revenue, then decided (user, 2026-10-09).
+
+**D-05:** the second author (CFA, "Financial Analysis Techniques") is required before the thesis annex, not before
+the freeze; the 18 "source pending" rows stay marked. The user is obtaining it.
+
+**N23 (new defect):** debt and interest concepts not captured. Of the 840 filings with no debt line, 663 are
+non-financial; 319 file a read interest concept and 177 an unread one; Real Estate is 212. ED files
+`OtherLongTermDebtCurrent` and `NotesPayableCurrent`. Goes to `T-148`, no new task.
+
+**Universe history (review point 1):** no WRDS. The data-mining repo's backfill from Wikipedia's change log, fixed and
+patched with S&P DJI press releases (its PR #49), writes `universe_history.db`; the shared `universe.db` is the
+pilot's 20-ticker universe and is not overwritten. PR #49 still needs CIKs on every interval in the window.
+
+## 10. The reviewer's final round on v1.3 (2026-10-09)
+
+**Applied** (`sec_xcheck/make_v13_part5.py`, then `quotecheck_v13.py checklist_v1.3.md --write` for the totals):
+NCI defined once in MD-02 (redeemable NCI included; CON-04's identity when no balance is filed; 0 only with no
+NCI income; otherwise a capture failure) and used by MD-35; MD-38 is an inference (Inference 14, Sourced 8); the
+pending list drops `enterprise_fcf_yield` and adds preferred stock in EV; the REIT matrix cell for
+`enterprise_fcf_yield` is NA; PER-11 measurable (92 memberships ended in the window, 86 leavers); D-13 uses the
+three-year average (C13 p.21), declares its inferences (debt definition, water by analogy, the GICS proxy, AES and
+NRG not exempt) and its asymmetry, and states the 5%–12% sensitivity.
+
+**Answered:** quotes with an ellipsis are checked fragment by fragment (`quotecheck_v13.py`, `find()`: each part
+longer than 12 characters must be found on the cited page).
+
+**D-14, REITs and `NEGATIVE_FCF` (open).** D-13's argument (negative free cash flow as the normal state, funded
+externally) applies to REITs too, and APP-04b puts acquisitions in REIT capex. To measure first: how many REITs
+`NEGATIVE_FCF` vetoes in the replay. Then decide, with sources, as for D-13.
+
+**Before `T-100` (the leavers, review point 4):** filings ingested by CIK for the 86 leavers, their type in
+`company_types.csv`, their GICS classification (L-03; the historical source is still to be chosen), and the replay
+figures (vetoes by sector, financial firms, utilities) run again on the historical universe before they go into
+the thesis. Tasks, not rule changes; recorded with the docs PR.
+
+**Done (2026-10-09): v1.3 frozen** once the URLs of C13–C15 were added to the source register (C13 is a copy filed as an exhibit
+with the CPUC; the original is Moody's "Rating Methodology: Regulated Electric and Gas Utilities", 6 August 2024).

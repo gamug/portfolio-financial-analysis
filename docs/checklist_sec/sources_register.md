@@ -4,7 +4,7 @@ This register records every source document collected for the SEC XBRL data-trea
 Location of local copies: `docs/checklist_sec/sec documentation/` (local / untracked).
 
 Baseline snapshot: **2026-10-07**
-Total documents: **53** documents plus the 11 DQC element-list files of Block B (added 2026-10-08) (updated 2026-10-08: Blocks D and E added; the earlier count of 34 predated A7, B6 and C8–C12)
+Total documents: **56** documents (C13–C15 added 2026-10-09) plus the 11 DQC element-list files of Block B (added 2026-10-08) (updated 2026-10-08: Blocks D and E added; the earlier count of 34 predated A7, B6 and C8–C12)
 
 ---
 
@@ -83,6 +83,9 @@ Total documents: **53** documents plus the 11 DQC element-list files of Block B 
 | `C10_Damodaran_Earnings_Multiples.pdf` | Damodaran, *Investment Valuation* (2nd ed.), Chapter 18: Earnings Multiples (PE, PEG, EV/EBITDA) | https://pages.stern.nyu.edu/~adamodar/pdfiles/valn2ed/ch18.pdf | Chapter 18, 59 pages; downloaded 2026-10-07 | `a864e654892586e6d0ab936c5c0777cfd7fe1a23c4b8e9bd81dffc89e1652e28` |
 | `C11_SP_DJI_Equity_Indices_Policies_Practices.pdf` | S&P Dow Jones Indices: Equity Indices Policies & Practices Methodology | spglobal.com/spdji → Methodologies | August 2026; downloaded 2026-10-07 (file renamed from `methodology-sp-equity-indices-policies-practices.pdf`) | `b36b938046a9ca2af0ec55fc04662182eede5583c166664e63d3615f326e3064` |
 | `C12_Brown_Goetzmann_Ibbotson_Ross_1992.pdf` | Brown, Goetzmann, Ibbotson & Ross (1992), "Survivorship Bias in Performance Studies", *Review of Financial Studies* 5(4) | University library | 1992, 28 pages; downloaded 2026-10-07 (file renamed from `Brown_Goetzmann_Ibbotson_Ross.pdf`) | `a98d0e7f5215c7a996396dced216caa2cb36594a3397cf77bc9fa87e151d41aa` |
+| `C13_rating methodology_regulated electric and gas utilities.pdf` | Moody's Ratings, "Rating Methodology: Regulated Electric and Gas Utilities", 6 August 2024 (copy filed as Exhibit PCF-03 in CPUC A.25-03-010, served 2025-09-02) | https://docs.cpuc.ca.gov/PublishedDocs/SupDoc/A2503010%3BA2503011%3BA2503012%3BA2503013/8476/577936956.pdf (the CPUC copy, Exhibit PCF-03; the original is Moody's Ratings' methodology of 6 August 2024, cited as such) | downloaded 2026-10-09; for D-13 | `3f17b668928f73a0c7ff3d95a9a0dab69b6f2e1732114f5b724e223609950b2b` |
+| `C14_Annual Report of the U.S. Investor-Owned.pdf` | Edison Electric Institute, "2024 Financial Review: Annual Report of the U.S. Investor-Owned Electric Utility Industry" | https://www.eei.org/-/media/Project/EEI/Documents/Issues-and-Policy/Finance-And-Tax/Financial_Review/FinancialReview_2024.pdf | downloaded 2026-10-09; for D-13 | `81cfbcc718f786bf55d35daf2192de20dcdde80f3597de32df4f83ade1495052` |
+| `C15_Essential Utilities Inc. And Subsidiaries Downgraded One Notch To 'A-' On Weakening Financial Measures; Outlook Stable.pdf` | S&P Global Ratings, "Essential Utilities Inc. And Subsidiaries Downgraded One Notch To 'A-' On Weakening Financial Measures; Outlook Stable", 19 March 2024 | https://www.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3140914 | downloaded 2026-10-09; for D-13 | `20d275dc4400f499e906066bc197b011c00d0bdc114d1e500c657f81099c3a4c` |
 
 ---
 
