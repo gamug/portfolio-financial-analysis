@@ -2326,8 +2326,6 @@ this document.** Their internal sequencing:
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
   `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
-- **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all** — after
-  Work item 8 (… → `T-071`), `T-153`, Work item 19 (`T-083` → `T-142` → `T-145`), and Work item 2 have all landed.
-  `T-100` keeps `T-153` as a prerequisite.
+- **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 
 See `TASKS.md` for the discrete, checkable task breakdown.

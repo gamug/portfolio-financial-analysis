@@ -286,7 +286,7 @@ the final pilot, `T-143`.
         the TTM reads. *D&A (N14):* `Depreciation` alone is not D&A: 878 filings (95 companies).
         *Revenue as a sum (D-02, CON-11):* a sourced map, allowed only when the components are the only revenue lines
         in the statement's revenue section (B4: "The Revenues element would be used for the total revenue (ASC 606 and
-        non-ASC 606 revenue)"); otherwise revenue stays empty. Today 73 filings (5
+        non-ASC 606 revenue)"); otherwise revenue stays empty. Today 73 filings (5 companies) take a sum.
         *T-140's rebuild (L-09, D-03b):* real-time net-anchor test (PER-01, no lookahead). An anchor is
         refused when its value less the rows between is below a revenue-concept row of the same filing and
         column (the test uses only the filing itself), not by its label; measured: it rejects ICE's 26 columns and no
@@ -644,7 +644,7 @@ the final pilot, `T-143`.
       covering T-073+T-074+T-076 together
       (~4,844 filings) — do not re-run per prompt edit; full suite green
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
-- [ ] **T-153** The historical universe (before `T-100` and after `T-149`; needed for PER-10 and PER-11;
+- [ ] **T-153** The historical universe (after `T-071`, the last task of Work item 8, and before Work item 19; a prerequisite of `T-100`; needed for PER-10 and PER-11;
       review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
       - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
         Never overwrite the pilot's `universe.db`.
@@ -903,5 +903,4 @@ upstream + `T-052`), 5 (done 2026-09-25, `T-044` deprecated), 7 (done 2026-09-25
 11 (done 2026-09-25), 13 (done 2026-09-25), 14 (done 2026-09-30), 15 (done 2026-10-01, PR #106) and 16 (done 2026-10-01) are
 closed — see `CHANGELOG.md`.
 
-**Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after
-Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2 have all landed. `T-100` keeps `T-153` as a prerequisite.
+**Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
