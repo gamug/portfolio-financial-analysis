@@ -7,7 +7,14 @@ from datetime import UTC, datetime
 
 from portfolio_common.db import Database
 
-from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit, hold_trading_days
+from cycle.rules.base import (
+    Rule,
+    RuleContext,
+    RuleResult,
+    VetoHit,
+    hold_trading_days,
+    penalty_points,
+)
 from cycle.rules.builtin import RULES
 
 __all__ = [
@@ -19,15 +26,29 @@ __all__ = [
     "disabled_rule_ids",
     "enabled_rules",
     "hold_trading_days",
+    "penalty_points",
     "seed_catalog",
+    "soft_penalties",
 ]
 
 
-def seed_catalog(conn: Database) -> None:
+def soft_penalties(default: float) -> dict[str, float]:
+    """rule_id -> points an active stint of that SOFT rule takes off the blended score."""
+    out: dict[str, float] = {}
+    for rule in RULES:
+        points = penalty_points(rule, default)
+        if points is not None:
+            out[rule.RULE_ID] = points
+    return out
+
+
+def seed_catalog(conn: Database, soft_veto_penalty: float = 15.0) -> None:
     """Insert any missing rules into ``rule_catalog``. An existing row keeps its ``enabled`` flag
     and ``created_at`` but takes the code's current ``description``/``severity``/``params_json``
     (T-070): a recalibrated rule (LIQUIDITY_DISTRESS) must not keep describing its old test in
-    ``v_rule_catalog``, which is what the live ``evaluate()`` no longer does."""
+    ``v_rule_catalog``, which is what the live ``evaluate()`` no longer does. Every rule's
+    ``params_json`` also carries ``penalty_points`` (T-070): the points its active stint costs the
+    blended score -- the rule's own, else *soft_veto_penalty* -- and ``null`` for a HARD rule."""
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     conn.executemany(
         """
@@ -37,7 +58,16 @@ def seed_catalog(conn: Database) -> None:
             description = excluded.description, severity = excluded.severity,
             params_json = excluded.params_json
         """,
-        [(r.RULE_ID, r.DESCRIPTION, r.SEVERITY, json.dumps(r.PARAMS), now) for r in RULES],
+        [
+            (
+                r.RULE_ID,
+                r.DESCRIPTION,
+                r.SEVERITY,
+                json.dumps({**r.PARAMS, "penalty_points": penalty_points(r, soft_veto_penalty)}),
+                now,
+            )
+            for r in RULES
+        ],
     )
     conn.commit()
 

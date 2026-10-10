@@ -18,7 +18,14 @@ from cycle import data
 from cycle.orchestrator import run_monitoring
 from cycle.repair import apply_undo, plan_undo
 from cycle.replay import reset_replay_range
-from cycle.rules import RuleContext, enabled_rules, hold_trading_days, seed_catalog
+from cycle.rules import (
+    RULES,
+    RuleContext,
+    enabled_rules,
+    hold_trading_days,
+    seed_catalog,
+    soft_penalties,
+)
 from cycle.rules.base import RuleResult, VetoHit
 from cycle.rules.builtin import (
     LIQUIDITY_EXEMPT_SECTORS,
@@ -765,3 +772,69 @@ def test_the_pilots_seven_healthy_names_are_no_longer_flagged() -> None:
     hits, evaluated = _liquidity(metrics, {ids[t]: s[3] for t, s in pilot.items()})
     assert hits == set()
     assert evaluated == set(ids.values())
+
+
+# -- BREAK_TREND_200 is flag-only: a per-rule penalty ------------------------------------------------
+
+
+def test_every_rules_penalty_points_are_in_the_catalog(memory_db: Database) -> None:
+    seed_catalog(memory_db, 12.5)
+    params = {
+        r["rule_id"]: json.loads(r["params_json"])
+        for r in memory_db.execute("SELECT rule_id, params_json FROM rule_catalog")
+    }
+    severity = {r.RULE_ID: r.SEVERITY for r in RULES}
+    assert set(params) == set(severity)
+    for rule_id, p in params.items():
+        assert "penalty_points" in p, rule_id
+        if severity[rule_id] == "HARD":
+            assert p["penalty_points"] is None  # excludes instead of penalizing
+    assert params["BREAK_TREND_200"]["penalty_points"] == 0.0  # flag only
+    for rule_id in ("LIQUIDITY_DISTRESS", "PRICE_CRASH", "EARNINGS_MISSING"):
+        assert params[rule_id]["penalty_points"] == 12.5  # the default: the run's soft_veto_penalty
+    assert soft_penalties(15.0)["BREAK_TREND_200"] == 0.0
+    assert soft_penalties(15.0)["PRICE_CRASH"] == 15.0
+    assert "VOLATILITY_SHOCK" not in soft_penalties(15.0)
+
+
+def test_a_trend_break_flags_but_costs_nothing_while_another_soft_rule_costs_15(
+    cycle_seed: Database,
+) -> None:
+    conn = cycle_seed
+    for day in ("2026-07-31", "2026-08-03"):
+        for a in (1, 2, 3, 4, 5):
+            _obs(
+                conn,
+                a,
+                day,
+                "priceobs-v2",
+                vol_5d=0.01,
+                vol_60d_base=0.01,
+                sma_200=120.0 if a == 2 else 90.0,  # close 100: only asset 2 is below 0.95 x SMA
+                realized_vol_90d=0.2,
+                max_drawdown_90d=-0.5 if a == 1 else -0.1,  # asset 1 trips PRICE_CRASH (< -0.35)
+            )
+    run_monitoring(_settings(conn), "2026-07-31", conn=conn)  # raises both stints
+    r2 = run_monitoring(_settings(conn), "2026-08-03", conn=conn)  # ranked with them (T-1)
+    ranking = {
+        int(r["asset_id"]): r
+        for r in conn.execute(
+            "SELECT asset_id, blended_score, components_json, veto_rules_json FROM cycle_ranking "
+            "WHERE cycle_run_id = ?",
+            (r2.cycle_run_id,),
+        )
+    }
+
+    def base(asset: int) -> float:
+        parts = [v for v in json.loads(ranking[asset]["components_json"]).values() if v is not None]
+        return float(sum(parts) / len(parts))
+
+    assert "BREAK_TREND_200" in json.loads(ranking[2]["veto_rules_json"])  # flagged ...
+    assert ranking[2]["blended_score"] == pytest.approx(base(2))  # ... and not penalized
+    assert "PRICE_CRASH" in json.loads(ranking[1]["veto_rules_json"])
+    assert ranking[1]["blended_score"] == pytest.approx(base(1) - 15.0)  # another SOFT rule: 15
+    # the stint and its evidence are on record for review and the knowledge graph
+    row = conn.execute(
+        "SELECT severity, evidence_json FROM v_veto WHERE rule_id = 'BREAK_TREND_200' AND asset_id = 2"
+    ).fetchone()
+    assert row["severity"] == "SOFT" and json.loads(row["evidence_json"])["sma_200"] == 120.0

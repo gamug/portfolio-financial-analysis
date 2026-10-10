@@ -34,6 +34,7 @@ from cycle.rules import (
     enabled_rules,
     hold_trading_days,
     seed_catalog,
+    soft_penalties,
 )
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
@@ -526,7 +527,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     "first"
                 )
             report.veto_backdated_bypassed = veto_backdated_reason
-            seed_catalog(conn)
+            seed_catalog(conn, settings.soft_veto_penalty)
             ctx = RuleContext(
                 cycle_date=cycle_date,
                 metrics={a: metrics.get(a, {}) for a in asset_ids},
@@ -598,10 +599,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             )
             if unscored_reason is not None:
                 raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
+            # each SOFT rule's own points (BREAK_TREND_200 is flag-only: 0), else the run's default
+            default = settings.soft_veto_penalty
+            points = soft_penalties(default)
             scored = []
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
-                penalty = settings.soft_veto_penalty * len(soft.get(a, []))
+                penalty = sum(points.get(rid, default) for rid in soft.get(a, []))
                 scored.append((a, base - penalty, parts))
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []

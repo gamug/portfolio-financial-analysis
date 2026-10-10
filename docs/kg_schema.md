@@ -332,9 +332,14 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   `configured_weight` over the sum of the configured weights of that row's non-null components,
   so the row's effective weights sum to 1 (NULL when that sum is 0). The identity, for a row with
   at least one component:
-  `blended_score = sum(effective_weight * component_value) - soft_veto_penalty * (SOFT vetoes)`,
-  where `soft_veto_penalty` is the run's (`v_weight_scheme.soft_veto_penalty`) and the SOFT vetoes
-  are the `veto_rules_json` entries other than `HARD` and `UNSCORED`.
+  `blended_score = sum(effective_weight * component_value) - sum(penalty_points of the row's SOFT rules)`,
+  where the SOFT rules are the `veto_rules_json` entries other than `HARD` and `UNSCORED`, and a rule's
+  `penalty_points` is `v_rule_catalog.params_json` `$.penalty_points` (T-070): the points an active stint
+  of that rule takes off the score. It is the run's `soft_veto_penalty` (`v_weight_scheme.soft_veto_penalty`,
+  15 by default) for every SOFT rule except **`BREAK_TREND_200`, which declares 0** (flag-only: its stints
+  stay in `v_veto`, it subtracts nothing); `null` on a HARD rule (it excludes instead). A rule absent from
+  the catalog costs the run's `soft_veto_penalty`. So the penalty is no longer "15 × the number of SOFT
+  vetoes" (`tests/test_kg_view_contract.py` pins the identity with a `BREAK_TREND_200` hit).
 
 ### Columns added to existing views
 
@@ -374,8 +379,8 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 
 ### Definitions
 
-- **`blended_score`** is 0-100 minus the run's `soft_veto_penalty` (15 by default) per SOFT veto, so
-  it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
+- **`blended_score`** is 0-100 minus the active SOFT rules' `penalty_points` (15 each by default, 0 for the
+  flag-only `BREAK_TREND_200`), so it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
   mean over the non-null components, i.e. weights renormalized (`effective_weight` above).
 - **`normalized_score`** is `50 + 10z` over the cohort (z against the 2%-winsorized mean and standard
   deviation), clamped to [0, 100]; the same function for SECTOR. The cohort mean is near 50, not

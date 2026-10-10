@@ -361,11 +361,16 @@ class _LiquidityRule:
 
 @dataclass
 class _TrendBreakRule:
-    """BREAK_TREND_200 (SOFT, T-070): the close is more than 5% under its 200-day simple moving
-    average. SOFT, not HARD: a HARD veto here would purge half the index in any broad pullback."""
+    """BREAK_TREND_200 (SOFT, flag-only, T-070): the close is more than 5% under its 200-day simple
+    moving average. SOFT, not HARD: a HARD veto here would purge half the index in any broad
+    pullback. It also takes **no points** off the blended score (``PENALTY_POINTS = 0``): it
+    fires on about a fifth of the index on a typical day (up to 72%), the 15-point penalty would
+    dominate the ranking, and it repeats the trend TECHNICAL v2 already scores (12-1 momentum,
+    drawdown). Its stints and evidence stay in ``veto`` / ``v_veto`` for review."""
 
     RULE_ID = "BREAK_TREND_200"
     SEVERITY = "SOFT"
+    PENALTY_POINTS = 0.0
     DESCRIPTION = "close below 95% of the 200-day simple moving average"
     ratio: float = 0.95
 

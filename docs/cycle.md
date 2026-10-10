@@ -55,7 +55,7 @@ isolated the way `portfolio_position` is (above). A temporal stint's `expires_on
 **Veto lifecycle (T-125).** `veto` holds stints (`raised_on`/`cleared_on`/`last_seen_on`), not
 per-cycle-date events: a HARD veto clears the first cycle its rule re-evaluates the asset and
 finds it no longer breached (rather than staying permanent once raised), and a SOFT veto held
-across many cycles is one open stint, charged `soft_veto_penalty` once, not once per cycle. A
+across many cycles is one open stint, charged its rule's penalty (`soft_veto_penalty` unless the rule declares its own) once, not once per cycle. A
 rule that could not evaluate an asset this cycle (missing data) leaves any open stint untouched
 — never mistaken for "cleared." `kg_schema.queries.veto_out_of_order_reason` refuses a cycle
 date older than the latest veto transition already recorded, unless `--allow-backdated-veto` —
@@ -101,7 +101,7 @@ date is not evaluated (a halted or delisted name would otherwise be re-confirmed
 
 | Rule | Severity | Fires when (all must hold) |
 |---|---|---|
-| `BREAK_TREND_200` | SOFT | `close < 0.95 · sma_200` |
+| `BREAK_TREND_200` | SOFT, **flag-only** (0 penalty points) | `close < 0.95 · sma_200` |
 | `VOLATILITY_SHOCK` | HARD, temporal (10 sessions) | **absolute** `vol_5d / vol_60d_base > 2.5` AND **relative** `ratio > 2.5 · median(ratio of the name's GICS sector)` |
 | `CRASH_Z_SCORE` | HARD, temporal (10 sessions) | **absolute** `z = (ret_5d − 5·mu_60d_base) / (vol_60d_base·√5) < −2.5` AND **relative** `(ret_5d − median(ret_5d of the name's GICS sector)) / (vol_60d_base·√5) < −2.5` |
 
@@ -110,6 +110,17 @@ here with the daily baseline scaled to 5 days (mean × 5, sd × √5, independen
 agree. The relative leg is in the same units: the gap to the sector's median 5-day return, over the name's own
 `vol_60d_base·√5`. **Both legs are required** for both rules, and each rule's `PARAMS` in `rule_catalog`
 carries the formulas, thresholds and the fallback below.
+
+**`BREAK_TREND_200` is flag-only (review decision on PR #134).** It stays a SOFT rule with its stints and
+evidence in `veto` / `v_veto`, but it takes nothing off the blended score. It fires on about 21% of the index
+on a typical day (median 105 names of 503, up to 72%), a 15-point penalty on that many names dominates the
+ranking (pilot blended-rank Spearman 0.87 -> 0.50 against the old code with it), and it repeats the trend
+TECHNICAL v2 already scores (12-1 momentum, drawdown). Mechanism: each rule may declare `PENALTY_POINTS`
+(`rules.base.penalty_points`); the default is `settings.soft_veto_penalty` for every SOFT rule, `BREAK_TREND_200`
+declares 0, and `seed_catalog` writes every rule's `penalty_points` into `rule_catalog.params_json` (HARD
+rules: `null`). `rank` sums the active SOFT rules' points (`soft_penalties`), so the read contract's identity
+is `sum(effective_weight x component) - sum(penalty_points) = blended_score` (`docs/kg_schema.md`). The
+flagged name is still listed as SOFT-vetoed in `veto_rules_json` (and a pinned one is reported as flagged).
 
 **The sector group.** The names the rule evaluates that day (it has the inputs, and the observation is
 fresh) and that share the name's GICS sector (today's sector, checklist L-03). A sector with fewer than 5 such
@@ -179,7 +190,7 @@ by default | `equal` | `score_proportional` | `inverse_vol`), `max_name_weight` 
 derived — `1.5/n_held` for `score_tilt`, 0.10 for the legacy schemes; an explicit value wins, which
 is why the default is `None`: a `0.10` default would silently override `1.5/N`),
 `max_sector_weight` (.30), the **preferences** `pins`, `exclude`, `exclude_sectors` (tuples of
-names, empty by default) and `only_sectors` (`None` = every sector), `soft_veto_penalty` (15 pts),
+names, empty by default) and `only_sectors` (`None` = every sector), `soft_veto_penalty` (15 pts: the default points an active SOFT stint takes off the blended score; a rule may declare its own `penalty_points`, 0 for `BREAK_TREND_200`),
 `observation_engine_version` (`priceobs-v2`, T-070: the one `price_observation` version read),
 `unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of the universe
 with no FUNDAMENTAL score at all, up to and including 100%, PR #99 review).
@@ -459,8 +470,8 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
   minus that mean → a `score_snapshot` row of type `SECTOR` (`SectorRelativeMomentum`;
   negative = lagging its sector). Not in the blend — a standalone observation.
 - **rank** — blended score = weighted mean of available `normalized_score`s
-  (weights renormalized over present types), minus `soft_veto_penalty` per active
-  SOFT veto. T-1 HARD-veto assets are marked `vetoed` (excluded from selection). An asset
+  (weights renormalized over present types), minus each active SOFT veto's `penalty_points`
+  (`soft_veto_penalty` by default; 0 for the flag-only `BREAK_TREND_200`, T-070). T-1 HARD-veto assets are marked `vetoed` (excluded from selection). An asset
   with no FUNDAMENTAL score at all (not merely a stale one) is marked `vetoed` with an
   `"UNSCORED"` `veto_rules` entry immediately, this same cycle — not through the T-1 lag, and
   not a SOFT veto/`veto` table row (T-119, PR #78 review); it still appears in `cycle_ranking`,

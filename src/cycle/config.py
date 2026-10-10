@@ -45,7 +45,7 @@ class CycleSettings(BaseModel):
     exclude: tuple[str, ...] = ()
     exclude_sectors: tuple[str, ...] = ()
     only_sectors: tuple[str, ...] | None = None
-    soft_veto_penalty: float = 15.0  # points knocked off blended score per active soft veto
+    soft_veto_penalty: float = 15.0  # points off the blended score per active SOFT veto, unless the rule declares its own (T-070)
     # T-070: the one price_observation engine version the cycle reads (TECHNICAL v2 and the three
     # price vetoes need priceobs-v2's columns). Never "latest per day": a date holding rows of two
     # versions would mix them.

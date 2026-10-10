@@ -93,7 +93,11 @@ Projection semantics
                           (``v_weight_component``) and the effective weight (configured over
                           the sum of the row's non-null components' weights), so that
                           sum(effective_weight * component_value) - the SOFT-veto penalty =
-                          ``blended_score`` (T-144).
+                          ``blended_score`` (T-144). The penalty is the sum, over the row's SOFT
+                          rules (``veto_rules_json`` entries other than HARD / UNSCORED), of each
+                          rule's ``penalty_points`` (``v_rule_catalog.params_json``; the run's
+                          ``soft_veto_penalty`` where a rule declares none): 15 for most, 0 for the
+                          flag-only ``BREAK_TREND_200`` (T-070), not 15 x their count.
 ``v_weight_scheme``       one row per ``cycle_run`` that recorded a blend: the scheme id and
                           the scalar knobs (``top_n``, name/sector caps, soft-veto penalty).
                           ``cycle_date`` is the scheme's effective date -- a later run with a

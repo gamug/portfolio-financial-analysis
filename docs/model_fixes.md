@@ -5367,7 +5367,7 @@ never used: the observations were rebuilt from `price_daily` with the current co
   `price_observation` stays the one source), 253 closes. **Declared**: the sector is today's GICS sector (L-03); a sector with fewer than 5 names
   *with that signal* uses the whole cross-section's mean and sd (at the pilot's 20 names sector-Z alone is degenerate); population sd; no winsorizing
   inside the sector stage (the `normalize` step still winsorizes the final raw); zero spread → z = 0.
-- **Three vetoes** (`cycle/rules/builtin.py`): `BREAK_TREND_200` (SOFT, `close < 0.95·sma_200`); `VOLATILITY_SHOCK` and `CRASH_Z_SCORE` (HARD-temporal).
+- **Three vetoes** (`cycle/rules/builtin.py`): `BREAK_TREND_200` (SOFT, `close < 0.95·sma_200`, **flag-only**: see "PR #134 review" below); `VOLATILITY_SHOCK` and `CRASH_Z_SCORE` (HARD-temporal).
   **Declared**: the crash score's units (below); an observation older than 7 calendar days is not evaluated; the sector group is the names the rule
   evaluates that day, with the < 5 → cross-section fallback.
 - **Temporal semantics** (`cycle/writers.py`, `cycle/replay.py`): see `docs/cycle.md`, "Price vetoes and TECHNICAL v2". `expires_on` = raised + 10 sessions;
@@ -5448,6 +5448,17 @@ Stints: `VOLATILITY_SHOCK` 2,002 (4 open, 9 extended; length median and p90 10 s
 `BREAK_TREND_200` 8,066 (188 open; median 3, p90 41, max 351 sessions). The headroom is thin on the busiest days (19.7% against the 20% line) and this is the
 daily cadence, the worst case for the hold; at weekly cycles the maximum is 14.9%.
 
+### PR #134 review: `BREAK_TREND_200` becomes flag-only
+
+Decided by the user in review. `BREAK_TREND_200` stays a SOFT rule with its stints and evidence in `veto` / `v_veto` (for review and the knowledge graph) but **subtracts nothing** from the
+blended score. Reason: it fires on about 21% of the index on a typical day (median 105 of 503, up to 72%), the 15-point penalty dominated the ranking (pilot blended-rank Spearman against the
+old code 0.87 components-only → 0.50 with it), and it repeats the price trend TECHNICAL v2 already scores (12-1 momentum, drawdown). Mechanism: a per-rule penalty -- `PENALTY_POINTS` on a
+rule (`rules.base.penalty_points`), default `settings.soft_veto_penalty` (15) for every SOFT rule, 0 for `BREAK_TREND_200`; `seed_catalog` writes `penalty_points` into every rule's
+`rule_catalog.params_json` (`null` on HARD rules) so `v_rule_catalog` shows it; `rank` charges the sum of the active SOFT rules' points. No schema change. The read contract's identity is
+`sum(effective_weight × component) − Σ penalty_points of the row's SOFT rules = blended_score`, no longer `soft_veto_penalty × count` (`views.py`, `docs/kg_schema.md`; pinned with a
+`BREAK_TREND_200` hit in `tests/test_kg_view_contract.py`). Tests (`tests/test_price_vetoes.py`): a `BREAK_TREND_200` stint leaves `blended_score` equal to the components-only blend while a
+`PRICE_CRASH` stint still costs exactly 15, and every rule's `penalty_points` is in `params_json`. The pilot end-to-end comparison (b) below was re-run with it.
+
 ### Verification
 
 **Closes are split-adjusted** (checked before relying on them): NVDA 2024-06-10 (10:1) 120.99 → 120.89 → 121.79 → 120.91 (06-06 … 06-11); AVGO 2024-07-15 (10:1)
@@ -5474,12 +5485,14 @@ Q2 0.43 (0.01), Q3 0.56 (0.30). Per-date values: `/tmp/t070/out_pilot/compare_te
 | blended rank, old vs new code | median | min |
 |---|---|---|
 | Spearman of the components-only blend (no penalties, no vetoes: the TECHNICAL v2 effect alone) | 0.87 | 0.54 |
-| Spearman of `blended_score` (after the 15-point SOFT penalties) | 0.50 | 0.06 |
+| Spearman of `blended_score` (after the SOFT penalties; `BREAK_TREND_200` flag-only) | **0.56** | **0.18** |
+| same, with `LIQUIDITY_DISTRESS`'s 15 points handed back on both sides (TECHNICAL v2 + the new rules alone) | 0.89 | 0.54 |
 | Jaccard overlap of the selected book | 1.00 | 0.75 |
 
-The book changes little (18 eligible of 30 requested names, so the book holds every eligible name -- membership is decided by eligibility and HARD vetoes, ordering moves), but
-the blended ordering moves a lot, and most of it is the SOFT penalties: `LIQUIDITY_DISTRESS` drops the seven chronic flags and `BREAK_TREND_200` (125 stints) takes their place
-(names carrying any veto flag per date: median 7 old, 7 new). HARD-vetoed names per date: median 1 → 2, max 6 of 20.
+(Before the review decision `BREAK_TREND_200` cost 15 points and the blended Spearman was 0.50, min 0.06.) The book changes little (18 eligible of 30 requested names, so the book holds every eligible
+name -- membership is decided by eligibility and HARD vetoes, ordering moves). The ordering that does move is the deliberate `LIQUIDITY_DISTRESS` recalibration: the old rule penalized the seven chronic
+flags by 15 points each (names carrying a penalizing SOFT flag per date: median 6, max 10 old; median 0, max 2 new); with that handed back the rank correlation is 0.89. HARD-vetoed names per date:
+median 1 → 2, max 6 of 20.
 
 *Vetoes, old → new* (stints over the 144 dates; open at the end): `LIQUIDITY_DISTRESS` 14 (7 open) → **1** (0 open); `PRICE_CRASH` 8 (0) → 8; `LEVERAGE_EXTREME` 3 (1), `DATA_QUALITY` 2 (1), `NEGATIVE_FCF`
 1 (0) unchanged; new: `BREAK_TREND_200` 125 (8 open: MCD, STZ, NEE, UDR, CPT, SBAC, APO, WFC), `VOLATILITY_SHOCK` 25 (0 open), `CRASH_Z_SCORE` 25 (0 open).

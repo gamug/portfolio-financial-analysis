@@ -61,6 +61,16 @@ class Rule(Protocol):
     def evaluate(self, ctx: RuleContext) -> RuleResult: ...
 
 
+def penalty_points(rule: object, default: float) -> float | None:
+    """The points a SOFT rule's active stint takes off the blended score (T-070): its own
+    ``PENALTY_POINTS`` when it declares one (``0.0`` = flag only), else *default* (the run's
+    ``soft_veto_penalty``). ``None`` for a HARD rule, which excludes instead of penalizing."""
+    if getattr(rule, "SEVERITY", None) != "SOFT":
+        return None
+    declared = getattr(rule, "PENALTY_POINTS", None)
+    return float(declared) if declared is not None else default
+
+
 def hold_trading_days(rule: object) -> int | None:
     """A temporal rule's hold, in NYSE trading days (T-070): its stint cannot clear before
     ``raised_on`` plus this many sessions. ``None`` on every other rule."""
