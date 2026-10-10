@@ -419,7 +419,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 | `corporate_action` | dividends / splits (the pricing gateway only; legacy derived rows are unread history) | `UNIQUE(asset_id, action_type, ex_date, engine_version)` |
 | `quant_return_daily` | total-return daily series (dividends folded in) | `UNIQUE(asset_id, obs_date, engine_version)` |
 | `risk_free_rate` / `benchmark_series` | rf curve + benchmark index for `quant/` | `UNIQUE(curve, rate_date, engine_version)` / `UNIQUE(benchmark, obs_date, engine_version)` |
-| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model; `model_version` = base + manifest tag (`rm-v1+3f9a1c2b`, T-090) | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
+| `quant_risk_model` / `quant_expected_return` / `quant_covariance` | Markowitz μ / Σ per as-of model; `model_version` = base + manifest tag (`rm-v2+3f9a1c2b`, T-090; `rm-v1` before T-077) | `UNIQUE(as_of, model_version)` / `…(model_id, asset_id, mu_model)` / `…(model_id, asset_id_i, asset_id_j)` |
 | `quant_portfolio` / `quant_position` / `quant_frontier_point` | optimized benchmark books + frontier; `engine_version` = base + manifest tag (`opt-v1+3f9a1c2b`), `manifest_json` records the inputs | `UNIQUE(as_of, kind, frontier_k, engine_version)` / `…(portfolio_id, asset_id, valid_from)` / `…(model_id, k)` |
 | `quant_benchmark_performance` | forward realized / active return of a frozen book | `UNIQUE(portfolio_id, date, engine_version)` |
 
