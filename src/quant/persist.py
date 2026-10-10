@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 import numpy as np
-from portfolio_common.db import Database, DatabaseError
+from portfolio_common.db import Database, DatabaseError, Row
 
 from kg_schema import connect
 from kg_schema.market_cap import MarketCapResult, market_caps_as_of
@@ -24,11 +24,18 @@ from quant.db import (
     insert_frontier_points,
     insert_portfolio,
     insert_risk_model,
+    load_book_weights,
     load_covariance,
     load_expected_returns,
+    load_previous_book,
     load_risk_model,
     load_sector_of,
     sync_positions,
+)
+from quant.factors import (
+    FactorCoverageError,
+    carhart_expected_returns,
+    load_factors,
 )
 from quant.manifest import QuantManifest, resolve_quant_manifest
 from quant.objective import ObjectiveContext, objective_param, resolve_objectives
@@ -44,6 +51,14 @@ from quant.risk import (
     sample_covariance,
 )
 from quant.state import fail_run, finish_run, merge_run_params, open_run
+from quant.turnover import (
+    DEFAULT_ESTIMATOR,
+    PreviousBook,
+    book_engine_version,
+    check_turnover_cap,
+    plan_turnover,
+    turnover_between,
+)
 from quant.universe import settings_gate
 
 _W_EPS = 1e-6  # sparsify: drop near-zero weights from the stored book
@@ -62,6 +77,7 @@ class RiskModelResult:
     stale_prices_bypassed: str | None = None  # T-110: why, if --allow-stale-prices overrode it
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
     market_cap_coverage: dict[str, Any] = field(default_factory=dict)  # T-132: caps and their age
+    carhart: dict[str, Any] = field(default_factory=dict)  # T-077: the regression, or why none
 
 
 def _covariance(settings: QuantSettings, panel: ReturnPanel) -> tuple[np.ndarray, float | None]:
@@ -138,27 +154,67 @@ def _market_caps(
     return caps, coverage
 
 
-def _expected_returns(
+def _carhart(
+    settings: QuantSettings, panel: ReturnPanel, *, rf: float, as_of: str
+) -> tuple[dict[int, float] | None, dict[str, Any]]:
+    """The Carhart mu for the panel (T-077), or ``None`` plus the reason when the factor data does
+    not cover it. A file that is not the pinned one (:class:`FactorIntegrityError`) is not caught:
+    the build fails rather than estimating from data it cannot vouch for."""
+    try:
+        data = load_factors(as_of, settings.factors_dir)
+        res = carhart_expected_returns(
+            panel.returns,
+            panel.dates,
+            panel.asset_ids,
+            data,
+            rf_annual=rf,
+            periods_per_year=settings.periods_per_year,
+            min_obs=settings.carhart_min_obs,
+            premia_start=settings.carhart_premia_start,
+        )
+    except FactorCoverageError as exc:
+        return None, {"unavailable": str(exc)}
+    return dict(zip(panel.asset_ids, res.mu.tolist(), strict=True)), res.record
+
+
+def _expected_returns(  # noqa: PLR0913 - the panel inputs plus keyword-only rf / as-of
     settings: QuantSettings,
     panel: ReturnPanel,
     sigma: np.ndarray,
     caps: np.ndarray,
     *,
     rf: float,
-) -> dict[str, dict[int, float]]:
-    """All three estimators are total returns (T-109): ``hist_mean``/``james_stein`` are means
+    as_of: str,
+) -> tuple[dict[str, dict[int, float]], dict[str, Any]]:
+    """All the estimators are total returns (T-109): ``hist_mean``/``james_stein`` are means
     of the panel's own total-return series, so ``equilibrium`` must add back *rf* -- otherwise
     it stores the excess return ``lambda*Sigma*w_mkt`` alone, and every downstream Sharpe/
-    tangency (which subtracts *rf* once, expecting a total-return mu) would subtract it twice."""
+    tangency (which subtracts *rf* once, expecting a total-return mu) would subtract it twice.
+    ``carhart`` (T-077) is ``rf`` plus the factor premia times the shrunk betas, the same
+    convention. Returns the mu by estimator and the Carhart record (the regression, or why it
+    is missing)."""
     ppy = settings.periods_per_year
     hist = historical_mean(panel.returns, periods_per_year=ppy)
     js = james_stein_mean(panel.returns, periods_per_year=ppy)
     eq = equilibrium_returns(sigma, caps, risk_aversion=settings.equilibrium_risk_aversion, rf=rf)
-    return {
+    out = {
         "hist_mean": dict(zip(panel.asset_ids, hist.tolist(), strict=True)),
         "james_stein": dict(zip(panel.asset_ids, js.tolist(), strict=True)),
         "equilibrium": dict(zip(panel.asset_ids, eq.tolist(), strict=True)),
     }
+    carhart, record = _carhart(settings, panel, rf=rf, as_of=as_of)
+    if carhart is not None:
+        out["carhart"] = carhart
+    return out, record
+
+
+def _model_manifest_json(manifest: QuantManifest, carhart: dict[str, Any]) -> str:
+    """The manifest the risk model stores: the input versions plus the Carhart factor file and
+    regression (T-077). The factor block is not part of the tag -- the files are vendored, so the
+    code version pins them -- but a model records which it used."""
+    return json.dumps(
+        {**manifest.record(), "carhart": carhart}, sort_keys=True, separators=(",", ":")
+    )
 
 
 def run_build_risk_model(
@@ -228,7 +284,10 @@ def run_build_risk_model(
                     ).record()
                 },
             )
-            mu_by_model = _expected_returns(settings, panel, sigma, caps, rf=rf.annualized_rate)
+            mu_by_model, carhart = _expected_returns(
+                settings, panel, sigma, caps, rf=rf.annualized_rate, as_of=as_of
+            )
+            merge_run_params(conn, run_id, {"carhart": carhart})
 
             spec = {
                 "asset_ids": panel.asset_ids,
@@ -256,9 +315,14 @@ def run_build_risk_model(
                         {**settings.model_dump(mode="json"), "market_caps": coverage}, default=str
                     ),
                     quant_run_id=run_id,
-                    manifest_json=manifest.json(),
+                    manifest_json=_model_manifest_json(manifest, carhart),
                 ),
             )
+            if "carhart" not in mu_by_model:  # a rebuild must not leave an earlier carhart behind
+                conn.execute(
+                    "DELETE FROM quant_expected_return WHERE model_id = ? AND mu_model = 'carhart'",
+                    (model_id,),
+                )
             insert_expected_returns(conn, model_id, mu_by_model)
             cov_rows = insert_covariance(conn, model_id, panel.asset_ids, sigma) if store_cov else 0
             finish_run(conn, run_id)
@@ -278,6 +342,7 @@ def run_build_risk_model(
             stale_prices_bypassed=stale_reason,
             dirty_tree_bypassed=dirty_reason,
             market_cap_coverage=coverage,
+            carhart=carhart,
         )
     finally:
         if owns:
@@ -366,12 +431,70 @@ def _target_vol(
     return mv.expected_vol * 1.25
 
 
-def run_optimize(
+class MuUnavailable(RuntimeError):
+    """``optimize --mu X`` was asked of a risk model that holds no (or an incomplete) ``X`` mu."""
+
+
+def _expected_return_vector(
+    conn: Database, model: Row | None, model_id: int, ids: list[int], estimator: str
+) -> np.ndarray:
+    """The stored mu of *estimator* for the panel *ids*, or :class:`MuUnavailable` saying why not
+    (T-077: ``carhart`` is missing from an ``rm-v1`` model, and from a model whose factor data did
+    not cover the as-of)."""
+    mu_map = load_expected_returns(conn, model_id, estimator)
+    missing = [a for a in ids if a not in mu_map]
+    if not missing:
+        return np.array([mu_map[a] for a in ids], dtype=np.float64)
+    version = model["model_version"] if model else "?"
+    head = f"--mu {estimator}: risk model {version} @ {model['as_of'] if model else '?'}"
+    if len(missing) < len(ids):
+        raise MuUnavailable(f"{head} has no {estimator} mu for {len(missing)} of {len(ids)} assets")
+    if estimator == "carhart":
+        carhart: dict[str, Any] = {}
+        if model and model["manifest_json"]:
+            carhart = json.loads(model["manifest_json"]).get("carhart") or {}
+        if carhart.get("unavailable"):
+            raise MuUnavailable(
+                f"{head} has no carhart expected returns: {carhart['unavailable']}. Equilibrium, "
+                "james_stein and hist_mean are available on it"
+            )
+        raise MuUnavailable(
+            f"{head} has no carhart expected returns (built before T-077, whose models are "
+            "rm-v1); rebuild it with build-risk-model under rm-v2"
+        )
+    raise MuUnavailable(f"{head} has no {estimator} expected returns")
+
+
+def _book_manifest_json(manifest: QuantManifest, settings: QuantSettings) -> str:
+    """The manifest a book stores. A non-default estimator or a turnover cap is added to it (not to
+    the tag), so a default book's stored manifest is byte-identical to what it always was."""
+    record = dict(manifest.record())
+    if settings.ret_estimator != DEFAULT_ESTIMATOR:
+        record["ret_estimator"] = settings.ret_estimator
+    if settings.turnover_cap is not None:
+        record["turnover_cap"] = settings.turnover_cap
+    return json.dumps(record, sort_keys=True, separators=(",", ":"))
+
+
+def _previous_book(
+    conn: Database, *, kind: str, engine_version: str, before: str
+) -> PreviousBook | None:
+    """The newest earlier book of this chain (T-077) and its weights."""
+    found = load_previous_book(
+        conn, kind=kind, frontier_k=None, engine_version=engine_version, before=before
+    )
+    if found is None:
+        return None
+    return PreviousBook(found[0], found[1], load_book_weights(conn, found[0]))
+
+
+def run_optimize(  # noqa: PLR0915 - one linear orchestration, like run_build_risk_model
     settings: QuantSettings,
     *,
     as_of: str,
     conn: Database | None = None,
 ) -> OptimizeRunResult:
+    check_turnover_cap(settings.turnover_cap)
     owns = conn is None
     conn = conn or connect(settings.db_path)
     try:
@@ -412,11 +535,10 @@ def run_optimize(
                     "no stored covariance for this risk model; "
                     "re-run build-risk-model without --no-store-cov"
                 )
-            mu_map = load_expected_returns(conn, model_id, settings.ret_estimator)
-            mu = np.array([mu_map[a] for a in ids], dtype=np.float64)
             rm = load_risk_model(
                 conn, as_of=as_of, model_version=_model_version(settings, manifest)
             )
+            mu = _expected_return_vector(conn, rm, model_id, ids, settings.ret_estimator)
             rf = (
                 float(rm["rf_annual"])
                 if rm and rm["rf_annual"] is not None
@@ -425,12 +547,13 @@ def run_optimize(
             sector_of = load_sector_of(conn, ids)
             caps = effective_caps(settings, ids, sector_of)
             merge_run_params(conn, run_id, {"caps": caps.record()})
+            # the turnover cap is bound per book (each objective has its own previous book), so
+            # the shared constraints carry none; the target vol and the frontier are set without it
             cons = Constraints(
                 max_name_weight=caps.max_name_weight,
                 min_name_weight=settings.min_name_weight,
                 max_sector_weight=caps.max_sector_weight,
                 sector_of=sector_of,
-                turnover_cap=settings.turnover_cap,
                 asset_ids=ids,
             )
             tv = _target_vol(settings, sigma, mu, cons)
@@ -442,10 +565,34 @@ def run_optimize(
                 target_volatility=tv,
                 solver=settings.solver,
             )
+            engine_version = book_engine_version(settings, manifest)
 
             books: dict[str, int] = {}
             for name, build in resolve_objectives(settings.objectives):
-                res = build(ctx)
+                previous = _previous_book(
+                    conn, kind=name, engine_version=engine_version, before=as_of
+                )
+                plan = plan_turnover(
+                    cons,
+                    ids,
+                    previous,
+                    settings.turnover_cap,
+                    applies=name != "risk_parity",
+                    solver=settings.solver,
+                )
+                res = build(replace(ctx, constraints=plan.constraints))
+                held = {
+                    ids[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS
+                }
+                realized = turnover_between(held, previous.weights) if previous else None
+                book_params: dict[str, Any] = caps.record()
+                if plan.relaxation is not None:
+                    book_params["relaxations"] = [
+                        *book_params["relaxations"],
+                        asdict(plan.relaxation),
+                    ]
+                book_params["ret_estimator"] = settings.ret_estimator
+                book_params["turnover"] = {**plan.record, "realized": realized}
                 pid = insert_portfolio(
                     conn,
                     PortfolioRow(
@@ -459,20 +606,16 @@ def run_optimize(
                         sharpe=res.sharpe,
                         rf_annual=rf,
                         n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
-                        engine_version=manifest.book_tagged(settings.optimizer_engine_version),
+                        engine_version=engine_version,
+                        turnover=realized,
                         target_param=objective_param(name, ctx),
                         model_id=model_id,
                         quant_run_id=run_id,
-                        manifest_json=manifest.json(),
-                        params_json=json.dumps(caps.record(), separators=(",", ":")),
+                        manifest_json=_book_manifest_json(manifest, settings),
+                        params_json=json.dumps(book_params, separators=(",", ":")),
                     ),
                 )
-                sync_positions(
-                    conn,
-                    pid,
-                    as_of,
-                    {ids[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS},
-                )
+                sync_positions(conn, pid, as_of, held)
                 books[name] = pid
 
             frontier_points = 0

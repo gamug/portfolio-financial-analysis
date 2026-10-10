@@ -356,7 +356,7 @@ def test_corpact_pins_one_engine_and_ignores_history(db: Database) -> None:
 def test_the_risk_model_is_constrained_among_models_over_the_same_inputs(db: Database) -> None:
     as_of = _as_of(db)
     run_build_risk_model(_settings(), as_of=as_of, conn=db)
-    run_build_risk_model(_settings(risk_model_version="rm-v2"), as_of=as_of, conn=db)
+    run_build_risk_model(_settings(risk_model_version="rm-v3"), as_of=as_of, conn=db)
 
     default = run_optimize(_settings(), as_of=as_of, conn=db)
     newest = run_optimize(_settings(risk_model_select="latest"), as_of=as_of, conn=db)
@@ -370,11 +370,11 @@ def test_the_risk_model_is_constrained_among_models_over_the_same_inputs(db: Dat
         if k["engine_version"].endswith(newest.manifest_tag)
     ]
     assert all(
-        m["risk_model"] == "rm-v2" and m["constraints"] == {"risk_model": "latest"} for m in rm2
+        m["risk_model"] == "rm-v3" and m["constraints"] == {"risk_model": "latest"} for m in rm2
     )
 
     with pytest.raises(VersionError, match="run build-risk-model first"):
-        resolve_quant_manifest(db, _settings(risk_model_select=">=rm-v3"), optimize_as_of=as_of)
+        resolve_quant_manifest(db, _settings(risk_model_select=">=rm-v4"), optimize_as_of=as_of)
 
 
 def test_the_default_risk_model_keeps_the_t090_book_key(db: Database) -> None:
@@ -575,7 +575,7 @@ def test_a_bad_profile_exits_1(
 
 def test_the_two_risk_model_flags_are_exclusive(cli_on: Database) -> None:
     with pytest.raises(SystemExit):
-        cli.main(["optimize", "--model-version", "rm-v2", "--risk-model-version", "latest"])
+        cli.main(["optimize", "--model-version", "rm-v3", "--risk-model-version", "latest"])
 
 
 def test_the_new_flags_reach_the_settings() -> None:

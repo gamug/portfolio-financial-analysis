@@ -125,7 +125,7 @@ def test_two_manifests_write_two_risk_models_that_coexist(two_versions: Database
     assert len(models) == 2  # the second did NOT overwrite the first
     assert newest.manifest_tag != older.manifest_tag
     versions = {m[1] for m in models}
-    assert versions == {f"rm-v1+{newest.manifest_tag}", f"rm-v1+{older.manifest_tag}"}
+    assert versions == {f"rm-v2+{newest.manifest_tag}", f"rm-v2+{older.manifest_tag}"}
     by_id = {m[0]: m[2] for m in models}
     assert by_id[newest.model_id]["metrics"] == {"valuation": "metrics-v2"}
     assert by_id[older.model_id]["metrics"] == {"valuation": "metrics-v1"}
@@ -180,8 +180,10 @@ def test_optimize_writes_parallel_books_each_tied_to_its_own_model(two_versions:
         f"opt-v2+{new.manifest_tag}",
         f"opt-v2+{old.manifest_tag}",
     }
-    for b in books:  # every book is built on the model with the *same* manifest
-        assert b["book_manifest"] == b["model_manifest"]
+    for b in books:  # every book is built on the model with the *same* input manifest
+        model_manifest = json.loads(b["model_manifest"])
+        model_manifest.pop("carhart")  # T-077: the model alone records its factor regression
+        assert json.loads(b["book_manifest"]) == model_manifest
     assert {b["model_id"] for b in books} == {new.model_id, old.model_id}
     for pid in [*new.books.values(), *old.books.values()]:
         n = conn.execute(

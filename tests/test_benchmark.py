@@ -298,7 +298,7 @@ def test_evaluate_grades_books_against_the_gated_panel_under_new_versions(
     versions = {
         r[0] for r in conn.execute("SELECT engine_version FROM quant_benchmark_performance")
     }
-    assert versions == {PERF_ENGINE_VERSION} == {"perf-v2"}
+    assert versions == {PERF_ENGINE_VERSION} == {"perf-v3"}
     # every active return is the book's return minus bench-v2's that day
     bench = {d: math.expm1(lr) for d, lr, _ in _series(conn)}
     for r in conn.execute(
@@ -430,4 +430,4 @@ def test_the_performance_view_shows_one_row_per_book_and_day(
         "SELECT COUNT(*), COUNT(DISTINCT portfolio_id || date), MIN(engine_version) "
         "FROM v_quant_benchmark_performance"
     ).fetchone()
-    assert (shown[0], shown[1], shown[2]) == (stored // 2, stored // 2, "perf-v2")
+    assert (shown[0], shown[1], shown[2]) == (stored // 2, stored // 2, "perf-v3")
