@@ -144,14 +144,14 @@ knowledge graph.
   one fix that changes results already produced) → **`T-148`** (which line item and which sign) → **`T-150`** (the
   accounting identities, which check `T-148`'s equity and net-income choices, so they run once, after it) →
   **`T-151`** (the metric definitions, which absorb `T-072`'s EBITDA and `T-076`'s growth item). The tasks that
-  build on SEC-derived metrics (`T-076`, `T-073`, `T-074`, `T-071`) wait for them.
+  build on SEC-derived metrics (`T-076`, `T-073`, `T-074`, `T-071`, `T-153`) wait for them.
 - **`T-072` and `T-076`:** `T-072` (EBITDA persisted; net debt net of short-term investments) is fully absorbed by
   `T-151` and is not implemented separately. `T-076` is **not** absorbed: only its YoY-growth item (audit F8) moves
   to `T-151`; the rest (the 10-Q preamble, the valuation magnitude gate, the profitability skill, the quick-ratio
   definition, the `SKILL.md` trim) runs as its own task after `T-151`, and its quick-ratio item follows `T-151`'s
   dictionary (D-05: "source pending").
-- **Decisions in force:** `docs/checklist_sec/phase3_decisions.md` (D-01 to D-12 and §7); the audit's numbers are in
-  `docs/sec_data_checklist.md`.
+- **Decisions in force:** `docs/checklist_sec/phase3_decisions.md` (D-01 to D-14 and §7–§10); the frozen checklist
+  is `checklist_v1.3.md`; the audit's numbers are in `docs/sec_data_checklist.md`.
 
 One task per PR, each ending with its status commit after approval. `T-075` and `T-079` are superseded by
 `T-100` (see their entries); `T-078` stays deprecated; `T-140` is merged and its acceptance is measured by
@@ -264,31 +264,36 @@ the final pilot, `T-143`.
         definition of `IncomeTaxExpenseBenefit` (current plus deferred, both "pertaining to continuing operations").
         Measured: a component or standard-concept match in 55 filings (9 companies);
         current and deferred both filed without the total in 19 filings (APA).
-      - (d) **Debt and cash (MET-07, ID-02b, MET-00; D-01, D-06(d)).** Short-term debt: `LongTermDebtCurrent` +
+      - (d) **Debt and cash (MET-07, ID-02b, MET-00; D-01, D-06(d), N23).** Short-term debt: `LongTermDebtCurrent` +
         `ShortTermBorrowings` first (disjoint by definition); `CommercialPaper` only when `ShortTermBorrowings` is
         absent; `DebtCurrent` last, flagged "includes leases". A map with one term missing (D-01): the filed terms are
         accepted, flagged "partial map", only when long-term debt is present and the rest of the balance sheet
         resolved; short-term debt alone leaves debt empty; **missing cash never qualifies** (EV is empty), and
         EV / ROIC stop filling a missing debt or cash with 0 (D10, MET-00). Long-term debt: the combined debt-and-lease
         element only when it is the only long-term line, and then flagged "includes finance leases"; a line that
-        includes current maturities is not added to `LongTermDebtCurrent` (N4). Measured: the D-06(d) order changes
-        344 filings (53 companies); on the filing's own period 840 of
-        5,075 have no debt line, 1,206 long-term only, 85 short-term only; a missing
-        debt or cash term would be filled with 0 in 4,994 filings; N4 25 filings
-        (7 companies); the combined element is the long-term line in 1,380
-        filings (155 companies); N5 (cash counted twice) 4 filings; N6 (a balance sheet
-        read from another date) 8 filings.
+        includes current maturities is not added to `LongTermDebtCurrent` (N4). **ID-02b:** debt = 0 only with no debt line
+        at all, no interest concept, and a complete balance sheet (Regulation S-X 5-02 p.1); otherwise a capture failure.
+        **N23 (v1.3):** debt and interest concepts not read today: REIT debt, `OtherLongTermDebtCurrent`, `NotesPayableCurrent`
+        (filed by ED) and `InterestExpenseDebt`; plus interest expense is stored with mixed signs (202 negative of 319 in
+        production), to be checked against MET-09's coverage rule. Measured: the D-06(d) order changes 344 filings (53 companies);
+        on the filing's own period 840 of 5,075 have no debt line (663 non-financial; 319 file a read interest concept and 177 an unread one;
+        Real Estate is 212), 1,206 long-term only, 85 short-term only; a missing debt or cash term would be filled with 0 in 4,994 filings;
+        N4 25 filings (7 companies); the combined element is the long-term line in 1,380 filings (155 companies); N5 (cash counted twice)
+        4 filings; N6 (a balance sheet read from another date) 8 filings.
       - (e) **Revenue, cash flow and the other line items.** *Operating cash flow (CON-08, N3):* the total concept
         before the continuing-operations one; 191 filings (34 companies) read the
         continuing line, 66 of them on their own period and the rest in the year-to-date pair and the prior
         the TTM reads. *D&A (N14):* `Depreciation` alone is not D&A: 878 filings (95 companies).
         *Revenue as a sum (D-02, CON-11):* a sourced map, allowed only when the components are the only revenue lines
         in the statement's revenue section (B4: "The Revenues element would be used for the total revenue (ASC 606 and
-        non-ASC 606 revenue)"); otherwise revenue stays empty. Today 73 filings (5
-        companies) take a sum. *T-140's rebuild (L-09, D-03b):* a derived revenue value whose ex-post audit fails is
-        left empty. **N20, high:** 17 ICE values rest on the net-revenue line "Total
-        revenues, less transaction-based expenses" and every checkable one disagrees with the next year's comparative
-        column (derived 1,235M against 2,387M for 2022Q3); the rebuild also fires for PSX, NI and MPC, not only APA.
+        non-ASC 606 revenue)"); otherwise revenue stays empty. Today 73 filings (5 companies) take a sum.
+        *T-140's rebuild (L-09, D-03b):* real-time net-anchor test (PER-01, no lookahead). An anchor is
+        refused when its value less the rows between is below a revenue-concept row of the same filing and
+        column (the test uses only the filing itself), not by its label; measured: it rejects ICE's 26 columns and no
+        other company's. The ex-post audit only reports and never removes a value (PER-01: the next year's column did
+        not exist on the date of use). **N20, high:** 17 ICE values rest on the net-revenue line "Total revenues, less
+        transaction-based expenses" and every checkable one disagrees with the next year's comparative column
+        (derived 1,235M against 2,387M for 2022Q3); the rebuild also fires for PSX, NI and MPC, not only APA.
         **N19:** the label exclusion `\bcost\b` does not match "costs" ("TOTAL COSTS OF REVENUES" anchored 16 ADP columns
         before the guard refused them): use `\bcosts?\b`. *Banks' revenue (APP-01, F5):* 10 of the
         24 Article 9 filers have no resolved revenue and are hard-vetoed by `DQ_REVENUE_POS` (BNY: 33 refused
@@ -301,7 +306,8 @@ the final pilot, `T-143`.
         purchases are capex contrary to (a) in 10 filings (EOG); (c)'s tie-break fires in
         5 (FANG); REIT acquisition lines are left out in 121 filings (14 companies) and
         `PaymentsForCapitalImprovements` overlaps an acquisition line in 4; capex is absent where a cash-flow statement is
-        present in 490 filings. The FANG/APA table of `docs/sec_data_checklist.md` is the cost of excluding routine
+        present in 490 filings. Capex of DTE, ED, LNT and NEE does not resolve today (company extensions,
+        `PaymentsToAcquireOther...`) and is resolved under MET-08. The FANG/APA table of `docs/sec_data_checklist.md` is the cost of excluding routine
         leasehold purchases.
         **N22 (review of PR #127; DOW).** The oil & gas fallback tiers fire before the caption fallback, so a filer that
         also files a PP&E-family line resolves the wrong capex: DOW FY2025 (`0001751788-26-000018`) resolves 0.157B
@@ -321,6 +327,8 @@ the final pilot, `T-143`.
           `PaymentsToAcquireFurnitureAndFixtures` under MET-08 (b), each with its B6 definition (B6 holds all four since
           2026-10-09, from the FASB 2026 release; a concept whose definition is missing from B6 is added there first,
           no rule without a source);
+        - under MET-08 (c), a PP&E-family line beside a separate oil & gas line on the same statement is added and flagged
+          (e.g. DOW: USD 2.48B + 0.157B), not chosen one over the other;
         - the residual capex item that stood under `T-071` since `T-133`'s review (2026-10-02: filers whose capex is
           `PaymentsToAcquireOtherPropertyPlantAndEquipment` / `...OtherProductiveAssets`, which `T-133`'s single-line
           lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope.
@@ -355,8 +363,9 @@ the final pilot, `T-143`.
         the debt inputs of `LEVERAGE_EXTREME` change too. `T-148` therefore repeats `T-070`'s calibration check on
         the rebuilt data and reports it.
 - [ ] **T-149** Filing identity (engine `facts-v1` bump if stored facts change; `fundamental_agent`, `cycle`; the
-      gateway repo for the period-end field). New from `T-147`; precedes `T-148`. → `PLAN.md` Work item 8, step 12.
-      Rules PER-02, PER-05, PER-08, ID-07, APP-10a, APP-10b, MET-05 (N2). Measured on production:
+      gateway repo for the period-end field). New from `T-147`; precedes `T-148`. **Must be done before T-153.**
+      → `PLAN.md` Work item 8, step 12. Rules PER-02, PER-05, PER-08, ID-07, ID-10, APP-10a, APP-10b, MET-05 (N2).
+      These points ensure a company's metrics can never use another company's data. Measured on production:
       - (a) **Amendments (N1, PER-02, L-04).** Original filings are never replaced: the gateway lists a company's
         10-Ks with amendments, `_select_filings` keeps the most recent, and `upsert_filing` is `ON CONFLICT DO UPDATE`.
         On the SEC history the rule would keep a 10-K/A of the same fiscal year in 55 company-years
@@ -375,34 +384,40 @@ the final pilot, `T-143`.
         SNA, SWK, TDY, TXT) were lost to a repeated `FY` label: `T-140` fixed the labelling and this database predates
         it, so the final pilot's fresh database is the check. Two remain unexplained (EXE: a FY2021 10-K stored as
         FY2020; SMCI FY2024) and three have a recorded gateway failure (GEHC, CSCO, SMCI FY2026): find the causes.
-      - (c) **CIK, not ticker (APP-10a).** Fetch by CIK. Today every stored accession belongs to its asset's CIK
-        (5,076 filings, 0 outside its submissions), so nothing has been mis-assigned, but ticker reuse is
-        not excluded; XOM's pre-reorganization CIK is the known predecessor case.
-      - (d) **Period end (ID-07) and ranges (PER-08).** Compare the stored period end with `dei:DocumentPeriodEndDate` /
+      - (c) **Fetch by CIK, never by ticker (APP-10a, ✗ today).** Today every stored accession belongs to its asset's CIK
+        (5,076 filings, 0 outside its submissions), so fetching by ticker has not mis-assigned a filing here, but only
+        because today's members don't reuse tickers. With the historical universe (renames such as FB→META, reused tickers
+        such as 21st Century Fox's FOXA and FOX, companies that left the index) fetching by ticker would mix companies.
+        **A database invariant:** every stored filing belongs to its asset's CIK, checked against the SEC's submissions list,
+        and no filing is attached to two assets. A write that breaks either one fails.
+      - (d) **Co-registrants (ID-10, partial and untested today).** A test with a real combined utility 10-K (parent and
+        subsidiaries in one filing) proving that only the parent's facts, the ones without a legal-entity member, are used.
+      - (e) **Period end (ID-07) and ranges (PER-08).** Compare the stored period end with `dei:DocumentPeriodEndDate` /
         the header `periodOfReport` (needs a gateway field); match periods by the rule's month-end rounding and the day
         ranges [364, 371] year, [89, 98] quarter, [181, 189] six months, [273, 280] nine months instead of the 20-day
         tolerances. Measured: 1 filing differs (EXE); 1 quarter pairing is
         accepted by the code and rejected by the rule, 1 fiscal-year pairing is not a year apart.
-      - (e) **PER-05 (D-08).** Q4 = FY − the Q3 10-Q's nine-month year-to-date, which needs no three recorded quarters.
-      - (f) **N2: `earnings_yield` (MET-05).** `orchestrator._valorization` reads `profitability.net_income` /
+      - (f) **PER-05 (D-08).** Q4 = FY − the Q3 10-Q's nine-month year-to-date, which needs no three recorded quarters.
+      - (g) **N2: `earnings_yield` (MET-05).** `orchestrator._valorization` reads `profitability.net_income` /
         `income_statement.net_income`, neither a stored metric (0 of 34 metric names), so every real cycle ranked
         VALORIZATION without it (the whole value factor is empty in 35 of 40 stored rows). Compute it
         from the trailing-year net income and the as-of market cap, with MET-05's negative-earnings dummy
         (Fama and French; the positive part is used). **Effect reported separately** from the data-treatment
         changes, as a scoring bug (D-11 decomposition: (0) production as it is, (1) this fix alone on `metrics-v5`,
         (2) plus the new metric engine).
-      - (g) **Successions (APP-10b), low priority.** Detect `8-K12B` / `8-K12G3` / `8-K15D5`: 18 of 503
+      - (h) **Successions (APP-10b), low priority.** Detect `8-K12B` / `8-K12G3` / `8-K15D5`: 18 of 503
         companies filed one since 2022; linking a successor to its predecessor needs a hand reading of each 8-K.
       **Acceptance:** each bullet's measurement re-run on a rebuilt database (`audit_sec_checklist.py measure --only
       n1,periods,extra`) shows 0 amendments stored, 0 originals lost to an amendment, the N2 effect separately; regression
-      tests for (a), (d), (e), (f); the replaced test named above.
-- [ ] **T-150** Accounting identities with DQ-01 (`fundamental_agent/quality.py`; gate version bump). New from `T-147`;
+      tests for (a), (c), (d), (e), (f), (g); the replaced test named above; database invariant enforced on writes; co-registrant
+      utility test passes.
+- [ ] **T-150** Accounting identities with DQ-01 and L-10 (`fundamental_agent/quality.py`; gate version bump). New from `T-147`;
       runs after `T-148`, whose equity and net-income choices CON-04 and CON-19 verify, so the identities are measured once.
       → `PLAN.md` Work item 8, step 13. Rules CON-01 to CON-04, CON-06, CON-07, CON-19, CON-08 (as a check on `T-148`'s
       choice) and DQ-01 (**threshold = max(rounding, 0.5% × |base|)**: within rounding passes, above rounding and below
-      the threshold WARNs, above it is material and the inputs are blocked). The identities read the stored facts of one
-      filing and period (no dimensions), not the metrics, so they are a new gate beside `DQ_*`. `decimals` is not
-      captured: the audit assumed USD 1M as the rounding floor; `T-150` states its rule, or the gateway passes `decimals`.
+      the threshold WARNs, above it is material and the inputs are blocked). **L-10 / DQ-01 rounding term:** `0.5 × unit × terms`,
+      where the unit is inferred when `decimals` is not captured (L-10). The identities read the stored facts of one
+      filing and period (no dimensions), not the metrics, so they are a new gate beside `DQ_*`.
       Measured (DQ-01 BLOCK, own period): CON-19 44 filings of 2,045 at the source (8 companies) and
       36 on the stored rows; CON-02 24 of 237 (3 companies: AEP, JKHY, PPL); CON-01 0 at the source,
       3 stored (KKR); CON-03 and CON-07 nothing at the source; CON-04 4 stored, none at the source (the equity row the
@@ -412,12 +427,26 @@ the final pilot, `T-143`.
 - [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
       **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
       investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
-      keeps its skills redesign). → `PLAN.md` Work item 8, step 14. Delivers `docs/metric_dictionary.md`: per
-      metric, the formula, **one** source and whether it is an inference (D-05; this replaces adding 35 MET rules);
-      renames the audit key `free_cash_flow_to_equity` to `free_cash_flow` (it is OCF − capex, not FCFE); three
-      formulas stay **"source pending"** until the user loads a financial-statement-analysis text: the quick ratio,
-      the cash ratio and the CFO-based FCF to the firm (FCFF + interest × (1 − t) needs a loaded source, or Damodaran's
-      EBIT-based form). Definitions and the measured scope:
+      keeps its skills redesign). → `PLAN.md` Work item 8, step 14. Delivers `docs/metric_dictionary.md`: generated
+      directly from Annex B of `checklist_v1.3.md` (formula, one source, inference flag, 17 formulas "source pending" per D-05
+      until the second author is loaded); renames the audit key `free_cash_flow_to_equity` to `free_cash_flow` (OCF − capex, not FCFE).
+      Definitions and the measured scope:
+      - **MD-02 and MD-35:** invested capital and EV include noncontrolling interest (as MD-02 defines it: redeemable NCI
+        included between liabilities and equity; CON-04's identity when no balance is filed; 0 only with no NCI income;
+        otherwise a capture failure) and net short-term investments (when filed apart from cash); **MD-38:** (NOPAT (MD-05,
+        MET-03's 21%) − (capex (MET-08) − D&A (MD-01) + Δ non-cash working capital)) / EV (MD-35), with non-cash working capital
+        = (current assets − cash − short-term investments) − (current liabilities − short-term debt), its change between the ends
+        of the prior and the current year; empty when a term is missing or the balance sheet is not classified (REITs, banks).
+      - **The applicability matrix as data:** v1.3's matrix (35 metrics × 6 company types → applies, adjusted, or not applicable,
+        with the reason) becomes a data file the code reads, instead of conditions scattered through the code.
+      - **Traceability test:** fails when a metric in the dictionary has no implementation, when an implementation, map entry or
+        veto has no rule ID, or when the code and the matrix disagree.
+      - **Provenance on every metric:** its filing (accession), the XBRL concept of each line item, the rule IDs applied, the
+        flags, and the reason when it is left empty.
+      - **Company card:** for a CIK and a date it prints the profile, the filing used, each line item's concept and value, the
+        rules applied and the result. Used for the thesis and for debugging.
+      - **Gate after every rebuild:** T-147's comparison with the SEC's own data (same CIK and filing) and the golden set
+        (`golden_set.csv`), with a minimum fidelity. A value that doesn't match its own company's SEC data can't reach the scores.
       - **MET-01 / MET-02:** ROA = operating income × (1 − t) / total assets at the **start** of the year, not
         applicable to financial firms; ROIC and ROE divide by capital at the end of the prior year, never the ending
         capital (ROE for banks stays, C2). A 10-Q's "end of the prior year" is the prior 10-K's balance.
@@ -426,7 +455,7 @@ the final pilot, `T-143`.
         NOPAT uses the filing's own rate in 4,320 filings (471 companies); it is reduced by a tax on an operating
         loss in 198 of 203 loss filings; **N10:** `effective_tax_rate` shows 21% when pre-tax income is
         missing or ≤ 0 in 743 filings (172 companies; L-05 says empty); the 21% default hits
-        125 of 314 REIT filings (15 companies).
+        125 of 314 REIT filings (15 companies). MET-03 also reports ROIC at the effective rate as robustness.
       - **MET-09 / N9:** a negative denominator is left out of the continuous score and flagged, not discarded with the
         sign: **N9** — 177 filings (63 companies) have net cash and positive EBITDA, which T-116 treats as unresolved;
         net debt/EBITDA with EBITDA ≤ 0 in 41 filings and FCF conversion with net income ≤ 0 in 160.
@@ -437,7 +466,8 @@ the final pilot, `T-143`.
       - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
         meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
         ranking decision (D/E = +∞) is `T-071`'s.
-      **Acceptance:** `docs/metric_dictionary.md` has one sourced row per metric and the three "source pending" rows;
+      **Acceptance:** `docs/metric_dictionary.md` generated from Annex B; applicability matrix data file loaded;
+      traceability test passes; metric provenance and company card delivered; post-rebuild SEC fidelity gate enforced;
       the audit's `metrics` group re-run on a rebuilt database shows 0 for N10, N15 and the MET-03/MET-09 rows;
       regression tests per definition on real captured fixtures; a `docs/model_fixes.md` entry.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
@@ -460,14 +490,31 @@ the final pilot, `T-143`.
       `T-133`'s single-line lookup leaves empty rather than partial; see `docs/model_fixes.md` T-133
       "Residual scope". **The last item (the `OtherPropertyPlantAndEquipment` / `OtherProductiveAssets` filers) moved
       to `T-148`(f) on 2026-10-09, with N22: capex is `T-148`'s scope; the utility and REIT items stay here.**)*
-      *(2026-10-08, `T-147`'s audit and `phase3_decisions.md` D-04, D-07: scope addition.)*
+      *(2026-10-08, `T-147`'s audit and `phase3_decisions.md` D-04, D-07, D-13, D-14: scope addition.)*
+      **A company profile as of the date (APP-00, ✗ today; code uses today's GICS sector only):** one profile per
+      `(CIK, date)`, read from `docs/checklist_sec/company_types.csv` (delivered by `T-147`). The CSV has ONE base type
+      per company, the `type` column: `operating`, `article_9`, `article_7`, `other_financial`, `multi_sector_holding`.
+      On top of it come OVERLAYS: REIT (`reit`), multi-class (`multi_class_listed`), negative equity (evaluated from the
+      filing as of the date, not `negative_equity_latest`), and regulated utility (GICS sub-industry Electric, Gas, Multi-
+      or Water Utilities, D-13). The CSV has no validity dates today (it is one snapshot): `T-071` adds them, and `T-153` adds
+      the leavers' rows. Every package reads the company profile (type + overlays) from it and nowhere else.
+      **D-13 (regulated utilities exemption from `NEGATIVE_FCF`; see `docs/checklist_sec/checklist_v1.3.md` Scope, D-13):**
+      regulated utilities (GICS Electric, Gas, Multi- and Water Utilities) are exempt from `NEGATIVE_FCF`. In its place, a HARD
+      veto when the three-year average of operating cash flow before working-capital changes over total debt is below 5% (Moody's
+      scorecard, C13 PDF p.7: Ba 5%–13%, B 1%–5%; C13 p.11, p.14, p.19, p.21; C14 p.38; C15 p.2). Each year's ratio uses only
+      data public on D (the latest 10-K's three years of cash flow, the third year-end debt from the previous 10-K); working
+      capital is current items only, regulatory assets and liabilities stay in the cash flow (C13 p.14); the debt is MET-07's
+      (not Moody's adjusted debt, declared); missing inputs: no veto, flagged; CEG and VST fall inside the exemption through the
+      GICS proxy, AES and NRG do not; report the 5%–12% sensitivity.
+      **D-14 (REITs and `NEGATIVE_FCF`, open):** measure how many REITs `NEGATIVE_FCF` vetoes in the replay first, then
+      decide (APP-04b puts acquisitions in REIT capex, and external funding of negative free cash flow is industry practice).
       **D-04 (accepted):** `DQ_NEG_EQUITY` becomes **quarantine only** (D/E and ROE read NA, as APP-07 says) and is
       never a HARD data-quality veto; the distress test for negative-equity firms moves to `LEVERAGE_EXTREME`, keyed on
       the **equity sign**, never on a negative D/E (the rules read the quarantined metrics, so today the
       negative-equity branch never runs). Four conditions: (1) **valid inputs only** — the rule reads the equity sign,
       interest coverage and net debt/EBITDA directly; (2) **EBITDA ≤ 0 is a distress signal** — a net debt/EBITDA that
       MET-09 leaves empty never reads as "no signal"; T-116's calibrated condition (EBITDA ≤ 0 with positive net debt)
-      is kept and handled explicitly; (3) **not applied to financial firms** (APP-02; needs the company-type table, now
+      is kept and handled explicitly; (3) **not applied to financial firms** (APP-02; needs the company-type table,
       `docs/checklist_sec/company_types.csv`, APP-00); (4) **the thresholds are a calibrated cycle policy**, declared
       with a sensitivity analysis and the veto count by sector. Needs `T-151`'s EBITDA. Measured (latest 10-Ks,
       2026-09-22): 29 companies have negative equity and T-116's three conditions flag 4 of them (CCI, IRM, SBAC, WYNN),
@@ -484,11 +531,10 @@ the final pilot, `T-143`.
       exclude almost all and the sector factors are costly, exclude; if the thesis benchmarks against the full S&P
       500, keep them.
       **Also here:** the APP-00 overlays and the NA matrix in scoring (APP-01 to APP-04c); DQ-02's one constant,
-      winsorizing at 0.5% per tail (at n = 495, 245 assets move by more than a point; at n = 20 the two fractions are
-      identical); MET-00's neutral 50 in `valorization.compute` (never fires in the stored cycles, 0 of 40; keep the
-      guard); and the stored-valuation market cap reading the as-of reader's cover count. `NEGATIVE_FCF` hard-vetoes 24
-      of the 31 utilities (capex-heavy: construction spending exceeds operating cash flow) — the sector cluster Annex A
-      asks to report; decide whether utilities are exempt, with `T-070`. N2 (`earnings_yield`) moved to `T-149`.
+      winsorizing at 0.5% per tail: ⌊0.005 × n⌋ values per tail (at n = 495, 245 assets move by more than a point; at n = 20
+      the two fractions are identical); MET-00's neutral 50 in `valorization.compute` (never fires in the stored cycles,
+      0 of 40; keep the guard); and the stored-valuation market cap reading the as-of reader's cover count.
+      N2 (`earnings_yield`) moved to `T-149`.
 - [ ] **T-072** *(**Absorbed by `T-151` 2026-10-08 — implement there, not here.**)* Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt
@@ -598,6 +644,16 @@ the final pilot, `T-143`.
       covering T-073+T-074+T-076 together
       (~4,844 filings) — do not re-run per prompt edit; full suite green
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
+- [ ] **T-153** The historical universe (after `T-071`, the last task of Work item 8, and before Work item 19; a prerequisite of `T-100`; needed for PER-10 and PER-11;
+      review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
+      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
+        Never overwrite the pilot's `universe.db`.
+      - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?`
+        to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
+      - For the 86 companies that left the index in the window: their filings by CIK, their type in
+        `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+      - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
+        again on the historical universe before they go into the thesis.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
@@ -794,7 +850,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19) and the final pilot `T-143` are prerequisites. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), and the final pilot `T-143` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -823,7 +879,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
-2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → Work item 19 (`T-083` → `T-142` →
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
 `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
@@ -847,5 +903,4 @@ upstream + `T-052`), 5 (done 2026-09-25, `T-044` deprecated), 7 (done 2026-09-25
 11 (done 2026-09-25), 13 (done 2026-09-25), 14 (done 2026-09-30), 15 (done 2026-10-01, PR #106) and 16 (done 2026-10-01) are
 closed — see `CHANGELOG.md`.
 
-**Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after
-every other task in this file that is not deferred or superseded — current and future.
+**Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.

@@ -2,20 +2,24 @@
 
     uv run python scripts/sec_xcheck/quotecheck.py [CHECKLIST] [--sources DIR] [--write] [--quiet]
 
-``CHECKLIST`` defaults to ``docs/checklist_sec/checklist_v1.2.2.md``. The source documents (``sources_register.md``:
+``CHECKLIST`` defaults to ``docs/checklist_sec/checklist_v1.3.md``. The source documents (``sources_register.md``:
 URL, version, SHA-256) are read from ``--sources`` / ``SEC_XCHECK_SOURCES``; the PDFs are never committed.
+Because verifying against the local PDFs requires the local PDF collection, this script is not a pytest test.
 
-For each rule row, each quoted fragment ("...") must be found verbatim (after normalizing case, spacing and
-punctuation) in one of the files the row cites, on one of the PDF pages it cites. Three extraction artifacts are
-tolerated and reported: PDF ligatures ("fi", "ff", "fl") dropped by text extraction; "t" glyphs dropped in A1's
-section headings; and a fragment that spans a page break. With ``--write``, the totals table replaces the TOTALS
-marker in the checklist. Exit status 1 when any quote is not verified. Needs ``pypdf``.
+For each rule row and Annex B metric-dictionary row (| MD-nn |), each quoted fragment ("...") must be found
+verbatim (after normalizing case, spacing and punctuation) in one of the files the row cites, on one of the
+PDF pages it cites. Quotes containing an ellipsis ("…" or "...") are split into fragments and each fragment is
+verified. Three extraction artifacts are tolerated and reported: PDF ligatures ("fi", "ff", "fl") dropped by
+text extraction; "t" glyphs dropped in A1's section headings; and a fragment that spans a page break. With
+``--write``, the totals table replaces the TOTALS marker in the checklist. Exit status 1 when any quote is not
+verified. Needs ``pypdf``.
 """
 
 from __future__ import annotations
 
 import argparse
 import collections
+import dataclasses
 import glob
 import logging
 import os
@@ -31,8 +35,9 @@ from sec_xcheck.common import REPO, sources_dir
 MARK = "<!-- TOTALS -->"
 MIN_FRAGMENT = 12  # shorter pieces of an elided quote are too common to locate a page
 MIN_CELLS = 9  # a rule row has at least the nine columns of the checklist tables
+MIN_MD_CELLS = 6  # an Annex B metric-dictionary row has at least six columns
 LAYERS = ["ID", "PER", "CON", "DQ", "MET", "MKT", "APP"]
-DEFAULT_CHECKLIST = REPO / "docs" / "checklist_sec" / "checklist_v1.2.2.md"
+DEFAULT_CHECKLIST = REPO / "docs" / "checklist_sec" / "checklist_v1.3.md"
 
 _cache: dict[str, list[str]] = {}
 
@@ -119,26 +124,88 @@ def rows(text: str):
             yield m.group(1), cells
 
 
+@dataclasses.dataclass
+class RuleCheckSummary:
+    per_layer: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
+    sev: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
+    n_quotes: int = 0
+    problems: int = 0
+
+
+@dataclasses.dataclass
+class AnnexBCheckSummary:
+    count: int = 0
+    basis: collections.Counter[str] = dataclasses.field(default_factory=collections.Counter)
+    quotes: int = 0
+    bad: int = 0
+
+
+def md_rows(text: str):
+    for line in text.splitlines():
+        if not re.match(r"\|\s*MD-\d+\s*\|", line):
+            continue
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line)[1:-1]]
+        if len(cells) >= MIN_MD_CELLS:
+            yield cells[0], cells
+
+
 def totals_table(
     text: str,
-    per_layer: collections.Counter[str],
-    sev: collections.Counter[str],
-    n_quotes: int,
-    problems: int,
+    rules: RuleCheckSummary,
+    annex_b: AnnexBCheckSummary | None = None,
 ) -> str:
     lines = ["| Layer | Rules |", "|---|---|"]
-    lines += [f"| {k} | {per_layer[k]} |" for k in LAYERS]
-    lines += [f"| **All** | **{sum(per_layer.values())}** |", ""]
+    lines += [f"| {k} | {rules.per_layer[k]} |" for k in LAYERS]
+    lines += [f"| **All** | **{sum(rules.per_layer.values())}** |", ""]
     limitations = len(re.findall(r"(?m)^\| L-\d+ \|", text))
     screens = len(re.findall(r"(?m)^\| A-\d+ \|", text))
     lines += [
-        f"- **Quoted fragments:** {n_quotes}; verified against the files: {n_quotes - problems}.",
-        "- **Severity:** " + ", ".join(f"{k} {v}" for k, v in sorted(sev.items())) + ". "
+        f"- **Quoted fragments:** {rules.n_quotes}; verified against the files: {rules.n_quotes - rules.problems}.",
+        "- **Severity:** " + ", ".join(f"{k} {v}" for k, v in sorted(rules.sev.items())) + ". "
         '"DQ-01" means the identity\'s severity follows DQ-01 (WARN above rounding, BLOCK above materiality).',
         f"- **Outside the rules:** {limitations} declared limitations (section L) and "
         f"{screens} calibrated screens (Annex A).",
     ]
+    if annex_b and annex_b.count:
+        md_basis_str = ", ".join(f"{k} {v}" for k, v in sorted(annex_b.basis.items()))
+        lines.append(
+            f"- **Annex B (metric dictionary):** {annex_b.count} rows ({md_basis_str}); quoted fragments: {annex_b.quotes}; verified: {annex_b.quotes - annex_b.bad}."
+        )
     return "\n".join(lines)
+
+
+def check_rules(text: str, docs: Path, quiet: bool) -> RuleCheckSummary:
+    summary = RuleCheckSummary()
+    for rid, cells in rows(text):
+        summary.per_layer[rid.split("-")[0]] += 1
+        summary.sev[re.sub(r"\s*\(.*\)", "", cells[7])] += 1
+        srcs = cited(cells[2], docs)
+        for frag in re.findall(r'"([^"]+)"', cells[3]):
+            summary.n_quotes += 1
+            status, where = find(frag, srcs)
+            ok = status.startswith("OK")
+            summary.problems += not ok
+            if not (quiet and ok):
+                print(f"{rid:10s} {status:12s} {where:48s} {frag[:60]}")
+    return summary
+
+
+def check_annex_b(text: str, docs: Path, quiet: bool) -> AnnexBCheckSummary:
+    summary = AnnexBCheckSummary()
+    for mid, cells in md_rows(text):
+        summary.count += 1
+        summary.basis[cells[5]] += 1
+        if cells[2] == "—":
+            continue
+        srcs = cited(cells[2], docs)
+        for frag in re.findall(r'"([^"]+)"', cells[3]):
+            summary.quotes += 1
+            status, where = find(frag, srcs)
+            ok = status.startswith("OK")
+            summary.bad += not ok
+            if not (quiet and ok):
+                print(f"{mid:10s} {status:12s} {where:48s} {frag[:60]}")
+    return summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -159,31 +226,30 @@ def main(argv: list[str] | None = None) -> int:
         )
     path = Path(args.checklist)
     text = path.read_text(encoding="utf-8")
-    per_layer: collections.Counter[str] = collections.Counter()
-    sev: collections.Counter[str] = collections.Counter()
-    n_quotes = 0
-    problems = 0
-    for rid, cells in rows(text):
-        per_layer[rid.split("-")[0]] += 1
-        sev[re.sub(r"\s*\(.*\)", "", cells[7])] += 1
-        srcs = cited(cells[2], docs)
-        for frag in re.findall(r'"([^"]+)"', cells[3]):
-            n_quotes += 1
-            status, where = find(frag, srcs)
-            ok = status.startswith("OK")
-            problems += not ok
-            if not (args.quiet and ok):
-                print(f"{rid:10s} {status:12s} {where:48s} {frag[:60]}")
-    print(
-        f"\nrules {sum(per_layer.values())}  quotes {n_quotes}  verified {n_quotes - problems}  problems {problems}"
+
+    rules_res = check_rules(text, docs, args.quiet)
+    annex_b_res = check_annex_b(text, docs, args.quiet)
+
+    n_rules = sum(rules_res.per_layer.values())
+    summary = (
+        f"\nrules {n_rules}  quotes {rules_res.n_quotes}  "
+        f"verified {rules_res.n_quotes - rules_res.problems}  problems {rules_res.problems}"
     )
-    table = totals_table(text, per_layer, sev, n_quotes, problems)
+    if annex_b_res.count:
+        basis_str = ", ".join(f"{k} {v}" for k, v in sorted(annex_b_res.basis.items()))
+        summary += (
+            f"  | annex B rows {annex_b_res.count} ({basis_str})  "
+            f"quotes {annex_b_res.quotes}  verified {annex_b_res.quotes - annex_b_res.bad}  problems {annex_b_res.bad}"
+        )
+    print(summary)
+
+    table = totals_table(text, rules_res, annex_b_res)
     print("\n" + table)
     if args.write:
         start = text.index(MARK)
         end = text.index("\n---", start)
         path.write_text(text[:start] + MARK + "\n\n" + table + "\n" + text[end:], encoding="utf-8")
-    return 1 if problems else 0
+    return 1 if (rules_res.problems + annex_b_res.bad) else 0
 
 
 if __name__ == "__main__":
