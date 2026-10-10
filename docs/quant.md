@@ -21,7 +21,7 @@ uv run python -m quant build-risk-model --analysis-date 2026-08-27 [--lookback 7
                                         [--allow-stale-prices] [--allow-dirty]  # T-110 / T-114 guard overrides
 uv run python -m quant optimize --analysis-date 2026-08-27
                                 [--objectives min_var,risk_parity,tangency,target_vol,frontier]
-                                [--mu equilibrium|james_stein|hist_mean] [--frontier-k 15] [--target-vol 0.15]
+                                [--mu equilibrium|james_stein|hist_mean|carhart] [--frontier-k 15] [--target-vol 0.15]
                                 [--top-n 30] [--max-name-weight F] [--max-sector-weight 0.30] [--turnover-cap F]
                                 [--allow-stale-prices]
 uv run python -m quant benchmark --from 2026-06-30 --analysis-date TODAY     # --from required: the panel is gated as of it
@@ -167,12 +167,94 @@ model built from it is reproducible. No pandas.
   (`nearest_psd`) before cvxpy sees it. No scikit-learn.
 - **Expected returns**: `equilibrium` (reverse-optimized from cap weights,
   `Π = δ·Σ·w_market` — **the default**), `james_stein` (shrink the sample mean
-  toward the grand mean), `hist_mean` (raw). All three are computed and stored per
-  model; `ret_estimator` / `optimize --mu` picks which the return-aware objectives
+  toward the grand mean), `hist_mean` (raw), and `carhart` (T-077: the four-factor
+  estimator below, `factors.py`). All are computed and stored per
+  model (`carhart` only when the factor data covers the as-of); `ret_estimator` / `optimize --mu` picks which the return-aware objectives
   and the reported expected-return/Sharpe use. `equilibrium` is the default because
   it carries real cross-sectional dispersion with near-zero estimation noise;
   `james_stein` over ~5 y of daily data shrinks μ almost flat, which collapses the
   frontier onto `min_var` (see the note below).
+
+### `factors.py` — the Carhart four-factor estimator (T-077)
+
+`carhart` is `μ_i = rf + Σ_k β^shrunk_i,k · λ̄_k` over `{MKT, SMB, HML, MOM}`. It reads **no** market cap and no
+score, so it is available wherever the panel and the factor files overlap, and it is a second, independent
+source of cross-sectional dispersion beside `equilibrium`. `equilibrium` stays the default.
+
+**The factor data** is vendored, version-pinned and read offline. `src/quant/data/` holds Kenneth R. French's daily
+"Fama/French 3 Factors" (Mkt-RF, SMB, HML, RF) and daily "Momentum Factor" (Mom) files **byte-for-byte** (a
+`.gitattributes` `-text` rule keeps git from touching the line endings, so the hash below is the published file's),
+beside `manifest.json`: the library URL, each file's URL, the download date (2026-10-10), the library's own version
+statement (*"This file was created by using the 202608 CRSP database"*), the SHA-256 of each file and of the zip it came
+in, and each file's first and last date (1926-07-01 / 1926-11-03 to 2026-08-31). `load_factors(as_of)`:
+
+- checks every file's SHA-256 against the manifest and **refuses on a mismatch** (`FactorIntegrityError`, which fails
+  `build-risk-model` outright — it is not downgraded to "carhart unavailable": data that is not the pinned data is not
+  estimated from);
+- converts the files' **percent** to decimals and drops a row carrying French's missing-data sentinel (none today);
+- is **point-in-time**: the files are ascending and parsing stops at the first row dated after the as-of, so no later
+  row is read into the result; the two files are joined on date.
+
+**The regression.** For each panel asset, over the panel's last 756 trading days (the existing lookback): the panel holds
+total-return **log** returns (`tr_log_return`), converted with `expm1` to simple returns because the factors are simple
+returns; the excess return is `r_i,t − RF_t` with French's own daily RF (the series `Mkt-RF` is measured against); OLS of
+the excess return on `[1, Mkt-RF, SMB, HML, Mom]` over the dates where both exist. Each beta's sampling variance is
+`se²_i,k = s²_e,i · [(X'X)⁻¹]_kk`. The intercept `a_i` is estimated and **dropped**: no alpha enters `μ`.
+
+**Minimum observations** are 504 (two thirds of the window, `carhart_min_obs`). An asset below it takes the prior mean beta
+(shrinkage weight 0) and is flagged in the risk model's manifest. The panel is dense (`build_return_panel` keeps a name
+only with ≥ 98% coverage and zero-fills the few holes), so on a production-shaped panel every asset has the same count
+and the flag is a guard, not an event: what bites is the **overlap**. A panel whose last dates run past the factor file's
+last date is regressed on the overlap only and the gap is recorded (`panel_gap_after_factor_end`); an overlap under 504
+dates leaves `carhart` unbuilt — the other three estimators are built, the reason is stored in the model's manifest
+(`carhart.unavailable`), and `optimize --mu carhart` refuses with that reason.
+
+**Vasicek (1973) shrinkage**, per factor `k` separately (a declared simplification of the multivariate prior):
+
+```
+β̄_k  = the equal-weighted cross-sectional mean of β̂_i,k over the panel       (the prior mean)
+σ²_k  = the cross-sectional variance of β̂_i,k  (ddof = 1)                        (the prior variance)
+w_i,k = σ²_k / (σ²_k + se²_i,k)          β^shrunk_i,k = w_i,k · β̂_i,k + (1 − w_i,k) · β̄_k
+```
+
+This is `PLAN.md`'s `w = 1 − Var(β̂_i) / (Var(β̂_i) + Var(β̄))` written out: with `Var(β̂_i) = se²_i` the sampling variance of
+the asset's own estimate and `Var(β̄) = σ²_k` the dispersion of the prior, `1 − se²/(se² + σ²) = σ²/(σ² + se²)`. A noisy
+beta (large `se²`) is pulled to the prior mean; a precise one is left alone.
+
+**The premia** `λ̄_k` are the arithmetic mean of factor `k`'s daily returns from **1963-07-01** (the Fama–French / Carhart
+sample start) to the as-of, times `periods_per_year` (252). With `rf` the same annualized as-of risk-free rate the other
+estimators use (T-109's total-return convention), `μ_i = rf + Σ_k β^shrunk_i,k λ̄_k`. On the 202608 vintage, from 1963:
+Mkt-RF 7.33%, SMB 1.11%, HML 3.71%, Mom 7.15% a year.
+
+**Stored.** `μ` lands in `quant_expected_return` under `mu_model = 'carhart'`; the model is `rm-v2` (bumped from `rm-v1`
+because the stored rows change; an `rm-v1` model holds no `carhart` rows and `optimize --mu carhart` refuses it with a
+message saying so). `quant_risk_model.manifest_json` gains a `carhart` object: the factor library version, each file's
+SHA-256, the files' last date, the regression's first/last date and count, the panel's dates past the factors, `λ̄` per
+factor, `β̄_k` and `σ²_k`, the distribution of `w_i,k` (min, median, max) per factor, and the flagged asset ids — or
+`{"unavailable": reason}`. The same object goes on the `build-risk-model` run's `params_json`. **No schema change, no new
+table.**
+
+**Declared choices and limitations.**
+
+- *Factor vintage.* The library is rebuilt every year (CRSP restates, the breakpoints and the one-month bill series are
+  revised), so a vintage downloaded later can differ slightly from what was public on a past as-of. The model records the
+  vintage it used (202608); the point-in-time cut stops lookahead in *dates*, not in the data's revisions. **The factor
+  files' version is not part of the risk model's key** (`model_version` = `rm-v2` + the input-manifest tag), so replacing the
+  vendored files and rebuilding an as-of would overwrite carhart μ under the same `model_version`: **a new factor vintage requires
+  a new `risk_model_version`** (`rm-v3`, …). `tests/test_quant_factors.py` pins `rm-v2` to library version `202608 CRSP`, so
+  updating the files without bumping the version fails CI.
+- *Per-factor shrinkage* ignores the covariance between the four betas (a multivariate prior would shrink them jointly); a
+  declared simplification.
+- *Equal-weighted prior*: the prior mean is the plain cross-sectional mean over the panel, not a cap-weighted one, so it is
+  closer to the typical stock than to the index.
+- *The prior variance is the raw dispersion of the estimates*, which already contains the sampling noise `mean(se²)`; a
+  Vasicek prior would subtract it. So `w` errs low (a little more shrinkage than the textbook prior would give).
+- *Alpha dropped*: `μ` carries factor premia only.
+- *The premia are a 60-year average.* Their standard error is large (a factor's daily mean over ~15,000 days still has a
+  standard error of several percent a year), and the 1926 start or the last 756 days give materially different `λ̄` (see the
+  T-077 entry in `model_fixes.md`); `carhart` ranks assets by factor exposure far better than it prices them.
+- *Short sample.* Whatever a comparison over the ~20 months the database can evaluate shows is descriptive: no significance
+  claim is made (T-078 was deprecated for this reason).
 
 **Market caps (`T-132`).** One company counts once: panel assets sharing a CIK (GOOG/GOOGL, FOX/FOXA, NWS/NWSA) split the company cap equally in `w_market`. `w_market` is built from `kg_schema.market_cap.market_caps_as_of` at
 the as-of date: the latest cover-page share count usable that day × the close on or before it,
@@ -220,9 +302,46 @@ and `min_var` are unaffected either way.
 Shared hard constraints: fully invested (`Σw = 1`), long only (`w ≥ 0`), per-name
 box (`w ≤` the effective name cap), per-GICS-sector caps (`Σ_{i∈s} wᵢ ≤` the effective
 sector cap — the same *values* as the thesis book's (`cycle.construction.build_book`, T-137),
-but hard cvxpy constraints rather than an exact projection of a target), optional turnover cap.
+but hard cvxpy constraints rather than an exact projection of a target), optional turnover cap
+(next section).
 Solver: Clarabel, falling back to OSQP then SCS. **Every** objective —
 `min_var`, `risk_parity`, `tangency`, `target_vol` and the `frontier` — runs under the effective caps.
+
+### `turnover.py` — the turnover cap and the chain (T-077)
+
+`optimize --turnover-cap C` (`C` in (0, 2]; **off by default, so today's books are unchanged**) bounds the book's trade
+against the previous one: `Σ|w − w_prev| ≤ C`. Until T-077 the cap was inert — `Constraints.w_prev` existed and nothing
+populated it.
+
+- **The chain.** `w_prev` is the previous book of the same *chain*: the same objective (`kind`), `frontier_k`,
+  expected-return estimator, optimizer engine version, input manifest and turnover cap, with the newest `as_of` strictly
+  before the book's. The chain is carried by `quant_portfolio.engine_version`: the default configuration (`equilibrium`, no
+  cap) keeps its key (`opt-v2+<tag>`); a variant puts its marks **before the first `+`**: `opt-v2.mu-<estimator>.to-<cap>+<tag>`
+  (`.mu-…` for a non-default estimator, `.to-…` for a cap). `v_quant_portfolio.is_current` reads `opt-v<N>` up to the first `+`
+  and requires `N` all digits, so a variant book is **never current**, whatever the compute order. So a
+  `carhart` book and an `equilibrium` book at one as-of no longer overwrite each other (`--mu james_stein` and
+  `--mu hist_mean` books, which used to overwrite the default book, get their own key too), and the chain is a
+  *configuration over time*: change the estimator, the cap or the inputs and a new chain starts.
+- **No previous book, no constraint.** The first book of a chain is unconstrained and the book says why
+  (`params_json["turnover"]["reason_not_applied"]`).
+- **A name that left the panel still counts.** The previous book's weight in a name outside today's panel is sold in full
+  and adds to the turnover as a constant: `norm1(w − w_prev over the panel) + Σ w_prev(outside) ≤ C`.
+- **Relaxation.** If no book satisfying the name and sector caps trades that little, the cap is relaxed to the smallest
+  feasible value (an LP, `optimize.min_turnover`, plus 1e-6) and the relaxation is recorded beside the cap relaxations
+  (`relaxations`: `cap = "turnover"`, `requested`, `effective`, `reason`).
+- **Recorded.** `params_json` carries `ret_estimator` and `turnover`: `cap_requested`, `cap_effective`, `applied`,
+  `reason_not_applied`, `previous_portfolio_id`, `previous_as_of`, `outside_panel_weight` and `realized`; `quant_portfolio.turnover`
+  holds the realized `Σ|w − w_prev|` (NULL for the first book of a chain). The book's `manifest_json` gains
+  `ret_estimator` / `turnover_cap` only when they differ from the default, so a default book's manifest is unchanged.
+- **Who it reaches.** `min_var`, `target_vol` and (through its frontier scan) `tangency`. **`risk_parity` ignores it** (a
+  point, not an optimum — as before, it is projected onto the name and sector caps only), and so does **the `frontier`
+  sweep** (its points are keyed by risk model, not by chain, so no previous frontier point exists to trade from).
+  **`tangency` falls back to the frontier** whenever the cap binds (the turnover constraint cannot be linearised in the
+  max-Sharpe y-space): its book is the best-Sharpe point of a 25-point scan, status `from_frontier`. The default
+  `target_vol` (1.25× the minimum-variance volatility) is computed without the turnover constraint, so a cap changes the
+  book and not the target.
+- **Audit Q5.** `max_sharpe` also falls back to that frontier scan when the y-space program is infeasible under the caps
+  (it used to raise `OptimizeError`).
 
 ### `caps.py` — the caps follow N (T-137)
 
@@ -285,7 +404,8 @@ longer changes any number — the manifest keeps its `metrics` entry so existing
 stay comparable.) `resolve_quant_manifest`
 resolves `--metrics-version` against what `fundamental_metrics` actually stores (via
 `kg_schema.versions`) and returns a `QuantManifest` whose 8-hex **tag** is folded into the
-keys the outputs already use: `quant_risk_model.model_version` (`rm-v1` → `rm-v1+3f9a1c2b`)
+keys the outputs already use: `quant_risk_model.model_version` (`rm-v2` → `rm-v2+3f9a1c2b`;
+`rm-v1` before T-077)
 and `quant_portfolio.engine_version` (`opt-v2` → `opt-v2+3f9a1c2b`). Because those tables
 were already unique on those columns, **no schema change** is needed, and:
 
@@ -344,7 +464,7 @@ manifest JSON (`quant_run.params_json`, `manifest_json` on models and books) und
 `constraints` / `profile`. They are **not** part of the tag: two spellings that resolve to the
 same versions are the same inputs. A book optimized from a non-default risk model folds that
 model into its own tag (`book_tag`), so books from two risk models never overwrite each other;
-a book from the default `rm-v1` keeps T-090's key, so no stored book changed key.
+a book from the default risk model (`rm-v2`; `rm-v1` before T-077) keeps T-090's key, so no stored book changed key.
 
 **Profiles.** `--version-profile FILE` loads a TOML file of named constraint sets and
 `--profile NAME` picks one (optional when the file holds exactly one); a flag on the command
@@ -399,15 +519,24 @@ when none is loaded for the window). It records the benchmark version and panel 
 the `quant_run` row. It freezes each persisted book's weights at its as-of date, walks
 forward trading days, computes the weighted simple total return, compounds it,
 subtracts the return of the benchmark version it just built or chose, and writes
-`quant_benchmark_performance` under `perf-v2`. A held name missing one day's forward return
+`quant_benchmark_performance` under `perf-v3`. A held name missing one day's forward return
 but present again later (a `price_daily` gap — its move is folded into the return of the day
 it reappears, since the return engine bridges the gap from the last available close) counts
 as a 0% that day with its weight kept, not renormalized away; only a name with no later return
 at all (delisted, or its series ends) is dropped, with the remaining names' weights
 renormalized from that day on (T-111; `build_internal_benchmark` applies the same rule).
-`perf-v1` rows, graded against
-`bench-v1`, stay stored under their version, and `v_quant_benchmark_performance` shows the
-latest version per (book, date). The live
+`perf-v1` and `perf-v2` rows stay stored under their version, and
+`v_quant_benchmark_performance` shows the latest version per (book, date).
+
+**`perf-v3`: net of a turnover cost (T-077).** Each optimized book pays `TURNOVER_COST_BPS / 10⁴ × Σ|w − w_prev|` with
+`TURNOVER_COST_BPS = 10` (a constant beside `PERF_ENGINE_VERSION` in `evaluate.py`: **`perf-v3` means 10 bps by definition**; there is no flag or
+setting, and a different cost is a new perf engine version) **once, on its first forward day**; the later days are untouched. `w_prev` is the previous
+book of its chain (`turnover.py`), so the first book of a chain pays `bps × Σ|w|`, i.e. `bps`. The cost is charged on
+**target** weights, not on weights drifted by a month of returns — a declared simplification that slightly overstates the
+trade a daily-rebalanced book makes and understates one that drifts. **`perf-v3` `realized_return`,
+`cumulative_return` and `active_return` are therefore net of that cost**; the benchmark (an equal-weight index) and the
+`live_book` snapshot (which has no previous book to trade from) pay none, so the live-vs-benchmark active returns are not like for like. Each book's cost (turnover, previous book, bps, cost) is recorded in the `evaluate` run's own
+`quant_run.params_json["turnover_cost"]`, keyed by portfolio id — `evaluate` never rewrites a book row `optimize` wrote. The 15 bps sensitivity lives in `scripts/verify_t077.py` only. `perf-v2` (gross) rows are untouched. The live
 `cycle` book (`portfolio_position`) is snapshotted into
 `quant_portfolio(kind='live_book')` so `v_quant_vs_live` and
 `v_quant_benchmark_performance` make the system-vs-base-case comparison a single
@@ -450,7 +579,31 @@ creates them before it builds the views.
 | `quant_benchmark_performance` | forward realized / cumulative / active return | `v_quant_benchmark_performance` |
 | — | live book vs each optimized book, per name (+ `LIVE_ONLY` rows for live names no book holds, T-042) | `v_quant_vs_live` |
 
+## Read contract for the knowledge-graph views (T-077)
+
+No column of any `v_*` view changes, no view definition changes, `kg_schema.ensure` and `schema_version` are untouched (no
+migration). What a consumer sees differently:
+
+| view | change |
+|---|---|
+| `v_quant_risk_model` | New models are `rm-v2+<tag>` (`rm-v1` models stay as they are). `manifest_json` gains a `carhart` object (or `{"unavailable": reason}`). `ret_estimator` is **unchanged in meaning**: the estimator configured when the model was built (normally `equilibrium`), not the list of μ it stores — the four μ vectors are in `quant_expected_return`, which is not projected. |
+| `v_quant_portfolio` | **There is no `ret_estimator` column here, and none was added.** A book under a non-default estimator or a turnover cap is a *parallel row* beside the default at the same `(as_of, kind)`: `engine_version` is `opt-v2.mu-carhart.to-0.5+<tag>` (default books keep their key), `manifest_json` carries `ret_estimator` / `turnover_cap` for those books, and `turnover` is now filled (the realized `Σ|w − w_prev|`, NULL for the first book of a chain). `is_current` marks one row per `(as_of, kind, frontier_k)` and **a variant book is never current** (its `opt-v<N>` is not all digits before the first `+`), whatever the compute order; `v_quant_vs_live`'s `LIVE_ONLY` rows follow the default book only. |
+| `v_quant_benchmark_performance` | New rows are `perf-v3` (net of the turnover cost); the view shows the newest version per `(book, date)`, so a re-evaluated book switches from `perf-v2` to `perf-v3`. |
+| `v_quant_frontier_point` | unchanged; see the caveat below on what the points belong to. |
+
 ## Known gaps / caveats
+
+- **`equilibrium` needs cover-page share counts that production does not hold yet (found in T-077's verification).** The
+  as-of market cap (T-132) rests on `filing_cover_shares`, which `fundamental_agent` fills as it ingests a filing. The
+  production database's `filing_cover_shares` is empty (its filings predate T-132), so `build-risk-model` refuses there
+  (`no panel asset has a market cap`) until the fundamental ingestion is re-run (`T-100`). The T-077 verification filled
+  the table on a scratch copy from the EDGAR gateway, with `fundamental_agent`'s own client and parser.
+- **The `frontier` sweep is keyed by risk model, not by book.** `quant_frontier_point` is unique on `(model_id, k)`, so
+  two `optimize` runs on one model with different `--mu` overwrite each other's points (and the sweep takes no turnover
+  cap). Read it right after the run, or keep one database per estimator.
+- **Several books at one `(as_of, kind)`.** A non-default estimator or a turnover cap makes a parallel book beside the default
+  (the marks in its `engine_version`); `v_quant_portfolio.is_current` never flags a variant, so the default book stays current
+  whatever the compute order. A consumer that wants a variant reads it by `engine_version` / `manifest_json`.
 
 - **Total-return quality** hinges on the gateway. Dividends come only from
   `portfolio-data-mining`'s yfinance-backed endpoint, which is unofficial and has no

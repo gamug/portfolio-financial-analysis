@@ -455,7 +455,7 @@ CREATE TABLE IF NOT EXISTS quant_risk_model (
 CREATE TABLE IF NOT EXISTS quant_expected_return (
     model_id  INTEGER NOT NULL REFERENCES quant_risk_model(id) ON DELETE CASCADE,
     asset_id  INTEGER NOT NULL REFERENCES assets(id),
-    mu_model  TEXT NOT NULL,                      -- 'hist_mean' | 'james_stein' | 'equilibrium'
+    mu_model  TEXT NOT NULL,                      -- 'hist_mean' | 'james_stein' | 'equilibrium' | 'carhart' (T-077)
     mu        REAL NOT NULL,                      -- annualized
     UNIQUE (model_id, asset_id, mu_model)
 );

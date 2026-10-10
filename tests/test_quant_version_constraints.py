@@ -356,7 +356,7 @@ def test_corpact_pins_one_engine_and_ignores_history(db: Database) -> None:
 def test_the_risk_model_is_constrained_among_models_over_the_same_inputs(db: Database) -> None:
     as_of = _as_of(db)
     run_build_risk_model(_settings(), as_of=as_of, conn=db)
-    run_build_risk_model(_settings(risk_model_version="rm-v2"), as_of=as_of, conn=db)
+    run_build_risk_model(_settings(risk_model_version="rm-v3"), as_of=as_of, conn=db)
 
     default = run_optimize(_settings(), as_of=as_of, conn=db)
     newest = run_optimize(_settings(risk_model_select="latest"), as_of=as_of, conn=db)
@@ -370,11 +370,11 @@ def test_the_risk_model_is_constrained_among_models_over_the_same_inputs(db: Dat
         if k["engine_version"].endswith(newest.manifest_tag)
     ]
     assert all(
-        m["risk_model"] == "rm-v2" and m["constraints"] == {"risk_model": "latest"} for m in rm2
+        m["risk_model"] == "rm-v3" and m["constraints"] == {"risk_model": "latest"} for m in rm2
     )
 
     with pytest.raises(VersionError, match="run build-risk-model first"):
-        resolve_quant_manifest(db, _settings(risk_model_select=">=rm-v3"), optimize_as_of=as_of)
+        resolve_quant_manifest(db, _settings(risk_model_select=">=rm-v4"), optimize_as_of=as_of)
 
 
 def test_the_default_risk_model_keeps_the_t090_book_key(db: Database) -> None:
@@ -554,6 +554,20 @@ def test_plans_match_what_the_real_runs_then_write(db: Database) -> None:
     assert plan_build_risk_model(settings, as_of=as_of, conn=db).model_stored
 
 
+def test_the_optimize_plan_prints_the_variant_book_key(db: Database) -> None:
+    """T-077: a dry run under --mu / --turnover-cap names the key the book will really get."""
+    as_of = _as_of(db)
+    settings = _settings(ret_estimator="carhart", turnover_cap=0.5)
+    plan = plan_optimize(settings, as_of=as_of, conn=db)
+    res = run_optimize(
+        settings.model_copy(update={"ret_estimator": "hist_mean"}), as_of=as_of, conn=db
+    )
+    assert plan.book_version == f"opt-v2.mu-carhart.to-0.5+{res.manifest_tag}"
+    assert plan_optimize(_settings(), as_of=as_of, conn=db).book_version == (
+        f"opt-v2+{res.manifest_tag}"
+    )
+
+
 def test_an_unsatisfiable_flag_exits_1_with_the_reasons(
     cli_on: Database, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -575,7 +589,7 @@ def test_a_bad_profile_exits_1(
 
 def test_the_two_risk_model_flags_are_exclusive(cli_on: Database) -> None:
     with pytest.raises(SystemExit):
-        cli.main(["optimize", "--model-version", "rm-v2", "--risk-model-version", "latest"])
+        cli.main(["optimize", "--model-version", "rm-v3", "--risk-model-version", "latest"])
 
 
 def test_the_new_flags_reach_the_settings() -> None:

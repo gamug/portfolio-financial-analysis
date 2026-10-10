@@ -110,9 +110,22 @@ Projection semantics
 ``v_quant_risk_model``    one row per (as_of, model_version): the Markowitz risk model's
                           metadata (estimators, shrinkage, panel spec, rf). The mu vector
                           and covariance matrix stay in ``quant_expected_return`` /
-                          ``quant_covariance`` and are not projected.
+                          ``quant_covariance`` and are not projected. From ``rm-v2`` (T-077) the
+                          model also stores a ``carhart`` mu, and ``manifest_json`` carries a
+                          ``carhart`` object (factor-file version and SHA-256, regression range,
+                          lambda-bar, the beta prior, the shrinkage weights, the flagged assets) or
+                          ``{"unavailable": reason}``. ``ret_estimator`` is the estimator configured
+                          when the model was built, not a list of the mu stored.
 ``v_quant_portfolio``     one row per optimized benchmark book (as_of, kind); portfolio-level
-                          expected/realized risk-return, not per asset. ``is_current`` (T-144)
+                          expected/realized risk-return, not per asset. A book optimized under a
+                          non-default estimator or a turnover cap (T-077) sits beside the default
+                          book at the same (as_of, kind): its ``engine_version`` carries the marks before
+                          the first ``+`` (``opt-v2.mu-<estimator>.to-<cap>+<tag>``), its
+                          ``manifest_json`` names them, and ``turnover`` is its realized trade against
+                          the previous book of that chain. A variant book is **never** current
+                          (``opt-v<N>`` must be all digits up to the first ``+``), whatever the
+                          compute order, so ``v_quant_vs_live``'s ``LIVE_ONLY`` rows follow the
+                          default book only. ``is_current`` (T-144)
                           marks the newest ``opt-v<N>`` per (as_of, kind, frontier_k) -- by
                           ``N``, then ``computed_at``, then ``id``; at most one per key.
 ``v_quant_position``      the weights of each book; ``valid_to IS NULL`` = current (mirrors
@@ -121,7 +134,9 @@ Projection semantics
 ``v_quant_benchmark_performance`` forward realized daily / cumulative return of a frozen
                           book, and its active return vs the benchmark; the latest
                           ``engine_version`` per (book, date) -- ``perf-v1`` rows (graded
-                          against ``bench-v1``) stay stored under their version (T-108).
+                          against ``bench-v1``) stay stored under their version (T-108). From
+                          ``perf-v3`` (T-077) the returns are net of a one-off turnover cost on a
+                          book's first forward day; ``perf-v2`` rows are gross.
 ``v_quant_vs_live``       per-name weight of every optimized book beside the live
                           ``portfolio_position`` book as of the same date (active weight).
                           Plus (T-042) one ``kind = 'LIVE_ONLY'`` row per live position held

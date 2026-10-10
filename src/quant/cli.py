@@ -28,17 +28,21 @@ from quant.benchmark import (
 from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
+from quant.factors import FactorIntegrityError
 from quant.persist import (
     DryRunPlan,
     MissingMarketCaps,
+    MuUnavailable,
     plan_build_risk_model,
     plan_optimize,
     run_build_risk_model,
     run_optimize,
 )
 from quant.profiles import load_profile
+from quant.rates import RiskFreeUnavailable
 from quant.repair import NotALiveBookSnapshot, PortfolioNotFound, apply_void, plan_void
 from quant.returns import run_build_returns
+from quant.turnover import check_turnover_cap
 from quant.universe import benchmark_gate
 from quant.versions_report import versions_report
 
@@ -83,6 +87,29 @@ _ALLOW_DIRTY_HELP = (
     "working tree has uncommitted changes -- results would come from code HEAD alone can't "
     "reproduce; for a deliberate run from a work-in-progress checkout, not routine use"
 )
+
+
+_TURNOVER_CAP_HELP = (
+    "cap on sum |w - w_prev|, in (0, 2], against the previous book of the same chain (objective, "
+    "estimator, cap, optimizer engine, inputs): off by default, so books are unchanged. No previous "
+    "book: no constraint. A cap below the smallest feasible turnover is relaxed to it and recorded. "
+    "risk_parity and the frontier sweep ignore it; tangency under a binding cap is the best-Sharpe "
+    "point of a frontier scan (T-077)"
+)
+_MU_HELP = (
+    "expected-return estimator for the return-aware objectives and the reported return/Sharpe "
+    "(default equilibrium); carhart needs a risk model built under rm-v2 with factor data covering "
+    "the as-of (T-077)"
+)
+
+
+def _turnover_cap(text: str) -> float:
+    try:
+        value = float(text)
+        check_turnover_cap(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+    return value
 
 
 def _add_profile(sub: argparse.ArgumentParser) -> None:
@@ -176,9 +203,14 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument("--frontier-k", dest="frontier_k", type=int)
     op.add_argument("--target-vol", dest="target_vol", type=float)
     _add_cap_flags(op)
-    op.add_argument("--turnover-cap", dest="turnover_cap", type=float)
     op.add_argument(
-        "--mu", dest="ret_estimator", choices=("equilibrium", "james_stein", "hist_mean")
+        "--turnover-cap", dest="turnover_cap", type=_turnover_cap, help=_TURNOVER_CAP_HELP
+    )
+    op.add_argument(
+        "--mu",
+        dest="ret_estimator",
+        choices=("equilibrium", "james_stein", "hist_mean", "carhart"),
+        help=_MU_HELP,
     )
     op.add_argument("--solver")
     op.add_argument("--model-version", dest="model_version")
@@ -386,7 +418,15 @@ def _run_versions(settings: QuantSettings) -> int:
 def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: bool) -> int:
     try:
         res = run_build_risk_model(settings, as_of=as_of, store_cov=store_cov)
-    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale, MissingMarketCaps) as exc:
+    except (
+        VersionError,
+        StaleAsOf,
+        DirtyTree,
+        VetoSchemaStale,
+        MissingMarketCaps,
+        FactorIntegrityError,
+        RiskFreeUnavailable,
+    ) as exc:
         print(f"build-risk-model: {exc}", file=sys.stderr)
         return 1
     shr = f"{res.cov_shrinkage:.3f}" if res.cov_shrinkage is not None else "n/a"
@@ -406,6 +446,16 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({res.dirty_tree_bypassed})",
             file=sys.stderr,
         )
+    if "unavailable" in res.carhart:
+        print(f"  carhart mu not built: {res.carhart['unavailable']}", file=sys.stderr)
+    elif res.carhart:
+        print(
+            f"  carhart mu: {res.carhart['regression_n_dates']} regression dates "
+            f"({res.carhart['regression_date_start']}..{res.carhart['regression_date_end']}), "
+            f"factor files {res.carhart['factor_library_version']}, "
+            f"{res.carhart['panel_gap_after_factor_end']} panel date(s) past the factor data, "
+            f"{len(res.carhart['flagged_asset_ids'])} asset(s) flagged"
+        )
     cov = res.market_cap_coverage
     if cov:
         print(
@@ -424,7 +474,17 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
 def _run_optimize(settings: QuantSettings, as_of: str) -> int:
     try:
         opt = run_optimize(settings, as_of=as_of)
-    except (VersionError, StaleAsOf, DirtyTree, VetoSchemaStale, MissingMarketCaps) as exc:
+    except (
+        VersionError,
+        StaleAsOf,
+        DirtyTree,
+        VetoSchemaStale,
+        MissingMarketCaps,
+        FactorIntegrityError,
+        RiskFreeUnavailable,
+        MuUnavailable,
+        ValueError,
+    ) as exc:
         print(f"optimize: {exc}", file=sys.stderr)
         return 1
     books = ", ".join(f"{k}#{v}" for k, v in opt.books.items())

@@ -1,0 +1,40 @@
+{
+  "source": "Kenneth R. French Data Library",
+  "library_url": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html",
+  "downloaded": "2026-10-10",
+  "library_version": "202608 CRSP",
+  "units": "percent (daily, simple returns); the loader converts to decimals",
+  "files": {
+    "ff3": {
+      "path": "F-F_Research_Data_Factors_daily.csv",
+      "url": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_Factors_daily_CSV.zip",
+      "version_statement": "This file was created by using the 202608 CRSP database.",
+      "zip_sha256": "2f29e22546069914890a712680a6f81f3680ebc3543b52864484d209ca13a7db",
+      "sha256": "c2dc30c9e89eeea05a689c81fb426f4d76711270733b3731997615cbdff5b247",
+      "first_date": "1926-07-01",
+      "last_date": "2026-08-31",
+      "n_rows": 26317,
+      "title": "Fama/French 3 Factors [Daily]",
+      "columns": [
+        "Mkt-RF",
+        "SMB",
+        "HML",
+        "RF"
+      ]
+    },
+    "mom": {
+      "path": "F-F_Momentum_Factor_daily.csv",
+      "url": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip",
+      "version_statement": "This file was created by using the 202608 CRSP database.",
+      "zip_sha256": "ecf82b116e6ec56d2b79a2f27bd1d1598c217b5c6c25caa55b945bdd8a2c0b78",
+      "sha256": "d4b3e98cb5afb1533af0d4568aa816de2aadac5bbff9a590c1c65e3392d7b05b",
+      "first_date": "1926-11-03",
+      "last_date": "2026-08-31",
+      "n_rows": 26216,
+      "title": "Momentum Factor (Mom) [Daily]",
+      "columns": [
+        "Mom"
+      ]
+    }
+  }
+}

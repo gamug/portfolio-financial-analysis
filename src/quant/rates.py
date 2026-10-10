@@ -22,6 +22,10 @@ RF_ENGINE_VERSION = "rf-v1"
 _MIN_CSV_COLS = 2
 
 
+class RiskFreeUnavailable(RuntimeError):
+    """No risk-free rate was known as of the date (T-077, audit Q3)."""
+
+
 @dataclass(frozen=True)
 class RiskFree:
     curve: str
@@ -67,10 +71,18 @@ def load_risk_free(settings: QuantSettings, *, as_of: str, conn: Database) -> Ri
         if settings.rf_csv_path is None:
             raise RuntimeError("rf_source='csv' needs rf_csv_path")
         points = _load_csv(settings.rf_csv_path)
+        usable = [p for p in points if p[0] <= as_of]
+        if not usable:
+            # the series starts after the as-of: any rate in it postdates the as-of (the old fallback
+            # took the series' newest) and would be lookahead
+            first = points[0][0] if points else "no rows"
+            raise RiskFreeUnavailable(
+                f"the risk-free series {settings.rf_csv_path.name} starts {first}, after the "
+                f"as-of date {as_of}; refusing to use a rate that was not known then"
+            )
         for d, r in points:
             _upsert(conn, "US3M", d, r, f"csv:{settings.rf_csv_path.name}")
         conn.commit()
-        usable = [p for p in points if p[0] <= as_of] or points
         rate_date, annual = usable[-1]
         return RiskFree("US3M", rate_date, annual, _daily(annual, settings.periods_per_year), "csv")
 

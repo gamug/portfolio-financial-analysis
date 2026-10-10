@@ -4,7 +4,9 @@ Every objective shares the same hard constraints: fully invested (``sum w = 1``)
 long only (``w >= 0``), a per-name box cap, and per-GICS-sector caps -- the same
 *intent* as ``cycle.construction.build_book``'s caps (and, since T-137, the same effective values,
 resolved by ``quant.caps``) but enforced inside the optimizer as hard linear constraints rather
-than by an exact projection of a target. An optional turnover cap bounds ``sum |w - w_prev|`` against the previous book.
+than by an exact projection of a target. An optional turnover cap bounds ``sum |w - w_prev|`` against the previous book
+(T-077: ``Constraints.w_prev`` is populated from the previous book of the same chain; a name that book held and today's
+panel does not still counts, as the constant ``w_prev_outside``).
 """
 
 from __future__ import annotations
@@ -42,6 +44,9 @@ class Constraints:
     sector_of: dict[int, int | None] | None = None
     turnover_cap: float | None = None
     w_prev: Vec | None = None
+    # weight the previous book held in names outside today's panel: it is sold in full, so it adds
+    # to the turnover as a constant -- norm1(w - w_prev) + w_prev_outside <= turnover_cap
+    w_prev_outside: float = 0.0
     asset_ids: Sequence[int] | None = None
 
 
@@ -116,8 +121,27 @@ def _w_constraints(w: cp.Variable, c: Constraints, n: int) -> list[cp.Constraint
     for g in _sector_groups(c, n):
         cons.append(cp.sum(w[g]) <= c.max_sector_weight)
     if c.turnover_cap is not None and c.w_prev is not None:
-        cons.append(cp.norm1(w - c.w_prev) <= c.turnover_cap)
+        cons.append(cp.norm1(w - c.w_prev) <= c.turnover_cap - c.w_prev_outside)
     return cons
+
+
+def turnover_active(c: Constraints) -> bool:
+    """Whether *c* binds a turnover cap: one needs both the cap and a previous book."""
+    return c.turnover_cap is not None and c.w_prev is not None
+
+
+def min_turnover(c: Constraints, solver: str = "CLARABEL") -> float:
+    """The smallest ``sum |w - w_prev|`` over the panel any book satisfying the other constraints
+    (fully invested, long only, name and sector caps) can reach -- an LP. The turnover cap is
+    infeasible below ``min_turnover + w_prev_outside``; the caller relaxes it to that value."""
+    if c.w_prev is None:
+        return 0.0
+    n = len(c.w_prev)
+    w = cp.Variable(n)
+    free = replace(c, turnover_cap=None, w_prev=None, w_prev_outside=0.0)
+    prob = cp.Problem(cp.Minimize(cp.norm1(w - c.w_prev)), _w_constraints(w, free, n))
+    _solve(prob, solver)
+    return float(np.abs(np.asarray(w.value) - c.w_prev).sum())
 
 
 def _y_constraints(y: cp.Variable, c: Constraints, n: int) -> list[cp.Constraint]:
@@ -307,40 +331,55 @@ def target_volatility_portfolio(  # noqa: PLR0913 - keyword-only optimizer knobs
     return _result("target_vol", weights, ids, sig, mu, rf, used, status, time.perf_counter() - t0)
 
 
+def _tangency_from_frontier(
+    mu: Vec, sig: Mat, *, rf: float, constraints: Constraints, solver: str
+) -> OptResult:
+    """The best-Sharpe point of a 25-point frontier scan: the tangency book when no long-only
+    tangency exists, when a turnover cap binds (it cannot be linearised in y-space), or when the
+    y-space solve fails (audit Q5)."""
+    n = sig.shape[0]
+    pts = efficient_frontier(mu, sig, k=25, constraints=constraints, rf=rf, solver=solver)
+    feasible = [p for p in pts if p.status in _OK and p.sharpe is not None]
+    if not feasible:
+        fb = min_variance(sig, constraints=constraints, mu=mu, rf=rf, solver=solver)
+        return _result(
+            "tangency", fb.weights, fb.asset_ids, sig, mu, rf, fb.solver, "no_tangency", 0.0
+        )
+    best = max(feasible, key=lambda p: p.sharpe or -1e9)
+    return _result(
+        "tangency",
+        best.weights,
+        constraints.asset_ids or list(range(n)),
+        sig,
+        mu,
+        rf,
+        "frontier",
+        "from_frontier",
+        0.0,
+    )
+
+
 def max_sharpe(
     mu: Vec, sigma: Mat, *, rf: float, constraints: Constraints, solver: str = "CLARABEL"
 ) -> OptResult:
     sig = _sym_psd(sigma)
     n = sig.shape[0]
     excess = np.asarray(mu, dtype=np.float64) - rf
-    if not np.any(excess > 0) or constraints.turnover_cap is not None:
+    if not np.any(excess > 0) or turnover_active(constraints):
         # no long-only tangency, or turnover can't be linearised in y-space:
         # take the best Sharpe point off the frontier instead.
-        pts = efficient_frontier(mu, sig, k=25, constraints=constraints, rf=rf, solver=solver)
-        feasible = [p for p in pts if p.status in _OK and p.sharpe is not None]
-        if not feasible:
-            fb = min_variance(sig, constraints=constraints, mu=mu, rf=rf, solver=solver)
-            return _result(
-                "tangency", fb.weights, fb.asset_ids, sig, mu, rf, fb.solver, "no_tangency", 0.0
-            )
-        best = max(feasible, key=lambda p: p.sharpe or -1e9)
-        return _result(
-            "tangency",
-            best.weights,
-            constraints.asset_ids or list(range(n)),
-            sig,
-            mu,
-            rf,
-            "frontier",
-            "from_frontier",
-            0.0,
-        )
+        return _tangency_from_frontier(mu, sig, rf=rf, constraints=constraints, solver=solver)
 
     t0 = time.perf_counter()
     y = cp.Variable(n)
     cons = [*_y_constraints(y, constraints, n), excess @ y == 1]
     prob = cp.Problem(cp.Minimize(cp.quad_form(y, cp.psd_wrap(sig))), cons)
-    used = _solve(prob, solver)
+    try:
+        used = _solve(prob, solver)
+    except OptimizeError:
+        # audit Q5: the y-space program can be infeasible under the caps (excess return reachable
+        # only above them); the frontier scan still returns the best feasible book
+        return _tangency_from_frontier(mu, sig, rf=rf, constraints=constraints, solver=solver)
     yv = np.asarray(y.value)
     w = yv / yv.sum()
     ids = constraints.asset_ids or list(range(n))

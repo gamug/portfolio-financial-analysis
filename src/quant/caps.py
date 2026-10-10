@@ -32,7 +32,7 @@ _EPS = 1e-12  # "is this a real relaxation": far below the solver tolerance
 class Relaxation:
     """A cap the panel could not satisfy as requested, and what it was relaxed to."""
 
-    cap: Literal["name", "sector"]
+    cap: Literal["name", "sector", "turnover"]
     requested: float
     effective: float
     reason: str

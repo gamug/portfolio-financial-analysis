@@ -5086,3 +5086,227 @@ but it is the degenerate-cohort failure mode `docs/cycle.md` now records: such a
 
 Scratch paths: `/tmp/t141/replay.db` (copy of `data/pilot/financial_pilot_replay.db`), `/tmp/t141/prod_scratch.db` (copy of production, then migrated,
 then the refused MONITORING run), `/tmp/t141/universe_full.db` (503 tickers from that copy's `assets`).
+
+
+---
+
+## T-077 — Carhart four-factor μ with Vasicek-shrunk betas, a live turnover cap and a turnover cost (Work item 8, step 6)
+
+**Status**: Implemented on `feat/t077-carhart-mu-turnover` (SPEC 1.5.0, FR-009/FR-010); equilibrium stays the default. The
+equilibrium-vs-carhart **portfolio** comparison ran on the **20 pilot names only**, because the production copy has no cover-page share counts
+(see "What could not be verified"). Supersedes Work item 3 (`T-020`–`T-026`).
+
+### Symptom
+
+Checked against a scratch copy of production (`data/financial.db`, sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after), 2026-10-10:
+
+- **One expected-return estimator carried the return-aware objectives.** `equilibrium`'s cross-sectional dispersion on the 20-name panel is small (mean
+  sd **1.57 pp**, values 6.6–16.0% over the 20 monthly dates) and it is cap-weighted by construction; `james_stein` is a **constant on 5 of 20 dates** (sd
+  0.0000, 2025-01 to 2025-05: the sample means' dispersion is below its estimation noise) and 1.0–13.9 pp wide otherwise; `hist_mean` is 14–26 pp wide.
+  There was no estimator driven by factor exposure rather than by 3 years of sample means or by market cap.
+- **`--turnover-cap` was inert.** `Constraints.w_prev` is declared in `quant/optimize.py` and assigned nowhere under `src/` (`git grep w_prev=` at `774a315`:
+  only `replace(c, turnover_cap=None, w_prev=None)`), and `_w_constraints` adds the constraint only when both are set; so the flag was accepted and changed
+  nothing. `tangency` nevertheless switched to its frontier scan whenever a cap was set.
+- **`evaluate` charged no cost for trading**, so any comparison of two books was gross of what moving between them costs.
+- **Books of different estimators overwrote each other.** A book is keyed `(as_of, kind, frontier_k, engine_version)`; none of those carries the estimator (or the
+  cap), so `optimize --mu james_stein` after the default updated the same row in place.
+- **Audit Q3.** `rates.load_risk_free` with a CSV, for an as-of before the series' first date: `usable = [...] or points` then `usable[-1]` returned the
+  series' **newest** row. Reproduced at `774a315` with a series starting 2026-01-01 and an as-of 2025-12-31: `rate_date 2026-06-01, annualized_rate 0.045`
+  (a rate that did not exist yet).
+- **Audit Q5.** `max_sharpe`'s y-space program is infeasible when the caps force a book whose excess return is not positive although one name's is (three names
+  capped at 1/3, μ = (10%, 0, 0), rf 4%): `OptimizeError: no solver converged (SCS:infeasible)` at `774a315`.
+
+### Root cause
+
+Not a defect of a number but missing capability plus one dead path: the factor-model estimator was planned (Work item 3, then Work item 8 step 6) and never
+built; `w_prev` was never populated from the previous book; the book key predates `--mu` having more than one meaningful value; `evaluate` was written
+for gross comparison. Re-derived from the code, not from the audit's wording; Q3's mechanism is `or points` + `usable[-1]` (the newest rate, not the first).
+
+### Theoretical/technical reference
+
+- Carhart, M. M. (1997), "On Persistence in Mutual Fund Performance", *Journal of Finance* 52(1), 57–82 — the four-factor model (market, size, value, momentum).
+- Fama, E. F. & French, K. R. (1993), "Common risk factors in the returns on stocks and bonds", *Journal of Financial Economics* 33(1), 3–56 — Mkt-RF, SMB, HML.
+- Vasicek, O. A. (1973), "A Note on Using Cross-Sectional Information in Bayesian Estimation of Security Betas", *Journal of Finance* 28(5), 1233–1239 — shrinking a
+  beta toward the cross-sectional mean with weight `σ²/(σ² + se²)`.
+- Kenneth R. French Data Library (`mba.tuck.dartmouth.edu/pages/faculty/ken.french/data_library.html`): "Fama/French 3 Factors [Daily]" and "Momentum Factor (Mom)
+  [Daily]", both *"created by using the 202608 CRSP database"*, downloaded 2026-10-10; SHA-256 in `src/quant/data/manifest.json`.
+
+### Fix
+
+`quant/factors.py` (loader, OLS, Vasicek, premia, μ), `quant/turnover.py` (the chain, the previous book, the cap's constraint and its relaxation), `quant/persist.py`
+(the estimator beside the other three in `build-risk-model`, `rm-v1` → `rm-v2`; `w_prev` and the realized turnover in `optimize`), `quant/evaluate.py`
+(`perf-v2` → `perf-v3`, the cost), `quant/rates.py` (the refusal), `quant/optimize.py` (the turnover constraint with weight outside the panel, `min_turnover`, the Q5
+fallback), `quant/cli.py` (`--mu carhart`, `--turnover-cap` validated in (0, 2]). Full method: `docs/quant.md` ("`factors.py`", "`turnover.py`"),
+`SPEC.md` FR-009/FR-010.
+
+### Design decisions
+
+1. **Data vendored byte-for-byte, SHA-256 on load, no network.** A mismatch fails the build (it is not downgraded to "carhart unavailable"): data that is not the
+   pinned data is not estimated from. The files are stored with `.gitattributes -text` so git cannot change their line endings. Percent → decimals on load; rows after
+   the as-of are not parsed into the result.
+2. **Log → simple before the regression; French's RF for the excess return.** The factors are simple returns, and `Mkt-RF` is measured against French's own RF.
+3. **Vasicek per factor, prior = equal-weighted cross-sectional mean, prior variance = cross-sectional variance (`ddof = 1`)**, `w = σ²/(σ² + se²)` — as specified;
+   `PLAN.md`'s `1 − Var(β̂_i)/(Var(β̂_i) + Var(β̄))` is the same expression. Declared limitations: the four betas are shrunk separately; the prior variance contains the
+   sampling noise (a textbook Vasicek prior subtracts it), so `w` errs low.
+4. **λ̄ from 1963-07-01** (Fama–French sample start), arithmetic mean × 252. The intercept is estimated and dropped (no alpha in μ).
+5. **Overlap, not the as-of, bounds the regression.** A panel past the file's last date is regressed on the overlap and the gap recorded; under 504 dates → carhart
+   unbuilt, the other three built, the reason in the model's manifest, `optimize --mu carhart` refuses.
+6. **A chain is a configuration over time.** The previous book is the newest earlier one with the same `(kind, frontier_k, engine_version)`, and `engine_version`
+   carries the estimator and the cap as marks **before the first `+`** (`opt-v2.mu-carhart.to-0.5+<tag>`) while the default keeps its key. That makes books of different
+   estimators/caps coexist (which the verification needs), makes "previous book" well defined, and keeps a variant out of `v_quant_portfolio.is_current` (the view requires `opt-v<N>`, `N` all digits,
+   before the first `+`): only the default configuration can be current (PR #133 review).
+7. **The frontier sweep is not turnover-constrained** (its points are keyed by risk model, not chain), `risk_parity` ignores the cap (as before), and `tangency` under a
+   binding cap is the best-Sharpe point of a frontier scan (status `from_frontier`). The default `target_vol` is 1.25 × the min-variance volatility computed **without**
+   the turnover constraint, so a cap changes the book, not the target.
+8. **Cost on target weights**, once, on a book's first forward day; the first book of a chain pays `bps × Σ|w|`; the `live_book` snapshot and the benchmark pay none. **`perf-v3` means 10 bps
+   by definition** (a constant beside `PERF_ENGINE_VERSION`; no flag, no setting — another cost is a new perf version) and `evaluate` records each book's cost on its own run, never on the book row.
+9. **Factor vintage is pinned to the risk-model version**: a new vintage needs a new `risk_model_version` (a test pins `rm-v2` to "202608 CRSP").
+
+### Verification
+
+Everything below is on scratch copies under `/tmp/t077/`; production was opened by nothing but `cp`.
+
+**Preparation.** `fundamental_agent migrate` on the copy (v9, v10 applied). `quant backfill-actions --from 2022-01-01 --analysis-date 2026-09-29` against the
+deployed gateway: 499 of 499 assets fetched (7,391 dividends + 69 splits; 7 new rows — 426 assets already had actions). `quant build-returns`: 499 assets, 567,541
+new rows, 407 with dividends. Production's `universe.db` holds only the **20 pilot names**, so for the 499-name panel `KG_UNIVERSE_DB` pointed at a scratch copy of
+`universe_history.db` (894 stints: 503 live snapshot + 391 Wikipedia-change backfill; point in time, so HOOD enters 2025-09-22, APO 2024-12-23, …); for the 20-name path
+`KG_UNIVERSE_DB` pointed at a copy of the real `universe.db`. The 20 monthly as-ofs are the last trading day of each month from 2025-01-31 (the first with 756 days of
+history; 2024-12-31 has 753) to 2026-08-31, evaluated to 2026-09-29. All product runs were from clean commits (`quant_run.code_version` `0a27fb9` / `c0bb2dc`, no `-dirty`).
+
+#### What could not be verified
+
+`build-risk-model` on the 499-name panel **refuses** (`no panel asset has a market cap as of 2025-01-31`): the market cap rests on `filing_cover_shares` (T-132), which
+`fundamental_agent` fills as it ingests a filing, and production's table is **empty** (its filings predate T-132). Backfilling it for all ~2,600 filings since 2024-07 from the
+EDGAR gateway (the product's own client and parser) ran at 4–10 filings a minute (192 filings in ~35 minutes) and was stopped by decision; for the 20 pilot names the 156
+missing filings were fetched (0 errors, ~8 minutes), so on the 20 names the whole product path runs. **Therefore the equilibrium-vs-carhart portfolio comparison ran on 20
+names only; on 499 names only the estimator was called, directly, with no market caps and no `equilibrium`.** (A second, smaller finding on the 499-name panel: GEHC has a
+price gap the panel cannot heal on 2025-11-28 — `build_return_panel` raises — so the product's `build-risk-model` would refuse that date too; the direct call drops it
+there and records it.)
+
+#### 1. The 499-name panel, the estimator only (`scripts/verify_t077.py diagnostics`)
+
+The same gate (`settings_gate`), the same panel (756 days, ≥ 504 observations) and the same factor data as the model, `rf` 4.5%. N 464–490 per date; **0 assets flagged
+under 504 observations** on every date (the panel is dense by construction: a name needs ≥ 741 of 756 days, so the flag is a guard; it did not fire), **0 panel dates past the
+factor file** (every as-of ≤ 2026-08-31 = the file's last date). Per-date tables: `docs/t077_verification/diagnostics_499.md`. **`equilibrium` is not available here.**
+
+| estimator | mean of the cross-sectional mean | mean cross-sectional sd (range over dates) | mean min .. mean max |
+|---|---|---|---|
+| hist_mean | 12.13% | 18.33 pp (14.9–21.4) | −49.1% .. 105.5% |
+| james_stein | 12.13% | 1.24 pp (**0.00**–5.02; constant on 10 of 20 dates) | 8.5% .. 18.9% |
+| carhart | 10.95% | 3.87 pp (2.90–5.20) | 3.3% .. 22.7% |
+
+Correlation of carhart μ with `hist_mean`: Pearson 0.49 / Spearman 0.46 (0.22–0.72 over dates); with `james_stein`: 0.59 / 0.55 (0.47–0.72; **undefined on the 10 dates
+where `james_stein` is constant**).
+
+| factor | λ̄ (1963→D) mean (range over dates) | β̄ (prior mean) | σ² (prior variance) | median shrinkage weight | lowest single weight |
+|---|---|---|---|---|---|
+| MKT | 7.21% (7.01–7.35) | 0.895 (0.883–0.908) | 0.157 (0.100–0.208) | 0.979 (0.974–0.981) | 0.67 |
+| SMB | 1.08% (1.02–1.18) | 0.075 (0.051–0.109) | 0.089 (0.077–0.097) | 0.924 (0.916–0.930) | 0.33 |
+| HML | 3.65% (3.52–3.77) | 0.267 (0.251–0.279) | 0.177 (0.167–0.187) | 0.970 (0.959–0.979) | 0.51 |
+| MOM | 7.16% (7.05–7.43) | −0.142 (−0.165 – −0.106) | 0.078 (0.048–0.155) | 0.954 (0.941–0.976) | 0.52 |
+
+On 756 daily observations a beta's sampling variance is small next to the cross-sectional spread of betas, so **the shrinkage is mild** (median weight 0.92–0.98): it matters for the
+noisiest SMB and MOM betas (weights down to 0.33) and barely elsewhere.
+
+**(b) Premia sensitivity** (the same shrunk betas; μ under the 1963 start vs the factor file's own 1926 start vs the mean of the last 756 days):
+
+| premia | median change in μ vs 1963 | rank correlation with the 1963 μ |
+|---|---|---|
+| 1926 start | +0.64 pp (+0.61 … +0.71) | 0.998 (min 0.997) |
+| last 756 days | +3.87 pp (−2.25 … +6.98) | 0.830 (min 0.525) |
+
+The start year moves the level by ~0.6 pp and the ranking not at all; the 756-day window moves the level by several points and the ranking materially (over the last 756 days SMB
+averaged −4 to −7% a year, MKT 6–18% and MOM 3–17%, against 1.1%, 7.2% and 7.2% since 1963). The estimator ranks assets by factor exposure far better than it prices them.
+
+#### 2. The 20 pilot names, end to end through the product
+
+`build-risk-model` (`rm-v2+9d34ff69`, N 17–20, caps 17/17, 19/19 or 20/20 assets, share-count age median 27–98 days, max 123) on all 20 dates; the stored carhart μ equals a direct call of the
+estimator to 1e-9 on every date. `optimize --objectives min_var,tangency,target_vol,frontier` with `--mu equilibrium` and `--mu carhart`, each at no cap, at `--turnover-cap 0.5` and
+(beyond the brief) at 0.1: 120 runs, 360 books and 120 frontier sweeps, in **two database copies, one per estimator**, because the frontier points are keyed by risk model and would
+overwrite each other. `evaluate --from 2025-01-31 --analysis-date 2026-09-29` wrote `perf-v3` rows for 187 books per database. Per-date tables: `docs/t077_verification/diagnostics_20.md`,
+`chains.md`.
+
+**(a) on the 20 names** (equilibrium available):
+
+| estimator | mean of the cross-sectional mean | mean sd (range over dates) | mean min .. mean max |
+|---|---|---|---|
+| hist_mean | 6.76% | 19.81 pp (13.6–25.6) | −27.9% .. 59.8% |
+| james_stein | 6.76% | 5.71 pp (**0.00**–13.9; constant on 5 of 20 dates) | −2.7% .. 24.0% |
+| equilibrium | 9.26% | **1.57 pp** (1.37–2.09) | 7.1% .. 13.3% |
+| carhart | 10.02% | **4.61 pp** (3.39–5.63) | 5.0% .. 20.5% |
+
+Correlation of carhart μ with `equilibrium`: Pearson **0.85** / Spearman 0.80 (0.71–0.92); with `hist_mean` 0.53 / 0.49; with `james_stein` 0.63 / 0.58 (undefined on the 5 constant dates).
+λ̄ is the same as above (the premia do not depend on the panel). Flagged: 0 on every date. Gap: 0.
+
+| factor | β̄ (20 names) | β̄ (499 names) | σ² (20) | σ² (499) | median w (20) | median w (499) |
+|---|---|---|---|---|---|---|
+| MKT | 0.769 | 0.895 | 0.193 | 0.157 | 0.983 | 0.979 |
+| SMB | −0.046 | 0.075 | 0.096 | 0.089 | 0.917 | 0.924 |
+| HML | 0.458 | 0.267 | 0.152 | 0.177 | 0.966 | 0.970 |
+| MOM | −0.224 | −0.142 | 0.055 | 0.078 | 0.933 | 0.954 |
+
+**How noisy the prior is on a small panel** (`docs/t077_verification/prior_comparison.md`, per date): the 20-name prior mean differs from the 499-name one by 0.126 (MKT), 0.122 (SMB), 0.191 (HML) and 0.082
+(MOM) in absolute terms on average — 0.13 of a unit market beta, and for HML 71% of the large-panel value — and the prior variance is 1.27× (MKT), 1.33× (SMB), 0.86× (HML), 0.68× (MOM) the large-panel one in the median
+(range 0.36–1.64×). The 20 names are a defensive/value tilt (low MKT, high HML, strongly negative MOM), so their prior is a poor stand-in for the market's, and their shrinkage target is not the market beta.
+
+**(c) Chained monthly series** (computed in `verify_t077.py chains`, not in the product): each monthly book held at its target weights until the next as-of (the last until 2026-09-29), net of the cost on each
+book's first day (the first pays `bps × Σ|w|` = 10 bps), 20 books, 417 days, `rf` 4.5%; Sharpe = (mean daily × 252 − rf)/vol. Cap 0.5 never binds on this sample (the largest realized monthly turnover is 0.29 for `min_var` and `tangency`, 0.38–0.39 for `target_vol`), so its rows differ from "none" only through `tangency`'s frontier-scan path; cap 0.1 holds
+11–12 of the 60 books per estimator at the cap, 3 of them relaxed (2026-07-31, when three HARD-vetoed names holding 11–14% of the previous book left the panel, so no feasible book trades less than 0.23–0.29). Costs at 10 bps; the last column is 15 bps (return / Sharpe).
+
+| objective | estimator | cap | ann. return | vol | Sharpe | max DD | mean monthly turnover | at 15 bps |
+|---|---|---|---|---|---|---|---|---|
+| min_var | equilibrium | none | 7.31% | 13.31% | 0.26 | -9.55% | 0.065 | 7.24% / 0.25 |
+| min_var | equilibrium | 0.5 | 7.31% | 13.31% | 0.26 | -9.55% | 0.065 | 7.24% / 0.25 |
+| min_var | equilibrium | 0.1 | 7.30% | 13.31% | 0.26 | -9.55% | 0.065 | 7.23% / 0.25 |
+| min_var | carhart | none | 7.31% | 13.31% | 0.26 | -9.55% | 0.065 | 7.24% / 0.25 |
+| min_var | carhart | 0.5 | 7.31% | 13.31% | 0.26 | -9.55% | 0.065 | 7.24% / 0.25 |
+| min_var | carhart | 0.1 | 7.30% | 13.31% | 0.26 | -9.55% | 0.065 | 7.23% / 0.25 |
+| tangency | equilibrium | none | 9.46% | 13.74% | 0.40 | -12.04% | 0.046 | 9.40% / 0.40 |
+| tangency | equilibrium | 0.5 | 9.36% | 13.78% | 0.39 | -12.15% | 0.048 | 9.29% / 0.39 |
+| tangency | equilibrium | 0.1 | 9.55% | 13.74% | 0.41 | -12.05% | 0.044 | 9.49% / 0.40 |
+| tangency | carhart | none | 11.72% | 15.94% | 0.49 | -14.45% | 0.070 | 11.65% / 0.49 |
+| tangency | carhart | 0.5 | 11.45% | 15.94% | 0.48 | -14.46% | 0.069 | 11.37% / 0.47 |
+| tangency | carhart | 0.1 | 11.36% | 15.91% | 0.47 | -14.45% | 0.066 | 11.29% / 0.47 |
+| target_vol | equilibrium | none | 12.77% | 16.07% | 0.55 | -15.50% | 0.097 | 12.67% / 0.54 |
+| target_vol | equilibrium | 0.5 | 12.77% | 16.07% | 0.55 | -15.50% | 0.097 | 12.67% / 0.54 |
+| target_vol | equilibrium | 0.1 | 13.45% | 16.03% | 0.59 | -15.50% | 0.083 | 13.37% / 0.58 |
+| target_vol | carhart | none | 8.39% | 16.90% | 0.30 | -15.90% | 0.084 | 8.30% / 0.29 |
+| target_vol | carhart | 0.5 | 8.39% | 16.90% | 0.30 | -15.90% | 0.084 | 8.30% / 0.29 |
+| target_vol | carhart | 0.1 | 10.02% | 16.86% | 0.38 | -15.91% | 0.076 | 9.94% / 0.38 |
+| frontier | equilibrium | none | 9.13% | 13.73% | 0.38 | -12.05% | 0.050 | 9.07% / 0.37 |
+| frontier | equilibrium | 0.5 | 9.13% | 13.73% | 0.38 | -12.05% | 0.050 | 9.07% / 0.37 |
+| frontier | equilibrium | 0.1 | 9.13% | 13.73% | 0.38 | -12.05% | 0.050 | 9.07% / 0.37 |
+| frontier | carhart | none | 11.57% | 15.87% | 0.49 | -14.29% | 0.072 | 11.49% / 0.48 |
+| frontier | carhart | 0.5 | 11.57% | 15.87% | 0.49 | -14.29% | 0.072 | 11.49% / 0.48 |
+| frontier | carhart | 0.1 | 11.57% | 15.87% | 0.49 | -14.29% | 0.072 | 11.49% / 0.48 |
+
+`min_var` is **identical under both estimators** at every cap: max |weight difference| **0.0**, max |daily return difference| **0.0**, equal turnovers. `frontier` is the stored frontier's best-Sharpe point and is not
+turnover-constrained, so its capped rows equal the uncapped ones by construction. The script agrees with the product: for 3 objectives × 20 monthly holding windows, the largest difference between `evaluate`'s
+`perf-v3` daily `realized_return` and the script's chain is 2.3e-8 (the product renormalizes the weights of a name with no later return; the script keeps them).
+
+**(d) What this does and does not show.** About 20 months on 17–20 names is **descriptive only**; no significance claim is made (T-078 was deprecated for this reason). Carhart μ has about three times equilibrium's
+dispersion and is strongly rank-correlated with it; the chained results move in both directions (carhart higher for `tangency` and `frontier`, lower for `target_vol`), and the cap/cost effects are small next to that.
+`equilibrium` stays the default unless the user decides otherwise.
+
+**Tests** (hermetic, on a fixture cut from the real files): `tests/test_quant_factors.py` (OLS recovers known betas; log→simple and percent→decimal; Vasicek weights near 1 / near 0, flagged asset gets the prior mean,
+mean beta = β̄ under equal noise; no factor row after the as-of is read; the overlap refusal and recorded gap; the SHA-256 refusal), `tests/test_quant_carhart_pipeline.py`, `tests/test_quant_turnover.py` (previous-book
+selection; the constraint holds including a name that left the panel; the relaxation is recorded; the cost once on the first day under `perf-v3`), `tests/test_quant_rates.py` (the rf refusal), `tests/test_verify_t077.py`,
+and `tests/test_quant_import_isolation.py` still passes.
+
+### Residual scope / deliberately deferred
+
+- **Re-run note (not a new task): the full-universe comparison.** Once a database with cover-page share counts exists (`T-143`/`T-100`), repeat (a)–(c) on the full universe: `export KG_FINANCIAL_DB=<that db> KG_UNIVERSE_DB=<a point-in-time
+  universe covering the priced names>`; `uv run python -m quant backfill-actions --from 2022-01-01 --analysis-date 2026-09-29`; `uv run python -m quant build-returns --from 2022-01-01 --analysis-date 2026-09-29`; for each
+  month-end `D`: `uv run python -m quant build-risk-model --analysis-date D`; copy the database once per estimator; in each, for each `D` in order and for `--mu equilibrium|carhart` × `--turnover-cap` absent|0.5:
+  `uv run python -m quant optimize --analysis-date D --objectives min_var,tangency,target_vol,frontier --mu <est> [--turnover-cap 0.5]`; then `uv run python -m quant evaluate --from 2025-01-31 --analysis-date 2026-09-29`
+  and `uv run python scripts/verify_t077.py chains --run equilibrium:none=<db> --run equilibrium:0.5=<db> --run carhart:none=<db> --run carhart:0.5=<db> --end 2026-09-29 --out <dir>` (and `diagnostics --db <db>
+  --universe-db <universe> --label <name> --out <dir>` for (a)/(b)). **Data check for `T-100`:** on the 499-name panel `build-risk-model` refuses 2025-11-28 because GEHC (asset 211) has a price gap `build_return_panel` cannot heal (2.1% residual holes > the 2% limit); heal or explain it in the fresh database before this repeat.
+- `tangency` under a cap that does not bind still takes the frontier-scan path (so cap 0.5 differs from "none" for `tangency` only); returning the exact y-space tangency when its turnover is within the cap would remove the
+  discontinuity. Not done: the brief asked to document the fallback.
+- The frontier sweep takes no turnover cap and is keyed by risk model (a second `--mu` on the same model overwrites the points); a per-chain frontier would need a schema change.
+- `v_quant_portfolio` has **no `ret_estimator` column** and none was added (no column changes, as asked); the estimator is in `engine_version`'s marks and the book's `manifest_json`; a variant book is never `is_current`.
+- The factor files are a 202608 vintage; a later vintage may differ slightly from what was public on a past date. Per-factor shrinkage, the equal-weighted prior, target-weight costs and the 20-month sample are declared limitations (`docs/quant.md`).
+
+Scratch paths: `/tmp/t077/prod.db` (copy of production, migrated; backfilled actions and returns; cover shares for the pilot names and 192 other filings), `/tmp/t077/pilot.db` (+ `pilot_eq.db`, `pilot_cc.db`: 20 risk models, and the books and
+`perf-v3` rows), `/tmp/t077/universe.db` (copy of `universe.db`), `/tmp/t077/universe_hist.db` (copy of `universe_history.db`), `/tmp/t077/factors_dl/` (the downloaded zips), `/tmp/t077/report/` (the generated tables),
+`/tmp/t077/tools/` (the cover-share backfill and the driver, throwaway). Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.

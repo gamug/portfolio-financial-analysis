@@ -23,3 +23,7 @@ uv.lock                        linguist-generated=true -diff
 *.gif binary
 *.parquet binary
 *.xlsx binary
+
+# Vendored Kenneth French factor files: stored byte-for-byte so the manifest SHA-256 is the
+# published file's (T-077); no CRLF normalisation.
+src/quant/data/*.csv -text

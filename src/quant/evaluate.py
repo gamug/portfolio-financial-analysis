@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Any
 
 from portfolio_common.db import Database
 
@@ -34,15 +35,23 @@ from quant.db import (
     load_book_weights,
     load_forward_simple_returns,
     load_live_book,
+    load_previous_book,
     sync_positions,
     upsert_benchmark_performance,
 )
-from quant.state import fail_run, finish_run, open_run
+from quant.state import fail_run, finish_run, merge_run_params, open_run
+from quant.turnover import turnover_between
 from quant.universe import benchmark_gate
 
-# perf-v2 (T-108): active returns against bench-v2 (or a loaded external series); perf-v1's
-# were against bench-v1's mean-of-log index, so they stay as written, under their version.
-PERF_ENGINE_VERSION = "perf-v2"
+# perf-v3 (T-077): realized and active returns are net of a one-off turnover cost deducted on each
+# optimized book's first forward day; perf-v2's (against bench-v2, T-108) are gross and, like
+# perf-v1's, stay as written under their version.
+PERF_ENGINE_VERSION = "perf-v3"
+# The cost perf-v3 charges, by definition: a different cost is a new perf engine version, never a
+# flag, so a perf-v3 row always means this many basis points (PR #133 review).
+TURNOVER_COST_BPS = 10.0
+_BPS = 10_000.0
+LIVE_BOOK_KIND = "live_book"
 
 
 @dataclass
@@ -57,6 +66,39 @@ class EvaluateResult:
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
+def _turnover_cost(
+    conn: Database, portfolio_id: int, weights: dict[int, float]
+) -> dict[str, Any] | None:
+    """The one-off cost of trading into *portfolio_id*'s target weights from the previous book of
+    its chain (T-077): ``bps / 1e4 * sum |w - w_prev|``, on target weights, not drifted ones. The
+    first book of a chain pays ``bps * sum |w|`` (about *bps*). ``None`` for a book that is not a
+    benchmark book of a chain: the ``live_book`` snapshot has no previous book to trade from."""
+    book = conn.execute(
+        "SELECT kind, frontier_k, engine_version, as_of FROM quant_portfolio WHERE id = ?",
+        (portfolio_id,),
+    ).fetchone()
+    if book is None or book["kind"] == LIVE_BOOK_KIND:
+        return None
+    found = load_previous_book(
+        conn,
+        kind=str(book["kind"]),
+        frontier_k=book["frontier_k"],
+        engine_version=str(book["engine_version"]),
+        before=str(book["as_of"]),
+    )
+    previous = load_book_weights(conn, found[0]) if found else None
+    turnover = turnover_between(weights, previous)
+    return {
+        "bps": TURNOVER_COST_BPS,
+        "turnover": turnover,
+        "cost": TURNOVER_COST_BPS / _BPS * turnover,
+        "first_of_chain": found is None,
+        "previous_portfolio_id": found[0] if found else None,
+        "previous_as_of": found[1] if found else None,
+        "engine_version": PERF_ENGINE_VERSION,
+    }
+
+
 def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     conn: Database,
     portfolio_id: int,
@@ -66,6 +108,7 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     benchmark: str,
     benchmark_version: str,
     return_engine_version: str,
+    costs: dict[str, dict[str, Any]],
 ) -> int:
     weights = load_book_weights(conn, portfolio_id)
     if not weights:
@@ -91,6 +134,9 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
             if a not in last_seen or d > last_seen[a]:
                 last_seen[a] = d
 
+    cost = _turnover_cost(conn, portfolio_id, weights) if fwd else None
+    pending_cost = float(cost["cost"]) if cost else 0.0
+
     cumulative = 1.0
     rows: list[tuple[str, float, float, str | None, float | None, float | None]] = []
     for d in sorted(fwd):
@@ -101,10 +147,14 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
             if total_survivors > 0
             else 0.0
         )
+        realized -= pending_cost  # the turnover cost, once: on the book's first forward day
+        pending_cost = 0.0
         cumulative *= 1.0 + realized
         br = bench.get(d)
         active = None if br is None else realized - br
         rows.append((d, realized, cumulative - 1.0, benchmark, br, active))
+    if cost is not None:  # recorded on the evaluate run, never on the book row optimize wrote
+        costs[str(portfolio_id)] = cost
     return upsert_benchmark_performance(
         conn, portfolio_id, rows, engine_version=PERF_ENGINE_VERSION
     )
@@ -120,7 +170,7 @@ def _snapshot_live_book(
         conn,
         PortfolioRow(
             as_of=date_from,
-            kind="live_book",
+            kind=LIVE_BOOK_KIND,
             objective="live",
             solver="n/a",
             status="snapshot",
@@ -203,6 +253,7 @@ def run_evaluate(
                 "date_from": date_from,
                 "date_to": date_to,
                 "benchmark": benchmark,
+                "turnover_cost_bps": TURNOVER_COST_BPS,
                 "dirty_tree_bypassed": dirty_reason,
             },
             code_version=cv,
@@ -230,6 +281,7 @@ def run_evaluate(
             ).fetchall()
             perf_rows = 0
             evaluated = 0
+            costs: dict[str, dict[str, Any]] = {}
             for b in books:
                 added = _evaluate_book(
                     conn,
@@ -239,9 +291,11 @@ def run_evaluate(
                     benchmark=benchmark,
                     benchmark_version=bench_version,
                     return_engine_version=settings.return_engine_version,
+                    costs=costs,
                 )
                 perf_rows += added
                 evaluated += 1 if added else 0
+            merge_run_params(conn, run_id, {"turnover_cost": costs})
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'
             conn.rollback()  # drop uncommitted writes: fail_run commits

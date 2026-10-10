@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from french_support import copy_fixture
 from portfolio_common.db import Database
 
 from fundamental_agent import db
@@ -255,6 +256,13 @@ def memory_pricing_db() -> Database:
     conn = _memory_database()
     pricing_db.ensure_schema(conn)
     return conn
+
+
+@pytest.fixture
+def french_factor_dir(tmp_path: Path) -> Path:
+    """A writable copy of the Kenneth French factor fixture (a cut of the real files) with its
+    manifest (T-077); tests that point `QuantSettings.factors_dir` at it never touch the network."""
+    return copy_fixture(tmp_path / "factors")
 
 
 @pytest.fixture

@@ -619,6 +619,20 @@ def load_book_weights(conn: Database, portfolio_id: int) -> dict[int, float]:
     }
 
 
+def load_previous_book(
+    conn: Database, *, kind: str, frontier_k: int | None, engine_version: str, before: str
+) -> tuple[int, str] | None:
+    """``(portfolio_id, as_of)`` of the newest book of the same chain -- same ``kind``,
+    ``frontier_k`` (NULL matching NULL) and ``engine_version``, which encodes the estimator, the
+    optimizer engine, the inputs and the turnover cap -- dated strictly before *before* (T-077)."""
+    row = conn.execute(
+        "SELECT id, as_of FROM quant_portfolio WHERE kind = ? AND frontier_k IS ? "
+        "AND engine_version = ? AND as_of < ? ORDER BY as_of DESC, id DESC LIMIT 1",
+        (kind, frontier_k, engine_version, before),
+    ).fetchone()
+    return (int(row["id"]), str(row["as_of"])) if row else None
+
+
 def load_live_book(conn: Database, as_of: str) -> dict[int, float]:
     """The open ``portfolio_position`` book as of *as_of* (the cycle's live book)."""
     try:

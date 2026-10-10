@@ -83,8 +83,17 @@ class QuantSettings(BaseModel):
     # alone -- it carries real cross-sectional dispersion with near-zero estimation noise;
     # `james_stein` over ~5y of daily data shrinks mu almost flat, which collapses the frontier
     # onto min_var.
-    ret_estimator: str = "equilibrium"  # equilibrium | james_stein | hist_mean
+    # `carhart` (T-077): rf + sum_k shrunk_beta[i, k] * lambda_bar[k] over MKT/SMB/HML/MOM, from the
+    # vendored Kenneth French factors (`quant.factors`). Built beside the other three; equilibrium
+    # stays the default.
+    ret_estimator: str = "equilibrium"  # equilibrium | james_stein | hist_mean | carhart
     equilibrium_risk_aversion: float = 2.5
+    # T-077: where the vendored factor files live (None: the package's own `quant/data/`; tests
+    # point it at a fixture), the fewest regression dates an asset / the panel needs (two thirds of
+    # the 756-day window), and the premia sample start (the Fama-French / Carhart start).
+    factors_dir: Path | None = None
+    carhart_min_obs: int = Field(default=504, ge=7)
+    carhart_premia_start: str = "1963-07-01"
     risk_free_rate: float = 0.045
     rf_source: str = "constant"  # constant | csv | fred
     rf_csv_path: Path | None = None
@@ -105,6 +114,8 @@ class QuantSettings(BaseModel):
     min_name_weight: float = 0.0
     max_sector_weight: float | None = DEFAULT_SECTOR_CAP  # None => no per-sector cap
     frontier_k: int = 15
+    # T-077: sum |w - w_prev| cap, in (0, 2], against the previous book of the same chain (kind,
+    # frontier_k, estimator, optimizer engine and inputs). None (the default) is off: no book changes.
     turnover_cap: float | None = None
     solver: str = "CLARABEL"
 
@@ -122,7 +133,9 @@ class QuantSettings(BaseModel):
     # The price_observation series the universe gate reads (T-131 review). quant is a leaf and
     # cannot import pricing_agent's PRICE_OBSERVATION_ENGINE_VERSION, so the pin lives here.
     observation_engine_version: str = "priceobs-v1"
-    risk_model_version: str = "rm-v1"
+    # rm-v2 (T-077): the model now also stores the `carhart` expected-return rows and its manifest
+    # records the factor file and regression. An rm-v1 model has no carhart rows.
+    risk_model_version: str = "rm-v2"
     # opt-v2 (T-137): the name cap now follows N and the panel (1.5 / min(N, panel size)) and the
     # sector cap relaxes to feasibility, and risk_parity respects both caps. A default-configuration
     # book differs from opt-v1 on a panel smaller than N = 30 (the pilot-1 20-asset panel was capped at
