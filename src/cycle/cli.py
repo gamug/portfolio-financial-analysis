@@ -26,7 +26,7 @@ from cycle.orchestrator import (
 )
 from cycle.repair import NotBackdated, apply_undo, plan_undo
 from cycle.replay import reset_replay_range
-from cycle.state import ConstructionMismatch, ManifestMismatch
+from cycle.state import ConstructionMismatch, ManifestMismatch, ScoreWeightsMismatch
 from cycle.writers import OutOfOrderCycle
 from kg_schema import connect
 from kg_schema.cli import resolve_db_path
@@ -293,6 +293,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         VersionError,
         ManifestMismatch,
         ConstructionMismatch,
+        ScoreWeightsMismatch,
         PreferencesNeedDryRun,
         NoStoredRanking,
         BookInputError,

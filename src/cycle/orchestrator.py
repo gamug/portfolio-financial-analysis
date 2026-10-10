@@ -34,6 +34,7 @@ from cycle.scores.normalize import normalized_scores
 from cycle.state import (
     check_construction,
     check_manifest,
+    check_score_weights,
     checkpoint,
     done_steps,
     finish_cycle,
@@ -261,6 +262,9 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     }
     tag = manifest_tag(manifest)
     check_manifest(conn, cycle_type, cycle_date, tag)
+    # T-141: params_json.score_weights is written once, by the first attempt; every ranking of
+    # this run must use those weights, so refuse a resume under others (any cycle type).
+    check_score_weights(conn, cycle_type, cycle_date, settings.score_weights)
     if "positions" in steps:
         # T-136: never resume onto a different book than the one the first attempt built.
         check_construction(conn, cycle_type, cycle_date, settings.construction())

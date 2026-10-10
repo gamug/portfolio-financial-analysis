@@ -102,6 +102,43 @@ def check_construction(
     )
 
 
+class ScoreWeightsMismatch(RuntimeError):
+    """A ``cycle_run`` for this (type, date) recorded other composite score weights."""
+
+
+def check_score_weights(
+    conn: Database, cycle_type: str, cycle_date: str, score_weights: dict[str, float]
+) -> None:
+    """Refuse to resume an existing run under different composite score weights (T-141).
+
+    ``open_cycle`` records ``params_json.score_weights`` once, when the run is first created, and a
+    resume never rewrites it -- it is what ``v_weight_scheme``, ``v_weight_component`` and
+    ``v_cycle_ranking_component`` report. Resuming under other weights would rank (or keep a ranking
+    built) with weights the run does not record, so the read contract would disagree with the
+    blend, the same hazard :func:`check_construction` refuses for the book. A run that recorded no
+    weights is left alone. Call this *before* :func:`open_cycle`."""
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return
+    try:
+        recorded = json.loads(row["params_json"]).get("score_weights")
+    except (TypeError, ValueError):
+        return
+    if not isinstance(recorded, dict) or recorded == score_weights:
+        return
+    changed = sorted(
+        k for k in set(recorded) | set(score_weights) if recorded.get(k) != score_weights.get(k)
+    )
+    detail = "; ".join(f"{k}: {recorded.get(k)!r} -> {score_weights.get(k)!r}" for k in changed)
+    raise ScoreWeightsMismatch(
+        f"the {cycle_type} run for {cycle_date} was ranked with other score weights ({detail}). "
+        "Resuming would mix two blends -- rerun with the recorded weights, or a different date"
+    )
+
+
 def merge_params(conn: Database, cycle_run_id: int, updates: dict[str, Any]) -> None:
     """Merge *updates* into ``cycle_run.params_json`` (top-level keys; secrets stay redacted)."""
     row = conn.execute("SELECT params_json FROM cycle_run WHERE id = ?", (cycle_run_id,)).fetchone()
