@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 
 from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 
-_DEFAULT_WEIGHTS = {"FUNDAMENTAL": 0.4, "VALORIZATION": 0.3, "TECHNICAL": 0.2, "SEMANTIC": 0.1}
+# T-141: equal weights over the three components on a common 50 + 10z scale (the 1/N argument).
+# SEMANTIC stays out until Work item 4 writes it; `_blended` renormalizes over whatever is present.
+_DEFAULT_WEIGHTS = {"FUNDAMENTAL": 1 / 3, "VALORIZATION": 1 / 3, "TECHNICAL": 1 / 3}
 
 
 class CycleSettings(BaseModel):

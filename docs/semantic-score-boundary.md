@@ -42,7 +42,7 @@ established read-only-DB seam, and eliminates the write-back cycle.
 | Article → asset attribution | `urls.db.discovered_urls.ticker` (data-mining's extractor); `nlp` NER emits ORG spans, not tickers | contracted; a named owner for `ticker` ↔ `asset_id` |
 | Per-`(asset, day)` semantic score | **nobody builds it** — assigned to the integration repo on paper (`nlp` diagram caption, this repo's `docs/README.md` line 27), never implemented | **new `nlp` stage** → a table in `nlp.db` |
 | 0–100 `score_snapshot[SEMANTIC]` | integration repo writes it (per `README.md` "Knowledge-graph projection layer") | `financial-analysis` writes it from the `nlp` measure |
-| `cycle` blend consumption | `latest_semantic_score()` already reads pre-existing `score_snapshot[SEMANTIC]` rows, weight `0.1` | reader unchanged; the *source* of those rows changes |
+| `cycle` blend consumption | `latest_semantic_score()` already reads pre-existing `score_snapshot[SEMANTIC]` rows; SEMANTIC is not in the default blend weights since `T-141` | reader unchanged; the *source* of those rows changes |
 | Point-in-time / as-of | `nlp` has no `--analysis-date`, no `as_of` — processes all pending rows | daily time-series rows, filtered `event_time <= D` downstream |
 
 ---

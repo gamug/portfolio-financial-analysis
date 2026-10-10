@@ -4959,3 +4959,130 @@ tilt means; if a score-magnitude-sensitive weighting is ever wanted, that is a d
 - Assets with no sector are uncapped in the quant benchmark (as `quant.optimize` always treated them): 0 of 503 in production, 0 of 20 in the pilot.
 - `scripts/verify_t138.py` (read-only) and `tests/test_verify_t138.py` (16, mutation-checked) are the record's tooling; `T-100`'s fresh-database
   run should be checked with it.
+
+## T-141 — Equal composite weights: 1/3 each, SEMANTIC out of the defaults (Work item 8, step 9)
+
+**Status.** Implemented on `feat/t141-equal-composite-weights` (PR number in the status commit). Methodology change (constitution AI behavior
+#12): the composite blend's default weights. Everything below was measured on **scratch copies** under `/tmp/t141/` (listed at the end);
+production `financial.db` was only read, and its SHA-1 is the same before and after (`5c5c0642619bcc2f80aa72f13599bf824f676675`).
+
+### Symptom
+
+`cycle.config._DEFAULT_WEIGHTS` blended FUNDAMENTAL 0.4 / VALORIZATION 0.3 / TECHNICAL 0.2 / SEMANTIC 0.1, while the earlier decision (PLAN §5.3) was
+equal weights; neither choice was ever recorded or justified. SEMANTIC has never been written (`components_json` carries `"SEMANTIC": null` on all
+2,799 pilot ranking rows), so its 0.1 was a placeholder the renormalization silently discarded: the **effective** blend was 0.444 / 0.333 / 0.222.
+
+### Reference and decision (user, 2026-10-05)
+
+FUNDAMENTAL, VALORIZATION and TECHNICAL at **1/3 each**; SEMANTIC is removed from the defaults until Work item 4 produces it. With no basis to
+prefer one component's out-of-sample information over another's, the naive 1/N combination is hard to beat out of sample (DeMiguel, Garlappi &
+Uppal 2009, "Optimal Versus Naive Diversification", *Review of Financial Studies* 22(5), 1915-1953), and it matches Work item 18's equal-weight
+core. `soft_veto_penalty` (15 points per SOFT veto), the T-1 veto lag and the book construction are untouched. `_blended` still renormalizes over the
+components an asset has.
+
+### Fix
+
+- `src/cycle/config.py`: `_DEFAULT_WEIGHTS = {FUNDAMENTAL, VALORIZATION, TECHNICAL: 1/3}`. `orchestrator._blended` is unchanged (it only iterates the
+  configured weights, so stored SEMANTIC rows are ignored until the weights name SEMANTIC).
+- **Resume guard** (`src/cycle/state.py` `check_score_weights`, `ScoreWeightsMismatch`; called in `orchestrator._run` for every cycle type, before
+  `open_cycle`; reported by the CLI like `ConstructionMismatch`, exit 1). `params_json.score_weights` is written **once**, by `open_cycle` on a run's
+  first attempt (`settings.model_dump(...)`); the upsert's `ON CONFLICT` never rewrites `params_json`, and nothing else writes that key. T-136's
+  `check_construction` compared N, scheme, caps and preferences but not `score_weights`, so a run started under the old weights and resumed under the
+  new ones would have ranked with weights it did not record, and `v_weight_scheme`, `v_weight_component` and `v_cycle_ranking_component` (which
+  read `params_json.score_weights`) would have disagreed with the blend. A resume with other weights is now refused with the changed keys named; a run
+  that recorded no weights is left alone. There is no CLI flag for `score_weights`: a run recorded under `0.4/0.3/0.2/0.1` is refused by the new
+  defaults and is re-run from scratch (`backfill --force` for a `REPLAY` range) or on another date.
+
+### Consequence for the read contract
+
+- `v_weight_component`: **three rows per new run** (FUNDAMENTAL, VALORIZATION, TECHNICAL at 0.3333), no SEMANTIC row; runs stored earlier keep their four
+  rows. `v_weight_scheme.weights_json` has three keys for a new run.
+- `v_cycle_ranking_component`: **unchanged**. It lists the non-null components of each ranking row, and SEMANTIC was always null; a new run's
+  `components_json` simply has no SEMANTIC key. `effective_weight` is the configured weight over the sum of the row's non-null components'
+  weights, as before (an asset missing a component: 0.5 / 0.5).
+
+### Verification
+
+**(c) The claim the task rests on: one common scale.** Confirmed in the code. In `orchestrator._normalize`, TECHNICAL, VALORIZATION (and SEMANTIC)
+are each `normalized_scores(raw)` over that date's cohort, and FUNDAMENTAL is `normalized_scores(raw)` over each asset's latest public filing
+snapshot (`data.latest_fundamental_rows`); `normalized_scores` is `z_to_score(cross_sectional_z(raw, winsor=0.02))` = `clamp(50 + 10z, 0, 100)`
+with z against the **winsorized** mean and sd. All three are on that scale, so equal weights are equal weights on one scale. Two precisions the
+measurements below make visible: the sd of a component is **not exactly 10** (the z uses the winsorized sd but the values themselves are not
+winsorized), and equal *weights* are not equal *variance shares* once the components are correlated.
+
+**(a) The pilot replay** (scratch copy of `data/pilot/financial_pilot_replay.db`: 147 `cycle_run` rows, 2,799 ranking rows; the analysis covers the
+**144 REPLAY cycles, 2024-01-05 -> 2026-10-02, 2,739 rows**, 20 assets, 18-20 ranked per date; the 3 other runs, 60 rows, are the pilot's
+SELECTION/MONITORING). Both blends are recomputed offline from each row's stored `components_json` and `veto_rules_json` with `orchestrator._blended`
+and the 15-point penalty per SOFT veto (a rule that is neither `HARD` nor `UNSCORED`). **Check on the method: the old weights reproduce the stored
+`blended_score` of every one of the 2,739 rows exactly (max |difference| 0).**
+
+| component (2,739 values each) | median per-date sd (min - max) | pooled mean / sd | value at 0 or 100 |
+|---|---|---|---|
+| FUNDAMENTAL | 11.85 (10.02 - 13.73) | 50.50 / 11.90 | 0 (0.00%) |
+| VALORIZATION | 10.60 (10.01 - 11.46) | 50.19 / 10.68 | 0 (0.00%) |
+| TECHNICAL | 10.60 (10.02 - 12.58) | 49.95 / 10.72 | 0 (0.00%) |
+
+(population sd per date, then the median over the 144 dates; observed ranges FUNDAMENTAL 21.2 - 88.8, VALORIZATION 27.2 - 76.0, TECHNICAL 17.0 - 77.2.
+The clamp cannot bind on a 20-name cohort: |z| = 5 is unreachable.)
+
+| pair (Pearson) | pooled (n = 2,739) | median per date (min / max, 144 dates) |
+|---|---|---|
+| FUNDAMENTAL ~ VALORIZATION | -0.057 | -0.018 (-0.459 / +0.265) |
+| FUNDAMENTAL ~ TECHNICAL | +0.212 | +0.234 (-0.369 / +0.650) |
+| VALORIZATION ~ TECHNICAL | -0.113 | -0.114 (-0.585 / +0.418) |
+
+The components are close to independent, so the blend diversifies; but FUNDAMENTAL has the widest spread (sd 11.9 against 10.6), and the share of the
+blend's **variance** each component carries (median per date) was FUNDAMENTAL / VALORIZATION / TECHNICAL = **0.625 / 0.229 / 0.150** under the old
+weights and is **0.412 / 0.251 / 0.336** under 1/3 each. Equal weights bring the three much closer; they do not make the variance shares equal
+(VALORIZATION is anti-correlated with the others, FUNDAMENTAL is the widest).
+
+**Blended from fewer than three components: 0 of 2,739 asset-dates.** Every row has all three; no row has a non-null SEMANTIC. (So the renormalization is
+exercised in the pilot never; it is covered by `tests/test_cycle_weights.py`.)
+
+Old (0.4/0.3/0.2/0.1, SEMANTIC null, effective 0.444/0.333/0.222) against new (1/3 each); eligible = not HARD-vetoed and not UNSCORED (median 18 per date,
+15 - 19):
+
+| | median | min |
+|---|---|---|
+| Spearman rank correlation per date, eligible names (144 dates) | **0.9772** | 0.9174 |
+| Spearman rank correlation per date, all ranked names | 0.9774 | 0.9216 |
+
+| N | plain top-N overlap, eligible (`|∩| / min(N, eligible)`): median / mean / min | the cycle's own book builder (`build_book`, default `score_tilt`): held-name overlap median / min | one-way weight turnover between the two books: median / max |
+|---|---|---|---|
+| 30 (the `top_n` recorded in all 144 runs) | 1.000 / 1.000 / 1.000 | 1.000 / 1.000 | 0.0174 / 0.0366 |
+| 10 | 1.000 / 0.961 / 0.800 | 1.000 / 0.800 | 0.0418 / 0.1449 |
+| 5 | 1.000 / 0.919 / 0.400 | 1.000 / 0.600 | 0.0752 / 0.3907 |
+
+**N = 30 is trivial on this data**: every run recorded `top_n = 30` and a 20-asset universe has at most 19 eligible names, so the top 30 is every
+eligible name under both blends and the overlap is 100% by construction (the recorded books were `score_proportional`, caps 0.10/0.30). What the
+weights do change at N = 30 is the weights (turnover 0.017 median), through the score tilt. The informative rows are N = 10 and N = 5 (extra, not
+recorded in the runs). The sector-aware fill makes the real book differ from a plain top-N (at N = 5 a sector is full at one name, at N = 10
+at three), which is why `build_book` is called on both rankings and its held names are the second column: the medians agree (1.000), and the worst date
+holds 0.6 of the same names at N = 5 against 0.4 for plain top-5.
+
+**(b) A full cross-section: refused, not forced.** A MONITORING cycle with the branch code on a scratch copy of production at **2026-09-22**
+(`cycle monitor --analysis-date 2026-09-22 --allow-dirty`, `KG_FINANCIAL_DB`, `KG_UNIVERSE_DB` and `--db`/`--universe-db` all pointing to scratch
+files; `--allow-dirty` because the working tree had untracked files) **refused**: `483/503 universe members (96.0%) have no FUNDAMENTAL score at all,
+over the 5% limit` (`TooManyUnscored`, the T-119 circuit breaker, raised by `rank`). Reason: production holds fundamentals for the pilot's **20** assets
+only (`score_snapshot` FUNDAMENTAL: 20 assets; `fundamental_metrics`: 20), against 503 assets with prices through 2026-09-29. The price-spine guard
+accepted 2026-09-22 (the spine ends 2026-09-29). Two preparations on the scratch copy only: `fundamental_agent migrate` (production's schema predates
+migration v9, which the cycle requires) and a scratch 503-ticker `universe.db` built from the copy's `assets` (the real `universe.db` is the pilot's 20
+tickers and was neither used nor modified). The 503-row old-vs-new comparison therefore **cannot be made until the full-universe fundamentals exist
+(`T-100`/`T-143`)**; the refusal is the answer, nothing was forced.
+
+What the steps before `rank` did write on the 503 names is still a (partial) cross-section: TECHNICAL, normalized over 503 names: sd **10.18**, mean
+49.99, range 25.3 - 72.0, **0** values at 0 or 100 (so the clamp does not bind on a 503-name cohort either). VALORIZATION: **every one of the 503
+names is exactly 50.00 (sd 0)**: only 20 assets have metrics, the other 483 share one raw value, and the winsorized sd of a 483-fold tie is 0, so
+`cross_sectional_z` returns zeros. That is a data-coverage effect of production, not of this change (a database with fundamentals for every name would not show it),
+but it is the degenerate-cohort failure mode `docs/cycle.md` now records: such a component carries 1/3 of the weight and discriminates nothing.
+
+### Residual scope / deliberately deferred
+
+- The 503-name comparison and the clamp rate on real, heavy-tailed fundamentals wait for the fresh full-universe database (`T-100`/`T-143`).
+- A degenerate cohort (nearly every name tied on a component) silently yields a constant component; a coverage floor for VALORIZATION/FUNDAMENTAL
+  is not part of this change (TECHNICAL's is `T-070`).
+- Existing runs keep the weights they recorded; production is not re-selected by this change.
+- The verification script is a throwaway (not committed).
+
+Scratch paths: `/tmp/t141/replay.db` (copy of `data/pilot/financial_pilot_replay.db`), `/tmp/t141/prod_scratch.db` (copy of production, then migrated,
+then the refused MONITORING run), `/tmp/t141/universe_full.db` (503 tickers from that copy's `assets`).

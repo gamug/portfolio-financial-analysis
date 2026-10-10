@@ -97,7 +97,8 @@ contract.
 `CycleSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` and LLM creds
 optional. Knobs:
 `universe` (`"SP500"`), `top_n` (30 — N, the number of names the book is sized for),
-`score_weights` (FUND .4 / VALOR .3 / TECH .2 / SEM .1), `weight_scheme` (`score_tilt`
+`score_weights` (FUNDAMENTAL, VALORIZATION and TECHNICAL at 1/3 each — T-141; SEMANTIC is out of
+the defaults until Work item 4, see *Composite weights* below), `weight_scheme` (`score_tilt`
 by default | `equal` | `score_proportional` | `inverse_vol`), `max_name_weight` (**`None`**:
 derived — `1.5/n_held` for `score_tilt`, 0.10 for the legacy schemes; an explicit value wins, which
 is why the default is `None`: a `0.10` default would silently override `1.5/N`),
@@ -106,7 +107,8 @@ names, empty by default) and `only_sectors` (`None` = every sector), `soft_veto_
 `unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of the universe
 with no FUNDAMENTAL score at all, up to and including 100%, PR #99 review).
 `CycleSettings.construction()` is the subset that decides the book (N, scheme, caps,
-preferences — normalized: trimmed, case-folded, sorted); a resume must not change it (below).
+preferences — normalized: trimmed, case-folded, sorted); a resume must not change it (below),
+nor `score_weights` (T-141, `check_score_weights`).
 
 ## Files
 
@@ -125,6 +127,16 @@ are skipped on re-run. `finish_cycle(conn, id, status)`.
 `ConstructionMismatch` when the run for that (type, date) already recorded other
 book-construction settings (see *Resuming*, below); `merge_params(conn, id, updates)` merges keys
 into `cycle_run.params_json` (secrets stay redacted).
+
+`check_score_weights(conn, cycle_type, cycle_date, score_weights)` (T-141) raises
+`ScoreWeightsMismatch` when the run for that (type, date) recorded other composite weights. `open_cycle`
+writes `params_json.score_weights` once, on the run's first attempt, and a resume never rewrites it;
+`v_weight_scheme`, `v_weight_component` and `v_cycle_ranking_component` read that value, so a resume that
+ranked under other weights would leave the read contract disagreeing with the blend. It applies to every
+cycle type (a `MONITORING` run ranks too), runs before `open_cycle`, and leaves a run that recorded no
+weights alone. The weights have no CLI flag: a run recorded under the old `0.4/0.3/0.2/0.1` is refused by
+the new defaults, so re-run its date from a fresh run (for a `REPLAY`, `backfill --force` resets the range)
+or choose another date.
 
 `check_manifest(conn, cycle_type, cycle_date, tag)` (T-090) raises `ManifestMismatch` when a
 `cycle_run` for that (type, date) already exists **built on a different manifest**. A cycle
@@ -171,6 +183,32 @@ FUNDAMENTAL scores; a filing with no date has none and is never read. A run refu
 (zeros if degenerate). `z_to_score(z)` → `clamp(50 + 10z, 0, 100)`.
 `normalized_scores(raw)` composes both. `rank_pct(values, higher_is_better=True)` —
 cross-sectional percentile rank in `[0,1]`, `None` in → `None` out.
+
+### Composite weights — known effects (T-141)
+
+`rank` blends FUNDAMENTAL, VALORIZATION and TECHNICAL at 1/3 each (the 1/N argument, DeMiguel, Garlappi &
+Uppal 2009). Equal weights are equal influence only on a common scale: the three `normalized_score`s are each
+`clamp(50 + 10z, 0, 100)` of a winsorized cross-sectional z (`normalized_scores`; FUNDAMENTAL over each asset's
+latest public filing snapshot), and the evidence is in `docs/model_fixes.md` (T-141). Known effects:
+
+- **Renormalization.** `_blended` divides by the weights of the components an asset has, so an asset missing
+  one is the mean of the other two (1/2 each), never scored a third lower; `v_cycle_ranking_component`'s
+  `effective_weight` for that asset is 0.5/0.5 and always sums to 1. Its blended score is then on the same
+  50-centred scale but not built from the same inputs as a three-component name.
+- **The clamp.** A component is clamped at 0 and 100 (|z| ≥ 5): the order of two names beyond the clamp is
+  lost in that component. It does not bind on a small cohort (0% of the pilot's values); a large, heavy-tailed
+  cross-section is where it could.
+- **Dispersion is not exactly 10.** The z uses the winsorized mean and sd but the values themselves are not
+  winsorized, so a component's sd is not exactly 10 (the pilot: FUNDAMENTAL 11.9, VALORIZATION 10.6,
+  TECHNICAL 10.6). The component with more spread carries more of the blend's variance, and correlated or
+  anti-correlated components shift that again: weights are equal, variance shares are not.
+- **A degenerate cohort.** When almost every name shares one raw score (a component with data for few names),
+  the winsorized sd is 0 and `cross_sectional_z` returns zeros: every name sits at 50 and that component
+  discriminates nothing, while still carrying its 1/3 weight.
+- **SEMANTIC** is not weighted; `rank` still loads stored SEMANTIC rows but `_blended` only iterates the
+  configured weights, so they are ignored until the weights name it (Work item 4). From T-141 a new run's
+  `v_weight_component` has three rows and its `components_json` has no SEMANTIC key; `v_cycle_ranking_component`
+  is unchanged (SEMANTIC was always null, and the view skips nulls). Runs stored earlier keep their four rows.
 
 ### `scores/technical.py` — `SCORE_TYPE = "TECHNICAL"`, `compute(observations) -> list[RawScore]`
 
@@ -368,6 +406,10 @@ checks it against the legacy caps it did record.
 `SELECTION` or `REPLAY` run of the same date with a different N, scheme, cap or preference raises
 `ConstructionMismatch` (exit 1) — it never silently mixes two books. A run with nothing recorded (it never
 reached `positions`, or predates T-136) and a MONITORING run are not constrained.
+`check_score_weights` (T-141) is the same guard for the composite weights, and applies to every cycle type
+including `MONITORING`: a resume with other `score_weights` than the run's first attempt recorded raises
+`ScoreWeightsMismatch` (exit 1), because `params_json.score_weights` is written once and is what the weight views
+report.
 
 `CycleReport` records `steps_run` / `steps_skipped`, `selected`, `vetoed`, `unscored`/
 `unscored_tickers` (T-119: universe members with no FUNDAMENTAL score at all this cycle,
