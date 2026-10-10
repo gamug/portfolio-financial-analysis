@@ -568,6 +568,20 @@ def _m010_view_contract(db: Database) -> None:
     is ahead of the running code."""
 
 
+# -- m011: temporal vetoes and the priceobs-v2 columns (T-070) -----------------
+
+
+def _m011_temporal_vetoes(db: Database) -> None:
+    """Additive: ``price_observation``'s five priceobs-v2 columns and ``veto.expires_on`` (plus
+    its ``expiry_history_json`` bookkeeping). Spelled out here, not left to ``ensure``, because
+    m009 rebuilds ``veto`` without them; a no-op for a table that does not exist. The appended
+    ``v_price_observation`` / ``v_veto`` columns come from ``kg_schema.views``, rebuilt by every
+    ``ensure``. Every existing row keeps NULL: no veto has an expiry until a temporal rule opens
+    one, and no price_observation row has the new fields until pricing_agent writes priceobs-v2."""
+    for table in ("price_observation", "veto"):
+        db.ensure_columns(table, REQUIRED_COLUMNS[table])
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -605,6 +619,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "marker: the knowledge-graph view contract -- v_fundamental_metric, "
         "v_cycle_ranking_component and the appended view columns (T-144)",
         _m010_view_contract,
+    ),
+    (
+        11,
+        "price_observation: sma_200 / ret_5d / vol_5d / mu_60d_base / vol_60d_base (priceobs-v2); "
+        "veto.expires_on (temporal vetoes) (T-070)",
+        _m011_temporal_vetoes,
     ),
 ]
 

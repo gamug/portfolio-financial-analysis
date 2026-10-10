@@ -42,6 +42,9 @@ class RuleContext:
     last_fundamental: dict[int, str | None]
     # asset_id -> HARD Ring-1 data-quality issues on its latest filing (T-065)
     data_quality: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    # asset_id -> its GICS sector name (today's sector, L-03). For a rule that does not apply to a
+    # kind of company; T-071's company profile replaces it.
+    sectors: dict[int, str | None] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -56,3 +59,10 @@ class Rule(Protocol):
         ...
 
     def evaluate(self, ctx: RuleContext) -> RuleResult: ...
+
+
+def hold_trading_days(rule: object) -> int | None:
+    """A temporal rule's hold, in NYSE trading days (T-070): its stint cannot clear before
+    ``raised_on`` plus this many sessions. ``None`` on every other rule."""
+    days = getattr(rule, "HOLD_TRADING_DAYS", None)
+    return int(days) if days is not None else None

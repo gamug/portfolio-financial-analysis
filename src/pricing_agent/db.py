@@ -20,7 +20,9 @@ from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
 from pricing_agent.stats import WindowStats
 
-PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"
+# priceobs-v2 (T-070): adds sma_200, ret_5d, vol_5d, mu_60d_base and vol_60d_base; every other
+# field is computed exactly as in priceobs-v1. Consumers read one version, never "latest per day".
+PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v2"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS sectors (
@@ -267,8 +269,9 @@ _UPSERT_OBSERVATION_SQL = """
 INSERT INTO price_observation
     (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
      realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
-     momentum_252d, dollar_volume, event_time, computed_at, engine_version, run_id, run_kind)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     momentum_252d, dollar_volume, sma_200, ret_5d, vol_5d, mu_60d_base, vol_60d_base,
+     event_time, computed_at, engine_version, run_id, run_kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     close = excluded.close, prev_close = excluded.prev_close,
     log_return = excluded.log_return, true_range = excluded.true_range,
@@ -277,6 +280,8 @@ ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     max_drawdown_90d = excluded.max_drawdown_90d,
     momentum_21d = excluded.momentum_21d, momentum_63d = excluded.momentum_63d,
     momentum_252d = excluded.momentum_252d, dollar_volume = excluded.dollar_volume,
+    sma_200 = excluded.sma_200, ret_5d = excluded.ret_5d, vol_5d = excluded.vol_5d,
+    mu_60d_base = excluded.mu_60d_base, vol_60d_base = excluded.vol_60d_base,
     computed_at = excluded.computed_at, run_id = excluded.run_id, run_kind = excluded.run_kind
 WHERE price_observation.close IS NOT excluded.close
    OR price_observation.prev_close IS NOT excluded.prev_close
@@ -290,6 +295,11 @@ WHERE price_observation.close IS NOT excluded.close
    OR price_observation.momentum_63d IS NOT excluded.momentum_63d
    OR price_observation.momentum_252d IS NOT excluded.momentum_252d
    OR price_observation.dollar_volume IS NOT excluded.dollar_volume
+   OR price_observation.sma_200 IS NOT excluded.sma_200
+   OR price_observation.ret_5d IS NOT excluded.ret_5d
+   OR price_observation.vol_5d IS NOT excluded.vol_5d
+   OR price_observation.mu_60d_base IS NOT excluded.mu_60d_base
+   OR price_observation.vol_60d_base IS NOT excluded.vol_60d_base
 """
 
 
@@ -325,6 +335,11 @@ def upsert_price_observations(
             o.momentum_63d,
             o.momentum_252d,
             o.dollar_volume,
+            o.sma_200,
+            o.ret_5d,
+            o.vol_5d,
+            o.mu_60d_base,
+            o.vol_60d_base,
             o.obs_date,
             now,
             engine_version,

@@ -132,7 +132,7 @@ class QuantSettings(BaseModel):
     return_engine_version: str = "qret-v2"
     # The price_observation series the universe gate reads (T-131 review). quant is a leaf and
     # cannot import pricing_agent's PRICE_OBSERVATION_ENGINE_VERSION, so the pin lives here.
-    observation_engine_version: str = "priceobs-v1"
+    observation_engine_version: str = "priceobs-v2"
     # rm-v2 (T-077): the model now also stores the `carhart` expected-return rows and its manifest
     # records the factor file and regression. An rm-v1 model has no carhart rows.
     risk_model_version: str = "rm-v2"

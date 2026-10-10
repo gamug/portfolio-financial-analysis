@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import math
+import statistics
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
 from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit
+from cycle.scores.technical import MIN_SECTOR_NAMES
+
+# The price vetoes (T-070) read the latest price_observation as of the cycle date. An observation
+# older than this many calendar days (a long weekend is 4) is not a reading of today: a halted or
+# delisted name would otherwise be re-confirmed forever by a stale row, so it is "could not tell".
+MAX_OBSERVATION_AGE_DAYS = 7
+
+# GICS sectors the LIQUIDITY_DISTRESS test does not apply to (checklist APP-09): a financial has no
+# classified balance sheet (no current/non-current split), and a regulated utility's is shaped by
+# its rate base and its commercial-paper funding. T-071's company profile (type + overlays)
+# replaces this sector test; until then GICS stands in for it.
+LIQUIDITY_EXEMPT_SECTORS = frozenset({"Financials", "Utilities"})
 
 
 @dataclass
@@ -254,6 +268,312 @@ class _DataQualityRule:
         return RuleResult(hits, frozenset(evaluated))
 
 
+def _fresh(ctx: RuleContext, obs: dict[str, float | None]) -> bool:
+    """Is the price observation *obs* (a ``price_observation`` row) recent enough to evaluate?"""
+    obs_date = obs.get("obs_date")
+    if not isinstance(obs_date, str):
+        return True  # a hand-built row with no date: nothing to age
+    age = date.fromisoformat(ctx.cycle_date) - date.fromisoformat(obs_date[:10])
+    return age.days <= MAX_OBSERVATION_AGE_DAYS
+
+
+@dataclass
+class _LiquidityRule:
+    """LIQUIDITY_DISTRESS, recalibrated (T-070, audit N7): ``current_ratio < 1.0`` alone flagged
+    structurally healthy PG, NEE, PM, T, STZ, APA and SBAC (7 of the 20-asset pilot) -- a business
+    with negative working capital by design (customer deposits, commercial paper rolled, receipts
+    before payables) sits below 1.0 for years. SOFT only when the current ratio is below 1.0 AND a
+    cash-coverage test also fails, using the metrics stored today (no new metric, T-151's scope):
+
+    - ``leverage.interest_coverage < interest_coverage_floor`` (EBIT does not cover the interest);
+    - ``cashflow.operating_cash_flow_margin < ocf_margin_floor`` (operations burn cash).
+
+    Either failing is a failed test. A missing metric is not a failed test; when *neither* is
+    available the asset is not evaluated (an open stint stays open: "could not tell"). Not applied
+    to GICS Financials or Utilities (``LIQUIDITY_EXEMPT_SECTORS``): they are evaluated and never
+    hit, so a stint opened before the exemption closes."""
+
+    RULE_ID = "LIQUIDITY_DISTRESS"
+    SEVERITY = "SOFT"
+    DESCRIPTION = (
+        "current ratio below 1.0 and weak cash coverage (interest coverage or operating cash "
+        "flow margin); not applied to Financials or Utilities"
+    )
+    current_ratio_threshold: float = 1.0
+    interest_coverage_floor: float = 1.5
+    ocf_margin_floor: float = 0.0
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "liquidity.current_ratio",
+            "op": "<",
+            "threshold": self.current_ratio_threshold,
+            "interest_coverage_floor": self.interest_coverage_floor,
+            "ocf_margin_floor": self.ocf_margin_floor,
+            "exempt_sectors": sorted(LIQUIDITY_EXEMPT_SECTORS),
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, metrics in ctx.metrics.items():
+            if ctx.sectors.get(aid) in LIQUIDITY_EXEMPT_SECTORS:
+                if metrics:
+                    evaluated.add(aid)  # never a hit: closes a stint opened before the exemption
+                continue
+            ratio = metrics.get("liquidity.current_ratio")
+            if ratio is None:
+                continue
+            if ratio >= self.current_ratio_threshold:
+                evaluated.add(aid)
+                continue
+            coverage = metrics.get("leverage.interest_coverage")
+            ocf_margin = metrics.get("cashflow.operating_cash_flow_margin")
+            if coverage is None and ocf_margin is None:
+                continue  # below 1.0 and nothing to corroborate it with: could not tell
+            evaluated.add(aid)
+            weak_coverage = coverage is not None and coverage < self.interest_coverage_floor
+            burning_cash = ocf_margin is not None and ocf_margin < self.ocf_margin_floor
+            if weak_coverage or burning_cash:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "current_ratio": ratio,
+                            "interest_coverage": coverage,
+                            "operating_cash_flow_margin": ocf_margin,
+                            "failed": [
+                                name
+                                for name, failed in (
+                                    ("interest_coverage", weak_coverage),
+                                    ("operating_cash_flow_margin", burning_cash),
+                                )
+                                if failed
+                            ],
+                        },
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+@dataclass
+class _TrendBreakRule:
+    """BREAK_TREND_200 (SOFT, T-070): the close is more than 5% under its 200-day simple moving
+    average. SOFT, not HARD: a HARD veto here would purge half the index in any broad pullback."""
+
+    RULE_ID = "BREAK_TREND_200"
+    SEVERITY = "SOFT"
+    DESCRIPTION = "close below 95% of the 200-day simple moving average"
+    ratio: float = 0.95
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {"metric": "close / sma_200", "op": "<", "threshold": self.ratio}
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, obs in ctx.price_obs.items():
+            close, sma = obs.get("close"), obs.get("sma_200")
+            if close is None or not sma or not _fresh(ctx, obs):
+                continue
+            evaluated.add(aid)
+            if close < self.ratio * sma:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {"close": close, "sma_200": sma, "ratio": close / sma},
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+def _sector_medians(
+    values: dict[int, float], sectors: dict[int, str | None]
+) -> dict[int, tuple[float, str | None, int]]:
+    """``asset_id -> (median, group, group size)`` of *values* within each asset's GICS sector
+    among the assets that have a value (the same ones the rule evaluates). A sector with fewer
+    than ``MIN_SECTOR_NAMES`` such assets -- or an asset with no sector -- takes the median of
+    the whole cross-section instead (group ``None``): the fallback TECHNICAL's sector-Z uses."""
+    by_sector: dict[str, list[float]] = {}
+    for aid, v in values.items():
+        sector = sectors.get(aid)
+        if sector is not None:
+            by_sector.setdefault(sector, []).append(v)
+    whole = statistics.median(values.values()) if values else 0.0
+    out: dict[int, tuple[float, str | None, int]] = {}
+    for aid in values:
+        sector = sectors.get(aid)
+        peers = by_sector.get(sector, []) if sector is not None else []
+        if len(peers) >= MIN_SECTOR_NAMES:
+            out[aid] = (statistics.median(peers), sector, len(peers))
+        else:
+            out[aid] = (whole, None, len(values))
+    return out
+
+
+@dataclass
+class _VolatilityShockRule:
+    """VOLATILITY_SHOCK (HARD-temporal, T-070): the name's 5-day volatility is more than 2.5 times
+    its own 60-day baseline's AND more than 2.5 times what its GICS sector's names show that day.
+    ``ratio = vol_5d / vol_60d_base`` (the ``sd`` of the daily log returns; the baseline ends 5
+    sessions before the cycle date, so the shock does not dilute its own baseline). The rule
+    fires when both hold:
+
+    - absolute: ``ratio > 2.5``;
+    - relative: ``ratio > 2.5 * median(ratio over the sector's names)``, the sector's names being
+      those the rule evaluates that day; a sector with fewer than 5 of them (or an asset with no
+      sector) uses the median over the whole cross-section.
+
+    The stint is held for ``HOLD_TRADING_DAYS`` sessions. The relative condition is the
+    declared design choice that keeps a broad sell-off from HARD-vetoing most of the index (the
+    absolute rule alone held up to 80% of the 503 names on 2025-04-10): a move a whole sector
+    makes together no longer raises a HARD veto -- it is a systematic move, carried by the
+    TECHNICAL score and the risk model, not idiosyncratic distress."""
+
+    RULE_ID = "VOLATILITY_SHOCK"
+    SEVERITY = "HARD"
+    HOLD_TRADING_DAYS = 10
+    DESCRIPTION = (
+        "5-day volatility above 2.5x the 60-day baseline and above 2.5x the sector's median "
+        "ratio; held 10 trading days"
+    )
+    ratio: float = 2.5
+    relative_ratio: float = 2.5
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "vol_5d / vol_60d_base",
+            "op": ">",
+            "threshold": self.ratio,
+            "relative": "ratio > relative_threshold * median(ratio of the GICS sector's names)",
+            "relative_threshold": self.relative_ratio,
+            "min_sector_names": MIN_SECTOR_NAMES,
+            "sector_fallback": "whole cross-section",
+            "hold_trading_days": self.HOLD_TRADING_DAYS,
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        ratios = {
+            aid: short / base
+            for aid, obs in ctx.price_obs.items()
+            if (short := obs.get("vol_5d")) is not None
+            and (base := obs.get("vol_60d_base"))
+            and _fresh(ctx, obs)
+        }
+        baseline = _sector_medians(ratios, ctx.sectors)
+        hits = []
+        for aid, ratio in ratios.items():
+            median, group, names = baseline[aid]
+            if ratio > self.ratio and ratio > self.relative_ratio * median:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "ratio": ratio,
+                            "vol_5d": ctx.price_obs[aid]["vol_5d"],
+                            "vol_60d_base": ctx.price_obs[aid]["vol_60d_base"],
+                            "group_median_ratio": median,
+                            "group": group or "cross-section",
+                            "group_names": names,
+                        },
+                    )
+                )
+        return RuleResult(hits, frozenset(ratios))
+
+
+@dataclass
+class _CrashZRule:
+    """CRASH_Z_SCORE (HARD-temporal, T-070): the name's 5-day log return is more than 2.5
+    baseline standard deviations below what its baseline predicts for 5 days AND more than 2.5
+    below its GICS sector's median 5-day return, in the same units. PLAN.md writes the absolute
+    part as ``(R5d - mu60d) / sigma60d``; the units are made consistent here -- a 5-day return is
+    compared with the daily baseline scaled to 5 days (mean x 5, sd x sqrt(5), independent daily
+    returns). The rule fires when both hold:
+
+    - absolute: ``z = (ret_5d - 5 * mu_60d_base) / (vol_60d_base * sqrt(5)) < -2.5``;
+    - relative: ``(ret_5d - median(ret_5d of the GICS sector's names)) / (vol_60d_base *
+      sqrt(5)) < -2.5`` -- the name's own volatility scales the gap to its sector; the sector's
+      names being those the rule evaluates that day. A sector with fewer than 5 of them (or an
+      asset with no sector) uses the whole cross-section's median.
+
+    The stint is held for ``HOLD_TRADING_DAYS`` sessions. See :class:`_VolatilityShockRule` for
+    why the relative condition exists and what it gives up."""
+
+    RULE_ID = "CRASH_Z_SCORE"
+    SEVERITY = "HARD"
+    HOLD_TRADING_DAYS = 10
+    DESCRIPTION = (
+        "5-day return more than 2.5 baseline standard deviations below normal and below the "
+        "sector's median 5-day return; held 10 trading days"
+    )
+    threshold: float = -2.5
+    window: int = 5
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "(ret_5d - 5 * mu_60d_base) / (vol_60d_base * sqrt(5))",
+            "op": "<",
+            "threshold": self.threshold,
+            "relative": (
+                "(ret_5d - median(ret_5d of the GICS sector's names)) / (vol_60d_base * sqrt(5)) "
+                "< relative_threshold"
+            ),
+            "relative_threshold": self.threshold,
+            "min_sector_names": MIN_SECTOR_NAMES,
+            "sector_fallback": "whole cross-section",
+            "hold_trading_days": self.HOLD_TRADING_DAYS,
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        returns = {
+            aid: ret
+            for aid, obs in ctx.price_obs.items()
+            if (ret := obs.get("ret_5d")) is not None
+            and obs.get("mu_60d_base") is not None
+            and obs.get("vol_60d_base")
+            and _fresh(ctx, obs)
+        }
+        baseline = _sector_medians(returns, ctx.sectors)
+        scale = math.sqrt(self.window)
+        hits = []
+        for aid, ret in returns.items():
+            obs = ctx.price_obs[aid]
+            mu, sd = obs["mu_60d_base"], obs["vol_60d_base"]
+            assert mu is not None and sd is not None  # filtered above
+            median, group, names = baseline[aid]
+            z = (ret - self.window * mu) / (sd * scale)
+            relative_z = (ret - median) / (sd * scale)
+            if z < self.threshold and relative_z < self.threshold:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "z": z,
+                            "relative_z": relative_z,
+                            "ret_5d": ret,
+                            "mu_60d_base": mu,
+                            "vol_60d_base": sd,
+                            "group_median_ret_5d": median,
+                            "group": group or "cross-section",
+                            "group_names": names,
+                        },
+                    )
+                )
+        return RuleResult(hits, frozenset(returns))
+
+
 RULES: list[Rule] = [
     _LeverageRule(),
     _ThresholdRule(
@@ -264,15 +584,11 @@ RULES: list[Rule] = [
         "<",
         0.0,
     ),
-    _ThresholdRule(
-        "LIQUIDITY_DISTRESS",
-        "SOFT",
-        "current ratio below 1.0",
-        "liquidity.current_ratio",
-        "<",
-        1.0,
-    ),
+    _LiquidityRule(),
     _DrawdownRule(),
     _StaleFundamentalRule(),
     _DataQualityRule(),
+    _TrendBreakRule(),
+    _VolatilityShockRule(),
+    _CrashZRule(),
 ]

@@ -61,7 +61,7 @@ def seed_cohort(
                 "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "
                 "realized_vol_90d, max_drawdown_90d, momentum_63d, momentum_21d, event_time, "
                 "computed_at, engine_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "'2026-06-30T00:00:00Z', 'priceobs-v1')",
+                "'2026-06-30T00:00:00Z', 'priceobs-v2')",
                 (
                     i,
                     day,

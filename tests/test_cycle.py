@@ -60,19 +60,15 @@ def test_rank_pct_handles_none_and_direction() -> None:
 def test_technical_prefers_momentum_and_low_vol() -> None:
     obs: dict[int, dict[str, float | None]] = {
         1: {
-            "momentum_63d": 0.30,
-            "momentum_21d": 0.1,
+            "momentum_252d": 0.30,
+            "momentum_21d": 0.0,
             "realized_vol_90d": 0.15,
-            "atr_14": 1.0,
-            "close": 100.0,
             "max_drawdown_90d": -0.05,
         },
         2: {
-            "momentum_63d": -0.20,
-            "momentum_21d": -0.1,
+            "momentum_252d": -0.20,
+            "momentum_21d": 0.0,
             "realized_vol_90d": 0.60,
-            "atr_14": 5.0,
-            "close": 100.0,
             "max_drawdown_90d": -0.40,
         },
     }
@@ -156,6 +152,7 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
                 "leverage.debt_to_equity": 1.0,
                 "cashflow.free_cash_flow_margin": -0.1,
                 "liquidity.current_ratio": 0.7,
+                "cashflow.operating_cash_flow_margin": -0.05,  # burns cash: corroborates it
             },
         },
         price_obs={2: {"max_drawdown_90d": -0.50}},

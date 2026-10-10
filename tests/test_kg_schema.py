@@ -109,7 +109,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert queries.current_version(conn) == 10
+    assert queries.current_version(conn) == 11
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "
@@ -211,11 +211,17 @@ def test_m009_collapses_per_date_veto_hits_into_stints() -> None:
     queries.record(conn, 8, "pretend floor")
     conn.commit()
 
-    assert 9 in kg_schema.ensure(conn, run_migrations=True)
+    applied = kg_schema.ensure(conn, run_migrations=True)
+    assert 9 in applied
+    # m009 rebuilds `veto` without T-070's columns; m011, which follows it, puts them back
+    assert 11 in applied
+    assert {"expires_on", "expiry_history_json"} <= set(conn.table_columns("veto"))
 
     rows = conn.execute(
-        "SELECT raised_on, cleared_on, last_seen_on FROM veto WHERE asset_id = 1 ORDER BY raised_on"
+        "SELECT raised_on, cleared_on, last_seen_on, expires_on FROM veto WHERE asset_id = 1 "
+        "ORDER BY raised_on"
     ).fetchall()
+    assert [r["expires_on"] for r in rows] == [None, None]  # collapsed history is not temporal
     assert len(rows) == 2
     first, second = rows
     assert (first["raised_on"], first["last_seen_on"], first["cleared_on"]) == (

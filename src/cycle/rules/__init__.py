@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 from portfolio_common.db import Database
 
-from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit
+from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit, hold_trading_days
 from cycle.rules.builtin import RULES
 
 __all__ = [
@@ -18,18 +18,24 @@ __all__ = [
     "VetoHit",
     "disabled_rule_ids",
     "enabled_rules",
+    "hold_trading_days",
     "seed_catalog",
 ]
 
 
 def seed_catalog(conn: Database) -> None:
-    """Insert any missing rules into ``rule_catalog`` (never overwrites)."""
+    """Insert any missing rules into ``rule_catalog``. An existing row keeps its ``enabled`` flag
+    and ``created_at`` but takes the code's current ``description``/``severity``/``params_json``
+    (T-070): a recalibrated rule (LIQUIDITY_DISTRESS) must not keep describing its old test in
+    ``v_rule_catalog``, which is what the live ``evaluate()`` no longer does."""
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     conn.executemany(
         """
-        INSERT OR IGNORE INTO rule_catalog (rule_id, description, severity, params_json,
-                                            enabled, created_at)
+        INSERT INTO rule_catalog (rule_id, description, severity, params_json, enabled, created_at)
         VALUES (?, ?, ?, ?, 1, ?)
+        ON CONFLICT (rule_id) DO UPDATE SET
+            description = excluded.description, severity = excluded.severity,
+            params_json = excluded.params_json
         """,
         [(r.RULE_ID, r.DESCRIPTION, r.SEVERITY, json.dumps(r.PARAMS), now) for r in RULES],
     )

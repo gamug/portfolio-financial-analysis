@@ -98,7 +98,7 @@ def liquidity_data_gate(  # noqa: PLR0913 - all keyword-only knobs with defaults
     exclude_hard_vetoed: bool = True,
     universe_db_path: str | Path | None = None,
     return_engine_version: str = "qret-v2",
-    observation_engine_version: str = "priceobs-v1",
+    observation_engine_version: str = "priceobs-v2",
 ) -> GateResult:
     members = load_universe_asset_ids(
         conn, universe=universe, as_of=as_of, universe_db_path=universe_db_path

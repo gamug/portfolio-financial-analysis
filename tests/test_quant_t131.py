@@ -42,13 +42,13 @@ def test_observation_history_follows_the_pinned_version_not_the_newest_one(
     conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=False)
     as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]
     # a newer, shorter v2 series: 100 days
-    _copy_observations(conn, "priceobs-v2", "2099-01-01T00:00:00Z", since=_nth_last_date(conn, 100))
+    _copy_observations(conn, "priceobs-v3", "2099-01-01T00:00:00Z", since=_nth_last_date(conn, 100))
 
     v1 = _history_counts(
-        conn, as_of, return_engine_version="qret-v2", observation_engine_version="priceobs-v1"
+        conn, as_of, return_engine_version="qret-v2", observation_engine_version="priceobs-v2"
     )
     v2 = _history_counts(
-        conn, as_of, return_engine_version="qret-v2", observation_engine_version="priceobs-v2"
+        conn, as_of, return_engine_version="qret-v2", observation_engine_version="priceobs-v3"
     )
     assert set(v1.values()) == {259}  # 260 bars, the first has no log return
     assert set(v2.values()) == {100}
@@ -58,7 +58,7 @@ def test_observation_history_follows_the_pinned_version_not_the_newest_one(
         as_of=as_of,
         min_history_days=200,
         min_dollar_volume=0.0,
-        observation_engine_version="priceobs-v1",
+        observation_engine_version="priceobs-v2",
     )
     assert gate.asset_ids == [1, 2]  # the pinned series is long enough
     gate = liquidity_data_gate(
@@ -66,7 +66,7 @@ def test_observation_history_follows_the_pinned_version_not_the_newest_one(
         as_of=as_of,
         min_history_days=200,
         min_dollar_volume=0.0,
-        observation_engine_version="priceobs-v2",
+        observation_engine_version="priceobs-v3",
     )
     assert set(gate.dropped.values()) == {"short_history"}
 
@@ -90,7 +90,7 @@ def test_return_history_follows_the_pinned_version_not_the_newest_one(
 
     def counts(version: str) -> dict[int, int]:
         return _history_counts(
-            conn, dates[-1], return_engine_version=version, observation_engine_version="priceobs-v1"
+            conn, dates[-1], return_engine_version=version, observation_engine_version="priceobs-v2"
         )
 
     assert counts("qret-v2") == {1: 260}
@@ -103,7 +103,7 @@ def test_median_dollar_volume_reads_only_the_pinned_version(
     """A *newer* version with tiny volumes must not drag down the pinned version's liquidity."""
     conn = quant_seed(memory_quant_db, n_assets=1, n_days=260, with_dividends=False)
     as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]
-    _copy_observations(conn, "priceobs-v2", "2099-01-01T00:00:00Z", dollar_volume=1.0)
+    _copy_observations(conn, "priceobs-v3", "2099-01-01T00:00:00Z", dollar_volume=1.0)
 
     def kept(version: str) -> list[int]:
         return liquidity_data_gate(
@@ -115,8 +115,8 @@ def test_median_dollar_volume_reads_only_the_pinned_version(
             observation_engine_version=version,
         ).asset_ids
 
-    assert kept("priceobs-v1") == [1]
-    assert kept("priceobs-v2") == []
+    assert kept("priceobs-v2") == [1]
+    assert kept("priceobs-v3") == []
 
 
 def test_the_gates_take_their_pins_from_the_settings(
@@ -124,13 +124,13 @@ def test_the_gates_take_their_pins_from_the_settings(
 ) -> None:
     conn = quant_seed(memory_quant_db, n_assets=1, n_days=260, with_dividends=False)
     as_of = conn.execute("SELECT MAX(obs_date) FROM price_observation").fetchone()[0]
-    _copy_observations(conn, "priceobs-v2", "2099-01-01T00:00:00Z", since=_nth_last_date(conn, 100))
+    _copy_observations(conn, "priceobs-v3", "2099-01-01T00:00:00Z", since=_nth_last_date(conn, 100))
     settings = QuantSettings(
         db_path=tmp_path / "x.db", min_history_days=200, liquidity_min_dollar_volume=0.0
     )
 
     assert settings_gate(conn, settings, as_of=as_of).asset_ids == [1]
-    pinned_short = settings.model_copy(update={"observation_engine_version": "priceobs-v2"})
+    pinned_short = settings.model_copy(update={"observation_engine_version": "priceobs-v3"})
     assert settings_gate(conn, pinned_short, as_of=as_of).asset_ids == []
     assert benchmark_gate(conn, pinned_short, as_of=as_of).asset_ids == []
 

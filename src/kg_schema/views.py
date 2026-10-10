@@ -59,6 +59,9 @@ Projection semantics
                           middle industry-group tier; sub-industry stands in for it).
 ``v_price_observation``    latest ``engine_version`` per (asset, obs_date); derived
                           price analytics only (raw OHLCV stays in ``price_daily``).
+                          ``sma_200`` .. ``vol_60d_base`` (T-070, appended) exist from
+                          ``priceobs-v2`` and are NULL on a ``priceobs-v1`` row and until their
+                          window is full.
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
@@ -69,6 +72,8 @@ Projection semantics
 ``v_veto``                 rule-hit stints (T-125); ``cleared_on IS NULL`` = an open (active)
                           stint. ``raised_on``/``cleared_on``/``last_seen_on`` are cycle dates;
                           ``detected_at``/``cleared_at`` are wall-clock metadata only.
+                          ``expires_on`` (T-070, appended) is a temporal veto's earliest clearing
+                          cycle date; NULL on every other veto.
 ``v_data_quality_issue``  one row per Ring-1 ``DQ_*`` gate hit on a filing's metric (T-065),
                           with the filing's form / period beside it. ``quarantined = 1`` =
                           consumers read the metric as NULL; HARD = a ``cycle`` DATA_QUALITY
@@ -278,7 +283,8 @@ VIEWS: dict[str, str] = {
         SELECT p.id, a.ticker, p.asset_id, p.obs_date, p.close, p.prev_close, p.log_return,
                p.true_range, p.atr_14, p.realized_vol_21d, p.realized_vol_90d,
                p.max_drawdown_90d, p.momentum_21d, p.momentum_63d, p.momentum_252d,
-               p.dollar_volume, p.source, p.event_time, p.computed_at, p.engine_version
+               p.dollar_volume, p.source, p.event_time, p.computed_at, p.engine_version,
+               p.sma_200, p.ret_5d, p.vol_5d, p.mu_60d_base, p.vol_60d_base
         FROM price_observation p JOIN assets a ON a.id = p.asset_id
         WHERE p.engine_version = (
             SELECT p2.engine_version FROM price_observation p2
@@ -314,7 +320,8 @@ VIEWS: dict[str, str] = {
     "v_veto": """
         CREATE VIEW v_veto AS
         SELECT v.id, a.ticker, v.asset_id, v.rule_id, v.severity, v.raised_on, v.cleared_on,
-               v.last_seen_on, v.detected_at, v.cleared_at, v.evidence_json, v.run_id
+               v.last_seen_on, v.detected_at, v.cleared_at, v.evidence_json, v.run_id,
+               v.expires_on
         FROM veto v JOIN assets a ON a.id = v.asset_id
     """,
     "v_data_quality_issue": """
