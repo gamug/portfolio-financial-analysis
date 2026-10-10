@@ -158,18 +158,38 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
     return out
 
 
-def latest_price_observation(conn: Database, cycle_date: str) -> dict[int, dict[str, float | None]]:
+class MissingObservations(RuntimeError):
+    """``price_observation`` holds rows, but none at the engine version the cycle reads."""
+
+
+def latest_price_observation(
+    conn: Database, cycle_date: str, engine_version: str
+) -> dict[int, dict[str, float | None]]:
+    """Each asset's newest ``price_observation`` row on or before *cycle_date*, at *engine_version*
+    only (T-070) -- never a mix of versions, even when one date holds rows of two.
+
+    Raises :class:`MissingObservations` when the table has rows but none at *engine_version*
+    (pricing has not rebuilt the series under it yet), rather than score nothing silently."""
     rows = conn.execute(
         """
         SELECT p.*
         FROM price_observation p
         JOIN (
             SELECT asset_id, MAX(obs_date) AS d FROM price_observation
-            WHERE obs_date <= ? GROUP BY asset_id
+            WHERE obs_date <= ? AND engine_version = ? GROUP BY asset_id
         ) last ON last.asset_id = p.asset_id AND last.d = p.obs_date
+        WHERE p.engine_version = ?
         """,
-        (cycle_date,),
+        (cycle_date, engine_version, engine_version),
     ).fetchall()
+    if not rows:
+        other = conn.execute("SELECT engine_version FROM price_observation LIMIT 1").fetchone()
+        if other is not None:
+            raise MissingObservations(
+                f"price_observation has no rows at engine_version {engine_version!r} (it holds "
+                f"{other['engine_version']!r}); run `python -m pricing_agent run --store-daily "
+                "--observations` to rebuild the series under it"
+            )
     return {int(r["asset_id"]): dict(r) for r in rows}
 
 

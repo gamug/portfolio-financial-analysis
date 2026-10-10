@@ -104,6 +104,17 @@ def next_trading_day(day: date) -> date:
     return nxt
 
 
+def add_trading_days(day: date, n: int) -> date:
+    """The NYSE trading day *n* sessions after *day* (``n >= 0``; *day* itself need not be one).
+    ``add_trading_days(d, 0)`` is *d*; ``add_trading_days(d, 1)`` is :func:`next_trading_day`."""
+    if n < 0:
+        raise ValueError("n must be >= 0")
+    out = day
+    for _ in range(n):
+        out = next_trading_day(out)
+    return out
+
+
 def available_from(filing_date: str | None) -> str | None:
     """``available_at`` for a filing dated *filing_date* (ISO ``YYYY-MM-DD``): the next NYSE
     trading day. A filing with no date cannot be shown to be public: ``None``."""

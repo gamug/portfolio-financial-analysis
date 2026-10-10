@@ -50,12 +50,12 @@ ones cleared there are reopened, and a surviving stint's `last_seen_on` is rolle
 `raised_on` if a hit on or after `--from` had bumped it forward (PR #103 review: left in place,
 that `last_seen_on` is itself a transition dated on or after `--from`, so the guard `--force`
 exists to clear the way for still finds one and refuses the immediate redo) — since `veto` is not
-isolated the way `portfolio_position` is (above). Nothing *before* `--from` is touched.
+isolated the way `portfolio_position` is (above). A temporal stint's `expires_on` (T-070) is put back too, **exactly**: each extension is recorded in `veto.expiry_history_json`, and the ones dated on or after `--from` are undone (a stint cleared there is reopened with the expiry it had), so a replay from `--from` reproduces the original stints. Nothing *before* `--from` is touched.
 
 **Veto lifecycle (T-125).** `veto` holds stints (`raised_on`/`cleared_on`/`last_seen_on`), not
 per-cycle-date events: a HARD veto clears the first cycle its rule re-evaluates the asset and
 finds it no longer breached (rather than staying permanent once raised), and a SOFT veto held
-across many cycles is one open stint, charged `soft_veto_penalty` once, not once per cycle. A
+across many cycles is one open stint, charged its rule's penalty (`soft_veto_penalty` unless the rule declares its own) once, not once per cycle. A
 rule that could not evaluate an asset this cycle (missing data) leaves any open stint untouched
 — never mistaken for "cleared." `kg_schema.queries.veto_out_of_order_reason` refuses a cycle
 date older than the latest veto transition already recorded, unless `--allow-backdated-veto` —
@@ -92,6 +92,93 @@ not the framework, is the source of truth for resume. A Strands
 `multiagent.GraphBuilder` can drive the same step graph later without changing that
 contract.
 
+## Price vetoes and TECHNICAL v2 (T-070)
+
+Three vetoes read `price_observation` at `priceobs-v2` (`CycleSettings.observation_engine_version`: the
+cycle reads that one version, never "latest per day"; it **refuses** with the `pricing_agent` command to run
+when the table holds rows but none at that version). An observation older than 7 calendar days at the cycle
+date is not evaluated (a halted or delisted name would otherwise be re-confirmed forever by a stale row).
+
+| Rule | Severity | Fires when (all must hold) |
+|---|---|---|
+| `BREAK_TREND_200` | SOFT, **flag-only** (0 penalty points) | `close < 0.95 · sma_200` |
+| `VOLATILITY_SHOCK` | HARD, temporal (10 sessions) | **absolute** `vol_5d / vol_60d_base > 2.5` AND **relative** `ratio > 2.5 · median(ratio of the name's GICS sector)` |
+| `CRASH_Z_SCORE` | HARD, temporal (10 sessions) | **absolute** `z = (ret_5d − 5·mu_60d_base) / (vol_60d_base·√5) < −2.5` AND **relative** `(ret_5d − median(ret_5d of the name's GICS sector)) / (vol_60d_base·√5) < −2.5` |
+
+All comparisons are strict. `PLAN.md` writes the crash score as `(R5d − μ60d)/σ60d`; a 5-day return is compared
+here with the daily baseline scaled to 5 days (mean × 5, sd × √5, independent daily returns), so the units
+agree. The relative leg is in the same units: the gap to the sector's median 5-day return, over the name's own
+`vol_60d_base·√5`. **Both legs are required** for both rules, and each rule's `PARAMS` in `rule_catalog`
+carries the formulas, thresholds and the fallback below.
+
+**`BREAK_TREND_200` is flag-only (review decision on PR #134).** It stays a SOFT rule with its stints and
+evidence in `veto` / `v_veto`, but it takes nothing off the blended score. It fires on about 21% of the index
+on a typical day (median 105 names of 503, up to 72%), a 15-point penalty on that many names dominates the
+ranking (pilot blended-rank Spearman 0.87 -> 0.50 against the old code with it), and it repeats the trend
+TECHNICAL v2 already scores (12-1 momentum, drawdown). Mechanism: each rule may declare `PENALTY_POINTS`
+(`rules.base.penalty_points`); the default is `settings.soft_veto_penalty` for every SOFT rule, `BREAK_TREND_200`
+declares 0, and `seed_catalog` writes every rule's `penalty_points` into `rule_catalog.params_json` (HARD
+rules: `null`). `rank` sums the active SOFT rules' points (`soft_penalties`), so the read contract's identity
+is `sum(effective_weight x component) - sum(penalty_points) = blended_score` (`docs/kg_schema.md`). The
+flagged name is still listed as SOFT-vetoed in `veto_rules_json` (and a pinned one is reported as flagged).
+
+**The sector group.** The names the rule evaluates that day (it has the inputs, and the observation is
+fresh) and that share the name's GICS sector (today's sector, checklist L-03). A sector with fewer than 5 such
+names -- and a name with no sector -- uses the **whole cross-section** of that day instead: the same fallback
+`TECHNICAL`'s sector-Z uses (`MIN_SECTOR_NAMES = 5`). On the 503-name copy it never applied (0 of 12,364
+sector-dates; the smallest sector, Energy, has 21 names); on the 20-name pilot it **always** applies (9,016 of
+9,016 sector-dates: no sector has more than 4 names), so there the relative leg is "against the pilot's
+median".
+
+**Why the relative leg: a declared limitation.** As first specified (absolute leg only) the two HARD rules held
+up to **80%** of the 503 names under a veto at once (2025-04-10) and more than 20% on 157 of 1,189 dates --
+a broad sell-off would have excluded most of the index (table below). The relative leg stops a move a whole
+sector makes together from raising a HARD veto: **by design, a sector-wide shock no longer vetoes the names in
+it.** Those are systematic moves, carried by the TECHNICAL score and by the risk model, not idiosyncratic
+distress. The cost is measured in `docs/model_fixes.md` (the sector-dates the absolute rules fired on 50% or more of a sector and
+the relative ones did not).
+
+**Temporal stints (on top of T-125's stints and the unchanged T-1 lag).** A temporal rule's stint opens with
+`expires_on = raised_on + 10 NYSE sessions` (`kg_schema.trading_calendar.add_trading_days`) and **cannot clear
+before it**, even when the condition is gone: it stays open, untouched (`last_seen_on` keeps the last cycle the
+condition was confirmed). At the first cycle on or after `expires_on`: the condition gone -> the stint clears
+(`cleared_on` = that cycle); still holding -> it stays open and `expires_on` moves to that cycle + 10 sessions.
+A rule that could not evaluate the asset leaves its stint alone, past the expiry too. `hard_vetoed_as_of`
+is unchanged: a stint is active at cutoff `C` iff `raised_on <= C AND (cleared_on IS NULL OR cleared_on > C)`.
+**With cycles further apart than 10 trading days the hold is effectively one cycle**: the next cycle is already
+past the expiry, so a gone condition clears at once -- and the T-1 lag still keeps the name out of that cycle's
+ranking. With the pilot's weekly cycles (5 sessions) a stint is held through the next cycle and
+re-evaluated on the one after (14 calendar days). `veto.expiry_history_json` records each extension
+(`{"on": cycle date, "was": the expiry it replaced}`) so that a same-date re-run of `write_vetoes` and
+`reset_replay_range` (`cycle backfill --force`) restore `expires_on` exactly; a cleared stint keeps the expiry
+it had. `cycle undo-run` repairs `portfolio_position` only and never touches `veto` (a test pins it).
+`report.vetoed` (the console count) is now the open HARD stints after the cycle, not the cycle's hits: a held
+stint is still excluded from the next ranking.
+
+**TECHNICAL v2** (`scores/technical.py`, model `technical-v2`) replaces the five rank-percentile signals:
+`mom_12_1 = close(t−21) / close(t−252) − 1` (Jegadeesh & Titman 1993: skip the last month; derived exactly as
+`(1 + momentum_252d) / (1 + momentum_21d) − 1`, needs 253 closes), `realized_vol_90d` (lower is better) and
+`max_drawdown_90d` (less negative is better). Each is standardized within its GICS sector on the cycle date,
+`z = (x − sector mean) / sector sd` (population sd, as `cross_sectional_z`; no winsorizing at this stage; a
+signal with no spread has z = 0), with the same < 5-name fallback to the cross-section.
+`raw = 0.50·z_mom − 0.30·z_vol + 0.20·z_dd`, divided by the sum of the weights of the signals present.
+**Coverage floor (audit C5):** fewer than 2 of the 3 signals -> **no TECHNICAL score** (the asset is absent
+from the blend, which renormalizes over the components present, T-141); before this an empty asset scored a
+neutral 50. `normalize` then maps `raw` to `50 + 10z` as for every score. A `cycle_run` recorded before T-070
+holds `technical-v1` scores: re-run it with `cycle backfill --force` (the run records
+`params_json.technical_version`).
+
+**`LIQUIDITY_DISTRESS` (audit N7)** is SOFT only when `current_ratio < 1.0` **and** a cash-coverage test fails:
+`interest_coverage < 1.5` or `operating_cash_flow_margin < 0` (either; a missing metric is not a failed test; with
+neither available the asset is not evaluated). It does not apply to GICS **Financials** or **Utilities**
+(APP-09: no classified balance sheet / a regulated one): those names are evaluated and never hit, so a stint
+opened before the exemption closes. `T-071`'s company profile replaces the GICS test (a pointer sits in
+`rules/builtin.py`). Operating cash flow over current liabilities is not a stored metric (adding one is `T-151`'s
+scope), so the cash leg is the stored operating-cash-flow margin. The 1.5 floor is `LEVERAGE_EXTREME`'s existing
+negative-equity coverage floor (T-116), not a new number; no source sets a current-ratio-conditioned test, so this
+is a **declared calibrated policy** with the sensitivity table in `docs/model_fixes.md` (T-070). The broader
+check repeats after `T-148` (it changes the interest-expense and cash inputs).
+
 ## Configuration (`config.py`)
 
 `CycleSettings.load()` needs `KG_FINANCIAL_DB`; `KG_UNIVERSE_DB` and LLM creds
@@ -103,7 +190,8 @@ by default | `equal` | `score_proportional` | `inverse_vol`), `max_name_weight` 
 derived — `1.5/n_held` for `score_tilt`, 0.10 for the legacy schemes; an explicit value wins, which
 is why the default is `None`: a `0.10` default would silently override `1.5/N`),
 `max_sector_weight` (.30), the **preferences** `pins`, `exclude`, `exclude_sectors` (tuples of
-names, empty by default) and `only_sectors` (`None` = every sector), `soft_veto_penalty` (15 pts),
+names, empty by default) and `only_sectors` (`None` = every sector), `soft_veto_penalty` (15 pts: the default points an active SOFT stint takes off the blended score; a rule may declare its own `penalty_points`, 0 for `BREAK_TREND_200`),
+`observation_engine_version` (`priceobs-v2`, T-070: the one `price_observation` version read),
 `unscored_max_share` (.05 — T-119: `rank` refuses outright past this share of the universe
 with no FUNDAMENTAL score at all, up to and including 100%, PR #99 review).
 `CycleSettings.construction()` is the subset that decides the book (N, scheme, caps,
@@ -151,7 +239,7 @@ two. It runs *before* `open_cycle`, which would otherwise flip the earlier run b
 `universe.db` point-in-time (`members_asof` → `resolve_asset_ids`) and returns the
 matching `assets` rows; raises loudly if `universe.db` yields nothing or nothing
 resolves. `latest_metrics(conn, date, versions)` (the newest filing *usable* on the date —
-`available_at ≤ date`, T-106/T-107 — keyed `"group.name"`), `latest_price_observation`,
+`available_at ≤ date`, T-106/T-107 — keyed `"group.name"`), `latest_price_observation(conn, cycle_date, engine_version)` (each asset's newest row at that one `engine_version`; `MissingObservations` when the table has rows but none at it, T-070),
 `latest_fundamental_rows` (each asset's newest FUNDAMENTAL snapshot usable on the date; `last_fundamental_dates` and `latest_fundamental_score` read it — an asset with none at all is
 simply absent as a key, never present with a `None` value), `unscored_assets(asset_ids, scored)`
 (the universe's own key-membership diff against that, T-119 — includes every asset when none is
@@ -210,13 +298,14 @@ latest public filing snapshot), and the evidence is in `docs/model_fixes.md` (T-
   `v_weight_component` has three rows and its `components_json` has no SEMANTIC key; `v_cycle_ranking_component`
   is unchanged (SEMANTIC was always null, and the view skips nulls). Runs stored earlier keep their four rows.
 
-### `scores/technical.py` — `SCORE_TYPE = "TECHNICAL"`, `compute(observations) -> list[RawScore]`
+### `scores/technical.py` — `SCORE_TYPE = "TECHNICAL"`, `VERSION = "technical-v2"`, `compute(observations, sectors) -> list[RawScore]`
 
-Proposed definition (user to refine). Cross-sectionally ranks each sub-signal and
-blends by weight: 12-1-ish `momentum_63d` (.35, ↑), `momentum_21d` (.15, ↑),
-`realized_vol_90d` (.20, ↓), `atr_14/close` (.15, ↓), `max_drawdown_90d` (.15,
-less-negative-is-better). `raw_value` = 100 × weighted mean of available
-percentiles.
+Version 2 (T-070): `0.50·z(mom_12_1) − 0.30·z(realized_vol_90d) + 0.20·z(max_drawdown_90d)`, each z within the
+asset's GICS sector (cross-section when the sector has fewer than 5 names with the signal), renormalized over
+the signals present, no score under 2 of 3 signals. `components` carries each signal, its z and the size of the
+group it was standardized against (`n_<signal>`: 5 or more is the sector, otherwise the cross-section). Full
+definition in "Price vetoes and TECHNICAL v2 (T-070)" above. `mom_12_1(obs)` and `sector_z(values, sectors)`
+are public and tested on their own.
 
 ### `scores/valorization.py` — `SCORE_TYPE = "VALORIZATION"`, `compute(metrics) -> list[RawScore]`
 
@@ -238,17 +327,19 @@ dropped. Pure derivation — nothing fetched.
 ### `rules/`
 
 - `base.py` — `VetoHit(asset_id, rule_id, severity, evidence)`, `RuleContext`
-  (`metrics`, `price_obs`, `last_fundamental`, `data_quality` per asset), `Rule` protocol
+  (`metrics`, `price_obs`, `last_fundamental`, `data_quality`, `sectors` per asset), `Rule` protocol
   (`RULE_ID`, `SEVERITY`, `DESCRIPTION`, `PARAMS` property, `evaluate(ctx)`).
 - `builtin.py` — `RULES`: `LEVERAGE_EXTREME` (`debt_to_equity > 3`, HARD),
   `NEGATIVE_FCF` (`free_cash_flow_margin < 0`, HARD; the margin is trailing-twelve-month on a 10-Q, T-133), `LIQUIDITY_DISTRESS`
-  (`current_ratio < 1`, SOFT), `PRICE_CRASH` (`max_drawdown_90d < −0.35`, SOFT),
+  (`current_ratio < 1` and weak cash coverage, SOFT, not for Financials/Utilities; T-070), `PRICE_CRASH` (`max_drawdown_90d < −0.35`, SOFT),
+  `BREAK_TREND_200` (SOFT), `VOLATILITY_SHOCK` and `CRASH_Z_SCORE` (HARD, temporal; T-070),
   `EARNINGS_MISSING` (a FUNDAMENTAL score *exists but has aged* past 400 days, SOFT — an asset
   with no score at all never reaches this rule at all, see `unscored` below, T-119),
   `DATA_QUALITY` (a HARD Ring-1 `DQ_*` gate fired on the latest filing — read from
   `RuleContext.data_quality`; the evidence names the gates, T-065).
-- `__init__.py` — `seed_catalog(conn)` (`INSERT OR IGNORE` into `rule_catalog`,
-  never overwrites), `enabled_rules(conn)`.
+- `__init__.py` — `seed_catalog(conn)` (inserts the missing rules; an existing row keeps its `enabled`
+  flag and `created_at` but takes the code's current `description`/`severity`/`params_json`, T-070),
+  `enabled_rules(conn)`, `hold_trading_days(rule)` (a temporal rule's hold; `None` for the others).
 - The rule catalog and the per-run blend (`score_weights` + knobs in
   `cycle_run.params_json`) are read-projected by `kg_schema` as `v_rule_catalog`,
   `v_weight_scheme`, `v_weight_component` — no separate export step.
@@ -258,7 +349,10 @@ dropped. Pure derivation — nothing fetched.
 `write_scores` (TECH/VALOR → `score_snapshot`, upsert on the natural key),
 `apply_normalized`, `write_vetoes` (T-125: applies this cycle's stint transitions — open,
 extend, close, or leave an unevaluated asset's open stint untouched — self-undoing this same
-cycle date's own prior transitions first, so a re-run is idempotent; never deletes a stint).
+cycle date's own prior transitions first, so a re-run is idempotent; never deletes a stint). With
+`hold_days` (rule id -> sessions; `rules.hold_trading_days`, T-070) a temporal stint opens with `expires_on`, is
+held past a gone condition until it, and is extended while the condition persists (see "Price vetoes" above);
+`restore_expiries_from(conn, date_from)` undoes the extensions dated on or after `date_from`.
 `hard_vetoed_as_of(conn, cutoff)` / `active_soft_vetoes` (re-exported from
 `kg_schema.queries`, the one point-in-time predicate `cycle` and `quant` both read: a stint is
 active at cutoff `C` iff `raised_on <= C AND (cleared_on IS NULL OR cleared_on > C)`).
@@ -376,8 +470,8 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
   minus that mean → a `score_snapshot` row of type `SECTOR` (`SectorRelativeMomentum`;
   negative = lagging its sector). Not in the blend — a standalone observation.
 - **rank** — blended score = weighted mean of available `normalized_score`s
-  (weights renormalized over present types), minus `soft_veto_penalty` per active
-  SOFT veto. T-1 HARD-veto assets are marked `vetoed` (excluded from selection). An asset
+  (weights renormalized over present types), minus each active SOFT veto's `penalty_points`
+  (`soft_veto_penalty` by default; 0 for the flag-only `BREAK_TREND_200`, T-070). T-1 HARD-veto assets are marked `vetoed` (excluded from selection). An asset
   with no FUNDAMENTAL score at all (not merely a stale one) is marked `vetoed` with an
   `"UNSCORED"` `veto_rules` entry immediately, this same cycle — not through the T-1 lag, and
   not a SOFT veto/`veto` table row (T-119, PR #78 review); it still appears in `cycle_ranking`,

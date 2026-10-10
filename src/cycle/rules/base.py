@@ -42,6 +42,9 @@ class RuleContext:
     last_fundamental: dict[int, str | None]
     # asset_id -> HARD Ring-1 data-quality issues on its latest filing (T-065)
     data_quality: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
+    # asset_id -> its GICS sector name (today's sector, L-03). For a rule that does not apply to a
+    # kind of company; T-071's company profile replaces it.
+    sectors: dict[int, str | None] = field(default_factory=dict)
 
 
 @runtime_checkable
@@ -56,3 +59,20 @@ class Rule(Protocol):
         ...
 
     def evaluate(self, ctx: RuleContext) -> RuleResult: ...
+
+
+def penalty_points(rule: object, default: float) -> float | None:
+    """The points a SOFT rule's active stint takes off the blended score (T-070): its own
+    ``PENALTY_POINTS`` when it declares one (``0.0`` = flag only), else *default* (the run's
+    ``soft_veto_penalty``). ``None`` for a HARD rule, which excludes instead of penalizing."""
+    if getattr(rule, "SEVERITY", None) != "SOFT":
+        return None
+    declared = getattr(rule, "PENALTY_POINTS", None)
+    return float(declared) if declared is not None else default
+
+
+def hold_trading_days(rule: object) -> int | None:
+    """A temporal rule's hold, in NYSE trading days (T-070): its stint cannot clear before
+    ``raised_on`` plus this many sessions. ``None`` on every other rule."""
+    days = getattr(rule, "HOLD_TRADING_DAYS", None)
+    return int(days) if days is not None else None

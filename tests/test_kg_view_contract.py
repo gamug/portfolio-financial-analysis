@@ -16,6 +16,7 @@ from conftest import _memory_database, seed_filing
 from portfolio_common.db import Database, DatabaseError
 
 import kg_schema
+from cycle.rules import seed_catalog
 from fundamental_agent import db as fundamental_db
 from kg_schema import migrations, queries, versions
 from kg_schema.views import VIEWS, ensure_views
@@ -450,6 +451,9 @@ NEW_COLUMNS: dict[str, tuple[str, ...]] = {
     "v_cycle_ranking": ("status",),
     "v_quant_vs_live": ("engine_version", "is_current"),
     "v_quant_portfolio": ("is_current",),
+    # T-070 (contract 11): appended after T-144's, existing columns untouched
+    "v_price_observation": ("sma_200", "ret_5d", "vol_5d", "mu_60d_base", "vol_60d_base"),
+    "v_veto": ("expires_on",),
 }
 
 NEW_VIEWS: dict[str, tuple[str, ...]] = {
@@ -518,8 +522,8 @@ def test_the_new_views_have_exactly_the_documented_columns(conn: Database) -> No
 def test_the_marker_migration_raises_schema_version_to_10_and_is_idempotent(
     conn: Database,
 ) -> None:
-    assert max(v for v, _, _ in migrations.MIGRATIONS) == 10
-    assert queries.current_version(conn) == 10
+    assert 10 in {v for v, _, _ in migrations.MIGRATIONS}
+    assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     assert migrations.apply_migrations(conn) == []  # a second run applies nothing
 
 
@@ -527,9 +531,9 @@ def test_the_marker_migration_changes_no_table(conn: Database) -> None:
     """m010 is a marker: the views come from ``ensure``, so a database at 9 gets the same
     tables and the same views whether or not it has been migrated."""
     before = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
-    conn.execute("DELETE FROM schema_version WHERE version = 10")
+    conn.execute("DELETE FROM schema_version WHERE version >= 10")
     conn.commit()
-    assert migrations.apply_migrations(conn) == [10]
+    assert migrations.apply_migrations(conn) == [10, 11]  # m011 adds only columns that exist
     after = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     assert after == before
 
@@ -543,7 +547,7 @@ def test_ensure_views_leaves_a_database_that_is_ahead_of_the_code(conn: Database
     conn.execute("DROP VIEW v_cycle_ranking_component")
     conn.execute("DROP VIEW v_cycle_ranking")
     conn.execute("CREATE VIEW v_cycle_ranking AS SELECT 1 AS from_a_later_contract")
-    queries.record(conn, 11, "a later contract")
+    queries.record(conn, 12, "a later contract")
     ensure_views(conn)
     assert _columns(conn, "v_cycle_ranking") == ("from_a_later_contract",)
     assert not conn.relation_exists("v_cycle_ranking_component")
@@ -928,6 +932,42 @@ def test_blended_score_identity_holds_with_soft_vetoes(conn: Database) -> None:
         assert sum(p["effective_weight"] for p in parts) == pytest.approx(1.0)
         soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
         got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty * len(soft)
+        assert got == pytest.approx(r["blended_score"], abs=1e-9)
+
+
+def test_blended_score_identity_uses_each_soft_rules_penalty_points(conn: Database) -> None:
+    """T-070: the penalty is the sum of the row's SOFT rules' ``penalty_points`` (from
+    ``v_rule_catalog.params_json``; the run's ``soft_veto_penalty`` where a rule declares none) --
+    BREAK_TREND_200 is flag-only (0), another SOFT rule still costs the default."""
+    seed_catalog(conn, 15.0)
+    _cycle(conn, 1, "2026-03-02", "completed", WEIGHTS)
+    comps: dict[str, float | None] = {"FUNDAMENTAL": 80.0, "TECHNICAL": 40.0, "VALORIZATION": 55.0}
+    base = sum(WEIGHTS[k] * v for k, v in comps.items() if v is not None) / sum(WEIGHTS.values())
+    cases = {  # asset -> (SOFT rules, expected penalty)
+        1: (["BREAK_TREND_200"], 0.0),
+        2: (["BREAK_TREND_200", "PRICE_CRASH"], 15.0),
+        3: (["PRICE_CRASH", "LIQUIDITY_DISTRESS"], 30.0),
+    }
+    for rank, (asset, (rules, penalty)) in enumerate(cases.items(), start=1):
+        _rank(conn, 1, asset, rank, base - penalty, comps, rules)
+    conn.commit()
+    default = conn.execute("SELECT soft_veto_penalty FROM v_weight_scheme").fetchone()[0]
+    points = {
+        r["rule_id"]: r["pts"]
+        for r in conn.execute(
+            "SELECT rule_id, json_extract(params_json, '$.penalty_points') AS pts FROM v_rule_catalog"
+        )
+    }
+    assert points["BREAK_TREND_200"] == 0.0 and points["PRICE_CRASH"] == 15.0
+    for r in conn.execute("SELECT asset_id, blended_score, veto_rules_json FROM v_cycle_ranking"):
+        parts = conn.execute(
+            "SELECT component_value, effective_weight FROM v_cycle_ranking_component "
+            "WHERE cycle_run_id = 1 AND asset_id = ?",
+            (r["asset_id"],),
+        ).fetchall()
+        soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
+        penalty = sum(p if (p := points.get(x)) is not None else default for x in soft)
+        got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty
         assert got == pytest.approx(r["blended_score"], abs=1e-9)
 
 

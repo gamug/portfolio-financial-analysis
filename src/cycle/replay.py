@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from portfolio_common.db import Database
 
-from cycle.writers import WEIGHT_EPS, OutOfOrderCycle
+from cycle.writers import WEIGHT_EPS, OutOfOrderCycle, restore_expiries_from
 
 
 def out_of_order_replay_reason(conn: Database, cycle_date: str) -> str | None:
@@ -142,6 +142,11 @@ def reset_replay_range(conn: Database, date_from: str) -> None:
     after the range being reset, ``cycle backfill --force`` failed on its first date. Rolled
     back to its stint's own ``raised_on`` here, alongside the ``raised_on``/``cleared_on``
     void/reopen: the redo will set it forward again as soon as it re-evaluates that pair.
+
+    ``expires_on`` (T-070) is restored the same way, but exactly rather than approximately:
+    the redo's behavior depends on it (a held stint stays open until it), so each extension is
+    recorded in ``expiry_history_json`` and :func:`cycle.writers.restore_expiries_from` undoes
+    the ones dated on or after *date_from*.
     """
     conn.execute(
         "DELETE FROM portfolio_position_replay WHERE valid_from >= ?",
@@ -164,4 +169,8 @@ def reset_replay_range(conn: Database, date_from: str) -> None:
         "UPDATE veto SET last_seen_on = raised_on WHERE raised_on < ? AND last_seen_on >= ?",
         (date_from, date_from),
     )
+    # T-070: a temporal stint raised before date_from may have had its expiry moved by an
+    # extension on or after it; put it back exactly (a reopened stint keeps its expiry as it was
+    # when it cleared, and the redo decides again).
+    restore_expiries_from(conn, date_from)
     conn.commit()

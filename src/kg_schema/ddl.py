@@ -139,6 +139,12 @@ CREATE TABLE IF NOT EXISTS veto (
     cleared_at    TEXT,
     evidence_json TEXT,
     run_id        INTEGER,
+    -- T-070 (m011): a temporal veto (VOLATILITY_SHOCK, CRASH_Z_SCORE) cannot clear before this
+    -- cycle date; NULL on every non-temporal veto. `expiry_history_json` is bookkeeping only (not
+    -- in `v_veto`): the extensions that moved `expires_on`, so a same-date re-run and the replay
+    -- reset can put it back exactly.
+    expires_on    TEXT,
+    expiry_history_json TEXT,
     UNIQUE (asset_id, rule_id, raised_on)
 );
 
@@ -248,6 +254,12 @@ CREATE TABLE IF NOT EXISTS price_observation (
     engine_version   TEXT NOT NULL,
     run_id           INTEGER,
     run_kind         TEXT,
+    -- priceobs-v2 (T-070, m011): see `REQUIRED_COLUMNS["price_observation"]`
+    sma_200          REAL,
+    ret_5d           REAL,
+    vol_5d           REAL,
+    mu_60d_base      REAL,
+    vol_60d_base     REAL,
     UNIQUE (asset_id, obs_date, engine_version)
 );
 CREATE INDEX IF NOT EXISTS ix_price_observation_asset_date
@@ -581,6 +593,20 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
     "price_window": {
         "event_time": "TEXT",
         "run_id": "INTEGER",
+    },
+    # T-070 (m011), priceobs-v2: the price signals the cycle's TECHNICAL v2 and three price vetoes
+    # read. NULL until each window is full, and NULL on every priceobs-v1 row.
+    "price_observation": {
+        "sma_200": "REAL",  # mean of the last 200 closes
+        "ret_5d": "REAL",  # ln(close_t / close_{t-5})
+        "vol_5d": "REAL",  # sd of the last 5 daily log returns (daily, not annualized)
+        "mu_60d_base": "REAL",  # mean of the 60 daily log returns ending 5 trading days earlier
+        "vol_60d_base": "REAL",  # their sd
+    },
+    # T-070 (m011): a temporal veto's earliest clearing cycle date (see the `veto` DDL comment).
+    "veto": {
+        "expires_on": "TEXT",
+        "expiry_history_json": "TEXT",
     },
     "price_daily": {
         "event_time": "TEXT",

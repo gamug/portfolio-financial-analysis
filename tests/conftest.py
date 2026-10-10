@@ -347,7 +347,7 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
                     "INSERT INTO price_observation "
                     "(asset_id, obs_date, close, prev_close, log_return, dollar_volume, "
                     " event_time, computed_at, engine_version) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'priceobs-v1')",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'priceobs-v2')",
                     (
                         a,
                         obs_date,
@@ -450,7 +450,7 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
                 "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "
                 "realized_vol_90d, max_drawdown_90d, momentum_63d, momentum_21d, event_time, "
                 "computed_at, engine_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, "
-                "'2026-06-30T00:00:00Z', 'priceobs-v1')",
+                "'2026-06-30T00:00:00Z', 'priceobs-v2')",
                 (
                     i,
                     f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",

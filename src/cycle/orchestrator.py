@@ -28,7 +28,14 @@ from cycle.construction import (
 )
 from cycle.db import ensure_schema
 from cycle.replay import out_of_order_replay_reason, sync_replay_positions
-from cycle.rules import RuleContext, disabled_rule_ids, enabled_rules, seed_catalog
+from cycle.rules import (
+    RuleContext,
+    disabled_rule_ids,
+    enabled_rules,
+    hold_trading_days,
+    seed_catalog,
+    soft_penalties,
+)
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import (
@@ -308,6 +315,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             **settings.model_dump(exclude={"pins", "exclude", "exclude_sectors", "only_sectors"}),
             "manifest": manifest,
             "manifest_tag": tag,
+            "technical_version": technical.VERSION,
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
@@ -330,7 +338,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
     dq = data.data_quality(conn, cycle_date, versions)
     metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
-    price_obs = data.latest_price_observation(conn, cycle_date)
+    price_obs = data.latest_price_observation(conn, cycle_date, settings.observation_engine_version)
 
     def _do(step: str, fn: Callable[[], dict]) -> None:
         if step in already:
@@ -375,7 +383,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- technical
         def _technical() -> dict:
             obs_in = {a: price_obs[a] for a in asset_ids if a in price_obs}
-            scores = technical.compute(obs_in)
+            scores = technical.compute(obs_in, sector_of)
             writers.write_scores(
                 conn,
                 "TECHNICAL",
@@ -384,6 +392,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {},
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
+                model=technical.VERSION,
             )
             return {"scored": len(scores)}
 
@@ -518,13 +527,14 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     "first"
                 )
             report.veto_backdated_bypassed = veto_backdated_reason
-            seed_catalog(conn)
+            seed_catalog(conn, settings.soft_veto_penalty)
             ctx = RuleContext(
                 cycle_date=cycle_date,
                 metrics={a: metrics.get(a, {}) for a in asset_ids},
                 price_obs={a: price_obs[a] for a in asset_ids if a in price_obs},
                 last_fundamental=data.last_fundamental_dates(conn, cycle_date),
                 data_quality={a: dq.hard[a] for a in asset_ids if a in dq.hard},
+                sectors={a: sector_name_of.get(a) for a in asset_ids},
             )
             # RuleResult.evaluated (T-125 b): each rule's own could-resolve set, so a missing
             # cycle keeps a stint open instead of the writer misreading "no data" as "cleared".
@@ -541,9 +551,23 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 # ranks correctly.
                 return {"opened": 0, "cleared": 0, "backdated_readonly": True}
             evaluated = {rule_id: res.evaluated for rule_id, res in results}
+            hold_days = {
+                rule.RULE_ID: days
+                for rule in enabled_rules(conn)
+                if (days := hold_trading_days(rule)) is not None
+            }
             opened, cleared = writers.write_vetoes(
-                conn, cycle_date, hits, evaluated, disabled_rule_ids(conn), run_id=run_id
+                conn,
+                cycle_date,
+                hits,
+                evaluated,
+                disabled_rule_ids(conn),
+                run_id=run_id,
+                hold_days=hold_days,
             )
+            # Open HARD stints, not this cycle's hits: a temporal stint is held after its
+            # condition is gone (T-070) and the next ranking still excludes it.
+            report.vetoed = len(writers.hard_vetoed_as_of(conn, cycle_date))
             return {"opened": opened, "cleared": cleared}
 
         _do("veto", _veto)
@@ -575,10 +599,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             )
             if unscored_reason is not None:
                 raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
+            # each SOFT rule's own points (BREAK_TREND_200 is flag-only: 0), else the run's default
+            default = settings.soft_veto_penalty
+            points = soft_penalties(default)
             scored = []
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
-                penalty = settings.soft_veto_penalty * len(soft.get(a, []))
+                penalty = sum(points.get(rid, default) for rid in soft.get(a, []))
                 scored.append((a, base - penalty, parts))
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
@@ -768,7 +795,10 @@ def dry_run_book(
         tickers = {a: t for a, (t, _s) in labels.items()}
         sectors = {a: s for a, (_t, s) in labels.items()}
         cands = _book_candidates(
-            rows, tickers, sectors, data.latest_price_observation(conn, cycle_date)
+            rows,
+            tickers,
+            sectors,
+            data.latest_price_observation(conn, cycle_date, settings.observation_engine_version),
         )
         book = _call_build_book(settings, cands)
         by_id = {c.asset_id: c for c in cands}

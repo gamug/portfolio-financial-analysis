@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
-from datetime import UTC, datetime
+from collections.abc import Iterable, Mapping
+from datetime import UTC, date, datetime
 
 from portfolio_common.db import Database
 
@@ -16,6 +16,7 @@ from kg_schema.queries import (
     require_veto_stint_columns,
     veto_out_of_order_reason,
 )
+from kg_schema.trading_calendar import add_trading_days
 
 __all__ = [
     "OutOfOrderCycle",
@@ -23,6 +24,7 @@ __all__ = [
     "apply_normalized",
     "hard_vetoed_as_of",
     "out_of_order_reason",
+    "restore_expiries_from",
     "sync_positions",
     "veto_out_of_order_reason",
     "write_ranking",
@@ -149,6 +151,35 @@ def write_sector_aggregates(
     return len(aggregates)
 
 
+def hold_until(cycle_date: str, trading_days: int) -> str:
+    """The cycle date *trading_days* NYSE sessions after *cycle_date* (a temporal veto's expiry)."""
+    return add_trading_days(date.fromisoformat(cycle_date), trading_days).isoformat()
+
+
+def restore_expiries_from(conn: Database, date_from: str) -> int:
+    """Put back every ``veto.expires_on`` that an extension on or after *date_from* moved (T-070).
+
+    A temporal stint's ``expiry_history_json`` holds one ``{"on", "was"}`` entry per extension:
+    the cycle date it moved the expiry on, and the expiry it replaced. Dropping the entries dated
+    ``>= date_from`` and restoring the ``was`` of the earliest of them puts ``expires_on`` back
+    exactly where it stood before *date_from*. The caller commits. Returns the stints restored."""
+    restored = 0
+    for r in conn.execute(
+        "SELECT id, expiry_history_json FROM veto WHERE expiry_history_json IS NOT NULL"
+    ).fetchall():
+        history = json.loads(r["expiry_history_json"])
+        kept = [h for h in history if h["on"] < date_from]
+        if len(kept) == len(history):
+            continue
+        was = next(h["was"] for h in history if h["on"] >= date_from)
+        conn.execute(
+            "UPDATE veto SET expires_on = ?, expiry_history_json = ? WHERE id = ?",
+            (was, json.dumps(kept) if kept else None, int(r["id"])),
+        )
+        restored += 1
+    return restored
+
+
 def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
     conn: Database,
     cycle_date: str,
@@ -157,6 +188,7 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
     disabled_rule_ids: Iterable[str],
     *,
     run_id: int,
+    hold_days: Mapping[str, int] | None = None,
 ) -> tuple[int, int]:
     """Apply this cycle's veto transitions as stints (T-125), not per-date rows.
 
@@ -173,6 +205,14 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
     older *cycle_date* than the latest recorded transition is the caller's job to refuse
     (:func:`kg_schema.queries.veto_out_of_order_reason`) before this is ever called.
 
+    *hold_days* maps a temporal rule's id to its hold in NYSE trading days (T-070). Such a stint
+    opens with ``expires_on = cycle_date + hold`` and cannot clear before it, even when its
+    condition is gone (it stays open, untouched). At the first cycle on or after ``expires_on``:
+    the condition gone -> the stint clears; still holding -> it stays open and ``expires_on``
+    moves to that cycle + hold (the move is recorded in ``expiry_history_json`` so a re-run of
+    the date, or a replay reset, can put it back). A stint of any other rule never has an
+    ``expires_on``.
+
     Raises :class:`kg_schema.queries.VetoSchemaStale` against a ``veto`` table that exists
     but predates m009's stint columns, rather than failing mid-write on a missing-column
     ``DatabaseError`` once production `migrate` (deliberately deferred by this same PR) is
@@ -187,9 +227,14 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
         "UPDATE veto SET cleared_on = NULL, cleared_at = NULL WHERE cleared_on = ?",
         (cycle_date,),
     )
+    restore_expiries_from(conn, cycle_date)
+    hold_days = hold_days or {}
     open_rows = {
         (int(r["asset_id"]), str(r["rule_id"])): r
-        for r in conn.execute("SELECT id, asset_id, rule_id FROM veto WHERE cleared_on IS NULL")
+        for r in conn.execute(
+            "SELECT id, asset_id, rule_id, expires_on, expiry_history_json FROM veto "
+            "WHERE cleared_on IS NULL"
+        )
     }
     hit_by_key = {(h.asset_id, h.rule_id): h for h in hits}
     opened = cleared = 0
@@ -198,13 +243,18 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
             key = (aid, rule_id)
             hit = hit_by_key.get(key)
             existing = open_rows.get(key)
+            hold = hold_days.get(rule_id)
+            expires = existing["expires_on"] if existing is not None else None
+            # A temporal stint is held until its expiry; one with no expiry recorded is expired.
+            held = hold is not None and expires is not None and cycle_date < str(expires)
             if hit is not None:
                 if existing is None:
                     conn.execute(
                         """
                         INSERT INTO veto (asset_id, rule_id, severity, raised_on, cleared_on,
-                                          last_seen_on, detected_at, evidence_json, run_id)
-                        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)
+                                          last_seen_on, detected_at, evidence_json, run_id,
+                                          expires_on)
+                        VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
                         """,
                         (
                             aid,
@@ -215,6 +265,7 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
                             now,
                             json.dumps(hit.evidence),
                             run_id,
+                            hold_until(cycle_date, hold) if hold is not None else None,
                         ),
                     )
                     opened += 1
@@ -230,7 +281,18 @@ def write_vetoes(  # noqa: PLR0913 - one wide writer; splitting hurts clarity
                             int(existing["id"]),
                         ),
                     )
-            elif existing is not None:
+                    if hold is not None and not held:
+                        history = json.loads(existing["expiry_history_json"] or "[]")
+                        history.append({"on": cycle_date, "was": expires})
+                        conn.execute(
+                            "UPDATE veto SET expires_on = ?, expiry_history_json = ? WHERE id = ?",
+                            (
+                                hold_until(cycle_date, hold),
+                                json.dumps(history),
+                                int(existing["id"]),
+                            ),
+                        )
+            elif existing is not None and not held:
                 conn.execute(
                     "UPDATE veto SET cleared_on = ?, cleared_at = ? WHERE id = ?",
                     (cycle_date, now, int(existing["id"])),
