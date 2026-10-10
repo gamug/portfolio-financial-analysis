@@ -105,8 +105,17 @@ Per-`(asset, day)` analytics (roadmap `PriceObservation`). Pure functions over a
 | `max_drawdown_90d` | worst `close/peak − 1` over the trailing 90 closes (≤ 0) | `None` until index ≥ 89 |
 | `momentum_21d/63d/252d` | `close_t / close_{t−lag} − 1` | `None` if `t < lag` |
 | `dollar_volume` | `close · volume` (`None` if volume 0) | — |
+| `sma_200` (v2) | mean of the last 200 closes | `None` until index ≥ 199 |
+| `ret_5d` (v2) | `ln(close_t / close_{t−5})` | `None` until index ≥ 5 |
+| `vol_5d` (v2) | sample sd (n − 1) of the last 5 daily log returns; **daily, not annualized** | `None` until index ≥ 5 |
+| `mu_60d_base` / `vol_60d_base` (v2) | mean and sample sd (n − 1) of the **60 daily log returns that end 5 sessions before `t`** (returns `t−64 … t−5`); the recent 5 are excluded on purpose, so a shock does not dilute its own baseline; daily, not annualized | `None` until index ≥ 65 |
 
-`ATR_PERIOD`, `VOL_SHORT`, `VOL_LONG`, `DRAWDOWN_WINDOW` are module constants.
+The five `(v2)` fields (`priceobs-v2`, `T-070`) feed `cycle`'s `BREAK_TREND_200`, `VOLATILITY_SHOCK` and
+`CRASH_Z_SCORE`; every field is `None` until its window is full, and a window holding an undefined log
+return (a non-positive close) leaves the field `None`. The closes are the gateway's **split-adjusted,
+not dividend-adjusted** bars (checked on NVDA 2024-06-10, AVGO 2024-07-15 and WMT 2024-02-26: continuous
+across the split). `ATR_PERIOD`, `VOL_SHORT`, `VOL_LONG`, `DRAWDOWN_WINDOW`, `SMA_LONG`, `SHOCK_WINDOW`,
+`BASELINE_WINDOW` are module constants.
 
 ### `db.py`
 
@@ -118,7 +127,7 @@ Per-`(asset, day)` analytics (roadmap `PriceObservation`). Pure functions over a
 | `completed_windows(conn)` | `(ticker, start, end, label)` resume set |
 | `upsert_price_window(row)` | upsert on `(asset_id, start_date, end_date, label)`; sets `event_time = end_date` |
 | `replace_daily_prices(conn, asset_id, candles)` | raw OHLCV; sets `event_time = date`, `ingested_at` |
-| `upsert_price_observations(conn, asset_id, observations, *, engine_version, run_id)` | keyed `(asset_id, obs_date, engine_version)`; **rewritten only when a derived value differs** (T-131), a no-op on unchanged prices; `PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v1"` |
+| `upsert_price_observations(conn, asset_id, observations, *, engine_version, run_id)` | keyed `(asset_id, obs_date, engine_version)`; **rewritten only when a derived value differs** (T-131), a no-op on unchanged prices; `PRICE_OBSERVATION_ENGINE_VERSION = "priceobs-v2"` (`T-070`: adds `sma_200`, `ret_5d`, `vol_5d`, `mu_60d_base`, `vol_60d_base` -- definitions in `docs/kg_schema.md`; every `priceobs-v1` field is computed exactly as before; a consumer reads one version, so a database needs one `pricing_agent run --store-daily --observations` pass before `cycle`/`quant` can read `priceobs-v2`) |
 | `load_daily_candles(conn, asset_id, *, end)` | the asset's full stored `price_daily` history up to `end` — what observations and the split-seam check read (T-131) |
 | `recorded_split_values` / `has_pre_split_rows` | the asset's `corporate_action` SPLIT ratios, and whether one postdates a bar stored before it (T-131) |
 

@@ -5310,3 +5310,243 @@ and `tests/test_quant_import_isolation.py` still passes.
 Scratch paths: `/tmp/t077/prod.db` (copy of production, migrated; backfilled actions and returns; cover shares for the pilot names and 192 other filings), `/tmp/t077/pilot.db` (+ `pilot_eq.db`, `pilot_cc.db`: 20 risk models, and the books and
 `perf-v3` rows), `/tmp/t077/universe.db` (copy of `universe.db`), `/tmp/t077/universe_hist.db` (copy of `universe_history.db`), `/tmp/t077/factors_dl/` (the downloaded zips), `/tmp/t077/report/` (the generated tables),
 `/tmp/t077/tools/` (the cover-share backfill and the driver, throwaway). Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.
+
+---
+
+## T-070 — TECHNICAL v2, three price vetoes (two of them HARD-temporal, sector-relative) and a recalibrated LIQUIDITY_DISTRESS (Work item 8, step 1)
+
+**Status.** Implemented on `feat/t070-technical-v2-temporal-vetoes` (PR number in the status commit). Methodology change (constitution AI behavior #12): a
+scoring definition, three veto thresholds and one veto recalibration, plus contract 11 (`m011`). Everything below was measured on **scratch copies**
+under `/tmp/t070/` (listed at the end); production `financial.db` was only read, and its SHA-1 is the same before and after
+(`5c5c0642619bcc2f80aa72f13599bf824f676675`). Production's own `price_observation` rows from 2026-09 (windowed fields NULL, written before T-131) were
+never used: the observations were rebuilt from `price_daily` with the current code.
+
+### Symptom
+
+- **TECHNICAL v1** was five cross-sectional rank percentiles (`momentum_63d` .35, `momentum_21d` .15, `realized_vol_90d` .20, `atr_14/close` .15,
+  `max_drawdown_90d` .15) that included the most recent month's return (the short-term reversal) and had no sector context; an asset with none of
+  its signals scored a neutral **50** (audit C5).
+- **No price-based protective veto** existed beyond `PRICE_CRASH` (90-day drawdown < −35%, SOFT).
+- **`LIQUIDITY_DISTRESS`** (`current_ratio < 1.0` → SOFT) flagged structurally healthy PG, NEE, PM, T, STZ, APA and SBAC: **7 of the 20** pilot
+  names on 2026-10-02 (audit N7); over the 144 replay dates it opened 14 stints on 9 tickers (MCD, SBAC, T, STZ, NEE, PG, PM, APA, MA).
+
+### Reference and decision
+
+- **Momentum**: Jegadeesh & Titman (1993), "Returns to Buying Winners and Losers: Implications for Stock Market Efficiency", *Journal of Finance* 48(1),
+  65–91 -- a 12-month return that skips the most recent month, to avoid the one-month reversal. Industry-relative standardization: Moskowitz & Grinblatt
+  (1999), "Do Industries Explain Momentum?", *Journal of Finance* 54(4), 1249–1290; and Campbell, Lettau, Malkiel & Xu (2001), "Have Individual Stocks
+  Become More Volatile?", *Journal of Finance* 56(1), 1–43 (a stock's volatility splits into a market, an industry and a firm component -- the
+  rationale for judging a shock against the sector's).
+- **Trend break**: a 200-day (about 10-month) moving-average filter -- Brock, Lakonishok & LeBaron (1992), *Journal of Finance* 47(5), 1731–1764; Faber
+  (2007), "A Quantitative Approach to Tactical Asset Allocation", *Journal of Wealth Management* 9(4), 69–79. The 5% band and SOFT (not HARD) severity are
+  PLAN.md's: a HARD veto here would purge half the index in any broad pullback (measured: the rule fires on a median of 105 names a day, 362 at most).
+- **Liquidity**: cash-flow measures predict distress better than the current ratio -- Beaver (1966), "Financial Ratios as Predictors of Failure",
+  *Journal of Accounting Research* 4 (Supplement), 71–111; working-capital ratios are weak on their own -- Altman (1968), *Journal of Finance* 23(4),
+  589–609. **No source gives a current-ratio-conditioned test or its thresholds**, so the thresholds below are a declared calibrated policy, not a
+  citation.
+- Decisions in the task brief (user): the five new observation fields, `priceobs-v2`, the three vetoes' thresholds and 10-session temporal semantics,
+  m011/contract 11, the 20% checkpoint, and -- after the checkpoint tripped -- the **sector-relative** form of the two HARD rules, with the formulas
+  quoted in "The checkpoint" below.
+
+### Fix
+
+- `pricing_agent` (`observations.py`, `db.py`): `price_observation` gains `sma_200`, `ret_5d`, `vol_5d`, `mu_60d_base`, `vol_60d_base`; engine
+  `priceobs-v2` (every v1 field computed exactly as before). **Declared definitions**: `sma_200` the mean of the last 200 closes; `ret_5d =
+  ln(c_t/c_{t−5})`; `vol_5d` the sample sd (n − 1) of the last 5 daily log returns; the baseline `mu_60d_base`/`vol_60d_base` the mean and sample sd of
+  the **60 daily log returns that end 5 sessions before the date** (returns `i−64 … i−5`), so the recent window never dilutes its own baseline; all
+  daily (not annualized); each NULL until its window is full (200 / 6 / 6 / 66 / 66 closes) or when a window holds an undefined return.
+- **One engine version** (`cycle/data.py`, `cycle/config.py`, `quant/config.py`): `latest_price_observation(conn, date, engine_version)` filters on
+  `CycleSettings.observation_engine_version = "priceobs-v2"`; before it picked each asset's newest `obs_date` and took every row of that date, so two
+  versions of one date were both returned and the dict kept the last. It raises `MissingObservations` when the table has rows but none at that version.
+  `quant`'s gate pin moves to `priceobs-v2` too (same series, more columns; v2 rows must exist, which one `pricing_agent run --store-daily
+  --observations` pass creates).
+- **m011** (`kg_schema/migrations.py`, `ddl.py`, `views.py`): additive; the five columns and `veto.expires_on` (+ `expiry_history_json`); `v_price_observation`
+  and `v_veto` gain their columns at the **end**; contract version 11. Tested on a version-10 database holding rows (`tests/test_m011_temporal_vetoes.py`).
+- **TECHNICAL v2** (`cycle/scores/technical.py`): `0.50·z(mom_12_1) − 0.30·z(realized_vol_90d) + 0.20·z(max_drawdown_90d)`, sector-Z, renormalized over the
+  signals present, no score under 2 of 3. `mom_12_1 = close(t−21)/close(t−252) − 1`, derived exactly as `(1+momentum_252d)/(1+momentum_21d) − 1` (so
+  `price_observation` stays the one source), 253 closes. **Declared**: the sector is today's GICS sector (L-03); a sector with fewer than 5 names
+  *with that signal* uses the whole cross-section's mean and sd (at the pilot's 20 names sector-Z alone is degenerate); population sd; no winsorizing
+  inside the sector stage (the `normalize` step still winsorizes the final raw); zero spread → z = 0.
+- **Three vetoes** (`cycle/rules/builtin.py`): `BREAK_TREND_200` (SOFT, `close < 0.95·sma_200`); `VOLATILITY_SHOCK` and `CRASH_Z_SCORE` (HARD-temporal).
+  **Declared**: the crash score's units (below); an observation older than 7 calendar days is not evaluated; the sector group is the names the rule
+  evaluates that day, with the < 5 → cross-section fallback.
+- **Temporal semantics** (`cycle/writers.py`, `cycle/replay.py`): see `docs/cycle.md`, "Price vetoes and TECHNICAL v2". `expires_on` = raised + 10 sessions;
+  no clear before it; at the first cycle on/after it the stint clears or is extended by 10 sessions from that cycle; the T-1 lag is unchanged; with cycles
+  further apart than 10 sessions the hold is effectively one cycle. **`expiry_history_json` is a second new column on `veto`** (not in `v_veto`) that the
+  brief did not list: the replay reset and a same-date re-run must put `expires_on` back *exactly* -- a held stint's later behaviour depends on its
+  value, which `last_seen_on`'s approximate rollback cannot give -- and the extensions are the only history. `cycle undo-run` repairs `portfolio_position`
+  only, never `veto`, so there is nothing for it to restore (a test pins that).
+- **`LIQUIDITY_DISTRESS`**: SOFT only when `current_ratio < 1.0` AND (`interest_coverage < 1.5` OR `operating_cash_flow_margin < 0`); a missing metric is not
+  a failed test; neither available → not evaluated (an open stint stays open); GICS Financials and Utilities are exempt (APP-09) -- evaluated and never hit,
+  so an older stint closes -- with a pointer that `T-071`'s company profile replaces the GICS test. Operating cash flow ÷ current liabilities is **not a
+  stored metric** (a new metric is `T-151`'s), so the cash leg is the stored margin.
+- `seed_catalog` now refreshes an existing rule's description, severity and `params_json` (keeping `enabled` and `created_at`); before, a recalibrated rule
+  kept its old description in `v_rule_catalog` for ever (the T-116 note's "residual scope"). `CycleReport.vetoed` counts the open HARD stints after the
+  cycle (a held stint is still excluded), not the cycle's hits. A run records `params_json.technical_version`.
+
+### The checkpoint: the HARD rules as first specified, and what the user chose
+
+On the 503-name copy (`price_daily` 2022-01-03 → 2026-09-29, 1,189 sessions, 591,409 `priceobs-v2` rows rebuilt), one **daily** cycle per session through the
+real rule classes and `write_vetoes`. "Held" = names under an open HARD stint of either rule after the cycle (what the next ranking excludes).
+
+| variant | held, daily: median / p95 / max | dates > 10% / > 20% | held, weekly cycles: max | weeks > 10% / > 20% | fired that day: median / max |
+|---|---|---|---|---|---|
+| absolute only (as first specified) | 6.6% / 26.8% / **80.1%** (2025-04-10) | 408 / **157** | 68.0% | 40 / 10 | 1.6% / 72.2% (2025-04-09) |
+| market-relative (same formulas, group = cross-section) | 4.2% / 16.3% / 23.9% | 212 / 19 | 16.5% | 17 / 0 | 1.2% / 11.5% |
+| **sector-relative (adopted)** | **3.4% / 14.3% / 19.7%** (2026-02-09, 2026-02-17) | **147 / 0** | 14.9% | 9 / 0 | **1.0% / 9.7%** |
+
+The absolute rules were above 20% in 17 episodes (peak share of the index held): 2022-05-02…20 (28.6%), 2022-06-13…28 (46.5%), 2022-09-26…10-07 (34.4%),
+2023-03-13…24 (26.8%), 2023-10-02…11-06 (24.5%), 2024-04-16…29 (26.0%), 2024-07-26…08-16 (46.3%), 2024-10-31…11-19 (36.4%), 2024-12-19…20 (21.7%),
+2025-03-10…20 (26.2%), **2025-04-03…23 (80.1%)**, 2025-08-01…13 (26.6%), 2025-11-03…12 (25.4%), 2026-02-04…19 (29.8%), 2026-03-06…13 (22.3%) and two
+short ones in 2023-10. The sell-off peak swept every sector (2025-04-10: Energy 21/21, Real Estate 29/30, Financials 71/76, Materials 23/25, Consumer
+Discretionary 42/47, Industrials 70/83, Information Technology 60/73, Communication Services 17/24, Health Care 37/59, Utilities 17/31, Consumer Staples 16/34);
+the smaller episodes were sector-led (2022-06-23: Utilities 31/31, Energy 20/21, Real Estate 22/30 -- only 17 names fired that day, 234 were *held*, the
+10-session hold accumulating different days; 2023-03-15: Financials 54/76). `VOLATILITY_SHOCK` fires on rallies too (354 names fired it on 2025-04-09, the tariff-pause rally; 72% of the index fired one of the two rules that day).
+
+**The user's decision (2026-10-10): sector-relative, with both legs required.** The exact formulas are in `docs/cycle.md` and the rules' `PARAMS`: for
+`VOLATILITY_SHOCK`, `vol_5d/vol_60d_base > 2.5` AND `ratio > 2.5 · median(ratio of the name's GICS sector that day)`; for `CRASH_Z_SCORE`, `(ret_5d −
+5·mu_60d_base)/(vol_60d_base·√5) < −2.5` AND `(ret_5d − median(ret_5d of the name's GICS sector))/(vol_60d_base·√5) < −2.5`. This is what was
+implemented, as written. The 503-name numbers above are the real rule classes, not an approximation (the in-memory stint book and the real writer agree:
+max 0.1968, identical day by day in `tests/test_verify_t070.py`'s parity test).
+
+**Small sectors.** A sector with fewer than 5 names that have the inputs that day uses the whole cross-section (TECHNICAL's fallback). On the 503 names it
+**never** applied: 0 of 12,364 sector-dates (the smallest sector, Energy, has 21 names; the first full dates are 2022-05). On the pilot's 20 names it
+**always** applies: 9,016 of 9,016 sector-dates and 22,540 of 22,540 name-dates (no pilot sector has more than 4 names), so there "relative to the
+sector" is "relative to the pilot's median".
+
+**The limitation, declared and measured.** A move a whole sector makes together no longer raises a HARD veto, by design: it is a systematic move, carried by the
+TECHNICAL score and the risk model. The sector-dates on which the absolute rules fired on **50% or more of a sector's names and the sector-relative ones did
+not** (daily; "fired" = either rule; names that fired absolute → relative): **63 sector-dates** --
+
+| sector | dates | absolute → relative fired (of the sector) |
+|---|---|---|
+| Utilities | 2022-06-13…17; 2022-09-27, 29, 30; 2023-09-28, 10-02; 2026-03-20, 23 | 30/31 → 0 (06-13), 31/31 → 0 (06-14), 29/31 → 1 (2023-10-02) |
+| Real Estate | 2022-06-13, 14; 2023-09-27; 2024-04-16; 2025-04-07…10 | 22/30 → 0 (2022-06-14), 24/30 → 0 (2025-04-08) |
+| Financials | 2022-06-14; **2023-03-10, 13, 15**; 2025-04-04…10 | 38/76 → 4, 50/76 → 12, 43/76 → 13 (March 2023); 70/76 → 0 (2025-04-09) |
+| Energy | 2022-06-16, 17; 2022-09-26; 2023-10-04, 05; 2024-08-06; 2025-04-03…10 | 20/21 → 0 (2022-06-17, 2025-04-09) |
+| Industrials / Information Technology / Consumer Discretionary / Health Care / Materials / Communication Services | 2025-04-04…10 (IT, CD, HC, CS from 04-08) | Industrials 68/81 → 2 (04-09), IT 59/71 → 0, CD 39/47 → 0, HC 32/59 → 2, Materials 22/25 → 1, CS 13/24 → 0 |
+
+The regional banks of March 2023 are in the data. On **2023-03-10** the absolute rules fired on 38 Financials (ACGL, AIG, AIZ, AMP, APO, ARES, BAC, BLK, BNY, BX, C,
+CPAY, GPN, **HBAN**, HIG, IBKR, ICE, JPM, **KEY**, KKR, L, MET, MS, MTB, NTRS, PFG, PNC, PRU, RF, RJF, STT, SYF, USB, WFC + CFG, FITB, SCHW, TFC); the sector-relative
+rules kept **CFG, FITB, SCHW, TFC** and dropped the rest. On **2023-03-13** they kept AIG, BAC, CFG, FIS, FITB, HBAN, KEY, RF, SCHW, TFC, USB, WFC (12 of 50) and on
+**2023-03-15** AIG, AMP, APO, CFG, FITB, HBAN, KEY, MET, RF, RJF, SCHW, TFC, USB (13 of 43): the worst-hit regionals stay vetoed, the sector-wide move (JPM, C, GS, MS, PNC,
+insurers, asset managers…) does not. Full per-date lists (names dropped and kept): `/tmp/t070/out_final/systematic_moves.json`.
+
+**What the final rules still catch** (first fire, sector-relative; the absolute rules fire on the same days): INTC 2024-08-02 (−31% over 5 days), UNH 2025-04-17
+and 2025-05-13 (fires 2025-05-15), CRWD 2024-07-19 -- all four on the event day (UNH's second on the second session after, when the 5-day return had accumulated).
+The strongest of the 1,531 distinct CRASH_Z events (hits separated by more than 10 sessions) are single-name collapses: GL 2024-04-11 (−55%, z −31), FISV 2025-10-29
+(−44%), EIX 2025-01-08 (z −13), IT 2025-08-05 (−30%), WST 2025-02-13 (−40%), EW 2024-07-18, DXCM 2024-07-26 (−43%), AKAM 2024-02-14, INTC 2024-08-02, DG 2024-08-29 and
+2023-06-01, TTD 2025-08-08, CNC 2025-07-02, ZTS 2026-05-07, HII 2024-10-31, SNPS 2025-09-10, ALGN 2025-07-31, SWKS 2025-02-06, CHTR 2025-07-25 (the regional banks of March 2023
+also appear: KEY, HBAN, TFC, FITB, SCHW, CFG); list in `/tmp/t070/out_final/crash_events.json`.
+
+**Breadth series of the adopted rules** (503 names, daily cycles; share of the index): *fired that day* median 1.0%, p95 5.4%, max 9.7%, no date above 10%;
+*held* median 3.4%, p95 14.3%, max 19.7%, **147 dates above 10%** (12% of sessions) and none above 20%; by year (median / max held) 2022 1.4% / 9.9%, 2023 3.6% /
+15.1%, 2024 4.4% / 19.3%, 2025 3.4% / 18.1%, 2026 4.4% / 19.7%. The worst date, 2026-02-09, holds 99 names: Financials 25 (33%), Health Care 17 (29%), IT 16 (22%),
+Industrials 14 (17%), Consumer Discretionary 10 (21%), Communication Services 10 (42%), Consumer Staples 3, Real Estate 2, Materials 2. Fire counts per session --
+`VOLATILITY_SHOCK` median 4 / p95 22 / max 38 (2024-11-01); `CRASH_Z_SCORE` median 2 / 13 / 36 (2026-02-05); `BREAK_TREND_200` (SOFT) median 105 / 216 / 362 (2025-04-08).
+Stints: `VOLATILITY_SHOCK` 2,002 (4 open, 9 extended; length median and p90 10 sessions, max 20); `CRASH_Z_SCORE` 1,536 (7 open, 8 extended; 10 / 10 / 20);
+`BREAK_TREND_200` 8,066 (188 open; median 3, p90 41, max 351 sessions). The headroom is thin on the busiest days (19.7% against the 20% line) and this is the
+daily cadence, the worst case for the hold; at weekly cycles the maximum is 14.9%.
+
+### Verification
+
+**Closes are split-adjusted** (checked before relying on them): NVDA 2024-06-10 (10:1) 120.99 → 120.89 → 121.79 → 120.91 (06-06 … 06-11); AVGO 2024-07-15 (10:1)
+170.07 → 171.42 → 169.38; WMT 2024-02-26 (3:1) 58.52 → 59.60 → 59.59 -- continuous, volumes scaled with them; not dividend-adjusted.
+
+**(a) The 503 names** (`/tmp/t070/scratch503.db`, a migrated copy of production; `priceobs-v2` rebuilt for all 503 assets from `price_daily`): tables above.
+**TECHNICAL v2 input coverage** on the first session of each month (share of the 503 names with each input / with at least 2 of 3): history starts 2022-01-03, so
+`realized_vol_90d` and `max_drawdown_90d` exist from 2022-05 and `mom_12_1` (253 closes) from 2023-01 -- 2022-09-01: vol 493, drawdown 493, momentum 0, ≥ 2: 493 (98%);
+2023-05-01: 493 / 494 / 494, ≥ 2: 494 (98%); 2024-05-01: 494 / 496 / 496, ≥ 2: 496 (99%); 2025-05-01: 499 / 499 / 499, ≥ 2: 499 (99%); 2026-08-03: 500 / 501 / 501, ≥ 2: 501 (100%
+of the 503; two names have under 2 inputs, so no score). `/tmp/t070/out_final/technical_coverage.json`.
+
+**(b) End to end on the pilot** (`cycle backfill --force`, 144 weekly REPLAY dates 2024-01-05 → 2026-10-02, 20 names, `data/pilot/financial_pilot_replay.db` copied twice; **old
+code** = master `ac65af8` run through a worktree, **new code** = this branch with `priceobs-v2` rebuilt from `price_daily`; no LLM key in the environment, so no network call). Both
+runs use the current default weights (1/3 each; the stored replay was under the T-141 predecessor's, hence `--force`).
+
+| TECHNICAL v1 vs v2, Spearman per date | median | p10 | min | max |
+|---|---|---|---|---|
+| all 144 dates | 0.68 | 0.42 | 0.01 (2026-Q2) | 0.95 |
+| by year (median) | 2024 0.73 | 2025 0.74 | 2026 0.52 | |
+
+by quarter, median (min): 2024Q1 0.90 (0.77), Q2 0.58 (0.44), Q3 0.70 (0.48), Q4 0.73 (0.49); 2025Q1 0.76 (0.73), Q2 0.82 (0.73), Q3 0.69 (0.51), Q4 0.62 (0.28); 2026Q1 0.52 (0.25),
+Q2 0.43 (0.01), Q3 0.56 (0.30). Per-date values: `/tmp/t070/out_pilot/compare_technical.json`. No date has fewer names scored under v2 than under v1.
+
+| blended rank, old vs new code | median | min |
+|---|---|---|
+| Spearman of the components-only blend (no penalties, no vetoes: the TECHNICAL v2 effect alone) | 0.87 | 0.54 |
+| Spearman of `blended_score` (after the 15-point SOFT penalties) | 0.50 | 0.06 |
+| Jaccard overlap of the selected book | 1.00 | 0.75 |
+
+The book changes little (18 eligible of 30 requested names, so the book holds every eligible name -- membership is decided by eligibility and HARD vetoes, ordering moves), but
+the blended ordering moves a lot, and most of it is the SOFT penalties: `LIQUIDITY_DISTRESS` drops the seven chronic flags and `BREAK_TREND_200` (125 stints) takes their place
+(names carrying any veto flag per date: median 7 old, 7 new). HARD-vetoed names per date: median 1 → 2, max 6 of 20.
+
+*Vetoes, old → new* (stints over the 144 dates; open at the end): `LIQUIDITY_DISTRESS` 14 (7 open) → **1** (0 open); `PRICE_CRASH` 8 (0) → 8; `LEVERAGE_EXTREME` 3 (1), `DATA_QUALITY` 2 (1), `NEGATIVE_FCF`
+1 (0) unchanged; new: `BREAK_TREND_200` 125 (8 open: MCD, STZ, NEE, UDR, CPT, SBAC, APO, WFC), `VOLATILITY_SHOCK` 25 (0 open), `CRASH_Z_SCORE` 25 (0 open).
+*Expiry behaviour on real stints*: all 50 temporal stints were **held past the last cycle their condition was confirmed** and cleared at the first cycle on or after `expires_on` --
+e.g. HUM `CRASH_Z_SCORE` raised 2024-01-19, not seen again, `expires_on` 2024-02-02, cleared 2024-02-02; HUM `VOLATILITY_SHOCK` 2024-01-26 → 2024-02-09; MA 2024-02-23 → 2024-03-08 (a Friday raised
+on a weekly cycle clears two cycles later, 14 calendar days: the next cycle, 5 sessions on, is before the expiry and holds). **None was extended** (the 5-day return/volatility had decayed by the second
+cycle). The extension path is exercised by the unit tests and by the 503-name daily run (9 and 8 extended stints). With 20 names every group is the cross-section (above).
+
+**(c) `LIQUIDITY_DISTRESS` on the pilot.** Latest metrics-v4 filing of each name, before → after: flagged before NEE, PG, PM, SBAC, APA, T, STZ (the audit's seven); **after: none**. NEE
+(Utilities) is exempt; PG (coverage 22.5, OCF margin 0.22), T (3.74, 0.31), APA (n/a, 0.51), PM (n/a, 0.34), SBAC (n/a, 0.45), STZ (n/a, 0.30) pass the cash test. Five of the
+seven have no `interest_coverage` (a data gap -- interest expense -- that `T-148` addresses), so they pass on the cash-flow leg, a real test, not on a missing value. Over the 144
+replay dates: 14 stints on 9 tickers → one (T, 2024-11-01 → 2025-02-14, when its coverage was under 1.5).
+
+Counts over every pilot filing with a current ratio (341 filings, metrics-v4), old rule → new rule, by sector (filings; Financials and Utilities are exempt):
+
+| sector | filings | `current_ratio < 1` (old) | new | exempt |
+|---|---|---|---|---|
+| Energy | 68 | 12 | 0 | |
+| Consumer Staples | 92 | 45 | 0 | |
+| Real Estate | 23 | 22 | 0 | |
+| Communication Services | 23 | 22 | 3 (T) | |
+| Consumer Discretionary | 23 | 3 | 0 | |
+| Health Care | 45 | 0 | 0 | |
+| Utilities | 23 | 23 | 0 | 23 |
+| Financials | 44 | 1 | 0 | 1 |
+| **all** | 341 | **128** | **3** | 24 |
+
+Sensitivity (filings flagged by the new rule, 341 filings; rows = `interest_coverage` floor, columns = `operating_cash_flow_margin` floor):
+
+| coverage floor ↓ / OCF margin floor → | −0.05 | **0.00** | 0.05 | 0.10 |
+|---|---|---|---|---|
+| 1.0 | 2 | 2 | 2 | 4 |
+| **1.5** | 3 | **3** | 3 | 5 |
+| 2.0 | 4 | 4 | 4 | 6 |
+| 3.0 | 5 | 5 | 5 | 7 |
+
+Only T (and XOM at an OCF floor of 0.10) is ever flagged, at any of the 16 settings; the rule is not sensitive to the exact floors on this sample. 1.5 is `LEVERAGE_EXTREME`'s existing negative-equity
+coverage floor (T-116), 0 the "operations burn cash" line. **The sample is the 20 pilot names only** (production holds fundamentals for 20 assets); the broader check repeats after `T-148`
+(interest expense, operating cash flow and cash change), as TASKS.md already says.
+
+### Data findings (not fixed here)
+
+- **Unadjusted or mixed split prints in 2026 `price_daily`** (found because the strongest CRASH_Z hits included them): **APH** 2026-08-20 close 156.04 → 76.56 and stays (a 2:1
+  split with the history before it not re-adjusted); **MNST** alternates between about 95 and about 48 from 2026-07-20 to 2026-08-11 (07-17 97.50, 07-20 47.72, 07-23 93.56,
+  07-31 48.19, 08-03 93.55, 08-06 47.08, 08-07 90.36, 08-11 45.53) -- a vendor feed mixing adjusted and unadjusted bars. Both raise false `CRASH_Z_SCORE` (z −12.5 and −16.7) and would
+  HARD-veto the name for 10 sessions. No other split-shaped jump (ratio in 0.08–0.55 or above 1.8) exists in the 503-name history except GL 2024-04-11, FISV 2025-10-29 and MRNA 2026-08-19 (all with
+  a 20–46× volume spike: real). This belongs to `pricing_agent`/the gateway (the T-131 seam check only runs on a refresh), not to the rule.
+- Early dates are warm-up: the price vetoes need 66 closes (2022-04) and TECHNICAL's momentum 253 (2023-01).
+
+### Tests (hermetic)
+
+`tests/test_pricing_observations.py` (each new field on hand-made candles, window edges, NULL until full, the baseline's exclusion of the recent window, a gap; the writer);
+`tests/test_technical_v2.py` (`mom_12_1` on candles, sector-Z with the small-sector fallback and the 5-name threshold on names *with the signal*, renormalization, the floor, a cycle writing
+`technical-v2`); `tests/test_price_vetoes.py` (each veto's strict edge, both legs, the fallback, the units, freshness; the temporal stint: no clear before `expires_on`, extension, clear, T-1, a
+monthly cadence, an unevaluated asset, a same-date re-run, the replay reset restoring `expires_on` exactly, `undo-run` leaving `veto` alone; the cycle reading only the configured observation version;
+a whole cycle; `LIQUIDITY_DISTRESS`'s two conditions, edges, the exemptions and the pilot's seven names); `tests/test_m011_temporal_vetoes.py` (m011 on a version-10 database with rows, idempotent, views,
+fresh DDL); `tests/test_kg_view_contract.py` lists the new columns; `tests/test_verify_t070.py` (the verification script's arithmetic, the production guard, the stint-book parity with the writer).
+
+### Residual scope / deliberately deferred
+
+- **`veto.expiry_history_json`** (above) is an addition to the brief; drop it only with an equally exact way to restore `expires_on`.
+- Existing runs (production, the stored pilot replay) hold `technical-v1` scores; a `cycle backfill --force` is the way to recompute them. Production is not migrated or rebuilt by this change.
+- Run `pricing_agent run --store-daily --observations` once per database before `cycle`/`quant` read `priceobs-v2`; `cycle` refuses (`MissingObservations`) until then.
+- The sector-relative rules can still HARD-veto about a fifth of the index on the busiest days of a *daily* cadence (19.7% at most); a stricter bound would be a new design decision.
+- The GICS sector is today's (L-03); `T-153`'s historical universe corrects it.
+
+Scratch paths: `/tmp/t070/prod_copy.db` (copy of production, untouched), `/tmp/t070/scratch503.db` (migrated, `priceobs-v2` rebuilt, daily-cycle veto simulation written into its `veto`), `/tmp/t070/pilot_old_run.db` and
+`/tmp/t070/pilot_new_run.db` (the old/new backfills), `/tmp/t070/old_code/` (worktree of master `ac65af8`), `/tmp/t070/out/` (the absolute-only run), `/tmp/t070/out_final/` (the adopted rules: `vetoes_summary.json`, `relative_summary.json`,
+`systematic_moves.json`, `events.json`, `crash_events.json`, `technical_coverage.json`), `/tmp/t070/out_pilot/` (`compare_*.json`, `liquidity.json`, `pilot_vetoes_{old,new}.json`). Commands: `scripts/verify_t070.py
+{rebuild,vetoes,relative,coverage,compare,liquidity}`. Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.

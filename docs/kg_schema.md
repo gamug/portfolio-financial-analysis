@@ -211,6 +211,7 @@ are present / it hasn't already run).
 | m008 | `available_at` (`T-107`): re-adds the column to `sec_filings` / `fundamental_metrics` / `score_snapshot` (older rebuilds drop it), backfills each dated filing with the first NYSE trading day after its `filing_date` (`kg_schema.trading_calendar.available_from`) and copies it onto the filing's metrics and FUNDAMENTAL scores, then restores the `AVAILABILITY_TRIGGERS` guards. Refuses (rolls back) if a metric or FUNDAMENTAL score is left without one. `apply_migrations` drops those guards while any migration runs and restores them afterwards |
 | m009 | `veto` stints (`T-125`): collapses the old per-`(asset, rule, cycle_date)` hit rows into `raised_on`/`cleared_on`/`last_seen_on` stints, using the cycle dates the `"veto"` checkpoint step actually completed on (any `cycle_run`, any `cycle_type`) as the evaluation timeline — a stint opens on a pair's first hit date, extends across consecutive hit dates, and closes at the first evaluation date with no hit row for that pair, reopening a new stint if hit again later. `kg_schema._ensure_veto_indexes` (not this migration) then creates the two indexes naming the new columns, since they cannot ship inline in `ADDITIVE_DDL` without breaking its no-op safety against a still-unmigrated database |
 | m010 | marker for the knowledge-graph view contract (`T-144`): changes no table. The new views and appended columns come from `views.py` on every `ensure`; this raises the `schema_version` floor to 10 so the knowledge-graph repo can assert it and `ensure_views` can tell a database that is ahead of the running code (see "The knowledge-graph view contract" below) |
+| m011 | the temporal price vetoes' columns (`T-070`, contract 11), additive: `price_observation.sma_200` / `ret_5d` / `vol_5d` / `mu_60d_base` / `vol_60d_base` (the `priceobs-v2` fields) and `veto.expires_on` / `expiry_history_json`, added with `Database.ensure_columns` from `REQUIRED_COLUMNS` (m009 rebuilds `veto` without them, so this migration puts them back; a fresh database has them from the DDL). Every existing row keeps NULL. `v_price_observation` and `v_veto` gain their appended columns from `views.py` on every `ensure` |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -298,7 +299,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 
 ### Versions and deployment
 
-- `schema_version` **10** (`m010`, a marker: no table changes). The views themselves are rebuilt
+- `schema_version` **11** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below). The views themselves are rebuilt
   by every `ensure`, so a database gets them as soon as any process on the new code opens it,
   whether or not it has been migrated; `migrate` is what raises the floor.
 - **Every process that opens the database is upgraded (or stopped) before `migrate` runs.**
@@ -307,7 +308,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   `ensure_views` guard (skip when `schema_version` is above the highest migration it knows)
   protects *later* code from the *next* contract change; it cannot retrofit code that predates it.
 - The production database (`/workspaces/thesis/data/financial.db`) is frozen until `T-100` and
-  stays at its current `schema_version`; a consumer must not raise its floor to 10 for it.
+  stays at its current `schema_version`; a consumer must not raise its floor to 10 or 11 for it.
 
 ### New views
 
@@ -344,7 +345,11 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 | `v_cycle_ranking` | `status` (the `cycle_run`'s) |
 | `v_quant_vs_live` | `engine_version`, `is_current` |
 | `v_quant_portfolio` | `is_current` |
+| `v_price_observation` | `sma_200`, `ret_5d`, `vol_5d`, `mu_60d_base`, `vol_60d_base` (`T-070`, contract 11; see below) |
+| `v_veto` | `expires_on` (`T-070`, contract 11; see below) |
 
+- **`priceobs-v2` columns (`T-070`)** — written by `pricing_agent run --observations` from the asset's stored `price_daily` history, NULL until the window is full and NULL on every `priceobs-v1` row (a date can hold both versions; `v_price_observation` shows the newest by `computed_at`, so a consumer that needs these columns reads one `engine_version`, never "latest per day"; `cycle` and `quant` pin `priceobs-v2`). `sma_200` = the mean of the last 200 closes (`close` is split-adjusted, not dividend-adjusted). `ret_5d` = `ln(close_t / close_{t-5})`. `vol_5d` = the sample standard deviation (n − 1) of the last 5 daily log returns, **daily, not annualized**. `mu_60d_base` / `vol_60d_base` = the mean and sample standard deviation of the **60 daily log returns that end 5 trading days before `obs_date`** (returns `i−64 … i−5` for the bar at index `i`): the baseline excludes the recent window on purpose, so a shock does not dilute its own baseline. Windows are full at 200 / 6 / 6 / 66 / 66 closes. A window with an undefined return (a non-positive close) leaves the field NULL.
+- **`v_veto.expires_on` (`T-070`)** — set only on a *temporal* veto (`VOLATILITY_SHOCK`, `CRASH_Z_SCORE`; NULL on every other veto): the earliest cycle date the stint may clear. It opens at `raised_on` + 10 NYSE sessions and moves to *cycle date* + 10 sessions each time a cycle on or after it finds the condition still holding. `veto.expiry_history_json` (the extensions, so a re-run of a date and `cycle backfill --force` can put `expires_on` back exactly) is bookkeeping and is **not** in the view.
 - `v_score_snapshot.available_at` is the cycle date (= `event_time`) for TECHNICAL, VALORIZATION and
   SECTOR rows: a cycle-computed score is usable from its cycle date. The stored column (NULL on those
   rows) and FUNDAMENTAL rows (the filing's, `T-107`) are unchanged; SEMANTIC rows are not written
