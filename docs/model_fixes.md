@@ -5535,11 +5535,15 @@ coverage floor (T-116), 0 the "operations burn cash" line. **The sample is the 2
 
 ### Data findings (not fixed here)
 
-- **Unadjusted or mixed split prints in 2026 `price_daily`** (found because the strongest CRASH_Z hits included them): **APH** 2026-08-20 close 156.04 → 76.56 and stays (a 2:1
-  split with the history before it not re-adjusted); **MNST** alternates between about 95 and about 48 from 2026-07-20 to 2026-08-11 (07-17 97.50, 07-20 47.72, 07-23 93.56,
-  07-31 48.19, 08-03 93.55, 08-06 47.08, 08-07 90.36, 08-11 45.53) -- a vendor feed mixing adjusted and unadjusted bars. Both raise false `CRASH_Z_SCORE` (z −12.5 and −16.7) and would
-  HARD-veto the name for 10 sessions. No other split-shaped jump (ratio in 0.08–0.55 or above 1.8) exists in the 503-name history except GL 2024-04-11, FISV 2025-10-29 and MRNA 2026-08-19 (all with
-  a 20–46× volume spike: real). This belongs to `pricing_agent`/the gateway (the T-131 seam check only runs on a refresh), not to the rule.
+- **Split seams in production's `price_daily` (T-131's finding N3), not a vendor fault** (noticed because the strongest CRASH_Z hits included them): **APH** 2026-08-20 close 156.04 → 76.56
+  and stays, and **MNST** alternating between about 95 and about 48 from 2026-07-20 to 2026-08-11 (07-17 97.50, 07-20 47.72, 07-23 93.56, 07-31 48.19, 08-03 93.55, 08-06 47.08, 08-07 90.36,
+  08-11 45.53). Both raise false `CRASH_Z_SCORE` (z −12.5 and −16.7) and would HARD-veto the name for 10 sessions. Checked against the gateway today (review of PR #134): it returns both series on one
+  consistent split-adjusted basis (MNST 2026-07-15…08-13 all about 45–50; APH 2026-08-17…08-24 all about 76–85). Production's halved MNST values (07-20, 07-31, 08-06) are exactly the gateway's
+  adjusted values: those dates were rewritten after the 2026-08-11 split and the others were not. The APH rows up to 2026-08-19 come from the original, pre-split download and the rows from 2026-08-20
+  were added by the 2026-09-29 refresh (run 8, after the 2026-09-03 split). These are the 7 jumps of **T-131's finding N3** (above), caused by production's price rows being stored in pieces before
+  T-131's split-seam guard; T-131 fixed it in code and showed the fix on a production copy. All 23 other splits since 2025 in `corporate_action` show no jump (they happened before the history was
+  downloaded). Besides these, the only split-shaped jumps (ratio 0.08–0.55 or above 1.8) in the 503-name history are GL 2024-04-11, FISV 2025-10-29 and MRNA 2026-08-19, each with a 20–46× volume
+  spike: real. Outside T-070's scope: `T-100`'s fresh database is built with the guard in place.
 - Early dates are warm-up: the price vetoes need 66 closes (2022-04) and TECHNICAL's momentum 253 (2023-01).
 
 ### Tests (hermetic)
