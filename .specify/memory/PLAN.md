@@ -944,7 +944,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    updated); acceptance pending the final pilot (`T-143`).** Kept on review beyond the brief: the first-week-of-January
    label year, quarter pairing by date, and the quarter counted from the filing's own balance-sheet
    fiscal year end before the stored 10-K.
-9. **Equal composite weights (`T-141`, system review N11, user decision 2026-10-05; first in this work
+9. **Equal composite weights (`T-141`, done, PR #132; system review N11, user decision 2026-10-05; first in this work
    item's order)** — resolves the open composite-weights question that stood before `T-070`/`T-071`.
    `cycle/config.py`'s `_DEFAULT_WEIGHTS` blended FUNDAMENTAL 0.4 / VALORIZATION 0.3 / TECHNICAL 0.2 /
    SEMANTIC 0.1, while the earlier decision (§5.3) was equal weights; neither choice was recorded. The

@@ -20,7 +20,7 @@ defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
-finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) →
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) →
 **Work item 19** (local follow-ups: `T-083` → `T-142` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
@@ -157,7 +157,7 @@ One task per PR, each ending with its status commit after approval. `T-075` and 
 `T-100` (see their entries); `T-078` stays deprecated; `T-140` is merged and its acceptance is measured by
 the final pilot, `T-143`.
 
-- [ ] **T-141** Equal composite weights (system review N11, user decision 2026-10-05; resolves the
+- [x] **T-141** Equal composite weights (system review N11, user decision 2026-10-05; resolves the
       composite-weights note that stood before `T-070`/`T-071`). Set `_DEFAULT_WEIGHTS` in
       `src/cycle/config.py` to FUNDAMENTAL, VALORIZATION and TECHNICAL at 1/3 each, and remove
       SEMANTIC until Work item 4. **Why it is mathematically sound:** all three components are
@@ -171,6 +171,15 @@ the final pilot, `T-143`.
       correlation and the top-N overlap on the replay. Amend `SPEC.md` FR-007's default-weights text
       and `docs/cycle.md`, and add a `docs/model_fixes.md` entry (constitution AI behavior #12).
       → `PLAN.md` Work item 8, step 9.
+      - **Status (2026-10-10): done, PR #132** (approved 2026-10-10). Defaults 1/3 each, no SEMANTIC; `check_score_weights`
+        / `ScoreWeightsMismatch` refuses a resume with other `score_weights` (every cycle type; a run with none
+        recorded is left alone); SPEC FR-007 (version 1.4.0), `docs/cycle.md` and a `docs/model_fixes.md` entry.
+        Verified on scratch copies, production's sha1 unchanged: pilot replay Spearman median 0.977 (min 0.917);
+        the 503-name run **refused** (483/503 unscored, production holds fundamentals for 20 assets), so that
+        comparison waits for `T-100`/`T-143`; VALORIZATION is a constant 50 when almost every name ties (a
+        coverage effect, recorded in `docs/cycle.md`, not changed). No CLI flag sets `score_weights`, so a run
+        recorded under the old weights is refused by the new defaults. Work item 8 still has open tasks, so
+        nothing moves to `CHANGELOG.md`.
 - [ ] **T-070** Technical score V2 in `src/cycle/scores/technical.py`
       (12-1 momentum, 90d realized vol, 90d max drawdown, sector-Z
       standardization, `0.50/0.30/0.20` weights) + `BREAK_TREND_200` (SOFT),
