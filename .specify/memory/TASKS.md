@@ -180,7 +180,7 @@ the final pilot, `T-143`.
         coverage effect, recorded in `docs/cycle.md`, not changed). No CLI flag sets `score_weights`, so a run
         recorded under the old weights is refused by the new defaults. Work item 8 still has open tasks, so
         nothing moves to `CHANGELOG.md`.
-- [ ] **T-070** Technical score V2 in `src/cycle/scores/technical.py`
+- [x] **T-070** Technical score V2 in `src/cycle/scores/technical.py`
       (12-1 momentum, 90d realized vol, 90d max drawdown, sector-Z
       standardization, `0.50/0.30/0.20` weights) + `BREAK_TREND_200` (SOFT),
       `VOLATILITY_SHOCK`/`CRASH_Z_SCORE` (HARD-temporal, 10-trading-day
@@ -190,6 +190,17 @@ the final pilot, `T-143`.
       structurally healthy PG, NEE, PM, T, STZ, APA and SBAC (7 of 20); combine it with cash
       coverage (e.g. OCF / current liabilities, interest coverage) and exempt utilities and
       financials. Also add a minimum signal-coverage floor to TECHNICAL (audit C5).)*
+      - **Status (2026-10-10): done, PR #134** (approved 2026-10-10 at `2643774`). `priceobs-v2` (`sma_200`, `ret_5d`,
+        `vol_5d`, the 60-day baseline ending 5 sessions before the date); `m011` / contract 11 (`v_price_observation`
+        and `v_veto.expires_on`); TECHNICAL v2 (sector-Z, no score under 2 of 3 signals); `BREAK_TREND_200` (SOFT,
+        **flag-only**: a per-rule `penalty_points`, 0 for it, in every rule's `params_json`), `VOLATILITY_SHOCK` and
+        `CRASH_Z_SCORE` (HARD-temporal, 10 sessions, extended while the condition persists, **sector-relative with both
+        legs required**: the absolute rules held up to 80% of the 503 names, 157 dates above 20%; the adopted rules peak
+        at 19.7%); `LIQUIDITY_DISTRESS` needs a failed cash test and exempts Financials/Utilities (pilot: 7 flagged → 0).
+        SPEC 1.6.0; `docs/model_fixes.md` T-070. Verified on scratch copies, production's sha1 unchanged. Not done here
+        and still open: the APH/MNST split seams in production `price_daily` are T-131's N3 (T-100's fresh database has the
+        guard); `LIQUIDITY_DISTRESS`'s broader check repeats after `T-148`. Work item 8 still has open tasks, so nothing
+        moves to `CHANGELOG.md`.
 - [x] **T-147** — **done, PR #127; checklist v1.3 follows from `docs/sec_data_checklist.md` §9.** SEC data-treatment checklist audit (user, 2026-10-07; docs, a script and tests -- **no change
       under `src/`**). Audit the data path (EDGAR → `portfolio-data-mining` gateway → `fundamental_agent` →
       `cycle`/`quant`) against the SEC data-treatment checklist. **Audits `checklist_v1.2.2.md`** (frozen and approved

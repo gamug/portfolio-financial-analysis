@@ -812,7 +812,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
 
 **Approach**:
 
-1. **Technical score V2** (`src/cycle/scores/technical.py`): keep 12-1
+1. **Technical score V2 (`T-070`, done, PR #134; the vetoes are sector-relative and `BREAK_TREND_200` is flag-only, decided by the user in review -- see `docs/model_fixes.md`)** (`src/cycle/scores/technical.py`): keep 12-1
    momentum (Jegadeesh-Titman 1993 — skip the most recent 21 days to avoid
    short-term reversal noise), 90-day realized volatility, and 90-day max
    drawdown (asymmetric loss-clustering signal volatility alone misses),
