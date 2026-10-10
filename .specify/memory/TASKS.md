@@ -575,7 +575,7 @@ the final pilot, `T-143`.
       `T-100`'s LLM run: YoY growth returns None when the prior value is ≤ 0 (audit F8);
       quick ratio as (cash + ST investments + receivables) / current liabilities, and cash
       ratio tolerant of a missing cash line (audit F5, F6).)*
-- [ ] **T-077** Carhart 4-factor `ret_estimator` with Vasicek beta
+- [x] **T-077** Carhart 4-factor `ret_estimator` with Vasicek beta
       shrinkage (`mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
       `{MKT,SMB,HML,MOM}`, vendored version-pinned Kenneth French factor
       CSV, 756-day rolling betas) in `risk.py`, registered in
@@ -588,6 +588,18 @@ the final pilot, `T-143`.
       refuses an as-of before the series instead of using a future rate (audit Q3);
       optionally, `max_sharpe` falls back to the frontier on solver infeasibility (audit
       Q5).)*
+      - **Status (2026-10-10): done, PR #133** (approved 2026-10-10). `carhart` estimator (`quant/factors.py`; Kenneth French
+        202608 files vendored byte-for-byte with a SHA-256-checked manifest; Vasicek per factor; λ̄ from 1963-07-01), `rm-v2`;
+        `--turnover-cap` bound against the previous book of the chain (`quant/turnover.py`; a name that left the panel counts;
+        relaxation recorded; variant books carry `.mu-…`/`.to-…` before the first `+` of `engine_version` and are never
+        `is_current`); `evaluate` `perf-v3` net of a 10 bps cost that is a constant (a different cost is a new perf version),
+        recorded on the evaluate run; audit Q3 (rf CSV refuses an as-of before the series) and Q5 (`max_sharpe` frontier
+        fallback). SPEC 1.5.0 (FR-009, FR-010), `docs/quant.md`, `docs/model_fixes.md`. Verified on scratch copies, production's
+        sha1 unchanged: **the equilibrium-vs-carhart portfolio comparison ran on the 20 pilot names only** (production has no
+        cover-page share counts, so `equilibrium` cannot be built on 499 names); on 499 names the estimator alone was called.
+        Descriptive only (~20 months); `equilibrium` stays the default. **Re-run note for `T-143`/`T-100`** (not a new task): repeat the
+        comparison on the full universe once a database with cover shares exists, commands in `docs/model_fixes.md` (T-077); its
+        data check: GEHC's 2025-11-28 price gap. Work item 8 still has open tasks, so nothing moves to `CHANGELOG.md`.
 - [ ] **T-078** *(**DEPRECATED 2026-09-25, at the user's direction — not part of the
       development; do not implement.** Kept unchecked as the historical record, per this
       file's "mark cancelled in place, don't renumber" rule. Reason: a meaningful IC needs a

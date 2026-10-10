@@ -900,7 +900,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    arrive precomputed in the automated pipeline) to cut per-filing token
    cost.
 6. **`quant` μ estimator — Carhart 4-factor, supersedes Work item 3's
-   single-factor plan**: `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
+   single-factor plan** (`T-077`, done, PR #133): `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
    `{MKT, SMB, HML, MOM}`, with Vasicek shrinkage on each asset's OLS betas
    toward the cross-sectional mean beta for that factor (`w_i = 1 -
    Var(β̂_i,k) / (Var(β̂_i,k) + Var(β̄_k))`), betas estimated from
