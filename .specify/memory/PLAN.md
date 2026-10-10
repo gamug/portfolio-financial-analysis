@@ -32,9 +32,9 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
-orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-153`** (the historical universe, after `T-149` and before `T-100`) → **`T-100`**, the full-universe production run,
+orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
@@ -805,7 +805,7 @@ as task `T-077`.
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
 `T-151` (step 14, which absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, without its
 growth item; its quick-ratio item follows `T-151`'s dictionary) → `T-073` (step 3) → `T-074`
-(step 4) → `T-071` (step 2). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
+(step 4) → `T-071` (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
 `T-100`: it runs the LLM on every filing from a fresh database, with the final prompts.
@@ -843,13 +843,20 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    possible even post-Work-item-7) don't dominate a sector's scale; winsorizing
    uses DQ-02: ⌊0.005 × n⌋ values per tail.
    **Company profile as of the date (APP-00):** one profile per `(CIK, date)`, read from
-   `docs/checklist_sec/company_types.csv` (delivered by `T-147`), with: (1) the type: operating,
-   Article 9 bank, Article 7 insurer, other financial, REIT, regulated utility, multi-class; (2) each
-   classification's evidence; (3) its validity dates. Every package reads company type from it and nowhere else.
-   **D-13 (regulated utilities):** exempt GICS Electric, Gas, Multi- and Water Utilities from `NEGATIVE_FCF`.
-   In its place, a HARD veto when the three-year average of operating cash flow before working-capital changes
-   over total debt is below 5% (Moody's scorecard C13 p.7, p.11, p.14, p.19, p.21; C14 p.38; C15 p.2). AES and NRG
-   are not exempt.
+   `docs/checklist_sec/company_types.csv` (delivered by `T-147`). The CSV has ONE base type per company, the `type` column:
+   `operating`, `article_9`, `article_7`, `other_financial`, `multi_sector_holding`. On top of it come OVERLAYS:
+   REIT (`reit`), multi-class (`multi_class_listed`), negative equity (evaluated from the filing as of the date,
+   not `negative_equity_latest`), and regulated utility (GICS sub-industry Electric, Gas, Multi- or Water Utilities, D-13).
+   The CSV has no validity dates today (it is one snapshot): `T-071` adds them, and `T-153` adds the leavers' rows.
+   Every package reads the company profile (type + overlays) from it and nowhere else.
+   **D-13 (regulated utilities exemption from `NEGATIVE_FCF`; see `docs/checklist_sec/checklist_v1.3.md` Scope, D-13):**
+   exempt GICS Electric, Gas, Multi- and Water Utilities from `NEGATIVE_FCF`. In its place, a HARD veto when the three-year
+   average of operating cash flow before working-capital changes over total debt is below 5% (Moody's scorecard C13 PDF p.7,
+   p.11, p.14, p.19, p.21; C14 p.38; C15 p.2). Each year's ratio uses only data public on D (the latest 10-K's three years
+   of cash flow, the third year-end debt from the previous 10-K); working capital is current items only, regulatory assets
+   and liabilities stay in the cash flow (C13 p.14); the debt is MET-07's (not Moody's adjusted debt, declared); missing
+   inputs: no veto, flagged; CEG and VST fall inside the exemption through the GICS proxy, AES and NRG do not; report the
+   5%–12% sensitivity.
    **D-14 (REITs, open):** measure how many REITs `NEGATIVE_FCF` vetoes in the replay first, then decide.
 3. **Fundamental agent: continuous scoring rubric** (`agents.py`): the
    synthesis prompt currently asks for a bare `0-100` integer with no
@@ -1003,8 +1010,10 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
     line. **ID-02b:** debt = 0 only with no debt line at all, no interest concept, and a complete balance sheet (S-X 5-02 p.1);
     otherwise a capture failure. **N23 (v1.3):** debt and interest concepts not read today: REIT debt, `OtherLongTermDebtCurrent`,
     `NotesPayableCurrent` (ED) and `InterestExpenseDebt`; plus interest expense stored with mixed signs (202 negative of 319 in
-    production), checked against MET-09's coverage rule. (e) **Revenue and L-09:** real-time net-anchor test (refuse "Total revenues, less..."
-    net anchors); ex-post audit only reports. (f) **Capex (MET-08, N22)**: the oil & gas fallback tiers apply only
+    production), checked against MET-09's coverage rule. (e) **Revenue and L-09:** real-time net-anchor test (an anchor is
+    refused when its value less the rows between is below a revenue-concept row of the same filing and column, using only the
+    filing itself, rejecting ICE's 26 columns and no other company's); the ex-post audit only reports and never removes a value
+    (PER-01: the next year's column did not exist on the date of use). (f) **Capex (MET-08, N22)**: the oil & gas fallback tiers apply only
     when no PP&E-family line is filed (DOW: 0.157B resolved against 2.48B); MET-08 (c) adds PP&E-family line beside a separate
     oil & gas line on the same statement (flagged); capex of DTE, ED, LNT and NEE (company extensions, `PaymentsToAcquireOther...`)
     resolved under MET-08. (g) **Records**: engine `metrics-v6`; a `docs/model_fixes.md` entry citing the checklist rule IDs and
@@ -1040,7 +1049,10 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
     author is loaded); renames `free_cash_flow_to_equity` to `free_cash_flow`.
     - **MD-02 and MD-35:** invested capital and EV include noncontrolling interest (as MD-02 defines it: redeemable NCI
       included; CON-04 identity when no balance is filed; 0 only with no NCI income; otherwise capture failure) and net
-      short-term investments; **MD-38:** FCFF in Damodaran C10's EBIT form (`EBIT × (1 − t) − (CapEx − D&A + ΔWC)`).
+      short-term investments (when filed apart from cash); **MD-38:** (NOPAT (MD-05, MET-03's 21%) − (capex (MET-08) − D&A
+      (MD-01) + Δ non-cash working capital)) / EV (MD-35), with non-cash working capital = (current assets − cash − short-term
+      investments) − (current liabilities − short-term debt), its change between the ends of the prior and the current year;
+      empty when a term is missing or the balance sheet is not classified (REITs, banks).
     - **Applicability matrix as data:** v1.3's matrix (35 metrics × 6 company types) becomes a data file the code reads,
       instead of conditions scattered through code.
     - **Traceability test:** fails when a metric in the dictionary has no implementation, when an implementation, map entry
@@ -1052,6 +1064,12 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
     - ROA, ROIC, ROE on beginning capital; NOPAT on 21% federal rate (REITs on their own; ROIC also reported at effective rate for robustness);
       denominators ≤ 0 (MET-09, N9); growth from a base ≤ 0 (MET-04); ROIC only on positive invested capital (N15); EBITDA persisted (absorbs `T-072`).
       `TASKS.md` `T-151`.
+
+15. **The historical universe (`T-153`, after `T-071`, needed for PER-10 and PER-11; review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11).**
+    - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49. Never overwrite the pilot's `universe.db`.
+    - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?` to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
+    - For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+    - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average) again on the historical universe before they go into the thesis.
 
 **Acceptance criteria**:
 
@@ -2190,7 +2208,7 @@ full-universe scope, which was never that task's real purpose.)
 open today and every task added later — except those the user deferred or superseded (2026-10-05,
 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20's `T-146` are
 deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are superseded by `T-100` itself.
-`T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and `T-153` are prerequisites. A new work
+`T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), and the final pilot `T-143` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A new work
 item goes above this one, never below; `T-100` stays unchecked until every other box is checked, or explicitly
 superseded/moved/deferred.
 
@@ -2204,12 +2222,6 @@ the pilot also runs a cross-check against the SEC, with network allowed, beside 
 `T-147` delivers). FAIL on any value mismatch, on any resolved income tax/equity/net income/short-term debt that differs from its
 intended SEC concept, or on any flipped sign; WARN on documented not-applicable cases. `T-100` also runs the LLM on every filing with the final
 prompts, which is why `T-079`'s separate bundled re-run is superseded.
-
-**The historical universe (`T-153`, before `T-100` and after `T-149`, needed for PER-10 and PER-11; review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11).**
-- Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49. Never overwrite the pilot's `universe.db`.
-- Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?` to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
-- For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source is still to be decided).
-- Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average) again on the historical universe before they go into the thesis.
 
 **Approach**: purge the sample-era derived data only if a version bump requires it (same mechanism as
 `T-088`; outside the orchestrator, and moot on the fresh database this task needs) → **one orchestrator run
@@ -2301,7 +2313,7 @@ this document.** Their internal sequencing:
   7/8 and its `entity_resolution` half is additionally blocked on the
   `urls.db` transfer noted in its own section, independent of any other
   work item here. **Deferred until after `T-100`** (2026-10-05), except `T-083`, which moved to Work item 19.
-- Work item 19 (local follow-ups: `T-083` → `T-142` → `T-145`) follows Work item 8 and precedes Work item 2, so the
+- Work item 19 (local follow-ups: `T-083` → `T-142` → `T-145`) follows Work item 8 and `T-153`, and precedes Work item 2, so the
   orchestrator and the final pilot run on the corrected code. Its `T-144` and `T-152` run first, before Work item 8
   (user, 2026-10-09).
 - Work item 2 (orchestrator) follows Work item 19; the final pilot `T-143` runs through it. Work item 4
@@ -2312,10 +2324,10 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
-- **Work item 12 (`T-143`, `T-153` then `T-100`, the full-universe production run) runs last of all** — after
-  every other task in `TASKS.md` that is not deferred or superseded, including any task added later.
-  `T-153` (the historical universe) runs before `T-100` and after `T-149`.
+- **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all** — after
+  Work item 8 (… → `T-071`), `T-153`, Work item 19 (`T-083` → `T-142` → `T-145`), and Work item 2 have all landed.
+  `T-100` keeps `T-153` as a prerequisite.
 
 See `TASKS.md` for the discrete, checkable task breakdown.

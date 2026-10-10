@@ -185,3 +185,4 @@ the thesis. Tasks, not rule changes; recorded with the docs PR.
 
 **Done (2026-10-09): v1.3 frozen** once the URLs of C13–C15 were added to the source register (C13 is a copy filed as an exhibit
 with the CPUC; the original is Moody's "Rating Methodology: Regulated Electric and Gas Utilities", 6 August 2024).
+Those edit scripts were local and are not tracked; the tracked checker is `scripts/sec_xcheck/quotecheck.py`, which reproduces the frozen totals.
