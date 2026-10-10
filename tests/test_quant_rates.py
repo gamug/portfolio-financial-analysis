@@ -50,8 +50,8 @@ def test_csv_source_picks_point_on_or_before_as_of(tmp_path: Path) -> None:
 
 
 def test_csv_source_refuses_an_as_of_before_the_series_starts(tmp_path: Path) -> None:
-    """T-077 (audit Q3): the old ``or points`` fallback silently used the series' first -- future
-    -- rate for an as-of before it, a lookahead into the risk-free rate."""
+    """T-077 (audit Q3): the old ``or points`` fallback silently took the series' *newest* -- a
+    future -- rate for an as-of before it, a lookahead into the risk-free rate."""
     csv_path = tmp_path / "rf.csv"
     csv_path.write_text("date,rate\n2026-01-01,0.04\n2026-06-01,0.045\n")
     conn = _conn()

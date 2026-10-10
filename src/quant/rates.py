@@ -73,7 +73,8 @@ def load_risk_free(settings: QuantSettings, *, as_of: str, conn: Database) -> Ri
         points = _load_csv(settings.rf_csv_path)
         usable = [p for p in points if p[0] <= as_of]
         if not usable:
-            # the series starts after the as-of: using its first (future) rate would be lookahead
+            # the series starts after the as-of: any rate in it postdates the as-of (the old fallback
+            # took the series' newest) and would be lookahead
             first = points[0][0] if points else "no rows"
             raise RiskFreeUnavailable(
                 f"the risk-free series {settings.rf_csv_path.name} starts {first}, after the "

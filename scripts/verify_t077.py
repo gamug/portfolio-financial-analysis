@@ -485,10 +485,7 @@ def render_diagnostics(rec: dict[str, Any], title: str) -> str:
     for r in rows:
         out.append(
             f"| {r['as_of']} | "
-            + " | ".join(
-                f"{r['corr_carhart'][e]['pearson']:.3f} / {r['corr_carhart'][e]['spearman']:.3f}"
-                for e in others
-            )
+            + " | ".join(_fmt_corr(r["corr_carhart"][e]) for e in others)
             + " |"
         )
     out += [
