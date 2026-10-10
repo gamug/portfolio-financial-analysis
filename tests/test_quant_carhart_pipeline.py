@@ -171,10 +171,10 @@ def test_optimize_mu_carhart_writes_its_own_books_beside_equilibrium(
     }
     assert len(rows) == 4  # nothing overwritten
     for pid in eq.books.values():
-        assert "+mu-" not in rows[pid]["engine_version"]  # the default keeps its key
+        assert "." not in rows[pid]["engine_version"].partition("+")[0]  # the default keeps its key
         assert "ret_estimator" not in json.loads(rows[pid]["manifest_json"])
     for pid in ca.books.values():
-        assert rows[pid]["engine_version"].endswith("+mu-carhart")
+        assert rows[pid]["engine_version"].startswith("opt-v2.mu-carhart+")
         assert json.loads(rows[pid]["manifest_json"])["ret_estimator"] == "carhart"
         assert json.loads(rows[pid]["params_json"])["ret_estimator"] == "carhart"
 
@@ -204,5 +204,3 @@ def test_cli_accepts_mu_carhart_and_validates_the_turnover_cap(
         with pytest.raises(SystemExit):
             cli.build_parser().parse_args(["optimize", "--turnover-cap", bad])
     assert "turnover cap must be in (0, 2]" in capsys.readouterr().err
-    ev = cli.build_parser().parse_args(["evaluate", "--turnover-cost-bps", "15"])
-    assert ev.turnover_cost_bps == 15.0

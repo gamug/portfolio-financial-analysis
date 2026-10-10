@@ -119,9 +119,13 @@ Projection semantics
 ``v_quant_portfolio``     one row per optimized benchmark book (as_of, kind); portfolio-level
                           expected/realized risk-return, not per asset. A book optimized under a
                           non-default estimator or a turnover cap (T-077) sits beside the default
-                          book at the same (as_of, kind): its ``engine_version`` ends ``+mu-<estimator>``
-                          and/or ``+to-<cap>``, its ``manifest_json`` names them, and ``turnover`` is
-                          its realized trade against the previous book of that chain. ``is_current`` (T-144)
+                          book at the same (as_of, kind): its ``engine_version`` carries the marks before
+                          the first ``+`` (``opt-v2.mu-<estimator>.to-<cap>+<tag>``), its
+                          ``manifest_json`` names them, and ``turnover`` is its realized trade against
+                          the previous book of that chain. A variant book is **never** current
+                          (``opt-v<N>`` must be all digits up to the first ``+``), whatever the
+                          compute order, so ``v_quant_vs_live``'s ``LIVE_ONLY`` rows follow the
+                          default book only. ``is_current`` (T-144)
                           marks the newest ``opt-v<N>`` per (as_of, kind, frontier_k) -- by
                           ``N``, then ``computed_at``, then ``id``; at most one per key.
 ``v_quant_position``      the weights of each book; ``valid_to IS NULL`` = current (mirrors

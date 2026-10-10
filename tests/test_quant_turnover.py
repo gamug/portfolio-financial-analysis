@@ -12,7 +12,9 @@ import numpy as np
 import pytest
 from portfolio_common.db import Database
 
+import quant.evaluate as quant_evaluate
 from kg_schema.versions import MetricVersions
+from quant import cli
 from quant.caps import Relaxation
 from quant.config import QuantSettings
 from quant.db import (
@@ -54,11 +56,11 @@ def test_the_book_key_changes_only_for_a_non_default_estimator_or_a_cap() -> Non
     default = book_engine_version(base, manifest)
     assert default == manifest.book_tagged("opt-v2")  # a default book keeps its pre-T-077 key
     cc = base.model_copy(update={"ret_estimator": "carhart"})
-    assert book_engine_version(cc, manifest) == default + "+mu-carhart"
+    assert book_engine_version(cc, manifest) == f"opt-v2.mu-carhart+{manifest.book_tag}"
     capped = base.model_copy(update={"turnover_cap": 0.5})
-    assert book_engine_version(capped, manifest) == default + "+to-0.5"
+    assert book_engine_version(capped, manifest) == f"opt-v2.to-0.5+{manifest.book_tag}"
     both = base.model_copy(update={"ret_estimator": "carhart", "turnover_cap": 0.25})
-    assert book_engine_version(both, manifest) == default + "+mu-carhart+to-0.25"
+    assert book_engine_version(both, manifest) == f"opt-v2.mu-carhart.to-0.25+{manifest.book_tag}"
 
 
 def test_turnover_counts_every_name_in_either_book() -> None:
@@ -186,9 +188,9 @@ def test_the_previous_book_is_the_newest_earlier_one_of_the_same_chain(
         "other_kind": insert_portfolio(conn, _row("2026-02-20", kind="tangency")),
         "other_engine": insert_portfolio(conn, _row("2026-02-25", engine="opt-v1+abcd1234")),
         "other_estimator": insert_portfolio(
-            conn, _row("2026-02-26", engine="opt-v2+abcd1234+mu-carhart")
+            conn, _row("2026-02-26", engine="opt-v2.mu-carhart+abcd1234")
         ),
-        "other_cap": insert_portfolio(conn, _row("2026-02-27", engine="opt-v2+abcd1234+to-0.5")),
+        "other_cap": insert_portfolio(conn, _row("2026-02-27", engine="opt-v2.to-0.5+abcd1234")),
         "frontier_pt": insert_portfolio(conn, _row("2026-02-28", frontier_k=3)),
     }
     found = load_previous_book(
@@ -215,7 +217,7 @@ def test_the_previous_book_is_the_newest_earlier_one_of_the_same_chain(
         conn,
         kind="min_var",
         frontier_k=None,
-        engine_version="opt-v2+abcd1234+to-0.5",
+        engine_version="opt-v2.to-0.5+abcd1234",
         before="2026-12-31",
     )
     assert capped == (ids["other_cap"], "2026-02-27")
@@ -271,7 +273,7 @@ def test_a_default_run_has_no_cap_and_each_chain_starts_from_nothing(seeded: Dat
     for pid in first.books.values():
         b = _book(seeded, pid)
         assert b["turnover"] is None  # nothing to trade from
-        assert "+to-" not in str(b["engine_version"]) and "+mu-" not in str(b["engine_version"])
+        assert "." not in str(b["engine_version"]).partition("+")[0]  # no variant marks
         assert b["params"]["turnover"]["reason_not_applied"] == "no turnover cap requested"
         assert b["params"]["turnover"]["realized"] is None
     for kind, pid in second.books.items():
@@ -303,7 +305,7 @@ def test_the_cap_holds_against_the_previous_book_of_its_own_chain(seeded: Databa
         for kind, pid in run.books.items():
             b = _book(seeded, pid)
             t = b["params"]["turnover"]
-            assert str(b["engine_version"]).endswith("+to-0.005")
+            assert str(b["engine_version"]).startswith("opt-v2.to-0.005+")
             assert t["previous_portfolio_id"] == prev.books[kind]
             if kind == "risk_parity":  # ignores the cap, and says so
                 assert t["applied"] is False and "ignores" in t["reason_not_applied"]
@@ -396,7 +398,9 @@ def _perf(conn: Database, pid: int) -> list[tuple[str, float, float, float | Non
     ]
 
 
-def test_the_cost_is_deducted_once_on_the_first_forward_day(seeded: Database) -> None:
+def test_the_cost_is_deducted_once_on_the_first_forward_day(
+    seeded: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
     assert PERF_ENGINE_VERSION == "perf-v3"
     d = _dates(seeded)
     s = _settings(objectives=["min_var"])
@@ -404,14 +408,13 @@ def test_the_cost_is_deducted_once_on_the_first_forward_day(seeded: Database) ->
     second = run_optimize(s, as_of=d[-20], conn=seeded)
     pid1, pid2 = first.books["min_var"], second.books["min_var"]
 
-    run_evaluate(
-        s.model_copy(update={"turnover_cost_bps": 0.0}),
-        date_from=d[-40],
-        date_to=d[-1],
-        conn=seeded,
-    )
+    assert quant_evaluate.TURNOVER_COST_BPS == 10.0
+    with monkeypatch.context() as m:  # a gross run, for the comparison only
+        m.setattr(quant_evaluate, "TURNOVER_COST_BPS", 0.0)
+        run_evaluate(s, date_from=d[-40], date_to=d[-1], conn=seeded)
     gross1, gross2 = _perf(seeded, pid1), _perf(seeded, pid2)
-    run_evaluate(s, date_from=d[-40], date_to=d[-1], conn=seeded)  # 10 bps, re-written in place
+    book_rows = {r[0]: r[1] for r in seeded.execute("SELECT id, params_json FROM quant_portfolio")}
+    run_evaluate(s, date_from=d[-40], date_to=d[-1], conn=seeded)  # 10 bps by definition
     net1, net2 = _perf(seeded, pid1), _perf(seeded, pid2)
     assert len(net1) == len(gross1) > 5 and len(net2) == len(gross2) > 5
 
@@ -433,26 +436,39 @@ def test_the_cost_is_deducted_once_on_the_first_forward_day(seeded: Database) ->
     cost2 = 10 / 10_000 * turnover_between(load_book_weights(seeded, pid2), w1)
     assert gross2[0][1] - net2[0][1] == pytest.approx(cost2, abs=1e-12)
     assert cost2 < cost1
-    rec = json.loads(
-        seeded.execute("SELECT params_json FROM quant_portfolio WHERE id = ?", (pid2,)).fetchone()[
-            0
-        ]
-    )
-    cost = rec["turnover_cost"]
+    # the cost is recorded on the evaluate run, keyed by portfolio id; the book row optimize wrote
+    # is not touched, by this run or a re-run
+    assert {
+        r[0]: r[1] for r in seeded.execute("SELECT id, params_json FROM quant_portfolio")
+    } == book_rows
+    run = json.loads(
+        seeded.execute(
+            "SELECT params_json FROM quant_run WHERE command = 'evaluate' ORDER BY id DESC"
+        ).fetchone()[0]
+    )["turnover_cost"]
+    cost = run[str(pid2)]
     assert cost["first_of_chain"] is False and cost["previous_portfolio_id"] == pid1
-    assert (
-        cost["bps"] == 10
-        and cost["cost"] == pytest.approx(cost2)
-        and cost["engine_version"] == "perf-v3"
-    )
-    first_rec = json.loads(
-        seeded.execute("SELECT params_json FROM quant_portfolio WHERE id = ?", (pid1,)).fetchone()[
-            0
-        ]
-    )
-    assert first_rec["turnover_cost"]["first_of_chain"] is True
-    assert first_rec["turnover_cost"]["turnover"] == pytest.approx(sum(w1.values()))
-    assert first_rec["ret_estimator"] == "equilibrium"  # the optimize record is kept beside it
+    assert cost["bps"] == 10 and cost["cost"] == pytest.approx(cost2)
+    assert cost["engine_version"] == "perf-v3"
+    assert run[str(pid1)]["first_of_chain"] is True
+    assert run[str(pid1)]["turnover"] == pytest.approx(sum(w1.values()))
+    assert "turnover_cost" not in json.loads(book_rows[pid1])
+
+
+def test_perf_v3_means_ten_bps_by_definition_and_a_rerun_changes_nothing(seeded: Database) -> None:
+    """PR #133 review: no flag and no setting can make a perf-v3 row carry another cost."""
+    assert "turnover_cost_bps" not in QuantSettings.model_fields
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["evaluate", "--turnover-cost-bps", "15"])
+    d = _dates(seeded)
+    s = _settings(objectives=["min_var"])
+    pid = run_optimize(s, as_of=d[-20], conn=seeded).books["min_var"]
+    run_evaluate(s, date_from=d[-20], date_to=d[-1], conn=seeded)
+    first = _perf(seeded, pid)
+    run_evaluate(s, date_from=d[-20], date_to=d[-1], conn=seeded)
+    assert _perf(seeded, pid) == first
+    gross_first_day = first[0][1] + 10 / 10_000 * sum(load_book_weights(seeded, pid).values())
+    assert gross_first_day > first[0][1]
 
 
 def test_perf_v2_rows_stay_stored_and_the_view_shows_perf_v3(seeded: Database) -> None:
@@ -490,19 +506,65 @@ def test_a_capped_chain_pays_against_its_own_previous_book_and_the_live_book_pay
     plain = run_optimize(_settings(objectives=["min_var"]), as_of=d[-30], conn=seeded).books[
         "min_var"
     ]
-    cost_b = _turnover_cost(seeded, b, load_book_weights(seeded, b), cost_bps=10.0)
+    cost_b = _turnover_cost(seeded, b, load_book_weights(seeded, b))
     assert (
         cost_b is not None and cost_b["previous_portfolio_id"] == a
     )  # not the uncapped book at d[-30]
     assert cost_b["turnover"] <= 0.3 + 1e-5
     live = insert_portfolio(seeded, _row(d[-20], kind="live_book", engine="opt-v2"))
-    assert _turnover_cost(seeded, live, {1: 1.0}, cost_bps=10.0) is None
+    assert _turnover_cost(seeded, live, {1: 1.0}) is None
     assert plain != a
 
 
-def test_a_negative_cost_is_refused(seeded: Database) -> None:
+def test_a_variant_book_is_never_current_whatever_the_compute_order(seeded: Database) -> None:
+    """PR #133 review: only the default configuration (equilibrium, no cap) can be
+    ``is_current``; a variant computed after it neither takes over nor moves ``v_quant_vs_live``."""
     d = _dates(seeded)
-    with pytest.raises(ValueError, match="turnover_cost_bps"):
-        run_evaluate(
-            _settings(turnover_cost_bps=-1.0), date_from=d[-20], date_to=d[-1], conn=seeded
-        )
+    day = d[-20]
+    s = _settings(objectives=["min_var", "tangency"])
+    seeded.execute(
+        "INSERT INTO portfolio_position (asset_id, valid_from, weight) VALUES (1, ?, 0.6), (6, ?, 0.4)",
+        (day, day),
+    )
+    seeded.commit()
+    default = run_optimize(s, as_of=day, conn=seeded)
+
+    def current() -> dict[int, int]:
+        return {
+            int(r["id"]): int(r["is_current"])
+            for r in seeded.execute(
+                "SELECT id, is_current FROM v_quant_portfolio WHERE as_of = ?", (day,)
+            )
+        }
+
+    def vs_live() -> list[tuple[object, ...]]:
+        return [
+            tuple(r)
+            for r in seeded.execute(
+                "SELECT kind, ticker, benchmark_weight, live_weight FROM v_quant_vs_live "
+                "WHERE as_of = ? AND is_current = 1 ORDER BY kind, ticker",
+                (day,),
+            )
+        ]
+
+    before_current, before_live = current(), vs_live()
+    assert {before_current[p] for p in default.books.values()} == {1}
+    assert before_live
+
+    variants = [
+        run_optimize(s.model_copy(update={"ret_estimator": "hist_mean"}), as_of=day, conn=seeded),
+        run_optimize(s.model_copy(update={"turnover_cap": 0.5}), as_of=day, conn=seeded),
+        run_optimize(
+            s.model_copy(update={"ret_estimator": "james_stein", "turnover_cap": 0.3}),
+            as_of=day,
+            conn=seeded,
+        ),
+    ]
+    after = current()
+    assert len(after) == 8
+    for pid in default.books.values():
+        assert after[pid] == 1  # the default stays current, though it was computed first
+    for v in variants:
+        for pid in v.books.values():
+            assert after[pid] == 0
+    assert vs_live() == before_live

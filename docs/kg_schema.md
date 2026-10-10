@@ -352,7 +352,10 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - `v_quant_portfolio.is_current` is 1 for the newest `opt-v<N>` book per (`as_of`, `kind`,
   `frontier_k`): by `N` numerically, then `computed_at`, then `id`. `frontier_k` is part of the key
   because every `frontier_k` book of one `as_of` is its own book; for every other kind it is NULL.
-  A book whose `engine_version` is not exactly `opt-v<N>` or `opt-v<N>+<tag>` is never current. At most one current book
+  A book whose `engine_version` is not exactly `opt-v<N>` or `opt-v<N>+<tag>` is never current: in particular a
+  **variant book** (a non-default estimator or a turnover cap, T-077: `opt-v2.mu-carhart.to-0.5+<tag>`) is never current,
+  whatever the compute order, so only the default configuration (`equilibrium`, no cap) can be, and `v_quant_vs_live`'s
+  `LIVE_ONLY` rows follow it. At most one current book
   per key.
 - `v_quant_vs_live` is now every book except `kind = 'live_book'`: the dead `equal_weight` and
   `cap_weight` filters are gone (no code writes those kinds, so no existing row appears or goes).

@@ -329,3 +329,14 @@ def test_an_overlap_under_the_minimum_is_refused(french_factor_dir: Path) -> Non
     ]
     with pytest.raises(FactorCoverageError):
         carhart_expected_returns(np.zeros((600, 1)), late, [1], data, rf_annual=0.04, min_obs=504)
+
+
+def test_the_risk_model_version_is_pinned_to_the_vendored_factor_vintage() -> None:
+    """PR #133 review: the factor files' version is not in the risk model's key, so replacing the
+    files and rebuilding an as-of would overwrite carhart mu under the same ``model_version``. A new
+    vintage therefore needs a new ``risk_model_version``: change both together and update this pin."""
+    from quant.config import QuantSettings  # noqa: PLC0415 - only this test needs it
+
+    manifest = json.loads((factors.DATA_DIR / "manifest.json").read_text())
+    default = QuantSettings.model_fields["risk_model_version"].default
+    assert (default, manifest["library_version"]) == ("rm-v2", "202608 CRSP")

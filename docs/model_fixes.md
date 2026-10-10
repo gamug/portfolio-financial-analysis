@@ -5136,7 +5136,7 @@ for gross comparison. Re-derived from the code, not from the audit's wording; Q3
 `quant/factors.py` (loader, OLS, Vasicek, premia, μ), `quant/turnover.py` (the chain, the previous book, the cap's constraint and its relaxation), `quant/persist.py`
 (the estimator beside the other three in `build-risk-model`, `rm-v1` → `rm-v2`; `w_prev` and the realized turnover in `optimize`), `quant/evaluate.py`
 (`perf-v2` → `perf-v3`, the cost), `quant/rates.py` (the refusal), `quant/optimize.py` (the turnover constraint with weight outside the panel, `min_turnover`, the Q5
-fallback), `quant/cli.py` (`--mu carhart`, `--turnover-cap` validated in (0, 2], `evaluate --turnover-cost-bps`). Full method: `docs/quant.md` ("`factors.py`", "`turnover.py`"),
+fallback), `quant/cli.py` (`--mu carhart`, `--turnover-cap` validated in (0, 2]). Full method: `docs/quant.md` ("`factors.py`", "`turnover.py`"),
 `SPEC.md` FR-009/FR-010.
 
 ### Design decisions
@@ -5152,12 +5152,15 @@ fallback), `quant/cli.py` (`--mu carhart`, `--turnover-cap` validated in (0, 2],
 5. **Overlap, not the as-of, bounds the regression.** A panel past the file's last date is regressed on the overlap and the gap recorded; under 504 dates → carhart
    unbuilt, the other three built, the reason in the model's manifest, `optimize --mu carhart` refuses.
 6. **A chain is a configuration over time.** The previous book is the newest earlier one with the same `(kind, frontier_k, engine_version)`, and `engine_version`
-   carries the estimator and the cap as suffixes (`+mu-carhart`, `+to-0.5`) while the default keeps its key. That makes books of different estimators/caps coexist (which
-   the verification needs) and makes "previous book" well defined. It also means `v_quant_portfolio.is_current` can flag a variant (below).
+   carries the estimator and the cap as marks **before the first `+`** (`opt-v2.mu-carhart.to-0.5+<tag>`) while the default keeps its key. That makes books of different
+   estimators/caps coexist (which the verification needs), makes "previous book" well defined, and keeps a variant out of `v_quant_portfolio.is_current` (the view requires `opt-v<N>`, `N` all digits,
+   before the first `+`): only the default configuration can be current (PR #133 review).
 7. **The frontier sweep is not turnover-constrained** (its points are keyed by risk model, not chain), `risk_parity` ignores the cap (as before), and `tangency` under a
    binding cap is the best-Sharpe point of a frontier scan (status `from_frontier`). The default `target_vol` is 1.25 × the min-variance volatility computed **without**
    the turnover constraint, so a cap changes the book, not the target.
-8. **Cost on target weights**, once, on a book's first forward day; the first book of a chain pays `bps × Σ|w|`; the `live_book` snapshot and the benchmark pay none.
+8. **Cost on target weights**, once, on a book's first forward day; the first book of a chain pays `bps × Σ|w|`; the `live_book` snapshot and the benchmark pay none. **`perf-v3` means 10 bps
+   by definition** (a constant beside `PERF_ENGINE_VERSION`; no flag, no setting — another cost is a new perf version) and `evaluate` records each book's cost on its own run, never on the book row.
+9. **Factor vintage is pinned to the risk-model version**: a new vintage needs a new `risk_model_version` (a test pins `rm-v2` to "202608 CRSP").
 
 ### Verification
 
@@ -5297,11 +5300,11 @@ and `tests/test_quant_import_isolation.py` still passes.
   month-end `D`: `uv run python -m quant build-risk-model --analysis-date D`; copy the database once per estimator; in each, for each `D` in order and for `--mu equilibrium|carhart` × `--turnover-cap` absent|0.5:
   `uv run python -m quant optimize --analysis-date D --objectives min_var,tangency,target_vol,frontier --mu <est> [--turnover-cap 0.5]`; then `uv run python -m quant evaluate --from 2025-01-31 --analysis-date 2026-09-29`
   and `uv run python scripts/verify_t077.py chains --run equilibrium:none=<db> --run equilibrium:0.5=<db> --run carhart:none=<db> --run carhart:0.5=<db> --end 2026-09-29 --out <dir>` (and `diagnostics --db <db>
-  --universe-db <universe> --label <name> --out <dir>` for (a)/(b)). On 499 names expect `build-risk-model` to refuse 2025-11-28 (GEHC's price gap) until that is healed.
+  --universe-db <universe> --label <name> --out <dir>` for (a)/(b)). **Data check for `T-100`:** on the 499-name panel `build-risk-model` refuses 2025-11-28 because GEHC (asset 211) has a price gap `build_return_panel` cannot heal (2.1% residual holes > the 2% limit); heal or explain it in the fresh database before this repeat.
 - `tangency` under a cap that does not bind still takes the frontier-scan path (so cap 0.5 differs from "none" for `tangency` only); returning the exact y-space tangency when its turnover is within the cap would remove the
   discontinuity. Not done: the brief asked to document the fallback.
 - The frontier sweep takes no turnover cap and is keyed by risk model (a second `--mu` on the same model overwrites the points); a per-chain frontier would need a schema change.
-- `v_quant_portfolio` has **no `ret_estimator` column** and none was added (no column changes, as asked); the estimator is in `engine_version`'s suffix and the book's `manifest_json`, and `is_current` can flag a variant book.
+- `v_quant_portfolio` has **no `ret_estimator` column** and none was added (no column changes, as asked); the estimator is in `engine_version`'s marks and the book's `manifest_json`; a variant book is never `is_current`.
 - The factor files are a 202608 vintage; a later vintage may differ slightly from what was public on a past date. Per-factor shrinkage, the equal-weighted prior, target-weight costs and the 20-month sample are declared limitations (`docs/quant.md`).
 
 Scratch paths: `/tmp/t077/prod.db` (copy of production, migrated; backfilled actions and returns; cover shares for the pilot names and 192 other filings), `/tmp/t077/pilot.db` (+ `pilot_eq.db`, `pilot_cc.db`: 20 risk models, and the books and

@@ -159,9 +159,11 @@ def _frontier_best(conn: Any, model_id: int) -> Weights | None:
     return {int(a): float(w) for a, w in json.loads(row["weights_json"]).items()} if row else None
 
 
-def _suffix(estimator: str, cap: str) -> list[str]:
-    return ([] if estimator == "equilibrium" else [f"mu-{estimator}"]) + (
-        [] if cap == "none" else [f"to-{float(cap):g}"]
+def _marks(estimator: str, cap: str) -> str:
+    """The variant marks a book's ``engine_version`` carries before its first ``+`` (``.mu-X``,
+    ``.to-C``); empty for the default configuration."""
+    return ("" if estimator == "equilibrium" else f".mu-{estimator}") + (
+        "" if cap == "none" else f".to-{float(cap):g}"
     )
 
 
@@ -172,7 +174,7 @@ def load_books(
     conn = connect_ro(db)
     try:
         out: dict[str, list[tuple[str, Weights]]] = {o: [] for o in OBJECTIVES}
-        want = _suffix(estimator, cap)
+        want = _marks(estimator, cap)
         for as_of in as_ofs:
             for obj in OBJECTIVES:
                 if obj == "frontier":
@@ -192,9 +194,9 @@ def load_books(
         conn.close()
 
 
-def _extras(row: Any) -> list[str]:
-    """The suffixes after ``opt-vN+<tag>``: ``[]`` for a default book, else ``mu-X`` / ``to-C``."""
-    return str(row["engine_version"]).split("+")[2:]
+def _extras(row: Any) -> str:
+    """The variant marks of ``opt-vN[.mu-X][.to-C]+<tag>``: ``""`` for a default book."""
+    return str(row["engine_version"]).partition("+")[0].removeprefix("opt-v2")
 
 
 def _as_ofs(db: str) -> list[str]:

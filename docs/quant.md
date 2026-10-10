@@ -27,7 +27,6 @@ uv run python -m quant optimize --analysis-date 2026-08-27
 uv run python -m quant benchmark --from 2026-06-30 --analysis-date TODAY     # --from required: the panel is gated as of it
 uv run python -m quant load-benchmark --csv spy_tr.csv --benchmark SPY_TR      # columns: date,total_return_level
 uv run python -m quant evaluate  [--from 2026-06-01] --analysis-date TODAY [--benchmark SP500_EW_INTERNAL|SPY_TR]
-                                 [--turnover-cost-bps 10]
 ```
 
 `evaluate`'s `--from` defaults to the earliest persisted `quant_portfolio.as_of`
@@ -239,7 +238,11 @@ table.**
 
 - *Factor vintage.* The library is rebuilt every year (CRSP restates, the breakpoints and the one-month bill series are
   revised), so a vintage downloaded later can differ slightly from what was public on a past as-of. The model records the
-  vintage it used (202608); the point-in-time cut stops lookahead in *dates*, not in the data's revisions.
+  vintage it used (202608); the point-in-time cut stops lookahead in *dates*, not in the data's revisions. **The factor
+  files' version is not part of the risk model's key** (`model_version` = `rm-v2` + the input-manifest tag), so replacing the
+  vendored files and rebuilding an as-of would overwrite carhart μ under the same `model_version`: **a new factor vintage requires
+  a new `risk_model_version`** (`rm-v3`, …). `tests/test_quant_factors.py` pins `rm-v2` to library version `202608 CRSP`, so
+  updating the files without bumping the version fails CI.
 - *Per-factor shrinkage* ignores the covariance between the four betas (a multivariate prior would shrink them jointly); a
   declared simplification.
 - *Equal-weighted prior*: the prior mean is the plain cross-sectional mean over the panel, not a cap-weighted one, so it is
@@ -313,7 +316,9 @@ populated it.
 - **The chain.** `w_prev` is the previous book of the same *chain*: the same objective (`kind`), `frontier_k`,
   expected-return estimator, optimizer engine version, input manifest and turnover cap, with the newest `as_of` strictly
   before the book's. The chain is carried by `quant_portfolio.engine_version`: the default configuration (`equilibrium`, no
-  cap) keeps its key (`opt-v2+<tag>`), another estimator appends `+mu-<estimator>` and a cap appends `+to-<cap>`. So a
+  cap) keeps its key (`opt-v2+<tag>`); a variant puts its marks **before the first `+`**: `opt-v2.mu-<estimator>.to-<cap>+<tag>`
+  (`.mu-…` for a non-default estimator, `.to-…` for a cap). `v_quant_portfolio.is_current` reads `opt-v<N>` up to the first `+`
+  and requires `N` all digits, so a variant book is **never current**, whatever the compute order. So a
   `carhart` book and an `equilibrium` book at one as-of no longer overwrite each other (`--mu james_stein` and
   `--mu hist_mean` books, which used to overwrite the default book, get their own key too), and the chain is a
   *configuration over time*: change the estimator, the cap or the inputs and a new chain starts.
@@ -523,14 +528,15 @@ renormalized from that day on (T-111; `build_internal_benchmark` applies the sam
 `perf-v1` and `perf-v2` rows stay stored under their version, and
 `v_quant_benchmark_performance` shows the latest version per (book, date).
 
-**`perf-v3`: net of a turnover cost (T-077).** Each optimized book pays `turnover_cost_bps / 10⁴ × Σ|w − w_prev|` (default
-10 bps, `--turnover-cost-bps`) **once, on its first forward day**; the later days are untouched. `w_prev` is the previous
+**`perf-v3`: net of a turnover cost (T-077).** Each optimized book pays `TURNOVER_COST_BPS / 10⁴ × Σ|w − w_prev|` with
+`TURNOVER_COST_BPS = 10` (a constant beside `PERF_ENGINE_VERSION` in `evaluate.py`: **`perf-v3` means 10 bps by definition**; there is no flag or
+setting, and a different cost is a new perf engine version) **once, on its first forward day**; the later days are untouched. `w_prev` is the previous
 book of its chain (`turnover.py`), so the first book of a chain pays `bps × Σ|w|`, i.e. `bps`. The cost is charged on
 **target** weights, not on weights drifted by a month of returns — a declared simplification that slightly overstates the
 trade a daily-rebalanced book makes and understates one that drifts. **`perf-v3` `realized_return`,
 `cumulative_return` and `active_return` are therefore net of that cost**; the benchmark (an equal-weight index) and the
-`live_book` snapshot (which has no previous book to trade from) pay none, so the live-vs-benchmark active returns are not like for like. The cost, the turnover and the previous
-book are recorded in the book's `params_json["turnover_cost"]`. `perf-v2` (gross) rows are untouched. The live
+`live_book` snapshot (which has no previous book to trade from) pay none, so the live-vs-benchmark active returns are not like for like. Each book's cost (turnover, previous book, bps, cost) is recorded in the `evaluate` run's own
+`quant_run.params_json["turnover_cost"]`, keyed by portfolio id — `evaluate` never rewrites a book row `optimize` wrote. The 15 bps sensitivity lives in `scripts/verify_t077.py` only. `perf-v2` (gross) rows are untouched. The live
 `cycle` book (`portfolio_position`) is snapshotted into
 `quant_portfolio(kind='live_book')` so `v_quant_vs_live` and
 `v_quant_benchmark_performance` make the system-vs-base-case comparison a single
@@ -581,7 +587,7 @@ migration). What a consumer sees differently:
 | view | change |
 |---|---|
 | `v_quant_risk_model` | New models are `rm-v2+<tag>` (`rm-v1` models stay as they are). `manifest_json` gains a `carhart` object (or `{"unavailable": reason}`). `ret_estimator` is **unchanged in meaning**: the estimator configured when the model was built (normally `equilibrium`), not the list of μ it stores — the four μ vectors are in `quant_expected_return`, which is not projected. |
-| `v_quant_portfolio` | **There is no `ret_estimator` column here, and none was added.** A book under a non-default estimator or a turnover cap is a *parallel row* beside the default at the same `(as_of, kind)`: `engine_version` ends `+mu-carhart` / `+to-0.5` (default books keep their key), `manifest_json` carries `ret_estimator` / `turnover_cap` for those books, and `turnover` is now filled (the realized `Σ|w − w_prev|`, NULL for the first book of a chain). `is_current` marks one row per `(as_of, kind, frontier_k)` — the newest by `computed_at` among the same `opt-v<N>` — so with variants present it can flag a variant; filter on the absence of the suffix for the default book. |
+| `v_quant_portfolio` | **There is no `ret_estimator` column here, and none was added.** A book under a non-default estimator or a turnover cap is a *parallel row* beside the default at the same `(as_of, kind)`: `engine_version` is `opt-v2.mu-carhart.to-0.5+<tag>` (default books keep their key), `manifest_json` carries `ret_estimator` / `turnover_cap` for those books, and `turnover` is now filled (the realized `Σ|w − w_prev|`, NULL for the first book of a chain). `is_current` marks one row per `(as_of, kind, frontier_k)` and **a variant book is never current** (its `opt-v<N>` is not all digits before the first `+`), whatever the compute order; `v_quant_vs_live`'s `LIVE_ONLY` rows follow the default book only. |
 | `v_quant_benchmark_performance` | New rows are `perf-v3` (net of the turnover cost); the view shows the newest version per `(book, date)`, so a re-evaluated book switches from `perf-v2` to `perf-v3`. |
 | `v_quant_frontier_point` | unchanged; see the caveat below on what the points belong to. |
 
@@ -596,9 +602,8 @@ migration). What a consumer sees differently:
   two `optimize` runs on one model with different `--mu` overwrite each other's points (and the sweep takes no turnover
   cap). Read it right after the run, or keep one database per estimator.
 - **Several books at one `(as_of, kind)`.** A non-default estimator or a turnover cap makes a parallel book beside the default
-  (the `engine_version` suffix); `v_quant_portfolio.is_current` marks the newest `opt-v<N>` per `(as_of, kind,
-  frontier_k)` by `N`, then `computed_at`, so it will flag whichever variant was written last. A consumer that wants the
-  default book filters on the absence of the `+mu-` / `+to-` suffix.
+  (the marks in its `engine_version`); `v_quant_portfolio.is_current` never flags a variant, so the default book stays current
+  whatever the compute order. A consumer that wants a variant reads it by `engine_version` / `manifest_json`.
 
 - **Total-return quality** hinges on the gateway. Dividends come only from
   `portfolio-data-mining`'s yfinance-backed endpoint, which is unofficial and has no

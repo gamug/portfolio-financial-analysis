@@ -36,14 +36,17 @@ def check_turnover_cap(cap: float | None) -> float | None:
 
 
 def book_engine_version(settings: QuantSettings, manifest: QuantManifest) -> str:
-    """``opt-v2+<tag>`` plus ``+mu-<estimator>`` for a non-default estimator and ``+to-<cap>`` when
-    a turnover cap is set: the key of a book *and* the identity of its chain."""
-    version = manifest.book_tagged(settings.optimizer_engine_version)
+    """The key of a book *and* the identity of its chain: ``opt-v2+<tag>`` for the default
+    configuration (``equilibrium``, no cap); a variant puts its marks **before** the first ``+``,
+    ``opt-v2.mu-<estimator>.to-<cap>+<tag>``. ``v_quant_portfolio.is_current`` reads ``opt-v<N>``
+    up to the first ``+`` and requires ``N`` all digits, so a variant book is never current,
+    whatever the compute order (PR #133 review)."""
+    marks = ""
     if settings.ret_estimator != DEFAULT_ESTIMATOR:
-        version += f"+mu-{settings.ret_estimator}"
+        marks += f".mu-{settings.ret_estimator}"
     if settings.turnover_cap is not None:
-        version += f"+to-{settings.turnover_cap:g}"
-    return version
+        marks += f".to-{settings.turnover_cap:g}"
+    return manifest.book_tagged(settings.optimizer_engine_version + marks)
 
 
 @dataclass(frozen=True)

@@ -117,9 +117,6 @@ class QuantSettings(BaseModel):
     # T-077: sum |w - w_prev| cap, in (0, 2], against the previous book of the same chain (kind,
     # frontier_k, estimator, optimizer engine and inputs). None (the default) is off: no book changes.
     turnover_cap: float | None = None
-    # evaluate's one-way cost, in basis points of traded weight, deducted once on a book's first
-    # forward day (perf-v3): cost = bps / 1e4 * sum |w - w_prev|.
-    turnover_cost_bps: float = Field(default=10.0, ge=0.0)
     solver: str = "CLARABEL"
 
     # --- append-only engine-version knobs ---

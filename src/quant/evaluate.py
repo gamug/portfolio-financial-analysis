@@ -39,7 +39,7 @@ from quant.db import (
     sync_positions,
     upsert_benchmark_performance,
 )
-from quant.state import fail_run, finish_run, open_run
+from quant.state import fail_run, finish_run, merge_run_params, open_run
 from quant.turnover import turnover_between
 from quant.universe import benchmark_gate
 
@@ -47,6 +47,9 @@ from quant.universe import benchmark_gate
 # optimized book's first forward day; perf-v2's (against bench-v2, T-108) are gross and, like
 # perf-v1's, stay as written under their version.
 PERF_ENGINE_VERSION = "perf-v3"
+# The cost perf-v3 charges, by definition: a different cost is a new perf engine version, never a
+# flag, so a perf-v3 row always means this many basis points (PR #133 review).
+TURNOVER_COST_BPS = 10.0
 _BPS = 10_000.0
 LIVE_BOOK_KIND = "live_book"
 
@@ -64,7 +67,7 @@ class EvaluateResult:
 
 
 def _turnover_cost(
-    conn: Database, portfolio_id: int, weights: dict[int, float], *, cost_bps: float
+    conn: Database, portfolio_id: int, weights: dict[int, float]
 ) -> dict[str, Any] | None:
     """The one-off cost of trading into *portfolio_id*'s target weights from the previous book of
     its chain (T-077): ``bps / 1e4 * sum |w - w_prev|``, on target weights, not drifted ones. The
@@ -86,23 +89,14 @@ def _turnover_cost(
     previous = load_book_weights(conn, found[0]) if found else None
     turnover = turnover_between(weights, previous)
     return {
-        "bps": cost_bps,
+        "bps": TURNOVER_COST_BPS,
         "turnover": turnover,
-        "cost": cost_bps / _BPS * turnover,
+        "cost": TURNOVER_COST_BPS / _BPS * turnover,
         "first_of_chain": found is None,
         "previous_portfolio_id": found[0] if found else None,
         "previous_as_of": found[1] if found else None,
         "engine_version": PERF_ENGINE_VERSION,
     }
-
-
-def _record_cost(conn: Database, portfolio_id: int, cost: dict[str, Any]) -> None:
-    conn.execute(
-        "UPDATE quant_portfolio SET params_json = json_patch(COALESCE(params_json, '{}'), ?) "
-        "WHERE id = ?",
-        (json.dumps({"turnover_cost": cost}, separators=(",", ":")), portfolio_id),
-    )
-    conn.commit()
 
 
 def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
@@ -114,7 +108,7 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
     benchmark: str,
     benchmark_version: str,
     return_engine_version: str,
-    cost_bps: float,
+    costs: dict[str, dict[str, Any]],
 ) -> int:
     weights = load_book_weights(conn, portfolio_id)
     if not weights:
@@ -140,7 +134,7 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
             if a not in last_seen or d > last_seen[a]:
                 last_seen[a] = d
 
-    cost = _turnover_cost(conn, portfolio_id, weights, cost_bps=cost_bps) if fwd else None
+    cost = _turnover_cost(conn, portfolio_id, weights) if fwd else None
     pending_cost = float(cost["cost"]) if cost else 0.0
 
     cumulative = 1.0
@@ -159,8 +153,8 @@ def _evaluate_book(  # noqa: PLR0913 - keyword-only knobs
         br = bench.get(d)
         active = None if br is None else realized - br
         rows.append((d, realized, cumulative - 1.0, benchmark, br, active))
-    if cost is not None:
-        _record_cost(conn, portfolio_id, cost)
+    if cost is not None:  # recorded on the evaluate run, never on the book row optimize wrote
+        costs[str(portfolio_id)] = cost
     return upsert_benchmark_performance(
         conn, portfolio_id, rows, engine_version=PERF_ENGINE_VERSION
     )
@@ -237,8 +231,6 @@ def run_evaluate(
     ``as_of`` an `optimize` run just used) that leaves no room between it and
     whatever price data has actually been ingested. Raises ``ValueError`` if
     omitted and no book has been persisted yet."""
-    if settings.turnover_cost_bps < 0:
-        raise ValueError(f"turnover_cost_bps must be >= 0, got {settings.turnover_cost_bps}")
     owns = conn is None
     conn = conn or connect(settings.db_path)
     try:
@@ -261,7 +253,7 @@ def run_evaluate(
                 "date_from": date_from,
                 "date_to": date_to,
                 "benchmark": benchmark,
-                "turnover_cost_bps": settings.turnover_cost_bps,
+                "turnover_cost_bps": TURNOVER_COST_BPS,
                 "dirty_tree_bypassed": dirty_reason,
             },
             code_version=cv,
@@ -289,6 +281,7 @@ def run_evaluate(
             ).fetchall()
             perf_rows = 0
             evaluated = 0
+            costs: dict[str, dict[str, Any]] = {}
             for b in books:
                 added = _evaluate_book(
                     conn,
@@ -298,10 +291,11 @@ def run_evaluate(
                     benchmark=benchmark,
                     benchmark_version=bench_version,
                     return_engine_version=settings.return_engine_version,
-                    cost_bps=settings.turnover_cost_bps,
+                    costs=costs,
                 )
                 perf_rows += added
                 evaluated += 1 if added else 0
+            merge_run_params(conn, run_id, {"turnover_cost": costs})
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'
             conn.rollback()  # drop uncommitted writes: fail_run commits

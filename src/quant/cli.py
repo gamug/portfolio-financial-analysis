@@ -295,13 +295,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=INTERNAL_EW,
         help=f"{INTERNAL_EW} (rebuilt over the gated panel) or a series loaded with load-benchmark",
     )
-    ev.add_argument(
-        "--turnover-cost-bps",
-        dest="turnover_cost_bps",
-        type=float,
-        help="one-way cost in basis points of traded weight, deducted once on each book's first "
-        "forward day: bps / 1e4 * sum |w - w_prev| (default 10; perf-v3, T-077)",
-    )
     ev.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     vs = sub.add_parser(
@@ -340,7 +333,6 @@ _FLAG_TO_FIELD: dict[str, tuple[str, object]] = {
     "max_name_weight": ("max_name_weight", float),
     "max_sector_weight": ("max_sector_weight", float),
     "turnover_cap": ("turnover_cap", float),
-    "turnover_cost_bps": ("turnover_cost_bps", float),
     "solver": ("solver", str),
     "market_cap_max_share_age_days": ("market_cap_max_share_age_days", int),
 }
