@@ -177,7 +177,8 @@ def load_books(
             for obj in OBJECTIVES:
                 if obj == "frontier":
                     m = conn.execute(
-                        "SELECT id FROM quant_risk_model WHERE as_of = ?", (as_of,)
+                        "SELECT id FROM quant_risk_model WHERE as_of = ? AND model_version LIKE 'rm-v2+%'",
+                        (as_of,),
                     ).fetchone()
                     w = _frontier_best(conn, int(m["id"])) if m else None
                 else:
@@ -200,7 +201,10 @@ def _as_ofs(db: str) -> list[str]:
     conn = connect_ro(db)
     try:
         return [
-            str(r[0]) for r in conn.execute("SELECT as_of FROM quant_risk_model ORDER BY as_of")
+            str(r[0])
+            for r in conn.execute(
+                "SELECT as_of FROM quant_risk_model WHERE model_version LIKE 'rm-v2+%' ORDER BY as_of"
+            )
         ]
     finally:
         conn.close()
