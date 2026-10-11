@@ -657,6 +657,14 @@ the final pilot, `T-143`.
         across the full universe and inspected.
       - A `docs/model_fixes.md` entry (methodology change, constitution AI behavior #12). **Done**
         in PR #115.
+      - **Residual to fix before `T-143` (found by `T-149`'s cohort rebuild, 2026-10-11): CNP's Q1-2022 10-Q
+        (accession `0001130310-22-000063`, period 2022-03-31, filed 2022-05-03) is labelled `2022Q3`, and then
+        collides with the real Q3** (`0001130310-22-000123`, period 2022-09-30), which is refused
+        (`FilingLabelCollision`, recorded as a `stage='process'` error, so CNP's Q3-2022 is not stored). Cause:
+        `T-140`'s `fiscal.payload_fiscal_year_end` takes the earliest balance-sheet instant 30-330 days back, and
+        that payload carries stray instants (2021-07-20, 2021-12-02, ...), so the fiscal year end is read as
+        2021-07-20 and March falls in the third quarter. `T-140`'s code, unchanged by `T-149`. Acceptance: both
+        10-Qs stored, as Q1 and Q3, with no collision, on the cohort rebuild.
 - [ ] **T-079** *(**SUPERSEDED by `T-100`, 2026-10-05, at the user's direction — do not
       implement.** Kept unchecked as the historical record. Reason: `T-100` starts from a fresh
       database and runs the LLM on every filing, so a separate bundled re-run would pay for the same
@@ -676,8 +684,11 @@ the final pilot, `T-143`.
         again on the historical universe before they go into the thesis.
       - Filings of a company that left the index come by CIK; if one of them succeeded a predecessor registrant whose CIK
         holds the earlier filings, it uses the same mechanism as XOM: a row in `src/kg_schema/data/cik_successions.csv` (successor,
-        predecessor, effective date, the accession and a quote of the 8-K12B/8-K12G3/8-K or S-4 that establishes it), which the
-        pipeline, the invariant and `cik_chain` already read. Only add a row for a company that loses filings without it (T-149).
+        predecessor, effective date, the accession and a quote of the successor's own succession 8-K -- 8-K12B, 8-K12G3 or 8-K15D5, per APP-10b-1 --
+        that establishes it, and `rules` = "APP-10b-2;APP-10b-3"), which the pipeline, the invariant and `cik_chain` already read. APP-10b-2 accepts
+        no other evidence (not an S-4, not a plain 8-K). Each new row must also pass the APP-10b-3 check (the predecessor's last 10-K before the
+        effective date is listed under the predecessor's CIK, else `pipeline._verify_successions` leaves the link out and records
+        `stage='succession'`). Only add a row for a company that loses filings without it (T-149).
       - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
         WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
         assets are keyed by ticker.
@@ -885,6 +896,14 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       universe member with core data (or an explained, recorded exception); `cycle`
       ranks the full universe; the `quant` books and `evaluate` run clean on it; the
       run is recorded on the `*_run` log rows with its `code_version`.
+      **Known data checks (from `T-149`, 2026-10-11):** GEHC's FY2022 10-K (accession `0001932393-23-000025`,
+      filed 2023-02-15, weeks after the spin-off from GE) carries only cover-page XBRL -- R1 "Cover" and R2 "Audit
+      Information", a 19 KB instance, no tagged statements, no amendment -- so edgartools finds no statements and the
+      gateway's error follows. It is **no financial statements in the filing's XBRL (source data gap), not retried**;
+      not a gateway request. The same error hit 35 companies (57 filings) in production's runs of 2026-08-28..09-21;
+      all 56 others extract fine on today's gateway. Expect GEHC FY2022 as a recorded failure, and count that error
+      across the universe. (PSKY FY2025 is refused by ID-07 as recorded: its payload holds only the predecessor's 2024
+      and 2023 full years, which fits a company formed by a 2025 merger -- not a gateway fault.)
       **Must run on a fresh `financial.db` (PR #104 review, 2026-09-30):** `financial_facts`
       is append-only, `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key,
       filing_version = accession_number)` — a re-run against a database already carrying a
