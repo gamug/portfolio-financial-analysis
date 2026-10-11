@@ -180,6 +180,21 @@ def test_the_combined_element_never_outranks_a_narrower_long_term_line() -> None
     assert resolution.value == 40_000_000_000.0 and resolution.flags == ()
 
 
+def test_the_reit_pair_next_to_a_companys_own_long_term_line_is_a_sub_line_not_the_debt() -> None:
+    """MetLife files "Long-term debt" (14.5B, the combined element) and a "Collateral financing
+    arrangement" (352M, ``SecuredDebt``): the first is the long-term debt; read as the REIT pair
+    the second displaced it (a 14.3B debt became 1.1B)."""
+    payload = copy.deepcopy(_payload(PM))
+    template = _row(payload, "balance_sheet", G + "LongTermDebtAndCapitalLeaseObligations")
+    _add(payload, "balance_sheet", template, concept=G + "SecuredDebt")
+    for column in [c for c in template if c[:2] == "20"]:
+        payload["balance_sheet"][-1][column] = 352_000_000.0
+    stmts = Statements.from_payload(payload)
+    resolution = stmts.resolve("long_term_debt", _key(stmts))
+    assert resolution.value == 45_134_000_000.0
+    assert resolution.concept == G + "LongTermDebtAndCapitalLeaseObligations"
+
+
 # -- N23: debt concepts the resolver did not read -------------------------------------------------
 
 
@@ -222,14 +237,32 @@ def test_a_partial_map_is_accepted_flagged_when_long_term_debt_and_the_balance_s
 
 
 def test_a_partial_map_is_refused_when_the_balance_sheet_did_not_resolve() -> None:
-    """D-01 (ii): without the rest of the balance sheet a missing term is as likely a capture
-    failure. EXE with its cash line gone: no debt, flagged."""
+    """D-01 (ii): without the rest of the balance sheet (total assets, equity) a missing term is as
+    likely a capture failure. EXE with its equity line gone: no debt, flagged."""
     stmts = Statements.from_payload(
-        _drop(_payload(EXE), "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+        _drop(
+            _payload(EXE),
+            "balance_sheet",
+            G + "StockholdersEquity",
+            G + "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+        )
     )
     total = stmts.total_debt(_key(stmts))
     assert total.value is None
     assert set(total.flags) == {"partial_map_rejected", "capture_failure"}
+
+
+def test_a_missing_cash_empties_the_enterprise_value_but_not_the_debt() -> None:
+    """Cash never qualifies (D-01): a cash the registry did not read leaves the enterprise value and
+    the ROIC empty (MET-00). The debt itself is accepted on the rest of the balance sheet -- Edison,
+    CF Industries and 60 other companies file a cash concept the registry does not read, and their
+    debt ratios do not need it."""
+    stmts = Statements.from_payload(
+        _drop(_payload(EXE), "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    )
+    total = stmts.total_debt(_key(stmts))
+    assert total.value == 1_929_000_000.0 and total.flags == ("partial_map",)
+    assert stmts.get("cash", _key(stmts)) is None
 
 
 def test_short_term_debt_alone_leaves_debt_empty() -> None:

@@ -65,6 +65,15 @@ def test_n5_cash_and_short_term_investments_counted_twice() -> None:
     )
 
 
+def test_n5_is_not_counted_once_the_liquidity_group_leaves_the_investments_out() -> None:
+    items: dict[str, float | tuple[float, str]] = {
+        "cash": (100.0, G + "CashCashEquivalentsAndShortTermInvestments"),
+        "short_term_investments": 20.0,
+    }
+    assert rm.cash_double_counts(rec(items=items))
+    assert not rm.cash_double_counts(rec(items=items, cash_ratio_flags_investments=True))
+
+
 def test_n6_a_balance_sheet_read_from_another_date() -> None:
     assert rm.instant_not_exact(rec(instant="2022-12-31", instant_exact=False))
     assert not rm.instant_not_exact(rec())

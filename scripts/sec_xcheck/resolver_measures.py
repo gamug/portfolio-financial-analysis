@@ -142,15 +142,13 @@ def st_debt_gap(r: Rec) -> float:
 # ---------------------------------------------------------------- N5: cash
 def cash_double_counts(r: Rec) -> bool:
     """The cash ratio adds the short-term investments to a cash that already contains them. Since T-148 the liquidity
-    group leaves them out of the sum and says so (``flag_cash_includes_short_term_investments``)."""
+    group leaves them out of the sum and says so (``flag_cash_includes_short_term_investments``); ``features.extract``
+    records whether it did."""
     if concept_of(r, "cash") != G + "CashCashEquivalentsAndShortTermInvestments" or r.value(
         "short_term_investments"
     ) in (None, 0.0):
         return False
-    cash_ratio = r.f.get("metrics", {}).get("cash_ratio")
-    return not (
-        cash_ratio and cash_ratio["inputs"].get("flag_cash_includes_short_term_investments")
-    )
+    return not r.f.get("cash_ratio_flags_investments", False)
 
 
 # ---------------------------------------------------------------- N6 / ID-05: balance sheet date

@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from fundamental_agent import fiscal
-from fundamental_agent.metrics import COMPUTERS
+from fundamental_agent.metrics import COMPUTERS, liquidity
 from fundamental_agent.statements import REGISTRY, Statements, filed_value
 
 GAAP = "us-gaap_"
@@ -241,6 +241,11 @@ def extract(stmts: Statements, key: str, *, metrics: bool = True) -> dict[str, A
         ),
         "items": {item: resolution(stmts, item, key) for item in REGISTRY},
     }
+    # N5 (T-148): whether the liquidity group leaves the short-term investments out of a cash line that contains them
+    cash_ratio = next(r for r in liquidity.compute(stmts, key) if r.name == "cash_ratio")
+    record["cash_ratio_flags_investments"] = bool(
+        cash_ratio.inputs.get("flag_cash_includes_short_term_investments")
+    )
     total_debt = stmts.total_debt(key)
     record["total_debt"] = {
         "value": total_debt.value,

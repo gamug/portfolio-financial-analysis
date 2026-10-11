@@ -868,12 +868,13 @@ class Statements:
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
         """Long-term debt (MET-07): the narrowest filed line (ID-02a) -- ``LongTermDebtNoncurrent``,
-        then ``LongTermDebt`` (it includes current maturities), then the REIT pair
-        ``UnsecuredDebt`` + ``SecuredDebt`` (N23; both "including the current and noncurrent
-        portions"), then the combined debt-and-lease elements, used only because no narrower line
-        is filed and flagged ``includes_finance_leases``. A line that includes the current
-        maturities is flagged ``includes_current_maturities``: no current-maturity term is added
-        to it (:meth:`_short_term_parts`, N4)."""
+        then ``LongTermDebt`` (it includes current maturities), then the combined debt-and-lease
+        elements, used only because no narrower line is filed and flagged
+        ``includes_finance_leases``, and last the REIT pair ``UnsecuredDebt`` + ``SecuredDebt``
+        (N23; both "including the current and noncurrent portions"), which a REIT files as its
+        only long-term debt lines. A line that includes the current maturities is flagged
+        ``includes_current_maturities``: no current-maturity term is added to it
+        (:meth:`_short_term_parts`, N4)."""
         noncurrent, long_term, combined, combined_current = spec.concepts
         for concept in (noncurrent, long_term):
             value = self._concept_value(spec, column, concept)
@@ -881,10 +882,6 @@ class Statements:
                 if concept in INCLUDES_CURRENT_MATURITIES:
                     self._flag("includes_current_maturities")
                 return value, concept, "concept"
-        reit = {c: v for c in REIT_DEBT if (v := self._concept_value(spec, column, c)) is not None}
-        if reit:
-            self._flag("includes_current_maturities")
-            return sum(reit.values()), " + ".join(reit), "map" if len(reit) > 1 else "concept"
         for concept in (combined, combined_current):
             value = self._concept_value(spec, column, concept)
             if value is not None:
@@ -892,6 +889,13 @@ class Statements:
                 if concept in INCLUDES_CURRENT_MATURITIES:
                     self._flag("includes_current_maturities")
                 return value, concept, "concept"
+        # the REIT pair is read only when no other long-term line is filed: next to a company's own
+        # long-term line it is a sub-line (MET's "collateral financing arrangement", 352M against
+        # 14.5B of long-term debt), never the long-term debt
+        reit = {c: v for c in REIT_DEBT if (v := self._concept_value(spec, column, c)) is not None}
+        if reit:
+            self._flag("includes_current_maturities")
+            return sum(reit.values()), " + ".join(reit), "map" if len(reit) > 1 else "concept"
         return None, None, None
 
     def _short_term_parts(
@@ -957,12 +961,13 @@ class Statements:
 
         * both filed -> their sum; one term of the map not filed -> the filed terms, flagged
           ``partial_map``, **only** when long-term debt is present and the rest of the balance
-          sheet resolved (total assets, equity and cash); otherwise empty, ``partial_map_rejected``;
+          sheet resolved (total assets and equity); otherwise empty, ``partial_map_rejected``;
         * short-term debt alone -> empty (``short_term_debt_only``): it suggests an unrecognized
           long-term concept;
         * no debt line at all -> **0**, flagged ``no_debt_lines``, only when the balance sheet
-          resolved completely, no debt concept is filed on it and no interest-expense concept on
-          the income statement (the variants the registry does not read included); otherwise
+          resolved completely (total assets, equity and cash), no debt concept is filed on it and
+          no interest-expense concept on the income statement (the variants the registry does not
+          read included); otherwise
           empty, flagged ``capture_failure`` (N23). A missing debt is never read as 0 (MET-00).
         """
         outer, self._flags = self._flags, []
@@ -975,13 +980,13 @@ class Statements:
         finally:
             self._flags = outer
 
-    def _balance_sheet_resolved(self, period_key: str) -> bool:
-        """D-01 (ii): the rest of the balance sheet resolved -- the three items debt is read
-        against (total assets, equity, cash)."""
-        return all(
-            self.resolve(item, period_key).value is not None
-            for item in ("total_assets", "equity", "cash")
-        )
+    def _balance_sheet_resolved(self, period_key: str, *, with_cash: bool = False) -> bool:
+        """The rest of the balance sheet resolved (D-01 (ii), ID-02b): total assets and equity -- the
+        denominators the debt ratios divide by -- and, for the zero of "no debt line at all", cash too
+        (a company with no debt must show a whole balance sheet). A missing cash is a capture failure
+        of its own: it empties the enterprise value and ROIC (MET-00) but not the debt."""
+        items = ("total_assets", "equity", "cash") if with_cash else ("total_assets", "equity")
+        return all(self.resolve(item, period_key).value is not None for item in items)
 
     def _total_debt(
         self, period_key: str, column: str
@@ -1030,7 +1035,7 @@ class Statements:
     ) -> tuple[float | None, str | None, str | None]:
         """ID-02b: no long-term and no short-term debt resolved."""
         if (
-            self._balance_sheet_resolved(period_key)
+            self._balance_sheet_resolved(period_key, with_cash=True)
             and not self._has_debt_line(column)
             and not self._has_interest_expense_line(period_key)
         ):
