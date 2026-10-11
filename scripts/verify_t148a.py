@@ -22,6 +22,7 @@ before and after). Every write goes to ``--out``.
 * ``n13`` -- the filings that took the "available to common" line as net income (ID-03): how many file
   ``NetIncomeLoss`` (so they resolve now), how many are left empty and flagged.
 * ``n23`` -- the debt and interest concepts the resolver did not read: how many filings now resolve through them.
+* ``flags`` -- how often each resolution flag is raised, per item.
 * ``tables`` -- the before/after rows of two ``audit_sec_checklist.py measure`` results.
 """
 
@@ -66,6 +67,16 @@ N23_DEBT = (
 )
 N23_INTEREST = G + "InterestExpenseDebt"
 SHOWN = 5  # examples listed
+FLAG_ITEMS = (
+    "net_income",
+    "income_tax",
+    "interest_expense",
+    "capital_expenditure",
+    "equity",
+    "cash",
+    "long_term_debt",
+    "short_term_debt",
+)
 # why a debt is empty, most specific first (the flags a Resolution of total_debt carries)
 REASONS = ("short_term_debt_only", "partial_map_rejected", "capture_failure")
 TABLE_ROWS = (
@@ -361,6 +372,28 @@ def cmd_n23(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_flags(args: argparse.Namespace) -> int:
+    """How often each resolution flag is raised, per item, over the own-period filings (and how many had no hint)."""
+    conn = open_ro(args.db)
+    counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    total = 0
+    for f in filings(conn):
+        stmts = statements_from_db(conn, f["id"])
+        key = own_period_key(stmts, f["form"], f["period_end"])
+        if key is None:
+            continue
+        total += 1
+        for item in FLAG_ITEMS:
+            for flag in stmts.resolve(item, key).flags:
+                counts[item][flag] += 1
+        for flag in stmts.total_debt(key).flags:
+            counts["total_debt"][flag] += 1
+    print(f"{total} own-period filings")
+    for item, c in counts.items():
+        print(f"  {item:22s}", dict(c.most_common()))
+    return 0
+
+
 def cmd_tables(args: argparse.Namespace) -> int:
     def load(path: str) -> dict[str, Any]:
         return {
@@ -393,7 +426,12 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--analysis-date", default="2026-09-30")
         p.add_argument("--no-prices", action="store_true")
         p.set_defaults(fn=fn)
-    for name, fn in (("cost", cmd_cost), ("n13", cmd_n13), ("n23", cmd_n23)):
+    for name, fn in (
+        ("cost", cmd_cost),
+        ("n13", cmd_n13),
+        ("n23", cmd_n23),
+        ("flags", cmd_flags),
+    ):
         p = sub.add_parser(name)
         p.add_argument("--db", required=True)
         p.add_argument("--cache")
