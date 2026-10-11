@@ -164,7 +164,7 @@ INCLUDES_CURRENT_MATURITIES = (
 # is evidence the company has debt). Receivables, securities, gains and the like are not debt.
 _DEBT_LINE_RE = re.compile(
     r"debt|notes|loans?payable|borrowing|linesofcredit|lineofcredit|commercialpaper|debenture"
-    r"|mortgage|convertible|financingarrangement",
+    r"|mortgage|financingarrangement",
     re.IGNORECASE,
 )
 _NOT_A_DEBT_LINE_RE = re.compile(
@@ -878,14 +878,16 @@ class Statements:
         only long-term debt lines. A line that includes the current maturities is flagged
         ``includes_current_maturities``: no current-maturity term is added to it
         (:meth:`_short_term_parts`, N4)."""
-        noncurrent, long_term, combined, combined_current = spec.concepts
-        for concept in (noncurrent, long_term):
+        for concept in (G + "LongTermDebtNoncurrent", G + "LongTermDebt"):
             value = self._concept_value(spec, column, concept)
             if value is not None:
                 if concept in INCLUDES_CURRENT_MATURITIES:
                     self._flag("includes_current_maturities")
                 return value, concept, "concept"
-        for concept in (combined, combined_current):
+        for concept in (
+            G + "LongTermDebtAndCapitalLeaseObligations",
+            G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+        ):
             value = self._concept_value(spec, column, concept)
             if value is not None:
                 self._flag("includes_finance_leases")
@@ -1016,7 +1018,7 @@ class Statements:
         )
 
         if lt_value is None and st_value is None:
-            return self._no_debt_line(period_key, column)
+            return self._no_debt_line(period_key)
         if lt_value is None:
             self._flag("short_term_debt_only")
             self._flag("capture_failure")
@@ -1037,9 +1039,7 @@ class Statements:
         self._flag("partial_map")
         return lt_value + (st_value or 0.0), concept, "map"
 
-    def _no_debt_line(
-        self, period_key: str, column: str
-    ) -> tuple[float | None, str | None, str | None]:
+    def _no_debt_line(self, period_key: str) -> tuple[float | None, str | None, str | None]:
         """ID-02b: no long-term and no short-term debt resolved."""
         if (
             self._balance_sheet_resolved(period_key, with_cash=True)
@@ -1375,7 +1375,7 @@ class Statements:
     def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
         """One value per distinct ``spec.concepts`` member, first occurrence in
         document order. Matches only ``spec.concepts`` (never the fuzzy
-        ``label_contains`` fallback :func:`_matches` also checks -- an
+        ``label_contains`` fallback -- an
         unrecognized custom "Total ..." extension concept can match by label
         text alone and would double-count against the real components, or
         wrongly inflate the plausibility floor). Shared by
@@ -1530,15 +1530,6 @@ def _parse_period(column: str) -> Period | None:
     if instant:
         return Period(key=column, date=instant["date"], tag=INSTANT)
     return None
-
-
-def _matches(row: dict[str, Any], spec: LineItem) -> bool:
-    if row.get("concept") in spec.concepts:
-        return True
-    if spec.standard and row.get("standard_concept") in spec.standard:
-        return True
-    label = str(row.get("label") or "").lower()
-    return any(hint in label for hint in spec.label_contains)
 
 
 def _preferred_sign(row: dict[str, Any]) -> float | None:

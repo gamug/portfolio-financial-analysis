@@ -364,6 +364,15 @@ def test_a_debt_concept_by_any_of_its_names_is_a_debt_line(concept: str) -> None
     assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
 
 
+def test_a_convertible_preferred_stock_is_not_a_debt_line() -> None:
+    """Equity named "convertible" is not an obligation: a company with no debt keeps its zero."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + "ConvertiblePreferredStockNonredeemable")
+    stmts = Statements.from_payload(payload)
+    assert stmts.total_debt(_key(stmts)).value == 0.0
+
+
 def test_an_incomplete_balance_sheet_makes_a_missing_debt_a_capture_failure() -> None:
     stmts = Statements.from_payload(
         _drop(_payload(ALGN), "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
@@ -507,6 +516,27 @@ def test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty(
     }
     assert negative["enterprise_fcf_yield"].value is None
     assert negative["free_cash_flow_yield"].value is not None  # the equity yield needs no interest
+
+
+def test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one() -> None:
+    """``InterestAndDebtExpense`` filed negative is rejected (ID-13) and the item is empty -- but an empty
+    interest expense must not read as "no interest": the unlevered FCF yield is empty, not the levered one."""
+    price = ClosePrice(date="2024-12-31", close=100.0)
+    payload = copy.deepcopy(_payload(DUKE))
+    interest = _row(payload, "income_statement", G + "InterestExpense")
+    interest["concept"] = G + "InterestAndDebtExpense"  # Duke's expense under the listed concept
+    ok = {
+        r.name: r
+        for r in valuation.compute(Statements.from_payload(payload), "2024-12-31 (FY)", price)
+    }
+    assert ok["enterprise_fcf_yield"].value is not None
+    interest["preferred_sign"] = -1.0  # filed negative
+    rejected = {
+        r.name: r
+        for r in valuation.compute(Statements.from_payload(payload), "2024-12-31 (FY)", price)
+    }
+    assert rejected["enterprise_fcf_yield"].value is None
+    assert rejected["free_cash_flow_yield"].value is not None
 
 
 def test_a_zero_interest_expense_leaves_the_coverage_empty() -> None:

@@ -102,8 +102,19 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     total_debt = debt_resolution.value
     enterprise_value = _enterprise_value(market_cap, total_debt, cash)
 
-    fcff = _fcf_to_firm(stmts, period_key, fcfe, stmts.get("interest_expense", period_key))
-    fcff_annual = _fcf_to_firm(stmts, period_key, fcfe_annual, annual.get("interest_expense"))
+    interest_resolution = stmts.resolve("interest_expense", period_key)
+    # a sign the resolver rejected (ID-13) is not "no interest expense": the unlevered flow is empty
+    interest_rejected = any(f.endswith("_rejected") for f in interest_resolution.flags)
+    fcff = _fcf_to_firm(
+        stmts, period_key, fcfe, interest_resolution.value, interest_rejected=interest_rejected
+    )
+    fcff_annual = _fcf_to_firm(
+        stmts,
+        period_key,
+        fcfe_annual,
+        annual.get("interest_expense"),
+        interest_rejected=interest_rejected,
+    )
     sbc_adjusted_fcf = (
         fcfe_annual - sbc_annual if fcfe_annual is not None and sbc_annual is not None else None
     )
@@ -184,10 +195,15 @@ class _AnnualFlows:
 
 
 def _fcf_to_firm(
-    stmts: Statements, period_key: str, fcfe: float | None, interest: float | None
+    stmts: Statements,
+    period_key: str,
+    fcfe: float | None,
+    interest: float | None,
+    *,
+    interest_rejected: bool = False,
 ) -> float | None:
     """Unlevered FCF proxy: FCFE plus after-tax interest expense (no working-capital delta)."""
-    if fcfe is None:
+    if fcfe is None or interest_rejected:
         return None
     if interest is None:
         return fcfe
