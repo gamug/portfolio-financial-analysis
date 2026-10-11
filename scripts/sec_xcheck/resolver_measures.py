@@ -23,6 +23,8 @@ OCF_LINES = (
 CURRENT_MATURITIES_INCLUDED = (
     G + "LongTermDebt",
     G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+    G + "UnsecuredDebt",  # the REIT pair (N23) is "including the current and noncurrent portions"
+    G + "SecuredDebt",
 )
 COMBINED_DEBT_LEASE = (
     G + "LongTermDebtAndCapitalLeaseObligations",
@@ -60,11 +62,16 @@ def ocf_both_differ(r: Rec) -> bool:
 
 
 # ---------------------------------------------------------------- N4 / MET-07: debt
+def _parts(concept: str | None) -> list[str]:
+    """The concepts of a resolved value: one, or the terms of a map (``a + b``, T-148)."""
+    return [] if concept is None else concept.split(" + ")
+
+
 def debt_double_counts(r: Rec) -> bool:
     """A long-term line that already contains current maturities, plus ``LongTermDebtCurrent`` read as short-term debt."""
-    return concept_of(r, "long_term_debt") in CURRENT_MATURITIES_INCLUDED and concept_of(
-        r, "short_term_debt"
-    ) == (G + "LongTermDebtCurrent")
+    return any(
+        c in CURRENT_MATURITIES_INCLUDED for c in _parts(concept_of(r, "long_term_debt"))
+    ) and (G + "LongTermDebtCurrent") in _parts(concept_of(r, "short_term_debt"))
 
 
 def double_counted_amount(r: Rec) -> float:
@@ -84,43 +91,75 @@ def debt_absent(r: Rec) -> bool:
 
 
 def ev_zero_filled(r: Rec) -> bool:
-    """Enterprise value adds ``(total_debt or 0) - (cash or 0)``: a missing term is silently 0 (D10)."""
-    return debt_absent(r) or r.value("cash") is None
+    """Enterprise value has no debt or no cash. Before T-148 it added ``(total_debt or 0) - (cash or 0)``: a missing term
+    was silently 0 (D10). Since, MET-00: the enterprise value (and ROIC) is left empty, so this counts the filings it
+    is left empty for -- debt as :meth:`Statements.total_debt` resolves it (a partial map, ID-02b's debt = 0 and
+    capture failure included), not the long-term and short-term items alone."""
+    total = r.f.get("total_debt")
+    no_debt = debt_absent(r) if total is None else total["value"] is None
+    return no_debt or r.value("cash") is None
 
 
-# D-06(d): the short-term debt order T-148 should use: disjoint LongTermDebtCurrent + ShortTermBorrowings,
+# D-06(d): the short-term debt order T-148 uses: disjoint LongTermDebtCurrent + ShortTermBorrowings,
 # CommercialPaper only without ShortTermBorrowings, DebtCurrent (it includes leases) last and flagged.
-def proposed_short_term_debt(st: dict[str, float]) -> float | None:
-    ltdc, stb = st.get(G + "LongTermDebtCurrent"), st.get(G + "ShortTermBorrowings")
-    cp, dc = st.get(G + "CommercialPaper"), st.get(G + "DebtCurrent")
-    parts = [p for p in (ltdc, stb if stb is not None else cp) if p is not None]
+# N23 (T-148): OtherLongTermDebtCurrent takes the place of LongTermDebtCurrent and NotesPayableCurrent the place of
+# ShortTermBorrowings / CommercialPaper when those are not filed. N4 (MET-07): a long-term line that includes the current
+# maturities gets none added -- neither LongTermDebtCurrent nor DebtCurrent, which contains them.
+def proposed_short_term_debt(st: dict[str, float], lt_concept: str | None = None) -> float | None:
+    includes_current = any(c in CURRENT_MATURITIES_INCLUDED for c in _parts(lt_concept))
+    first = (
+        None if includes_current else _first(st, "LongTermDebtCurrent", "OtherLongTermDebtCurrent")
+    )
+    second = _first(st, "ShortTermBorrowings", "CommercialPaper", "NotesPayableCurrent")
+    parts = [p for p in (first, second) if p is not None]
     if parts:
         return float(sum(parts))
-    return dc
+    return None if includes_current else st.get(G + "DebtCurrent")
+
+
+def _first(st: dict[str, float], *names: str) -> float | None:
+    return next((st[G + n] for n in names if G + n in st), None)
 
 
 def st_debt_differs(r: Rec) -> bool:
-    new, old = proposed_short_term_debt(r.f["st"]), r.value("short_term_debt")
+    new, old = (
+        proposed_short_term_debt(r.f["st"], concept_of(r, "long_term_debt")),
+        r.value("short_term_debt"),
+    )
     if new is None and old is None:
         return False
     return new is None or old is None or abs(new - old) > 1.0
 
 
 def st_debt_gap(r: Rec) -> float:
-    new, old = proposed_short_term_debt(r.f["st"]), r.value("short_term_debt")
+    new, old = (
+        proposed_short_term_debt(r.f["st"], concept_of(r, "long_term_debt")),
+        r.value("short_term_debt"),
+    )
     return abs((new or 0.0) - (old or 0.0))
 
 
 # ---------------------------------------------------------------- N5: cash
 def cash_double_counts(r: Rec) -> bool:
-    return concept_of(r, "cash") == G + "CashCashEquivalentsAndShortTermInvestments" and r.value(
+    """The cash ratio adds the short-term investments to a cash that already contains them. Since T-148 the liquidity
+    group leaves them out of the sum and says so (``flag_cash_includes_short_term_investments``)."""
+    if concept_of(r, "cash") != G + "CashCashEquivalentsAndShortTermInvestments" or r.value(
         "short_term_investments"
-    ) not in (None, 0.0)
+    ) in (None, 0.0):
+        return False
+    cash_ratio = r.f.get("metrics", {}).get("cash_ratio")
+    return not (
+        cash_ratio and cash_ratio["inputs"].get("flag_cash_includes_short_term_investments")
+    )
 
 
 # ---------------------------------------------------------------- N6 / ID-05: balance sheet date
 def instant_not_exact(r: Rec) -> bool:
-    return r.f["instant"] is not None and not r.f["instant_exact"]
+    """The balance sheet read is not the one dated the period end (N6, ID-05). Since T-148 an instant that rounds to the
+    same month end is the period's own (PER-08); ``instant_same_period`` says so, and only another date is counted."""
+    if r.f["instant"] is None:
+        return False
+    return not r.f.get("instant_same_period", r.f["instant_exact"])
 
 
 def instant_gap_days(r: Rec) -> str:
@@ -169,9 +208,10 @@ def nci_present(r: Rec) -> bool:
 
 # ---------------------------------------------------------------- D3 / D-06(c): income tax
 def tax_component_only(r: Rec) -> bool:
-    return (
-        how_of(r, "income_tax") is not None
-        and concept_of(r, "income_tax") != G + "IncomeTaxExpenseBenefit"
+    """A component or a standard-concept match supplied the tax. The sourced map (current + deferred, D-06(c), T-148) is
+    not a component: it is the total's definition."""
+    return how_of(r, "income_tax") not in (None, "map") and (
+        concept_of(r, "income_tax") != G + "IncomeTaxExpenseBenefit"
     )
 
 

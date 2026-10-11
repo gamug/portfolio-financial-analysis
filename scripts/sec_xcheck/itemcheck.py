@@ -8,6 +8,8 @@ classifies the stored value:
 
 * ``ok_own_concept``  -- equals a fact of one of the item's own registry concepts;
 * ``FLIPPED``         -- equals the negative of such a fact (a sign defect, D1);
+* ``ok_sourced_map``  -- equals a sourced map of the item's own facts (T-148): ``ProfitLoss`` less the NCI income for parent
+  net income (ID-03), current plus deferred tax for income tax (ID-02b, B6's definition);
 * ``OTHER_CONCEPT``   -- equals a fact of a concept the registry does not list for the item (D2);
 * ``NOT_IN_SEC(rebuilt/derived)`` -- equals no fact of the accession (a derived value, or a custom concept);
 * ``no_sec_facts_for_accn`` / ``none`` -- the accession has no facts at the source / the input is absent.
@@ -82,14 +84,53 @@ def facts_of(
     return out
 
 
-def classify(stored: float | None, own: set[str], values: dict[float, set[str]]) -> tuple[str, Any]:
-    """Class of one stored input against the SEC facts of its accession and period (see the module docstring)."""
+# the sourced maps T-148 implements: item -> ((concept, weight), ...), the value being the weighted sum of the facts
+SOURCED_MAPS: dict[str, tuple[tuple[str, float], ...]] = {
+    "net_income": (
+        ("ProfitLoss", 1.0),
+        ("NetIncomeLossAttributableToNoncontrollingInterest", -1.0),
+    ),
+    "income_tax": (
+        ("CurrentIncomeTaxExpenseBenefit", 1.0),
+        ("DeferredIncomeTaxExpenseBenefit", 1.0),
+    ),
+}
+
+
+def map_values(item: str, values: dict[float, set[str]]) -> list[float]:
+    """The values a sourced map of *item* gives from the SEC facts of the accession and period (empty when a term is
+    not filed)."""
+    terms = SOURCED_MAPS.get(item)
+    if not terms:
+        return []
+    by_concept: dict[str, list[float]] = collections.defaultdict(list)
+    for value, concepts in values.items():
+        for concept in concepts:
+            by_concept[concept].append(value)
+    if any(concept not in by_concept for concept, _w in terms):
+        return []
+    totals = [0.0]
+    for concept, weight in terms:
+        totals = [t + weight * v for t in totals for v in by_concept[concept]]
+    return totals
+
+
+def classify(  # noqa: PLR0911 - one return per class of the module docstring
+    stored: float | None,
+    own: set[str],
+    values: dict[float, set[str]],
+    mapped: Iterable[float] = (),
+) -> tuple[str, Any]:
+    """Class of one stored input against the SEC facts of its accession and period (see the module docstring).
+    *mapped* are the values of the item's sourced map (:func:`map_values`)."""
     if stored is None:
         return "none", None
     hit = [cons for v, cons in values.items() if match_value(v, stored)]
     flip = [cons for v, cons in values.items() if match_value(v, -stored)]
     if any(own & cs for cs in hit):
         return "ok_own_concept", None
+    if any(match_value(m, stored) for m in mapped):
+        return "ok_sourced_map", None
     if any(own & cs for cs in flip):
         return "FLIPPED", "flip"
     if hit:
@@ -121,7 +162,9 @@ def run(
             inputs = json.loads(row["inputs_json"])
             for key in keys:
                 values = ins if key in INSTANT_ITEMS else dur
-                cls, extra = classify(inputs.get(key), own.get(key, set()), values)
+                cls, extra = classify(
+                    inputs.get(key), own.get(key, set()), values, map_values(key, values)
+                )
                 results[key][cls] += 1
                 if cls in ("FLIPPED", "OTHER_CONCEPT", "NOT_IN_SEC(rebuilt/derived)"):
                     examples[key].append(

@@ -16,10 +16,9 @@ import datetime as dt
 import re
 from typing import Any
 
+from fundamental_agent import fiscal
 from fundamental_agent.metrics import COMPUTERS
-from fundamental_agent.statements import REGISTRY, Statements
-from fundamental_agent.statements import _matches as row_matches
-from fundamental_agent.statements import _numeric as numeric
+from fundamental_agent.statements import REGISTRY, Statements, filed_value
 
 GAAP = "us-gaap_"
 MIN_SUMMED = 2  # a sum needs at least two components
@@ -130,7 +129,7 @@ def capex_captions(stmts: Statements, column: str | None) -> dict[str, float]:
         label = str(row.get("label") or "")
         if row.get("abstract") or row.get("dimension") or not wanted.search(label):
             continue
-        value = numeric(row.get(column)) if not unwanted.search(label) else None
+        value = filed_value(row, column) if not unwanted.search(label) else None
         if value is not None:
             out.setdefault(str(row.get("concept")), value)
     return out
@@ -152,57 +151,17 @@ def concept_values(
         concept = row.get("concept")
         if row.get("abstract") or row.get("dimension") or concept not in concepts or concept in out:
             continue
-        value = numeric(row.get(column))
+        value = filed_value(row, column)  # the resolver's own (filed) sign (T-148)
         if value is not None:
             out[str(concept)] = value
     return out
 
 
-def match_kind(row: dict[str, Any], spec: Any) -> str:
-    """How a row matched a line item: ``concept`` (exact), ``standard`` (the gateway's standard concept) or ``label``."""
-    if row.get("concept") in spec.concepts:
-        return "concept"
-    return "standard" if spec.standard and row.get("standard_concept") in spec.standard else "label"
-
-
-def sum_resolution(
-    stmts: Statements, spec: Any, column: str, value: float
-) -> dict[str, Any] | None:
-    """Several co-reported streams and no filed total: the value is the sum of the components (named)."""
-    if not spec.sum_components:
-        return None
-    parts = stmts._matching_component_values(spec, column)
-    if len(parts) < MIN_SUMMED:
-        return None
-    return {"value": value, "concept": " + ".join(sorted(parts)), "how": "sum"}
-
-
 def resolution(stmts: Statements, item: str, key: str) -> dict[str, Any]:
-    """Which row ``stmts.get`` read for *item*: ``{value, concept, how}``; ``how`` names the tier that supplied it."""
-    spec = REGISTRY[item]
-    column = column_of(stmts, item, key)
-    value = stmts.get(item, key)
-    if value is None or column is None:
-        return {"value": None, "concept": None, "how": None}
-    if spec.total_concepts:
-        for row in stmts._rows_for(spec):
-            if row.get("concept") in spec.total_concepts and numeric(row.get(column)) is not None:
-                return {"value": value, "concept": str(row.get("concept")), "how": "total"}
-    summed = sum_resolution(stmts, spec, column, value)
-    if summed:
-        return summed
-    for row in stmts._rows_for(spec):
-        if row_matches(row, spec) and numeric(row.get(column)) is not None:
-            return {
-                "value": value,
-                "concept": str(row.get("concept")),
-                "how": match_kind(row, spec),
-            }
-    for tier, concept in enumerate(spec.fallback_concepts):
-        if stmts._concept_value(spec, column, concept) is not None:
-            return {"value": value, "concept": concept, "how": f"fallback{tier + 1}"}
-    how = "label_fallback" if spec.label_fallback else "derived"  # derived: a sum or a rebuild
-    return {"value": value, "concept": None, "how": how}
+    """What ``stmts.resolve`` read for *item*: ``{value, concept, how, flags}``; ``how`` names the tier that supplied it
+    (``concept``, ``standard``, ``label``, ``total``, ``sum``, ``map``, ``fallbackN``, ``label_fallback``, ``derived``)."""
+    r = stmts.resolve(item, key)
+    return {"value": r.value, "concept": r.concept, "how": r.how, "flags": list(r.flags)}
 
 
 def revenue_path(stmts: Statements, key: str) -> dict[str, Any]:
@@ -275,7 +234,19 @@ def extract(stmts: Statements, key: str, *, metrics: bool = True) -> dict[str, A
         "key": key,
         "instant": inst,
         "instant_exact": inst is not None and inst[:10] == key[:10],
+        # T-148 (PER-08): the instant may sit days from the period end and still be its month end
+        "instant_same_period": inst is not None
+        and fiscal.same_period_end(
+            dt.date.fromisoformat(inst[:10]), dt.date.fromisoformat(key[:10])
+        ),
         "items": {item: resolution(stmts, item, key) for item in REGISTRY},
+    }
+    total_debt = stmts.total_debt(key)
+    record["total_debt"] = {
+        "value": total_debt.value,
+        "concept": total_debt.concept,
+        "how": total_debt.how,
+        "flags": list(total_debt.flags),
     }
     record["identity"] = {
         **any_statement(stmts, IDENTITY_BALANCE, inst),

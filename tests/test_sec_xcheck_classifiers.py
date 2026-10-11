@@ -28,6 +28,28 @@ DOC = {
 }
 
 
+def test_itemcheck_accepts_a_sourced_map_of_the_items_own_facts() -> None:
+    """T-148: parent net income may be ProfitLoss less the NCI income (ID-03), income tax current plus deferred
+    (ID-02b); a value that equals another concept's fact is OTHER_CONCEPT only when no sourced map explains it."""
+    own = {"NetIncomeLoss", "ProfitLoss"}
+    values = {
+        110.0: {"ProfitLoss"},
+        10.0: {"NetIncomeLossAttributableToNoncontrollingInterest"},
+        100.0: {"NetIncomeLossAvailableToCommonStockholdersBasic"},
+    }
+    mapped = itemcheck.map_values("net_income", values)
+    assert mapped == [100.0]
+    assert itemcheck.classify(100.0, own, values, mapped)[0] == "ok_sourced_map"
+    assert itemcheck.classify(100.0, own, values)[0] == "OTHER_CONCEPT"
+    tax = {
+        5.0: {"CurrentIncomeTaxExpenseBenefit"},
+        2.0: {"DeferredIncomeTaxExpenseBenefit"},
+    }
+    assert itemcheck.map_values("income_tax", tax) == [7.0]
+    assert itemcheck.map_values("income_tax", {5.0: {"CurrentIncomeTaxExpenseBenefit"}}) == []
+    assert itemcheck.map_values("equity", tax) == []
+
+
 def test_a_value_equal_to_its_own_concept_is_ok() -> None:
     own = {"IncomeTaxExpenseBenefit"}
     assert itemcheck.classify(25.0, own, {25.0: {"IncomeTaxExpenseBenefit"}})[0] == "ok_own_concept"

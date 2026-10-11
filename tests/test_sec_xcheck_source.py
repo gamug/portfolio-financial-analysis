@@ -110,7 +110,7 @@ def test_measure_reads_each_ciks_facts_once_and_marks_the_proxy_incomplete(tmp_p
 
 
 # -- precedence (D2) ------------------------------------------------------------------------------------
-def test_concept_first_resolution_beats_a_label_match_that_comes_earlier_in_the_document() -> None:
+def test_the_resolver_reads_the_exact_concept_first_wherever_the_other_row_sits() -> None:
     stmts = Statements.from_payload(
         {
             "balance_sheet": [
@@ -130,11 +130,10 @@ def test_concept_first_resolution_beats_a_label_match_that_comes_earlier_in_the_
         }
     )
     both = precedence.resolve_both(stmts, "2023-12-31 (FY)")
-    assert both["equity"] == (
-        700.0,
-        500.0,
-    )  # document order reads the wrong row; the spec's order reads the right one
-    assert stmts.get("equity", "2023-12-31") == 700.0  # and the patch is undone afterwards
+    # T-148: the resolver itself reads the spec's order now, so the script's concept-first variant
+    # changes nothing (it used to read 700 in document order against 500)
+    assert both["equity"] == (500.0, 500.0)
+    assert stmts.get("equity", "2023-12-31") == 500.0  # and the patch is undone afterwards
 
 
 # -- submissions-based checks --------------------------------------------------------------------------------

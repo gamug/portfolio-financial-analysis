@@ -104,6 +104,25 @@ def test_d6d_short_term_debt_follows_the_disjoint_lines_with_debt_current_last()
     assert rm.st_debt_differs(today) and rm.st_debt_gap(today) == 5.0
 
 
+def test_d6d_with_n4_and_n23_the_measure_states_the_rule_t148_implements() -> None:
+    """N4: a long-term line that includes the current maturities gets neither ``LongTermDebtCurrent`` nor
+    ``DebtCurrent`` added. N23: ``OtherLongTermDebtCurrent`` and ``NotesPayableCurrent`` take the place of the term
+    they are a kind of when it is not filed."""
+    includes = G + "LongTermDebt"
+    both = {G + "LongTermDebtCurrent": 10.0, G + "ShortTermBorrowings": 5.0}
+    assert rm.proposed_short_term_debt(both, includes) == 5.0
+    assert rm.proposed_short_term_debt({G + "LongTermDebtCurrent": 10.0}, includes) is None
+    assert rm.proposed_short_term_debt({G + "DebtCurrent": 99.0}, includes) is None
+    assert rm.proposed_short_term_debt(both, G + "LongTermDebtNoncurrent") == 15.0
+    reit = f"{G}UnsecuredDebt + {G}SecuredDebt"  # the REIT pair includes them too
+    assert rm.proposed_short_term_debt(both, reit) == 5.0
+    ed = {G + "OtherLongTermDebtCurrent": 250.0, G + "NotesPayableCurrent": 1575.0}
+    assert rm.proposed_short_term_debt(ed) == 1825.0
+    assert (
+        rm.proposed_short_term_debt({**ed, G + "LongTermDebtCurrent": 7.0}) == 1582.0
+    )  # not added to it
+
+
 def test_d2_precedence_equity_and_net_income() -> None:
     assert rm.equity_not_narrowest(
         rec(items={"equity": 700.0}, equity={G + "StockholdersEquity": 500.0})
@@ -209,6 +228,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -2479000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
     {
         "concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
@@ -216,6 +236,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -157000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
     {
         "concept": "dow_CashFlowHedgingRelatedToCapitalExpenditures",
@@ -223,6 +244,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -40000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
 ]
 
@@ -241,7 +263,7 @@ def test_n22_dow_capex_resolves_to_the_gas_field_line_not_the_capital_expenditur
     capex = record["items"]["capital_expenditure"]
     assert capex["concept"] == cx.OG_ED and capex["how"] == "fallback1"
     assert abs(capex["value"]) == 157_000_000.0
-    assert record["capex"][cx.MACHINERY] == -2_479_000_000.0
+    assert record["capex"][cx.MACHINERY] == 2_479_000_000.0  # filed sign (T-148)
     # two captions match (the hedging row has no accrual word), so the caption fallback would refuse anyway:
     # putting the O&G tiers behind the caption is not enough, the concept itself has to be in the registry
     assert set(

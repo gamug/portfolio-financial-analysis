@@ -263,6 +263,16 @@ def cik_family(cik: str) -> tuple[str, ...]:
     return (cik10(cik), *PREDECESSORS.get(cik10(cik), ()))
 
 
+# the two literal statements, chosen by whether the stored table has the T-148 column (no SQL text is
+# built from a variable)
+_FACTS_SQL = {
+    True: "SELECT statement, concept, label, standard_concept, period_key, value, preferred_sign "
+    "FROM financial_facts WHERE filing_id = ? ORDER BY id",
+    False: "SELECT statement, concept, label, standard_concept, period_key, value, "
+    "NULL AS preferred_sign FROM financial_facts WHERE filing_id = ? ORDER BY id",
+}
+
+
 def statements_from_db(conn: Any, filing_id: int) -> Any:
     """Rebuild a ``Statements`` from the stored ``financial_facts`` of one filing, rows in insertion order.
 
@@ -271,11 +281,12 @@ def statements_from_db(conn: Any, filing_id: int) -> Any:
     (``INSERT OR IGNORE``); the rebuilt payload therefore carries one row per ``(statement, concept)``.
     """
     rows: dict[tuple[str, str], dict[str, Any]] = {}
-    for r in conn.execute(
-        "SELECT statement, concept, label, standard_concept, period_key, value "
-        "FROM financial_facts WHERE filing_id = ? ORDER BY id",
-        (filing_id,),
-    ):
+    # T-148 (ID-12): the stored filed-sign hint, when the database has the column and the fact a
+    # value for it. A row stored before T-148 carries none, and then reads as displayed, flagged.
+    has_sign = any(
+        c[1] == "preferred_sign" for c in conn.execute("PRAGMA table_info(financial_facts)")
+    )
+    for r in conn.execute(_FACTS_SQL[has_sign], (filing_id,)):
         row = rows.setdefault(
             (r["statement"], r["concept"]),
             {
@@ -286,6 +297,8 @@ def statements_from_db(conn: Any, filing_id: int) -> Any:
                 "dimension": False,
             },
         )
+        if r["preferred_sign"] is not None:  # a row's hint: the first column that has one
+            row.setdefault("preferred_sign", r["preferred_sign"])
         row.setdefault(r["period_key"], r["value"])
     payload: dict[str, list[Any]] = {key: [] for key in STATEMENT_KEYS}
     for (statement, _concept), row in rows.items():
