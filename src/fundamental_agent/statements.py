@@ -159,10 +159,6 @@ INCLUDES_CURRENT_MATURITIES = (
     G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
     *REIT_DEBT,
 )
-INCLUDES_FINANCE_LEASES = (
-    G + "LongTermDebtAndCapitalLeaseObligations",
-    G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
-)
 # ID-02b "no debt line at all": a balance-sheet concept that names a debt obligation, and an
 # income-statement concept that names interest expense, in any taxonomy (an extension counts: it
 # is evidence the company has debt). Receivables, securities, gains and the like are not debt.

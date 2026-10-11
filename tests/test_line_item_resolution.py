@@ -55,7 +55,8 @@ APA_Q = "financials_APA_10-Q_2021_acc-0001673379-21-000012.json"
 APA_K = "financials_APA_10-K_2022_acc-0001784031-22-000009.json"
 WAT = "financials_WAT_10-Q_2023_acc-0001193125-23-271909.json"
 WAT_21 = "financials_WAT_10-Q_2021_acc-0001193125-21-319595.json"
-APO = "financials_slice_APO_10-K_2022_acc-0001858681-23-000007.json"
+APO = "financials_APO_10-K_2023_acc-0001858681-23-000007.json"
+PM = "financials_PM_10-K_2026_acc-0001628280-26-005939.json"
 
 
 # -- (a) the filed sign: ID-11, ID-12 ----------------------------------------------------------
@@ -80,7 +81,7 @@ def test_stz_income_tax_and_cost_of_goods_are_read_in_the_filed_sign() -> None:
 
 
 def test_apo_tax_benefit_is_negative_as_filed_not_the_displayed_positive() -> None:
-    """Apollo's FY2022 10-K (accession 0001858681-23-000007; the statement as the gateway stored it)
+    """Apollo's FY2022 10-K (accession 0001858681-23-000007)
     shows "income tax (provision) benefit" as +1,069M beside a pre-tax loss of 5,815M: a benefit,
     displayed positive (``preferred_sign = -1``). Filed it is -1,069M. Read as displayed, the
     benefit was a 1,069M expense (17 of APO's production filings, with the tax rate clamped to 0
@@ -184,29 +185,20 @@ def _balance_row(concept: str, label: str, value: float, sign: float = 1.0) -> d
 
 
 def test_pm_equity_is_the_stockholders_equity_row_not_the_label_match() -> None:
-    """Philip Morris International FY2025 (accession 0001628280-26-005939; the rows as the gateway
-    stored them): ``StockholdersEquityBeforeTreasuryStock``, "Total stockholders' equity before
-    treasury stock" (+25,557M), precedes the real equity row in the statement and matches the
-    ``total stockholders`` label hint, so it was read as equity (D2: +22.6B against -12.6B in the
-    audit's year). ``StockholdersEquity`` is the narrowest definition and wins wherever it sits
-    (ID-02a); the label is only a fallback."""
-    stmts = Statements.from_payload(
-        {
-            "balance_sheet": [
-                _balance_row(
-                    "us-gaap_StockholdersEquityBeforeTreasuryStock",
-                    "Total stockholders' equity before treasury stock",
-                    25_557_000_000.0,
-                ),
-                _balance_row(
-                    "us-gaap_StockholdersEquity",
-                    "Total PMI stockholders' deficit",
-                    -9_994_000_000.0,
-                ),
-            ]
-        }
-    )
-    resolution = stmts.resolve("equity", "2025-12-31 (FY)")
+    """Philip Morris International FY2025 (accession 0001628280-26-005939):
+    ``StockholdersEquityBeforeTreasuryStock``, "Total stockholders' equity before treasury stock"
+    (+25,557M), precedes the real equity row in the statement and matches the ``total stockholders``
+    label hint, so it was read as equity (D2: +22.6B against -12.6B in the audit's year).
+    ``StockholdersEquity`` -- "Total PMI stockholders' deficit", -9,994M -- is the narrowest
+    definition and wins wherever it sits (ID-02a); the label is only a fallback."""
+    stmts = _stmts(PM)
+    key = _latest(stmts)
+    payload = _payload(PM)
+    rows = [r["concept"] for r in payload["balance_sheet"] if not r.get("dimension")]
+    assert rows.index("us-gaap_StockholdersEquityBeforeTreasuryStock") < rows.index(
+        "us-gaap_StockholdersEquity"
+    )  # the wrong row comes first in the document
+    resolution = stmts.resolve("equity", key)
     assert resolution.value == -9_994_000_000.0
     assert resolution.concept == "us-gaap_StockholdersEquity" and resolution.how == "concept"
 

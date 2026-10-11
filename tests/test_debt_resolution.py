@@ -1,11 +1,9 @@
 """T-148 part 1 (d): debt, cash and interest expense -- MET-07, ID-02b, D-01, D-06(d), MET-00,
 MET-09, ID-05 and the N4-N6 / N23 defects, on the real gateway captures in ``tests/fixtures``.
 
-The ``financials_slice_*`` fixtures are statements the gateway returned for filings the pipeline
-stored (production's ``financial_facts``, non-dimensional rows), with the sign hint that turns each
-displayed value into the SEC's filed one; each carries its provenance in ``_provenance``. They stand
-for shapes no full capture in the repository has (a REIT, Consolidated Edison, a company with no
-debt, Philip Morris' equity).
+Captured for this task (2026-10-11, the gateway's ``/financials`` with the filing's accession):
+a REIT (UDR), Consolidated Edison, a company with no debt (Align) and Philip Morris, shapes no
+earlier capture in the repository has.
 """
 
 from __future__ import annotations
@@ -66,10 +64,10 @@ EXE = "financials_EXE_10-K_2022_acc-0000895126-22-000029.json"
 WAT = "financials_WAT_10-Q_2023_acc-0001193125-23-271909.json"
 JNJ = "financials_JNJ_10-K_2024_acc-0000200406-24-000013.json"
 MSFT = "financials_MSFT_10-Q_2024.json"
-UDR = "financials_slice_UDR_10-K_2025_acc-0000074208-26-000013.json"
-ED = "financials_slice_ED_10-K_2025_acc-0001047862-26-000031.json"
-ALGN = "financials_slice_ALGN_10-K_2022_acc-0001097149-23-000013.json"
-PM = "financials_slice_PM_10-K_2025_acc-0001628280-26-005939.json"
+UDR = "financials_UDR_10-K_2026_acc-0000074208-26-000013.json"
+ED = "financials_ED_10-K_2026_acc-0001047862-26-000031.json"
+ALGN = "financials_ALGN_10-K_2023_acc-0001097149-23-000013.json"
+PM = "financials_PM_10-K_2026_acc-0001628280-26-005939.json"
 
 
 # -- short-term debt: D-06(d), MET-07 -----------------------------------------------------------
