@@ -311,6 +311,26 @@ def test_an_unread_debt_line_makes_a_missing_debt_a_capture_failure() -> None:
     assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
 
 
+@pytest.mark.parametrize(
+    "concept",
+    [
+        "LinesOfCreditCurrent",
+        "LineOfCredit",
+        "SeniorNotes",
+        "MortgageLoansPayable",
+        "ConvertibleDebtNoncurrent",
+    ],
+)
+def test_a_debt_concept_by_any_of_its_names_is_a_debt_line(concept: str) -> None:
+    """The pattern for "a debt line is filed" is case-insensitive and reads the plural names too: a
+    filer whose only debt is a line of credit has debt the resolver did not find, not none."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + concept)
+    stmts = Statements.from_payload(payload)
+    assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
+
+
 def test_an_incomplete_balance_sheet_makes_a_missing_debt_a_capture_failure() -> None:
     stmts = Statements.from_payload(
         _drop(_payload(ALGN), "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")

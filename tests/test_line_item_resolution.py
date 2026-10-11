@@ -149,7 +149,8 @@ def test_a_row_without_a_preferred_sign_reads_as_displayed_and_is_flagged() -> N
     assert tax.value == 16_741_000_000.0 and tax.flags == ("sign_unverified",)
     # displayed -10,959M cannot be told from a wrong sign: rejected, not read as a payment
     capex = stmts.resolve("capital_expenditure", key)
-    assert capex.value is None and set(capex.flags) == {"sign_unverified", "wrong_sign_rejected"}
+    assert capex.value is None
+    assert set(capex.flags) == {"sign_unverified", "sign_unknown_negative_rejected"}
 
 
 def test_a_genuine_negative_is_kept_when_it_is_the_filed_sign() -> None:

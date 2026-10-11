@@ -163,12 +163,14 @@ INCLUDES_CURRENT_MATURITIES = (
 # income-statement concept that names interest expense, in any taxonomy (an extension counts: it
 # is evidence the company has debt). Receivables, securities, gains and the like are not debt.
 _DEBT_LINE_RE = re.compile(
-    r"Debt|NotesPayable|LoansPayable|Borrowings|LineOfCredit|CommercialPaper|Debentures"
-    r"|SeniorNotes|MortgageNotes|MortgagesPayable|ConvertibleNotes",
+    r"debt|notes|loans?payable|borrowing|linesofcredit|lineofcredit|commercialpaper|debenture"
+    r"|mortgage|convertible|financingarrangement",
+    re.IGNORECASE,
 )
 _NOT_A_DEBT_LINE_RE = re.compile(
-    r"Securities|Receivable|Investment|Asset|Gain|Loss|Expense|Income|Interest|Issuance|Repayment"
-    r"|Proceeds|FairValue|Deferred|Held|Discount|Premium",
+    r"securities|receivable|investment|asset|gain|loss|expense|income|interest|issuance"
+    r"|repayment|proceeds|fairvalue|deferred|held|discount|premium|realestate|payable.*related",
+    re.IGNORECASE,
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
 
@@ -645,7 +647,9 @@ class Statements:
 
         A negative filed value of a concept in ``spec.nonnegative`` (ID-13, DQC_0015) is a wrong
         sign: the row is **rejected** -- ``None`` -- and ``wrong_sign_rejected`` flagged. It is never
-        repaired with ``abs()`` (ID-11)."""
+        repaired with ``abs()`` (ID-11). A negative on a row with no hint is not known to be the
+        filed sign (a payment is displayed negative); it is rejected the same way and flagged
+        ``sign_unknown_negative_rejected``: the item is empty, not a guess either way."""
         displayed = _numeric(row.get(column))
         if displayed is None:
             return None
@@ -656,7 +660,11 @@ class Statements:
         else:
             value = displayed * sign
         if spec is not None and value < 0 and self._must_not_be_negative(spec, row):
-            self._flag("wrong_sign_rejected")
+            # a negative with no sign hint is not known to be the filed sign (a payment is displayed
+            # negative): it is still not used -- never made positive -- but named for what it is
+            self._flag(
+                "wrong_sign_rejected" if sign is not None else "sign_unknown_negative_rejected"
+            )
             return None
         return value
 
@@ -778,13 +786,12 @@ class Statements:
         """Tier 2 of :meth:`get`: the summed components, or the first matching row (plus the
         T-133 fallback tiers when that finds nothing)."""
         if spec.sum_components:
-            parts = self._matching_component_values(spec, column)
-            total = self._sum_matching_components(spec, column)
+            total, used = self._sum_components(spec, column)
             if total is None:
                 return None, None, None
-            if len(parts) >= MIN_SUMMED:
-                return total, " + ".join(sorted(parts)), "sum"
-            return total, next(iter(parts)), "concept"
+            if len(used) >= MIN_SUMMED:
+                return total, " + ".join(sorted(used)), "sum"
+            return total, used[0], "concept"
         value, concept, how = self._first_component_row(spec, column)
         if value is None and (spec.fallback_concepts or spec.label_fallback):
             return self._fallback_row(spec, column)
@@ -912,45 +919,56 @@ class Statements:
                     break
         return parts
 
+    def _long_term_with_flags(
+        self, column: str
+    ) -> tuple[float | None, str | None, str | None, list[str]]:
+        """The long-term debt resolution and the flags it raised (kept apart from the caller's)."""
+        outer, self._flags = self._flags, []
+        try:
+            value, concept, how = self._long_term_debt(REGISTRY["long_term_debt"], column)
+            return value, concept, how, list(self._flags)
+        finally:
+            self._flags = outer
+
+    def _short_term(
+        self, spec: LineItem, column: str, *, in_long_term: bool
+    ) -> tuple[float | None, str | None, dict[str, tuple[float, str]], bool]:
+        """The short-term side of the debt map, shared by :meth:`_short_term_debt` and
+        :meth:`_total_debt`: ``(value, concept, filed terms, used DebtCurrent)``. The filed terms
+        of :data:`SHORT_TERM_DEBT_MAP` added; ``DebtCurrent`` -- "debt and lease obligation" -- only
+        when no term is filed, flagged ``includes_leases``. Against a long-term line that includes
+        the current maturities (*in_long_term*) neither the current-maturities term nor
+        ``DebtCurrent`` (which contains them) is added (N4)."""
+        parts = self._short_term_parts(spec, column, current_maturities_in_long_term=in_long_term)
+        if parts:
+            return (
+                sum(v for v, _c in parts.values()),
+                " + ".join(c for _v, c in parts.values()),
+                parts,
+                False,
+            )
+        if not in_long_term:
+            value = self._concept_value(spec, column, SHORT_TERM_DEBT_LAST)
+            if value is not None:
+                self._flag("includes_leases")
+                return value, SHORT_TERM_DEBT_LAST, {}, True
+        return None, None, {}, False
+
     def _short_term_debt(
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
-        """Short-term debt (MET-07, D-06(d)): the filed terms of :data:`SHORT_TERM_DEBT_MAP`
-        added; ``DebtCurrent`` -- "debt and lease obligation" -- only when no term is filed,
-        flagged ``includes_leases``. Against a long-term line that includes the current maturities
-        neither the current-maturities term nor ``DebtCurrent`` (which contains them) is added
-        (N4; flagged ``current_maturities_in_long_term``)."""
-        lt_spec = REGISTRY["long_term_debt"]
-        lt_value, lt_concept, _how = self._saved_flags(self._long_term_debt, lt_spec, column)
-        in_long_term = lt_value is not None and (
-            lt_concept is not None
-            and any(c in INCLUDES_CURRENT_MATURITIES for c in lt_concept.split(" + "))
-        )
+        """Short-term debt (MET-07, D-06(d)): :meth:`_short_term` against the long-term line the
+        resolver reads (N4: ``current_maturities_in_long_term`` flagged when it includes them)."""
+        *_lt, lt_flags = self._long_term_with_flags(column)
+        in_long_term = "includes_current_maturities" in lt_flags
         if in_long_term:
             self._flag("current_maturities_in_long_term")
-        parts = self._short_term_parts(spec, column, current_maturities_in_long_term=in_long_term)
-        if parts:
-            concept = " + ".join(c for _v, c in parts.values())
-            return (
-                sum(v for v, _c in parts.values()),
-                concept,
-                "map" if len(parts) > 1 else "concept",
-            )
-        if in_long_term:
+        value, concept, parts, _used_debt_current = self._short_term(
+            spec, column, in_long_term=in_long_term
+        )
+        if value is None:
             return None, None, None
-        value = self._concept_value(spec, column, SHORT_TERM_DEBT_LAST)
-        if value is not None:
-            self._flag("includes_leases")
-            return value, SHORT_TERM_DEBT_LAST, "concept"
-        return None, None, None
-
-    def _saved_flags(self, fn: Any, spec: LineItem, column: str) -> Any:
-        """Run a resolver without letting its flags leak into the caller's."""
-        outer, self._flags = self._flags, []
-        try:
-            return fn(spec, column)
-        finally:
-            self._flags = outer
+        return value, concept, "map" if len(parts) > 1 else "concept"
 
     def total_debt(self, period_key: str) -> Resolution:
         """Total debt for *period_key* (MET-07, ID-02b, D-01; MET-00): long-term plus short-term.
@@ -987,22 +1005,15 @@ class Statements:
     def _total_debt(
         self, period_key: str, column: str
     ) -> tuple[float | None, str | None, str | None]:
-        lt_spec, st_spec = REGISTRY["long_term_debt"], REGISTRY["short_term_debt"]
-        lt_value, lt_concept, _ = self._long_term_debt(lt_spec, column)
-        in_long_term = "includes_current_maturities" in self._flags
-        parts = self._short_term_parts(
-            st_spec, column, current_maturities_in_long_term=in_long_term
-        )
-        st_value = sum(v for v, _c in parts.values()) if parts else None
-        st_concept = " + ".join(c for _v, c in parts.values()) if parts else None
-        used_debt_current = False
-        if st_value is None and not in_long_term:
-            st_value = self._concept_value(st_spec, column, SHORT_TERM_DEBT_LAST)
-            if st_value is not None:
-                st_concept, used_debt_current = SHORT_TERM_DEBT_LAST, True
-                self._flag("includes_leases")
+        lt_value, lt_concept, _how, lt_flags = self._long_term_with_flags(column)
+        for flag in lt_flags:
+            self._flag(flag)
+        in_long_term = "includes_current_maturities" in lt_flags
         if in_long_term:
             self._flag("current_maturities_in_long_term")
+        st_value, st_concept, parts, used_debt_current = self._short_term(
+            REGISTRY["short_term_debt"], column, in_long_term=in_long_term
+        )
 
         if lt_value is None and st_value is None:
             return self._no_debt_line(period_key, column)
@@ -1374,8 +1385,11 @@ class Statements:
         return values
 
     def _sum_matching_components(self, spec: LineItem, column: str) -> float | None:
+        return self._sum_components(spec, column)[0]
+
+    def _sum_components(self, spec: LineItem, column: str) -> tuple[float | None, list[str]]:
         """Sum one value per distinct additive component -- the
-        ``sum_components`` branch of :meth:`get`.
+        ``sum_components`` branch of :meth:`get` -- and name the components it counted.
 
         Concepts sharing a ``spec.synonym_groups`` entry are alternate
         encodings of ONE stream, not separate amounts: at most one value per
@@ -1384,17 +1398,19 @@ class Statements:
         """
         values = self._matching_component_values(spec, column)
         if not values:
-            return None
+            return None, []
 
         total = 0.0
         counted: set[str] = set()
+        used: list[str] = []
         for concept in spec.concepts:
             if concept not in values or concept in counted:
                 continue
             group = next((g for g in spec.synonym_groups if concept in g), (concept,))
             total += values[concept]
+            used.append(concept)
             counted.update(group)
-        return total
+        return total, used
 
     def get_all(self, item: str) -> dict[str, float]:
         """Every period-column value on registry *item*'s first-matching row (in precedence
@@ -1439,7 +1455,10 @@ class Statements:
         days from the calendar month end), the closest if several. **Never the nearest earlier
         date** (N6): that read another period's balance sheet -- the prior year end of a 10-Q
         whose own column was missing -- as this one."""
-        target = date.fromisoformat(period_key[:10])
+        try:
+            target = date.fromisoformat(period_key[:10])
+        except ValueError:
+            return None
         instants = self.instant_periods()
         exact = [p for p in instants if p.date == period_key[:10]]
         if exact:

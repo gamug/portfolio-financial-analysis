@@ -130,10 +130,9 @@ def test_the_resolver_reads_the_exact_concept_first_wherever_the_other_row_sits(
         }
     )
     both = precedence.resolve_both(stmts, "2023-12-31 (FY)")
-    # T-148: the resolver itself reads the spec's order now, so the script's concept-first variant
-    # changes nothing (it used to read 700 in document order against 500)
-    assert both["equity"] == (500.0, 500.0)
-    assert stmts.get("equity", "2023-12-31") == 500.0  # and the patch is undone afterwards
+    # document order (the rule before T-148) reads the wrong row; the spec's order and the resolver read the right one
+    assert both["equity"] == (700.0, 500.0, 500.0)
+    assert stmts.get("equity", "2023-12-31") == 500.0
 
 
 # -- submissions-based checks --------------------------------------------------------------------------------
