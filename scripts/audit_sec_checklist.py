@@ -230,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     ct.add_argument("--out", default=str(CHECKLIST_DIR / "company_types.csv"))
     add(
         "successions", cmd_successions, "register the succession 8-Ks (APP-10b-1), unlinked"
-    ).add_argument("--out", default=str(CHECKLIST_DIR / "successions.csv"))
+    ).add_argument("--out", default=str(CHECKLIST_DIR / "succession_8ks.csv"))
     add("l09", cmd_l09, "build the L-09 verification register").add_argument(
         "--out", default=str(CHECKLIST_DIR / "l09_verification.csv")
     )

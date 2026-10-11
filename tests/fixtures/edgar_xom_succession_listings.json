@@ -1,0 +1,234 @@
+{
+ "_comment": "Real gateway listings captured 2026-10-11 for ExxonMobil Holdings Corp (CIK 0002115436, successor from 2026-07-01) and Exxon Mobil Corp (CIK 0000034088, predecessor). Keys: <cik>/<form>/<filing year>.",
+ "0002115436/10-K/2022": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-K/2023": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-K/2024": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-K/2025": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-K/2026": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-Q/2022": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-Q/2023": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-Q/2024": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-Q/2025": {
+  "success": true,
+  "data": []
+ },
+ "0002115436/10-Q/2026": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2026-08-03",
+    "accession_number": "0000034088-26-000093",
+    "cik": "0002115436",
+    "period_of_report": "2026-06-30"
+   }
+  ]
+ },
+ "0000034088/10-K/2022": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2022-02-23",
+    "accession_number": "0000034088-22-000011",
+    "cik": "0000034088",
+    "period_of_report": "2021-12-31"
+   }
+  ]
+ },
+ "0000034088/10-K/2023": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2023-02-22",
+    "accession_number": "0000034088-23-000020",
+    "cik": "0000034088",
+    "period_of_report": "2022-12-31"
+   }
+  ]
+ },
+ "0000034088/10-K/2024": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2024-02-28",
+    "accession_number": "0000034088-24-000018",
+    "cik": "0000034088",
+    "period_of_report": "2023-12-31"
+   }
+  ]
+ },
+ "0000034088/10-K/2025": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2025-02-19",
+    "accession_number": "0000034088-25-000010",
+    "cik": "0000034088",
+    "period_of_report": "2024-12-31"
+   }
+  ]
+ },
+ "0000034088/10-K/2026": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2026-02-18",
+    "accession_number": "0000034088-26-000045",
+    "cik": "0000034088",
+    "period_of_report": "2025-12-31"
+   }
+  ]
+ },
+ "0000034088/10-Q/2022": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2022-11-02",
+    "accession_number": "0000034088-22-000064",
+    "cik": "0000034088",
+    "period_of_report": "2022-09-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2022-08-03",
+    "accession_number": "0000034088-22-000051",
+    "cik": "0000034088",
+    "period_of_report": "2022-06-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2022-05-04",
+    "accession_number": "0000034088-22-000026",
+    "cik": "0000034088",
+    "period_of_report": "2022-03-31"
+   }
+  ]
+ },
+ "0000034088/10-Q/2023": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2023-10-31",
+    "accession_number": "0000034088-23-000056",
+    "cik": "0000034088",
+    "period_of_report": "2023-09-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2023-08-01",
+    "accession_number": "0000034088-23-000048",
+    "cik": "0000034088",
+    "period_of_report": "2023-06-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2023-05-02",
+    "accession_number": "0000034088-23-000030",
+    "cik": "0000034088",
+    "period_of_report": "2023-03-31"
+   }
+  ]
+ },
+ "0000034088/10-Q/2024": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2024-11-04",
+    "accession_number": "0000034088-24-000068",
+    "cik": "0000034088",
+    "period_of_report": "2024-09-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2024-08-05",
+    "accession_number": "0000034088-24-000050",
+    "cik": "0000034088",
+    "period_of_report": "2024-06-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2024-04-29",
+    "accession_number": "0000034088-24-000029",
+    "cik": "0000034088",
+    "period_of_report": "2024-03-31"
+   }
+  ]
+ },
+ "0000034088/10-Q/2025": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2025-11-03",
+    "accession_number": "0000034088-25-000061",
+    "cik": "0000034088",
+    "period_of_report": "2025-09-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2025-08-04",
+    "accession_number": "0000034088-25-000042",
+    "cik": "0000034088",
+    "period_of_report": "2025-06-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2025-05-05",
+    "accession_number": "0000034088-25-000024",
+    "cik": "0000034088",
+    "period_of_report": "2025-03-31"
+   }
+  ]
+ },
+ "0000034088/10-Q/2026": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-Q",
+    "filing_date": "2026-08-03",
+    "accession_number": "0000034088-26-000093",
+    "cik": "0000034088",
+    "period_of_report": "2026-06-30"
+   },
+   {
+    "form": "10-Q",
+    "filing_date": "2026-05-04",
+    "accession_number": "0000034088-26-000067",
+    "cik": "0000034088",
+    "period_of_report": "2026-03-31"
+   }
+  ]
+ }
+}

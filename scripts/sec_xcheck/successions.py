@@ -1,13 +1,15 @@
 """APP-10b-1 (T-149): the register of succession 8-Ks among the stored companies' filings.
 
-    uv run python scripts/audit_sec_checklist.py successions [--out docs/checklist_sec/successions.csv]
+    uv run python scripts/audit_sec_checklist.py successions [--out docs/checklist_sec/succession_8ks.csv]
 
 A successor issuer reports its succession on an 8-K of submission type ``8-K12B``, ``8-K12G3`` or
 ``8-K15D5`` (or the ``/A`` of one), under Rule 12g-3 / 15d-5 of the Exchange Act. The EDGAR gateway
 lists only ``10-K``, ``10-Q``, ``8-K`` and ``S-1`` (its ``form`` is an enum) and returns plain
 ``8-K``s for ``8-K``, so the pipeline cannot see these filings; the SEC's ``submissions`` list can.
 The register records each one -- ticker, CIK, form, filing date, accession -- and **links nothing**:
-tying a successor's series to its predecessor's needs the 8-K's own words (APP-10b-2), a hand reading.
+tying a successor's series to its predecessor's needs the 8-K's own words (APP-10b-2), a hand reading. The
+links that were read and are used live in ``src/kg_schema/data/cik_successions.csv`` (XOM only: the one succession
+of the 18 whose predecessor filings the by-CIK fetch would lose).
 """
 
 from __future__ import annotations

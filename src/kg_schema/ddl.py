@@ -36,6 +36,20 @@ CREATE INDEX IF NOT EXISTS ix_um_open
 -- `coverage` command). One row per (as_of, universe, symbol): does that member
 -- have an identity row / FUNDAMENTAL score / metrics / prices / observations /
 -- returns as of `as_of`. `covered` = every required check passed.
+-- T-149 (APP-10b): a successor registrant's predecessor, so the filings the predecessor made before the
+-- succession belong to the successor's asset. Seeded from `kg_schema/data/cik_successions.csv`
+-- (`identity.seed_successions`), one row per (successor, predecessor), each with the filing that
+-- establishes the succession and a quote from it. One hop: a chain of two is two rows.
+CREATE TABLE IF NOT EXISTS cik_succession (
+    successor_cik      TEXT NOT NULL,
+    predecessor_cik    TEXT NOT NULL,
+    effective_date     TEXT NOT NULL,
+    evidence_form      TEXT NOT NULL,
+    evidence_accession TEXT NOT NULL,
+    evidence_quote     TEXT NOT NULL,
+    UNIQUE (successor_cik, predecessor_cik)
+);
+
 CREATE TABLE IF NOT EXISTS universe_coverage (
     id               INTEGER PRIMARY KEY,
     as_of            TEXT NOT NULL,
@@ -579,6 +593,9 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         # (`kg_schema.trading_calendar.available_from`). Copied onto the filing's metrics and
         # FUNDAMENTAL scores; guarded by `AVAILABILITY_TRIGGERS`.
         "available_at": "TEXT",
+        # T-149: the CIK the filing was listed and fetched under -- the asset's own or a recorded
+        # predecessor's (`cik_succession`); guarded by `IDENTITY_TRIGGERS`. NULL on older rows.
+        "cik": "TEXT",
     },
     # T-041: the fundamental synthesis's structured forensic flags (Work item 8, T-074) --
     # a JSON object of four booleans (data_error_suspected, negative_equity_buyback,
@@ -705,7 +722,7 @@ BEGIN SELECT RAISE(ABORT, 'score_snapshot: a FUNDAMENTAL row''s available_at mus
 # `assets` (with `cik`) and `sec_filings` exist.
 # ---------------------------------------------------------------------------
 
-IDENTITY_TABLES = ("assets", "sec_filings")
+IDENTITY_TABLES = ("assets", "sec_filings", "cik_succession")
 
 IDENTITY_TRIGGERS = """
 -- A filing is fetched by its asset's CIK (APP-10a), so an asset with filings has one.
@@ -733,6 +750,22 @@ WHEN NEW.accession_number IS NOT NULL AND EXISTS (
       AND oa.cik IS NOT (SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id)
 )
 BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already attached to an asset of another CIK'); END;
+-- A filing's own CIK (the one it was listed and fetched under) is its asset's or a recorded
+-- predecessor's of it (`cik_succession`), never any other. NULL (rows from before T-149) is unchecked.
+CREATE TRIGGER IF NOT EXISTS trg_sf_chain_insert BEFORE INSERT ON sec_filings
+WHEN NEW.cik IS NOT NULL
+  AND NEW.cik IS NOT (SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id)
+  AND NOT EXISTS (
+    SELECT 1 FROM cik_succession s JOIN assets a ON a.id = NEW.asset_id
+    WHERE s.successor_cik = a.cik AND s.predecessor_cik = NEW.cik)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: the filing''s CIK is neither its asset''s nor a recorded predecessor''s'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sf_chain_update BEFORE UPDATE OF asset_id, cik ON sec_filings
+WHEN NEW.cik IS NOT NULL
+  AND NEW.cik IS NOT (SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id)
+  AND NOT EXISTS (
+    SELECT 1 FROM cik_succession s JOIN assets a ON a.id = NEW.asset_id
+    WHERE s.successor_cik = a.cik AND s.predecessor_cik = NEW.cik)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: the filing''s CIK is neither its asset''s nor a recorded predecessor''s'); END;
 -- The CIK of an asset that has filings never changes or goes empty: its filings were fetched
 -- by the old one. A CIK may still be set on an asset that has none yet, or filled in where it
 -- was empty, as long as it keeps agreeing with the assets sharing an accession with it.

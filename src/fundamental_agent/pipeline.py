@@ -7,8 +7,8 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
@@ -96,6 +96,13 @@ class _YearTask:
     form: str
     year: int
     cik: str  # the 10-digit string every EDGAR call carries (T-149); the ticker is for display
+    # the asset's recorded predecessors (APP-10b, ``cik_succession``): their filings are the asset's too
+    predecessors: tuple[str, ...] = ()
+
+    @property
+    def ciks(self) -> tuple[str, ...]:
+        """Every CIK this asset's filings are fetched under: its own first."""
+        return (self.cik, *self.predecessors)
 
 
 @dataclass(frozen=True)
@@ -135,7 +142,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise RuntimeError(
                 f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
             )
-        tasks = _plan(assets, params)
+        chains = {str(a["ticker"]): identity.cik_chain(conn, a["cik"]) for a in assets}
+        tasks = _plan(assets, params, chains)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
@@ -193,7 +201,11 @@ class MissingCikError(RuntimeError):
     """An asset in scope has no CIK, so its filings cannot be fetched (T-149)."""
 
 
-def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
+def _plan(
+    assets: Sequence[Row],
+    params: RunParams,
+    chains: Mapping[str, tuple[str, ...]] | None = None,
+) -> list[_YearTask]:
     keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
     if keyless:
         raise MissingCikError(
@@ -209,6 +221,7 @@ def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
             form=form,
             year=year,
             cik=str(identity.normalize_cik(asset["cik"])),
+            predecessors=(chains or {}).get(str(asset["ticker"]), ())[1:],
         )
         for asset in assets
         for form in params.forms
@@ -291,18 +304,29 @@ def _record_failure(
 
 
 def _list_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
-    """The task's filings for its form and year, listed under the asset's CIK.
+    """The task's filings for its form and year, listed under every CIK in the asset's chain.
 
-    Raises :class:`EdgarNotFoundError` when the company exists but filed nothing that year
-    (a skip), and a plain :class:`EdgarError` when the gateway knows no company by that CIK (a
-    failure worth seeing). A CIK finds a company that left the index too; a ticker would not."""
-    try:
-        refs = engine.edgar.filing_by_year(task.cik, task.form, task.year)
-    except EdgarNotFoundError as exc:
-        raise EdgarError(f"no EDGAR match for {task.ticker!r} (CIK {task.cik})") from exc
-    if not refs:
+    The asset's own CIK is listed first, then its recorded predecessors' (APP-10b: ExxonMobil Holdings
+    Corp's filings before 2026-07-01 are its predecessor's). A filing listed under more than one -- XOM's
+    2026-08-03 10-Q is listed under both -- is kept once, by accession, under the first. Each row carries
+    the CIK it was listed under. Raises :class:`EdgarNotFoundError` when the company exists but filed
+    nothing that year (a skip), and a plain :class:`EdgarError` when the gateway knows no company by
+    any of the CIKs (a failure worth seeing). A CIK finds a company that left the index; a ticker would not."""
+    found: dict[str, FilingRef] = {}
+    known = False
+    for cik in task.ciks:
+        try:
+            refs = engine.edgar.filing_by_year(cik, task.form, task.year)
+        except EdgarNotFoundError:
+            continue
+        known = True
+        for ref in refs:
+            found.setdefault(ref.accession_number, replace(ref, cik=ref.cik or cik))
+    if not known:
+        raise EdgarError(f"no EDGAR match for {task.ticker!r} (CIK {', '.join(task.ciks)})")
+    if not found:
         raise EdgarNotFoundError(f"no {task.form} filing for {task.ticker} in {task.year}")
-    return refs
+    return list(found.values())
 
 
 class SharedAccessionsError(RuntimeError):
@@ -356,13 +380,14 @@ class FilingIdentityError(RuntimeError):
 
 
 def _check_filer(task: _YearTask, ref: FilingRef) -> None:
-    """Refuse a filing whose own CIK is not the asset's: a ticker reassigned, or a listing keyed
-    wrongly, would otherwise attach one company's statements to another's history. A listing that
-    carries no CIK (a gateway before portfolio-data-mining T-045) cannot be checked."""
-    if ref.cik is not None and ref.cik != task.cik:
+    """Refuse a filing whose own CIK is not in the asset's chain -- its own or a recorded predecessor's
+    (``cik_succession``): a ticker reassigned, or a listing keyed wrongly, would otherwise attach one
+    company's statements to another's history. A listing that carries no CIK (a gateway before
+    portfolio-data-mining T-045) cannot be checked."""
+    if ref.cik is not None and ref.cik not in task.ciks:
         raise FilingIdentityError(
             f"{ref.accession_number} is listed under CIK {ref.cik}, not {task.ticker}'s "
-            f"{task.cik}; not stored"
+            f"{' or '.join(task.ciks)}; not stored"
         )
 
 
@@ -376,11 +401,14 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
         return 0, 1  # already ingested and scored by an earlier run
 
+    filer = (
+        ref.cik or task.cik
+    )  # the CIK it was listed under: a predecessor's for XOM before 2026-07-01
     payload = engine.edgar.financials(
-        task.cik, task.form, task.year, accession_number=ref.accession_number
+        filer, task.form, task.year, accession_number=ref.accession_number
     )
     stmts = Statements.from_payload(payload)
-    meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number)
+    meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
     if isinstance(resolved, str):
@@ -575,7 +603,7 @@ def _extract_sections(
     """Best-effort narrative-text extraction. A failure here never fails the filing."""
     if not meta.accession_number:
         return
-    cik = _asset_cik(engine, task.asset_id)
+    cik = meta.cik or _asset_cik(engine, task.asset_id)  # the archive folder is the filer's
     if not cik:
         return
     try:
@@ -691,6 +719,7 @@ def _analyze_one(
             filing_date=meta.filing_date,
             accession_number=meta.accession_number,
             period_end=target.period.date,
+            cik=meta.cik,
         ),
         run_id=run_id,
     )

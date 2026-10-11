@@ -88,6 +88,9 @@ class FilingMeta:
     filing_date: str | None = None
     accession_number: str | None = None
     period_end: str | None = None
+    cik: str | None = (
+        None  # the CIK the filing was listed under (T-149): the asset's or a predecessor's
+    )
 
 
 @dataclass(frozen=True)
@@ -415,15 +418,16 @@ def upsert_filing(
     conn.execute(
         """
         INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date,
-                                 available_at, accession_number, period_end, retrieved_at, run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 available_at, accession_number, period_end, retrieved_at, run_id, cik)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (asset_id, form, fiscal_period) DO UPDATE SET
             filing_date      = excluded.filing_date,
             available_at     = excluded.available_at,
             accession_number = excluded.accession_number,
             period_end       = excluded.period_end,
             retrieved_at     = excluded.retrieved_at,
-            run_id           = excluded.run_id
+            run_id           = excluded.run_id,
+            cik              = COALESCE(sec_filings.cik, excluded.cik)
         """,
         (
             key.asset_id,
@@ -436,6 +440,7 @@ def upsert_filing(
             meta.period_end,
             _now(),
             run_id,
+            meta.cik,
         ),
     )
     row = conn.execute(
