@@ -3,6 +3,7 @@
     uv run python scripts/verify_t149.py triggers --prod DB --out /tmp/t149/prod_copy.db
     uv run python scripts/verify_t149.py pilot    --prod DB --out /tmp/t149/pilot.db [--analysis-date D]
     uv run python scripts/verify_t149.py n2       --db /tmp/t149/pilot.db --cycle-date D
+    uv run python scripts/verify_t149.py coreg    --db DB --tickers DUK,SO,... [--year 2025]
     uv run python scripts/verify_t149.py twitter  --out /tmp/t149/twitter.db
 
 ``--prod`` is opened ``mode=ro`` (``triggers`` copies it first and reads the copy; the copy's sha1 is
@@ -19,6 +20,8 @@ checked against the original's before and after). Every write goes to ``--out``.
 * ``n2`` -- the earnings yield's effect on VALORIZATION, apart from every data-treatment change:
   the same database, the same cycle date, with the trailing net income read (this fix) or withheld
   (what every real cycle did before).
+* ``compare`` -- the stored metrics of the same names, an earlier pilot database against the rebuilt one.
+* ``coreg`` -- ID-10 across the live combined filings of a list of tickers (read-only, gateway only).
 * ``twitter`` -- one company that left the index, ingested by CIK alone (the path ``T-153`` takes).
 """
 
@@ -40,7 +43,9 @@ from cycle.orchestrator import run_selection
 from fundamental_agent import db, pipeline
 from fundamental_agent.agents import AnalysisResult, FundamentalAnalyst, _fallback_assessment
 from fundamental_agent.config import Settings
+from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import RunParams
+from fundamental_agent.statements import REGISTRY, Statements, _parse_period
 from kg_schema import connect, ensure, identity, queries
 from kg_schema.queries import UniverseMember
 from kg_schema.versions import MetricVersions, resolve_metric_versions
@@ -69,6 +74,7 @@ PILOT_TICKERS = [
     "STZ",
     "PSX",
 ]
+SHOWN = 12  # rows listed per category
 PRICE_TABLES = ("price_daily", "price_window", "price_observation", "corporate_action")
 
 
@@ -239,6 +245,23 @@ class _FactsOnlyAnalyst:
         )
 
 
+def _members_of(prod: Path, tickers: list[str]) -> list[UniverseMember]:
+    """UniverseMembers for *tickers* from production's assets (read-only): symbol, name, CIK, sector."""
+    conn = sqlite3.connect(f"file:{prod}?mode=ro", uri=True)
+    rows = [
+        conn.execute(
+            "SELECT a.ticker, a.company_name, a.cik, s.name, a.sub_industry FROM assets a "
+            "LEFT JOIN sectors s ON s.id = a.sector_id WHERE a.ticker = ?",
+            (ticker,),
+        ).fetchone()
+        for ticker in tickers
+    ]
+    return [
+        UniverseMember(t, name or t, cik, sector, sub, None, None, None, "2022-01-01", None)
+        for t, name, cik, sector, sub in (r for r in rows if r is not None)
+    ]
+
+
 def cmd_pilot(args: argparse.Namespace) -> int:
     prod, out = Path(args.prod), Path(args.out)
     before = sha1(prod)
@@ -259,12 +282,19 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     # 1. the universe's assets, then the pilot names' prices from production (read-only)
     conn = connect(out)
     db.ensure_schema(conn)
-    members = pipeline._load_members(settings, args.analysis_date)
-    db.sync_universe(conn, [m for m in members if m.symbol in PILOT_TICKERS])
+    tickers = args.tickers.split(",") if args.tickers else list(PILOT_TICKERS)
+    if (
+        args.members_from_prod
+    ):  # a cohort outside the pilot universe: the production assets, as members
+        members = _members_of(prod, tickers)
+        pipeline._load_members = lambda _s, _d: members  # type: ignore[assignment]
+    else:
+        members = pipeline._load_members(settings, args.analysis_date)
+    db.sync_universe(conn, [m for m in members if m.symbol in tickers])
     pricing_db.ensure_schema(conn)
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute(f"ATTACH DATABASE 'file:{prod}?mode=ro' AS prod")
-    for table in PRICE_TABLES:
+    for table in () if args.no_prices else PRICE_TABLES:
         if not conn.execute("SELECT 1 FROM prod.sqlite_master WHERE name = ?", (table,)).fetchone():
             continue
         cols = [r[1] for r in conn.execute(f"PRAGMA main.table_info({table})")]
@@ -286,7 +316,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
     params = RunParams(
         forms=("10-K", "10-Q"),
         since_year=2022,
-        tickers=list(PILOT_TICKERS),
+        tickers=tickers,
         analysis_date=args.analysis_date,
         fresh=True,
     )
@@ -408,6 +438,124 @@ def data_net_income(conn: Any, cycle_date: str) -> dict[str, float]:
     return {names[a]: v for a, v in by_id.items()}
 
 
+def cmd_coreg(args: argparse.Namespace) -> int:
+    """ID-10 over the gateway's live combined filings: does any resolved item equal a value held only
+    by a legal-entity-member row? (Matched by period date, so a balance-sheet instant and a duration
+    column of one date are compared as the resolver compares them.)"""
+    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    total_leaks = 0
+    with EdgarClient(os.environ["EDGAR_BASE_URL"]) as edgar:
+        for ticker in args.tickers.split(","):
+            cik = conn.execute("SELECT cik FROM assets WHERE ticker = ?", (ticker,)).fetchone()[0]
+            refs = [r for r in edgar.filing_by_year(cik, "10-K", args.year) if r.form == "10-K"]
+            payload = edgar.financials(
+                cik, "10-K", args.year, accession_number=refs[0].accession_number
+            )
+            entity: dict[str, set[float]] = {}
+            consolidated: dict[str, set[float]] = {}
+            n_entity_rows = 0
+            for statement in ("income_statement", "balance_sheet", "cash_flow"):
+                for row in payload[statement]:
+                    legal = (
+                        bool(row.get("dimension"))
+                        and row.get("dimension_axis") == "dei:LegalEntityAxis"
+                    )
+                    n_entity_rows += legal
+                    for column, value in row.items():
+                        period = _parse_period(str(column))
+                        if period is not None and isinstance(value, (int, float)):
+                            (entity if legal else consolidated).setdefault(period.date, set()).add(
+                                float(value)
+                            )
+            stmts = Statements.from_payload(payload)
+            leaks = [
+                (item, p.key, v)
+                for item in REGISTRY
+                for p in stmts.periods
+                if (v := stmts.get(item, p.key)) is not None
+                and v in entity.get(p.date, set())
+                and v not in consolidated.get(p.date, set())
+            ]
+            total_leaks += len(leaks)
+            print(
+                f"{ticker:<5} {refs[0].accession_number}  legal-entity rows {n_entity_rows:>4}  leaks {leaks}"
+            )
+    return 1 if total_leaks else 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    """What T-149's data-treatment changes did to the stored metrics of the same names: the earlier
+    pilot database (read-only) against the rebuilt one, filing by filing on (ticker, form, period
+    end), metric by metric on (group, name) in the current engine version of each."""
+    old = sqlite3.connect(f"file:{args.old}?mode=ro", uri=True)
+    new = sqlite3.connect(f"file:{args.new}?mode=ro", uri=True)
+
+    def load(
+        conn: sqlite3.Connection,
+    ) -> tuple[dict[tuple[str, str, str], str], dict[tuple[str, str, str, str, str], float | None]]:
+        filings = {
+            (r[0], r[1], r[2]): r[3]
+            for r in conn.execute(
+                "SELECT a.ticker, f.form, f.period_end, f.accession_number FROM sec_filings f "
+                "JOIN assets a ON a.id = f.asset_id"
+            )
+        }
+        version = conn.execute(
+            "SELECT engine_version FROM fundamental_metrics GROUP BY engine_version ORDER BY MAX(id) DESC LIMIT 1"
+        ).fetchone()[0]
+        metrics = {
+            (r[0], r[1], r[2], r[3], r[4]): r[5]
+            for r in conn.execute(
+                "SELECT a.ticker, f.form, f.period_end, m.metric_group, m.metric_name, m.value "
+                "FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id "
+                "JOIN assets a ON a.id = f.asset_id WHERE m.engine_version = ?",
+                (version,),
+            )
+        }
+        return filings, metrics
+
+    (f_old, m_old), (f_new, m_new) = load(old), load(new)
+    tickers = {k[0] for k in f_new} & {k[0] for k in f_old}
+    f_old = {k: v for k, v in f_old.items() if k[0] in tickers}
+    m_old = {k: v for k, v in m_old.items() if k[0] in tickers}
+    only_old, only_new = sorted(set(f_old) - set(f_new)), sorted(set(f_new) - set(f_old))
+    print(
+        f"names compared {len(tickers)}; filings old {len(f_old)}, new {len(f_new)}, in both {len(set(f_old) & set(f_new))}"
+    )
+    print("  only in the earlier pilot:", only_old[:SHOWN], "..." if len(only_old) > SHOWN else "")
+    print("  only in the rebuilt pilot:", only_new[:SHOWN], "..." if len(only_new) > SHOWN else "")
+    print(
+        "  accession differs on the same period:",
+        [k for k in set(f_old) & set(f_new) if f_old[k] != f_new[k]][:10],
+    )
+    changed: dict[str, int] = {}
+    filled = emptied = same = 0
+    examples: list[tuple[Any, ...]] = []
+    for key in set(m_old) & set(m_new):
+        a, b = m_old[key], m_new[key]
+        if a is None and b is None:
+            same += 1
+        elif a is None:
+            filled += 1
+        elif b is None:
+            emptied += 1
+        elif abs(a - b) > 1e-9 * max(1.0, abs(a), abs(b)):
+            changed[f"{key[3]}.{key[4]}"] = changed.get(f"{key[3]}.{key[4]}", 0) + 1
+            if len(examples) < SHOWN:
+                examples.append((*key, a, b))
+        else:
+            same += 1
+    print(
+        f"metric rows in both: {same + filled + emptied + sum(changed.values())}: unchanged {same}, "
+        f"empty -> value {filled}, value -> empty {emptied}, value changed {sum(changed.values())}"
+    )
+    for name, n in sorted(changed.items(), key=lambda kv: -kv[1])[:15]:
+        print(f"    changed {n:>4}  {name}")
+    for e in examples:
+        print("    e.g.", e)
+    return 0
+
+
 def cmd_twitter(args: argparse.Namespace) -> int:
     out = Path(args.out)
     if out.exists():
@@ -470,6 +618,15 @@ def cmd_twitter(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
+    cmp_ = sub.add_parser("compare")
+    cmp_.add_argument("--old", required=True)
+    cmp_.add_argument("--new", required=True)
+    cmp_.set_defaults(func=cmd_compare)
+    co = sub.add_parser("coreg")
+    co.add_argument("--db", default=os.environ.get("KG_FINANCIAL_DB"))
+    co.add_argument("--tickers", required=True)
+    co.add_argument("--year", type=int, default=2025)
+    co.set_defaults(func=cmd_coreg)
     n2 = sub.add_parser("n2")
     n2.add_argument("--db", required=True)
     n2.add_argument("--out-dir", required=True)
@@ -482,6 +639,9 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--prod", default=os.environ.get("KG_FINANCIAL_DB"))
         if name == "pilot":
             p.add_argument("--analysis-date", default="2026-09-22")
+            p.add_argument("--tickers", help="comma-separated; default: the 20 pilot names")
+            p.add_argument("--members-from-prod", action="store_true")
+            p.add_argument("--no-prices", action="store_true")
         p.set_defaults(func=func)
     args = parser.parse_args(argv)
     return int(args.func(args))

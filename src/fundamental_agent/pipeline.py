@@ -458,10 +458,6 @@ def _record_unusable(engine: _Engine, task: _YearTask, ref: FilingRef, reason: s
     )
 
 
-# A 10-Q's own quarter column ends on its balance sheet's date (the same month end, PER-08). A
-# column ending before it is a comparative: the payload then carries no quarter of the filing's own.
-
-
 def _targets(
     stmts: Statements,
     task: _YearTask,
@@ -517,6 +513,8 @@ def _resolve_quarter(
     end = date.fromisoformat(period.date)
     instants = [p.date for p in stmts.instant_periods()]
     latest = max(instants, default=None)
+    # The filing's own quarter column ends on its balance sheet's date (the same month end, PER-08);
+    # one that ends before it is a comparative.
     if (
         latest is not None
         and date.fromisoformat(latest) > end
@@ -614,10 +612,6 @@ _TTM_ITEMS = (
 )
 
 
-# A first quarter's period end sits one quarter after the last fiscal year end -- PER-08's
-# [89, 98] days, which absorbs 52/53-week calendars -- where a later quarter's sits two or three.
-
-
 def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
     """Whether *target* is its fiscal year's first quarter, so that its quarter column *is* its
     year-to-date. The gateway's ``(Q1)`` tag says so for a calendar-aligned filer, but it tags a
@@ -627,6 +621,8 @@ def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
     if target.period.tag == "Q1":
         return True
     end = date.fromisoformat(target.period.date)
+    # a first quarter ends one quarter (PER-08: [89, 98] days, 52/53-week calendars included) after
+    # the last fiscal year end; a later quarter's sits two or three
     return any(
         within((end - date.fromisoformat(p.date)).days, QUARTER_DAYS)
         for p in stmts.periods
