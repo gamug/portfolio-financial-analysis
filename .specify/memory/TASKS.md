@@ -382,7 +382,7 @@ the final pilot, `T-143`.
         `T-070` adds are: operating cash flow (N3), interest expense (the filed sign, `abs()` removed) and cash (N5);
         the debt inputs of `LEVERAGE_EXTREME` change too. `T-148` therefore repeats `T-070`'s calibration check on
         the rebuilt data and reports it.
-- [ ] **T-149** Filing identity (engine `facts-v1` bump if stored facts change; `fundamental_agent`, `cycle`; the
+- [x] **T-149** — **done 2026-10-11, PR #135** (approved after the review's four fixes: APP-10b-3, the `rules` column, T-153's evidence rule, CNP/GEHC tracked). Filing identity (engine `facts-v1` bump if stored facts change; `fundamental_agent`, `cycle`; the
       gateway repo for the period-end field). New from `T-147`; precedes `T-148`. **Must be done before T-153.**
       → `PLAN.md` Work item 8, step 12. Rules PER-02, PER-05, PER-08, ID-07, ID-10, APP-10a, APP-10b, MET-05 (N2).
       These points ensure a company's metrics can never use another company's data. Measured on production:
@@ -689,6 +689,25 @@ the final pilot, `T-143`.
         no other evidence (not an S-4, not a plain 8-K). Each new row must also pass the APP-10b-3 check (the predecessor's last 10-K before the
         effective date is listed under the predecessor's CIK, else `pipeline._verify_successions` leaves the link out and records
         `stage='succession'`). Only add a row for a company that loses filings without it (T-149).
+        APP-10b-3's check must also accept the predecessor's last annual report when it is listed under the
+        successor's CIK (A7 p.4: the successor files it "unless such report has been filed by the predecessor");
+        today's `_last_annual_report_missing` looks only under the predecessor's CIK, which is correct for XOM.
+      - **Verified 2026-10-11 against the SEC submissions files (read-only; 2022-2026, 10-K and 10-Q only, current
+        members against production's stored filings, leavers against their membership periods):** XOM is the only
+        current member whose stored filings are not under its own CIK (18 of 5,076; all `0000034088`). Among the 86
+        leaver CIKs (90 membership intervals since 2022) there is no other such case. Five leavers have no 10-K/10-Q
+        under their CIK during their membership, in two groups:
+        - PHINIA, Fortrea and MasterBrand were members for 1-4 days after their spin-offs and have no filing in that
+          window; expected, no action (L-11 already mentions two of them).
+        - **Signature Bank (SBNY, CIK `0001288784`) and First Republic Bank (FRC, CIK `0001132979`)** have no 10-K or
+          10-Q on EDGAR at all (their CIKs hold only SC 13G/13D filings by holders; over 2004-2025 the banks never
+          filed one). Most likely they reported to their bank regulator (the FDIC), as banks without a holding
+          company; that is from the reviewer's own knowledge, not from the loaded sources. They enter the historical
+          universe with no fundamentals, so they are UNSCORED and never held: the backtest avoids their 2023 failures
+          for lack of data, not by signal (survivorship bias, the thing PER-11 is about). Not an XOM-type problem and
+          nothing `T-149` builds can fix it: a data-source gap for this task to declare under PER-11 / L-11 and
+          measure (dates, the weight they would have had in the index), and to say whether the quant benchmark,
+          which reads only prices, can still hold them.
       - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
         WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
         assets are keyed by ticker.
