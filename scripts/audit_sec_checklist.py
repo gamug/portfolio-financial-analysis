@@ -4,6 +4,7 @@
     uv run python scripts/audit_sec_checklist.py baseline --out DIR --date D     # the D-11 "before" export
     uv run python scripts/audit_sec_checklist.py company-types [--fetch]         # APP-00 table
     uv run python scripts/audit_sec_checklist.py l09                             # L-09 verification register
+    uv run python scripts/audit_sec_checklist.py successions                     # APP-10b-1 succession 8-K register
     uv run python scripts/audit_sec_checklist.py measure [--only n1,resolver]    # every count, both evidence levels
     uv run python scripts/audit_sec_checklist.py d07-replay                      # D-07 replay on scratch copies
     uv run python scripts/audit_sec_checklist.py fidelity                        # is the level (b) re-run faithful?
@@ -37,6 +38,7 @@ from sec_xcheck import (
     records,
     runner,
     submissions,
+    successions,
 )
 from sec_xcheck.common import REPO, SecClient, cache_dir, cik_family, open_ro
 
@@ -120,6 +122,16 @@ def cmd_l09(args: argparse.Namespace) -> int:
     print(f"{len(rows)} register rows -> {args.out}")
     for f in l09.findings(rows, len(conn.execute("SELECT id FROM sec_filings").fetchall())):
         print(f"  {f.key}: {f.count}/{f.total} ({f.companies} companies)")
+    return 0
+
+
+def cmd_successions(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    client = SecClient(cache_dir(args.cache), offline=True)
+    rows = successions.build_register(conn, client)
+    successions.write_csv(rows, Path(args.out))
+    companies = sorted({r["ticker"] for r in rows})
+    print(f"{len(rows)} succession 8-Ks of {len(companies)} companies -> {args.out}: {companies}")
     return 0
 
 
@@ -216,6 +228,9 @@ def main(argv: list[str] | None = None) -> int:
         help="download the 10-Ks the Article 9 evidence is read from",
     )
     ct.add_argument("--out", default=str(CHECKLIST_DIR / "company_types.csv"))
+    add(
+        "successions", cmd_successions, "register the succession 8-Ks (APP-10b-1), unlinked"
+    ).add_argument("--out", default=str(CHECKLIST_DIR / "successions.csv"))
     add("l09", cmd_l09, "build the L-09 verification register").add_argument(
         "--out", default=str(CHECKLIST_DIR / "l09_verification.csv")
     )
