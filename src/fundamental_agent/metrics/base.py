@@ -28,6 +28,10 @@ class TTMFlow:
     # T-105 review: the four-quarter sum, when it was computable beside the identity -- kept
     # only for the cross-check, never used as the value.
     alt: float | None = None
+    # T-149 (PER-05): the filing's own year-to-date value of the flow (three, six or nine months),
+    # recorded so a later Q4 can be the fiscal year less the third quarter's nine months.
+    # (not part of the flow's identity: it compares equal with or without it)
+    ytd: float | None = field(default=None, compare=False)
 
 
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:

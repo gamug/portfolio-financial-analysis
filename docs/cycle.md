@@ -252,7 +252,8 @@ gap" case the way the other guards are),
 cap from the shared `kg_schema.market_cap` reader — the latest cover-page share count usable
 on the date × the close on or before it; `None` for an asset it refuses to value, which only
 drops that asset's `earnings_yield` and size factor; the valorization step records
-`market_cap_missing`), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
+`market_cap_missing`), `latest_trailing_net_income(conn, date, versions)` (T-149: asset → the trailing-year net
+income of the same latest usable filing, for the earnings yield), `data_quality(conn, date, versions) -> DataQuality` (T-065: the
 `data_quality_issue` verdicts on the same latest filing, for the run's metric versions and the
 current gate version — `quarantined` keys, `hard` issues, `negative_equity` assets; `apply()`
 blanks quarantined values). **Point in time (T-106, T-107)**: a filing's period end is not when it
@@ -310,7 +311,14 @@ are public and tested on their own.
 ### `scores/valorization.py` — `SCORE_TYPE = "VALORIZATION"`, `compute(metrics) -> list[RawScore]`
 
 Proposed. Factor blend: **value** .45 (`valuation.free_cash_flow_yield`,
-`valuation.enterprise_fcf_yield`, synthetic `earnings_yield`), **quality** .40
+`valuation.enterprise_fcf_yield`, synthetic `earnings_yield` — N2 / MET-05, T-149: the **positive part** of the
+trailing-year net income over the as-of market cap, `max(NI, 0) / cap`, so a loss-maker contributes 0, the
+lowest yield, never a negative one; the trailing-year net income is `inputs.net_income_ttm` of the filing's
+`profitability` metric rows — a 10-K's fiscal year or a 10-Q's real trailing twelve months, none for a 10-Q that
+could only be annualized as one quarter × 4, and none when `profitability.return_on_assets` is quarantined — read by
+`data.latest_trailing_net_income`; the valorization step records how many names got a yield, `earnings_yield`, and
+how many are the Fama–French negative-earnings dummy, `negative_earnings`; before T-149 the step read a
+`profitability.net_income` metric that does not exist, so the value factor ranked without it), **quality** .40
 (`profitability.return_on_equity`, `roic.return_on_invested_capital`,
 `cashflow.free_cash_flow_margin`, low `leverage.debt_to_equity`), **size** .15
 (synthetic `neg_log_market_cap`). Each factor = mean of its available sub-metric

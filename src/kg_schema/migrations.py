@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from portfolio_common.db import Database
 
 from . import availability as _availability
+from . import identity as _identity
 from . import queries as _queries
 from .ddl import REQUIRED_COLUMNS
 
@@ -582,6 +583,20 @@ def _m011_temporal_vetoes(db: Database) -> None:
         db.ensure_columns(table, REQUIRED_COLUMNS[table])
 
 
+# -- m012: the filing-identity invariant (T-149) -------------------------------
+
+
+def _m012_filing_identity(db: Database) -> None:
+    """No table changes: installs ``ddl.IDENTITY_TRIGGERS`` and refuses a database whose stored
+    rows already break them (an asset with filings and no CIK, or an accession on assets of
+    different CIKs -- a trigger never checks the rows already there), so a database at contract
+    12 is one where the invariant holds for every row. Raises the floor to 12, as m010 did for
+    T-144's views."""
+    _identity.drop_triggers(db)
+    _identity.require(db)
+    _identity.ensure_triggers(db)
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -626,6 +641,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "veto.expires_on (temporal vetoes) (T-070)",
         _m011_temporal_vetoes,
     ),
+    (
+        12,
+        "filing identity: every asset with filings has a CIK, an accession spans only assets "
+        "of one CIK -- triggers, checked against the stored rows (T-149)",
+        _m012_filing_identity,
+    ),
 ]
 
 
@@ -639,6 +660,7 @@ def apply_migrations(db: Database) -> list[int]:
     # The T-107 guards come off for the rebuilds and go back on afterwards (m008 re-creates
     # them; this covers a later migration too).
     _availability.drop_triggers(db)
+    _identity.drop_triggers(db)
     applied: list[int] = []
     try:
         for ver, desc, fn in pending:
@@ -648,4 +670,5 @@ def apply_migrations(db: Database) -> list[int]:
             applied.append(ver)
     finally:
         _availability.ensure_triggers(db)
+        _identity.ensure_triggers(db)
     return applied

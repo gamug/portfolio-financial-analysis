@@ -1025,7 +1025,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
     per PR; one that changes what VALORIZATION or a veto rule reads may overlap `T-070`/`T-071`, in which case
     the agent says which and the user decides whether it merges into those tasks.
 
-12. **Filing identity (`T-149`, from `T-147`'s audit, 2026-10-08; precedes `T-148`)** — ensures a company's metrics can never
+12. **Filing identity (`T-149`, done 2026-10-11, PR #135; from `T-147`'s audit, 2026-10-08; precedes `T-148`)** — ensures a company's metrics can never
     use another company's data. **Must be done before T-153.**
     - **Fetch by CIK, never by ticker (APP-10a, ✗ today):** The audit found 0 of 5,076 stored filings outside their CIK,
       but only because today's members don't reuse tickers. With the historical universe (renames such as FB→META, reused

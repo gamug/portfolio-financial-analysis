@@ -56,8 +56,12 @@ def _legacy_conn() -> Database:
     conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(_LEGACY_SQL)
-    conn.execute("INSERT INTO assets (ticker, company_name) VALUES ('AAPL', 'Apple')")
-    conn.execute("INSERT INTO assets (ticker, company_name) VALUES ('MSFT', 'Microsoft')")
+    conn.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('AAPL', 'Apple', '0000320193')"
+    )
+    conn.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('MSFT', 'Microsoft', '0000789019')"
+    )
     conn.execute(
         "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
         "filing_date, accession_number, retrieved_at) VALUES (1, '10-K', 2023, 'FY2023', "
@@ -109,7 +113,7 @@ def test_ensure_is_idempotent_and_additive() -> None:
 
 def test_migrations_rebuild_and_preserve_rows(migrated_db: Database) -> None:
     conn = migrated_db
-    assert queries.current_version(conn) == 11
+    assert queries.current_version(conn) == 12
     # score_type CHECK admits 'SECTOR' after m005
     conn.execute(
         "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, computed_at) "

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from conftest import write_universe_db
+from conftest import cik_for, write_universe_db
 
 from fundamental_agent import pipeline
 from fundamental_agent.agents import AnalysisResult, FilingContext, FundamentalAssessment
@@ -57,7 +57,9 @@ def _q1_payload() -> dict[str, Any]:
 
 
 def _task(form: str = "10-Q", year: int = 2023) -> _YearTask:
-    return _YearTask(asset_id=1, ticker="STZ", company_name="STZ", form=form, year=year)
+    return _YearTask(
+        asset_id=1, ticker="STZ", company_name="STZ", form=form, year=year, cik="0000000001"
+    )
 
 
 # -- _targets: the filing's own period only ------------------------------------------------
@@ -88,11 +90,7 @@ def test_filings_are_ingested_oldest_first_whatever_order_the_gateway_lists_them
     ]
 
 
-def test_a_10k_keeps_only_the_most_recent_of_several_matches() -> None:
-    original = FilingRef("10-K", "2023-04-20", "acc-orig")
-    amendment = FilingRef("10-K", "2023-09-01", "acc-amend")
-    picked = _select_filings(_task("10-K"), [amendment, original])
-    assert [r.accession_number for r in picked] == ["acc-amend"]
+# A 10-K year that holds an amendment keeps its original: tests/test_filing_identity.py (T-149).
 
 
 # -- a full run against a fake gateway -----------------------------------------------------
@@ -250,7 +248,7 @@ def test_a_resumed_run_skips_the_financials_call_for_ingested_accessions(
     second = _run(monkeypatch, tmp_path, second_edgar)
     assert second.completed == 0 and second.skipped == 2
     assert second_edgar.financials_calls == []  # the listing is still one cheap call
-    assert second_edgar.listing_calls == ["STZ"]
+    assert second_edgar.listing_calls == [cik_for("STZ")]  # listed by CIK (T-149)
 
 
 def test_a_filing_dated_after_the_analysis_date_is_skipped_without_being_fetched(

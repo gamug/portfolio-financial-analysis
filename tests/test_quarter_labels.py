@@ -63,7 +63,7 @@ def _wat(ref: FilingRef) -> dict[str, Any]:
 
 
 def _task(ticker: str = "WAT", year: int = 2023) -> _YearTask:
-    return _YearTask(1, ticker, ticker, "10-Q", year)
+    return _YearTask(1, ticker, ticker, "10-Q", year, "0000000001")
 
 
 def _label(payload: dict[str, Any], ticker: str = "WAT") -> str:
@@ -291,7 +291,7 @@ def test_the_two_johnson_and_johnson_fiscal_years_are_labelled_apart() -> None:
         (JNJ_FY2022, "2023-01-01", "FY2022", 2022),
         (JNJ_FY2023, "2023-12-31", "FY2023", 2023),
     ):
-        task = _YearTask(1, "JNJ", "JNJ", "10-K", 2023)
+        task = _YearTask(1, "JNJ", "JNJ", "10-K", 2023, "0000000001")
         (target,) = _targets(Statements.from_payload(_jnj(ref)), task)
         assert (target.period.date, target.fiscal_period, target.fiscal_year) == (
             period_end,
@@ -305,7 +305,7 @@ def test_a_johnson_and_johnson_quarter_the_gateway_tagged_q4_is_its_third() -> N
     quarter (ended 2023-10-01) arrives as ``(Q4)``."""
     stmts = Statements.from_payload(_jnj(JNJ_Q3))
     assert max(stmts.quarter_periods(), key=lambda p: p.date).key == "2023-10-01 (Q4)"
-    (target,) = _targets(stmts, _YearTask(1, "JNJ", "JNJ", "10-Q", 2023))
+    (target,) = _targets(stmts, _YearTask(1, "JNJ", "JNJ", "10-Q", 2023, "0000000001"))
     assert (target.fiscal_period, target.fiscal_year) == ("2023Q3", 2023)
 
 

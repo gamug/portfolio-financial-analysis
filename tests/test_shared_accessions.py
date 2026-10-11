@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import cik_for
 from portfolio_common.db import Database
 from test_pipeline_multi_filing import Q1_JUN, Q2_OCT, _Edgar, _q1_payload, _stz_q2_payload
 
@@ -34,7 +35,7 @@ def _legacy(conn: Database, q1_end: str = "2023-05-31") -> dict[str, int]:
     db.ensure_schema(conn)
     conn.execute("DROP TRIGGER trg_sf_accession_insert")
     conn.execute("DROP TRIGGER trg_sf_accession_update")
-    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'STZ')")
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (1, 'STZ', ?)", (cik_for("STZ"),))
     stmts = Statements.from_payload(_stz_q2_payload())
     ids = {}
     for fp, pe in (("2023Q1", q1_end), ("2023Q2", "2023-08-31")):
@@ -119,11 +120,15 @@ def test_the_database_refuses_a_second_row_with_the_same_accession(memory_db: Da
     )
     with pytest.raises(sqlite3.IntegrityError, match="accession_number already used"):
         conn.execute("UPDATE sec_filings SET accession_number = ? WHERE id = ?", (SHARED, q1))
-    # Another asset may carry the same string (it is per company), and NULL is never shared.
-    db.upsert_filing(conn, db.FilingKey(2, "10-Q", 2023, "2023Q2"), meta)
+    # Another asset of the same CIK (a share class) may carry the same accession (T-149: one of
+    # another company may not), and NULL is never shared.
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (3, 'STZ.B', ?)", (cik_for("STZ"),))
+    with pytest.raises(sqlite3.IntegrityError, match="attached to an asset of another CIK"):
+        db.upsert_filing(conn, db.FilingKey(2, "10-Q", 2023, "2023Q2"), meta)
+    db.upsert_filing(conn, db.FilingKey(3, "10-Q", 2023, "2023Q2"), meta)
     for fp in ("2022Q1", "2022Q2"):
         db.upsert_filing(conn, db.FilingKey(1, "10-Q", 2022, fp), db.FilingMeta(None, None, None))
-    assert db.shared_accession_filings(conn) == []
+    assert db.shared_accession_filings(conn) == []  # per asset: the share class's row is no legacy
 
 
 def test_a_run_refuses_to_start_over_legacy_rows(tmp_path: Path) -> None:

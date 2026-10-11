@@ -39,6 +39,10 @@ def compute(
     # single-period value regardless -- it's what a later filing's own TTM
     # computation reads back as one of its trailing quarters.
     net_ttm = (ttm or {}).get("net_income", net)
+    # N2 / MET-05 (T-149): the trailing-year net income the cycle's earnings yield divides by the
+    # as-of market cap. A 10-K's is its fiscal year; a 10-Q's is the TTM (``annualized_x4`` in the
+    # inputs says it was only one quarter times four, which the cycle then does not use).
+    inputs.update(present(net_income_ttm=net_ttm))
     return [
         MetricResult("gross_margin", safe_div(gross, revenue), "ratio", inputs),
         MetricResult("operating_margin", safe_div(operating, revenue), "ratio", inputs),

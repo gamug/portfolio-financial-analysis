@@ -14,6 +14,7 @@ distance is taken modulo a year so a fiscal year end from a neighbouring year an
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Iterable
 from datetime import date, timedelta
 
@@ -73,3 +74,71 @@ def payload_fiscal_year_end(instants: Iterable[str], period_end: date) -> date |
         d for d in (date.fromisoformat(i) for i in instants) if low <= (period_end - d).days <= high
     ]
     return min(found) if found else None
+
+
+# -- PER-08: when two period ends are the same period (T-149) ---------------------------------
+#
+# "Two periods match when their end dates round to the same month end, and their length is within
+# [364, 371] days for a year, [89, 98] for a quarter, [181, 189] for six months and [273, 280] for
+# nine months" (checklist v1.3, PER-08). The ranges are arithmetic -- 52 or 53 weeks, 13 or 14 weeks
+# -- not a source; the rounding is the SEC's ("ddate: the end date for the data value, rounded to
+# the nearest month end", Financial Statement Data Sets, A2 §5.3). A filing's payload gives a
+# column's end date, not its start, so a length is read as the distance between two consecutive
+# period ends (a period starts the day after the one before it ends).
+
+YEAR_DAYS = (364, 371)
+QUARTER_DAYS = (89, 98)
+SIX_MONTH_DAYS = (181, 189)
+NINE_MONTH_DAYS = (273, 280)
+
+
+def month_end(day: date) -> date:
+    """The month end nearest to *day* (a tie goes to the earlier one): 2023-07-01 -> 2023-06-30,
+    2024-09-28 -> 2024-09-30, 2023-02-15 -> 2023-02-28."""
+    previous = day.replace(day=1) - timedelta(days=1)
+    this = day.replace(day=calendar.monthrange(day.year, day.month)[1])
+    return previous if (day - previous) <= (this - day) else this
+
+
+def same_period_end(a: date, b: date) -> bool:
+    """Whether two period end dates round to the same month end."""
+    return month_end(a) == month_end(b)
+
+
+def within(days: int, bounds: tuple[int, int]) -> bool:
+    low, high = bounds
+    return low <= days <= high
+
+
+def one_year_before(day: date) -> date:
+    """*day* a calendar year earlier (29 February becomes 28 February)."""
+    if day.month == 2 and day.day == 29:  # noqa: PLR2004 - the leap day
+        return date(day.year - 1, 2, 28)
+    return day.replace(year=day.year - 1)
+
+
+def is_year_apart(earlier: date, later: date) -> bool:
+    """Whether *earlier* is the period end one year before *later*: the distance is within
+    :data:`YEAR_DAYS` and *earlier* rounds to the same month end as *later* a year earlier."""
+    return within((later - earlier).days, YEAR_DAYS) and same_period_end(
+        earlier, one_year_before(later)
+    )
+
+
+def is_quarter_apart(earlier: date, later: date) -> bool:
+    """Whether *earlier* is the period end one quarter before *later*: the distance is within
+    :data:`QUARTER_DAYS` and *earlier* rounds to the same month end as *later* three months
+    earlier."""
+    return within((later - earlier).days, QUARTER_DAYS) and same_period_end(
+        earlier, months_before(later, 3)
+    )
+
+
+def months_before(day: date, months: int) -> date:
+    """*day* moved back *months* calendar months; a month end stays a month end (2023-08-31 - 3
+    -> 2023-05-31, 2024-02-29 - 3 -> 2023-11-30)."""
+    year, month0 = divmod(day.year * 12 + (day.month - 1) - months, 12)
+    month = month0 + 1
+    last = calendar.monthrange(year, month)[1]
+    was_month_end = day.day == calendar.monthrange(day.year, day.month)[1]
+    return date(year, month, last if was_month_end else min(day.day, last))

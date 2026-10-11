@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -92,6 +93,44 @@ def latest_metrics(
         out.setdefault(int(r["asset_id"]), {})[f"{r['metric_group']}.{r['metric_name']}"] = r[
             "value"
         ]
+    return out
+
+
+def latest_trailing_net_income(
+    conn: Database, cycle_date: str, versions: MetricVersions
+) -> dict[int, float]:
+    """asset_id -> the trailing-year net income of each asset's newest filing *usable* on
+    *cycle_date* (the same filing :func:`latest_metrics` reads), for the earnings yield (N2,
+    MET-05, T-149). It is ``inputs.net_income_ttm`` of the filing's ``profitability`` metric rows: a
+    10-K's fiscal year, or a 10-Q's real trailing twelve months. A 10-Q that could only be
+    annualized as one quarter times four (``annualized_x4``) has none -- that is the quarter again,
+    not a trailing year -- and neither has a filing recorded before the input existed: the asset is
+    absent, never estimated."""
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = 'profitability' AND m.metric_name = 'return_on_assets'
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, versions.json_param()),
+    ).fetchall()
+    out: dict[int, float] = {}
+    for r in rows:
+        inputs = json.loads(r["inputs_json"] or "{}")
+        value = inputs.get("net_income_ttm")
+        real = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if real and not inputs.get("annualized_x4"):
+            out[int(r["asset_id"])] = float(value)
     return out
 
 

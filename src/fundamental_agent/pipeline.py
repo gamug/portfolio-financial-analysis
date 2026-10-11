@@ -7,8 +7,8 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -29,15 +29,22 @@ from fundamental_agent.edgar_client import (
     EdgarError,
     EdgarNotFoundError,
     FilingRef,
-    normalize_ticker,
 )
 from fundamental_agent.filing_text import fetch_primary_document
-from fundamental_agent.fiscal import label_year, payload_fiscal_year_end, quarter_label
+from fundamental_agent.fiscal import (
+    QUARTER_DAYS,
+    is_year_apart,
+    label_year,
+    payload_fiscal_year_end,
+    quarter_label,
+    same_period_end,
+    within,
+)
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
-from fundamental_agent.statements import YEAR_TOLERANCE_DAYS, Period, Statements, iter_facts
-from kg_schema import connect, rundate
+from fundamental_agent.statements import Period, Statements, iter_facts
+from kg_schema import connect, identity, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 
@@ -88,6 +95,14 @@ class _YearTask:
     company_name: str
     form: str
     year: int
+    cik: str  # the 10-digit string every EDGAR call carries (T-149); the ticker is for display
+    # the asset's recorded predecessors (APP-10b, ``cik_succession``): their filings are the asset's too
+    predecessors: tuple[str, ...] = ()
+
+    @property
+    def ciks(self) -> tuple[str, ...]:
+        """Every CIK this asset's filings are fetched under: its own first."""
+        return (self.cik, *self.predecessors)
 
 
 @dataclass(frozen=True)
@@ -108,7 +123,6 @@ class _Engine:
     params: RunParams
     report: RunReport
     completed: set[_Unit]
-    resolved: dict[str, str] = field(default_factory=dict)
     # Accessions already scored: a resumed run skips their ``financials`` call.
     completed_accessions: set[str] = field(default_factory=set)
 
@@ -119,6 +133,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     try:
         db.ensure_schema(conn)
         _refuse_shared_accessions(conn)
+        _refuse_identity_violations(conn)
         members = _load_members(settings, params.analysis_date)
         db.sync_universe(conn, members)
         symbols = [m.symbol for m in members]
@@ -127,7 +142,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise RuntimeError(
                 f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
             )
-        tasks = _plan(assets, params)
+        chains = {str(a["ticker"]): identity.cik_chain(conn, a["cik"]) for a in assets}
+        tasks = _plan(assets, params, chains)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
@@ -154,7 +170,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 engine = _Engine(
                     conn, edgar, analyst, params, report, completed, completed_accessions=accessions
                 )
-                _drive(engine, tasks)
+                _drive(engine, _verify_successions(engine, tasks))
         except BaseException:  # an interrupt too: never leave the run log 'running'
             conn.rollback()  # drop any half-written statement before recording the outcome
             db.finish_run(conn, run_id, status="failed")
@@ -181,7 +197,21 @@ def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember
     return members
 
 
-def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
+class MissingCikError(RuntimeError):
+    """An asset in scope has no CIK, so its filings cannot be fetched (T-149)."""
+
+
+def _plan(
+    assets: Sequence[Row],
+    params: RunParams,
+    chains: Mapping[str, tuple[str, ...]] | None = None,
+) -> list[_YearTask]:
+    keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
+    if keyless:
+        raise MissingCikError(
+            f"{len(keyless)} assets have no CIK ({', '.join(keyless)}): filings are fetched by CIK, "
+            "never by ticker (APP-10a, T-149)"
+        )
     years = range(params.since_year, params.resolved_until() + 1)
     return [
         _YearTask(
@@ -190,11 +220,82 @@ def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
             company_name=str(asset["company_name"] or asset["ticker"]),
             form=form,
             year=year,
+            cik=str(identity.normalize_cik(asset["cik"])),
+            predecessors=(chains or {}).get(str(asset["ticker"]), ())[1:],
         )
         for asset in assets
         for form in params.forms
         for year in years
     ]
+
+
+# A fiscal year is at most 53 weeks, so the last one to end before a succession ended within this many days.
+_LAST_ANNUAL_WINDOW_DAYS = 371
+
+
+def _verify_successions(engine: _Engine, tasks: Sequence[_YearTask]) -> list[_YearTask]:
+    """Drop the predecessors whose last annual report is not listed (APP-10b-3, BLOCK).
+
+    SEC Rule 12g-3 (A7 p.4) has the successor file the annual report of the predecessor's last full
+    fiscal year; when it is missing the rule only leaves the multi-year metrics empty. Stricter here:
+    the link is what makes them multi-year, so the predecessor's filings are not linked at all, and an
+    ``analysis_run_error`` (``stage='succession'``) says which. The check is once per succession."""
+    effective = {
+        (task.cik, pred): date_
+        for task in tasks
+        for pred, date_ in identity.predecessors_of(engine.conn, task.cik)
+        if pred in task.predecessors
+    }
+    verdicts: dict[tuple[str, str], str | None] = {}
+    recorded: set[tuple[str, str]] = set()
+    verified: list[_YearTask] = []
+    for task in tasks:
+        kept = []
+        for pred in task.predecessors:
+            key = (task.cik, pred)
+            if key not in verdicts:
+                verdicts[key] = _last_annual_report_missing(engine, pred, effective[key])
+            reason = verdicts[key]
+            if reason is None:
+                kept.append(pred)
+            elif (task.ticker, pred) not in recorded:
+                recorded.add((task.ticker, pred))
+                message = f"predecessor {pred} not linked to {task.cik} (APP-10b-3): {reason}"
+                engine.report.errors.append(f"{task.ticker} [succession]: {message}")
+                db.record_error(
+                    engine.conn,
+                    engine.report.run_id,
+                    RunError(task.ticker, "10-K", "", "succession", message),
+                )
+        verified.append(
+            replace(task, predecessors=tuple(kept)) if kept != task.predecessors else task
+        )
+    return verified
+
+
+def _last_annual_report_missing(engine: _Engine, predecessor: str, effective: str) -> str | None:
+    """Why the predecessor's last 10-K before *effective* cannot be confirmed; ``None`` when it is listed.
+
+    The last full fiscal year ended within :data:`_LAST_ANNUAL_WINDOW_DAYS` before the effective date and
+    its 10-K was filed that calendar year or the one before; an amendment does not count (L-04)."""
+    end = date.fromisoformat(effective)
+    first = end - timedelta(days=_LAST_ANNUAL_WINDOW_DAYS)
+    for year in (end.year, end.year - 1):
+        try:
+            refs = engine.edgar.filing_by_year(predecessor, "10-K", year)
+        except EdgarNotFoundError:
+            continue
+        except Exception as exc:  # the report cannot be confirmed: do not link
+            return f"its 10-K listing for {year} could not be read ({exc})"
+        for ref in refs:
+            if _is_amendment(ref) or ref.form.strip().upper() != "10-K" or not ref.period_of_report:
+                continue
+            if first <= date.fromisoformat(ref.period_of_report) < end:
+                return None
+    return (
+        f"no 10-K with a period ending {first} to {end} is listed under {predecessor}; "
+        "the predecessor's filings are not linked"
+    )
 
 
 def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
@@ -207,22 +308,27 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
 def _run_task(engine: _Engine, task: _YearTask) -> None:
     """One (ticker, form, filing-year): list its filings, then ingest each one."""
     try:
-        ticker_api, refs = _list_filings(engine, task)
+        refs = _list_filings(engine, task)
     except EdgarNotFoundError:
         _count(engine, skipped=1)  # the company filed no such form that year
         return
-    except Exception as exc:  # one bad ticker/year must not stop the batch
+    except Exception as exc:  # one bad company/year must not stop the batch
         _record_failure(engine, task, None, exc)
         return
-    for ref in _select_filings(task, refs):
-        _run_filing(engine, task, ticker_api, ref)
+    selected = _select_filings(task, refs)
+    _count(engine, skipped=len(refs) - len(selected))  # amendments: never ingested (L-04)
+    for ref in selected:
+        _run_filing(engine, task, ref)
 
 
-def _run_filing(engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef) -> None:
+def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
     try:
-        done, skipped = _process_filing(engine, task, ticker_api, ref)
+        done, skipped = _process_filing(engine, task, ref)
     except EdgarNotFoundError:
         _count(engine, skipped=1)
+        return
+    except FilingIdentityError as exc:  # another company's filing: never stored
+        _record_failure(engine, task, ref, exc, stage="identity")
         return
     except Exception as exc:  # one bad filing must not stop its siblings or the batch
         _record_failure(engine, task, ref, exc)
@@ -241,7 +347,12 @@ def _count(engine: _Engine, *, completed: int = 0, skipped: int = 0) -> None:
 
 
 def _record_failure(
-    engine: _Engine, task: _YearTask, ref: FilingRef | None, exc: Exception
+    engine: _Engine,
+    task: _YearTask,
+    ref: FilingRef | None,
+    exc: Exception,
+    *,
+    stage: str = "process",
 ) -> None:
     report = engine.report
     where = f" [{ref.accession_number}]" if ref else ""
@@ -255,38 +366,36 @@ def _record_failure(
             task.ticker,
             task.form,
             str(task.year),
-            "process",
+            stage,
             f"{ref.accession_number}: {exc}" if ref else str(exc),
         ),
     )
 
 
-def _list_filings(engine: _Engine, task: _YearTask) -> tuple[str, list[FilingRef]]:
-    """The ticker spelling EDGAR knows and its filings for the task's form and year.
+def _list_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
+    """The task's filings for its form and year, listed under every CIK in the asset's chain.
 
-    Raises :class:`EdgarNotFoundError` when the company exists but filed nothing that year
-    (a skip), and a plain :class:`EdgarError` when no spelling matches a company at all (a
-    failure worth seeing)."""
-    candidates = (
-        [engine.resolved[task.ticker]]
-        if task.ticker in engine.resolved
-        else normalize_ticker(task.ticker)
-    )
-    company_found = False
-    last: EdgarNotFoundError | None = None
-    for candidate in candidates:
+    The asset's own CIK is listed first, then its recorded predecessors' (APP-10b: ExxonMobil Holdings
+    Corp's filings before 2026-07-01 are its predecessor's). A filing listed under more than one -- XOM's
+    2026-08-03 10-Q is listed under both -- is kept once, by accession, under the first. Each row carries
+    the CIK it was listed under. Raises :class:`EdgarNotFoundError` when the company exists but filed
+    nothing that year (a skip), and a plain :class:`EdgarError` when the gateway knows no company by
+    any of the CIKs (a failure worth seeing). A CIK finds a company that left the index; a ticker would not."""
+    found: dict[str, FilingRef] = {}
+    known = False
+    for cik in task.ciks:
         try:
-            refs = engine.edgar.filing_by_year(candidate, task.form, task.year)
-        except EdgarNotFoundError as exc:
-            last = exc
+            refs = engine.edgar.filing_by_year(cik, task.form, task.year)
+        except EdgarNotFoundError:
             continue
-        company_found = True
-        if refs:
-            engine.resolved[task.ticker] = candidate
-            return candidate, refs
-    if company_found:
+        known = True
+        for ref in refs:
+            found.setdefault(ref.accession_number, replace(ref, cik=ref.cik or cik))
+    if not known:
+        raise EdgarError(f"no EDGAR match for {task.ticker!r} (CIK {', '.join(task.ciks)})")
+    if not found:
         raise EdgarNotFoundError(f"no {task.form} filing for {task.ticker} in {task.year}")
-    raise EdgarError(f"no EDGAR match for {task.ticker!r}") from last
+    return list(found.values())
 
 
 class SharedAccessionsError(RuntimeError):
@@ -309,21 +418,50 @@ def _refuse_shared_accessions(conn: Database) -> None:
         )
 
 
+def _is_amendment(ref: FilingRef) -> bool:
+    return ref.form.strip().upper().endswith("/A")
+
+
+def _refuse_identity_violations(conn: Database) -> None:
+    """Refuse to run over stored filings that break the filing-identity invariant (T-149): the
+    triggers keep new writes out, but never check the rows already there."""
+    identity.require(conn)
+
+
 def _select_filings(task: _YearTask, refs: Sequence[FilingRef]) -> list[FilingRef]:
-    """The filings to ingest, **oldest first**.
+    """The filings to ingest, **oldest first**, **originals only**.
 
-    Chronological order matters: F4's trailing-twelve-month figure for a 10-Q reads the
-    prior quarters' already-recorded values (``db.ttm_flows``), so Q1 must be recorded
-    before Q2 and Q2 before Q3. The gateway lists most-recent-first, hence the re-sort.
-    A 10-K reports one fiscal year, so if several match (an amendment) only the most
-    recent is kept."""
-    ordered = sorted(refs, key=lambda r: (r.filing_date or "", r.accession_number))
-    return ordered[-1:] if task.form == "10-K" else ordered
+    A 10-K/A or 10-Q/A is never ingested (PER-02, L-04): a period's value is the one in its
+    original filing, and an amendment of the same period would replace it in every reader (they
+    order a company's filings by period end, then publication time). The gateway lists amendments
+    beside their originals, so a year whose newest filing is a 10-K/A keeps its original 10-K --
+    and a Part III-only amendment, which has no statements, no longer costs the year its figures.
+
+    Chronological order matters: F4's trailing-twelve-month figure for a 10-Q reads the prior
+    quarters' already-recorded values (``db.ttm_flows``), so Q1 must be recorded before Q2 and Q2
+    before Q3. The gateway lists most-recent-first, hence the re-sort."""
+    originals = [r for r in refs if not _is_amendment(r)]
+    return sorted(originals, key=lambda r: (r.filing_date or "", r.accession_number))
 
 
-def _process_filing(
-    engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef
-) -> tuple[int, int]:
+class FilingIdentityError(RuntimeError):
+    """The gateway listed another company's filing under the asset's CIK (T-149)."""
+
+
+def _check_filer(task: _YearTask, ref: FilingRef) -> None:
+    """Refuse a filing whose own CIK is not in the asset's chain -- its own or a recorded predecessor's
+    (``cik_succession``): a ticker reassigned, or a listing keyed wrongly, would otherwise attach one
+    company's statements to another's history. A listing that carries no CIK (a gateway before
+    portfolio-data-mining T-045) cannot be checked."""
+    if ref.cik is not None and ref.cik not in task.ciks:
+        raise FilingIdentityError(
+            f"{ref.accession_number} is listed under CIK {ref.cik}, not {task.ticker}'s "
+            f"{' or '.join(task.ciks)}; not stored"
+        )
+
+
+def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[int, int]:
+    _check_filer(task, ref)
     as_of = engine.params.analysis_date
     if ref.filing_date and ref.filing_date > as_of:
         return 0, 1  # no lookahead: this filing was filed after the analysis date
@@ -332,16 +470,24 @@ def _process_filing(
     if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
         return 0, 1  # already ingested and scored by an earlier run
 
+    filer = (
+        ref.cik or task.cik
+    )  # the CIK it was listed under: a predecessor's for XOM before 2026-07-01
     payload = engine.edgar.financials(
-        ticker_api, task.form, task.year, accession_number=ref.accession_number
+        filer, task.form, task.year, accession_number=ref.accession_number
     )
     stmts = Statements.from_payload(payload)
-    meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number)
+    meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
     if isinstance(resolved, str):
         # T-140: a filing with no quarter (or year) of its own is never dropped silently
         _record_unusable(engine, task, ref, resolved)
+        return 0, 1
+
+    mismatch = _period_end_mismatch(resolved, ref)
+    if mismatch is not None:
+        _record_unusable(engine, task, ref, mismatch)  # ID-07 is a BLOCK: not stored, recorded
         return 0, 1
 
     done = skipped = 0
@@ -358,6 +504,31 @@ def _process_filing(
         engine.completed_accessions.add(ref.accession_number)
         done += 1
     return done, skipped
+
+
+def _period_end_mismatch(target: _Target, ref: FilingRef) -> str | None:
+    """Why the period end the payload gave is not the filing's own, or ``None`` (ID-07, PER-08).
+
+    The key a filing is stored under is read off the statements (the latest fiscal-year or quarter
+    column); the SEC says which period the filing reports (``periodOfReport``, the header field the
+    gateway lists as ``period_of_report``). The two must end at the same month end. Expand Energy's
+    FY2021 10-K is the case: fresh-start accounting split the year into a predecessor and a
+    successor period, the payload has no full-year 2021 column, and the latest one -- FY2020 -- was
+    stored under the FY2021 filing's accession. A filing with no ``period_of_report`` (the SEC gives
+    none, or the gateway predates portfolio-data-mining T-045) cannot be checked."""
+    if ref.period_of_report is None:
+        return None
+    try:
+        reported = date.fromisoformat(ref.period_of_report)
+    except ValueError:
+        return f"the SEC's periodOfReport {ref.period_of_report!r} is not a date"
+    if same_period_end(date.fromisoformat(target.period.date), reported):
+        return None
+    return (
+        f"the payload's {target.period.key} ends {target.period.date}, not at the SEC's "
+        f"periodOfReport {ref.period_of_report} (ID-07): the statements do not hold this "
+        "filing's own period"
+    )
 
 
 def _fye_lookup(engine: _Engine, task: _YearTask) -> Callable[[str], date | None]:
@@ -382,11 +553,6 @@ def _record_unusable(engine: _Engine, task: _YearTask, ref: FilingRef, reason: s
         engine.report.run_id,
         RunError(task.ticker, task.form, str(task.year), "period", message),
     )
-
-
-# A 10-Q's own quarter column ends on its balance sheet's date. A column further back is a
-# comparative: the payload then carries no quarter of the filing's own.
-_OWN_PERIOD_SLACK_DAYS = 20
 
 
 def _targets(
@@ -444,7 +610,13 @@ def _resolve_quarter(
     end = date.fromisoformat(period.date)
     instants = [p.date for p in stmts.instant_periods()]
     latest = max(instants, default=None)
-    if latest is not None and (date.fromisoformat(latest) - end).days > _OWN_PERIOD_SLACK_DAYS:
+    # The filing's own quarter column ends on its balance sheet's date (the same month end, PER-08);
+    # one that ends before it is a comparative.
+    if (
+        latest is not None
+        and date.fromisoformat(latest) > end
+        and not same_period_end(date.fromisoformat(latest), end)
+    ):
         return (
             f"the latest quarter column {period.key} ends before the balance sheet's {latest}: "
             f"a comparative, not the filing's own quarter (periods: {_columns(stmts)})"
@@ -500,7 +672,7 @@ def _extract_sections(
     """Best-effort narrative-text extraction. A failure here never fails the filing."""
     if not meta.accession_number:
         return
-    cik = _asset_cik(engine, task.asset_id)
+    cik = meta.cik or _asset_cik(engine, task.asset_id)  # the archive folder is the filer's
     if not cik:
         return
     try:
@@ -537,11 +709,6 @@ _TTM_ITEMS = (
 )
 
 
-# A 10-Q's balance sheet sets its period end beside the last fiscal year end: about one quarter
-# earlier for a first quarter, two or three for the others. The window absorbs 52/53-week calendars.
-_FIRST_QUARTER_GAP_DAYS = (60, 115)
-
-
 def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
     """Whether *target* is its fiscal year's first quarter, so that its quarter column *is* its
     year-to-date. The gateway's ``(Q1)`` tag says so for a calendar-aligned filer, but it tags a
@@ -551,9 +718,10 @@ def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
     if target.period.tag == "Q1":
         return True
     end = date.fromisoformat(target.period.date)
-    low, high = _FIRST_QUARTER_GAP_DAYS
+    # a first quarter ends one quarter (PER-08: [89, 98] days, 52/53-week calendars included) after
+    # the last fiscal year end; a later quarter's sits two or three
     return any(
-        low <= (end - date.fromisoformat(p.date)).days <= high
+        within((end - date.fromisoformat(p.date)).days, QUARTER_DAYS)
         for p in stmts.periods
         if p.is_instant
     )
@@ -564,21 +732,13 @@ def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | 
     10-Q. A first quarter's year-to-date *is* its quarter, so a Q1 filing with no ``(YTD)``
     columns uses its ``(Q1)`` columns (T-105)."""
     end = date.fromisoformat(target.period.date)
-    year_ago = end - timedelta(days=365)
     tags = ("YTD", target.period.tag) if _is_first_quarter(stmts, target) else ("YTD",)
     for tag in tags:
         # a first quarter's prior-year column can carry another quarter tag than its own (Waters:
         # (Q2) beside (Q1)), so any quarter column stands in for it
         periods = [p for p in stmts.periods if (p.is_quarter if tag != "YTD" else p.tag == tag)]
         current = next((p for p in periods if p.date == target.period.date), None)
-        prior = next(
-            (
-                p
-                for p in periods
-                if abs((date.fromisoformat(p.date) - year_ago).days) <= YEAR_TOLERANCE_DAYS
-            ),
-            None,
-        )
+        prior = next((p for p in periods if is_year_apart(date.fromisoformat(p.date), end)), None)
         if current is not None and prior is not None:
             return current.key, prior.key, prior.date
     return None, None, None
@@ -628,6 +788,7 @@ def _analyze_one(
             filing_date=meta.filing_date,
             accession_number=meta.accession_number,
             period_end=target.period.date,
+            cik=meta.cik,
         ),
         run_id=run_id,
     )
@@ -666,6 +827,7 @@ def _analyze_one(
         cik=_asset_cik(engine, task.asset_id),
     )
     result = engine.analyst.analyze(ctx)
+    db.stamp_ytd(result.metrics, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
     db.record_metrics(
         engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
     )

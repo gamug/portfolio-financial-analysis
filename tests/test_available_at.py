@@ -202,8 +202,8 @@ def test_m008_backfills_every_row_and_restores_the_guards(scored: tuple[Database
         "fundamental_metrics": 1,
         "score_snapshot": 1,
     }
-    assert apply_migrations(conn) == [8, 9, 10, 11]
-    assert queries.current_version(conn) == 11
+    assert apply_migrations(conn) == [8, 9, 10, 11, 12]
+    assert queries.current_version(conn) == 12
     assert {v for _, v in _available(conn)} == {"2026-02-23"}
     assert availability.missing(conn) == {}
     triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
@@ -291,7 +291,8 @@ def test_the_as_of_consumers_filter_filings_by_available_at_alone() -> None:
 def test_the_scan_sees_the_readers_it_guards() -> None:
     """Guard the guard: the known as-of readers are string literals the scan parses."""
     cycle_sql = _sql_strings(SRC / "cycle" / "data.py")
-    assert sum("available_at <= ?" in s for s in cycle_sql) == 3
+    # metrics, data-quality verdicts, the trailing net income of the earnings yield (T-149), fundamentals
+    assert sum("available_at <= ?" in s for s in cycle_sql) == 4
     # T-132: the market cap is the shared reader's (cycle and quant no longer read a stored metric
     # for it), whose one filing read is the cover-share query
     quant_sql = _sql_strings(SRC / "quant" / "db.py")

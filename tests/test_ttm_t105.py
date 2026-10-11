@@ -153,19 +153,19 @@ def _stmts(*columns: str) -> Statements:
 
 def test_ytd_columns_are_this_year_s_and_last_year_s() -> None:
     stmts = _stmts("2025-09-30 (Q3)", "2025-09-30 (YTD)", "2024-09-30 (Q3)", "2024-09-30 (YTD)")
-    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025))[0]
+    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025, "0000000001"))[0]
     assert _ytd_columns(stmts, target) == ("2025-09-30 (YTD)", "2024-09-30 (YTD)", "2024-09-30")
 
 
 def test_a_first_quarter_s_year_to_date_is_its_quarter() -> None:
     stmts = _stmts("2025-03-29 (Q1)", "2024-03-30 (Q1)")  # a 52/53-week calendar
-    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025))[0]
+    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025, "0000000001"))[0]
     assert _ytd_columns(stmts, target) == ("2025-03-29 (Q1)", "2024-03-30 (Q1)", "2024-03-30")
 
 
 def test_no_year_ago_column_means_no_identity() -> None:
     stmts = _stmts("2025-09-30 (Q3)", "2025-09-30 (YTD)")
-    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025))[0]
+    target = _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2025, "0000000001"))[0]
     assert _ytd_columns(stmts, target) == (None, None, None)
 
 

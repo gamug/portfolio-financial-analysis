@@ -280,7 +280,10 @@ def test_a_dual_listed_issuer_is_counted_once_and_recorded(seeded: Database) -> 
     single = run_build_risk_model(_config(risk_model_version="rm-single"), as_of=as_of, conn=seeded)
     assert single.market_cap_coverage["dual_listed"] == {}
 
-    seeded.execute("UPDATE assets SET cik = '0001652044' WHERE id IN (5, 6)")  # two listings
+    # two listings of one issuer: the seeded names already hold filings, whose CIK T-149 keeps
+    # fixed, so this test lifts that guard to model the issuer
+    seeded.execute("DROP TRIGGER trg_assets_cik_keep")
+    seeded.execute("UPDATE assets SET cik = '0001652044' WHERE id IN (5, 6)")
     seeded.commit()
     dual = run_build_risk_model(_config(risk_model_version="rm-dual"), as_of=as_of, conn=seeded)
     assert dual.market_cap_coverage["dual_listed"] == {"0001652044": [5, 6]}

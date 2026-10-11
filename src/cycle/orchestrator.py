@@ -401,8 +401,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- valorization
         def _valorization() -> dict:
             mcap = data.market_cap_estimates(conn, cycle_date, list(asset_ids))
+            trailing_ni = data.latest_trailing_net_income(conn, cycle_date, versions)
             rows = {}
             no_cap = 0
+            negative_earnings = 0
             for a in asset_ids:
                 m = dict(metrics.get(a, {}))
                 quarantined = dq.quarantined.get(a, set())
@@ -411,9 +413,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     # D/E is quarantined, but negative book equity is still the worst leverage
                     # in the cohort, never a missing factor (C2, docs/model_fixes.md).
                     m["leverage.debt_to_equity"] = float("inf")
-                ni = m.get("profitability.net_income") or m.get("income_statement.net_income")
-                if ni is not None and mc:
-                    m["earnings_yield"] = ni / mc
+                ni = trailing_ni.get(a)
+                if ni is not None and mc and "profitability.return_on_assets" not in quarantined:
+                    # MET-05 (Fama and French): E(+)/P -- the positive part -- with the
+                    # negative-earnings dummy kept apart (counted below, not ranked): a loss
+                    # contributes 0, the lowest earnings yield, never a negative one.
+                    m["earnings_yield"] = max(ni, 0.0) / mc
+                    negative_earnings += ni < 0
                 if mc:
                     m["neg_log_market_cap"] = -math.log(mc)
                 else:
@@ -429,7 +435,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
             )
-            return {"scored": len(scores), "market_cap_missing": no_cap}
+            with_yield = sum(1 for r in rows.values() if r.get("earnings_yield") is not None)
+            return {
+                "scored": len(scores),
+                "market_cap_missing": no_cap,
+                "earnings_yield": with_yield,
+                "negative_earnings": negative_earnings,
+            }
 
         _do("valorization", _valorization)
 

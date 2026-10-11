@@ -5567,3 +5567,228 @@ Scratch paths: `/tmp/t070/prod_copy.db` (copy of production, untouched), `/tmp/t
 `/tmp/t070/pilot_new_run.db` (the old/new backfills), `/tmp/t070/old_code/` (worktree of master `ac65af8`), `/tmp/t070/out/` (the absolute-only run), `/tmp/t070/out_final/` (the adopted rules: `vetoes_summary.json`, `relative_summary.json`,
 `systematic_moves.json`, `events.json`, `crash_events.json`, `technical_coverage.json`), `/tmp/t070/out_pilot/` (`compare_*.json`, `liquidity.json`, `pilot_vetoes_{old,new}.json`). Commands: `scripts/verify_t070.py
 {rebuild,vetoes,relative,coverage,compare,liquidity}`. Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.
+
+---
+
+## T-149 — Filing identity: fetch by CIK, the cross-company invariant, originals only, co-registrants, PER-05, PER-08, ID-07, and the earnings yield (Work item 8, step 12)
+
+**Status.** Implemented on `fix/t149-filing-identity` (PR number in the status commit). Methodology change (constitution AI behavior #12): what a "filing" is
+(which one is a period's value, whose it is, which period it reports), how two periods are matched, how a discrete Q4 is derived, and a scoring input
+(`earnings_yield`), plus contract 12 (`m012`). Everything below was measured on **scratch copies** under `/tmp/t149/` (listed at the end); production
+`financial.db` was only read, and its SHA-1 is the same before and after (`5c5c0642619bcc2f80aa72f13599bf824f676675`). The gateway fields it needs
+(`cik`, `period_of_report` on every filing row) arrived with `portfolio-data-mining` PR #50 / T-045, merged and live 2026-10-10.
+
+### Symptom
+
+Measured on production by `T-147`'s audit (`docs/sec_data_checklist.md`), checked again here:
+
+- **N1, amendments.** The gateway lists a company's 10-Ks with their amendments; `_select_filings` kept the newest 10-K of a *filing year* and `upsert_filing` was
+  `ON CONFLICT DO UPDATE`. 8 stored accessions are amendments (ADM, AMP, AXON, CNP, DASH, HOOD, IBKR, OXY); 48 original 10-Ks of 30 companies are missing because a
+  10-K/A of the period exists (a Part III-only amendment has no statements: the year was lost with an extraction failure); 18 10-Q/A share a quarter label with their
+  original. ADM's real listing for 2024 is `10-K/A 2024-11-18` (a restatement) above `10-K 2024-03-12`, same fiscal year ending 2023-12-31.
+- **APP-10a, fetch by ticker.** Every EDGAR call named the ticker (with spelling guesses: `BRK.B` → `BRK-B` → `BRKB`). Production holds 5,076 filings, none outside its
+  asset's CIK -- only because today's members do not reuse tickers. Twitter (CIK 1418091) left the index: `TWTR` answers "Company not found", the CIK returns its 10-K.
+  `sync_universe` overwrote a stored CIK with whatever the universe sent, and `pricing_agent`'s took any non-empty one.
+- **PER-08.** Two 20-day windows decided which column is "a year earlier" (`statements.prior_of`, `YEAR_TOLERANCE_DAYS`) and which stored filing is "a quarter before" (`db._PERIOD_TOLERANCE_DAYS`);
+  a third decided whether a quarter column is a comparative. Measured: Cummins' Q3 2022 paired with the quarter ended 2021-10-03 (362 days; the rule says [364, 371]); Expand Energy's FY2022
+  paired with FY2020 (730 days: its FY2021 column is absent).
+- **ID-07.** The stored period end was inferred from the statements alone. EXE's FY2021 10-K (accession `0000895126-22-000029`, period of report 2021-12-31) was stored as **FY2020**.
+- **PER-05.** A discrete Q4 was the year less Q1, Q2 *and* Q3, all recorded; with any one missing there was no Q4 and the four-quarter TTM fell back to `x4`.
+- **N2.** `orchestrator._valorization` read `profitability.net_income` / `income_statement.net_income`, neither a stored metric (0 of 34 names): the value factor ranked without
+  `earnings_yield` in every real cycle (empty in 35 of 40 stored VALORIZATION rows).
+
+### Reference and decision
+
+- **APP-10a**: "CIK numbers remain unique to the filer; they are not recycled" (SEC, *Accessing EDGAR Data*, A6 p.3); tickers are reassigned. The gateway accepts a CIK in place of a ticker on
+  `filing_by_year`/`financials`/`years_available`/`company_info`, with or without leading zeros, and finds a company that left the index by it (checked 2026-10-11).
+- **PER-02 / L-04**: "prevrpt -- TRUE indicates that the submission information was subsequently amended" (SEC Financial Statement Data Sets, A2 §5.1 p.6); a later amendment "may be
+  considered to reflect survivor/look-ahead bias" (C6 p.84). **Decision: an amendment is not stored at all** (checklist L-04: values are as originally reported). Storing it under its own
+  `form` would not work: `cycle/data.py`'s `latest_metrics` and `data_quality` order a company's filings by `period_end DESC, available_at DESC`, so an amendment of the same period end with a later
+  `available_at` would replace the original in every read.
+- **ID-07 / PER-08**: the EDGAR header field `periodOfReport` is the end of the reporting period, and the Financial Statement Data Sets round a column's end date "to the nearest month end" (A1 §3.1.7 pp.31-32;
+  A2 §5.3 p.8). The day ranges [364, 371] a year, [89, 98] a quarter, [181, 189] six months, [273, 280] nine months are arithmetic -- 52 or 53 weeks, 13 or 14 weeks -- not a source (checklist PER-08 note).
+  A payload gives a column's end date and not its start, so a length is read as the distance between consecutive period ends.
+- **ID-10**: "NULL indicates the consolidated entity" -- facts of a co-registrant carry a legal-entity member (A2 §5.3 p.8; A1 §6.2.7 p.127).
+- **PER-05**: a durational element's series must aggregate to the period's total (DQC_0084, B3); so Q4 = FY − nine-month year-to-date.
+- **N2 / MET-05**: Fama and French (1992), *The Cross-Section of Expected Stock Returns*, *Journal of Finance* 47(2): "If earnings are positive, E(+)/P is the ratio of total earnings to market equity and E/P dummy is 0. If earnings are
+  negative, E(+)/P is 0 and E/P dummy is 1." (C4 p.13, p.18). The cycle's step records the dummy's count; it does not rank it.
+- Decisions in the task brief (user, 2026-10-10/11): fetch by CIK with the ticker for display only; refuse a CIK change; the two invariants as triggers; originals only; Duke Energy's combined 10-K as the co-registrant fixture;
+  PER-05/N2/APP-10b as `T-149` (f), (g), (h) describe, the effect of N2 reported apart from the data-treatment changes.
+
+### Fix
+
+- **By CIK (`edgar_client.py`, `pipeline.py`, `repair.py`).** `require_cik` turns `320193`, `"320193"` and `"0000320193"` into the 10-digit string; `company_info`, `years_available`, `filing_by_year`
+  and `financials` take only that and raise `NotACikError` before any request for a ticker. `normalize_ticker`/`resolve` (spelling guesses) are removed. `_YearTask` carries the `cik`; the ticker stays in logs, the progress bar and
+  `analysis_run_error`. `_plan` refuses an asset with no CIK (`MissingCikError`, naming the tickers) before a run row exists. `repair-accessions` fetches by CIK too. `FilingRef` gains `cik` and `period_of_report`.
+- **The CIK never changes silently (`kg_schema/identity.py`, both `sync_universe`).** `refuse_cik_changes` raises `CikConflict` ("AAA: stored CIK 0000000001, incoming CIK 0000000002", every conflict named) before any write; the upsert is
+  `cik = COALESCE(NULLIF(assets.cik, ''), excluded.cik)`: a stored CIK is never overwritten or emptied, an empty one is filled in; spellings of one number (`320193`/`0000320193`) are no change. `pricing_agent`'s sync had taken any
+  non-empty incoming CIK; it now has the same guard.
+- **The invariant, as triggers (`kg_schema/ddl.py` `IDENTITY_TRIGGERS`, `identity.py`, migration `m012`, contract version 12).** `trg_sf_cik_insert/update`: a filing of an asset with no CIK aborts. `trg_sf_cross_cik_insert/update`: an accession already
+  on an asset of another CIK aborts (the share classes of one issuer share a CIK, hence an accession). `trg_assets_cik_keep`: the CIK of an asset with filings cannot change or empty; `trg_assets_cik_share`: a CIK filled in on an asset must agree with the
+  assets sharing one of its accessions. A trigger never checks the rows already there: `identity.violations`/`require` do, `pipeline.run` refuses to start over violations, and `m012` refuses (rolls back) a database that has any -- so a database at
+  contract 12 holds the invariant for every row. `ensure` creates the triggers (like T-107's), `apply_migrations` drops and restores them around the rebuilds. **Contract 12 is a marker, no table or view changes** (as `m010` was for T-144).
+- **Originals only (`pipeline._select_filings`, `db.upsert_filing`).** A reference whose form ends in `/A` is dropped; the originals are ingested oldest first, **all of them** (two 10-Ks filed in one calendar year are both kept -- the old rule kept the
+  newest of a year, which lost SMCI's late FY2024 10-K). The run counts the dropped amendments as skipped. `upsert_filing` raises `FilingReplacementRefused` when the row already holds another accession (same accession: a re-run; no accession yet: a legacy row
+  takes its first). Amendments are **not stored** -- the declared decision above; `repair` skips them too.
+- **The filer and period checks (`pipeline._check_filer`, `_period_end_mismatch`).** A listing row whose `cik` is not the asset's raises `FilingIdentityError`: not fetched, not stored, an `analysis_run_error` with `stage='identity'`. A row whose
+  `period_of_report` does not end at the same month end as the period the statements gave is recorded under `stage='period'` and not stored (ID-07 is a BLOCK). A row without either field (a gateway before T-045) cannot be checked and is stored as before.
+- **PER-08 (`fiscal.py`, `statements.prior_of`, `db._filing_near`, `pipeline`).** `month_end` (the nearest month end), `same_period_end`, `is_year_apart` ([364, 371] days and the same rounded month end a calendar year earlier), `is_quarter_apart` ([89, 98]),
+  `YEAR_DAYS`/`QUARTER_DAYS`/`SIX_MONTH_DAYS`/`NINE_MONTH_DAYS`. They replace `YEAR_TOLERANCE_DAYS = 20` (`prior_of`, `_ytd_columns`), `_PERIOD_TOLERANCE_DAYS = 20` (`_filing_near`: stored filings are now found by the rounded month end),
+  `_OWN_PERIOD_SLACK_DAYS = 20` (the comparative check) and `_FIRST_QUARTER_GAP_DAYS = (60, 115)` (now [89, 98]). `fiscal._TOLERANCE_DAYS = 30` (which quarter a date is) is a labelling rule and is unchanged. `prior_of` now returns no prior for a
+  non-quarter period whose same-tag earlier column is not a year earlier (it took the latest earlier column with no date check).
+- **PER-05 (`db._quarter_flow_ending`, `_nine_month_ytd`, `stamp_ytd`).** Each 10-Q records its year-to-date beside its quarter: `ytd_<item>` in the audit inputs of the item's anchor metric row (`TTMFlow.ytd`, not part of the flow's identity). A Q4 is the
+  fiscal year less the nine-month year-to-date of the 10-Q that closes one quarter before the year end (PER-08: [89, 98] days, same month end); a third quarter recorded without the year-to-date falls back to the year less Q1, Q2 and Q3, as before.
+  Metric **values** are unchanged by the recording; the TTM by quarters is now derivable where it was not.
+- **N2 (`metrics/profitability.py`, `cycle/data.py`, `cycle/orchestrator.py`).** The profitability rows' inputs carry `net_income_ttm`; `data.latest_trailing_net_income` reads it for the same latest usable filing as the metrics (the resolved version,
+  `available_at <= cycle date`), without a 10-Q's `annualized_x4` value. `earnings_yield = max(NI_ttm, 0) / market cap` (the shared as-of reader's); not computed when the cap is missing or `profitability.return_on_assets` is quarantined; the step records
+  `earnings_yield` (names with one) and `negative_earnings` (the E/P dummy's count). **The net income is today's `net_income` line** (consolidated, as ROA's): `T-148` settles which net-income line (parent-attributable) every ratio uses, and this input follows it.
+- **A successor keeps its predecessor's filings (`kg_schema/data/cik_successions.csv`, table `cik_succession`, `identity.cik_chain`, `pipeline._list_filings`).** Found by this task's own verification, not by the audit: fetching by CIK dropped XOM's history (below).
+  The table is tracked and versioned: successor CIK, predecessor CIK, effective date, and the evidence -- the form, the accession and a quote of the filing that establishes it. One row:
+  `0002115436 <- 0000034088`, effective 2026-07-01, **8-K12B `0001193125-26-291990`**: "This Current Report on Form 8-K is being filed for the purpose of establishing ExxonMobil Holdings Corporation as the successor
+  registrant of ExxonMobil's common stock pursuant to Rule 12g-3(a) under the Securities Exchange Act of 1934" (the redomiciliation merger of 2026-07-01 under the merger agreement of 2026-04-08; the proxy statement of 2026-04-08 carries it as Annex A).
+  Seeded into the database on every `ensure`; one hop per row. A task fetches `filing_by_year`/`financials` under **every CIK of the asset's chain, its own first**; a filing listed under several (the 2026-08-03 10-Q, accession
+  `0000034088-26-000093`, is listed under both CIKs) is kept once, by accession, under the first; each filing is fetched under the CIK it was listed under. `sec_filings.cik` (new nullable column) records it, and a trigger
+  (`trg_sf_chain_insert/update`) aborts a filing whose CIK is neither its asset's nor a recorded predecessor's of it; `identity.violations` finds such rows already stored, and `m012` / `pipeline.run` refuse them. The check on the listing
+  (`FilingIdentityError`) is the same: the row's `cik` must be in the chain. No other succession is added: of the 18 (below) none other loses a filing.
+  **The rules and the source.** The link follows **APP-10b-2** ("link a successor's series to its predecessor's only when the successor's 8-K for the succession says so; that filing's accession is the evidence": the row's `evidence_accession` and `evidence_quote`) and **APP-10b-3**
+  (below), with source **A7**, 17 CFR 240.12g-3 (pp.2-4: Rule 12g-3(a), and the successor's duty to file the predecessor's last annual report); the row names them in its `rules` column of `cik_successions.csv` ("APP-10b-2;APP-10b-3"; a row without `rules` is refused like one without evidence).
+  **APP-10b-3 (the predecessor's last full fiscal-year annual report must exist; BLOCK in checklist v1.3).** At the start of a run, once per succession (`pipeline._verify_successions`), the predecessor's last 10-K whose period ends before the effective date must be listed under the predecessor's CIK: an original 10-K
+  (an amendment does not count, L-04) with a period ending in the 371 days before the effective date (a fiscal year is at most 53 weeks), listed in the effective year or the year before. For XOM it is the FY2025 10-K, `0000034088-26-000045`, filed 2026-02-18, period 2025-12-31. If it is not listed (or the listing cannot be read), the predecessor's filings are **not linked**
+  for that run and an `analysis_run_error` with `stage='succession'` is recorded (it also appears in the run report's errors). This is **stricter than the rule**, which only leaves the multi-year metrics across the succession empty: the link is what makes them multi-year, so without the report there is no link. Tests on captured listings: `tests/test_cik_succession.py` (present: 19 filings, the check made once; missing, or only a 10-K/A listed: only the successor's own filing stored, the error recorded).
+- **ID-10 needed no code change.** The resolver reads only rows with no dimension; the real combined filings show no leak (below). It is now tested.
+- **APP-10b-1 (detection).** The gateway cannot list `8-K12B`/`8-K12G3`/`8-K15D5` (`form` is an enum of four; `8-K` returns plain 8-Ks -- checked live against APO, BLK, APTV and BG), so the pipeline cannot detect them. The register is built from the SEC's
+  submissions by `scripts/audit_sec_checklist.py successions` (`scripts/sec_xcheck/successions.py`); it links nothing (APP-10b-2 needs the 8-K's own words).
+
+### Measurements
+
+**Production, before** (T-147's audit, `docs/sec_data_checklist.md`, re-checked 2026-10-11 with `scripts/audit_sec_checklist.py measure --only n1,periods,extra`): the counts in "Symptom". The triggers' fit to production's rows:
+
+```
+copied production -> /tmp/t149/prod_copy.db (sha1 5c5c0642619bcc2f80aa72f13599bf824f676675)
+schema_version of the copy before: 8 ... migrations applied to the copy: [9, 10, 11, 12]; schema_version now 12
+stored filings 5076; accessions on more than one asset 30 (of one CIK: 30, of several: 0); filings of an asset with no CIK 0
+  share classes: FOX,FOXA   GOOG,GOOGL   NWS,NWSA
+re-updated 5076 rows: 0 rejected; re-inserted 5076 rows: 0 rejected
+  control ok -- an accession given to an asset of another CIK: ABORT
+  control ok -- a filing of an asset with no CIK: ABORT
+  control ok -- a filing whose CIK is outside the asset's chain: ABORT
+  control ok -- XOM's predecessor CIK 0000034088 is accepted on XOM
+  control ok -- a new CIK for an asset with filings: ABORT
+production sha1 unchanged: 5c5c0642619bcc2f80aa72f13599bf824f676675
+```
+(`m012` also refused nothing: 0 violations before the triggers. Production's 5,076 rows hold no `sec_filings.cik` yet, which the chain trigger leaves unchecked.)
+
+**Rebuilt, facts-only (no LLM call; `scripts/verify_t149.py pilot`).** The pipeline with an analyst that computes every metric and scores by the rule-based fallback (`tests/test_verify_t149.py` shows it makes no model call); prices copied from production for the same names.
+Run on commit `d821383`+docs (code = the PR's head up to comments). Audit re-run `scripts/audit_sec_checklist.py measure --only n1,periods,extra --db <rebuilt>`:
+
+| finding | production (before) | rebuilt 20-name pilot (378 filings) | rebuilt 51-company amendment cohort (933 filings) |
+|---|---:|---:|---:|
+| `N1.stored_is_amendment` (amendments stored as a period's value) | 8 of 5,076 (ADM, AMP, AXON, CNP, DASH, HOOD, IBKR, OXY) | **0** | **0** |
+| `N1.original_10k_not_stored_with_amendment` (originals lost to a 10-K/A) | 48 of 2,420 (30 companies) | **0** of 99 | **1** of 243 (PSKY FY2025, see below) |
+| `N1.original_10k_not_stored_without_amendment` | 14 | 0 | 0 |
+| `N1.missing_cause.label_collision` / `recorded_error` / `unexplained` | 9 / 51 / 2 (EXE, SMCI) | 0 / 0 / 0 | 0 / 0 / 0 |
+| `PER08.prior_gap_accepted_by_code_not_rule` / `fy_prior_not_a_year` | 1 (CMI) / 1 (EXE), re-run on today's code: 0 / 0 | 0 / 0 | 0 / 0 |
+| `ID07.period_end_differs_from_header` | 1 (EXE) | 0 | 0 |
+| XOM stored filings | 19 (all under CIK 0000034088) | **19** (5 10-Ks, 14 10-Qs, the joint 10-Q once) | -- |
+
+The 20-name pilot is the brief's rebuild; it holds none of the 8 amendment companies but HOOD, so the **51-company cohort** (every company the audit found affected: the 36 with a 10-K/A the old rule kept, the 15 with a 10-Q/A, the 8 stored) was rebuilt too (`--members-from-prod --no-prices`; run on commit `82f1deb`, before the XOM chain, which changes nothing for them).
+The one original still missing in the cohort is **PSKY FY2025** (accession `0002041610-26-000011`): the gateway's payload for that 10-K holds the 2024 fiscal year, and the new ID-07 check refused it (`stage='period'`, "the payload's 2024-12-31 (FY) ends 2024-12-31, not at the SEC's periodOfReport 2025-12-31") -- refused by ID-07 as recorded, and not a gateway fault: the payload holds only the predecessor's 2024 and 2023 full years, which fits a company formed by a 2025 merger. Before, it would have been stored as FY2024 under the FY2025 accession.
+`N1.select_amendment_*` and `N1.10qa_overwrites_10q` (level a) count what the SEC history holds and replay the old rule by construction: they stay at 55 and 18.
+Rebuild totals: 20-name pilot 378 filings stored, 5 skipped (the Apollo Q1-2023 10-Q's payload holds only the prior fiscal year -- T-140's recorded case), 0 failed; cohort 933 stored, 104 skipped (amendments), 1 failed (CNP, below).
+
+**The unexplained filings of `T-147`'s list, with their causes** (real captures in `tests/fixtures/edgar_filing_identity_responses.json`, `financials_EXE_10-K_2022_acc-0000895126-22-000029.json`):
+
+| case | cause | now |
+|---|---|---|
+| EXE FY2021 stored as FY2020 | fresh-start accounting split 2021 into predecessor and successor periods: the 10-K's payload has FY columns `2020-12-31`, `2019-12-31` only (2021 is a bare `2021-12-31`); `latest_fy()` took 2020 and stored it under the FY2021 accession; SEC `periodOfReport` is 2021-12-31 | ID-07 refuses it (`stage='period'`) |
+| SMCI FY2024 | the 10-K was filed late (2025-02-25), so calendar 2025 holds two 10-Ks (it and FY2025, 2025-08-28); the old rule kept only the newest of a year | both kept |
+| GEHC FY2022 | **no financial statements in the filing's XBRL (source data gap), not retried.** The SEC filing `0001932393-23-000025` (GEHC's FY2022 10-K, filed 2023-02-15, weeks after the spin-off from GE) carries only cover-page XBRL: R1 "Cover" and R2 "Audit Information", a 19 KB instance, no tagged statements, and no amendment. edgartools therefore finds no statements, and the gateway's error ("'NoneType' object has no attribute 'to_dataframe'") follows. Not a gateway fault | recorded as a failure each run (`stage='process'`); not a gateway request. The same error hit 35 companies (57 filings) in production's runs of 2026-08-28..09-21; the 56 filings other than GEHC's extract fine on today's gateway |
+| CSCO and SMCI FY2026 | the production runs of 2026-08-28/30 predate those 10-Ks (filed 2026-09-02 and 2026-08-31); both fetch today (checked 2026-10-11) | nothing to fix |
+
+**Two findings outside this task**, from the rebuilt cohort: (1) CNP's Q1-2022 10-Q is labelled `2022Q3` and then collides with its Q3 (`FilingLabelCollision`, recorded): `fiscal.payload_fiscal_year_end` takes the *earliest* balance-sheet instant 30-330 days back, and that payload carries stray instants (2021-07-20, 2021-12-02, ...), so the fiscal year end is read as 2021-07-20; this is `T-140`'s code, unchanged here; tracked as a residual in `T-140`'s open acceptance (`TASKS.md`), to fix before `T-143`. (2) PSKY above.
+
+**Co-registrants (ID-10).** `scripts/verify_t149.py coreg`, the live FY2024 10-Ks of 17 combined utilities (DUK, SO, AEP, ETR, ED, AEE, PCG, D, EXC, DTE, CMS, PPL, NEE, XEL, FE, PEG, EIX; 1 to 942 legal-entity rows each): **0** resolved items equal a value held only by a legal-entity member. Duke Energy (CIK 1326160, accession `0001326160-25-000072`): revenue 30,357M, net income 4,614M (`ProfitLoss`; 4,524M attributable to the parent, 4,402M to common), total assets 186,343M -- the same as the SEC's companyfacts for that accession.
+
+**A company that left the index, by its CIK.** `scripts/verify_t149.py twitter`: Twitter, CIK 1418091, FY2021 10-K (filed 2022-02-16), into `/tmp/t149/twitter.db`: `TWTR`: 1 filing stored (`FY2021`, period end 2021-12-31, accession `0001418091-22-000029`, 253 facts, 29 metrics), 0 failed; the gateway answers "Company not found" for the ticker (capture in the fixtures). This is the path `T-153` takes.
+
+**The succession finding (XOM).** By its universe CIK alone, XOM kept 1 filing of 19. ExxonMobil Holdings Corp (0002115436, the asset's CIK) lists only the 2026-08-03 10-Q (period 2026-06-30), which is listed under both CIKs; the 5 10-Ks and 13 other 10-Qs of 2022-2026 were all filed by Exxon Mobil Corp (0000034088) -- production's 19 stored filings all carry accessions `0000034088-`. All 18 succession companies of the register were then listed by CIK and by ticker, 10-K and 10-Q, 2022-2026
+(`/tmp/t149/cik_vs_ticker.py`): **17 differ in nothing; only XOM loses filings (18 of 19)**. For those 17 the CIK in the universe lists every filing the ticker did, so no row is needed (a row is added only for a company that loses filings without it). After the fix: 19 stored (5 10-Ks FY2021-FY2025, 14 10-Qs), the joint 10-Q once.
+The register of the 18 (8-K12B/8-K12G3 filings since 2022, `scripts/audit_sec_checklist.py successions`; it links nothing and is not used by the code):
+
+| ticker | CIK | form | filed | accession |
+|---|---|---|---|---|
+| APO | 0001858681 | 8-K12B | 2022-01-03 | 0001193125-22-000274 |
+| APTV | 0001521332 | 8-K12G3 | 2024-12-18 | 0001193125-24-280796 |
+| BG | 0001996862 | 8-K12G3 | 2023-11-01 | 0001104659-23-113123 |
+| BLK | 0002012383 | 8-K12B | 2024-10-01 | 0001193125-24-229601 |
+| DOC | 0000765880 | 8-K12B | 2023-02-10 | 0001104659-23-018524 |
+| FERG | 0002011641 | 8-K12B | 2024-08-01 | 0001193125-24-190512 |
+| FRT | 0000034903 | 8-K12B | 2022-01-03 | 0001193125-22-000302 |
+| J | 0000052988 | 8-K12G3 | 2022-08-29 | 0001193125-22-232264 |
+| KIM | 0000879101 | 8-K12B | 2023-01-03 | 0001140361-23-000046 |
+| KKR | 0001404912 | 8-K12B | 2022-05-31 | 0001140361-22-021298 |
+| LH | 0000920148 | 8-K12B | 2024-05-17 | 0000920148-24-000063 |
+| LIN | 0001707925 | 8-K12B | 2023-03-01 | 0001193125-23-055949 |
+| OKE | 0001039684 | 8-K12B | 2026-09-10 | 0001193125-26-387972 |
+| PSA | 0001393311 | 8-K12B | 2023-08-14 | 0001193125-23-211436 |
+| PSKY | 0002041610 | 8-K12B | 2025-08-07 | 0001193125-25-175046 |
+| PSKY | 0002041610 | 8-K12B/A | 2025-10-23 | 0002041610-25-000029 |
+| TEL | 0001385157 | 8-K12B | 2024-09-30 | 0001104659-24-103940 |
+| WELL | 0000766704 | 8-K12B | 2022-04-01 | 0001193125-22-092900 |
+| XOM | 0002115436 | 8-K12B | 2026-07-01 | 0001193125-26-291990 |
+
+**N2: the earnings yield's effect, apart from the data-treatment changes.** The same rebuilt database (`/tmp/t149/pilot.db`, metrics-v5), the same cycle date (2026-09-22), the trailing net income read (this fix) or withheld (what every real cycle did; `scripts/verify_t149.py n2`). Nothing else differs: this is the D-11 step (1).
+valorization step, with the fix:    {'scored': 20, 'market_cap_missing': 0, 'earnings_yield': 20, 'negative_earnings': 0}
+valorization step, before the fix:  {'scored': 20, 'market_cap_missing': 0, 'earnings_yield': 0, 'negative_earnings': 0}
+
+| ticker | trailing NI (M) | value factor before -> after | VALORIZATION before -> after | rank before -> after |
+|---|---:|---|---|---|
+| APA | 1,979 | 1.000 -> 0.982 | 87.787 -> 86.997 | 1 -> 1 |
+| APO | 4,299 | - -> 0.684 | 57.563 -> 62.449 | 11 -> 10 |
+| BF.B | 721 | 0.714 -> 0.722 | 66.848 -> 67.187 | 4 -> 4 |
+| CPT | 337 | 0.714 -> 0.564 | 70.672 -> 63.905 | 10 -> 13 |
+| ESS | 438 | - -> 0.105 | 37.930 -> 25.599 | 18 -> 19 |
+| HOOD | 2,072 | - -> 0.053 | 58.542 -> 34.567 | 20 -> 20 |
+| HUM | 1,295 | 0.321 -> 0.267 | 30.737 -> 28.284 | 15 -> 17 |
+| MA | 16,257 | 0.107 -> 0.142 | 36.230 -> 37.781 | 8 -> 9 |
+| MCD | 8,787 | 0.179 -> 0.277 | 33.221 -> 37.648 | 17 -> 16 |
+| NEE | 7,537 | - -> 0.368 | 25.473 -> 30.589 | 13 -> 14 |
+| PG | 16,144 | 0.321 -> 0.355 | 42.438 -> 43.933 | 7 -> 6 |
+| PM | 11,430 | 0.321 -> 0.320 | 43.554 -> 43.469 | 5 -> 5 |
+| PSX | 7,192 | 0.857 -> 0.835 | 65.714 -> 64.699 | 2 -> 2 |
+| SBAC | 992 | 0.321 -> 0.425 | 44.215 -> 48.868 | 16 -> 15 |
+| STZ | 1,824 | 0.714 -> 0.774 | 62.751 -> 65.457 | 9 -> 8 |
+| T | 23,024 | 0.929 -> 0.952 | 61.252 -> 62.324 | 12 -> 12 |
+| UDR | 558 | 0.464 -> 0.485 | 64.702 -> 65.632 | 3 -> 3 |
+| WAT | 167 | 0.000 -> 0.000 | 20.950 -> 20.950 | 19 -> 18 |
+| WFC | 22,610 | - -> 0.842 | 26.419 -> 52.425 | 14 -> 11 |
+| XOM | 33,730 | 0.536 -> 0.550 | 43.267 -> 43.915 | 6 -> 7 |
+
+Value factor = the mean of the available percentiles of `valuation.free_cash_flow_yield`, `valuation.enterprise_fcf_yield` and (after) `earnings_yield`. 19 of 20 names had no value-factor reading from the earnings yield before; with the fix 20 do (XOM gained one with the chain). The blended rank moved for **13 of 20**; no pilot name has a loss, so the negative-earnings dummy's count is 0 here (covered by `tests/test_earnings_yield.py`).
+
+**The data-treatment changes** (PER-08, PER-05, amendments, the chain, ID-07), the earlier pilot database (`data/pilot/financial_pilot.db`, metrics-v5 on the old code) against this rebuild, same 20 names (`scripts/verify_t149.py compare`): filings in both 377; the earlier one also holds 2021 filings (it ran from 2021, this from 2022: 72 only there) and one HOOD 10-K under an amendment's accession (now the original's), the rebuilt one WAT's 2023-09-30 10-Q that the earlier one lacks. Metric rows in both: 11,873: unchanged 11,769, empty -> value 58, value -> empty 22, value changed 24 (inventory/receivables/asset turnover, ROA, ROE, ROIC: the TTM of a 10-Q built by a different method now that a Q4 needs less). Scores are not compared (the earlier pilot's were LLM-written; these are the fallback's).
+
+### Tests (hermetic, real gateway captures)
+
+`tests/test_filing_identity.py` (by CIK end to end; an asset with no CIK refused before any run; the write-once CIK in both agents' `sync_universe` -- refusal naming ticker/stored/incoming, nothing written, no overwrite or emptying, a missing CIK filled; the six triggers, including the share classes
+GOOGL/GOOG with Alphabet's CIK; `identity.violations`/`require` and m012 on legacy rows; the real ADM 2024 listing -- the 10-K/A never replaces the original; 10-Q/A; two originals in one year; `upsert_filing` refusing a stored original's replacement; the filer check; Twitter ingested by CIK alone, its real payload),
+`tests/test_edgar_client.py` (every CIK spelling reaches the gateway as ten digits, a ticker is refused before any request, the new row fields from real captures, a pre-T-045 gateway),
+`tests/test_co_registrants.py` (Duke Energy's FY2024 10-K, 922 legal-entity rows: revenue 30,357M, net income 4,614M, total assets 186,343M; no resolved item equals a value held only by a subsidiary; stored facts only from non-dimensional rows; removing the consolidated revenue leaves the item missing, never a subsidiary's),
+`tests/test_period_ranges.py` (the rounding; the ranges; the Cummins and Expand Energy pairings no longer made; the Waters case kept; stored filings found by the rounded month end),
+`tests/test_period_of_report.py` (EXE FY2021 not stored as FY2020; SMCI's late FY2024 10-K kept beside FY2025; GEHC's gateway extraction failure recorded; a listing without the field is stored as before),
+`tests/test_q4_from_ytd.py` (Q4 = year − nine-month YTD with no other quarter recorded; the fallback; a third quarter that is not one quarter before the year end; a 52/53-week year end; a first quarter's TTM through the derived Q4; Waters' real nine months),
+`tests/test_earnings_yield.py` (the input; the reader -- version, x4, legacy rows, point in time; a whole cycle: the positive part, the loss counted, a name with no earnings yield; quarantine),
+`tests/test_cik_succession.py` (the table and its evidence; XOM's 5 10-Ks and 14 10-Qs fetched under both CIKs with the joint 10-Q once; a listing CIK outside the chain refused; APP-10b-3 with the last 10-K present, missing and only amended; the chain trigger, its update path and the legacy-row check), `tests/test_sec_xcheck_successions.py`, `tests/test_verify_t149.py` (the facts-only analyst makes no model call). The test that pinned the replacement,
+`test_pipeline_multi_filing.py::test_a_10k_keeps_only_the_most_recent_of_several_matches`, is replaced by the ADM tests.
+
+### Residual scope / deliberately deferred
+
+- **Production is not migrated or rebuilt by this change.** A database with stored amendments (production's 8) keeps them until a fresh build (`T-100`): `upsert_filing` will not replace them, a resumed run skips their periods as done. `N1.stored_is_amendment` is the check.
+- **Rows recorded before this change lack `ytd_<item>` and `net_income_ttm`**: their Q4 falls back to three quarters, and their asset has no `earnings_yield` until rebuilt (a missing input is absent, never guessed). The metrics engine stays `metrics-v5`: only audit inputs gained keys, no value changed.
+- **The ticker is still the asset's key** (`assets.ticker` UNIQUE): a rename (FB→META and 10 others) is `T-153`'s, recorded in its task text. Filings of a company that left the index are fetched by CIK once `T-153` supplies the CIK (shown below on Twitter).
+- **Gateway:** (1) the succession forms (APP-10b) -- the gateway's `form` cannot list them; a request to widen it is not yet written; (2) GEHC's FY2022 10-K is **not** a gateway fault: its XBRL holds no financial statements (source data gap, see the table above); it is not retried and no request is made;
+  (3) a stale gateway cache at run time explains the CSCO/SMCI FY2026 failures (their 10-Ks were filed 2026-09-02 and 2026-08-31, after the 2026-08-28/30 production runs); both fetch today.
+- **The net-income line** (consolidated vs attributable to the parent) is `T-148`'s; `earnings_yield` will follow it.
+- **`N1.select_amendment_*` (level a)** replay the *old* rule over SEC history by construction and keep reporting 55 company-years; the acceptance counts are the stored ones.
+
+Scratch paths: `/tmp/t149/prod_copy.db` (migrated copy of production, the trigger check; `triggers.log`), `/tmp/t149/pilot.db` (+ `pilot_n2_on.db`, `pilot_n2_off.db`, `n2_effect.json`, `n2.log`, `compare.log`, `audit_pilot_after.json`), `/tmp/t149/n1_cohort.db` (+ `audit_cohort_after.json`, `n1_cohort.json`), `/tmp/t149/twitter.db`, `/tmp/t149/coreg.log`, `/tmp/t149/cik_vs_ticker.json`, `/tmp/t149/sec_docs/` (the XOM 8-K12B and 8-K), `/tmp/t149/audit_prod_before.json`. Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.

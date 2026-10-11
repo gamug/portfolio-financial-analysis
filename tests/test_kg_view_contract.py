@@ -533,7 +533,11 @@ def test_the_marker_migration_changes_no_table(conn: Database) -> None:
     before = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     conn.execute("DELETE FROM schema_version WHERE version >= 10")
     conn.commit()
-    assert migrations.apply_migrations(conn) == [10, 11]  # m011 adds only columns that exist
+    assert migrations.apply_migrations(conn) == [
+        10,
+        11,
+        12,
+    ]  # m011 adds only columns that exist; m012 only triggers
     after = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     assert after == before
 
@@ -547,7 +551,7 @@ def test_ensure_views_leaves_a_database_that_is_ahead_of_the_code(conn: Database
     conn.execute("DROP VIEW v_cycle_ranking_component")
     conn.execute("DROP VIEW v_cycle_ranking")
     conn.execute("CREATE VIEW v_cycle_ranking AS SELECT 1 AS from_a_later_contract")
-    queries.record(conn, 12, "a later contract")
+    queries.record(conn, 13, "a later contract")
     ensure_views(conn)
     assert _columns(conn, "v_cycle_ranking") == ("from_a_later_contract",)
     assert not conn.relation_exists("v_cycle_ranking_component")

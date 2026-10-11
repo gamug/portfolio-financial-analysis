@@ -38,19 +38,18 @@ from fundamental_agent.edgar_client import (
     EdgarError,
     EdgarNotFoundError,
     FilingRef,
-    normalize_ticker,
 )
-from fundamental_agent.pipeline import _targets, _YearTask
+from fundamental_agent.pipeline import _is_amendment, _targets, _YearTask
 from fundamental_agent.statements import Statements, iter_facts
 
 
 class Gateway(Protocol):
     """The two ``EdgarClient`` calls the repair makes."""
 
-    def filing_by_year(self, ticker: str, form: str, year: int) -> list[FilingRef]: ...
+    def filing_by_year(self, cik: str, form: str, year: int) -> list[FilingRef]: ...
 
     def financials(
-        self, ticker: str, form: str, year: int, accession_number: str | None = None
+        self, cik: str, form: str, year: int, accession_number: str | None = None
     ) -> dict[str, list[dict[str, Any]]]: ...
 
 
@@ -73,6 +72,7 @@ class SharedGroup:
 
     asset_id: int
     ticker: str
+    cik: str
     form: str
     accession: str
     filing_date: str | None
@@ -140,6 +140,7 @@ def shared_groups(conn: Database) -> list[SharedGroup]:
             g = groups[key] = SharedGroup(
                 asset_id=key[0],
                 ticker=str(r["ticker"]),
+                cik=str(r["cik"]),
                 form=str(r["form"]),
                 accession=key[1],
                 filing_date=r["filing_date"],
@@ -183,35 +184,38 @@ def find_replacements(edgar: Gateway, group: SharedGroup) -> GroupOutcome:
     ends = [s.period_end for s in group.stale]
     years = sorted({int(p[:4]) for p in ends} | {int(p[:4]) + 1 for p in ends})
     found: dict[str, Replacement] = {}
-    for candidate in normalize_ticker(group.ticker):
-        for year in years:
-            if len(found) == len(wanted):
-                break
-            try:
-                refs = edgar.filing_by_year(candidate, group.form, year)
-            except EdgarNotFoundError:
+    for year in years:
+        if len(found) == len(wanted):
+            break
+        try:
+            refs = edgar.filing_by_year(group.cik, group.form, year)
+        except EdgarNotFoundError:
+            continue
+        for ref in refs:
+            if (
+                ref.accession_number == group.accession
+                or len(found) == len(wanted)
+                or _is_amendment(ref)  # never a period's value (PER-02)
+            ):
                 continue
-            for ref in refs:
-                if ref.accession_number == group.accession or len(found) == len(wanted):
-                    continue
-                payload = edgar.financials(
-                    candidate, group.form, year, accession_number=ref.accession_number
-                )
-                stmts = Statements.from_payload(payload)
-                task = _YearTask(group.asset_id, group.ticker, group.ticker, group.form, year)
-                for target in _targets(stmts, task):
-                    stale = wanted.get(target.fiscal_period)
-                    if stale is not None and stale.fiscal_period not in found:
-                        found[stale.fiscal_period] = Replacement(
-                            stale,
-                            ref.accession_number,
-                            ref.filing_date,
-                            target.fiscal_year,
-                            target.period.date,
-                            stmts,
-                        )
-        if found:
-            break  # this spelling is the one EDGAR knows
+            payload = edgar.financials(
+                group.cik, group.form, year, accession_number=ref.accession_number
+            )
+            stmts = Statements.from_payload(payload)
+            task = _YearTask(
+                group.asset_id, group.ticker, group.ticker, group.form, year, group.cik
+            )
+            for target in _targets(stmts, task):
+                stale = wanted.get(target.fiscal_period)
+                if stale is not None and stale.fiscal_period not in found:
+                    found[stale.fiscal_period] = Replacement(
+                        stale,
+                        ref.accession_number,
+                        ref.filing_date,
+                        target.fiscal_year,
+                        target.period.date,
+                        stmts,
+                    )
     outcome.replaced = [found[p] for p in sorted(found)]
     outcome.unresolved = [s for p, s in sorted(wanted.items()) if p not in found]
     return outcome

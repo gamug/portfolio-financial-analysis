@@ -21,7 +21,7 @@ from sec_xcheck.submissions import all_filings
 CMD = "uv run python scripts/audit_sec_checklist.py measure --only periods"
 YEAR_RANGE = (364, 371)
 QUARTER_RANGE = (89, 98)
-CODE_TOLERANCE = 20  # statements.YEAR_TOLERANCE_DAYS
+CODE_TOLERANCE = 20  # the +-20-day window statements.prior_of used before T-149 (PER-08)
 YEAR_DAYS = 365
 # Effective dates for public business entities that are SEC filers (not smaller reporting companies):
 # ASC 842: fiscal years beginning after 2018-12-15; ASC 326 (CECL): fiscal years beginning after 2019-12-15.

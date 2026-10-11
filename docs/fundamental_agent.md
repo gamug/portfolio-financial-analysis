@@ -41,17 +41,25 @@ doubled `/edgar` is intentional), `SEC_USER_AGENT`.
 
 ### `edgar_client.py` — `EdgarClient`
 
-Blocking HTTP client for the gateway. Endpoints: `/company_info/{t}`,
-`/years_available/{t}?form=`, `/filing_by_year/{t}?form=&year=`,
-`/financials/{t}?form=&year=[&accession_number=]`. Every response is a
+Blocking HTTP client for the gateway. Endpoints: `/company_info/{cik}`,
+`/years_available/{cik}?form=`, `/filing_by_year/{cik}?form=&year=`,
+`/financials/{cik}?form=&year=[&accession_number=]`. Every response is a
 `{"success", "data"}` envelope, unwrapped by `_unwrap`. Retries 500/502/503/504 +
 transport errors (3 attempts, exp backoff ≤ 8 s); 404 or "Company not found" →
-`EdgarNotFoundError`. `normalize_ticker` yields spelling candidates (`BRK.B` → `BRK-B`
-→ `BRKB`).
+`EdgarNotFoundError`.
+
+**By CIK, never by ticker (T-149, APP-10a).** A company is its CIK: tickers are reassigned, and a company
+that left the index has none (Twitter's `TWTR` answers "Company not found" at the gateway; its CIK
+`1418091` returns its 2022 10-K). Every company-scoped call takes the CIK and `require_cik` turns
+`320193`, `"320193"` and `"0000320193"` into the 10-digit string the gateway is sent; a ticker raises
+`NotACikError` before any request. `normalize_ticker` and `resolve` (spelling guesses) are gone. A
+`FilingRef` also carries `cik` (the filer the row was listed under) and `period_of_report` (the SEC's
+`reportDate`, `YYYY-MM-DD` or `None`) since `portfolio-data-mining` T-045; both are `None` from a gateway
+that sends neither.
 
 **Multi-filing contract (T-092).** Since `portfolio-data-mining` PR #39, `year` is the
 *filing* year and one year can hold several filings of a form (three 10-Qs).
-`filing_by_year` returns a **list** of `FilingRef(form, filing_date, accession_number)`,
+`filing_by_year` returns a **list** of `FilingRef(form, filing_date, accession_number, cik, period_of_report)`,
 most recent first, and an empty list — not an error — when there is none; an
 object-shaped (pre-#39) payload raises `EdgarError` rather than being guessed at.
 `financials` takes an optional `accession_number`, required whenever the year holds more
@@ -210,10 +218,10 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 
 | Function | Notes |
 |---|---|
-| `sync_universe(conn, members)` | upserts `assets` / `sectors` from `UniverseMember`s (identity write path only; no `universe_membership` write) |
+| `sync_universe(conn, members)` | upserts `assets` / `sectors` from `UniverseMember`s (identity write path only; no `universe_membership` write). **An asset's CIK is write-once (T-149):** a ticker arriving with another CIK raises `kg_schema.identity.CikConflict` (naming the ticker, the stored and the incoming CIK) before anything is written, and a stored CIK is never overwritten or emptied — an empty one is filled in. `pricing_agent.db.sync_universe` does the same |
 | `load_universe(conn, *, tickers=None, symbols=None, limit=None)` | asset rows restricted to the point-in-time `symbols` (and optional `tickers`) |
 | `start_run(conn, *, params, as_of=None, code_version=None)` | `analysis_run` row with the run's as-of + code tag |
-| `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`; raises `FilingLabelCollision` when the label is already held by another `period_end` (T-140: the upsert would overwrite that filing in place). Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row) |
+| `upsert_filing(…, *, run_id=None, commit=True)` | `sec_filings` upsert on `(asset_id, form, fiscal_period)`; raises `FilingLabelCollision` when the label is already held by another `period_end` (T-140: the upsert would overwrite that filing in place) and `FilingReplacementRefused` when the row already holds another accession (T-149, PER-02: the original filing is the period's value; a re-run of the same accession and a legacy row with no accession are fine). Triggers `trg_sf_accession_insert/update` refuse a second row of the asset with the same `accession_number` (T-120: one filing, one row); the T-149 identity triggers (`kg_schema.ddl.IDENTITY_TRIGGERS`, migration m012) refuse a filing of an asset with no CIK and an accession attached to assets of different CIKs |
 | `append_financial_facts(…, *, filing_version, event_time)` | **append-only** — `INSERT OR IGNORE`, no DELETE. Falls back to the pre-migration column set if the versioned columns aren't there yet. A fact carrying `correction_rule` (T-118: set by `iter_facts` from the gateway's own `data["corrections"]`) is persisted with that rule id in the like-named column; `NULL` means filed as-is |
 | `record_metrics(…, *, engine_version, event_time)` | append-only `INSERT OR IGNORE` |
 | `insert_snapshot(row)` | writes `score_snapshot` (`FUNDAMENTAL`, `ON CONFLICT DO NOTHING`); `SnapshotRow` carries `event_time` = filing period-end and `prompt_hash` (T-113) |
@@ -226,19 +234,24 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 ### `pipeline.py`
 
 `run(settings, params)` → connect, `ensure_schema`, sync universe, plan
-asset×form×year tasks, `_drive` with a `tqdm` bar. `_run_task` → `_list_filings` (the
-ticker spelling EDGAR knows + every filing of the form that year) → `_select_filings`
-(**oldest first** — F4's TTM reads the prior quarters' already-recorded values — and, for
-a 10-K, only the most recent of several matches) → for each filing `_process_filing`:
-skip it if it is filed after the analysis date or its accession is already scored (a
+asset×form×year tasks (a task carries the asset's CIK chain, `identity.cik_chain`: its own CIK, then its recorded predecessors' -- a successor registrant keeps its predecessor's filings, XOM's 19 filings of 2022-2026 being Exxon Mobil Corp's (CIK 0000034088) while the asset's CIK is ExxonMobil Holdings Corp's (0002115436) since 2026-07-01, `kg_schema/data/cik_successions.csv`; `_plan` refuses with `MissingCikError` an asset that has no CIK — a filing is
+never fetched by ticker), `_drive` with a `tqdm` bar. `_run_task` → `_list_filings` (every filing of
+the form that year, listed under every CIK of the chain; one listed under several -- XOM's 2026-08-03 10-Q -- is kept once, by accession, under the first) → `_select_filings` (**oldest first** — F4's TTM reads
+the prior quarters' already-recorded values — and **originals only**: a 10-K/A or 10-Q/A is never
+ingested, PER-02 / L-04, so a year whose newest filing is an amendment keeps its original, and two
+originals filed in one calendar year are both kept) → for each filing `_process_filing`:
+refuse it (`FilingIdentityError`, recorded under `analysis_run_error` `stage='identity'`, not fetched)
+when the listing's `cik` is not in the asset's chain; skip it if it is filed after the analysis date or its accession is already scored (a
 resumed run makes no `financials` call for it), fetch its statements by
 `accession_number`, then for its `_target` → `_analyze_one`. A filing has exactly **one**
 target — its *own* reporting period (10-K: the latest FY + prior; 10-Q: the latest quarter
 in the payload), or **none**, in which case `_resolve_target` says why and the filing is counted
 as skipped *and* recorded in `analysis_run_error` (`stage='period'`) and the run report: no
 quarter column of its own (APO's Q1-2023 10-Q, whose payload holds only the prior fiscal year), a
-latest quarter column that ends before the balance sheet's date (a comparative), or a date that is
-no quarter end of the fiscal year (T-140). The label is derived, not copied from the gateway: a
+latest quarter column that ends before the balance sheet's date (a comparative), a date that is
+no quarter end of the fiscal year (T-140), or a period end that is not the SEC's `periodOfReport` to
+the month end (ID-07, T-149: Expand Energy's FY2021 10-K, whose payload has no full-year 2021 column
+after fresh-start accounting, was stored as FY2020 before). The label is derived, not copied from the gateway: a
 10-K is `FY<year>`; a 10-Q is `<year>Q<n>` with *n* counted from the fiscal year end (the filing's own
 balance sheet comparative column, else the asset's latest stored 10-K, so a changed fiscal year labels correctly;
 `fundamental_agent.fiscal`),

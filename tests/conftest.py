@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import random
@@ -47,6 +48,13 @@ def _clean_code_version() -> Any:
     provenance.code_version.cache_clear()
 
 
+def cik_for(symbol: str) -> str:
+    """A deterministic 10-digit CIK for a test ticker (T-149: an asset with filings has one, and
+    a universe sync refuses a ticker whose CIK changes -- so every fixture derives it the same
+    way from the symbol)."""
+    return str(int(hashlib.sha256(symbol.encode()).hexdigest()[:8], 16)).zfill(10)
+
+
 _UNIVERSE_DDL = """
 CREATE TABLE universe_membership (
     symbol TEXT NOT NULL, security TEXT NOT NULL,
@@ -68,9 +76,9 @@ def write_universe_db(
     conn.executescript(_UNIVERSE_DDL)
     conn.executemany(
         "INSERT INTO universe_membership "
-        "(symbol, security, gics_sector, gics_sub_industry, valid_from, valid_to, source) "
-        "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?)",
-        [(sym, f"{sym} Inc.", vf, vt, source) for sym, vf, vt in members],
+        "(symbol, security, gics_sector, gics_sub_industry, cik, valid_from, valid_to, source) "
+        "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?, ?)",
+        [(sym, f"{sym} Inc.", cik_for(sym), vf, vt, source) for sym, vf, vt in members],
     )
     conn.commit()
     conn.close()
@@ -152,8 +160,24 @@ def universe_db(tmp_path: Path) -> Callable[..., Path]:
 def _memory_database() -> Database:
     raw = sqlite3.connect(":memory:")
     raw.row_factory = sqlite3.Row
+    # A test that inserts an asset without a CIK gets `cik_for(ticker)`, so the many direct
+    # `INSERT INTO assets (id, ticker)` fixtures satisfy T-149's invariant; a test of the
+    # invariant itself passes a CIK or clears it explicitly.
+    raw.create_function("cik_for", 1, cik_for, deterministic=True)
     conn = Database(raw)
     conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+_DEFAULT_CIK_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS trg_test_default_cik AFTER INSERT ON assets
+WHEN NEW.cik IS NULL
+BEGIN UPDATE assets SET cik = cik_for(NEW.ticker) WHERE id = NEW.id; END;
+"""
+
+
+def _with_default_cik(conn: Database) -> Database:
+    conn.executescript(_DEFAULT_CIK_TRIGGER)
     return conn
 
 
@@ -173,6 +197,12 @@ def seed_filing(  # noqa: PLR0913 - one filing row, every column a test may pin
 ) -> int:
     """Insert one dated ``sec_filings`` row with its ``available_at`` (T-107); returns its id."""
     fp = fiscal_period or f"FY{period_end[:4]}"
+    # T-149: an asset with filings has a CIK (a trigger refuses the filing otherwise)
+    row = conn.execute("SELECT ticker FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    conn.execute(
+        "UPDATE assets SET cik = ? WHERE id = ? AND COALESCE(cik, '') = ''",
+        (cik_for(row["ticker"]), asset_id),
+    )
     return int(
         conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
@@ -248,14 +278,14 @@ def seed_fundamental_score(  # noqa: PLR0913 - one scored filing, every column a
 def memory_db() -> Database:
     conn = _memory_database()
     db.ensure_schema(conn)
-    return conn
+    return _with_default_cik(conn)
 
 
 @pytest.fixture
 def memory_pricing_db() -> Database:
     conn = _memory_database()
     pricing_db.ensure_schema(conn)
-    return conn
+    return _with_default_cik(conn)
 
 
 @pytest.fixture
@@ -271,7 +301,7 @@ def memory_quant_db() -> Database:
     pricing_db.ensure_schema(conn)  # assets, sectors, price_daily, price_window + kg_schema
     conn.executescript(_QUANT_EXTRA_DDL)
     quant_db.ensure_schema(conn)  # quant_run + (re-)runs kg_schema.ensure
-    return conn
+    return _with_default_cik(conn)
 
 
 def _seed_quarterly_caps(

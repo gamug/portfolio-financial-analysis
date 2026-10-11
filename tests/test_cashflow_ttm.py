@@ -317,7 +317,7 @@ def _balance(*instants: str) -> list[dict[str, Any]]:
 
 
 def _target(stmts: Statements) -> Any:
-    return _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2026))[0]
+    return _targets(stmts, _YearTask(1, "X", "X", "10-Q", 2026, "0000000001"))[0]
 
 
 def _waters(balance: list[dict[str, Any]]) -> Statements:
