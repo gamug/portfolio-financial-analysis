@@ -7,6 +7,11 @@ unwraps it and turns anything unexpected into an :class:`EdgarError`.
 returns **every** filing for a form and year (a company files three 10-Qs a year), and
 ``financials`` takes an optional ``accession_number`` -- without it, a year with several
 filings is an error. This client speaks that contract only.
+
+A company is identified by its CIK, never its ticker (T-149, checklist APP-10a: tickers are
+reassigned, and a company that left the index has none). Every company-scoped call takes the
+10-digit CIK string and refuses anything else; the gateway accepts one in place of a ticker, with
+or without leading zeros, and finds a company that left the index by its CIK alone.
 """
 
 from __future__ import annotations
@@ -18,6 +23,8 @@ from typing import Any, cast
 
 import httpx
 
+from kg_schema.identity import normalize_cik
+
 FILING_FORMS = ("10-K", "10-Q", "8-K", "S-1")
 _RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 _MAX_BACKOFF_SECONDS = 8.0
@@ -28,7 +35,7 @@ class EdgarError(RuntimeError):
 
 
 class EdgarNotFoundError(EdgarError):
-    """The gateway has no data for the requested ticker/form/year."""
+    """The gateway has no data for the requested CIK/form/year."""
 
 
 class EdgarAmbiguousError(EdgarError):
@@ -39,13 +46,23 @@ class EdgarAmbiguousError(EdgarError):
         self.candidates = candidates
 
 
+class NotACikError(EdgarError, ValueError):
+    """A company was named by something other than its CIK (a ticker, an empty string)."""
+
+
 @dataclass(frozen=True)
 class FilingRef:
-    """One filing as ``filing_by_year`` lists it."""
+    """One filing as ``filing_by_year`` lists it.
+
+    ``cik`` (the filer the row was listed under, 10 digits) and ``period_of_report`` (the SEC's
+    ``reportDate``, ``YYYY-MM-DD``, ``None`` when the SEC gives none) arrived with
+    portfolio-data-mining T-045; ``None`` here means the gateway sent none."""
 
     form: str
     filing_date: str | None
     accession_number: str
+    cik: str | None = None
+    period_of_report: str | None = None
 
 
 # "Found 3 '10-Q' filings for 'XOM' in 2024; call get_filing_by_year ... Available: a, b, c"
@@ -55,18 +72,16 @@ _AMBIGUOUS_RE = re.compile(
 )
 
 
-def normalize_ticker(ticker: str) -> list[str]:
-    """Return candidate spellings for *ticker*, most-likely first.
-
-    Wikipedia writes share classes as ``BRK.B``; EDGAR usually wants ``BRK-B`` and
-    occasionally ``BRKB``.
-    """
-    raw = ticker.strip().upper()
-    candidates = [raw]
-    for alt in (raw.replace(".", "-"), raw.replace(".", ""), raw.replace("-", ".")):
-        if alt and alt not in candidates:
-            candidates.append(alt)
-    return candidates
+def require_cik(value: object) -> str:
+    """*value* as the 10-digit CIK string every company-scoped call carries, else
+    :class:`NotACikError`. A ticker is refused, never looked up (APP-10a)."""
+    try:
+        cik = normalize_cik(value)
+    except ValueError:
+        cik = None
+    if cik is None:
+        raise NotACikError(f"{value!r} is not a CIK: filings are fetched by CIK, never by ticker")
+    return cik
 
 
 class EdgarClient:
@@ -114,22 +129,23 @@ class EdgarClient:
 
     # -- endpoint wrappers -------------------------------------------------
 
-    def company_info(self, ticker: str) -> dict[str, Any]:
-        return cast("dict[str, Any]", self._get(f"/company_info/{ticker}"))
+    def company_info(self, cik: str) -> dict[str, Any]:
+        return cast("dict[str, Any]", self._get(f"/company_info/{require_cik(cik)}"))
 
-    def years_available(self, ticker: str, form: str) -> list[int]:
-        data = self._get(f"/years_available/{ticker}", {"form": form})
+    def years_available(self, cik: str, form: str) -> list[int]:
+        data = self._get(f"/years_available/{require_cik(cik)}", {"form": form})
         return sorted(int(year) for year in data)
 
-    def filing_by_year(self, ticker: str, form: str, year: int) -> list[FilingRef]:
+    def filing_by_year(self, cik: str, form: str, year: int) -> list[FilingRef]:
         """Every *form* filing whose filing date falls in *year*, most recent first.
 
         Empty when there is none (a valid answer, not an error). A single-object payload
         is the pre-#39 contract and is rejected loudly rather than guessed at."""
-        raw = self._get(f"/filing_by_year/{ticker}", {"form": form, "year": year})
+        cik = require_cik(cik)
+        raw = self._get(f"/filing_by_year/{cik}", {"form": form, "year": year})
         if not isinstance(raw, list):
             raise EdgarError(
-                f"/filing_by_year/{ticker} returned {type(raw).__name__}, expected a list of "
+                f"/filing_by_year/{cik} returned {type(raw).__name__}, expected a list of "
                 "filings -- the gateway predates portfolio-data-mining PR #39"
             )
         return [
@@ -137,13 +153,17 @@ class EdgarClient:
                 form=str(item.get("form", form)),
                 filing_date=str(item["filing_date"]) if item.get("filing_date") else None,
                 accession_number=str(item["accession_number"]),
+                cik=normalize_cik(item.get("cik")),
+                period_of_report=str(item["period_of_report"])
+                if item.get("period_of_report")
+                else None,
             )
             for item in raw
             if isinstance(item, dict) and item.get("accession_number")
         ]
 
     def financials(
-        self, ticker: str, form: str, year: int, accession_number: str | None = None
+        self, cik: str, form: str, year: int, accession_number: str | None = None
     ) -> dict[str, list[dict[str, Any]]]:
         """The statements of one filing. *accession_number* is required whenever the
         year holds more than one filing of *form* (raises :class:`EdgarAmbiguousError`).
@@ -156,10 +176,11 @@ class EdgarClient:
         next run) already does the right thing once this raises. A failed *cover-page* read
         (``statement == "cover"``, portfolio-data-mining T-043) is the exception: it leaves
         the statements validated and only the share count empty, so it does not raise."""
+        cik = require_cik(cik)
         params: dict[str, Any] = {"form": form, "year": year}
         if accession_number is not None:
             params["accession_number"] = accession_number
-        raw = self._get(f"/financials/{ticker}", params)
+        raw = self._get(f"/financials/{cik}", params)
         # The cover-page count (portfolio-data-mining T-043) is read independently of the
         # statements and fails in isolation: its error rides in the same list but leaves all three
         # statements validated, so it must not fail the filing -- the caller records it and the
@@ -169,20 +190,8 @@ class EdgarClient:
         ]
         if errors:
             detail = "; ".join(f"{e.get('statement')}: {e.get('error')}" for e in errors)
-            raise EdgarError(f"/financials/{ticker} reconciliation failed: {detail}")
+            raise EdgarError(f"/financials/{cik} reconciliation failed: {detail}")
         return cast("dict[str, list[dict[str, Any]]]", raw)
-
-    # -- helpers --------------------------------------------------------------
-
-    def resolve(self, ticker: str) -> tuple[str, dict[str, Any]]:
-        """Return the first ticker spelling EDGAR recognises and its company info."""
-        errors: list[str] = []
-        for candidate in normalize_ticker(ticker):
-            try:
-                return candidate, self.company_info(candidate)
-            except EdgarNotFoundError as exc:
-                errors.append(str(exc))
-        raise EdgarNotFoundError(f"no EDGAR match for {ticker!r}: {'; '.join(errors)}")
 
 
 def _unwrap(path: str, payload: Any) -> Any:

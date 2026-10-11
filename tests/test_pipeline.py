@@ -47,7 +47,9 @@ def _payload(name: str) -> dict[str, Any]:
 
 
 def _task(ticker: str, form: str, year: int) -> _YearTask:
-    return _YearTask(asset_id=1, ticker=ticker, company_name=ticker, form=form, year=year)
+    return _YearTask(
+        asset_id=1, ticker=ticker, company_name=ticker, form=form, year=year, cik="0000000001"
+    )
 
 
 def test_plan_is_asset_x_form_x_year() -> None:
@@ -120,7 +122,14 @@ def test_ttm_flows_reads_the_prior_quarters_by_the_targets_period_end(
     db.sync_universe(memory_db, [_member("MSFT")])
     asset_id = db.load_universe(memory_db)[0]["id"]
     stmts = Statements.from_payload(_payload("financials_MSFT_10-Q_2024.json"))
-    task = _YearTask(asset_id=asset_id, ticker="MSFT", company_name="MSFT", form="10-Q", year=2024)
+    task = _YearTask(
+        asset_id=asset_id,
+        ticker="MSFT",
+        company_name="MSFT",
+        form="10-Q",
+        year=2024,
+        cik="0000789019",
+    )
     target = _targets(stmts, task)[0]
     assert target.period.date == "2024-09-30"
     # seed the three prior quarters (a June fiscal year: 2024-06-30 is its Q4-adjacent 10-Q end)
@@ -158,7 +167,14 @@ def test_ttm_flows_falls_back_to_times_four_for_a_fresh_10q(memory_db: Database)
     db.sync_universe(memory_db, [_member("MSFT")])
     asset_id = db.load_universe(memory_db)[0]["id"]
     stmts = Statements.from_payload(_payload("financials_MSFT_10-Q_2024.json"))
-    task = _YearTask(asset_id=asset_id, ticker="MSFT", company_name="MSFT", form="10-Q", year=2024)
+    task = _YearTask(
+        asset_id=asset_id,
+        ticker="MSFT",
+        company_name="MSFT",
+        form="10-Q",
+        year=2024,
+        cik="0000789019",
+    )
     targets = _targets(stmts, task)
 
     result = _ttm_flows(_engine(memory_db), task, stmts, targets[0])

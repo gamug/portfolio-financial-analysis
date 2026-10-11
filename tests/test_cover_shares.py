@@ -126,7 +126,7 @@ def test_a_cover_only_reconciliation_error_does_not_fail_the_filing() -> None:
         reconciliation_errors=[{"statement": "cover", "error": "boom"}],
     )
     with _serving({"success": True, "data": payload}) as client:
-        assert client.financials("PG", "10-K", 2026) == payload
+        assert client.financials("80424", "10-K", 2026) == payload
 
 
 def test_a_statement_error_still_fails_even_beside_a_cover_error() -> None:
@@ -140,7 +140,7 @@ def test_a_statement_error_still_fails_even_beside_a_cover_error() -> None:
         _serving({"success": True, "data": payload}) as client,
         pytest.raises(EdgarError, match=r"balance_sheet.*KeyError") as info,
     ):
-        client.financials("PG", "10-K", 2026)
+        client.financials("80424", "10-K", 2026)
     assert "cover" not in str(info.value)
 
 

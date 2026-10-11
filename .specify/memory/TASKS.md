@@ -674,6 +674,9 @@ the final pilot, `T-143`.
         `company_types.csv`, and their GICS classification (the historical source is still to be decided).
       - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
         again on the historical universe before they go into the thesis.
+      - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
+        WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
+        assets are keyed by ticker.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 

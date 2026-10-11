@@ -22,6 +22,7 @@ from portfolio_common.db import Database, Row
 import kg_schema
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, CoverShares, Statements
+from kg_schema import identity
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
 
@@ -275,8 +276,14 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     """Insert/update ``assets`` and ``sectors`` from *members* -- the write-once
     identity path where a brand-new S&P 500 symbol first gets its ``assets.id``.
 
+    A ticker's CIK never changes silently (T-149): a member arriving with a CIK other than the
+    stored one raises :class:`kg_schema.identity.CikConflict` before anything is written, and a
+    stored CIK is never overwritten or emptied (a missing one is filled in).
+
     Point-in-time membership itself is no longer kept here; it is read straight
     from ``universe.db`` as of the run's ``analysis_date``. Returns the count."""
+    members = list(members)
+    identity.refuse_cik_changes(conn, members)
     count = 0
     for m in members:
         sector_id = _upsert_sector(conn, m.gics_sector or "")
@@ -286,11 +293,11 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 company_name = excluded.company_name,
-                cik          = excluded.cik,
+                cik          = COALESCE(NULLIF(assets.cik, ''), excluded.cik),
                 sector_id    = excluded.sector_id,
                 sub_industry = excluded.sub_industry
             """,
-            (m.symbol, m.security, m.cik, sector_id, m.gics_sub_industry),
+            (m.symbol, m.security, identity.normalize_cik(m.cik), sector_id, m.gics_sub_industry),
         )
         count += 1
     conn.commit()
@@ -366,6 +373,35 @@ def _refuse_label_collision(conn: Database, key: FilingKey, meta: FilingMeta) ->
         )
 
 
+class FilingReplacementRefused(RuntimeError):
+    """A stored filing would be replaced by another accession of the same period (T-149)."""
+
+
+def _refuse_replacement(conn: Database, key: FilingKey, meta: FilingMeta) -> None:
+    """A period's value is the one in its original filing (PER-02, L-04): a stored row never
+    changes accession. The upsert below is keyed on the period label, so a later filing of the
+    same period -- an amendment, or a listing that now orders differently -- would overwrite the
+    original's accession, date and period end while its facts stayed under the old one. A row
+    with no accession yet (legacy) takes its first one; the same accession again is a re-run."""
+    stored = conn.execute(
+        "SELECT accession_number, filing_date FROM sec_filings "
+        "WHERE asset_id = ? AND form = ? AND fiscal_period = ?",
+        (key.asset_id, key.form, key.fiscal_period),
+    ).fetchone()
+    if (
+        stored is not None
+        and stored["accession_number"]
+        and meta.accession_number
+        and stored["accession_number"] != meta.accession_number
+    ):
+        raise FilingReplacementRefused(
+            f"{key.form} {key.fiscal_period} already holds the original filing "
+            f"{stored['accession_number']} (filed {stored['filing_date']}); refusing to replace "
+            f"it with {meta.accession_number} (filed {meta.filing_date}): the original is the "
+            "period's value (PER-02)"
+        )
+
+
 def upsert_filing(
     conn: Database,
     key: FilingKey,
@@ -375,6 +411,7 @@ def upsert_filing(
     commit: bool = True,
 ) -> int:
     _refuse_label_collision(conn, key, meta)
+    _refuse_replacement(conn, key, meta)
     conn.execute(
         """
         INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date,
@@ -1110,7 +1147,7 @@ def shared_accession_filings(conn: Database) -> list[Row]:
     return list(
         conn.execute(
             """
-            SELECT f.id, f.asset_id, a.ticker, f.form, f.fiscal_year, f.fiscal_period,
+            SELECT f.id, f.asset_id, a.ticker, a.cik, f.form, f.fiscal_year, f.fiscal_period,
                    f.period_end, f.filing_date, f.accession_number
             FROM sec_filings f
             JOIN assets a ON a.id = f.asset_id

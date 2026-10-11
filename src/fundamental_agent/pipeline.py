@@ -29,7 +29,6 @@ from fundamental_agent.edgar_client import (
     EdgarError,
     EdgarNotFoundError,
     FilingRef,
-    normalize_ticker,
 )
 from fundamental_agent.filing_text import fetch_primary_document
 from fundamental_agent.fiscal import label_year, payload_fiscal_year_end, quarter_label
@@ -37,7 +36,7 @@ from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import YEAR_TOLERANCE_DAYS, Period, Statements, iter_facts
-from kg_schema import connect, rundate
+from kg_schema import connect, identity, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 
@@ -88,6 +87,7 @@ class _YearTask:
     company_name: str
     form: str
     year: int
+    cik: str  # the 10-digit string every EDGAR call carries (T-149); the ticker is for display
 
 
 @dataclass(frozen=True)
@@ -108,7 +108,6 @@ class _Engine:
     params: RunParams
     report: RunReport
     completed: set[_Unit]
-    resolved: dict[str, str] = field(default_factory=dict)
     # Accessions already scored: a resumed run skips their ``financials`` call.
     completed_accessions: set[str] = field(default_factory=set)
 
@@ -119,6 +118,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
     try:
         db.ensure_schema(conn)
         _refuse_shared_accessions(conn)
+        _refuse_identity_violations(conn)
         members = _load_members(settings, params.analysis_date)
         db.sync_universe(conn, members)
         symbols = [m.symbol for m in members]
@@ -181,7 +181,17 @@ def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember
     return members
 
 
+class MissingCikError(RuntimeError):
+    """An asset in scope has no CIK, so its filings cannot be fetched (T-149)."""
+
+
 def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
+    keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
+    if keyless:
+        raise MissingCikError(
+            f"{len(keyless)} assets have no CIK ({', '.join(keyless)}): filings are fetched by CIK, "
+            "never by ticker (APP-10a, T-149)"
+        )
     years = range(params.since_year, params.resolved_until() + 1)
     return [
         _YearTask(
@@ -190,6 +200,7 @@ def _plan(assets: Sequence[Row], params: RunParams) -> list[_YearTask]:
             company_name=str(asset["company_name"] or asset["ticker"]),
             form=form,
             year=year,
+            cik=str(identity.normalize_cik(asset["cik"])),
         )
         for asset in assets
         for form in params.forms
@@ -207,22 +218,27 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
 def _run_task(engine: _Engine, task: _YearTask) -> None:
     """One (ticker, form, filing-year): list its filings, then ingest each one."""
     try:
-        ticker_api, refs = _list_filings(engine, task)
+        refs = _list_filings(engine, task)
     except EdgarNotFoundError:
         _count(engine, skipped=1)  # the company filed no such form that year
         return
-    except Exception as exc:  # one bad ticker/year must not stop the batch
+    except Exception as exc:  # one bad company/year must not stop the batch
         _record_failure(engine, task, None, exc)
         return
-    for ref in _select_filings(task, refs):
-        _run_filing(engine, task, ticker_api, ref)
+    selected = _select_filings(task, refs)
+    _count(engine, skipped=len(refs) - len(selected))  # amendments: never ingested (L-04)
+    for ref in selected:
+        _run_filing(engine, task, ref)
 
 
-def _run_filing(engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef) -> None:
+def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
     try:
-        done, skipped = _process_filing(engine, task, ticker_api, ref)
+        done, skipped = _process_filing(engine, task, ref)
     except EdgarNotFoundError:
         _count(engine, skipped=1)
+        return
+    except FilingIdentityError as exc:  # another company's filing: never stored
+        _record_failure(engine, task, ref, exc, stage="identity")
         return
     except Exception as exc:  # one bad filing must not stop its siblings or the batch
         _record_failure(engine, task, ref, exc)
@@ -241,7 +257,12 @@ def _count(engine: _Engine, *, completed: int = 0, skipped: int = 0) -> None:
 
 
 def _record_failure(
-    engine: _Engine, task: _YearTask, ref: FilingRef | None, exc: Exception
+    engine: _Engine,
+    task: _YearTask,
+    ref: FilingRef | None,
+    exc: Exception,
+    *,
+    stage: str = "process",
 ) -> None:
     report = engine.report
     where = f" [{ref.accession_number}]" if ref else ""
@@ -255,38 +276,25 @@ def _record_failure(
             task.ticker,
             task.form,
             str(task.year),
-            "process",
+            stage,
             f"{ref.accession_number}: {exc}" if ref else str(exc),
         ),
     )
 
 
-def _list_filings(engine: _Engine, task: _YearTask) -> tuple[str, list[FilingRef]]:
-    """The ticker spelling EDGAR knows and its filings for the task's form and year.
+def _list_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
+    """The task's filings for its form and year, listed under the asset's CIK.
 
     Raises :class:`EdgarNotFoundError` when the company exists but filed nothing that year
-    (a skip), and a plain :class:`EdgarError` when no spelling matches a company at all (a
-    failure worth seeing)."""
-    candidates = (
-        [engine.resolved[task.ticker]]
-        if task.ticker in engine.resolved
-        else normalize_ticker(task.ticker)
-    )
-    company_found = False
-    last: EdgarNotFoundError | None = None
-    for candidate in candidates:
-        try:
-            refs = engine.edgar.filing_by_year(candidate, task.form, task.year)
-        except EdgarNotFoundError as exc:
-            last = exc
-            continue
-        company_found = True
-        if refs:
-            engine.resolved[task.ticker] = candidate
-            return candidate, refs
-    if company_found:
+    (a skip), and a plain :class:`EdgarError` when the gateway knows no company by that CIK (a
+    failure worth seeing). A CIK finds a company that left the index too; a ticker would not."""
+    try:
+        refs = engine.edgar.filing_by_year(task.cik, task.form, task.year)
+    except EdgarNotFoundError as exc:
+        raise EdgarError(f"no EDGAR match for {task.ticker!r} (CIK {task.cik})") from exc
+    if not refs:
         raise EdgarNotFoundError(f"no {task.form} filing for {task.ticker} in {task.year}")
-    raise EdgarError(f"no EDGAR match for {task.ticker!r}") from last
+    return refs
 
 
 class SharedAccessionsError(RuntimeError):
@@ -309,21 +317,49 @@ def _refuse_shared_accessions(conn: Database) -> None:
         )
 
 
+def _is_amendment(ref: FilingRef) -> bool:
+    return ref.form.strip().upper().endswith("/A")
+
+
+def _refuse_identity_violations(conn: Database) -> None:
+    """Refuse to run over stored filings that break the filing-identity invariant (T-149): the
+    triggers keep new writes out, but never check the rows already there."""
+    identity.require(conn)
+
+
 def _select_filings(task: _YearTask, refs: Sequence[FilingRef]) -> list[FilingRef]:
-    """The filings to ingest, **oldest first**.
+    """The filings to ingest, **oldest first**, **originals only**.
 
-    Chronological order matters: F4's trailing-twelve-month figure for a 10-Q reads the
-    prior quarters' already-recorded values (``db.ttm_flows``), so Q1 must be recorded
-    before Q2 and Q2 before Q3. The gateway lists most-recent-first, hence the re-sort.
-    A 10-K reports one fiscal year, so if several match (an amendment) only the most
-    recent is kept."""
-    ordered = sorted(refs, key=lambda r: (r.filing_date or "", r.accession_number))
-    return ordered[-1:] if task.form == "10-K" else ordered
+    A 10-K/A or 10-Q/A is never ingested (PER-02, L-04): a period's value is the one in its
+    original filing, and an amendment of the same period would replace it in every reader (they
+    order a company's filings by period end, then publication time). The gateway lists amendments
+    beside their originals, so a year whose newest filing is a 10-K/A keeps its original 10-K --
+    and a Part III-only amendment, which has no statements, no longer costs the year its figures.
+
+    Chronological order matters: F4's trailing-twelve-month figure for a 10-Q reads the prior
+    quarters' already-recorded values (``db.ttm_flows``), so Q1 must be recorded before Q2 and Q2
+    before Q3. The gateway lists most-recent-first, hence the re-sort."""
+    originals = [r for r in refs if not _is_amendment(r)]
+    return sorted(originals, key=lambda r: (r.filing_date or "", r.accession_number))
 
 
-def _process_filing(
-    engine: _Engine, task: _YearTask, ticker_api: str, ref: FilingRef
-) -> tuple[int, int]:
+class FilingIdentityError(RuntimeError):
+    """The gateway listed another company's filing under the asset's CIK (T-149)."""
+
+
+def _check_filer(task: _YearTask, ref: FilingRef) -> None:
+    """Refuse a filing whose own CIK is not the asset's: a ticker reassigned, or a listing keyed
+    wrongly, would otherwise attach one company's statements to another's history. A listing that
+    carries no CIK (a gateway before portfolio-data-mining T-045) cannot be checked."""
+    if ref.cik is not None and ref.cik != task.cik:
+        raise FilingIdentityError(
+            f"{ref.accession_number} is listed under CIK {ref.cik}, not {task.ticker}'s "
+            f"{task.cik}; not stored"
+        )
+
+
+def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[int, int]:
+    _check_filer(task, ref)
     as_of = engine.params.analysis_date
     if ref.filing_date and ref.filing_date > as_of:
         return 0, 1  # no lookahead: this filing was filed after the analysis date
@@ -333,7 +369,7 @@ def _process_filing(
         return 0, 1  # already ingested and scored by an earlier run
 
     payload = engine.edgar.financials(
-        ticker_api, task.form, task.year, accession_number=ref.accession_number
+        task.cik, task.form, task.year, accession_number=ref.accession_number
     )
     stmts = Statements.from_payload(payload)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number)

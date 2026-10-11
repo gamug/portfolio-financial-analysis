@@ -230,7 +230,10 @@ def test_revenue_gate_is_silent_without_net_income() -> None:
 
 
 def _filing(conn: Database, asset_id: int, ticker: str, period_end: str = "2025-12-31") -> int:
-    conn.execute("INSERT OR IGNORE INTO assets (id, ticker) VALUES (?, ?)", (asset_id, ticker))
+    conn.execute(
+        "INSERT OR IGNORE INTO assets (id, ticker, cik) VALUES (?, ?, ?)",
+        (asset_id, ticker, f"{asset_id:010d}"),
+    )
     return int(
         conn.execute(
             "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "

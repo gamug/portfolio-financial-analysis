@@ -698,3 +698,54 @@ WHEN NEW.score_type = 'FUNDAMENTAL' AND (NEW.available_at IS NULL OR NEW.availab
     (SELECT f.available_at FROM sec_filings f WHERE f.id = NEW.filing_id))
 BEGIN SELECT RAISE(ABORT, 'score_snapshot: a FUNDAMENTAL row''s available_at must be its filing''s'); END;
 """
+
+
+# ---------------------------------------------------------------------------
+# T-149: the filing-identity invariant. Created by `kg_schema.ensure` (and migration m012) once
+# `assets` (with `cik`) and `sec_filings` exist.
+# ---------------------------------------------------------------------------
+
+IDENTITY_TABLES = ("assets", "sec_filings")
+
+IDENTITY_TRIGGERS = """
+-- A filing is fetched by its asset's CIK (APP-10a), so an asset with filings has one.
+CREATE TRIGGER IF NOT EXISTS trg_sf_cik_insert BEFORE INSERT ON sec_filings
+WHEN COALESCE((SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id), '') = ''
+BEGIN SELECT RAISE(ABORT, 'sec_filings: the asset has no CIK'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sf_cik_update BEFORE UPDATE OF asset_id ON sec_filings
+WHEN COALESCE((SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id), '') = ''
+BEGIN SELECT RAISE(ABORT, 'sec_filings: the asset has no CIK'); END;
+-- One accession reports one company, so it may be attached to several assets only when they
+-- are one CIK (the share classes of one issuer: GOOGL/GOOG, NWSA/NWS, FOXA/FOX).
+CREATE TRIGGER IF NOT EXISTS trg_sf_cross_cik_insert BEFORE INSERT ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o JOIN assets oa ON oa.id = o.asset_id
+    WHERE o.accession_number = NEW.accession_number AND o.asset_id <> NEW.asset_id
+      AND oa.cik IS NOT (SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id)
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already attached to an asset of another CIK'); END;
+CREATE TRIGGER IF NOT EXISTS trg_sf_cross_cik_update
+BEFORE UPDATE OF asset_id, accession_number ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o JOIN assets oa ON oa.id = o.asset_id
+    WHERE o.accession_number = NEW.accession_number AND o.asset_id <> NEW.asset_id
+      AND o.id <> NEW.id
+      AND oa.cik IS NOT (SELECT a.cik FROM assets a WHERE a.id = NEW.asset_id)
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already attached to an asset of another CIK'); END;
+-- The CIK of an asset that has filings never changes or goes empty: its filings were fetched
+-- by the old one. A CIK may still be set on an asset that has none yet, or filled in where it
+-- was empty, as long as it keeps agreeing with the assets sharing an accession with it.
+CREATE TRIGGER IF NOT EXISTS trg_assets_cik_keep BEFORE UPDATE OF cik ON assets
+WHEN NEW.cik IS NOT OLD.cik
+  AND (COALESCE(NEW.cik, '') = '' OR COALESCE(OLD.cik, '') <> '')
+  AND EXISTS (SELECT 1 FROM sec_filings f WHERE f.asset_id = OLD.id)
+BEGIN SELECT RAISE(ABORT, 'assets: the CIK of an asset with filings cannot change'); END;
+CREATE TRIGGER IF NOT EXISTS trg_assets_cik_share BEFORE UPDATE OF cik ON assets
+WHEN NEW.cik IS NOT OLD.cik AND EXISTS (
+    SELECT 1 FROM sec_filings f JOIN sec_filings o ON o.accession_number = f.accession_number
+    JOIN assets oa ON oa.id = o.asset_id
+    WHERE f.asset_id = OLD.id AND o.asset_id <> OLD.id AND oa.cik IS NOT NEW.cik
+)
+BEGIN SELECT RAISE(ABORT, 'assets: the new CIK differs from an asset sharing one of its accessions'); END;
+"""

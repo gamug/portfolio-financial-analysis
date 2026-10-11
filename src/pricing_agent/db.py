@@ -15,6 +15,7 @@ from typing import Any
 from portfolio_common.db import Allowlist, Database, Row
 
 import kg_schema
+from kg_schema import identity
 from kg_schema.queries import UniverseMember
 from pricing_agent.observations import Observation
 from pricing_agent.pricing_client import Candle
@@ -140,6 +141,8 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     """Insert/update ``assets`` / ``sectors`` from *members* (the identity path
     where a new S&P 500 symbol first gets its ``assets.id``). Point-in-time
     membership is read directly from ``universe.db``, not kept here."""
+    members = list(members)
+    identity.refuse_cik_changes(conn, members)  # T-149: a ticker's CIK never changes silently
     count = 0
     for m in members:
         sector_id = _upsert_sector(conn, m.gics_sector or "")
@@ -149,11 +152,11 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT (ticker) DO UPDATE SET
                 company_name = COALESCE(NULLIF(excluded.company_name, ''), assets.company_name),
-                cik          = COALESCE(NULLIF(excluded.cik, ''), assets.cik),
+                cik          = COALESCE(NULLIF(assets.cik, ''), excluded.cik),
                 sector_id    = COALESCE(excluded.sector_id, assets.sector_id),
                 sub_industry = COALESCE(NULLIF(excluded.sub_industry, ''), assets.sub_industry)
             """,
-            (m.symbol, m.security, m.cik, sector_id, m.gics_sub_industry),
+            (m.symbol, m.security, identity.normalize_cik(m.cik), sector_id, m.gics_sub_industry),
         )
         count += 1
     conn.commit()
