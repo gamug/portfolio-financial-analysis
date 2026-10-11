@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -31,11 +31,19 @@ from fundamental_agent.edgar_client import (
     FilingRef,
 )
 from fundamental_agent.filing_text import fetch_primary_document
-from fundamental_agent.fiscal import label_year, payload_fiscal_year_end, quarter_label
+from fundamental_agent.fiscal import (
+    QUARTER_DAYS,
+    is_year_apart,
+    label_year,
+    payload_fiscal_year_end,
+    quarter_label,
+    same_period_end,
+    within,
+)
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
-from fundamental_agent.statements import YEAR_TOLERANCE_DAYS, Period, Statements, iter_facts
+from fundamental_agent.statements import Period, Statements, iter_facts
 from kg_schema import connect, identity, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
@@ -380,6 +388,11 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
         _record_unusable(engine, task, ref, resolved)
         return 0, 1
 
+    mismatch = _period_end_mismatch(resolved, ref)
+    if mismatch is not None:
+        _record_unusable(engine, task, ref, mismatch)  # ID-07 is a BLOCK: not stored, recorded
+        return 0, 1
+
     done = skipped = 0
     for target in [resolved]:
         if target.period.date > as_of:
@@ -394,6 +407,31 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
         engine.completed_accessions.add(ref.accession_number)
         done += 1
     return done, skipped
+
+
+def _period_end_mismatch(target: _Target, ref: FilingRef) -> str | None:
+    """Why the period end the payload gave is not the filing's own, or ``None`` (ID-07, PER-08).
+
+    The key a filing is stored under is read off the statements (the latest fiscal-year or quarter
+    column); the SEC says which period the filing reports (``periodOfReport``, the header field the
+    gateway lists as ``period_of_report``). The two must end at the same month end. Expand Energy's
+    FY2021 10-K is the case: fresh-start accounting split the year into a predecessor and a
+    successor period, the payload has no full-year 2021 column, and the latest one -- FY2020 -- was
+    stored under the FY2021 filing's accession. A filing with no ``period_of_report`` (the SEC gives
+    none, or the gateway predates portfolio-data-mining T-045) cannot be checked."""
+    if ref.period_of_report is None:
+        return None
+    try:
+        reported = date.fromisoformat(ref.period_of_report)
+    except ValueError:
+        return f"the SEC's periodOfReport {ref.period_of_report!r} is not a date"
+    if same_period_end(date.fromisoformat(target.period.date), reported):
+        return None
+    return (
+        f"the payload's {target.period.key} ends {target.period.date}, not at the SEC's "
+        f"periodOfReport {ref.period_of_report} (ID-07): the statements do not hold this "
+        "filing's own period"
+    )
 
 
 def _fye_lookup(engine: _Engine, task: _YearTask) -> Callable[[str], date | None]:
@@ -420,9 +458,8 @@ def _record_unusable(engine: _Engine, task: _YearTask, ref: FilingRef, reason: s
     )
 
 
-# A 10-Q's own quarter column ends on its balance sheet's date. A column further back is a
-# comparative: the payload then carries no quarter of the filing's own.
-_OWN_PERIOD_SLACK_DAYS = 20
+# A 10-Q's own quarter column ends on its balance sheet's date (the same month end, PER-08). A
+# column ending before it is a comparative: the payload then carries no quarter of the filing's own.
 
 
 def _targets(
@@ -480,7 +517,11 @@ def _resolve_quarter(
     end = date.fromisoformat(period.date)
     instants = [p.date for p in stmts.instant_periods()]
     latest = max(instants, default=None)
-    if latest is not None and (date.fromisoformat(latest) - end).days > _OWN_PERIOD_SLACK_DAYS:
+    if (
+        latest is not None
+        and date.fromisoformat(latest) > end
+        and not same_period_end(date.fromisoformat(latest), end)
+    ):
         return (
             f"the latest quarter column {period.key} ends before the balance sheet's {latest}: "
             f"a comparative, not the filing's own quarter (periods: {_columns(stmts)})"
@@ -573,9 +614,8 @@ _TTM_ITEMS = (
 )
 
 
-# A 10-Q's balance sheet sets its period end beside the last fiscal year end: about one quarter
-# earlier for a first quarter, two or three for the others. The window absorbs 52/53-week calendars.
-_FIRST_QUARTER_GAP_DAYS = (60, 115)
+# A first quarter's period end sits one quarter after the last fiscal year end -- PER-08's
+# [89, 98] days, which absorbs 52/53-week calendars -- where a later quarter's sits two or three.
 
 
 def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
@@ -587,9 +627,8 @@ def _is_first_quarter(stmts: Statements, target: _Target) -> bool:
     if target.period.tag == "Q1":
         return True
     end = date.fromisoformat(target.period.date)
-    low, high = _FIRST_QUARTER_GAP_DAYS
     return any(
-        low <= (end - date.fromisoformat(p.date)).days <= high
+        within((end - date.fromisoformat(p.date)).days, QUARTER_DAYS)
         for p in stmts.periods
         if p.is_instant
     )
@@ -600,21 +639,13 @@ def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | 
     10-Q. A first quarter's year-to-date *is* its quarter, so a Q1 filing with no ``(YTD)``
     columns uses its ``(Q1)`` columns (T-105)."""
     end = date.fromisoformat(target.period.date)
-    year_ago = end - timedelta(days=365)
     tags = ("YTD", target.period.tag) if _is_first_quarter(stmts, target) else ("YTD",)
     for tag in tags:
         # a first quarter's prior-year column can carry another quarter tag than its own (Waters:
         # (Q2) beside (Q1)), so any quarter column stands in for it
         periods = [p for p in stmts.periods if (p.is_quarter if tag != "YTD" else p.tag == tag)]
         current = next((p for p in periods if p.date == target.period.date), None)
-        prior = next(
-            (
-                p
-                for p in periods
-                if abs((date.fromisoformat(p.date) - year_ago).days) <= YEAR_TOLERANCE_DAYS
-            ),
-            None,
-        )
+        prior = next((p for p in periods if is_year_apart(date.fromisoformat(p.date), end)), None)
         if current is not None and prior is not None:
             return current.key, prior.key, prior.date
     return None, None, None
@@ -702,6 +733,7 @@ def _analyze_one(
         cik=_asset_cik(engine, task.asset_id),
     )
     result = engine.analyst.analyze(ctx)
+    db.stamp_ytd(result.metrics, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
     db.record_metrics(
         engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
     )

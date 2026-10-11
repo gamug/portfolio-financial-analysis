@@ -14,17 +14,16 @@ import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from typing import Any
+
+from fundamental_agent import fiscal
 
 STATEMENT_KEYS = ("income_statement", "balance_sheet", "cash_flow")
 _DURATION_RE = re.compile(r"^\s*(?P<date>\d{4}-\d{2}-\d{2})\s*\((?P<tag>[A-Za-z0-9]+)\)\s*$")
 _INSTANT_RE = re.compile(r"^\s*(?P<date>\d{4}-\d{2}-\d{2})\s*$")
 _QUARTER_RE = re.compile(r"^Q[1-4]$")
 INSTANT = "INSTANT"
-_YEAR_DAYS = 365
-# A column "one year earlier" can sit a few days off on a 52/53-week calendar.
-YEAR_TOLERANCE_DAYS = 20
 
 
 @dataclass(frozen=True)
@@ -501,24 +500,32 @@ class Statements:
         return fy[-1] if fy else None
 
     def prior_of(self, period: Period) -> Period | None:
-        """The same period one step earlier in time, if the payload carries it.
+        """The same period one year earlier, if the payload carries it (PER-08).
+
+        A column is the prior of *period* only when its end date is one year earlier: within
+        [364, 371] days and rounding to the same month end as the date a calendar year before
+        (:func:`fundamental_agent.fiscal.is_year_apart`). A 52/53-week filer's year-ago end sits
+        days off the calendar one and still matches; a column 345 or 385 days away -- a changed
+        fiscal year, a stray comparative -- no longer does (it was a +-20-day window around 365).
 
         A quarter is paired with the quarter column that ended a year before it (T-140): the
         gateway's tag is a function of the end date's calendar month, so a 52/53-week filer's
         quarter and its prior-year twin can carry neighbouring tags -- Waters' 2023-09-30 is
         ``(Q3)`` beside 2022-10-01 ``(Q4)`` -- and a same-tag match found no prior year at all.
-        Any other period takes the same-tag column one step earlier."""
-        if period.is_quarter:
-            year_ago = date.fromisoformat(period.date) - timedelta(days=_YEAR_DAYS)
-            twins = [
-                (abs((date.fromisoformat(p.date) - year_ago).days), p.date, p)
-                for p in self.periods
-                if p.is_quarter
-            ]
-            near = [t for t in twins if t[0] <= YEAR_TOLERANCE_DAYS]
-            return min(near, key=lambda t: t[:2])[2] if near else None
-        earlier = [p for p in self.periods if p.tag == period.tag and p.date < period.date]
-        return earlier[-1] if earlier else None
+        Any other period takes the same-tag column that is a year earlier."""
+        end = date.fromisoformat(period.date)
+        twins = [
+            p
+            for p in self.periods
+            if (p.is_quarter if period.is_quarter else p.tag == period.tag)
+            and fiscal.is_year_apart(date.fromisoformat(p.date), end)
+        ]
+        # several (a gateway tag repeated on neighbouring columns): the one closest to a year
+        return min(
+            twins,
+            key=lambda p: (abs((end - date.fromisoformat(p.date)).days - 365), p.date),
+            default=None,
+        )
 
     def _rows_for(self, spec: LineItem) -> Iterator[dict[str, Any]]:
         """Every non-abstract, non-dimensional row across *spec*'s statements,

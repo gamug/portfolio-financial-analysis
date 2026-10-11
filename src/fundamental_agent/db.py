@@ -9,7 +9,6 @@ never the label (T-140) -- see :func:`completed_units`.
 
 from __future__ import annotations
 
-import calendar
 import json
 import math
 from collections.abc import Iterable, Sequence
@@ -20,6 +19,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 
 import kg_schema
+from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, CoverShares, Statements
 from kg_schema import identity
@@ -601,6 +601,10 @@ def overlapping_history(
     return out
 
 
+# The audit input a 10-Q's anchor metric row carries beside the item's single-quarter value: the
+# item's year-to-date at the filing's period end (PER-05, T-149) -- three, six or nine months.
+YTD_INPUT_PREFIX = "ytd_"
+
 # Which already-recorded metric row's `inputs_json` carries each flow item's raw,
 # never-TTM-adjusted value -- see :func:`ttm_flows`, F4 (docs/model_fixes.md). Both
 # groups are always computed for every filing (fundamental_agent.metrics.CORE_GROUPS/
@@ -630,44 +634,39 @@ class YTDPair:
     prior_end: str | None
 
 
-# A fiscal quarter/year end can drift from "exactly N months earlier": 52/53-week calendars
-# (AAPL's quarters end on a Saturday) land within a few days. Adjacent quarters are ~91 days
-# apart, so a window this wide still identifies exactly one.
-_PERIOD_TOLERANCE_DAYS = 20
 _QUARTER_MONTHS = 3
 
 
 def _months_before(iso_date: str, months: int) -> date:
     """*iso_date* moved back *months* calendar months; a month-end stays a month-end
     (2023-08-31 - 3 -> 2023-05-31, 2024-02-29 - 3 -> 2023-11-30)."""
-    d = date.fromisoformat(iso_date)
-    year, month0 = divmod(d.year * 12 + (d.month - 1) - months, 12)
-    month = month0 + 1
-    last = calendar.monthrange(year, month)[1]
-    was_month_end = d.day == calendar.monthrange(d.year, d.month)[1]
-    return date(year, month, last if was_month_end else min(d.day, last))
+    return fiscal.months_before(date.fromisoformat(iso_date), months)
 
 
 def _filing_near(conn: Database, asset_id: int, form: str, target: date) -> tuple[int, str] | None:
-    """``(filing id, period_end)`` of the asset's *form* filing whose period ends closest
-    to *target* (within :data:`_PERIOD_TOLERANCE_DAYS`), or ``None``.
+    """``(filing id, period_end)`` of the asset's *form* filing whose period end rounds to the
+    same month end as *target* (PER-08, :func:`fundamental_agent.fiscal.same_period_end`), the
+    closest one if several do, or ``None``. It was a 20-day window; a window admits a period a
+    month off, and the rounding admits a 52/53-week end days from the calendar one.
 
     Filings are located by **date**, never by their ``fiscal_period`` label. The labels are
     ``FY{y}`` / ``{y}Q{n}`` with *y* the calendar year the period ends in, so a fiscal year
     and its own quarters carry different years unless the year ends in December -- STZ's
     ``FY2024`` (ending Feb-2024) owns the quarters ``2023Q1``-``Q3`` (T-094)."""
-    iso = target.isoformat()
-    row = conn.execute(
-        """
-        SELECT id, period_end FROM sec_filings
-        WHERE asset_id = ? AND form = ? AND period_end IS NOT NULL
-          AND ABS(julianday(period_end) - julianday(?)) <= ?
-        ORDER BY ABS(julianday(period_end) - julianday(?))
-        LIMIT 1
-        """,
-        (asset_id, form, iso, _PERIOD_TOLERANCE_DAYS, iso),
-    ).fetchone()
-    return (int(row["id"]), str(row["period_end"])) if row else None
+    rows = conn.execute(
+        "SELECT id, period_end FROM sec_filings "
+        "WHERE asset_id = ? AND form = ? AND period_end IS NOT NULL",
+        (asset_id, form),
+    ).fetchall()
+    matching = [
+        (abs((date.fromisoformat(r["period_end"]) - target).days), int(r["id"]), r["period_end"])
+        for r in rows
+        if fiscal.same_period_end(date.fromisoformat(r["period_end"]), target)
+    ]
+    if not matching:
+        return None
+    _, filing_id, period_end = min(matching)
+    return filing_id, str(period_end)
 
 
 def _recorded_flow(
@@ -682,6 +681,21 @@ def _recorded_flow(
     TTM must never combine this engine's values with an older engine's, which may resolve a
     concept differently. A prior filing not yet recorded under this version reads as missing,
     so the caller falls through to its next method."""
+    return _recorded_input(conn, filing_id, item, item, engine_version)
+
+
+def _recorded_ytd(
+    conn: Database, filing_id: int, item: str, engine_version: str = METRICS_ENGINE_VERSION
+) -> float | None:
+    """The year-to-date *item* value a 10-Q recorded beside its single-quarter one (the
+    ``ytd_<item>`` audit input :func:`ytd_inputs` stamps): nine months on a third quarter. Missing
+    on a filing recorded before PER-05 (T-149), whose Q4 then falls back to the quarters."""
+    return _recorded_input(conn, filing_id, item, YTD_INPUT_PREFIX + item, engine_version)
+
+
+def _recorded_input(
+    conn: Database, filing_id: int, item: str, key: str, engine_version: str
+) -> float | None:
     group, name = _TTM_FLOW_SOURCE[item]
     row = conn.execute(
         """
@@ -694,7 +708,7 @@ def _recorded_flow(
     ).fetchone()
     if row is None or not row["inputs_json"]:
         return None
-    value = json.loads(row["inputs_json"]).get(item)
+    value = json.loads(row["inputs_json"]).get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
@@ -710,9 +724,12 @@ def _quarter_flow_ending(
     """The single-quarter value of *item* for the fiscal quarter ending near *quarter_end*.
 
     A 10-Q reports quarters 1-3. A fiscal **Q4** has no 10-Q -- the 10-K reports only the
-    full-year total -- so it is derived as that 10-K's FY flow minus the three 10-Q quarters
-    inside the same fiscal year, all located by date, and only when all four are ingested;
-    otherwise ``None`` and the caller falls back to ``x4`` (F4, docs/model_fixes.md)."""
+    full-year total -- so it is the 10-K's FY flow minus the nine-month year-to-date of the
+    third-quarter 10-Q (PER-05, checklist D-08), which needs no other quarter recorded. That
+    10-Q must close one quarter before the fiscal year end (PER-08: [89, 98] days, the same month
+    end). A third quarter recorded before the year-to-date was kept falls back to the FY flow minus
+    the three 10-Q quarters, and only when all four are ingested; otherwise ``None`` and the
+    caller falls back to ``x4`` (F4, docs/model_fixes.md)."""
     quarter = _filing_near(conn, asset_id, "10-Q", quarter_end)
     if quarter is not None:
         return _recorded_flow(conn, quarter[0], item, engine_version)
@@ -722,6 +739,9 @@ def _quarter_flow_ending(
     fy = _recorded_flow(conn, fiscal_year[0], item, engine_version)
     if fy is None:
         return None
+    ytd = _nine_month_ytd(conn, asset_id, fiscal_year[1], item, engine_version)
+    if ytd is not None:
+        return fy - ytd
     total = fy
     for months in (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS):
         q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
@@ -730,6 +750,19 @@ def _quarter_flow_ending(
             return None
         total -= flow
     return total
+
+
+def _nine_month_ytd(
+    conn: Database, asset_id: int, fiscal_year_end: str, item: str, engine_version: str
+) -> float | None:
+    """The nine-month year-to-date *item* of the 10-Q that closes the quarter before
+    *fiscal_year_end*, or ``None``: no such 10-Q, one that is not a quarter before the year end
+    (a changed fiscal year), or one recorded without its year-to-date."""
+    year_end = date.fromisoformat(fiscal_year_end)
+    third = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year_end, _QUARTER_MONTHS))
+    if third is None or not fiscal.is_quarter_apart(date.fromisoformat(third[1]), year_end):
+        return None
+    return _recorded_ytd(conn, third[0], item, engine_version)
 
 
 def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str) -> int | None:
@@ -785,13 +818,29 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 else None
             )
             if fy is not None:
-                out[item] = TTMFlow(fy - pair.prior + pair.current, "ytd", alt=summed)
+                out[item] = TTMFlow(
+                    fy - pair.prior + pair.current, "ytd", alt=summed, ytd=pair.current
+                )
                 continue
+        ytd_now = pair.current if pair else None
         if summed is not None:
-            out[item] = TTMFlow(summed, "quarters")
+            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now)
         elif item in current:
-            out[item] = TTMFlow(current[item] * 4.0, "x4")
+            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now)
     return out
+
+
+def stamp_ytd(metrics: Sequence[tuple[str, MetricResult]], flows: dict[str, TTMFlow]) -> None:
+    """Record each flow's year-to-date in the audit inputs of its anchor metric row -- beside the
+    item's single-quarter value, where :func:`_recorded_ytd` reads it back (PER-05, T-149). A
+    10-Q's nine months are what a later Q4 is taken from. Only inputs change: no metric value."""
+    for item, flow in flows.items():
+        if flow.ytd is None or item not in _TTM_FLOW_SOURCE:
+            continue
+        group, name = _TTM_FLOW_SOURCE[item]
+        for result_group, result in metrics:
+            if result_group == group and result.name == name:
+                result.inputs[YTD_INPUT_PREFIX + item] = flow.ytd
 
 
 def _trailing_quarters(  # noqa: PLR0913 - one quarter's identity plus the version pin

@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from fundamental_agent.statements import YEAR_TOLERANCE_DAYS
+from fundamental_agent.fiscal import is_year_apart
 from sec_xcheck.common import filings, own_period_key, statements_from_db
 from sec_xcheck.features import extract
 from sec_xcheck.findings import Finding, spread
@@ -62,17 +62,10 @@ def pipeline_columns(stmts: Any, form: str, target: Any) -> list[tuple[str, Any]
         if fy and fy[0].date not in {target.date, getattr(prior, "date", None)}:
             out.append(("cagr_base", fy[0]))
     elif form == "10-Q":
-        year_ago = dt.date.fromisoformat(target.date) - dt.timedelta(days=365)
         ytd = [p for p in stmts.periods if p.tag == "YTD"]
         current = next((p for p in ytd if p.date == target.date), None)
-        before = next(
-            (
-                p
-                for p in ytd
-                if abs((dt.date.fromisoformat(p.date) - year_ago).days) <= YEAR_TOLERANCE_DAYS
-            ),
-            None,
-        )
+        end = dt.date.fromisoformat(target.date)
+        before = next((p for p in ytd if is_year_apart(dt.date.fromisoformat(p.date), end)), None)
         if current is not None and before is not None:
             out += [("ytd", current), ("ytd_prior", before)]
     return out

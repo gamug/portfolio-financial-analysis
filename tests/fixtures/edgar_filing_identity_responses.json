@@ -72,5 +72,52 @@
     "period_of_report": "2023-12-31"
    }
   ]
+ },
+ "filing_by_year_SMCI_10-K_2025": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2025-08-28",
+    "accession_number": "0001375365-25-000027",
+    "cik": "0001375365",
+    "period_of_report": "2025-06-30"
+   },
+   {
+    "form": "10-K",
+    "filing_date": "2025-02-25",
+    "accession_number": "0001375365-25-000004",
+    "cik": "0001375365",
+    "period_of_report": "2024-06-30"
+   }
+  ]
+ },
+ "filing_by_year_EXE_10-K_2022": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2022-02-24",
+    "accession_number": "0000895126-22-000029",
+    "cik": "0000895126",
+    "period_of_report": "2021-12-31"
+   }
+  ]
+ },
+ "filing_by_year_GEHC_10-K_2023": {
+  "success": true,
+  "data": [
+   {
+    "form": "10-K",
+    "filing_date": "2023-02-15",
+    "accession_number": "0001932393-23-000025",
+    "cik": "0001932393",
+    "period_of_report": "2022-12-31"
+   }
+  ]
+ },
+ "financials_GEHC_10-K_2023_failure": {
+  "success": false,
+  "error": "Failed to extract financials: 'NoneType' object has no attribute 'to_dataframe'"
  }
 }
