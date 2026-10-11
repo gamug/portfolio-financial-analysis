@@ -370,14 +370,14 @@ def cmd_tables(args: argparse.Namespace) -> int:
     def cell(r: dict[str, Any] | None) -> str:
         if r is None:
             return "-"
-        return (
-            f"{r['target_count']} f / {r['target_companies']} co ({r['count']}/{r['total']} cols)"
-        )
+        # own-period filings / companies, then filings with the value in any column (T-147's convention)
+        return f"{r['target_count']} f / {r['target_companies']} co; any column {r['filings']} f"
 
     before, after = load(args.before), load(args.after)
-    print(f"{'finding':52s} {'before (own period)':>34s} {'after (own period)':>34s}")
+    print("| finding | before (production) | after |")
+    print("|---|---|---|")
     for fid in TABLE_ROWS:
-        print(f"{fid:52s} {cell(before.get(fid)):>34s} {cell(after.get(fid)):>34s}")
+        print(f"| `{fid}` | {cell(before.get(fid))} | {cell(after.get(fid))} |")
     return 0
 
 
