@@ -1043,32 +1043,39 @@ class Statements:
         """ID-02b: no long-term and no short-term debt resolved."""
         if (
             self._balance_sheet_resolved(period_key, with_cash=True)
-            and not self._has_debt_line(column)
-            and not self._has_interest_expense_line(period_key)
+            and not self._has_debt_line()
+            and not self._has_interest_expense_line()
         ):
             self._flag("no_debt_lines")
             return 0.0, None, "none_filed"
         self._flag("capture_failure")
         return None, None, None
 
-    def _has_debt_line(self, column: str) -> bool:
-        """A balance-sheet concept that names a debt obligation has a value in *column*."""
-        for row in self._rows_for(REGISTRY["long_term_debt"]):
+    def _statement_rows(self, statement: str) -> Iterator[dict[str, Any]]:
+        """Every non-abstract row of *statement*: dimensional or not, with a value or not. A concept
+        the filer put on the statement is *filed* whatever the gateway left of its value -- the
+        gateway's T-042 empties the non-dimensional row of a total the filer tags only with
+        dimensions (GM's ``DebtCurrent`` and ``LongTermDebtAndCapitalLeaseObligations``: 35.7B and
+        94.6B, now ``None`` beside the dimensional rows)."""
+        for row in self.raw.get(statement, []):
+            if not row.get("abstract"):
+                yield row
+
+    def _has_debt_line(self) -> bool:
+        """A balance-sheet concept that names a debt obligation is on the statement (any period, any
+        row, valued or not): the company has debt the resolver did not read, or the gateway emptied."""
+        for row in self._statement_rows("balance_sheet"):
             local = str(row.get("concept") or "").split("_", 1)[-1]
-            if (
-                _DEBT_LINE_RE.search(local)
-                and not _NOT_A_DEBT_LINE_RE.search(local)
-                and _numeric(row.get(column)) is not None
-            ):
+            if _DEBT_LINE_RE.search(local) and not _NOT_A_DEBT_LINE_RE.search(local):
                 return True
         return False
 
-    def _has_interest_expense_line(self, period_key: str) -> bool:
-        """An interest-expense concept -- any taxonomy -- has a value in the income statement's
-        *period_key* column (``InterestExpenseDebt`` and the like included)."""
-        for row in self._rows_for(REGISTRY["interest_expense"]):
+    def _has_interest_expense_line(self) -> bool:
+        """An interest-expense concept -- any taxonomy, ``InterestExpenseDebt`` and the like
+        included -- is on the income statement (any row, valued or not; see :meth:`_statement_rows`)."""
+        for row in self._statement_rows("income_statement"):
             local = str(row.get("concept") or "").split("_", 1)[-1]
-            if _INTEREST_EXPENSE_LINE_RE.match(local) and _numeric(row.get(period_key)) is not None:
+            if _INTEREST_EXPENSE_LINE_RE.match(local):
                 return True
         return False
 

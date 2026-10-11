@@ -12,7 +12,8 @@ import pytest
 from conftest import seed_filing
 
 from fundamental_agent import db
-from fundamental_agent.statements import Statements, iter_facts
+from fundamental_agent.metrics import leverage
+from fundamental_agent.statements import Statements
 from kg_schema import connect
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -68,9 +69,15 @@ def test_the_cost_table_counts_a_filing_whose_debt_is_empty(
     period = aapl_10k.latest_fy()
     assert period is not None
     filing_id = seed_filing(conn, 1, period_end=period.date, filing_date="2023-11-03")
-    db.append_financial_facts(conn, filing_id, iter_facts(aapl_10k))
     # the same filing without its long-term debt line: only the short-term ones remain
-    conn.execute("DELETE FROM financial_facts WHERE concept = 'us-gaap_LongTermDebtNoncurrent'")
+    payload = json.loads((FIXTURES / "financials_AAPL_10-K_2023.json").read_text())["data"]
+    payload["balance_sheet"] = [
+        r for r in payload["balance_sheet"] if r["concept"] != "us-gaap_LongTermDebtNoncurrent"
+    ]
+    stmts = Statements.from_payload(payload)
+    db.record_metrics(
+        conn, filing_id, [("leverage", r) for r in leverage.compute(stmts, period.key)]
+    )
     conn.commit()
     conn.close()
 
@@ -78,3 +85,5 @@ def test_the_cost_table_counts_a_filing_whose_debt_is_empty(
     out = capsys.readouterr().out
     assert "Information Technology" in out
     assert "short_term_debt_only" in out
+    verify.cmd_flags(argparse.Namespace(db=str(path)))
+    assert "flag_total_debt_short_term_debt_only" in capsys.readouterr().out

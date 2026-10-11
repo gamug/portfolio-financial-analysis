@@ -61,10 +61,16 @@ def _rows(stmts: Statements, spec: LineItem) -> list[dict[str, Any]]:
     ]
 
 
+def _usable(spec: LineItem, row: dict[str, Any], value: float | None) -> bool:
+    """A value the resolver may read: not empty, and not a negative of an element ID-13 lists (rejected, never repaired)."""
+    return value is not None and not (value < 0 and row.get("concept") in spec.nonnegative)
+
+
 def document_order(stmts: Statements, spec: LineItem, column: str) -> float | None:
     """The rule before T-148: the first matching row of the statement, whatever the kind of match."""
     for row in _rows(stmts, spec):
-        if _matches(row, spec) and (value := filed_value(row, column)) is not None:
+        value = filed_value(row, column)
+        if _matches(row, spec) and _usable(spec, row, value):
             return value
     return None
 
@@ -88,7 +94,8 @@ def concept_first(stmts: Statements, spec: LineItem, column: str) -> float | Non
         and any(h in str(r.get("label") or "").lower() for h in spec.label_contains)
     ]
     for row in (*exact, *standard, *labelled):
-        if (value := filed_value(row, column)) is not None:
+        value = filed_value(row, column)
+        if _usable(spec, row, value):
             return value
     return None
 

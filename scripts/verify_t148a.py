@@ -67,16 +67,6 @@ N23_DEBT = (
 )
 N23_INTEREST = G + "InterestExpenseDebt"
 SHOWN = 5  # examples listed
-FLAG_ITEMS = (
-    "net_income",
-    "income_tax",
-    "interest_expense",
-    "capital_expenditure",
-    "equity",
-    "cash",
-    "long_term_debt",
-    "short_term_debt",
-)
 # why a debt is empty, most specific first (the flags a Resolution of total_debt carries)
 REASONS = ("short_term_debt_only", "partial_map_rejected", "capture_failure")
 TABLE_ROWS = (
@@ -226,33 +216,44 @@ def _sector(conn: Any, ticker: str) -> str:
     return str(row[0]) if row and row[0] else "(none)"
 
 
+def _leverage_inputs(conn: Any, filing_id: int) -> dict[str, Any] | None:
+    """The audit inputs the pipeline stored with the filing's ``debt_to_equity``: the debt, equity and cash it read and
+    the resolution flags -- what the engine computed from the whole payload (the stored facts keep neither the
+    dimensional rows nor the values the gateway emptied, so a replay from them cannot say)."""
+    row = conn.execute(
+        "SELECT inputs_json FROM fundamental_metrics WHERE filing_id = ? AND metric_name = 'debt_to_equity' "
+        "ORDER BY id DESC LIMIT 1",
+        (filing_id,),
+    ).fetchone()
+    return None if row is None else dict(json.loads(row["inputs_json"] or "{}"))
+
+
 def cmd_cost(args: argparse.Namespace) -> int:
     """Filings whose debt, EV or ROIC is now empty. The old code read a missing debt as 0 in the EV and the ROIC
-    (``(total_debt or 0)``, ``sum_present(debt, equity)``), so each of these had a number before."""
+    (``(total_debt or 0)``, ``sum_present(debt, equity)``), so each of these had a number before. Read from the
+    stored metrics of the rebuilt database (own period)."""
     conn = open_ro(args.db)
     by_sector: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     reasons: collections.Counter[str] = collections.Counter()
     for f in filings(conn):
-        stmts = statements_from_db(conn, f["id"])
-        key = own_period_key(stmts, f["form"], f["period_end"])
-        if key is None:
+        inputs = _leverage_inputs(conn, f["id"])
+        if inputs is None:
             continue
-        sector = _sector(conn, f["ticker"])
-        counts = by_sector[sector]
+        counts = by_sector[_sector(conn, f["ticker"])]
         counts["filings"] += 1
-        debt = stmts.total_debt(key)
-        cash = stmts.get("cash", key)
-        equity = stmts.get("equity", key)
-        no_debt, no_cash = debt.value is None, cash is None
+        no_debt, no_cash = "total_debt" not in inputs, "cash" not in inputs
         counts["debt_empty"] += no_debt
         counts["cash_empty"] += no_cash
         counts["ev_empty_where_it_was_filled"] += no_debt or no_cash
-        counts["roic_empty_where_it_was_filled"] += (no_debt or no_cash) and equity is not None
+        counts["roic_empty_where_it_was_filled"] += (no_debt or no_cash) and "equity" in inputs
         if no_debt:
-            reasons[
-                next((fl for fl in REASONS if fl in debt.flags), "no balance sheet column")
-            ] += 1
-        if debt.value == 0.0:
+            flags = {
+                k.removeprefix("flag_total_debt_")
+                for k in inputs
+                if k.startswith("flag_total_debt_")
+            }
+            reasons[next((fl for fl in REASONS if fl in flags), "no balance sheet column")] += 1
+        if inputs.get("flag_total_debt_no_debt_lines"):
             counts["debt_zero_rule"] += 1
     total: collections.Counter[str] = collections.Counter()
     print(
@@ -373,24 +374,23 @@ def cmd_n23(args: argparse.Namespace) -> int:
 
 
 def cmd_flags(args: argparse.Namespace) -> int:
-    """How often each resolution flag is raised, per item, over the own-period filings (and how many had no hint)."""
+    """How often each resolution flag the pipeline stored (``flag_<item>_<flag>`` in the audit inputs) is raised,
+    over the filings' own-period metric rows."""
     conn = open_ro(args.db)
-    counts: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
-    total = 0
-    for f in filings(conn):
-        stmts = statements_from_db(conn, f["id"])
-        key = own_period_key(stmts, f["form"], f["period_end"])
-        if key is None:
-            continue
-        total += 1
-        for item in FLAG_ITEMS:
-            for flag in stmts.resolve(item, key).flags:
-                counts[item][flag] += 1
-        for flag in stmts.total_debt(key).flags:
-            counts["total_debt"][flag] += 1
-    print(f"{total} own-period filings")
-    for item, c in counts.items():
-        print(f"  {item:22s}", dict(c.most_common()))
+    counts: collections.Counter[str] = collections.Counter()
+    filings_seen: set[int] = set()
+    for row in conn.execute(
+        "SELECT filing_id, inputs_json FROM fundamental_metrics WHERE inputs_json LIKE '%flag_%'"
+    ):
+        for key in json.loads(row["inputs_json"] or "{}"):
+            if key.startswith("flag_"):
+                counts[(key, row["filing_id"])] += 0  # one filing counts once per flag
+                filings_seen.add(row["filing_id"])
+    per_flag: collections.Counter[str] = collections.Counter(key for key, _fid in counts)
+    total = conn.execute("SELECT COUNT(DISTINCT filing_id) FROM fundamental_metrics").fetchone()[0]
+    print(f"{total} filings with metrics; {len(filings_seen)} carry a flag")
+    for key, n in per_flag.most_common():
+        print(f"  {n:5d}  {key}")
     return 0
 
 

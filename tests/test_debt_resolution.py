@@ -68,6 +68,7 @@ UDR = "financials_UDR_10-K_2026_acc-0000074208-26-000013.json"
 ED = "financials_ED_10-K_2026_acc-0001047862-26-000031.json"
 ALGN = "financials_ALGN_10-K_2023_acc-0001097149-23-000013.json"
 PM = "financials_PM_10-K_2026_acc-0001628280-26-005939.json"
+GM = "financials_GM_10-K_2026_acc-0001467858-26-000013.json"
 
 
 # -- short-term debt: D-06(d), MET-07 -----------------------------------------------------------
@@ -290,6 +291,38 @@ def test_no_debt_line_is_zero_on_a_complete_balance_sheet_without_interest_expen
     total = stmts.total_debt(_key(stmts))
     assert total.value == 0.0
     assert total.flags == ("no_debt_lines",)
+
+
+def test_gm_a_debt_the_gateway_emptied_is_a_capture_failure_not_zero() -> None:
+    """General Motors' FY2025 10-K files its debt only with dimensions (Automotive, GM Financial): the
+    gateway's T-042 empties the non-dimensional row of ``DebtCurrent`` (35.7B) and
+    ``LongTermDebtAndCapitalLeaseObligations`` (94.6B) -- see ``corrections`` -- and its interest expense.
+    The concepts are on the statement, so "no debt line" is false: debt is missing, not 0. (A first
+    reading checked the column's value and made it 0: a 109B debt, found by rebuilding the 503
+    companies, as 0.)"""
+    payload = _payload(GM)
+    stmts = Statements.from_payload(payload)
+    key = _key(stmts)
+    assert stmts.get("long_term_debt", key) is None and stmts.get("short_term_debt", key) is None
+    total = stmts.total_debt(key)
+    assert total.value is None and total.flags == ("capture_failure",)
+    corrected = {
+        c["concept"]
+        for c in json.loads((FIXTURES / GM).read_text())["data"]["corrections"]
+        if c["statement"] == "balance_sheet"
+    }
+    assert {G + "DebtCurrent", G + "LongTermDebtAndCapitalLeaseObligations"} <= corrected
+
+
+def test_a_debt_row_valued_only_in_another_period_is_still_a_debt_line() -> None:
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    row = {**template, "concept": G + "LongTermDebtNoncurrent"}
+    for column in [c for c in row if c[:2] == "20"]:
+        row[column] = None
+    payload["balance_sheet"].append(row)
+    stmts = Statements.from_payload(payload)
+    assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
 
 
 def test_an_unread_interest_concept_makes_a_missing_debt_a_capture_failure() -> None:
