@@ -96,7 +96,8 @@ def _ready(db: Database) -> bool:
 
 
 def read_successions(path: Path = SUCCESSIONS_CSV) -> list[dict[str, str]]:
-    """The versioned succession table: successor, predecessor, effective date and the evidence."""
+    """The versioned succession table: successor, predecessor, effective date, the evidence and the
+    ``rules`` (``;``-separated checklist ids, APP-10b-2 and APP-10b-3) the link follows."""
     with path.open(newline="", encoding="utf-8") as fh:
         rows = list(csv.DictReader(fh))
     for row in rows:
@@ -104,7 +105,13 @@ def read_successions(path: Path = SUCCESSIONS_CSV) -> list[dict[str, str]]:
         row["predecessor_cik"] = str(normalize_cik(row["predecessor_cik"]))
         if not all(
             row[k]
-            for k in ("effective_date", "evidence_form", "evidence_accession", "evidence_quote")
+            for k in (
+                "effective_date",
+                "evidence_form",
+                "evidence_accession",
+                "evidence_quote",
+                "rules",
+            )
         ):
             raise ValueError(f"cik_succession row without its evidence: {row}")
     return rows
@@ -138,14 +145,22 @@ def cik_chain(db: Database, cik: object) -> tuple[str, ...]:
     own = normalize_cik(cik)
     if own is None:
         return ()
-    if not db.relation_exists("cik_succession"):
-        return (own,)
-    rows = db.execute(
-        "SELECT predecessor_cik FROM cik_succession WHERE successor_cik = ? "
-        "ORDER BY effective_date DESC, predecessor_cik",
-        (own,),
-    ).fetchall()
-    return (own, *(str(r["predecessor_cik"]) for r in rows))
+    return (own, *(cik for cik, _effective in predecessors_of(db, own)))
+
+
+def predecessors_of(db: Database, cik: object) -> list[tuple[str, str]]:
+    """``(predecessor CIK, effective date)`` of each recorded succession into *cik*, most recent first."""
+    own = normalize_cik(cik)
+    if own is None or not db.relation_exists("cik_succession"):
+        return []
+    return [
+        (str(r["predecessor_cik"]), str(r["effective_date"]))
+        for r in db.execute(
+            "SELECT predecessor_cik, effective_date FROM cik_succession WHERE successor_cik = ? "
+            "ORDER BY effective_date DESC, predecessor_cik",
+            (own,),
+        )
+    ]
 
 
 def ensure_triggers(db: Database) -> None:

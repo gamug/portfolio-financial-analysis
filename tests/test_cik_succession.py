@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,7 @@ def test_the_table_holds_the_one_succession_with_its_evidence() -> None:
     assert (row["evidence_form"], row["evidence_accession"]) == ("8-K12B", "0001193125-26-291990")
     assert "successor registrant" in row["evidence_quote"]
     assert "Rule 12g-3(a)" in row["evidence_quote"]
+    assert row["rules"] == "APP-10b-2;APP-10b-3"
 
 
 def test_a_row_without_its_evidence_is_refused(tmp_path: Path) -> None:
@@ -190,6 +192,60 @@ def test_each_filing_is_fetched_under_the_cik_it_was_listed_under(
     assert {c for a, c in fetched.items() if a != JOINT_10Q} == {PREDECESSOR}
     assert {c for c, _f, _y in gateway.listing_calls} == {SUCCESSOR, PREDECESSOR}
     assert len(gateway.financials_calls) == 14
+
+
+# -- APP-10b-3: the predecessor's last annual report must exist --------------------------------
+
+LAST_10K = (
+    "0000034088-26-000045"  # FY2025, filed 2026-02-18: the last before the 2026-07-01 succession
+)
+
+
+def _without_last_10k(amended: bool = False) -> type[_XomGateway]:
+    class Missing(_XomGateway):
+        def filing_by_year(self, cik: str, form: str, year: int) -> list[FilingRef]:
+            refs = super().filing_by_year(cik, form, year)
+            if not amended:
+                return [r for r in refs if r.accession_number != LAST_10K]
+            return [  # only a 10-K/A of that year is listed: an amendment does not count
+                replace(r, form="10-K/A") if r.accession_number == LAST_10K else r for r in refs
+            ]
+
+    return Missing
+
+
+@pytest.mark.parametrize("amended", [False, True])
+def test_a_missing_last_annual_report_leaves_the_predecessor_unlinked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, amended: bool
+) -> None:
+    gateway = _without_last_10k(amended)()
+    report = _run(monkeypatch, tmp_path, gateway, ("10-K", "10-Q"))
+    # only the joint 10-Q, listed under the successor itself, is stored; nothing of the predecessor's
+    assert (report.completed, report.failed) == (1, 0)
+    assert {c for c, _a in gateway.financials_calls} == {SUCCESSOR}
+    assert PREDECESSOR not in {c for c, _f, _y in gateway.listing_calls if _f != "10-K"}
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    ((stage, message),) = conn.execute(
+        "SELECT stage, message FROM analysis_run_error WHERE stage = 'succession'"
+    ).fetchall()
+    assert stage == "succession"
+    assert "APP-10b-3" in message and PREDECESSOR in message
+    assert [e for e in report.errors if "[succession]" in e]
+
+
+def test_the_last_annual_report_is_checked_once_and_a_complete_succession_records_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gateway = _XomGateway()
+    report = _run(monkeypatch, tmp_path, gateway, ("10-Q",))
+    assert report.failed == 0
+    assert not [e for e in report.errors if "[succession]" in e]
+    checks = [c for c in gateway.listing_calls if c[1] == "10-K"]
+    assert checks == [(PREDECESSOR, "10-K", 2026)]  # found in the effective year: one call, once
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    assert conn.execute(
+        "SELECT COUNT(*) FROM analysis_run_error WHERE stage = 'succession'"
+    ).fetchone() == (0,)
 
 
 def test_a_filing_listed_under_a_cik_outside_the_chain_is_refused(

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -170,7 +170,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 engine = _Engine(
                     conn, edgar, analyst, params, report, completed, completed_accessions=accessions
                 )
-                _drive(engine, tasks)
+                _drive(engine, _verify_successions(engine, tasks))
         except BaseException:  # an interrupt too: never leave the run log 'running'
             conn.rollback()  # drop any half-written statement before recording the outcome
             db.finish_run(conn, run_id, status="failed")
@@ -227,6 +227,75 @@ def _plan(
         for form in params.forms
         for year in years
     ]
+
+
+# A fiscal year is at most 53 weeks, so the last one to end before a succession ended within this many days.
+_LAST_ANNUAL_WINDOW_DAYS = 371
+
+
+def _verify_successions(engine: _Engine, tasks: Sequence[_YearTask]) -> list[_YearTask]:
+    """Drop the predecessors whose last annual report is not listed (APP-10b-3, BLOCK).
+
+    SEC Rule 12g-3 (A7 p.4) has the successor file the annual report of the predecessor's last full
+    fiscal year; when it is missing the rule only leaves the multi-year metrics empty. Stricter here:
+    the link is what makes them multi-year, so the predecessor's filings are not linked at all, and an
+    ``analysis_run_error`` (``stage='succession'``) says which. The check is once per succession."""
+    effective = {
+        (task.cik, pred): date_
+        for task in tasks
+        for pred, date_ in identity.predecessors_of(engine.conn, task.cik)
+        if pred in task.predecessors
+    }
+    verdicts: dict[tuple[str, str], str | None] = {}
+    recorded: set[tuple[str, str]] = set()
+    verified: list[_YearTask] = []
+    for task in tasks:
+        kept = []
+        for pred in task.predecessors:
+            key = (task.cik, pred)
+            if key not in verdicts:
+                verdicts[key] = _last_annual_report_missing(engine, pred, effective[key])
+            reason = verdicts[key]
+            if reason is None:
+                kept.append(pred)
+            elif (task.ticker, pred) not in recorded:
+                recorded.add((task.ticker, pred))
+                message = f"predecessor {pred} not linked to {task.cik} (APP-10b-3): {reason}"
+                engine.report.errors.append(f"{task.ticker} [succession]: {message}")
+                db.record_error(
+                    engine.conn,
+                    engine.report.run_id,
+                    RunError(task.ticker, "10-K", "", "succession", message),
+                )
+        verified.append(
+            replace(task, predecessors=tuple(kept)) if kept != task.predecessors else task
+        )
+    return verified
+
+
+def _last_annual_report_missing(engine: _Engine, predecessor: str, effective: str) -> str | None:
+    """Why the predecessor's last 10-K before *effective* cannot be confirmed; ``None`` when it is listed.
+
+    The last full fiscal year ended within :data:`_LAST_ANNUAL_WINDOW_DAYS` before the effective date and
+    its 10-K was filed that calendar year or the one before; an amendment does not count (L-04)."""
+    end = date.fromisoformat(effective)
+    first = end - timedelta(days=_LAST_ANNUAL_WINDOW_DAYS)
+    for year in (end.year, end.year - 1):
+        try:
+            refs = engine.edgar.filing_by_year(predecessor, "10-K", year)
+        except EdgarNotFoundError:
+            continue
+        except Exception as exc:  # the report cannot be confirmed: do not link
+            return f"its 10-K listing for {year} could not be read ({exc})"
+        for ref in refs:
+            if _is_amendment(ref) or ref.form.strip().upper() != "10-K" or not ref.period_of_report:
+                continue
+            if first <= date.fromisoformat(ref.period_of_report) < end:
+                return None
+    return (
+        f"no 10-K with a period ending {first} to {end} is listed under {predecessor}; "
+        "the predecessor's filings are not linked"
+    )
 
 
 def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
