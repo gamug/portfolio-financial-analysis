@@ -1,0 +1,499 @@
+{
+ "success": true,
+ "_provenance": "ALGN 10-K period 2022-12-31 (accession 0001097149-23-000013): the statement rows as the EDGAR gateway returned them, read back from production financial_facts (non-dimensional rows only; displayed values). preferred_sign is the sign that turns the displayed value into the SEC's filed value (companyfacts), as the gateway's own field does; null where the SEC has no us-gaap fact to compare. Trimmed to the income statement and balance sheet.",
+ "data": {
+  "income_statement": [
+   {
+    "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+    "label": "Net revenues",
+    "standard_concept": "Revenue",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 3734635000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 3952584000.0,
+    "2020-12-31 (FY)": 2471941000.0
+   },
+   {
+    "concept": "us-gaap_CostOfRevenue",
+    "label": "Cost of net revenues",
+    "standard_concept": "CostOfGoodsAndServicesSold",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 1100860000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 1017229000.0,
+    "2020-12-31 (FY)": 708706000.0
+   },
+   {
+    "concept": "us-gaap_GrossProfit",
+    "label": "Gross profit",
+    "standard_concept": "GrossProfit",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 2633775000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 2935355000.0,
+    "2020-12-31 (FY)": 1763235000.0
+   },
+   {
+    "concept": "us-gaap_SellingGeneralAndAdministrativeExpense",
+    "label": "Selling, general and administrative",
+    "standard_concept": "SellingGeneralAndAdminExpenses",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 1674469000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 1708640000.0,
+    "2020-12-31 (FY)": 1200757000.0
+   },
+   {
+    "concept": "us-gaap_ResearchAndDevelopmentExpense",
+    "label": "Research and development",
+    "standard_concept": "ResearchAndDevelopmentExpenses",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 305258000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 250315000.0,
+    "2020-12-31 (FY)": 175307000.0
+   },
+   {
+    "concept": "algn_RestructuringChargesAndOtherOperatingExpenses",
+    "label": "Restructuring and other charges",
+    "standard_concept": null,
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 11453000.0,
+    "2021-12-31 (FY)": 0.0,
+    "2020-12-31 (FY)": 0.0,
+    "preferred_sign": null
+   },
+   {
+    "concept": "us-gaap_OperatingExpenses",
+    "label": "Total operating expenses",
+    "standard_concept": "TotalOperatingExpenses",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 1991180000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 1958955000.0,
+    "2020-12-31 (FY)": 1376064000.0
+   },
+   {
+    "concept": "us-gaap_OperatingIncomeLoss",
+    "label": "Income from operations",
+    "standard_concept": "OperatingIncomeLoss",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 642595000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 976400000.0,
+    "2020-12-31 (FY)": 387171000.0
+   },
+   {
+    "concept": "us-gaap_InterestIncomeOther",
+    "label": "Interest income",
+    "standard_concept": "InterestIncome",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 5367000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 3103000.0,
+    "2020-12-31 (FY)": 3125000.0
+   },
+   {
+    "concept": "us-gaap_NonoperatingIncomeExpense",
+    "label": "Other income (expense), net",
+    "standard_concept": "NonoperatingIncomeExpense",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": -48905000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 32920000.0,
+    "2020-12-31 (FY)": -11347000.0
+   },
+   {
+    "concept": "algn_InterestIncomeAndOtherIncomeExpenseNet",
+    "label": "Interest Income and Other Income (Expense), Net",
+    "standard_concept": null,
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": -43538000.0,
+    "2021-12-31 (FY)": 36023000.0,
+    "2020-12-31 (FY)": -8222000.0,
+    "preferred_sign": null
+   },
+   {
+    "concept": "us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "label": "Net income before provision for (benefit from) income taxes",
+    "standard_concept": "PretaxIncomeLoss",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 599057000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 1012423000.0,
+    "2020-12-31 (FY)": 378949000.0
+   },
+   {
+    "concept": "us-gaap_IncomeTaxExpenseBenefit",
+    "label": "Provision for (benefit from) income taxes",
+    "standard_concept": "IncomeTaxes",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 237484000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 240403000.0,
+    "2020-12-31 (FY)": -1396939000.0
+   },
+   {
+    "concept": "us-gaap_NetIncomeLoss",
+    "label": "Net income",
+    "standard_concept": "NetIncome",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 361573000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 772020000.0,
+    "2020-12-31 (FY)": 1775888000.0
+   },
+   {
+    "concept": "us-gaap_EarningsPerShareBasic",
+    "label": "Basic (usd per share)",
+    "standard_concept": null,
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 4.62,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 9.78,
+    "2020-12-31 (FY)": 22.55
+   },
+   {
+    "concept": "us-gaap_EarningsPerShareDiluted",
+    "label": "Diluted (usd per share)",
+    "standard_concept": null,
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 4.61,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 9.69,
+    "2020-12-31 (FY)": 22.41
+   },
+   {
+    "concept": "us-gaap_WeightedAverageNumberOfSharesOutstandingBasic",
+    "label": "Basic (shares)",
+    "standard_concept": "SharesAverage",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 78190000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 78917000.0,
+    "2020-12-31 (FY)": 78760000.0
+   },
+   {
+    "concept": "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",
+    "label": "Diluted (shares)",
+    "standard_concept": "SharesFullyDilutedAverage",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31 (FY)": 78420000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31 (FY)": 79670000.0,
+    "2020-12-31 (FY)": 79230000.0
+   }
+  ],
+  "balance_sheet": [
+   {
+    "concept": "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+    "label": "Cash and cash equivalents",
+    "standard_concept": "CashAndMarketableSecurities",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 942050000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 1099370000.0
+   },
+   {
+    "concept": "us-gaap_AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+    "label": "Marketable securities, short-term",
+    "standard_concept": "ShortTermInvestments",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 57534000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 71972000.0
+   },
+   {
+    "concept": "us-gaap_AccountsReceivableNetCurrent",
+    "label": "Accounts receivable, net of allowance for doubtful accounts of $10,343 and $9,245, respectively",
+    "standard_concept": "TradeReceivables",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 859685000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 897198000.0
+   },
+   {
+    "concept": "us-gaap_InventoryNet",
+    "label": "Inventories",
+    "standard_concept": "Inventories",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 338752000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 230230000.0
+   },
+   {
+    "concept": "us-gaap_PrepaidExpenseAndOtherAssetsCurrent",
+    "label": "Prepaid expenses and other current assets",
+    "standard_concept": "OtherNonOperatingCurrentAssets",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 226370000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 195305000.0
+   },
+   {
+    "concept": "us-gaap_AssetsCurrent",
+    "label": "Total current assets",
+    "standard_concept": "CurrentAssetsTotal",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 2424391000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 2494075000.0
+   },
+   {
+    "concept": "us-gaap_AvailableForSaleSecuritiesDebtSecuritiesNoncurrent",
+    "label": "Marketable securities, long-term",
+    "standard_concept": "LongtermInvestments",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 41978000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 125320000.0
+   },
+   {
+    "concept": "us-gaap_PropertyPlantAndEquipmentNet",
+    "label": "Property, plant and equipment, net",
+    "standard_concept": "PlantPropertyEquipmentNet",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 1231855000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 1081926000.0
+   },
+   {
+    "concept": "us-gaap_OperatingLeaseRightOfUseAsset",
+    "label": "Operating lease right-of-use assets, net",
+    "standard_concept": "OperatingLeaseRightOfUseAsset",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 118880000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 121257000.0
+   },
+   {
+    "concept": "us-gaap_Goodwill",
+    "label": "Goodwill",
+    "standard_concept": "Goodwill",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 407551000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 418547000.0
+   },
+   {
+    "concept": "us-gaap_IntangibleAssetsNetExcludingGoodwill",
+    "label": "Intangible assets, net",
+    "standard_concept": "IntangibleAssets",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 95720000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 109709000.0
+   },
+   {
+    "concept": "us-gaap_DeferredIncomeTaxAssetsNet",
+    "label": "Deferred tax assets",
+    "standard_concept": "DeferredTaxNoncurrentAssets",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 1571746000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 1533767000.0
+   },
+   {
+    "concept": "us-gaap_OtherAssetsNoncurrent",
+    "label": "Other assets",
+    "standard_concept": "OtherNonOperatingNonCurrentAssets",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 55826000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 57509000.0
+   },
+   {
+    "concept": "us-gaap_Assets",
+    "label": "Total assets",
+    "standard_concept": "Assets",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 5947947000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 5942110000.0
+   },
+   {
+    "concept": "us-gaap_AccountsPayableCurrent",
+    "label": "Accounts payable",
+    "standard_concept": "TradePayables",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 127870000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 163886000.0
+   },
+   {
+    "concept": "us-gaap_AccruedLiabilitiesCurrent",
+    "label": "Accrued liabilities",
+    "standard_concept": "OtherOperatingCurrentLiabilities",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 454374000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 607315000.0
+   },
+   {
+    "concept": "us-gaap_DeferredRevenueCurrent",
+    "label": "Deferred revenues",
+    "standard_concept": "DeferredRevenueCurrent",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 1343643000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 1152870000.0
+   },
+   {
+    "concept": "us-gaap_LiabilitiesCurrent",
+    "label": "Total current liabilities",
+    "standard_concept": "CurrentLiabilitiesTotal",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 1925887000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 1924071000.0
+   },
+   {
+    "concept": "us-gaap_AccruedIncomeTaxesNoncurrent",
+    "label": "Accrued Income Taxes, Noncurrent",
+    "standard_concept": "DeferredTaxNonCurrentLiabilities",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 124393000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 118072000.0
+   },
+   {
+    "concept": "us-gaap_OperatingLeaseLiabilityNoncurrent",
+    "label": "Operating lease liabilities",
+    "standard_concept": "OperatingLeaseNonCurrentDebtEquivalent",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 100334000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 102656000.0
+   },
+   {
+    "concept": "us-gaap_OtherLiabilitiesNoncurrent",
+    "label": "Other long-term liabilities",
+    "standard_concept": "OtherNonOperatingNonCurrentLiabilities",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 195975000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 174597000.0
+   },
+   {
+    "concept": "us-gaap_Liabilities",
+    "label": "Total liabilities",
+    "standard_concept": "Liabilities",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 2346589000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 2319396000.0
+   },
+   {
+    "concept": "us-gaap_PreferredStockValue",
+    "label": "Preferred stock, $0.0001 par value (5,000 shares authorized; none issued)",
+    "standard_concept": "PreferredStock",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 0.0,
+    "2021-12-31": 0.0,
+    "preferred_sign": null
+   },
+   {
+    "concept": "us-gaap_CommonStockValue",
+    "label": "Common stock, $0.0001 par value (200,000 shares authorized; 77,267 and 78,710 issued and outstanding, respectively)",
+    "standard_concept": "CommonEquity",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 8000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 8000.0
+   },
+   {
+    "concept": "us-gaap_AdditionalPaidInCapital",
+    "label": "Additional paid-in capital",
+    "standard_concept": "AdditionalPaidInCapital",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 1044946000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 999006000.0
+   },
+   {
+    "concept": "us-gaap_AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+    "label": "Accumulated other comprehensive income (loss), net",
+    "standard_concept": "AccumulatedOtherComprehensiveIncome",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": -10284000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 4326000.0
+   },
+   {
+    "concept": "us-gaap_RetainedEarningsAccumulatedDeficit",
+    "label": "Retained earnings",
+    "standard_concept": "RetainedEarnings",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 2566688000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 2619374000.0
+   },
+   {
+    "concept": "us-gaap_StockholdersEquity",
+    "label": "Total stockholders\u2019 equity",
+    "standard_concept": "AllEquityBalance",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 3601358000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 3622714000.0
+   },
+   {
+    "concept": "us-gaap_LiabilitiesAndStockholdersEquity",
+    "label": "Total liabilities and stockholders\u2019 equity",
+    "standard_concept": "LiabilitiesAndEquity",
+    "abstract": false,
+    "dimension": false,
+    "2022-12-31": 5947947000.0,
+    "preferred_sign": 1.0,
+    "2021-12-31": 5942110000.0
+   }
+  ],
+  "cash_flow": []
+ }
+}

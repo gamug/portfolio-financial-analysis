@@ -2,19 +2,10 @@
 
 from __future__ import annotations
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.statements import Statements
 
 GROUP = "leverage"
-
-
-def _total_debt(stmts: Statements, period_key: str) -> float | None:
-    parts = [
-        stmts.get("long_term_debt", period_key),
-        stmts.get("short_term_debt", period_key),
-    ]
-    known = [p for p in parts if p is not None]
-    return sum(known) if known else None
 
 
 def compute(
@@ -25,12 +16,14 @@ def compute(
 ) -> list[MetricResult]:
     """Leverage ratios. Net debt / EBITDA divides a stock by a flow, so on a 10-Q the EBITDA
     is trailing-twelve-months (*ttm*, T-105) -- a single quarter made it ~4x too high."""
-    debt = _total_debt(stmts, period_key)
+    debt_resolution = stmts.total_debt(period_key)
+    debt = debt_resolution.value
     equity = stmts.get("equity", period_key)
     assets = stmts.get("total_assets", period_key)
     cash = stmts.get("cash", period_key)
     operating = stmts.get("operating_income", period_key)
-    interest = stmts.get("interest_expense", period_key)
+    interest_resolution = stmts.resolve("interest_expense", period_key)
+    interest = interest_resolution.value
     dep_amort = stmts.get("depreciation_amortization", period_key)
 
     net_debt = debt - cash if debt is not None and cash is not None else None
@@ -51,14 +44,17 @@ def compute(
         depreciation_amortization=dep_amort,
         ebitda_ttm=ebitda if ttm else None,
     )
+    inputs.update(flag_inputs("total_debt", debt_resolution.flags))
+    inputs.update(flag_inputs("interest_expense", interest_resolution.flags))
+    # MET-09: interest coverage is empty when interest expense is not positive. Zero is not
+    # defined; a negative filed value (a net interest income, a wrong sign the resolver did not
+    # reject) is flagged, never turned positive with abs() (ID-11).
+    if interest is not None and interest < 0.0:
+        inputs["flag_interest_expense_negative"] = 1.0
+    coverage = safe_div(operating, interest) if interest is not None and interest > 0.0 else None
     return [
         MetricResult("debt_to_equity", safe_div(debt, equity), "x", inputs),
         MetricResult("debt_to_assets", safe_div(debt, assets), "ratio", inputs),
-        MetricResult(
-            "interest_coverage",
-            safe_div(operating, abs(interest) if interest is not None else None),
-            "x",
-            inputs,
-        ),
+        MetricResult("interest_coverage", coverage, "x", inputs),
         MetricResult("net_debt_to_ebitda", safe_div(net_debt, ebitda), "x", inputs),
     ]

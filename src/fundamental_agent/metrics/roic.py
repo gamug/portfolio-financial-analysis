@@ -5,7 +5,7 @@ Companion SOP: ``skills/roic/SKILL.md``.
 
 from __future__ import annotations
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div, sum_present
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.statements import Statements
 
 GROUP = "roic"
@@ -34,21 +34,22 @@ def compute(
     trailing-twelve-months (*ttm*, T-105); the ``nopat`` metric itself stays the filing's own
     period value, as reported."""
     operating = stmts.get("operating_income", period_key)
-    tax = stmts.get("income_tax", period_key)
+    tax_resolution = stmts.resolve("income_tax", period_key)
+    tax = tax_resolution.value
     pretax = stmts.get("pretax_income", period_key)
     equity = stmts.get("equity", period_key)
     cash = stmts.get("cash", period_key)
-    debt = sum_present(
-        stmts.get("long_term_debt", period_key),
-        stmts.get("short_term_debt", period_key),
-    )
+    debt_resolution = stmts.total_debt(period_key)
+    debt = debt_resolution.value
 
     rate = effective_tax_rate(tax, pretax)
     nopat = operating * (1.0 - rate) if operating is not None else None
     operating_annual = ttm.get("operating_income") if ttm else operating
     nopat_annual = operating_annual * (1.0 - rate) if operating_annual is not None else None
-    invested = sum_present(debt, equity)
-    invested_ex_cash = invested - cash if invested is not None and cash is not None else invested
+    # MET-00: invested capital needs debt, equity and cash; a missing one leaves it (and the ROIC)
+    # empty -- it is never read as 0
+    invested = debt + equity if debt is not None and equity is not None else None
+    invested_ex_cash = invested - cash if invested is not None and cash is not None else None
 
     inputs = present(
         operating_income=operating,
@@ -60,6 +61,8 @@ def compute(
         cash=cash,
         nopat_ttm=nopat_annual if ttm else None,
     )
+    inputs.update(flag_inputs("income_tax", tax_resolution.flags))
+    inputs.update(flag_inputs("total_debt", debt_resolution.flags))
     return [
         MetricResult("effective_tax_rate", rate, "ratio", inputs),
         MetricResult("nopat", nopat, "usd", inputs),

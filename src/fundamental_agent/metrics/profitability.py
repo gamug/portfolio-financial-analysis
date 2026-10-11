@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.statements import Statements
 
 GROUP = "profitability"
@@ -20,7 +20,8 @@ def compute(
     if gross is None and revenue is not None and cogs is not None:
         gross = revenue - cogs
     operating = stmts.get("operating_income", period_key)
-    net = stmts.get("net_income", period_key)
+    net_resolution = stmts.resolve("net_income", period_key)
+    net = net_resolution.value
     assets = stmts.get("total_assets", period_key)
     equity = stmts.get("equity", period_key)
 
@@ -32,6 +33,7 @@ def compute(
         total_assets=assets,
         equity=equity,
     )
+    inputs.update(flag_inputs("net_income", net_resolution.flags))
     # ROA/ROE divide a flow (net income) by an instantaneous balance-sheet stock
     # (assets/equity) -- on a 10-Q that flow is only 3 months, not annual, and
     # must be measured on the same annual basis as the stock first (F4,

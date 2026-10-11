@@ -18,7 +18,18 @@ from fundamental_agent.statements import Statements
 
 
 def _row(concept: str, label: str, **columns: float) -> dict[str, Any]:
-    return {"concept": concept, "label": label, "abstract": False, "dimension": False, **columns}
+    """A statement row the way the gateway sends it (T-148): a payment is displayed negative and
+    carries ``preferred_sign = -1`` (ID-12), so its filed value is the positive amount paid; every
+    other row is displayed as filed."""
+    payment = concept.split("_", 1)[1].startswith("Payments") or "apital" in concept
+    return {
+        "concept": concept,
+        "label": label,
+        "abstract": False,
+        "dimension": False,
+        "preferred_sign": -1.0 if payment else 1.0,
+        **columns,
+    }
 
 
 def _stmts(
@@ -69,7 +80,7 @@ def _q3_filing() -> Statements:
 def test_a_q3_filing_has_no_quarter_cash_flow_so_the_ratios_come_from_the_ttm() -> None:
     ttm = {
         "operating_cash_flow": 1_200.0,
-        "capital_expenditure": -400.0,
+        "capital_expenditure": 400.0,
         "revenue": 4_000.0,
         "net_income": 500.0,
     }
@@ -88,7 +99,7 @@ def test_a_q3_filing_has_no_quarter_cash_flow_so_the_ratios_come_from_the_ttm() 
 
 def test_a_ttm_that_lacks_a_flow_leaves_the_ratio_empty_rather_than_mixing_bases() -> None:
     """Revenue is a 3-month figure here; dividing a 12-month cash flow by it would be 4x too big."""
-    got = _metrics(_q3_filing(), Q, {"operating_cash_flow": 1_200.0, "capital_expenditure": -400.0})
+    got = _metrics(_q3_filing(), Q, {"operating_cash_flow": 1_200.0, "capital_expenditure": 400.0})
     assert got["free_cash_flow_margin"].value is None
     assert got["operating_cash_flow_margin"].value is None
 
@@ -140,7 +151,7 @@ def test_one_negative_quarter_does_not_make_the_trailing_year_negative() -> None
     )
     quarter = _metrics(stmts, q1, None)["free_cash_flow_margin"].value
     assert quarter is not None and quarter < 0
-    ttm = {"operating_cash_flow": 860.0, "capital_expenditure": -170.0, "revenue": 3_000.0}
+    ttm = {"operating_cash_flow": 860.0, "capital_expenditure": 170.0, "revenue": 3_000.0}
     assert _metrics(stmts, q1, ttm)["free_cash_flow_margin"].value == pytest.approx(690.0 / 3_000.0)
 
 
@@ -163,13 +174,13 @@ def _ctx(form: str, flows: dict[str, TTMFlow]) -> FilingContext:
 def test_cash_flow_takes_real_ttm_flows_only_and_other_groups_keep_the_x4_fallback() -> None:
     flows = {
         "operating_cash_flow": TTMFlow(1_200.0, "ytd"),
-        "capital_expenditure": TTMFlow(-400.0, "x4"),
+        "capital_expenditure": TTMFlow(400.0, "x4"),
         "net_income": TTMFlow(500.0, "quarters"),
     }
     ctx = _ctx("10-Q", flows)
     assert _group_ttm("cashflow", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
     assert _group_ttm("profitability", ctx) == ctx.ttm
-    assert ctx.ttm["capital_expenditure"] == -400.0
+    assert ctx.ttm["capital_expenditure"] == 400.0
 
 
 def test_a_10k_is_given_no_ttm_for_cash_flow_but_a_10q_with_nothing_real_is_given_an_empty_one() -> (
@@ -191,7 +202,7 @@ def _capex(*rows: dict[str, Any]) -> float | None:
 def test_the_standard_capex_concept_is_unchanged() -> None:
     assert (
         _capex(_row("us-gaap_PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{FY: -5.0}))
-        == -5.0
+        == 5.0
     )
 
 
@@ -202,7 +213,7 @@ def test_an_oil_and_gas_producer_s_development_spend_is_capex() -> None:
         "Additions to oil and gas property",
         **{FY: -2_740.0},
     )
-    assert _capex(row) == -2_740.0
+    assert _capex(row) == 2_740.0
 
 
 def test_development_beats_an_acquisition_of_reserves_whatever_the_row_order() -> None:
@@ -211,8 +222,8 @@ def test_development_beats_an_acquisition_of_reserves_whatever_the_row_order() -
     develop = _row(
         "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties", "Development", **{FY: -2_867.0}
     )
-    assert _capex(acquire, develop) == -2_867.0
-    assert _capex(acquire) == -8_920.0  # sole line: the best that is known
+    assert _capex(acquire, develop) == 2_867.0
+    assert _capex(acquire) == 8_920.0  # sole line: the best that is known
 
 
 def test_an_oil_and_gas_filer_s_other_property_line_joins_its_oil_and_gas_spend() -> None:
@@ -227,9 +238,9 @@ def test_an_oil_and_gas_filer_s_other_property_line_joins_its_oil_and_gas_spend(
         "Additions to other PP&E",
         **{FY: -479.0},
     )
-    assert _capex(og, other) == -6_594.0
-    assert _capex(other, og) == -6_594.0  # whatever the row order
-    assert _capex(og) == -6_115.0  # the line is optional
+    assert _capex(og, other) == 6_594.0
+    assert _capex(other, og) == 6_594.0  # whatever the row order
+    assert _capex(og) == 6_115.0  # the line is optional
 
 
 def test_other_property_alone_is_not_oil_and_gas_capex() -> None:
@@ -245,7 +256,7 @@ def test_the_net_additions_line_takes_no_addend() -> None:
     other = _row(
         "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment", "Other PP&E", **{FY: -50.0}
     )
-    assert _capex(net, other) == -100.0
+    assert _capex(net, other) == 100.0
 
 
 def test_a_standard_capex_row_is_never_displaced_by_a_fallback() -> None:
@@ -253,7 +264,7 @@ def test_a_standard_capex_row_is_never_displaced_by_a_fallback() -> None:
     develop = _row(
         "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties", "Development", **{FY: -999.0}
     )
-    assert _capex(develop, plain) == -10.0
+    assert _capex(develop, plain) == 10.0
 
 
 def test_a_custom_concept_is_found_by_its_caption() -> None:
@@ -263,7 +274,7 @@ def test_a_custom_concept_is_found_by_its_caption() -> None:
         "Capital expenditures and investments",
         **{FY: -2_233.0},
     )
-    assert _capex(row) == -2_233.0
+    assert _capex(row) == 2_233.0
 
 
 def test_non_cash_capex_reconciling_rows_are_not_cash_spent() -> None:
@@ -369,7 +380,7 @@ def _analyst_margin(ctx: FilingContext) -> float | None:
 def test_the_analyst_feeds_a_10q_s_real_ttm_flows_to_the_cash_flow_group() -> None:
     flows = {
         "operating_cash_flow": TTMFlow(1_200.0, "ytd"),
-        "capital_expenditure": TTMFlow(-400.0, "ytd"),
+        "capital_expenditure": TTMFlow(400.0, "ytd"),
         "revenue": TTMFlow(4_000.0, "ytd"),
     }
     ctx = replace(_ctx("10-Q", flows), stmts=_q3_filing())
@@ -381,7 +392,7 @@ def test_a_quarter_times_four_is_not_a_trailing_year_so_it_yields_no_margin() ->
     raise it."""
     flows = {
         "operating_cash_flow": TTMFlow(-12.0, "x4"),
-        "capital_expenditure": TTMFlow(-156.0, "x4"),
+        "capital_expenditure": TTMFlow(156.0, "x4"),
         "revenue": TTMFlow(5_068.0, "x4"),
     }
     ctx = replace(_ctx("10-Q", flows), stmts=_q3_filing())

@@ -115,11 +115,66 @@ class LineItem:
     # ``psx_CapitalExpendituresAndInvestments``) has no stable tag to list, only its caption.
     label_fallback: str = ""
     label_fallback_exclude: str = ""
+    # ID-13 (T-148): concepts whose filed value must not be negative (the DQC_0015 elements the
+    # resolver reads, listed in every release of the 2020-2026 window). A negative filed value of
+    # one is a wrong sign: the row is rejected and the resolution flagged, never repaired with
+    # abs() (ID-11). A caption-matched row (``label_fallback``) is rejected on the same test when
+    # the item lists any: its caption names a payment.
+    nonnegative: tuple[str, ...] = ()
+    # The composite resolver this item uses instead of the generic concept lookup (T-148): its
+    # name is a key of :data:`_COMPOSITE`. The ``concepts`` stay listed for the audit scripts.
+    resolver: str = ""
 
 
 _INCOME = ("income_statement",)
 _BALANCE = ("balance_sheet",)
 _CASHFLOW = ("cash_flow",)
+
+G = "us-gaap_"
+
+# -- Debt (MET-07, ID-02b, D-01, D-06(d), N23; T-148) ---------------------------------------------
+# Short-term debt is a map of two terms, each the first of its concepts that is filed. The terms
+# are disjoint by definition (B6): ``LongTermDebtCurrent`` is long-term debt classified as current,
+# ``ShortTermBorrowings`` debt with an initial term under a year, ``CommercialPaper`` "short-term
+# borrowings using unsecured obligations" (so it is read only when ``ShortTermBorrowings`` is not).
+# ``OtherLongTermDebtCurrent`` and ``NotesPayableCurrent`` (N23: Consolidated Edison files its
+# "long-term debt due within one year" and its "notes payable" under them) take the place of the
+# term they are a kind of when it is not filed; they are never added to it. ``DebtCurrent``
+# ("debt and lease obligation, classified as current") is the last resort and is flagged
+# "includes leases".
+SHORT_TERM_DEBT_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("current_maturities", (G + "LongTermDebtCurrent", G + "OtherLongTermDebtCurrent")),
+    (
+        "borrowings",
+        (G + "ShortTermBorrowings", G + "CommercialPaper", G + "NotesPayableCurrent"),
+    ),
+)
+SHORT_TERM_DEBT_LAST = G + "DebtCurrent"
+# Long-term lines that already contain the current maturities: a short-term term that is a kind of
+# current maturity is not added to them (N4). The REIT pair is "including the current and
+# noncurrent portions" in B6/FASB's definitions.
+REIT_DEBT = (G + "UnsecuredDebt", G + "SecuredDebt")
+INCLUDES_CURRENT_MATURITIES = (
+    G + "LongTermDebt",
+    G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+    *REIT_DEBT,
+)
+INCLUDES_FINANCE_LEASES = (
+    G + "LongTermDebtAndCapitalLeaseObligations",
+    G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+)
+# ID-02b "no debt line at all": a balance-sheet concept that names a debt obligation, and an
+# income-statement concept that names interest expense, in any taxonomy (an extension counts: it
+# is evidence the company has debt). Receivables, securities, gains and the like are not debt.
+_DEBT_LINE_RE = re.compile(
+    r"Debt|NotesPayable|LoansPayable|Borrowings|LineOfCredit|CommercialPaper|Debentures"
+    r"|SeniorNotes|MortgageNotes|MortgagesPayable|ConvertibleNotes",
+)
+_NOT_A_DEBT_LINE_RE = re.compile(
+    r"Securities|Receivable|Investment|Asset|Gain|Loss|Expense|Income|Interest|Issuance|Repayment"
+    r"|Proceeds|FairValue|Deferred|Held|Discount|Premium",
+)
+_INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
 
 # US-GAAP concept tags are stable across filers and are matched first; ``standard``
 # and ``label`` hints are conservative fallbacks scoped to the same statement.
@@ -179,24 +234,16 @@ REGISTRY: dict[str, LineItem] = {
     "operating_income": LineItem(
         "operating_income", _INCOME, concepts=("us-gaap_OperatingIncomeLoss",)
     ),
+    # ID-03 (T-148): parent earnings. ``NetIncomeLoss`` (attributable to the parent) first;
+    # ``ProfitLoss`` (including the noncontrolling interest) less
+    # ``NetIncomeLossAttributableToNoncontrollingInterest`` when only ``ProfitLoss`` is filed
+    # (:meth:`Statements._net_income`). The "available to common" line is after preferred
+    # dividends and is never parent net income (N13): T-096's WAT fallback is gone.
     "net_income": LineItem(
         "net_income",
         _INCOME,
-        concepts=(
-            "us-gaap_NetIncomeLoss",
-            "us-gaap_ProfitLoss",
-            # T-096, docs/model_fixes.md: WAT tags no NetIncomeLoss/ProfitLoss row at
-            # all for most of its filing history (14/18 metrics-v2 filings in the
-            # 20-ticker sample) -- only this "available to common" variant. Live-
-            # verified never to co-occur with the two above in the same WAT filing
-            # (WAT switched tagging convention outright starting 2025Q2), so
-            # document-order (this item sets no `total_concepts`/`sum_components`,
-            # Tier 2's plain first-match) carries no live-verified ambiguity risk for
-            # it; a filer that genuinely tags both, with a different preferred-
-            # dividend-adjusted value, is a residual, unverified risk (see the
-            # docs entry).
-            "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
-        ),
+        concepts=("us-gaap_NetIncomeLoss", "us-gaap_ProfitLoss"),
+        resolver="net_income",
     ),
     "pretax_income": LineItem(
         "pretax_income",
@@ -207,11 +254,14 @@ REGISTRY: dict[str, LineItem] = {
         ),
         standard=("PretaxIncomeLoss",),
     ),
+    # ID-02b / D-06(c) (T-148): the total, else current + deferred when both are on the statement
+    # face (B6's definition of IncomeTaxExpenseBenefit); never a single component, so no
+    # ``standard`` match (the gateway maps CurrentIncomeTaxExpenseBenefit to "IncomeTaxes" too).
     "income_tax": LineItem(
         "income_tax",
         _INCOME,
         concepts=("us-gaap_IncomeTaxExpenseBenefit",),
-        standard=("IncomeTaxes",),
+        resolver="income_tax",
     ),
     "interest_expense": LineItem(
         "interest_expense",
@@ -220,7 +270,11 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_InterestExpense",
             "us-gaap_InterestExpenseNonoperating",
             "us-gaap_InterestAndDebtExpense",
+            # N23 (T-148): a filer that files only the debt-specific variant
+            "us-gaap_InterestExpenseDebt",
         ),
+        # ID-13: DQC_0015 lists these two in every release of the window
+        nonnegative=("us-gaap_InterestAndDebtExpense", "us-gaap_InterestExpenseDebt"),
     ),
     "depreciation_amortization": LineItem(
         "depreciation_amortization",
@@ -272,6 +326,18 @@ REGISTRY: dict[str, LineItem] = {
         label_fallback_exclude=(
             r"\b(accrued|unpaid|not (yet )?paid|incurred|included|financed|non-?cash|payable"
             r"|change|increase|decrease|proceeds|reimburse\w*|sales?)\b"
+        ),
+        # ID-13: DQC_0015 lists every one of these in every release of the window. The net
+        # element ``PaymentsForProceedsFromProductiveAssets`` is not on the list (it is a payment
+        # net of proceeds) and may be negative.
+        nonnegative=(
+            "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
+            "us-gaap_PaymentsToAcquireProductiveAssets",
+            "us-gaap_PaymentsForCapitalImprovements",
+            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "us-gaap_PaymentsToAcquireOilAndGasProperty",
+            "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
         ),
     ),
     "stock_based_compensation": LineItem(
@@ -366,6 +432,11 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_ReceivablesNetCurrent",
         ),
     ),
+    # MET-07 / ID-02b (T-148). The debt resolvers are composite (:meth:`Statements._long_term_debt`,
+    # :meth:`Statements._short_term_debt`, :meth:`Statements.total_debt`); the concepts below are
+    # the exact, single-line ones in the spec's order -- narrowest first (ID-02a), a line that
+    # includes current maturities (``LongTermDebt``) before the combined debt-and-lease elements,
+    # which are used only when they are the only long-term line.
     "long_term_debt": LineItem(
         "long_term_debt",
         _BALANCE,
@@ -375,16 +446,13 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_LongTermDebtAndCapitalLeaseObligations",
             "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
         ),
+        resolver="long_term_debt",
     ),
     "short_term_debt": LineItem(
         "short_term_debt",
         _BALANCE,
-        concepts=(
-            "us-gaap_LongTermDebtCurrent",
-            "us-gaap_ShortTermBorrowings",
-            "us-gaap_DebtCurrent",
-            "us-gaap_CommercialPaper",
-        ),
+        concepts=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
+        resolver="short_term_debt",
     ),
 }
 
@@ -445,6 +513,34 @@ class TotalRebuild:
     corroborated: bool = False
 
 
+MIN_SUMMED = 2  # a sum needs at least two components
+
+# Composite resolvers: ``LineItem.resolver`` -> the Statements method that resolves the item.
+_COMPOSITE = {
+    "net_income": "_net_income",
+    "income_tax": "_income_tax",
+    "long_term_debt": "_long_term_debt",
+    "short_term_debt": "_short_term_debt",
+}
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """What :meth:`Statements.resolve` read for one line item and one period (T-148).
+
+    ``concept`` -- the concept the value came from (``a + b`` for a map; ``None`` when it was
+    derived from the statement's layout); ``how`` -- the tier (``concept``, ``standard``,
+    ``label``, ``total``, ``sum``, ``map``, ``fallbackN``, ``label_fallback``, ``derived``,
+    ``none_filed``); ``flags`` -- what a reader must know about the value (``sign_unverified``,
+    ``wrong_sign_rejected``, ``partial_map``, ``includes_leases``, ``capture_failure``, ...).
+    """
+
+    value: float | None
+    concept: str | None = None
+    how: str | None = None
+    flags: tuple[str, ...] = ()
+
+
 @dataclass
 class Statements:
     """A parsed ``financials`` payload."""
@@ -463,6 +559,8 @@ class Statements:
     # failed (it fails in isolation, so the statements above are still validated).
     cover_shares: list[CoverShares] = field(default_factory=list)
     cover_error: str | None = None
+    # The flags of the resolution in progress (see :meth:`resolve`); never part of the payload.
+    _flags: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> Statements:
@@ -536,8 +634,83 @@ class Statements:
                     continue
                 yield row
 
+    # -- the filed value of a row (ID-11, ID-12, ID-13; T-148) -----------------------------------
+
+    def _flag(self, name: str) -> None:
+        if name not in self._flags:
+            self._flags.append(name)
+
+    def _read(self, row: dict[str, Any], column: str, spec: LineItem | None = None) -> float | None:
+        """The value of *row* in *column* **in the sign it was filed in**: the displayed value
+        times the row's ``preferred_sign`` (ID-12: edgartools renders a value with a negating label
+        as the negative of the filed one; ``preferred_sign = -1`` marks it). A row without a
+        ``preferred_sign`` (a payload that predates the field, a stored fact written before T-148)
+        reads as displayed and flags ``sign_unverified``.
+
+        A negative filed value of a concept in ``spec.nonnegative`` (ID-13, DQC_0015) is a wrong
+        sign: the row is **rejected** -- ``None`` -- and ``wrong_sign_rejected`` flagged. It is never
+        repaired with ``abs()`` (ID-11)."""
+        displayed = _numeric(row.get(column))
+        if displayed is None:
+            return None
+        sign = _preferred_sign(row)
+        if sign is None:
+            self._flag("sign_unverified")
+            value = displayed
+        else:
+            value = displayed * sign
+        if spec is not None and value < 0 and self._must_not_be_negative(spec, row):
+            self._flag("wrong_sign_rejected")
+            return None
+        return value
+
+    @staticmethod
+    def _must_not_be_negative(spec: LineItem, row: dict[str, Any]) -> bool:
+        if not spec.nonnegative:
+            return False
+        concept = row.get("concept")
+        if concept in spec.nonnegative:
+            return True
+        # a caption-matched row (``label_fallback``): a custom concept, found by its label
+        return bool(
+            spec.label_fallback
+            and concept not in spec.concepts
+            and concept not in spec.fallback_concepts
+        )
+
+    # -- resolution ------------------------------------------------------------------------------
+
+    def resolve(self, item: str, period_key: str) -> Resolution:
+        """Registry *item* for *period_key*: its value and where the value came from.
+
+        ``concept`` is the concept the value was read from (``a + b`` for a map, ``None`` for a
+        value derived from the statement's own layout), ``how`` the tier that supplied it
+        (``concept``, ``standard``, ``label``, ``total``, ``sum``, ``map``, ``fallbackN``,
+        ``label_fallback``, ``derived``) and ``flags`` what the reader must know (a wrong sign
+        rejected, a partial map, a line that includes leases, ...). Re-entrant: a composite
+        resolver calls it for the items it depends on."""
+        spec = REGISTRY[item]
+        outer, self._flags = self._flags, []
+        try:
+            column = period_key
+            if spec.statements == _BALANCE:
+                instant = self._instant_for(period_key)
+                if instant is None:
+                    return Resolution(None)
+                column = instant
+            value, concept, how = self._resolve_column(spec, column)
+            return Resolution(value, concept, how, tuple(self._flags))
+        finally:
+            self._flags = outer
+
     def get(self, item: str, period_key: str) -> float | None:
-        """Return the value of registry *item* for *period_key*, or ``None``.
+        """Return the value of registry *item* for *period_key*, or ``None`` (:meth:`resolve`'s
+        value).
+
+        Values are in the **filed sign** (ID-11/12: :meth:`_read`). Concept precedence (ID-02a,
+        T-148): the item's exact ``concepts`` first, **in the spec's order**, then its
+        ``standard`` concepts, then ``label_contains`` -- a label or standard-concept match never
+        outranks an exact concept (:meth:`_first_component_match`).
 
         Two-tier resolution (F2, ``docs/model_fixes.md``): **Tier 1** -- if
         ``spec.total_concepts`` is set, any row tagged with one of them wins
@@ -557,9 +730,8 @@ class Statements:
         with the aggregate's own concept, not the consolidated total either
         (APA FY2023-2025's shape -- ``us-gaap_Revenues`` roughly double the
         statement's own later, smaller "Total revenues and other" line).
-        Absent a trusted match there, **Tier 2** falls back to the original
-        single-row lookup: the first ``concepts``-matching row in document
-        order (unchanged default for every item that doesn't set
+        Absent a trusted match there, **Tier 2** falls back to the single-row lookup: the first
+        match in precedence order (unchanged default for every item that doesn't set
         ``sum_components``), or, when ``spec.sum_components`` is set, the
         sum of the first row per distinct matching concept -- multiple
         co-reported streams with no separately tagged total.
@@ -568,54 +740,325 @@ class Statements:
         revenue total a filer tags only with a dimension -- APA 2021Q1-2023Q3), the total is
         rebuilt from the statement's own later "Total revenues and other" line
         (:meth:`_rebuild_missing_total`, T-140) when that is safely derivable.
-        """
-        spec = REGISTRY[item]
-        column = period_key
-        if spec.statements == _BALANCE:
-            instant = self._instant_for(period_key)
-            if instant is None:
-                return None
-            column = instant
 
+        The items with ``spec.resolver`` set (net income, income tax, debt) use their composite
+        resolver instead: :data:`_COMPOSITE`.
+        """
+        return self.resolve(item, period_key).value
+
+    def _resolve_column(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        composite = _COMPOSITE.get(spec.resolver)
+        if composite is not None:
+            resolved: tuple[float | None, str | None, str | None] = getattr(self, composite)(
+                spec, column
+            )
+            return resolved
         rebuild_missing_total = False
         if spec.total_concepts:
-            total_value = self._first_total_match(spec, column)
+            total_value, total_concept = self._first_total_row(spec, column)
             if total_value is None:
                 rebuild_missing_total = True
             else:
                 corrected, contradicted = self._label_total_correction(spec, column, total_value)
                 if corrected is not None:
-                    return corrected
+                    return corrected, None, "derived"
                 if not contradicted and self._total_is_plausible(spec, column, total_value):
-                    return total_value
+                    return total_value, total_concept, "total"
 
-        value = self._component_value(spec, column)
+        value, concept, how = self._component_row(spec, column)
         if rebuild_missing_total:
             rebuilt = self._rebuild_missing_total(spec, column)
             # A surviving component (APA 2021Q1: a $0 "production revenues" row) is a partial
             # stream, never the total; only a component *above* the rebuilt total contradicts it.
             if rebuilt is not None and (value is None or rebuilt >= value):
-                return rebuilt
-        return value
+                return rebuilt, None, "derived"
+        return value, concept, how
 
-    def _component_value(self, spec: LineItem, column: str) -> float | None:
+    def _component_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
         """Tier 2 of :meth:`get`: the summed components, or the first matching row (plus the
         T-133 fallback tiers when that finds nothing)."""
         if spec.sum_components:
-            return self._sum_matching_components(spec, column)
-        value = self._first_component_match(spec, column)
+            parts = self._matching_component_values(spec, column)
+            total = self._sum_matching_components(spec, column)
+            if total is None:
+                return None, None, None
+            if len(parts) >= MIN_SUMMED:
+                return total, " + ".join(sorted(parts)), "sum"
+            return total, next(iter(parts)), "concept"
+        value, concept, how = self._first_component_row(spec, column)
         if value is None and (spec.fallback_concepts or spec.label_fallback):
-            return self._fallback_match(spec, column)
-        return value
+            return self._fallback_row(spec, column)
+        return value, concept, how
 
-    def _first_total_match(self, spec: LineItem, column: str) -> float | None:
-        """Tier 1: the first row tagged with one of ``spec.total_concepts``."""
+    def _component_value(self, spec: LineItem, column: str) -> float | None:
+        return self._component_row(spec, column)[0]
+
+    def _first_total_row(self, spec: LineItem, column: str) -> tuple[float | None, str | None]:
+        """Tier 1: the first row tagged with one of ``spec.total_concepts``, and its concept."""
         for row in self._rows_for(spec):
             if row.get("concept") in spec.total_concepts:
-                value = _numeric(row.get(column))
+                value = self._read(row, column, spec)
                 if value is not None:
-                    return value
-        return None
+                    return value, str(row.get("concept"))
+        return None, None
+
+    def _first_total_match(self, spec: LineItem, column: str) -> float | None:
+        return self._first_total_row(spec, column)[0]
+
+    # -- the composite resolvers (T-148) ---------------------------------------------------------
+
+    def _net_income(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Parent net income (ID-03; N13): ``NetIncomeLoss`` (attributable to the parent); else
+        ``ProfitLoss`` less ``NetIncomeLossAttributableToNoncontrollingInterest``; else empty.
+
+        ``ProfitLoss`` includes the noncontrolling interest, so it is parent earnings only when the
+        statement files the NCI income -- a row with a value, zero included (ID-03: "absent or
+        zero", read as a filed zero: an NCI line that is *absent* from the statement is not a zero,
+        APA's FY2021 10-K files its NCI income under the redeemable/nonredeemable variants and
+        ``ProfitLoss`` is 1,313M against 973M for the common stock). With ``ProfitLoss`` and no NCI
+        income the item is empty, flagged ``profit_loss_without_nci_income``. The "available to
+        common" line is after preferred dividends and is never parent net income: with neither
+        concept the item is empty, flagged ``net_income_not_filed``."""
+        parent = self._concept_value(spec, column, G + "NetIncomeLoss")
+        if parent is not None:
+            return parent, G + "NetIncomeLoss", "concept"
+        profit = self._concept_value(spec, column, G + "ProfitLoss")
+        if profit is None:
+            self._flag("net_income_not_filed")
+            return None, None, None
+        nci_concept = G + "NetIncomeLossAttributableToNoncontrollingInterest"
+        nci = self._concept_value(spec, column, nci_concept)
+        if nci is None:
+            self._flag("profit_loss_without_nci_income")
+            return None, None, None
+        if nci == 0.0:
+            return profit, G + "ProfitLoss", "concept"
+        return profit - nci, f"{G}ProfitLoss - {nci_concept}", "map"
+
+    def _income_tax(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Income tax (ID-02b, D-06(c)): ``IncomeTaxExpenseBenefit``; else current + deferred, only
+        when both are on the statement face (B6: the total "current income tax expense (benefit)
+        and deferred income tax expense (benefit) pertaining to continuing operations"); else
+        empty -- a single component is never the total."""
+        total = self._concept_value(spec, column, G + "IncomeTaxExpenseBenefit")
+        if total is not None:
+            return total, G + "IncomeTaxExpenseBenefit", "concept"
+        current = self._concept_value(spec, column, G + "CurrentIncomeTaxExpenseBenefit")
+        deferred = self._concept_value(spec, column, G + "DeferredIncomeTaxExpenseBenefit")
+        if current is not None and deferred is not None:
+            self._flag("current_plus_deferred")
+            return (
+                current + deferred,
+                f"{G}CurrentIncomeTaxExpenseBenefit + {G}DeferredIncomeTaxExpenseBenefit",
+                "map",
+            )
+        if current is not None or deferred is not None:
+            self._flag("tax_component_not_total")
+        return None, None, None
+
+    def _long_term_debt(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Long-term debt (MET-07): the narrowest filed line (ID-02a) -- ``LongTermDebtNoncurrent``,
+        then ``LongTermDebt`` (it includes current maturities), then the REIT pair
+        ``UnsecuredDebt`` + ``SecuredDebt`` (N23; both "including the current and noncurrent
+        portions"), then the combined debt-and-lease elements, used only because no narrower line
+        is filed and flagged ``includes_finance_leases``. A line that includes the current
+        maturities is flagged ``includes_current_maturities``: no current-maturity term is added
+        to it (:meth:`_short_term_parts`, N4)."""
+        noncurrent, long_term, combined, combined_current = spec.concepts
+        for concept in (noncurrent, long_term):
+            value = self._concept_value(spec, column, concept)
+            if value is not None:
+                if concept in INCLUDES_CURRENT_MATURITIES:
+                    self._flag("includes_current_maturities")
+                return value, concept, "concept"
+        reit = {c: v for c in REIT_DEBT if (v := self._concept_value(spec, column, c)) is not None}
+        if reit:
+            self._flag("includes_current_maturities")
+            return sum(reit.values()), " + ".join(reit), "map" if len(reit) > 1 else "concept"
+        for concept in (combined, combined_current):
+            value = self._concept_value(spec, column, concept)
+            if value is not None:
+                self._flag("includes_finance_leases")
+                if concept in INCLUDES_CURRENT_MATURITIES:
+                    self._flag("includes_current_maturities")
+                return value, concept, "concept"
+        return None, None, None
+
+    def _short_term_parts(
+        self, spec: LineItem, column: str, *, current_maturities_in_long_term: bool
+    ) -> dict[str, tuple[float, str]]:
+        """The filed terms of the short-term debt map (D-06(d), D-01; MET-07): for each term of
+        :data:`SHORT_TERM_DEBT_MAP` the first of its concepts that is filed, as
+        ``{term: (value, concept)}``. The current-maturities term is left out when the long-term
+        line already contains the current maturities (N4)."""
+        parts: dict[str, tuple[float, str]] = {}
+        for term, concepts in SHORT_TERM_DEBT_MAP:
+            if term == "current_maturities" and current_maturities_in_long_term:
+                continue
+            for concept in concepts:
+                value = self._concept_value(spec, column, concept)
+                if value is not None:
+                    parts[term] = (value, concept)
+                    break
+        return parts
+
+    def _short_term_debt(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Short-term debt (MET-07, D-06(d)): the filed terms of :data:`SHORT_TERM_DEBT_MAP`
+        added; ``DebtCurrent`` -- "debt and lease obligation" -- only when no term is filed,
+        flagged ``includes_leases``. Against a long-term line that includes the current maturities
+        neither the current-maturities term nor ``DebtCurrent`` (which contains them) is added
+        (N4; flagged ``current_maturities_in_long_term``)."""
+        lt_spec = REGISTRY["long_term_debt"]
+        lt_value, lt_concept, _how = self._saved_flags(self._long_term_debt, lt_spec, column)
+        in_long_term = lt_value is not None and (
+            lt_concept is not None
+            and any(c in INCLUDES_CURRENT_MATURITIES for c in lt_concept.split(" + "))
+        )
+        if in_long_term:
+            self._flag("current_maturities_in_long_term")
+        parts = self._short_term_parts(spec, column, current_maturities_in_long_term=in_long_term)
+        if parts:
+            concept = " + ".join(c for _v, c in parts.values())
+            return (
+                sum(v for v, _c in parts.values()),
+                concept,
+                "map" if len(parts) > 1 else "concept",
+            )
+        if in_long_term:
+            return None, None, None
+        value = self._concept_value(spec, column, SHORT_TERM_DEBT_LAST)
+        if value is not None:
+            self._flag("includes_leases")
+            return value, SHORT_TERM_DEBT_LAST, "concept"
+        return None, None, None
+
+    def _saved_flags(self, fn: Any, spec: LineItem, column: str) -> Any:
+        """Run a resolver without letting its flags leak into the caller's."""
+        outer, self._flags = self._flags, []
+        try:
+            return fn(spec, column)
+        finally:
+            self._flags = outer
+
+    def total_debt(self, period_key: str) -> Resolution:
+        """Total debt for *period_key* (MET-07, ID-02b, D-01; MET-00): long-term plus short-term.
+
+        * both filed -> their sum; one term of the map not filed -> the filed terms, flagged
+          ``partial_map``, **only** when long-term debt is present and the rest of the balance
+          sheet resolved (total assets, equity and cash); otherwise empty, ``partial_map_rejected``;
+        * short-term debt alone -> empty (``short_term_debt_only``): it suggests an unrecognized
+          long-term concept;
+        * no debt line at all -> **0**, flagged ``no_debt_lines``, only when the balance sheet
+          resolved completely, no debt concept is filed on it and no interest-expense concept on
+          the income statement (the variants the registry does not read included); otherwise
+          empty, flagged ``capture_failure`` (N23). A missing debt is never read as 0 (MET-00).
+        """
+        outer, self._flags = self._flags, []
+        try:
+            column = self._instant_for(period_key)
+            if column is None:
+                return Resolution(None)
+            value, concept, how = self._total_debt(period_key, column)
+            return Resolution(value, concept, how, tuple(self._flags))
+        finally:
+            self._flags = outer
+
+    def _balance_sheet_resolved(self, period_key: str) -> bool:
+        """D-01 (ii): the rest of the balance sheet resolved -- the three items debt is read
+        against (total assets, equity, cash)."""
+        return all(
+            self.resolve(item, period_key).value is not None
+            for item in ("total_assets", "equity", "cash")
+        )
+
+    def _total_debt(
+        self, period_key: str, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        lt_spec, st_spec = REGISTRY["long_term_debt"], REGISTRY["short_term_debt"]
+        lt_value, lt_concept, _ = self._long_term_debt(lt_spec, column)
+        in_long_term = "includes_current_maturities" in self._flags
+        parts = self._short_term_parts(
+            st_spec, column, current_maturities_in_long_term=in_long_term
+        )
+        st_value = sum(v for v, _c in parts.values()) if parts else None
+        st_concept = " + ".join(c for _v, c in parts.values()) if parts else None
+        used_debt_current = False
+        if st_value is None and not in_long_term:
+            st_value = self._concept_value(st_spec, column, SHORT_TERM_DEBT_LAST)
+            if st_value is not None:
+                st_concept, used_debt_current = SHORT_TERM_DEBT_LAST, True
+                self._flag("includes_leases")
+        if in_long_term:
+            self._flag("current_maturities_in_long_term")
+
+        if lt_value is None and st_value is None:
+            return self._no_debt_line(period_key, column)
+        if lt_value is None:
+            self._flag("short_term_debt_only")
+            self._flag("capture_failure")
+            return None, st_concept, None
+        covered = {
+            "current_maturities": in_long_term
+            or "current_maturities" in parts
+            or used_debt_current,
+            "borrowings": "borrowings" in parts or used_debt_current,
+        }
+        concept = " + ".join(c for c in (lt_concept, st_concept) if c)
+        if all(covered.values()):
+            return lt_value + (st_value or 0.0), concept, "map"
+        if not self._balance_sheet_resolved(period_key):
+            self._flag("partial_map_rejected")
+            self._flag("capture_failure")
+            return None, concept, None
+        self._flag("partial_map")
+        return lt_value + (st_value or 0.0), concept, "map"
+
+    def _no_debt_line(
+        self, period_key: str, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """ID-02b: no long-term and no short-term debt resolved."""
+        if (
+            self._balance_sheet_resolved(period_key)
+            and not self._has_debt_line(column)
+            and not self._has_interest_expense_line(period_key)
+        ):
+            self._flag("no_debt_lines")
+            return 0.0, None, "none_filed"
+        self._flag("capture_failure")
+        return None, None, None
+
+    def _has_debt_line(self, column: str) -> bool:
+        """A balance-sheet concept that names a debt obligation has a value in *column*."""
+        for row in self._rows_for(REGISTRY["long_term_debt"]):
+            local = str(row.get("concept") or "").split("_", 1)[-1]
+            if (
+                _DEBT_LINE_RE.search(local)
+                and not _NOT_A_DEBT_LINE_RE.search(local)
+                and _numeric(row.get(column)) is not None
+            ):
+                return True
+        return False
+
+    def _has_interest_expense_line(self, period_key: str) -> bool:
+        """An interest-expense concept -- any taxonomy -- has a value in the income statement's
+        *period_key* column (``InterestExpenseDebt`` and the like included)."""
+        for row in self._rows_for(REGISTRY["interest_expense"]):
+            local = str(row.get("concept") or "").split("_", 1)[-1]
+            if _INTEREST_EXPENSE_LINE_RE.match(local) and _numeric(row.get(period_key)) is not None:
+                return True
+        return False
 
     # Dimension axes whose slice may legitimately equal the consolidated total: a
     # single-segment filer discloses its one segment's revenue, which *is* the total. A
@@ -821,19 +1264,52 @@ class Statements:
         values = self._matching_component_values(spec, column)
         return max(values.values()) if values else None
 
-    def _first_component_match(self, spec: LineItem, column: str) -> float | None:
-        """Tier 2 (default): the original single-row, first-document-order
-        lookup, unchanged for every item that doesn't set ``sum_components``."""
-        for row in self._rows_for(spec):
-            if _matches(row, spec):
-                value = _numeric(row.get(column))
-                if value is not None:
-                    return value
-        return None
+    def _candidates(self, spec: LineItem) -> Iterator[tuple[str, dict[str, Any]]]:
+        """``(tier, row)`` for every row that can represent *spec*, in **precedence order**
+        (ID-02a, T-148): the exact ``concepts`` one concept after the other in the spec's order
+        (``concept``), then the rows whose gateway ``standard_concept`` is listed (``standard``),
+        then the rows whose label contains a ``label_contains`` hint (``label``). A label or a
+        standard-concept match never outranks an exact concept, wherever it sits in the statement."""
+        rows = list(self._rows_for(spec))
+        for concept in spec.concepts:
+            for row in rows:
+                if row.get("concept") == concept:
+                    yield "concept", row
+        if spec.standard:
+            for row in rows:
+                if row.get("concept") not in spec.concepts and (
+                    row.get("standard_concept") in spec.standard
+                ):
+                    yield "standard", row
+        if spec.label_contains:
+            for row in rows:
+                label = str(row.get("label") or "").lower()
+                if (
+                    row.get("concept") not in spec.concepts
+                    and not (spec.standard and row.get("standard_concept") in spec.standard)
+                    and any(hint in label for hint in spec.label_contains)
+                ):
+                    yield "label", row
 
-    def _fallback_match(self, spec: LineItem, column: str) -> float | None:
+    def _first_component_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Tier 2 (default): the first row in precedence order (:meth:`_candidates`) with a value
+        in *column*: ``(value, concept, tier)``."""
+        for tier, row in self._candidates(spec):
+            value = self._read(row, column, spec)
+            if value is not None:
+                return value, str(row.get("concept")), tier
+        return None, None, None
+
+    def _first_component_match(self, spec: LineItem, column: str) -> float | None:
+        return self._first_component_row(spec, column)[0]
+
+    def _fallback_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
         """The T-133 fallback tiers, in order: each ``spec.fallback_concepts`` entry, then the
-        ``spec.label_fallback`` caption. Reached only when :meth:`_first_component_match` found
+        ``spec.label_fallback`` caption. Reached only when :meth:`_first_component_row` found
         nothing, so it can never displace a value the ordinary lookup returns."""
         for tier, concept in enumerate(spec.fallback_concepts):
             value = self._concept_value(spec, column, concept)
@@ -842,9 +1318,9 @@ class Statements:
             if tier < spec.fallback_addend_tiers:
                 for extra in spec.fallback_addends:
                     value += self._concept_value(spec, column, extra) or 0.0
-            return value
+            return value, concept, f"fallback{tier + 1}"
         if not spec.label_fallback:
-            return None
+            return None, None, None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)
         # an empty pattern would match every label, so "no exclusion" must not compile to it
         unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
@@ -853,20 +1329,26 @@ class Statements:
             label = str(row.get("label") or "")
             if not wanted.search(label) or unwanted.search(label):
                 continue
-            value = _numeric(row.get(column))
+            value = self._read(row, column, spec)
             if value is not None:
                 found.setdefault(str(row.get("concept")), value)
         # One caption, one line. Two lines that both read as the item are a filer reporting it in
         # parts (NEE: "Capital expenditures of FPL" beside "Other capital expenditures" and the
         # independent-power line), and either alone would understate it -- a partial figure is
         # worse than none, so the item stays missing.
-        return next(iter(found.values())) if len(found) == 1 else None
+        if len(found) == 1:
+            concept, value = next(iter(found.items()))
+            return value, concept, "label_fallback"
+        return None, None, None
+
+    def _fallback_match(self, spec: LineItem, column: str) -> float | None:
+        return self._fallback_row(spec, column)[0]
 
     def _concept_value(self, spec: LineItem, column: str, concept: str) -> float | None:
         """The first non-dimensional row tagged *concept* that has a value in *column*."""
         for row in self._rows_for(spec):
             if row.get("concept") == concept:
-                value = _numeric(row.get(column))
+                value = self._read(row, column, spec)
                 if value is not None:
                     return value
         return None
@@ -885,7 +1367,7 @@ class Statements:
             concept = row.get("concept")
             if concept is None or concept not in spec.concepts or concept in values:
                 continue
-            value = _numeric(row.get(column))
+            value = self._read(row, column, spec)
             if value is not None:
                 values[concept] = value
         return values
@@ -914,29 +1396,25 @@ class Statements:
         return total
 
     def get_all(self, item: str) -> dict[str, float]:
-        """Every period-column value on registry *item*'s first-matching row --
-        not just one period, the full reported series for that concept in this
-        payload, keyed by its raw period_key exactly as ``iter_facts``/
+        """Every period-column value on registry *item*'s first-matching row (in precedence
+        order, :meth:`_candidates`) -- not just one period, the full reported series for that
+        concept in this payload, keyed by its raw period_key exactly as ``iter_facts``/
         ``financial_facts`` store it. Unlike :meth:`get`, this does not resolve
         a balance-sheet item through :meth:`_instant_for` -- it returns the row's
-        own columns as reported, which is what a cross-filing scale/tagging-defect
+        own columns as reported (in the filed sign), which is what a cross-filing scale/tagging-defect
         check (:func:`fundamental_agent.db.detect_share_scale_factors`) needs: the
         same overlapping historical periods this filing itself restates.
         """
         spec = REGISTRY[item]
-        for statement in spec.statements:
-            for row in self.raw.get(statement, []):
-                if row.get("abstract") or row.get("dimension"):
+        for _tier, row in self._candidates(spec):
+            out: dict[str, float] = {}
+            for column in row:
+                if _parse_period(str(column)) is None:
                     continue
-                if _matches(row, spec):
-                    out: dict[str, float] = {}
-                    for column, value in row.items():
-                        if _parse_period(str(column)) is None:
-                            continue
-                        number = _numeric(value)
-                        if number is not None:
-                            out[column] = number
-                    return out
+                number = self._read(row, column, spec)
+                if number is not None:
+                    out[column] = number
+            return out
         return {}
 
     def resolve_column(self, item: str, period_key: str) -> str | None:
@@ -954,13 +1432,23 @@ class Statements:
         return period_key
 
     def _instant_for(self, period_key: str) -> str | None:
-        target = period_key[:10]
+        """The balance-sheet column of the period *period_key* ends (ID-05: a balance is an
+        instant fact at the period end). The column of that very date; failing it, the one whose
+        date rounds to the same month end (PER-08 -- a 52/53-week filer's balance sheet is dated
+        days from the calendar month end), the closest if several. **Never the nearest earlier
+        date** (N6): that read another period's balance sheet -- the prior year end of a 10-Q
+        whose own column was missing -- as this one."""
+        target = date.fromisoformat(period_key[:10])
         instants = self.instant_periods()
-        exact = [p for p in instants if p.date == target]
+        exact = [p for p in instants if p.date == period_key[:10]]
         if exact:
             return exact[0].key
-        earlier = [p for p in instants if p.date <= target]
-        return earlier[-1].key if earlier else None
+        near = [p for p in instants if fiscal.same_period_end(date.fromisoformat(p.date), target)]
+        if not near:
+            return None
+        return min(
+            near, key=lambda p: (abs((date.fromisoformat(p.date) - target).days), p.date)
+        ).key
 
 
 def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
@@ -1001,6 +1489,9 @@ def iter_facts(stmts: Statements) -> Iterator[dict[str, Any]]:
                     "period_key": column,
                     "value": number,
                     "correction_rule": corrected_rule.get((statement, concept, column)),
+                    # ID-12 (T-148): edgartools' presentation hint -- the displayed value times it
+                    # is the filed value. ``None`` when the row carries none.
+                    "preferred_sign": _preferred_sign(row),
                 }
 
 
@@ -1021,6 +1512,23 @@ def _matches(row: dict[str, Any], spec: LineItem) -> bool:
         return True
     label = str(row.get("label") or "").lower()
     return any(hint in label for hint in spec.label_contains)
+
+
+def _preferred_sign(row: dict[str, Any]) -> float | None:
+    """The row's ``preferred_sign`` (+1 or -1), or ``None`` when it carries none (ID-12)."""
+    sign = _numeric(row.get("preferred_sign"))
+    return sign if sign in (1.0, -1.0) else None
+
+
+def filed_value(row: dict[str, Any], column: str) -> float | None:
+    """The value of *row* in *column* in the sign it was filed in (ID-12): the displayed value
+    times the row's ``preferred_sign``; as displayed when the row carries none. The audit scripts
+    read the other candidate concepts of a filing through it, on the resolver's own sign."""
+    displayed = _numeric(row.get(column))
+    if displayed is None:
+        return None
+    sign = _preferred_sign(row)
+    return displayed if sign is None else displayed * sign
 
 
 def _numeric(value: Any) -> float | None:

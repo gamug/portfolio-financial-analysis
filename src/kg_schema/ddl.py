@@ -580,6 +580,11 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         # T-118: the gateway's own `data["corrections"]` rule id (e.g. "T-118") when this
         # value was derived by the gateway rather than filed as-is; NULL for every filed fact.
         "correction_rule": "TEXT",
+        # T-148 (m013), ID-12: edgartools' ``preferred_sign`` (+1 or -1) of the payload row. The
+        # displayed value times it is the value in the sign it was filed in (ID-11); the stored
+        # ``value`` stays the displayed one, as it always was. NULL on every row written before
+        # T-148 (no backfill) and where the gateway sent none.
+        "preferred_sign": "REAL",
     },
     "fundamental_metrics": {
         "event_time": "TEXT",
