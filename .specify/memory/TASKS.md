@@ -255,6 +255,14 @@ the final pilot, `T-143`.
       2026-10-09 by the PR #127 review: (f) gains N22 and the residual capex item of `T-071`, and D6 is carried by (g).
       Numbers are production's 5,075 filings and the 17,350 filing-columns the pipeline reads (the target, the prior,
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
+      **Split in two PRs (user, 2026-10-11).** **Part 1 landed in "fix(fundamental): filed signs, concept precedence,
+      income tax, debt and cash (T-148 part 1)" -- (a), (b), (c), (d)** (engine `metrics-v6`, `m013` / contract 13, SPEC
+      1.8.0, `docs/model_fixes.md` "T-148 part 1"). **Part 2 follows: (e), (f), (g), the `T-070` recheck (j) and the full
+      acceptance (i)**, on `metrics-v6` as well (no non-scratch database is built between the two PRs). The box stays
+      open until part 2 merges. Part 1 also resolved two of part 2's measurements as a consequence of (b)'s precedence:
+      `N3.ocf_continuing_resolved` is 0 (the total concept precedes the continuing-operations one in the registry's order),
+      and the capex order is unchanged (`PaymentsToAcquireProductiveAssets` still precedes `PaymentsForCapitalImprovements`;
+      ETR's two 10-Ks read the former, 106M against 5.07B -- (f) settles it under MET-08).
       - (a) **Filed sign (ID-11, ID-12).** Store edgartools' `preferred_sign` (an additive column on `financial_facts`).
         `Statements.get` returns line items in the filed XBRL sign; the `T-117`/`T-140` rebuild arithmetic stays on
         displayed values. **Reject a wrong sign and flag it; do not repair it with `abs()`** (D-06(a); this replaces
