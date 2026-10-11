@@ -88,8 +88,20 @@ S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
 `Statements.from_payload` parses `income_statement` / `balance_sheet` /
 `cash_flow`. Duration columns look like `"2023-09-30 (FY)"` / `"(Q3)"` / `"(YTD)"`;
 **balance-sheet rows use bare instant dates** and resolve against the
-nearest-earlier instant. `REGISTRY` maps ~25 line items to US-GAAP tags with
-standard/label fallbacks. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
+instant dated the period end -- or the one that rounds to the same month end (PER-08), never the
+nearest earlier one (T-148, N6/ID-05). `REGISTRY` maps ~25 line items to US-GAAP tags with
+standard/label fallbacks, tried in **precedence order**: the exact concepts in the registry's order,
+then `standard`, then label hints (ID-02a, T-148). `Statements.resolve(item, period_key)` returns a
+`Resolution(value, concept, how, flags)`; `get` is its value. **Values are in the filed sign**
+(ID-11/ID-12): the displayed value times the row's `preferred_sign`, which `iter_facts` yields and
+`financial_facts.preferred_sign` stores (`m013`); a row without one reads as displayed and is flagged
+`sign_unverified`; a negative filed value of a capex payment or `InterestAndDebtExpense` /
+`InterestExpenseDebt` (DQC_0015) is rejected and flagged `wrong_sign_rejected`, never `abs()`-ed. The
+T-117/T-140 revenue rebuild arithmetic stays on displayed values. The composite items --
+`net_income` (ID-03: `NetIncomeLoss`, else `ProfitLoss` less the NCI income, else empty),
+`income_tax` (ID-02b: the total, else current + deferred on the face), `long_term_debt` and
+`short_term_debt` (MET-07, D-06(d), N4, N23) -- and `Statements.total_debt` (D-01, ID-02b: the partial
+map, short-term alone, the debt = 0 rule, the capture failure) are described in SPEC FR-001. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
 `RevenuesNetOfInterestExpense` for banks, `RegulatedAndUnregulatedOperatingRevenue` for
 utilities — T-102) over summing its named components, subject to T-095's too-small
 plausibility floor and T-117's too-large label-total contradiction check (a later,
@@ -119,17 +131,17 @@ positive value or a date is dropped. The pipeline stores them in `filing_cover_s
 Each exposes `GROUP` and `compute(stmts, period_key, prior_key=None) ->
 list[MetricResult]`. `MetricResult(name, value, unit, inputs)` — `unit ∈
 {"ratio","pct","x","usd"}`. `base.py` has `safe_div` (None / near-zero guard),
-`present`, `sum_present`.
+`present`, `sum_present`, `flag_inputs` (a resolution's flags as `flag_<item>_<flag>` audit inputs, T-148).
 
 | Module | Ratios |
 |---|---|
 | `profitability` | gross/operating/net margin, ROA, ROE |
 | `liquidity` | current, quick, cash ratio |
-| `leverage` | debt/equity, debt/assets, interest coverage, net-debt/EBITDA |
+| `leverage` | debt/equity, debt/assets, interest coverage (empty when interest expense is not positive, MET-09), net-debt/EBITDA; debt is `Statements.total_debt` |
 | `efficiency` | asset / inventory / receivables turnover |
 | `growth` | YoY revenue / operating income / net income / FCF growth (needs prior period) |
 | `cashflow` | OCF margin, FCF margin, FCF conversion, capex intensity; `free_cash_flow()` helper. Fiscal-year columns on a 10-K, **trailing twelve months on a 10-Q** (real `ytd`/`quarters` flows only, never the `x4` fallback; a flow missing from the TTM leaves its ratios empty) — a 10-Q's cash-flow statement is year-to-date only (T-133) |
-| `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC |
+| `roic` | `effective_tax_rate` (clamped, 0.21 default), NOPAT, ROIC -- empty when debt, equity or cash is (MET-00) |
 | `cagr` | multi-year revenue / net income / OCF CAGR from a 10-K's FY columns |
 | `valuation` | market cap, EV, equity/enterprise/SBC-adjusted FCF yield — **needs a period-end price**; shares are the filing's cover-page count (`filing_cover_shares`, T-132), else the balance sheet's outstanding count, else the weighted-average diluted count (flagged `shares_are_diluted_average`) — never `CommonStockSharesIssued` |
 
