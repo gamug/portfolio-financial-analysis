@@ -234,14 +234,14 @@ graph is fed by `entity_resolution` from news co-occurrence, not proxy filings.
 ### `pipeline.py`
 
 `run(settings, params)` → connect, `ensure_schema`, sync universe, plan
-asset×form×year tasks (`_plan` refuses with `MissingCikError` an asset that has no CIK — a filing is
+asset×form×year tasks (a task carries the asset's CIK chain, `identity.cik_chain`: its own CIK, then its recorded predecessors' -- a successor registrant keeps its predecessor's filings, XOM's 19 filings of 2022-2026 being Exxon Mobil Corp's (CIK 0000034088) while the asset's CIK is ExxonMobil Holdings Corp's (0002115436) since 2026-07-01, `kg_schema/data/cik_successions.csv`; `_plan` refuses with `MissingCikError` an asset that has no CIK — a filing is
 never fetched by ticker), `_drive` with a `tqdm` bar. `_run_task` → `_list_filings` (every filing of
-the form that year, listed under the asset's CIK) → `_select_filings` (**oldest first** — F4's TTM reads
+the form that year, listed under every CIK of the chain; one listed under several -- XOM's 2026-08-03 10-Q -- is kept once, by accession, under the first) → `_select_filings` (**oldest first** — F4's TTM reads
 the prior quarters' already-recorded values — and **originals only**: a 10-K/A or 10-Q/A is never
 ingested, PER-02 / L-04, so a year whose newest filing is an amendment keeps its original, and two
 originals filed in one calendar year are both kept) → for each filing `_process_filing`:
 refuse it (`FilingIdentityError`, recorded under `analysis_run_error` `stage='identity'`, not fetched)
-when the listing's `cik` is not the asset's; skip it if it is filed after the analysis date or its accession is already scored (a
+when the listing's `cik` is not in the asset's chain; skip it if it is filed after the analysis date or its accession is already scored (a
 resumed run makes no `financials` call for it), fetch its statements by
 `accession_number`, then for its `_target` → `_analyze_one`. A filing has exactly **one**
 target — its *own* reporting period (10-K: the latest FY + prior; 10-Q: the latest quarter

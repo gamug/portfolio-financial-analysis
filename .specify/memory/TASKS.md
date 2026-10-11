@@ -674,6 +674,10 @@ the final pilot, `T-143`.
         `company_types.csv`, and their GICS classification (the historical source is still to be decided).
       - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
         again on the historical universe before they go into the thesis.
+      - Filings of a company that left the index come by CIK; if one of them succeeded a predecessor registrant whose CIK
+        holds the earlier filings, it uses the same mechanism as XOM: a row in `src/kg_schema/data/cik_successions.csv` (successor,
+        predecessor, effective date, the accession and a quote of the 8-K12B/8-K12G3/8-K or S-4 that establishes it), which the
+        pipeline, the invariant and `cik_chain` already read. Only add a row for a company that loses filings without it (T-149).
       - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
         WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
         assets are keyed by ticker.

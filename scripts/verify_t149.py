@@ -163,6 +163,22 @@ def _controls(conn: Any) -> None:
             except sqlite3.IntegrityError as exc:
                 print(f"  control ok -- {label}: ABORT ({exc})")
         try:
+            conn.execute(
+                "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, retrieved_at, cik) "
+                "VALUES (?, '10-K', 1999, 'FY1999', 'now', '0000789019')",
+                (a1["id"],),
+            )
+            print("  CONTROL FAILED -- accepted: a filing whose CIK is outside the asset's chain")
+        except sqlite3.IntegrityError as exc:
+            print(f"  control ok -- a filing whose CIK is outside the asset's chain: ABORT ({exc})")
+        xom = conn.execute("SELECT id FROM assets WHERE ticker = 'XOM'").fetchone()
+        conn.execute(
+            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, retrieved_at, cik) "
+            "VALUES (?, '10-K', 1999, 'FY1999', 'now', '0000034088')",
+            (xom["id"],),
+        )
+        print("  control ok -- XOM's predecessor CIK 0000034088 is accepted on XOM")
+        try:
             conn.execute("UPDATE assets SET cik = '0000000001' WHERE id = ?", (a1["id"],))
             print("  CONTROL FAILED -- accepted: a new CIK for an asset with filings")
         except sqlite3.IntegrityError as exc:
@@ -192,10 +208,21 @@ def cmd_triggers(args: argparse.Namespace) -> int:
     )
     print(
         "identity triggers present:",
-        [n for n in names if n.startswith(("trg_sf_cik", "trg_sf_cross", "trg_assets_cik"))],
+        [
+            n
+            for n in names
+            if n.startswith(("trg_sf_cik", "trg_sf_cross", "trg_sf_chain", "trg_assets_cik"))
+        ],
     )
 
     n_filings = conn.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0]
+    for r in conn.execute("SELECT * FROM cik_succession"):
+        print("  cik_succession:", dict(r))
+    xom_n = conn.execute(
+        "SELECT COUNT(*), MIN(substr(accession_number, 1, 10)), MAX(substr(accession_number, 1, 10)) "
+        "FROM sec_filings f JOIN assets a ON a.id = f.asset_id WHERE a.ticker = 'XOM'"
+    ).fetchone()
+    print(f"  production XOM: {xom_n[0]} stored filings, accession prefixes {xom_n[1]}..{xom_n[2]}")
     shared = conn.execute(
         "SELECT f.accession_number, COUNT(DISTINCT f.asset_id) n, COUNT(DISTINCT a.cik) ciks, "
         "GROUP_CONCAT(DISTINCT a.ticker) tickers FROM sec_filings f JOIN assets a ON a.id = f.asset_id "

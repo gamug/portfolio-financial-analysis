@@ -66,10 +66,12 @@ The single entrypoint. Sequence:
    `assets` (with `cik`) and `sec_filings` exist: a filing of an asset with no CIK aborts, an accession
    attached to assets of different CIKs aborts (the share classes of one issuer share a CIK and an
    accession: GOOGL/GOOG, NWSA/NWS, FOXA/FOX), and the CIK of an asset with filings cannot change or
-   empty. They check only rows written from then on; `m012` refuses a database whose stored rows
+   empty; and a filing's own `sec_filings.cik` (the CIK it was listed under) is its asset's or a recorded predecessor's in `cik_succession`, never any other (`trg_sf_chain_*`). They check only rows written from then on; `m012` refuses a database whose stored rows
    already break them, and `kg_schema.identity.violations` / `require` say which. The module also holds
    `normalize_cik` (the 10-digit string) and `refuse_cik_changes`, the write-once guard both agents'
-   `sync_universe` run before they write an asset.
+   `sync_universe` run before they write an asset, and the succession table: `cik_succession` is seeded on every
+   `ensure` from `src/kg_schema/data/cik_successions.csv` (`seed_successions`), and `cik_chain(db, cik)` is the CIKs an
+   asset's filings are fetched under, its own first.
 6. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
    when the database's `schema_version` is above the highest migration this code knows**
    (T-144): a later contract may have added columns and views this code does not define, and
@@ -220,7 +222,7 @@ are present / it hasn't already run).
 | m009 | `veto` stints (`T-125`): collapses the old per-`(asset, rule, cycle_date)` hit rows into `raised_on`/`cleared_on`/`last_seen_on` stints, using the cycle dates the `"veto"` checkpoint step actually completed on (any `cycle_run`, any `cycle_type`) as the evaluation timeline — a stint opens on a pair's first hit date, extends across consecutive hit dates, and closes at the first evaluation date with no hit row for that pair, reopening a new stint if hit again later. `kg_schema._ensure_veto_indexes` (not this migration) then creates the two indexes naming the new columns, since they cannot ship inline in `ADDITIVE_DDL` without breaking its no-op safety against a still-unmigrated database |
 | m010 | marker for the knowledge-graph view contract (`T-144`): changes no table. The new views and appended columns come from `views.py` on every `ensure`; this raises the `schema_version` floor to 10 so the knowledge-graph repo can assert it and `ensure_views` can tell a database that is ahead of the running code (see "The knowledge-graph view contract" below) |
 | m011 | the temporal price vetoes' columns (`T-070`, contract 11), additive: `price_observation.sma_200` / `ret_5d` / `vol_5d` / `mu_60d_base` / `vol_60d_base` (the `priceobs-v2` fields) and `veto.expires_on` / `expiry_history_json`, added with `Database.ensure_columns` from `REQUIRED_COLUMNS` (m009 rebuilds `veto` without them, so this migration puts them back; a fresh database has them from the DDL). Every existing row keeps NULL. `v_price_observation` and `v_veto` gain their appended columns from `views.py` on every `ensure` |
-| m012 | the filing-identity invariant (`T-149`, contract 12): changes no table. Drops and re-creates `ddl.IDENTITY_TRIGGERS` and **refuses (rolls back) a database whose stored rows already break them** — `kg_schema.identity.violations`: an asset with filings and no CIK, or an accession on assets of different CIKs (a trigger never checks the rows already there) — so a database at contract 12 holds the invariant for every row. `apply_migrations` drops the guards while migrations run and restores them, like the T-107 ones |
+| m012 | the filing-identity invariant (`T-149`, contract 12): changes no table. Drops and re-creates `ddl.IDENTITY_TRIGGERS` and **refuses (rolls back) a database whose stored rows already break them** — `kg_schema.identity.violations`: an asset with filings and no CIK, an accession on assets of different CIKs, or a filing whose `cik` is outside its asset's chain (a trigger never checks the rows already there) — so a database at contract 12 holds the invariant for every row. `apply_migrations` drops the guards while migrations run and restores them, like the T-107 ones |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
