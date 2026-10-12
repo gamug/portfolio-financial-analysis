@@ -184,6 +184,19 @@ _NOT_A_DEBT_LINE_RE = re.compile(
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
 
+# -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
+_CASH_PAREN_RE = re.compile(r"\([^)]*\)")
+_CASH_NOTE_RE = re.compile(r"\(note\s+\w+\)", re.IGNORECASE)
+_ALLOWED_K1_CAPTIONS = frozenset(
+    {
+        "cash",
+        "cash and cash equivalents",
+        "cash and equivalents",
+        "cash, cash equivalents",
+    }
+)
+_INVESTMENT_KEYWORDS = ("invest", "marketable", "securit", "short-term", "short term")
+
 # -- Parent net income (ID-03, CON-19; T-148) -------------------------------------------------------
 # The us-gaap elements for income attributable to the noncontrolling interest: the total and its
 # redeemable / nonredeemable parts (B6).
@@ -442,6 +455,7 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_CashCashEquivalentsAndShortTermInvestments",
             "us-gaap_CashAndDueFromBanks",
         ),
+        resolver="cash",
     ),
     "short_term_investments": LineItem(
         "short_term_investments",
@@ -550,6 +564,7 @@ _COMPOSITE = {
     "income_tax": "_income_tax",
     "long_term_debt": "_long_term_debt",
     "short_term_debt": "_short_term_debt",
+    "cash": "_cash",
 }
 
 
@@ -960,6 +975,119 @@ class Statements:
             )
         if current is not None or deferred is not None:
             self._flag("tax_component_not_total")
+        return None, None, None
+
+    def _cash_sti(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str]:
+        row = next(
+            (
+                r
+                for r in self._rows_for(spec)
+                if r.get("concept") == concept and _numeric(r.get(column)) is not None
+            ),
+            None,
+        )
+        cap = str(row.get("label") or "").lower() if row else ""
+        if any(w in cap for w in _INVESTMENT_KEYWORDS):
+            self._flag("includes_short_term_investments")
+        else:
+            self._flag("cash_sti_tag_cash_caption")
+        return val, concept, "concept"
+
+    def _cash_k1(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str] | None:
+        row = next(
+            (
+                r
+                for r in self._rows_for(spec)
+                if r.get("concept") == concept and _numeric(r.get(column)) is not None
+            ),
+            None,
+        )
+        cap = str(row.get("label") or "") if row else ""
+        cap_clean = _CASH_NOTE_RE.sub("", cap)
+        cap_clean = _CASH_PAREN_RE.sub("", cap_clean).strip().lower()
+        if cap_clean in _ALLOWED_K1_CAPTIONS and "restrict" not in cap_clean:
+            for r in self._rows_for(spec):
+                if r.get("concept") == concept:
+                    continue
+                c_local = str(r.get("concept") or "").rsplit("_", 1)[-1].lower()
+                c_cap = str(r.get("label") or "").lower()
+                if ("restrict" in c_local or "restrict" in c_cap) and _numeric(
+                    r.get(column)
+                ) is not None:
+                    return None
+            self._flag("cash_tag_includes_restricted_cash_possible")
+            return val, concept, "concept"
+        return None
+
+    def _cash_classified(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str] | None:
+        ca = self.get("current_assets", column)
+        cl = self.get("current_liabilities", column)
+        if ca is not None and cl is not None:
+            self._flag("cash_element_only")
+            return val, concept, "concept"
+        return None
+
+    def _cash_primary(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        c1 = G + "CashAndCashEquivalentsAtCarryingValue"
+        val1 = self._concept_value(spec, column, c1)
+        if val1 is not None:
+            return val1, c1, "concept"
+
+        c2 = G + "CashCashEquivalentsAndShortTermInvestments"
+        val2 = self._concept_value(spec, column, c2)
+        if val2 is not None:
+            return self._cash_sti(spec, column, val2, c2)
+
+        c3 = G + "CashAndDueFromBanks"
+        val3 = self._concept_value(spec, column, c3)
+        if val3 is not None:
+            return val3, c3, "concept"
+
+        c_cash = G + "Cash"
+        c_ce = G + "CashEquivalentsAtCarryingValue"
+        val_cash = self._concept_value(spec, column, c_cash)
+        val_ce = self._concept_value(spec, column, c_ce)
+        if val_cash is not None and val_ce is not None:
+            self._flag("cash_plus_cash_equivalents_map")
+            return val_cash + val_ce, f"{c_cash} + {c_ce}", "map"
+
+        return None, None, None
+
+    def _cash(self, spec: LineItem, column: str) -> tuple[float | None, str | None, str | None]:
+        """Cash composite resolver (T-148 (k), B4, B6):
+
+        1. CashAndCashEquivalentsAtCarryingValue;
+        2. CashCashEquivalentsAndShortTermInvestments, caption checked;
+        3. CashAndDueFromBanks;
+        4. ES map: Cash + CashEquivalentsAtCarryingValue;
+        5. (k)(1): CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents,
+           caption checked and no other balance-sheet restricted line;
+        6. (k)(3): Cash alone on a classified balance sheet.
+        """
+        primary = self._cash_primary(spec, column)
+        if primary[0] is not None:
+            return primary
+
+        c_k1 = G + "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+        val_k1 = self._concept_value(spec, column, c_k1)
+        if val_k1 is not None:
+            res_k1 = self._cash_k1(spec, column, val_k1, c_k1)
+            return res_k1 if res_k1 is not None else (None, None, None)
+
+        val_cash = self._concept_value(spec, column, G + "Cash")
+        if val_cash is not None:
+            res_c = self._cash_classified(spec, column, val_cash, G + "Cash")
+            if res_c is not None:
+                return res_c
+
         return None, None, None
 
     def _long_term_debt(

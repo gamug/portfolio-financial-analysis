@@ -97,7 +97,8 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
 
     market_cap = shares * price.close if shares is not None else None
 
-    cash = stmts.get("cash", period_key)
+    cash_resolution = stmts.resolve("cash", period_key)
+    cash = cash_resolution.value
     debt_resolution = stmts.total_debt(period_key)
     total_debt = debt_resolution.value
     enterprise_value = _enterprise_value(market_cap, total_debt, cash)
@@ -132,6 +133,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         enterprise_value=enterprise_value,
     )
     inputs.update(flag_inputs("total_debt", debt_resolution.flags))
+    inputs.update(flag_inputs("cash", cash_resolution.flags))
     inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
     inputs["shares_are_diluted_average"] = float(used_diluted)
     inputs["shares_from_cover_page"] = float(share_count.from_cover)
