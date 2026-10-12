@@ -606,6 +606,48 @@ def main() -> int:  # noqa: C901, PLR0915
 
     check("T-145", t145)
 
+    def t083() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        bad: list[str] = []
+        details: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            sql_reconcile = (
+                "SELECT b.as_of, a.ticker "
+                "FROM (SELECT DISTINCT as_of FROM quant_portfolio WHERE kind <> 'live_book') b "
+                "JOIN portfolio_position pp ON pp.valid_from <= b.as_of "
+                "     AND (pp.valid_to IS NULL OR pp.valid_to > b.as_of) "
+                "JOIN assets a ON a.id = pp.asset_id "
+                "WHERE NOT EXISTS (SELECT 1 FROM v_quant_vs_live v "
+                "                  WHERE v.as_of = b.as_of AND v.asset_id = pp.asset_id "
+                "                    AND v.live_weight IS NOT NULL)"
+            )
+            rows = [tuple(r) for r in db.execute(sql_reconcile)]
+            n_book_dates = int(
+                db.execute(
+                    "SELECT COUNT(DISTINCT as_of) FROM quant_portfolio WHERE kind <> 'live_book'"
+                ).fetchone()[0]
+            )
+            sql_live_only = "SELECT COUNT(*) FROM v_quant_vs_live WHERE kind = 'LIVE_ONLY'"
+            n_live_only = int(db.execute(sql_live_only).fetchone()[0])
+            if rows:
+                bad.append(f"{prefix}unreconciled={len(rows)} {rows[:10]}")
+            item = f"{prefix}book dates={n_book_dates}, unreconciled={len(rows)}"
+            if rows:
+                item += f" {rows[:10]}"
+            item += f", LIVE_ONLY={n_live_only}"
+            details.append(item)
+        report(
+            "T-083",
+            "FAIL" if bad else "PASS",
+            "v_quant_vs_live reconciliation: " + ("; ".join(details) or "clean"),
+        )
+
+    check("T-083", t083)
+
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(
         f"\n{len(RESULTS)} checks: {fails} FAIL, {sum(1 for _, s, _ in RESULTS if s == 'WARN')} WARN"

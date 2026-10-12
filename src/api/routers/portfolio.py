@@ -1,5 +1,5 @@
-"""``/portfolio`` -- the live book (``v_portfolio_position``) and the latest cycle
-cohort (``v_cycle_ranking``). Views passed through verbatim."""
+"""``/portfolio`` -- the live book (``v_portfolio_position``), the latest cycle
+cohort (``v_cycle_ranking``), and optimized vs live weights (``v_quant_vs_live``). Views passed through verbatim."""
 
 from __future__ import annotations
 
@@ -45,3 +45,58 @@ def cycle_ranking(
         "ORDER BY rank"
     )
     return rows(db, sql, (cycle_type.upper(), cycle_type.upper()))
+
+
+@router.get("/quant-vs-live")
+def quant_vs_live(
+    as_of: str | None = Query(
+        None,
+        description="newest book date on or before this date (omitted -> newest in view)",
+    ),
+    kind: str | None = Query(
+        None,
+        description="filter by kind; LIVE_ONLY rows are always included unless kind=LIVE_ONLY",
+    ),
+    current_only: bool = Query(
+        True,
+        description="only current books (is_current = 1); false includes variant books",
+    ),
+    db: Database = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Optimized benchmark weights beside live portfolio positions (``v_quant_vs_live``).
+
+    LIVE_ONLY rows represent positions held by no current optimized book on that
+    date. If *kind* is provided, returns that kind's rows plus LIVE_ONLY rows (or
+    only LIVE_ONLY rows when kind='LIVE_ONLY').
+    """
+    if as_of:
+        date_rows = rows(
+            db,
+            "SELECT MAX(as_of) AS target_as_of FROM v_quant_vs_live WHERE as_of <= ?",
+            (as_of,),
+        )
+    else:
+        date_rows = rows(
+            db,
+            "SELECT MAX(as_of) AS target_as_of FROM v_quant_vs_live",
+        )
+    if not date_rows or not date_rows[0]["target_as_of"]:
+        return []
+
+    target_as_of = date_rows[0]["target_as_of"]
+
+    sql = "SELECT * FROM v_quant_vs_live WHERE as_of = ?"
+    params: list[object] = [target_as_of]
+
+    if kind:
+        if kind.upper() == "LIVE_ONLY":
+            sql += " AND kind = 'LIVE_ONLY'"
+        else:
+            sql += " AND (kind = ? COLLATE NOCASE OR kind = 'LIVE_ONLY')"
+            params.append(kind.lower())
+
+    if current_only:
+        sql += " AND is_current = 1"
+
+    sql += " ORDER BY kind, ticker"
+    return rows(db, sql, params)

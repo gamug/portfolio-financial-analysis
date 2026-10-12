@@ -15,13 +15,13 @@ renumber; mark a cancelled/superseded task in place instead.
 **🔴 Priority override (2026-09-08 forensic audit; order re-set by the user 2026-10-05)**: Work item 8
 (`T-141`, `T-070`–`T-077`, `T-147`, `T-148`) is the current top priority — a direct audit against production data
 (`data/financial.db`) found live correctness bugs, not open design work. (Closed Work items 1, 3, 5, 6, 7,
-10, 11, 13, 14, 15, 16, 17 and 18 are in `CHANGELOG.md`.) Work item 14 (P0/P1, the second audit's live
+10, 11, 13, 14, 15, 16, 17, 18 and 19 are in `CHANGELOG.md`.) Work item 14 (P0/P1, the second audit's live
 defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-02; Work item 18 (the N-ticker
-weight heuristic, `T-134`–`T-139`) is closed 2026-10-05.
+weight heuristic, `T-134`–`T-139`) is closed 2026-10-05; Work item 19 (local follow-ups, `T-144`, `T-152`, `T-142`, `T-145`, `T-083`) is closed 2026-10-12.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
 finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) →
-**Work item 19** (local follow-ups: `T-083` → `T-142` → `T-145`) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
+**Work item 19** (done 2026-10-12) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
 `portfolio-nlp`) and Work item 9's `T-080`/`T-081`/`T-082`/`T-084` (they change what the knowledge graph
@@ -498,7 +498,7 @@ the final pilot, `T-143`.
       **Status (2026-10-12): PR #141, box open until merge.** Delivered on `feat/t150-accounting-identities`:
       the `CON_*` gate in `quality.py` (`dq-v3`), `scripts/verify_t150.py` (`reproduce` reproduces T-147's
       filing sets exactly; `measure` reports the before/after counts), hermetic tests, and the
-      `docs/model_fixes.md` / `SPEC.md` (1.8.3) entries.
+      `docs/model_fixes.md` / `SPEC.md` (1.9.1) entries.
 - [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
       **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
       investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
@@ -796,124 +796,6 @@ of `T-100`. `T-083` (local: our API reading `v_quant_vs_live`) moved to Work ite
       transfer — not silently treated as done once T-080–T-082 land as a
       code-level fix only. → `PLAN.md` Work item 9 "Blocked by missing
       data" note.
-
-## Work item 19 — Local follow-ups before the final pilot
-
-Added 2026-10-05, at the user's direction (scope: finish this repo first). Local work that needs nothing
-from another repo, placed above Work item 12 so it merges before the final pilot (`T-143`). One task per PR,
-each ending with its status commit after approval. → `PLAN.md` Work item 19. Order: `T-144` → `T-152` first (moved ahead of Work
-item 8 on 2026-10-09: the knowledge-graph repo is waiting on the contract), then `T-083` → `T-142` → `T-145` after
-Work item 8. `T-144` and `T-145` record the knowledge-graph view changes the user approved 2026-10-06
-(the knowledge-graph repo already references these two ids); they are the schema and `v_*` contract changes
-that constitution AI behavior #10 asks to be approved first.
-
-- [ ] **T-083** *(moved from Work item 9, text unchanged)* Update `api`/`kg_schema` read paths to consume the
-      rewritten `v_quant_vs_live`. **Needs T-042.** → `PLAN.md` Work item 9, step 4.
-- [x] **T-142** — **done 2026-10-12, PR #137** (approved after one review round: the try block now starts right after open_cycle, so an interrupt during the data loads also leaves the run 'failed'; the ranking endpoint skips failed, running and reverted runs). PR #112 review follow-ups, each with a regression test (item (d) is documentation):
-      - (a) `cycle/orchestrator.py`: catch `BaseException` and call `conn.rollback()` before writing a
-        failed checkpoint or a failed `cycle_run` (today a failure partway through a step saves its
-        half-written writes, and a Ctrl-C leaves the run at `running`).
-      - (b) `quant/db.py`: remove the inner `conn.commit()` from `insert_risk_model`,
-        `insert_expected_returns`, `insert_covariance`, `insert_portfolio`, `sync_positions` and
-        `insert_frontier_points`, so each run commits once at `finish_run`.
-      - (c) `/portfolio/ranking`: take the latest cycle date only from runs with
-        `status = 'completed'` (join `v_cycle_run`; no view change).
-      - (d) Document the units of `planned_units`, `completed_units`/`skipped_units` and
-        `failed_units` in `docs/fundamental_agent.md` and the `v_analysis_run` notes.
-- [x] **T-144** — **done, PR #129.** The knowledge-graph view contract, one additive change (`kg_schema` views, DDL notes and
-      `docs/kg_schema.md`). → `PLAN.md` Work item 19, step 3.
-      **Moved first, 2026-10-09** (with `T-152`, ahead of Work item 8; nothing in Work item 8 changes a view).
-      Production is frozen until `T-100` and stays at `schema_version` 8 (`m009`, the veto stints, was never
-      applied to it): the acceptance builds the views on a *copy* of it and on the pilot, and the knowledge-graph
-      repo keeps its floor at or below the database's own version for the production database. `v_quant_vs_live` loses two filters, so it returns more rows: the PR lists every reader
-      (today only tests, e.g. `tests/test_quant_pipeline.py`) and shows each one updated or unaffected.
-      - `v_fundamental_metric` (new): `ticker`, `asset_id`, `filing_id`, `metric_group`, `metric_name`,
-        `metric_id` (`metric_group || '.' || metric_name`, joins to `v_rule_catalog.param_metric`), `unit`,
-        `value`, `engine_version`, `is_current`, `event_time`, `available_at`, `run_id`.
-      - `v_score_snapshot`: add `forensic_flags_json` and `prompt_hash`; `available_at` returns the cycle
-        date for TECHNICAL, VALORIZATION and SECTOR rows (the stored column and FUNDAMENTAL rows are
-        unchanged).
-      - `v_shared_executive_edge`: add `computed_at` (`MAX`) and `run_id`.
-      - `v_cycle_ranking`: add `cr.status`, and fix its docstring.
-      - `v_quant_vs_live`: add `engine_version` and `is_current`, and drop `equal_weight`/`cap_weight` from
-        its filters. `v_quant_portfolio`: add `is_current`.
-      - `is_current`: for metrics, the version `resolve_metric_versions` picks with no explicit selection; for
-        quant, the newest `opt-v*` per `(as_of, kind)`. At most one current row per key.
-      - `v_cycle_ranking_component` (new): `cycle_run_id`, `asset_id`, `score_type`, `component_value`,
-        `configured_weight`, `effective_weight`; one row for every non-null component of every ranking row,
-        vetoed or not.
-      - `docs/kg_schema.md` documents: `blended_score` is 0–100 minus the run's `soft_veto_penalty` (15 by
-        default) per SOFT veto, and 0.0 minus that deduction with no components; SECTOR `raw_value` is in
-        TECHNICAL points, [−100, 100]; `normalized_score` is 50 + 10z over the cohort, clamped to [0, 100], the same for SECTOR; FUNDAMENTAL's `normalized_score` is
-        rewritten by every cycle, so the per-cycle value is `component_value`; the units (`ratio`, `x`,
-        `usd`); weights and caps are fractions of the book, caps are effective on SELECTION runs and
-        configured (possibly NULL) on MONITORING runs; `scheme_id` is the position-weighting rule, not the
-        blend; no component means all components null; `vetoed` is HARD or UNSCORED only; the timezones of
-        the `*_at` columns; the forensic-flag keys.
-      - A marker migration that bumps `schema_version` (run through `migrate`, FR-011). `ensure_views` drops
-        and recreates every view from the running code's definitions, so an older process that runs `ensure`
-        against a migrated database would remove the new columns and views: every process that opens the
-        database is upgraded (or stopped) before `migrate` runs, and `ensure_views` skips its rebuild when
-        the database's `schema_version` is above the highest migration the code knows (protects later code
-        from the next contract change; it cannot retrofit code that predates it).
-      - **Acceptance**: the views build on a copy of production and on the pilot; `available_at` is
-        non-NULL and ≥ `event_time` on every row of `v_fundamental_metric` and of `v_score_snapshot`'s
-        FUNDAMENTAL, TECHNICAL, VALORIZATION and SECTOR rows (SEMANTIC rows are not written until Work item
-        4); at most one `is_current` row per key; for a (run, asset) with
-        at least one component, the effective weights sum to 1 and Σ(effective weight × `component_value`) −
-        `soft_veto_penalty` × (number of SOFT vetoes) = `blended_score`, where `soft_veto_penalty` is the
-        run's (`params_json`, `v_weight_scheme`) and the SOFT count is the `veto_rules_json` entries other than
-        `HARD` and `UNSCORED`; every non-null component has a row; existing view columns are unchanged in
-        names, order and values, except `v_score_snapshot.available_at` on TECHNICAL, VALORIZATION and SECTOR
-        rows (NULL → the cycle date).
-      - **Status (2026-10-09): done, PR #129** (approved 2026-10-09). Marker migration is `m010` (`schema_version` 10).
-        Production's `financial.db` is at `schema_version` **8**, not 9 (`m009`, the veto stints, was never
-        applied to it); it stays frozen until `T-100`. Work item 19 still has open tasks, so nothing moves to
-        `CHANGELOG.md`.
-- [x] **T-152** Publish the `v_*` view contract over the API (knowledge-graph request, local
-      `docs/kg_requirements/kg_handoff_view_contract_endpoint.md`; accepted by the user 2026-10-09; SPEC FR-014).
-      Metadata only, never rows. **Follows `T-144`.** → `PLAN.md` Work item 19, step 5.
-      - `GET /api/v1/contract`: `contract_version` (the highest migration version the running code knows,
-        `kg_schema.migrations.MIGRATIONS`), `code_version` (`kg_schema.provenance.code_version()`), and `views`:
-        every view of `kg_schema.views.VIEWS`, in its order, each with `name`, `frozen` and its `columns` in order
-        (names; a type only if it is free). Built from the code, by building the views in an in-memory database the
-        way `tests/test_kg_schema.py` does and reading each view's columns, never from a hand-kept list. `frozen`
-        comes from a machine-readable set in `views.py` (today `v_universe_membership` is frozen only in a
-        docstring).
-      - `GET /api/v1/contract/database`: `schema_version` (`MAX(version)` of `schema_version`; 0 when the table is
-        missing or empty), `views_present` and `views_missing` against `VIEWS`, the database opened `mode=ro`.
-      - Both in a read router (FR-014): `mode=ro`, no side effects, the read routes' authentication and nothing more.
-      - The rule, in `docs/api.md` and `docs/kg_schema.md`: within one `contract_version` columns are only added,
-        never renamed, removed or reordered; every migration raises `contract_version`, whether or not it changes a
-        view.
-      - Tests: the response lists exactly the views and columns of the in-memory build, in order (a view added to
-        `VIEWS` and missing from the response fails); `contract_version` equals the highest migration;
-        `/contract/database` on a partial database names the missing views; no write-capable connection in the
-        router module (FR-014's check).
-      - The PR carries a sample response of each route; the knowledge-graph repo gets the commit, the routes and
-        the sample.
-      - **Status (2026-10-09): done, PR #130** (approved 2026-10-09). Both routes (`/contract` and
-        `/contract/database`), 10-column `quant_run` pin, hermetic tests. Work item 19 still has open tasks
-        (`T-083`, `T-142`, `T-145`), so nothing moves to `CHANGELOG.md`.
-      **Acceptance:** the tests above; a `GET /api/v1/contract` against a running instance returns every view with
-      its columns in order and `contract_version` (10 once `T-144`'s marker migration has landed).
-- [x] **T-145** — **done 2026-10-12, PR #139** (approved after two review rounds: the check also verifies
-    the run type, so production's 14,172 shared_executive_edge rows on run 1, a SELECTION run, FAIL and are
-    reported, not repaired; m014 is one transaction checked against the foreign-key state before it, and
-    keeps every trigger, index and view; accession numbers are unique per asset, since production's 30 shared
-    ones are dual-class pairs GOOG/GOOGL, FOX/FOXA, NWS/NWSA; scripts/verify_pilot.py is now tracked).
-    Non-reusable ids. → `PLAN.md` Work item 19, step 4.
-      - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the
-        DDL, plus a migration for existing databases (`migrate`, FR-011), tested on a copy — foreign keys,
-        `T-107` triggers and views intact. The rebuild seeds `sqlite_sequence` with the highest id referenced
-        anywhere (each table's own rows and every `run_id`/`filing_id` column that points to it), so an id
-        deleted before the migration is not reused; the test deletes a referenced highest row and checks that
-        the next id exceeds it. The seeding and `verify_pilot.py`'s run-type check share one explicit map
-        from each `run_id` column to its run table (`score_snapshot.run_id` depends on `run_kind`;
-        `shared_executive_edge.run_id` points to `cycle_run`).
-      - `scripts/verify_pilot.py` checks that every `run_id` resolves to a run of the right type, and that
-        `sec_filings.accession_number` is never NULL and is unique.
-      - No production write: the orphaned edge run ids disappear with `T-100`'s fresh database.
 
 ## Work item 20 — Run-endpoint access control — DEFERRED until after `T-100`
 
