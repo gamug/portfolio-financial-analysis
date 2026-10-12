@@ -174,6 +174,88 @@ def test_con08_continuing_only_when_no_discontinued_line() -> None:
     assert both is not None and both.n_terms == 3 and both.level == "pass"
 
 
+# -- F6: every rule has a pass, a warn and a block case ----------------------------------------
+
+_M = 1_000_000.0
+_B = 1_000_000_000.0
+F6_CASES = {
+    "CON_01": (
+        {_ASSETS: 10 * _B, _LIAB_EQ: 10 * _B},
+        {_ASSETS: 10 * _B, _LIAB_EQ: 10 * _B - 10 * _M},
+        {_ASSETS: 10 * _B, _LIAB_EQ: 10 * _B - 60 * _M},
+    ),
+    "CON_02": (
+        {_ASSETS: 10 * _B, _ASSETS_CURRENT: 3 * _B, _ASSETS_NONCURRENT: 7 * _B},
+        {_ASSETS: 10 * _B, _ASSETS_CURRENT: 3 * _B, _ASSETS_NONCURRENT: 6.99 * _B},
+        {_ASSETS: 10 * _B, _ASSETS_CURRENT: 3 * _B, _ASSETS_NONCURRENT: 5 * _B},
+    ),
+    "CON_03": (
+        {
+            _ASSETS: 10 * _B,
+            _LIABILITIES: 10 * _B,
+            _LIABILITIES_CURRENT: 3 * _B,
+            _LIABILITIES_NONCURRENT: 7 * _B,
+        },
+        {
+            _ASSETS: 10 * _B,
+            _LIABILITIES: 10 * _B,
+            _LIABILITIES_CURRENT: 3 * _B,
+            _LIABILITIES_NONCURRENT: 6.99 * _B,
+        },
+        {
+            _ASSETS: 10 * _B,
+            _LIABILITIES: 10 * _B,
+            _LIABILITIES_CURRENT: 3 * _B,
+            _LIABILITIES_NONCURRENT: 5 * _B,
+        },
+    ),
+    "CON_04": (
+        {
+            _ASSETS: 10 * _B,
+            _EQUITY_INCL_NCI: 5 * _B,
+            _STOCKHOLDERS_EQUITY: 4.9 * _B,
+            _MINORITY_INTEREST: 0.1 * _B,
+        },
+        {
+            _ASSETS: 10 * _B,
+            _EQUITY_INCL_NCI: 5 * _B,
+            _STOCKHOLDERS_EQUITY: 4.99 * _B,
+            _MINORITY_INTEREST: 0.02 * _B,
+        },
+        {
+            _ASSETS: 10 * _B,
+            _EQUITY_INCL_NCI: 5 * _B,
+            _STOCKHOLDERS_EQUITY: 5.5 * _B,
+            _MINORITY_INTEREST: 0.1 * _B,
+        },
+    ),
+    "CON_07": (
+        {CHANGE: 100 * _M, _OCF: 500 * _M, _ICF: -300 * _M, _FCF: -100 * _M},
+        {CHANGE: 100.5 * _M, _OCF: 500 * _M, _ICF: -300 * _M, _FCF: -99.9 * _M},
+        {CHANGE: 100.5 * _M, _OCF: 500 * _M, _ICF: -300 * _M, _FCF: -98.4 * _M},
+    ),
+    "CON_08": (
+        {_OCF: 100 * _M, _OCF_CONT: 100 * _M},
+        {_OCF: 100 * _M, _OCF_CONT: 95 * _M},  # no change in cash -> base missing -> WARN cap
+        {CHANGE: 100 * _M, _OCF: 100 * _M, _OCF_CONT: 90 * _M},
+    ),
+    "CON_19": (
+        {_PROFIT_LOSS: 1_000 * _M, _NET_INCOME: 800 * _M, _NCI_INCOME: 200 * _M},
+        {_PROFIT_LOSS: 1_000 * _M, _NET_INCOME: 800 * _M, _NCI_INCOME: 199.5 * _M},
+        {_PROFIT_LOSS: 1_000 * _M, _NET_INCOME: 800 * _M, _NCI_INCOME: 190 * _M},
+    ),
+}
+
+
+@pytest.mark.parametrize("rule", sorted(F6_CASES))
+def test_every_rule_has_pass_warn_block(rule: str) -> None:
+    """F6: a pass, a warn and a block case for each rule (CON_06 has its own below)."""
+    passing, warning, blocking = F6_CASES[rule]
+    for level, values in (("pass", passing), ("warn", warning), ("block", blocking)):
+        result = _result(values, rule)
+        assert result is not None and result.level == level, (rule, level)
+
+
 def test_a_rule_with_a_missing_operand_is_not_tested() -> None:
     assert _result({_ASSETS: 10 * BILLION}, "CON_01") is None
     assert quality.con08_result({_OCF: 100 * MILLION}, "C") is None
