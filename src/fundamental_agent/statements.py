@@ -827,6 +827,13 @@ class Statements:
             for c, flag in spec.unread_flags:
                 if self._is_concept_filed_in_column(spec, column, c):
                     self._flag(flag)
+        if (
+            spec.name in ("revenue", "net_income", "equity")
+            and value is not None
+            and concept is not None
+            and self._equals_dimensional_member(spec, column, concept, value)
+        ):
+            self._flag("equals_dimensional_member")
         self._apply_id01_flags(how, concept, value)
 
     def _apply_id01_flags(self, how: str | None, concept: str | None, value: float | None) -> None:
@@ -1558,7 +1565,11 @@ class Statements:
     # duplicate on any other axis (APA FY2021: the equity-method-investee axis) is a
     # slice promoted to a total, not a coincidence (T-128).
     _WHOLE_ENTITY_AXES = frozenset(
-        {"srt:ConsolidationItemsAxis", "us-gaap:StatementBusinessSegmentsAxis"}
+        {
+            "srt:ConsolidationItemsAxis",
+            "us-gaap:StatementBusinessSegmentsAxis",
+            "us-gaap:StatementEquityComponentsAxis",
+        }
     )
 
     def _total_is_plausible(self, spec: LineItem, column: str, total_value: float) -> bool:
@@ -1597,6 +1608,28 @@ class Statements:
                     continue
                 value = _numeric(row.get(column))
                 if value is not None and math.isclose(value, total_value, rel_tol=1e-9):
+                    return True
+        return False
+
+    def _equals_dimensional_member(
+        self, spec: LineItem, column: str, concept: str, value: float
+    ) -> bool:
+        """Whether a dimensional row of *concept*, on an axis outside
+        _WHOLE_ENTITY_AXES, carries exactly *value* in *column* (ID-16 / ID-09)."""
+        concepts_to_check = {concept} if " + " not in concept else set()
+        if not concepts_to_check:
+            return False
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if (
+                    row.get("abstract")
+                    or not row.get("dimension")
+                    or row.get("concept") not in concepts_to_check
+                    or row.get("dimension_axis") in self._WHOLE_ENTITY_AXES
+                ):
+                    continue
+                v = _numeric(row.get(column))
+                if v is not None and math.isclose(v, value, rel_tol=1e-9):
                     return True
         return False
 

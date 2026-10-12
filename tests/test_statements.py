@@ -748,3 +748,132 @@ def test_registry_nonnegatives_match_dqc_lists() -> None:
             local = c.split("_", 1)[1] if "_" in c else c
             is_dqc = (local in all_d15) or (item.name == "revenue" and local in d14)
             assert (c in item.nonnegative) == is_dqc, f"{item.name}: {c}"
+
+
+def test_equals_dimensional_member_flag_raised_when_value_matches_dimensional_row() -> None:
+    """ID-16 / ID-09: when resolved non-dimensional value equals a dimensional row
+    of the same concept on an axis outside _WHOLE_ENTITY_AXES -> flag equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Revenue match
+    payload_rev = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_rev = Statements.from_payload(payload_rev)
+    res_rev = stmts_rev.resolve("revenue", key)
+    assert res_rev.value == 500.0
+    assert "equals_dimensional_member" in res_rev.flags
+
+    # Net income match
+    payload_ni = {
+        "income_statement": [
+            _income_row("us-gaap_NetIncomeLoss", "Net Income", **{key: 150.0}),
+            _slice_row(
+                "us-gaap_NetIncomeLoss",
+                "Slice",
+                "us-gaap:StatementClassOfStockAxis",
+                "us-gaap:CommonClassAMember",
+                **{key: 150.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_ni = Statements.from_payload(payload_ni)
+    res_ni = stmts_ni.resolve("net_income", key)
+    assert res_ni.value == 150.0
+    assert "equals_dimensional_member" in res_ni.flags
+
+    # Equity match
+    payload_eq = {
+        "income_statement": [],
+        "balance_sheet": [
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity",
+                "abstract": False,
+                "dimension": False,
+                "2023-12-31": 1_000.0,
+            },
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity slice",
+                "abstract": False,
+                "dimension": True,
+                "dimension_axis": "us-gaap:StatementClassOfStockAxis",
+                "dimension_member": "us-gaap:CommonClassAMember",
+                "2023-12-31": 1_000.0,
+            },
+        ],
+        "cash_flow": [],
+    }
+    stmts_eq = Statements.from_payload(payload_eq)
+    res_eq = stmts_eq.resolve("equity", key)
+    assert res_eq.value == 1_000.0
+    assert "equals_dimensional_member" in res_eq.flags
+
+
+def test_equals_dimensional_member_not_raised_for_whole_entity_or_differing_value() -> None:
+    """A whole-entity axis slice or different value does not trigger equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Whole-entity axis
+    payload_whole = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Segment",
+                "srt:ConsolidationItemsAxis",
+                "us-gaap:OperatingSegmentsMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_whole = Statements.from_payload(payload_whole)
+    res_whole = stmts_whole.resolve("revenue", key)
+    assert res_whole.value == 500.0
+    assert "equals_dimensional_member" not in res_whole.flags
+
+    # Differing value
+    payload_diff = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 300.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_diff = Statements.from_payload(payload_diff)
+    res_diff = stmts_diff.resolve("revenue", key)
+    assert res_diff.value == 500.0
+    assert "equals_dimensional_member" not in res_diff.flags
