@@ -23,6 +23,7 @@ from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.pipeline import _targets, _YearTask, _ytd_columns
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import CoverShares, Statements
+from kg_schema.market_cap import MarketCap
 
 
 def _asset(conn: Database) -> int:
@@ -253,6 +254,19 @@ TTM = {
 }
 KEY = "2025-06-30 (Q2)"
 PRICE = ClosePrice(date="2025-06-30", close=400.0)  # market cap 40,000
+MC = MarketCap(
+    asset_id=1,
+    value=40_000.0,
+    shares=100.0,
+    share_count=100.0,
+    share_as_of="2025-06-30",
+    share_age_days=0,
+    filing_id=1,
+    close=400.0,
+    close_date="2025-06-30",
+    n_classes=0,
+    split_factor=1.0,
+)
 
 
 def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
@@ -260,20 +274,20 @@ def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
 
 
 def test_fcf_yields_divide_a_year_of_cash_flow_by_the_price() -> None:
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM, market_cap=MC))
     assert out["free_cash_flow_yield"].value == pytest.approx((4_100 - 800) / 40_000)
     assert out["sbc_adjusted_fcf_yield"].value == pytest.approx((4_100 - 800 - 190) / 40_000)
     inputs = out["free_cash_flow_yield"].inputs
     assert inputs["free_cash_flow_to_equity"] == 800.0  # the raw quarter stays on record
     assert inputs["free_cash_flow_to_equity_ttm"] == 3_300.0
     # without TTM (a 10-K) the filing's own period is the year
-    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None))
+    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None, market_cap=MC))
     assert tenk["free_cash_flow_yield"].value == pytest.approx(800 / 40_000)
 
 
 def test_a_ttm_yield_never_mixes_in_a_raw_quarter() -> None:
     partial = {k: v for k, v in TTM.items() if k != "capital_expenditure"}
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial, market_cap=MC))
     assert out["free_cash_flow_yield"].value is None
 
 

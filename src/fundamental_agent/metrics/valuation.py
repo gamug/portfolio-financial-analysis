@@ -16,15 +16,13 @@ from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
-from kg_schema.market_cap import MarketCap, cover_total
+from kg_schema.market_cap import MarketCap
 
 GROUP = "valuation"
 
 
 def _resolve_market_cap(
-    stmts: Statements,
     price: ClosePrice | None,
-    cik: str | None,
     market_cap: MarketCap | None,
     market_cap_missing: str | None,
 ) -> tuple[
@@ -54,26 +52,8 @@ def _resolve_market_cap(
         p_close = price.close if price is not None else None
         return (None, p_close, None, None, None, None, False, market_cap_missing)
 
-    cover = (
-        cover_total(((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares), cik=cik)
-        if stmts.cover_shares
-        else None
-    )
-    if cover is not None and price is not None:
-        return (
-            cover.value,
-            price.close,
-            cover.value * price.close,
-            _day_gap(price.date, cover.as_of_date),
-            1.0,
-            float(cover.n_classes),
-            False,
-            None,
-        )
-    if cover is None:
-        p_close = price.close if price is not None else None
-        return (None, p_close, None, None, None, None, False, "no_cover_shares")
-    return (None, None, None, None, None, None, False, "no_recent_price")
+    p_close = price.close if price is not None else None
+    return (None, p_close, None, None, None, None, False, "not_computed")
 
 
 def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit inputs
@@ -104,7 +84,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         n_classes,
         incomplete_classes,
         missing_reason,
-    ) = _resolve_market_cap(stmts, price, cik, market_cap, market_cap_missing)
+    ) = _resolve_market_cap(price, market_cap, market_cap_missing)
 
     cash_resolution = stmts.resolve("cash", period_key)
     cash = cash_resolution.value

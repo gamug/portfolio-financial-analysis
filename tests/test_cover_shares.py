@@ -30,6 +30,7 @@ from fundamental_agent.edgar_client import EdgarError
 from fundamental_agent.metrics import valuation
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import CoverShares, Statements
+from kg_schema.market_cap import MarketCap, cover_total
 
 PG_COVER = {
     "shares_outstanding": [
@@ -167,8 +168,40 @@ def test_shares_issued_is_not_shares_outstanding() -> None:
 # -- the valuation metric ----------------------------------------------------------------------
 
 
-def _market_cap(stmts: Statements, key: str, close: float) -> tuple[float | None, dict[str, float]]:
-    results = valuation.compute(stmts, key, ClosePrice("2023-09-29", close))
+def _market_cap(
+    stmts: Statements, key: str, close: float, cik: str | None = None
+) -> tuple[float | None, dict[str, float]]:
+    cover = (
+        cover_total(((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares), cik=cik)
+        if stmts.cover_shares
+        else None
+    )
+    if cover is not None:
+        mc = MarketCap(
+            asset_id=1,
+            value=cover.value * close,
+            shares=cover.value,
+            share_count=cover.value,
+            share_as_of=cover.as_of_date,
+            share_age_days=0,
+            filing_id=1,
+            close=close,
+            close_date="2023-09-29",
+            n_classes=cover.n_classes,
+            split_factor=1.0,
+            cik=cik,
+        )
+        results = valuation.compute(
+            stmts, key, ClosePrice("2023-09-29", close), cik=cik, market_cap=mc
+        )
+    else:
+        results = valuation.compute(
+            stmts,
+            key,
+            ClosePrice("2023-09-29", close),
+            cik=cik,
+            market_cap_missing="no_cover_shares",
+        )
     cap = next(r for r in results if r.name == "market_capitalization")
     return cap.value, cap.inputs
 
@@ -195,14 +228,11 @@ def test_a_berkshire_class_a_share_is_converted_to_class_b_in_the_metric(
         CoverShares(1_389_605_139.0, "2026-01-31", "us-gaap:CommonClassBMember"),
     ]
     key = "2023-09-30 (FY)"
-    results = valuation.compute(aapl_10k, key, ClosePrice("2023-09-29", 1.0), cik="0001067983")
-    cap = next(r for r in results if r.name == "market_capitalization").value
+    cap, _ = _market_cap(aapl_10k, key, 1.0, cik="0001067983")
     assert cap == pytest.approx(1_389_605_139 + 1500 * 511_820)
     # any other issuer with the same member names stays 1:1
-    other = valuation.compute(aapl_10k, key, ClosePrice("2023-09-29", 1.0), cik="0000320193")
-    assert next(r for r in other if r.name == "market_capitalization").value == pytest.approx(
-        1_389_605_139 + 511_820
-    )
+    other_cap, _ = _market_cap(aapl_10k, key, 1.0, cik="0000320193")
+    assert other_cap == pytest.approx(1_389_605_139 + 511_820)
 
 
 def test_a_dual_class_cover_is_summed_in_the_metric_as_in_the_reader(aapl_10k: Statements) -> None:
