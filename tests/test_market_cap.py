@@ -265,6 +265,53 @@ def test_cover_total_is_the_one_aggregation() -> None:
     assert got == ShareCount(5.0, "2026-01-15", 2)
 
 
+def test_fox_is_valued_class_by_class(conn: Database) -> None:
+    """Fox Corporation (MKT-03): Class A trades as FOXA, Class B as FOX.
+    Class A count x FOXA close + Class B count x FOX close."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (10, 'FOX', '0001754301')")
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (11, 'FOXA', '0001754301')")
+    fid = seed_cover_shares(
+        conn, 10, 200.0, as_of_date="2026-07-31", class_member="us-gaap:CommonClassBMember"
+    )
+    seed_cover_shares(
+        conn,
+        10,
+        100.0,
+        as_of_date="2026-07-31",
+        class_member="us-gaap:CommonClassAMember",
+        filing_id=fid,
+    )
+    _price(conn, 10, AS_OF, 25.0)  # FOX = 25.0
+    _price(conn, 11, AS_OF, 30.0)  # FOXA = 30.0
+
+    res = market_caps_as_of(conn, [10], as_of=AS_OF)
+    cap = res.caps[10]
+    # 100 * 30.0 + 200 * 25.0 = 3,000 + 5,000 = 8,000.0
+    assert cap.value == pytest.approx(8_000.0)
+    assert cap.incomplete_classes is False
+
+
+def test_multi_class_with_unconverted_class_is_flagged_incomplete(conn: Database) -> None:
+    """A multi-class CIK with a class neither listed nor converted gets incomplete_classes=True."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (20, 'MULTI', '0001999999')")
+    fid = seed_cover_shares(
+        conn, 20, 100.0, as_of_date="2026-07-31", class_member="us-gaap:CommonClassAMember"
+    )
+    seed_cover_shares(
+        conn,
+        20,
+        50.0,
+        as_of_date="2026-07-31",
+        class_member="us-gaap:CommonClassBMember",
+        filing_id=fid,
+    )
+    _price(conn, 20, AS_OF, 10.0)
+    res = market_caps_as_of(conn, [20], as_of=AS_OF)
+    cap = res.caps[20]
+    assert cap.value == pytest.approx(150.0 * 10.0)
+    assert cap.incomplete_classes is True
+
+
 # -- the result --------------------------------------------------------------------------------
 
 

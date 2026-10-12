@@ -45,6 +45,7 @@ from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
 from kg_schema import connect, identity, rundate
+from kg_schema.market_cap import market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 
@@ -816,6 +817,10 @@ def _analyze_one(
         engine.conn, task.asset_id, stmts, target.period.key, exclude_filing_id=filing_id
     )
 
+    mc_res = market_caps_as_of(engine.conn, [task.asset_id], as_of=target.period.date)
+    market_cap_obj = mc_res.caps.get(task.asset_id)
+    market_cap_missing = mc_res.missing.get(task.asset_id)
+
     ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
@@ -829,7 +834,10 @@ def _analyze_one(
         share_scale_factors=share_scale_factors,
         ttm_flows=ttm,
         cik=_asset_cik(engine, task.asset_id),
+        market_cap=market_cap_obj,
+        market_cap_missing=market_cap_missing,
     )
+
     result = engine.analyst.analyze(ctx)
     db.stamp_ytd(result.metrics, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
     db.record_metrics(

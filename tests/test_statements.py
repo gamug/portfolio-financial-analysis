@@ -1,12 +1,19 @@
-"""Statement parsing and line-item resolution against real EDGAR captures."""
-
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from sec_xcheck.dqc_lists import dqc14, dqc15
 
-from fundamental_agent.statements import INSTANT, Period, Statements, _parse_period, iter_facts
+from fundamental_agent.statements import (
+    INSTANT,
+    REGISTRY,
+    Period,
+    Statements,
+    _parse_period,
+    iter_facts,
+)
 
 
 def _tag(column: str) -> str | None:
@@ -663,8 +670,12 @@ def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     stmts = Statements.from_payload(
         {
             "income_statement": [
-                _income_row("us-gaap_CostOfGoodsSold", "Cost of goods sold", **{key: 100.0}),
-                _income_row("us-gaap_CostOfServices", "Cost of services", **{key: 50.0}),
+                _income_row(
+                    "us-gaap_CostOfGoodsAndServicesSold",
+                    "Cost of goods and services sold",
+                    **{key: 100.0},
+                ),
+                _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 50.0}),
             ],
             "balance_sheet": [],
             "cash_flow": [],
@@ -721,3 +732,19 @@ def test_the_utility_total_is_still_checked_against_a_named_component() -> None:
         )
     )
     assert stmts.get("revenue", key) == 1_000.0
+
+
+def test_registry_nonnegatives_match_dqc_lists() -> None:
+    """ID-13 to ID-15: nonnegative concepts in REGISTRY match DQC_0015 releases and DQC_0014 revenue concepts."""
+    dqc_dir = Path("docs/checklist_sec/sec documentation/B_DQC_element_lists")
+    d15 = dqc15(dqc_dir)
+    all_d15: set[str] = set()
+    for s in d15.values():
+        all_d15 |= s
+    d14 = dqc14(dqc_dir)
+
+    for item in REGISTRY.values():
+        for c in item.concepts:
+            local = c.split("_", 1)[1] if "_" in c else c
+            is_dqc = (local in all_d15) or (item.name == "revenue" and local in d14)
+            assert (c in item.nonnegative) == is_dqc, f"{item.name}: {c}"

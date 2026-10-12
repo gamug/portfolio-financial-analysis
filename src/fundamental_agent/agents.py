@@ -24,6 +24,7 @@ from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.skills import load_skill
 from fundamental_agent.statements import Statements
+from kg_schema.market_cap import MarketCap
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 _BULLISH_CUTOFF = 60.0
@@ -143,6 +144,8 @@ class FilingContext:
     # the issuer's zero-padded CIK: a multi-class share count is converted to the traded class by
     # `kg_schema.market_cap.CLASS_CONVERSION` (T-132: BRK's A = 1,500 B)
     cik: str | None = None
+    market_cap: MarketCap | None = None
+    market_cap_missing: str | None = None
 
     @property
     def ttm(self) -> dict[str, float]:
@@ -172,12 +175,9 @@ _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
 
 
 def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
-    """The *ttm* argument for *group*'s ``compute``. Cash-flow quality is a trailing-twelve-month
-    measure on a 10-Q and the fiscal-year figure on a 10-K, where ``None`` says "already annual"
-    (T-133); it takes the real TTM flows only, since a company-exclusion rule must not read one
-    quarter x 4. Every other group takes the T-105 flows, ``x4`` fallback included."""
-    if group != "cashflow":
-        return ctx.ttm
+    """The *ttm* argument for *group*'s ``compute``. On a 10-Q every group takes
+    the real trailing-twelve-month flows only (:attr:`FilingContext.real_ttm`, PER-06/D-09);
+    on a 10-K, ``None`` says "already annual"."""
     return ctx.real_ttm if ctx.form == "10-Q" else None
 
 
@@ -293,11 +293,24 @@ class FundamentalAnalyst:
                 group, ctx.stmts, ctx.period_key, ctx.prior_key, _group_ttm(group, ctx)
             ):
                 out.append((group, result))
-        if ctx.price is not None:
+        if (
+            ctx.price is not None
+            or ctx.market_cap is not None
+            or ctx.market_cap_missing is not None
+        ):
+            ttm_val = _group_ttm(valuation_metrics.GROUP, ctx)
             for result in valuation_metrics.compute(
-                ctx.stmts, ctx.period_key, ctx.price, ctx.share_scale_factors, ctx.ttm, cik=ctx.cik
+                ctx.stmts,
+                ctx.period_key,
+                ctx.price,
+                ctx.share_scale_factors,
+                ttm_val,
+                cik=ctx.cik,
+                market_cap=ctx.market_cap,
+                market_cap_missing=ctx.market_cap_missing,
             ):
                 out.append((valuation_metrics.GROUP, result))
+
         _flag_annualization(out, ctx.ttm_flows)
         return out
 

@@ -63,6 +63,7 @@ class MarketCap:
     n_classes: int  # non-total classes summed into share_count; 0 for one class or a filed total
     split_factor: float
     cik: str | None = None  # the issuer: two listings of one company share it (GOOG/GOOGL)
+    incomplete_classes: bool = False
 
 
 @dataclass
@@ -103,14 +104,42 @@ class ShareCount:
     n_classes: int  # non-total classes summed into value; 0 for one class or a filed total
 
 
-#: Share classes that are not 1:1 with the class the filer's listing trades, as ``{cik:
-#: {class_member: units of the traded class per share}}`` (T-132, PR #110 review). The cap is a
-#: count times the *traded* close, so a class worth more than one traded share is converted before
-#: it is summed: Berkshire's class A converts into 1,500 class B (the listing, BRK.B, is B). Every
-#: other multi-class filer in the universe (GOOGL, BF.B, MA, HOOD, STZ ...) is economically 1:1 and
-#: stays out of the table. Keyed by the zero-padded 10-digit CIK, members as the gateway names them.
+#: Listed share classes per CIK, cited from cover page Trading Symbol table (MKT-03):
+#: {cik: {class_member: ticker}}. Keyed by 10-digit zero-padded CIK.
+CLASS_LISTING: dict[str, dict[str, str]] = {
+    # Fox Corporation (CIK 0001754301): Class A Common Stock trades as FOXA, Class B Common Stock trades as FOX.
+    # Cover page Trading Symbol table, 10-K FY2026 (accession 0001628280-26-053960).
+    "0001754301": {
+        "us-gaap:CommonClassAMember": "FOXA",
+        "us-gaap:CommonClassBMember": "FOX",
+    },
+    # News Corporation (CIK 0001564708): Class A Common Stock trades as NWSA, Class B Common Stock trades as NWS.
+    # Cover page Trading Symbol table, 10-K FY2026 (accession 0001564708-26-000175).
+    "0001564708": {
+        "us-gaap:CommonClassAMember": "NWSA",
+        "us-gaap:CommonClassBMember": "NWS",
+    },
+}
+
+#: Share classes that convert into the class the filer's listing trades, as ``{cik:
+#: {class_member: units of the traded class per share}}`` (T-132, MKT-03).
+#: Keyed by the zero-padded 10-digit CIK, members as the gateway names them.
 CLASS_CONVERSION: dict[str, dict[str, float]] = {
+    # Berkshire Hathaway Inc. (CIK 0001067983): Class A Common Stock converts into 1,500 Class B Common Stock.
+    # 10-K FY2025 (accession 0001193125-26-083899).
     "0001067983": {"us-gaap:CommonClassAMember": 1500.0},
+    # Erie Indemnity Co. (CIK 0000922621): "Class B shares are convertible into Class A shares at a conversion ratio of 2,400 to 1."
+    # 10-K FY2025 (accession 0001628280-26-010666).
+    "0000922621": {"us-gaap:CommonClassBMember": 2400.0},
+    # Block, Inc. / XYZ (CIK 0001512673): "Shares of the Company's Class B common stock are convertible into an equivalent number of shares of its Class A common stock and generally convert into shares of its Class A common stock upon transfer." (1:1)
+    # 10-K FY2025 (accession 0001628280-26-012254).
+    "0001512673": {"us-gaap:CommonClassBMember": 1.0},
+    # Coinbase Global, Inc. (CIK 0001679788): "In addition, each share of Class B common stock will automatically convert into a share of Class A common stock upon a sale or transfer." (1:1)
+    # 10-K FY2025 (accession 0001679788-26-000015).
+    "0001679788": {"us-gaap:CommonClassBMember": 1.0},
+    # Robinhood Markets, Inc. (CIK 0001783879): "Shares of Class B common stock will also automatically convert into shares of Class A common stock upon sale or transfer" (1:1)
+    # 10-K FY2025 (accession 0001783879-26-000023).
+    "0001783879": {"us-gaap:CommonClassBMember": 1.0},
 }
 
 
@@ -155,6 +184,7 @@ class _Count:
     as_of_date: str
     n_classes: int
     cik: str | None = None
+    entries: tuple[tuple[str, float, str], ...] = ()
 
 
 def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
@@ -164,10 +194,10 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
         by_filing[(int(r["asset_id"]), int(r["filing_id"]))].append(r)
     out: dict[int, list[_Count]] = defaultdict(list)
     for (asset_id, filing_id), entries in by_filing.items():
-        total = cover_total(
-            ((str(e["class_member"]), float(e["value"]), str(e["as_of_date"])) for e in entries),
-            cik=entries[0]["cik"],
+        raw_entries = tuple(
+            (str(e["class_member"]), float(e["value"]), str(e["as_of_date"])) for e in entries
         )
+        total = cover_total(raw_entries, cik=entries[0]["cik"])
         if total is not None:
             out[asset_id].append(
                 _Count(
@@ -177,6 +207,7 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
                     total.as_of_date,
                     total.n_classes,
                     entries[0]["cik"],
+                    raw_entries,
                 )
             )
     return out
@@ -205,6 +236,64 @@ def _factor(splits: list[tuple[str, float]], *, after: str, through: str | None)
     return factor
 
 
+def _class_by_class_val(  # noqa: PLR0913, PLR0917
+    count: _Count,
+    factor: float,
+    close: float,
+    ticker_to_asset: dict[str, int],
+    closes: dict[int, tuple[str, float]],
+    splits: dict[int, list[tuple[str, float]]],
+    basis_end: dict[int, str],
+) -> tuple[float | None, bool]:
+    """Value a CIK in CLASS_LISTING class by class (MKT-03)."""
+    cik_norm = str(count.cik).zfill(10) if count.cik else ""
+    class_map = CLASS_LISTING.get(cik_norm, {})
+    conv_map = CLASS_CONVERSION.get(cik_norm, {})
+    newest: dict[str, tuple[str, float, str]] = {}
+    for e in count.entries:
+        if e[0] not in newest or e[2] > newest[e[0]][2]:
+            newest[e[0]] = e
+    total_val = 0.0
+    incomplete = False
+    for member, val, _as_of in newest.values():
+        if not member:
+            continue
+        if member in class_map:
+            t = class_map[member]
+            class_aid = ticker_to_asset.get(t.upper())
+            if class_aid is None or class_aid not in closes:
+                return None, False
+            c_close = closes[class_aid][1]
+            c_fac = _factor(
+                splits.get(class_aid, []),
+                after=count.as_of_date,
+                through=basis_end.get(class_aid),
+            )
+            total_val += val * c_fac * c_close
+        elif member in conv_map:
+            total_val += val * conv_map[member] * factor * close
+        else:
+            incomplete = True
+            total_val += val * factor * close
+    return total_val, incomplete
+
+
+def _is_incomplete_classes(count: _Count) -> bool:
+    if count.n_classes <= 1:
+        return False
+    cik_norm = str(count.cik).zfill(10) if count.cik else ""
+    conv_map = CLASS_CONVERSION.get(cik_norm, {})
+    newest: dict[str, tuple[str, float, str]] = {}
+    for e in count.entries:
+        if e[0] not in newest or e[2] > newest[e[0]][2]:
+            newest[e[0]] = e
+    non_totals = [m for m in newest if m]
+    if len(non_totals) <= 1:
+        return False
+    unconverted = [c for c in non_totals if c not in conv_map]
+    return len(unconverted) > 1
+
+
 def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     db: Database,
     asset_ids: list[int],
@@ -220,14 +309,21 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     wanted = sorted(set(asset_ids))
     if not wanted:
         return result
+    listing_tickers = [ticker for classes in CLASS_LISTING.values() for ticker in classes.values()]
+    try:
+        ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_tickers)
+    except Exception:
+        ticker_to_asset = {}
+    all_needed_assets = sorted(set(wanted) | set(ticker_to_asset.values()))
+
     counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))
     floor = (date.fromisoformat(as_of) - timedelta(days=max_price_age_days)).isoformat()
     closes = {
         int(r["asset_id"]): (str(r["date"]), float(r["close"]))
-        for r in queries.last_closes(db, wanted, as_of=as_of, floor=floor)
+        for r in queries.last_closes(db, all_needed_assets, as_of=as_of, floor=floor)
     }
-    basis_end = queries.last_price_dates(db, wanted)
-    splits = _split_factors(db, wanted, corpact_engine_version)
+    basis_end = queries.last_price_dates(db, all_needed_assets)
+    splits = _split_factors(db, all_needed_assets, corpact_engine_version)
 
     for aid in wanted:
         if aid not in counts:
@@ -244,9 +340,21 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
         close_date, close = closes[aid]
         factor = _factor(splits.get(aid, []), after=count.as_of_date, through=basis_end.get(aid))
         shares = count.value * factor
+        cik_norm = str(count.cik).zfill(10) if count.cik else ""
+        if cik_norm in CLASS_LISTING:
+            val, incomplete = _class_by_class_val(
+                count, factor, close, ticker_to_asset, closes, splits, basis_end
+            )
+            if val is None:
+                result.missing[aid] = NO_RECENT_PRICE
+                continue
+        else:
+            val = shares * close
+            incomplete = _is_incomplete_classes(count)
+
         result.caps[aid] = MarketCap(
             asset_id=aid,
-            value=shares * close,
+            value=val,
             shares=shares,
             share_count=count.value,
             share_as_of=count.as_of_date,
@@ -257,5 +365,6 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             n_classes=count.n_classes,
             split_factor=factor,
             cik=count.cik,
+            incomplete_classes=incomplete,
         )
     return result

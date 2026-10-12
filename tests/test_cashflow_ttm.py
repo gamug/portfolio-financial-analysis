@@ -171,23 +171,29 @@ def _ctx(form: str, flows: dict[str, TTMFlow]) -> FilingContext:
     )
 
 
-def test_cash_flow_takes_real_ttm_flows_only_and_other_groups_keep_the_x4_fallback() -> None:
+def test_all_groups_take_real_ttm_flows_only_without_x4_fallback() -> None:
     flows = {
         "operating_cash_flow": TTMFlow(1_200.0, "ytd"),
         "capital_expenditure": TTMFlow(400.0, "x4"),
         "net_income": TTMFlow(500.0, "quarters"),
     }
     ctx = _ctx("10-Q", flows)
+    # PER-06: Every group receives real_ttm on 10-Q (no x4 fallback)
     assert _group_ttm("cashflow", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
-    assert _group_ttm("profitability", ctx) == ctx.ttm
-    assert ctx.ttm["capital_expenditure"] == 400.0
+    assert _group_ttm("profitability", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
+    assert _group_ttm("efficiency", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
+    assert _group_ttm("leverage", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
+    assert _group_ttm("roic", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
+    assert _group_ttm("valuation", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
 
 
-def test_a_10k_is_given_no_ttm_for_cash_flow_but_a_10q_with_nothing_real_is_given_an_empty_one() -> (
+def test_a_10k_is_given_no_ttm_for_any_group_but_a_10q_with_nothing_real_is_given_an_empty_one() -> (
     None
 ):
     assert _group_ttm("cashflow", _ctx("10-K", {})) is None
+    assert _group_ttm("profitability", _ctx("10-K", {})) is None
     assert _group_ttm("cashflow", _ctx("10-Q", {"revenue": TTMFlow(4.0, "x4")})) == {}
+    assert _group_ttm("profitability", _ctx("10-Q", {"revenue": TTMFlow(4.0, "x4")})) == {}
 
 
 # -- capex recognition -------------------------------------------------------------------------

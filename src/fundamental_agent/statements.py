@@ -265,15 +265,25 @@ REGISTRY: dict[str, LineItem] = {
                 "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
             ),
         ),
+        # ID-13/ID-15: DQC_0014 and DQC_0015 non-negative revenue concepts
+        nonnegative=(
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+            "us-gaap_OperatingLeaseLeaseIncome",
+        ),
     ),
     "cogs": LineItem(
         "cogs",
         _INCOME,
+        # ID-20: CostOfGoodsSold and CostOfServices removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_CostOfGoodsAndServicesSold",
             "us-gaap_CostOfRevenue",
-            "us-gaap_CostOfGoodsSold",
-            "us-gaap_CostOfServices",
+        ),
+        # ID-13: DQC_0015 non-negative concepts
+        nonnegative=(
+            "us-gaap_CostOfGoodsAndServicesSold",
+            "us-gaap_CostOfRevenue",
         ),
     ),
     "gross_profit": LineItem("gross_profit", _INCOME, concepts=("us-gaap_GrossProfit",)),
@@ -332,6 +342,10 @@ REGISTRY: dict[str, LineItem] = {
         ),
         unread_flags=(("us-gaap_Depreciation", "depreciation_only_not_da"),),
         concept_flags=(("us-gaap_DepreciationAndAmortization", "da_element_nonproduction"),),
+        nonnegative=(
+            "us-gaap_DepreciationDepletionAndAmortization",
+            "us-gaap_DepreciationAndAmortization",
+        ),
     ),
     "operating_cash_flow": LineItem(
         "operating_cash_flow",
@@ -382,9 +396,9 @@ REGISTRY: dict[str, LineItem] = {
     "stock_based_compensation": LineItem(
         "stock_based_compensation",
         _CASHFLOW,
+        # ID-20: ShareBasedCompensationExpense removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_ShareBasedCompensation",
-            "us-gaap_ShareBasedCompensationExpense",
             "us-gaap_AllocatedShareBasedCompensationExpense",
         ),
         standard=("StockBasedCompensationExpense",),
@@ -400,6 +414,7 @@ REGISTRY: dict[str, LineItem] = {
         _BALANCE,
         concepts=("us-gaap_CommonStockSharesOutstanding",),
         standard=("SharesYearEnd",),
+        nonnegative=("us-gaap_CommonStockSharesOutstanding",),
     ),
     # Weighted-average diluted share count from the income statement -- always
     # reported; use for per-share metrics and as the shares_outstanding fallback.
@@ -410,6 +425,7 @@ REGISTRY: dict[str, LineItem] = {
         _INCOME,
         concepts=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
         standard=("SharesFullyDilutedAverage",),
+        nonnegative=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
     ),
     # As-filed diluted EPS -- a GAAP-required disclosure, independent of
     # `diluted_shares` (net income divided by it, as reported by the filer
@@ -429,11 +445,26 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
         ),
     ),
-    "total_assets": LineItem("total_assets", _BALANCE, concepts=("us-gaap_Assets",)),
-    "current_assets": LineItem("current_assets", _BALANCE, concepts=("us-gaap_AssetsCurrent",)),
-    "total_liabilities": LineItem("total_liabilities", _BALANCE, concepts=("us-gaap_Liabilities",)),
+    "total_assets": LineItem(
+        "total_assets", _BALANCE, concepts=("us-gaap_Assets",), nonnegative=("us-gaap_Assets",)
+    ),
+    "current_assets": LineItem(
+        "current_assets",
+        _BALANCE,
+        concepts=("us-gaap_AssetsCurrent",),
+        nonnegative=("us-gaap_AssetsCurrent",),
+    ),
+    "total_liabilities": LineItem(
+        "total_liabilities",
+        _BALANCE,
+        concepts=("us-gaap_Liabilities",),
+        nonnegative=("us-gaap_Liabilities",),
+    ),
     "current_liabilities": LineItem(
-        "current_liabilities", _BALANCE, concepts=("us-gaap_LiabilitiesCurrent",)
+        "current_liabilities",
+        _BALANCE,
+        concepts=("us-gaap_LiabilitiesCurrent",),
+        nonnegative=("us-gaap_LiabilitiesCurrent",),
     ),
     "equity": LineItem(
         "equity",
@@ -452,22 +483,40 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_CashCashEquivalentsAndShortTermInvestments",
             "us-gaap_CashAndDueFromBanks",
         ),
+        nonnegative=(
+            "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+            "us-gaap_CashCashEquivalentsAndShortTermInvestments",
+            "us-gaap_CashAndDueFromBanks",
+        ),
         resolver="cash",
     ),
     "short_term_investments": LineItem(
         "short_term_investments",
         _BALANCE,
+        # ID-20: AvailableForSaleSecuritiesCurrent removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_ShortTermInvestments",
             "us-gaap_MarketableSecuritiesCurrent",
-            "us-gaap_AvailableForSaleSecuritiesCurrent",
+        ),
+        nonnegative=(
+            "us-gaap_ShortTermInvestments",
+            "us-gaap_MarketableSecuritiesCurrent",
         ),
     ),
-    "inventory": LineItem("inventory", _BALANCE, concepts=("us-gaap_InventoryNet",)),
+    "inventory": LineItem(
+        "inventory",
+        _BALANCE,
+        concepts=("us-gaap_InventoryNet",),
+        nonnegative=("us-gaap_InventoryNet",),
+    ),
     "receivables": LineItem(
         "receivables",
         _BALANCE,
         concepts=(
+            "us-gaap_AccountsReceivableNetCurrent",
+            "us-gaap_ReceivablesNetCurrent",
+        ),
+        nonnegative=(
             "us-gaap_AccountsReceivableNetCurrent",
             "us-gaap_ReceivablesNetCurrent",
         ),
@@ -486,12 +535,19 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_LongTermDebtAndCapitalLeaseObligations",
             "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
         ),
+        nonnegative=(
+            "us-gaap_LongTermDebtNoncurrent",
+            "us-gaap_LongTermDebt",
+            "us-gaap_LongTermDebtAndCapitalLeaseObligations",
+            "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+        ),
         resolver="long_term_debt",
     ),
     "short_term_debt": LineItem(
         "short_term_debt",
         _BALANCE,
         concepts=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
+        nonnegative=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
         resolver="short_term_debt",
     ),
 }

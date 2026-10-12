@@ -22,7 +22,7 @@ from fundamental_agent.metrics.roic import compute as roic_compute
 from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.pipeline import _targets, _YearTask, _ytd_columns
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import CoverShares, Statements
 
 
 def _asset(conn: Database) -> int:
@@ -238,7 +238,9 @@ def _quarter() -> Statements:
     }
     for statement, r in rows:
         payload[statement].append(r)
-    return Statements.from_payload(payload)
+    stmts = Statements.from_payload(payload)
+    stmts.cover_shares = [CoverShares(100.0, "2025-06-30")]
+    return stmts
 
 
 TTM = {

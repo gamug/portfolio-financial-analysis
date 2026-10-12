@@ -173,16 +173,17 @@ def _market_cap(stmts: Statements, key: str, close: float) -> tuple[float | None
     return cap.value, cap.inputs
 
 
-def test_the_cover_count_is_preferred_to_the_balance_sheet(aapl_10k: Statements) -> None:
+def test_cover_shares_used_for_market_cap_under_mkt04(aapl_10k: Statements) -> None:
     key = "2023-09-30 (FY)"
-    on_balance_sheet, inputs = _market_cap(aapl_10k, key, 100.0)
-    assert on_balance_sheet == pytest.approx(15_550_061_000.0 * 100.0)
-    assert inputs["shares_from_cover_page"] == 0.0
+    # With no cover shares, market cap is None and flagged market_cap_no_cover_shares
+    no_cover, inputs = _market_cap(aapl_10k, key, 100.0)
+    assert no_cover is None
+    assert inputs.get("market_cap_no_cover_shares") == 1.0
 
     aapl_10k.cover_shares = [CoverShares(15_000_000_000.0, "2023-10-20")]
     cap, inputs = _market_cap(aapl_10k, key, 100.0)
     assert cap == pytest.approx(15_000_000_000.0 * 100.0)
-    assert inputs["shares_from_cover_page"] == 1.0 and inputs["shares_are_diluted_average"] == 0.0
+    assert inputs["shares"] == 15_000_000_000.0
 
 
 def test_a_berkshire_class_a_share_is_converted_to_class_b_in_the_metric(
@@ -212,9 +213,10 @@ def test_a_dual_class_cover_is_summed_in_the_metric_as_in_the_reader(aapl_10k: S
     assert _market_cap(aapl_10k, "2023-09-30 (FY)", 2.0)[0] == pytest.approx(30.0)
 
 
-def test_with_no_cover_the_balance_sheet_count_still_serves(aapl_10k: Statements) -> None:
+def test_with_no_cover_market_cap_is_empty_under_mkt04(aapl_10k: Statements) -> None:
     assert aapl_10k.cover_shares == []
-    assert _market_cap(aapl_10k, "2023-09-30 (FY)", 1.0)[0] == pytest.approx(15_550_061_000.0)
+    cap, _ = _market_cap(aapl_10k, "2023-09-30 (FY)", 1.0)
+    assert cap is None
 
 
 # -- storage -----------------------------------------------------------------------------------

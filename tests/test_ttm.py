@@ -26,8 +26,12 @@ from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.metrics.efficiency import compute as efficiency_compute
+from fundamental_agent.metrics.leverage import compute as leverage_compute
 from fundamental_agent.metrics.profitability import compute as profitability_compute
-from fundamental_agent.statements import Statements
+from fundamental_agent.metrics.roic import compute as roic_compute
+from fundamental_agent.metrics.valuation import compute as valuation_compute
+from fundamental_agent.pricing import ClosePrice
+from fundamental_agent.statements import CoverShares, Statements
 from kg_schema.queries import UniverseMember
 
 
@@ -335,3 +339,73 @@ def test_efficiency_compute_uses_ttm_revenue_and_cogs() -> None:
 
     assert results["asset_turnover"].value == pytest.approx(400.0 / 500.0)
     assert results["asset_turnover"].inputs["revenue"] == 100.0  # audit trail unchanged
+
+
+def test_per06_quarterly_with_empty_ttm_leaves_all_ttm_ratios_empty() -> None:
+    """PER-06: On a 10-Q where flows were all x4 (real_ttm={}), every TTM-based
+    ratio is None and never falls back to the single-quarter flow."""
+    key = "2024-06-30 (Q3)"
+    stmts = Statements.from_payload(
+        _quarterly_payload(revenue=100.0, cogs=40.0, net_income=10.0, total_assets=500.0)
+    )
+    stmts.cover_shares = [CoverShares(10_000_000.0, "2024-07-15")]
+    price = ClosePrice("2024-06-28", 50.0)
+
+    # Empty TTM (all flows were x4)
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm={})}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm={})}
+    lev = {r.name: r.value for r in leverage_compute(stmts, key, None, ttm={})}
+    roic = {r.name: r.value for r in roic_compute(stmts, key, None, ttm={})}
+    val = {r.name: r.value for r in valuation_compute(stmts, key, price, ttm={})}
+
+    assert prof["return_on_assets"] is None
+    assert prof["return_on_equity"] is None
+    assert eff["asset_turnover"] is None
+    assert eff["receivables_turnover"] is None
+    assert eff["inventory_turnover"] is None
+    assert lev["net_debt_to_ebitda"] is None
+    assert roic["return_on_invested_capital"] is None
+    assert val["free_cash_flow_yield"] is None
+    assert val["enterprise_fcf_yield"] is None
+    assert val["sbc_adjusted_fcf_yield"] is None
+
+
+def test_per06_quarterly_with_real_ttm_computes_ratios() -> None:
+    """PER-06: On a 10-Q with real TTM flows, TTM-based ratios are computed."""
+    key = "2024-06-30 (Q3)"
+    stmts = Statements.from_payload(
+        _quarterly_payload(revenue=100.0, cogs=40.0, net_income=10.0, total_assets=500.0)
+    )
+    ttm = {"net_income": 40.0, "revenue": 400.0, "cogs": 160.0}
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm=ttm)}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm=ttm)}
+
+    assert prof["return_on_assets"] == pytest.approx(40.0 / 500.0)
+    assert eff["asset_turnover"] == pytest.approx(400.0 / 500.0)
+
+
+def test_per06_annual_10k_unaffected() -> None:
+    """PER-06: On a 10-K (ttm=None), ratios compute from the filing's annual flows."""
+    key = "2024-06-30 (FY)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _income_row(
+                    "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                    "Revenue",
+                    **{key: 100.0},
+                ),
+                _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 40.0}),
+                _income_row("us-gaap_NetIncomeLoss", "Net income", **{key: 10.0}),
+            ],
+            "balance_sheet": [
+                _income_row("us-gaap_Assets", "Total assets", **{"2024-06-30": 500.0}),
+            ],
+            "cash_flow": [],
+        }
+    )
+    prof = {r.name: r.value for r in profitability_compute(stmts, key, None, ttm=None)}
+    eff = {r.name: r.value for r in efficiency_compute(stmts, key, None, ttm=None)}
+
+    assert prof["return_on_assets"] == pytest.approx(10.0 / 500.0)
+    assert eff["asset_turnover"] == pytest.approx(100.0 / 500.0)

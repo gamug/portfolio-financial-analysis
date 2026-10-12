@@ -29,11 +29,11 @@ def compute(
 
     net_debt = debt - cash if debt is not None and cash is not None else None
     ebitda = None
-    if operating is not None and dep_amort is not None:
-        ebitda = operating + dep_amort
-    if ttm:
+    if ttm is not None:
         op_ttm, da_ttm = ttm.get("operating_income"), ttm.get("depreciation_amortization")
         ebitda = op_ttm + da_ttm if op_ttm is not None and da_ttm is not None else None
+    elif operating is not None and dep_amort is not None:
+        ebitda = operating + dep_amort
 
     inputs = present(
         total_debt=debt,
@@ -43,8 +43,9 @@ def compute(
         operating_income=operating,
         interest_expense=interest,
         depreciation_amortization=dep_amort,
-        ebitda_ttm=ebitda if ttm else None,
+        ebitda_ttm=ebitda if ttm is not None else None,
     )
+
     inputs.update(flag_inputs("total_debt", debt_resolution.flags))
     inputs.update(flag_inputs("interest_expense", interest_resolution.flags))
     inputs.update(flag_inputs("depreciation_amortization", da_resolution.flags))
