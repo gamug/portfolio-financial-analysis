@@ -286,54 +286,143 @@ def _per_filing_rules(rows: list[Any]) -> tuple[dict[str, str], set[str], set[st
     return worst, ytd_rules, base_missing_rules
 
 
-def _shared_filing_ids(conn: Any, before_conn: Any) -> tuple[set[int], set[int], dict[int, str]]:
-    """``(after ids, before ids, after_id -> accession)`` for the accessions present in both."""
-    after_map = _accession_ids(conn)
-    before_map = _accession_ids(before_conn)
-    shared = set(after_map) & set(before_map)
-    return (
-        {after_map[a] for a in shared},
-        {before_map[a] for a in shared},
-        {after_map[a]: a for a in shared},
-    )
+# The identity rules' operands and their column kind (True = the instant column), for the change
+# table's cause classification. CON_06 is left out: it is a new rule (F1b), so on the pre-F1b
+# "before" code it was never evaluated.
+_RULE_OPERANDS: dict[str, tuple[tuple[str, ...], bool]] = {
+    "CON_01": ((quality._ASSETS, quality._LIAB_EQ), True),
+    "CON_02": ((quality._ASSETS, quality._ASSETS_CURRENT, quality._ASSETS_NONCURRENT), True),
+    "CON_03": (
+        (quality._LIABILITIES, quality._LIABILITIES_CURRENT, quality._LIABILITIES_NONCURRENT),
+        True,
+    ),
+    "CON_04": (
+        (
+            quality._EQUITY_INCL_NCI,
+            quality._STOCKHOLDERS_EQUITY,
+            quality._MINORITY_INTEREST,
+        ),
+        True,
+    ),
+    "CON_07": ((*quality._CHANGE_IN_CASH, quality._OCF, quality._ICF, quality._FCF), False),
+    "CON_08": ((quality._OCF, quality._OCF_CONT, quality._OCF_DISC), False),
+    "CON_19": ((quality._PROFIT_LOSS, quality._NET_INCOME, quality._NCI_INCOME), False),
+}
 
 
-def _level_changes(
-    after_results: dict[int, list[quality.IdentityResult]],
-    before_results: dict[int, list[quality.IdentityResult]],
-    after_by_acc: dict[int, str],
-    tickers: dict[int, str],
+def _displayed(
+    conn: Any, filing_id: int, concept: str, column: str
+) -> tuple[float, float | None] | None:
+    """``(displayed value, preferred_sign or None)`` of the concept's own-statement row."""
+    statement = quality._CONCEPT_STATEMENT[concept]
+    sign_col = "preferred_sign" if quality._has_preferred_sign(conn) else "NULL AS preferred_sign"
+    row = conn.execute(
+        f"SELECT value, {sign_col} FROM financial_facts "  # noqa: S608 - fixed literal column
+        "WHERE filing_id = ? AND statement = ? AND concept = ? AND period_key = ? "
+        "ORDER BY id LIMIT 1",
+        (filing_id, statement, concept, column),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    return float(row[0]), row[1]
+
+
+def _operand_rows(
+    conn: Any, filing_id: int, operands: tuple[str, ...], instant: bool
+) -> dict[str, tuple[float, float | None] | None] | None:
+    facts = quality.load_facts(conn, [filing_id]).get(filing_id)
+    if facts is None:
+        return None
+    column = facts.instant_column if instant else facts.flow_column
+    if column is None:
+        return None
+    return {c: _displayed(conn, filing_id, c, column) for c in operands}
+
+
+def _cause(  # noqa: PLR0911 - one classification per cause
+    conn: Any, before_conn: Any, afid: int, bfid: int, rule: str
+) -> str:
+    """F4's classification of one level change for *rule*: 'operand row absent after', 'operand row
+    absent before', 'filed sign', 'value differs', or 'other' (a tolerance/base/rule change)."""
+    if rule not in _RULE_OPERANDS:  # CON_06 is a new rule: no pre-F1b operand shape
+        return "other"
+    operands, instant = _RULE_OPERANDS[rule]
+    before = _operand_rows(before_conn, bfid, operands, instant)
+    after = _operand_rows(conn, afid, operands, instant)
+    if before is None or after is None:
+        return "other"
+    if any(before.get(c) is not None and after.get(c) is None for c in operands):
+        return "operand row absent after"
+    if any(before.get(c) is None and after.get(c) is not None for c in operands):
+        return "operand row absent before"
+    if any(
+        (b := before.get(c)) is not None
+        and (a := after.get(c)) is not None
+        and b[0] == a[0]
+        and b[1] != a[1]
+        for c in operands
+    ):
+        return "filed sign"
+    if any(
+        (b := before.get(c)) is not None and (a := after.get(c)) is not None and b[0] != a[0]
+        for c in operands
+    ):
+        return "value differs"
+    return "other"
+
+
+def _changes_by_accession(  # noqa: PLR0913, PLR0917 - the two databases, their results and maps
+    conn: Any,
+    before_conn: Any,
+    after_results: dict[int, list[Any]],
+    before_results: dict[int, list[Any]],
+    after_map: dict[str, int],
+    before_map: dict[str, int],
+    shared: list[str],
+    *,
+    causes: bool,
 ) -> list[dict[str, Any]]:
-    before_levels = {
-        fid: {r.rule_id: r.level for r in rows} for fid, rows in before_results.items()
-    }
-    changes = []
-    for fid, rows in after_results.items():
-        old_levels = before_levels.get(fid, {})
-        for result in rows:
-            old = old_levels.get(result.rule_id)
-            if old is not None and old != result.level:
-                changes.append(
-                    {
-                        "accession": after_by_acc.get(fid),
-                        "ticker": tickers.get(fid, "?"),
-                        "rule": result.rule_id,
-                        "old": old,
-                        "new": result.level,
-                        "column": result.column,
-                    }
-                )
-    return changes
+    """Every level change between the two databases, keyed by **accession** and covering
+    tested↔untested in both directions."""
+    before_levels = {fid: _per_filing_rules(rows)[0] for fid, rows in before_results.items()}
+    after_levels = {fid: _per_filing_rules(rows)[0] for fid, rows in after_results.items()}
+    tickers = _tickers(conn)
+    out: list[dict[str, Any]] = []
+    for accession in shared:
+        afid, bfid = after_map[accession], before_map[accession]
+        a_rules = after_levels.get(afid, {})
+        b_rules = before_levels.get(bfid, {})
+        for rule in quality.CON_RULE_IDS:
+            old = b_rules.get(rule, "untested")
+            new = a_rules.get(rule, "untested")
+            if old == new:
+                continue
+            change: dict[str, Any] = {
+                "accession": accession,
+                "ticker": tickers.get(afid, "?"),
+                "rule": rule,
+                "old": old,
+                "new": new,
+            }
+            if causes:
+                change["cause"] = _cause(conn, before_conn, afid, bfid, rule)
+            out.append(change)
+    return out
 
 
 def cmd_measure(args: argparse.Namespace) -> int:
     conn = open_ro(args.db)
     before_conn = open_ro(args.before) if args.before else None
+    after_map = _accession_ids(conn)
+    before_map = _accession_ids(before_conn) if before_conn is not None else {}
     if before_conn is not None:
-        ids_after, ids_before, after_by_acc = _shared_filing_ids(conn, before_conn)
+        shared = sorted(set(after_map) & set(before_map))
+        ids_after = {after_map[a] for a in shared}
+        ids_before = {before_map[a] for a in shared}
     else:
-        ids_after = {int(r[0]) for r in conn.execute("SELECT id FROM sec_filings")}
-        ids_before, after_by_acc = set(), {}
+        shared = []
+        ids_after = set(after_map.values())
+        ids_before = set()
     after_results = _evaluate(conn, ids_after)
     counts = _counts(after_results, _tickers(conn))
 
@@ -342,7 +431,16 @@ def cmd_measure(args: argparse.Namespace) -> int:
     if before_conn is not None:
         before_results = _evaluate(before_conn, ids_before)
         before_counts = _counts(before_results, _tickers(before_conn))
-        changes = _level_changes(after_results, before_results, after_by_acc, _tickers(conn))
+        changes = _changes_by_accession(
+            conn,
+            before_conn,
+            after_results,
+            before_results,
+            after_map,
+            before_map,
+            shared,
+            causes=args.causes,
+        )
 
     header = (
         f"{'rule':7} {'tested':>7} {'pass':>7} {'warn':>7} {'block':>6} {'ytd':>5} "
@@ -359,21 +457,13 @@ def cmd_measure(args: argparse.Namespace) -> int:
             )
         return out
 
-    lines = [f"T-150 Phase 3.1/3.2: gate counts (real parameters C1-C9), db={args.db}"]
+    lines = [f"T-150 Phase 3.1: gate counts (real parameters C1-C9), db={args.db}"]
     if before_conn is not None:
-        lines.append(f"restricted to filings present in both (same accession): {len(ids_after)}")
+        lines.append(f"restricted to filings present in both (same accession): {len(shared)}")
     lines += ["", f"AFTER ({args.db})", header, *_rows(counts)]
     if before_counts is not None:
         lines += ["", f"BEFORE ({args.before})", header, *_rows(before_counts)]
-    text = "\n".join(lines)
-    if args.before:
-        lines += ["", f"level changes (before {args.before} -> after {args.db}): {len(changes)}"]
-        for ch in sorted(changes, key=lambda x: (x["rule"], x["accession"]))[:50]:
-            lines.append(
-                f"  {ch['rule']} {ch['ticker']} {ch['accession']} {ch['old']} -> {ch['new']} {ch['column']}"
-            )
-        text = "\n".join(lines)
-    Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
+    Path(args.out_txt).write_text("\n".join(lines) + "\n", encoding="utf-8")
     Path(args.out_json).write_text(
         json.dumps(
             {
@@ -381,12 +471,93 @@ def cmd_measure(args: argparse.Namespace) -> int:
                 "before": args.before,
                 "counts": counts,
                 "counts_before": before_counts,
-                "changes": changes,
             },
             indent=1,
         ),
         encoding="utf-8",
     )
+
+    change_lines = [
+        f"T-150 Phase 3.2: level changes by accession, before {args.before} -> {args.db}",
+        "",
+    ]
+    change_lines.append(f"changes: {len(changes)}")
+    if args.causes:
+        by_cause: dict[str, int] = {}
+        for ch in changes:
+            by_cause[ch["cause"]] = by_cause.get(ch["cause"], 0) + 1
+        change_lines.append(f"by cause: {by_cause}")
+    change_lines.append(f"{'rule':7} {'ticker':8} {'accession':24} {'old':9} {'new':9} cause")
+    for ch in sorted(changes, key=lambda c: (c["rule"], c["accession"])):
+        change_lines.append(
+            f"{ch['rule']:7} {ch['ticker']:8} {ch['accession']:24} {ch['old']:9} {ch['new']:9} "
+            f"{ch.get('cause', '')}"
+        )
+    Path(args.out_changes).write_text("\n".join(change_lines) + "\n", encoding="utf-8")
+    Path(args.out_changes_json).write_text(
+        json.dumps({"db": args.db, "before": args.before, "changes": changes}, indent=1),
+        encoding="utf-8",
+    )
+    print("\n".join(lines))
+    print(f"\n{len(changes)} level changes -> {args.out_changes}")
+    return 0
+
+
+def cmd_untested(args: argparse.Namespace) -> int:
+    """F4: the ``-> untested`` transitions grouped by cause, plus the fact-drop investigation."""
+    conn = open_ro(args.db)
+    before_conn = open_ro(args.before)
+    after_map = _accession_ids(conn)
+    before_map = _accession_ids(before_conn)
+    shared = sorted(set(after_map) & set(before_map))
+    changes = _changes_by_accession(
+        conn,
+        before_conn,
+        _evaluate(conn, {after_map[a] for a in shared}),
+        _evaluate(before_conn, {before_map[a] for a in shared}),
+        after_map,
+        before_map,
+        shared,
+        causes=True,
+    )
+    untested = [c for c in changes if c["new"] == "untested"]
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for ch in untested:
+        groups.setdefault((ch["cause"], ch["old"]), []).append(ch)
+    ids_before = json.dumps(sorted(before_map[a] for a in shared))
+    ids_after = json.dumps(sorted(after_map[a] for a in shared))
+    before_facts = int(
+        before_conn.execute(
+            "SELECT COUNT(*) FROM financial_facts WHERE filing_id IN (SELECT value FROM json_each(?))",
+            (ids_before,),
+        ).fetchone()[0]
+    )
+    after_facts = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM financial_facts WHERE filing_id IN (SELECT value FROM json_each(?))",
+            (ids_after,),
+        ).fetchone()[0]
+    )
+    lines = [
+        f"T-150 F4 untested transitions and the fact drop, before {args.before} -> {args.db}",
+        "",
+        f"shared accessions: {len(shared)}; total changes: {len(changes)}; -> untested: {len(untested)}",
+        f"stored facts: before {before_facts}, after {after_facts} (drop {before_facts - after_facts})",
+        "",
+        "-> untested grouped by (cause, old level):",
+    ]
+    for (cause, old), rows in sorted(groups.items()):
+        companies = sorted({r["ticker"] for r in rows})
+        lines.append(
+            f"  {cause} | {old} -> untested: {len(rows)} filings, {len(companies)} companies "
+            f"({', '.join(companies)})"
+        )
+        example = rows[0]
+        lines.append(
+            f"      example {example['ticker']} {example['accession']} ({example['rule']})"
+        )
+    text = "\n".join(lines)
+    Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
     print(text)
     return 0
 
@@ -778,9 +949,21 @@ def main(argv: list[str] | None = None) -> int:
     meas.add_argument(
         "--before", help="a second database: restrict to shared accessions, report changes"
     )
-    meas.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/p3_counts.txt")
-    meas.add_argument("--out-json", default="/workspaces/thesis/scratch/t150/out/p3_counts.json")
+    meas.add_argument("--causes", action="store_true", help="classify every change (F4)")
+    meas.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_counts.txt")
+    meas.add_argument("--out-json", default="/workspaces/thesis/scratch/t150/out/r1_counts.json")
+    meas.add_argument("--out-changes", default="/workspaces/thesis/scratch/t150/out/r1_changes.txt")
+    meas.add_argument(
+        "--out-changes-json", default="/workspaces/thesis/scratch/t150/out/r1_changes.json"
+    )
     meas.set_defaults(func=cmd_measure)
+    unt = sub.add_parser("untested", help="the -> untested transitions by cause (F4)")
+    unt.add_argument("--db", required=True)
+    unt.add_argument("--before", required=True)
+    unt.add_argument(
+        "--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_untested_causes.txt"
+    )
+    unt.set_defaults(func=cmd_untested)
     con06 = sub.add_parser("con06", help="CON-06: the within-instance rule and the cross-check")
     con06.add_argument("--db", required=True)
     con06.add_argument(
