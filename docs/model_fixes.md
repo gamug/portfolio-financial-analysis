@@ -6362,3 +6362,189 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
 
 **Scratch paths** (`/workspaces/thesis/scratch/t148b/`): `rebuilt_full3.db` (Part 1 rebuild, 9,341 filings), `before_recomputed.db` (recompute with master's code, 9,340 filings), `after_full.db` (recompute with current branch, 9,340 filings), `out/` (`recompute_before.log`, `recompute_after.log`, `r2a_method_effect.txt`, `r2a_method_effect.json`, `r2b_change.txt`, `r2b_change.json`, `r3_10q_flows.txt`, `r3_10q_flows.json`, `r3_margins_growth.txt`, `r3_per06_ttm_loss.txt`, `r3_per06_ttm_loss.json`, `flag_counts.txt`, `flag_counts.json`, `3.3_itemcheck.txt`, `3.3_signcheck.txt`, `3.3_precedence.txt`, `3.3_audit_measure.txt`, `3.3_audit_l09.txt`, `3.4_t070_calibration.txt`, `3.4_t070_changed_companies.txt`, `3.5_stt_mismatches.txt`, `causes_table.txt`, `id16.json`, `id16_revenue_axes.json`, `mkt03_multiclass_ciks.txt`).
 Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` and `universe.db` sha1 `04adf644f892597d5de1b60f11c0cd6cbc271ed1` before and after.
+
+## T-150 — accounting identities with DQ-01 and L-10 (Work item 8, step 13)
+
+A new Ring-1 data-quality gate beside the `DQ_*` gates in `src/fundamental_agent/quality.py`. It
+reads a filing's **stored facts** (`financial_facts`) — one filing, its own period, no dimensions,
+in the filed sign (ID-11/ID-12) — and checks the accounting identities of `checklist_v1.3.md`'s
+Layer CON with **DQ-01's tolerance** (`threshold = max(rounding, 0.5% × |base|)`) and **L-10's
+rounding term** (`0.5 × unit × n_terms`, unit inferred). No migration, no view or contract change,
+no change to metric values. `DATA_QUALITY_GATE_VERSION` bumps `dq-v2` → `dq-v3`; the production
+re-gate under `dq-v3` is a user action.
+
+### Rules (each with its checklist quote)
+
+| Rule | Identity | Quote (checklist v1.3) | Sev. |
+|---|---|---|---|
+| `CON_01` | `Assets = LiabilitiesAndStockholdersEquity` | "Assets equals Liability and Equity." | DQ-01 |
+| `CON_02` | `Assets = AssetsCurrent + AssetsNoncurrent` | "Assets = AssetsCurrent + AssetsNoncurrent" | WARN |
+| `CON_03` | `Liabilities = LiabilitiesCurrent + LiabilitiesNoncurrent` | "Liabilities = LiabilitiesCurrent + LiabilitiesNoncurrent" | WARN |
+| `CON_04` | equity incl. NCI `= StockholdersEquity + MinorityInterest` (only when `MinorityInterest` is filed) | "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest = StockholdersEquity + MinorityInterest" | DQ-01 |
+| `CON_07` | change in cash (excl. FX) `=` operating `+` investing `+` financing | "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseExcludingExchangeRateEffect … = NetCashProvidedByUsedInOperatingActivities + NetCashProvidedByUsedInInvestingActivities + NetCashProvidedByUsedInFinancingActivities" | WARN |
+| `CON_08` | operating cash flow `=` continuing `+` discontinued (total = continuing when no discontinued line) | "NetCashProvidedByUsedInOperatingActivities = NetCashProvidedByUsedInOperatingActivitiesContinuingOperations + CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations" | DQ-01 |
+| `CON_19` | `ProfitLoss = NetIncomeLoss + NetIncomeLossAttributableToNoncontrollingInterest` (all three filed) | "The starting point however, has to be net income including non-controlling interest." | DQ-01 |
+| `CON_06` | contiguous sub-periods sum to the aggregated period — the existing `DQ_TTM_CROSSCHECK` (`record_ttm_crosscheck`) | "values of a durational element for a series of periods of time do not aggregate to the value representing the aggregated period in the instance" | DQ-01 |
+
+`CON_02`, `CON_03`, `CON_07` are **WARN rules** (the checklist's "Sev." column): whatever level the
+arithmetic reaches, they record a WARN (`severity` SOFT) and quarantine nothing; the level reached
+(`"level": "block"`) is kept in the evidence. `CON_01`, `CON_04`, `CON_06`, `CON_08`, `CON_19`
+follow DQ-01: WARN level → a WARN; BLOCK level → "inputs blocked".
+
+### Decisions (director C1–C11)
+
+- **C1/C4 levels.** `diff = |left − right|`; `diff ≤ rounding` → pass; `rounding < diff ≤
+  threshold` → WARN; `diff > threshold` → BLOCK level.
+- **C2/C9 rounding (L-10).** `rounding = 0.5 × unit × n_terms`; `n_terms` the filed values
+  entering the identity (both sides); `unit` the largest of USD 1M, USD 1k that divides every
+  term exactly, else USD 1. CON-07, four terms in millions → USD 2,000,000 (L-10's own example).
+- **C3 bases.** CON-01..04 → `Assets`; CON-19 → `NetIncomeLoss`; CON-07/CON-08 → the first filed
+  change-in-cash concept; CON-06 → the TTM net income for an income-statement flow, and missing
+  for a cash-flow flow (no TTM change in cash is built). A missing base decides on `rounding`
+  alone and a not-pass is a WARN, never a BLOCK (`"base_missing": true`).
+- **C5/C6 blocking.** A BLOCK quarantines the rule's affected stored metrics (`quarantined = 1`,
+  severity SOFT — no HARD, no asset veto; precedent `DQ_NEG_EQUITY`); a WARN writes one SOFT
+  unquarantined row under the pseudo-group `identity` (`metric_name` = the rule). Affected metric
+  lists, with the checklist's "Metrics affected" quote:
+  - CON-01 ("Asset- and equity-based ratios"): `return_on_assets`, `return_on_equity`,
+    `debt_to_assets`, `debt_to_equity`, `asset_turnover`, `return_on_invested_capital`.
+  - CON-04: `return_on_equity`, `debt_to_equity`, `return_on_invested_capital`.
+  - CON-08: `operating_cash_flow_margin`, `free_cash_flow_margin`, `free_cash_flow_conversion`.
+  - CON-19 ("as ID-03"): every stored metric whose formula reads `net_income` — `net_margin`
+    (`profitability.py:51`), `return_on_assets` (`:52`), `return_on_equity` (`:53`),
+    `net_income_growth` (`growth.py:30`, `:48`), `net_income_cagr` (`cagr.py:17`),
+    `free_cash_flow_conversion` (`cashflow.py:47`, `:78`).
+  - CON-06 (`_TTM_BASED_METRICS`, per failed TTM item, from the metric formulas): net income →
+    ROA/ROE; revenue → asset/receivables turnover; cogs → inventory turnover; operating income →
+    net debt/EBITDA, ROIC; D&A → net debt/EBITDA; operating cash flow / capex → the three FCF
+    yields; SBC → the SBC-adjusted yield; interest expense → the unlevered FCF yield.
+- **C7 columns.** Balance concepts: the instant column at `period_end` (never an earlier period).
+  Flow concepts: the filing's own column — `<period_end> (FY)` for a 10-K, the quarter column
+  ending at `period_end` for a 10-Q. For CON-07/CON-08 on a 10-Q only, the year-to-date column
+  ending at `period_end` is used when the quarter column does not hold the operands (YTD tests
+  counted separately). Values in the filed sign (`displayed × preferred_sign`; as displayed when
+  the column is absent — a database that predates m013).
+- **C8 operands.** A rule is tested only when all operands are filed in the column; CON-04 only
+  with `MinorityInterest`; CON-08 without a discontinued line reads total = continuing; CON-19
+  needs all three concepts. **No sign alternatives in `src`**: the gate reads the filed sign and
+  computes the identity once.
+- **C10/C11.** Rule ids `CON_01`..`CON_04`, `CON_07`, `CON_08`, `CON_19` (CON-06 stays
+  `DQ_TTM_CROSSCHECK`), in the module docstring table and `CON_RULE_IDS`/`ALL_RULE_IDS`; evidence
+  JSON: `left`, `right`, `diff`, `rounding`, `unit`, `n_terms`, `base`, `threshold`, `level`,
+  `column`, `concepts`. Runs inside `quality.gate_version` (per filing, after the metric gates),
+  so the pipeline's `_analyze_one` and `python -m fundamental_agent quality` both run it;
+  append-only (`INSERT OR IGNORE`).
+
+### Reproduction of T-147 (Phase 2)
+
+- `scripts/audit_sec_checklist.py measure --only extra --db prod_copy.db` (`out/p2_extra.json`):
+  every block/warn count equals T-147's committed snapshot exactly (CON-01 3/0, CON-02 25/0,
+  CON-03 0/0, CON-04 4/5, CON-07 5/0, CON-08 1/1, CON-19 36/8). The one difference is CON-01's
+  *tested* denominator (5,074 vs 5,075, `out/p2_t147_counts.txt`): the committed snapshot is from
+  2026-10-09, before T-148 part 1 (`c1282a2`, 2026-10-11) added `_instant_for`'s N6 "never the
+  nearest earlier date"; EXE 10-Q 2022Q3's only balance-sheet instant is 2021-02-09
+  (`IBKR` FY2025 has zero stored facts), so under today's code it has no instant. EXE is not a hit
+  — only the CON-01 tested denominator moved.
+- `scripts/verify_t150.py reproduce --db prod_copy.db` (`out/p2_reproduce.txt/.json`): the gate's
+  pure core with T-147's parameters (rounding fixed at USD 1M, T-147's bases, CON-19's min over
+  the two NCI signs done in the script) reproduces T-147's per-rule/per-level **sets of filings**
+  exactly over the 5,075 target filings (**all sets equal; 0 reader value mismatches**).
+
+### The gate's real counts, before and after T-148 (Phase 3)
+
+`scripts/verify_t150.py measure --db after_t148.db --before prod_copy.db`
+(`out/p3_counts.txt/.json`), restricted to the 5,033 accessions present in both (after_t148.db is
+a larger rebuild, 9,341 filings). Counts are distinct filings; `ytd`/`basemiss` are C7 YTD-column
+tests and base-missing WARN caps.
+
+| Rule | tested | pass | warn | block | ytd | rule | tested | pass | warn | block | ytd |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| CON_01 after | 5028 | 5028 | 0 | 0 | 0 | CON_01 before | 5033 | 5030 | 0 | 3 | 0 |
+| CON_02 after | 233 | 208 | 0 | 25 | 0 | CON_02 before | 233 | 208 | 0 | 25 | 0 |
+| CON_03 after | 217 | 217 | 0 | 0 | 0 | CON_03 before | 217 | 217 | 0 | 0 | 0 |
+| CON_04 after | 2459 | 2455 | 4 | 0 | 0 | CON_04 before | 2491 | 2478 | 9 | 4 | 0 |
+| CON_07 after | 329 | 329 | 0 | 0 | 156 | CON_07 before | 335 | 330 | 0 | 5 | 156 |
+| CON_08 after | 188 | 185 | 0 | 3 | 83 | CON_08 before | 192 | 189 | 0 | 3 | 85 |
+| CON_19 after | 1943 | 1917 | 7 | 19 | 0 | CON_19 before | 1963 | 1234 | 129 | 600 | 0 |
+
+**Level changes (Phase 3.2, `out/p3_changes.txt`):** 690, **all `CON_19`, all one cause — a filed
+sign** (86 tickers; 563 block→pass, 123 warn→pass, 4 block→warn). The displayed facts are
+identical in both databases; only `preferred_sign` (T-148/m013) differs. Example
+(`out/p3_con19_example.txt`): **ACGL** `0000947484-22-000015`, FY2021, `NetIncomeLoss`
+2,156,849k, `ProfitLoss` 2,239,462k, NCI income displayed/the filed sign flips
+`-82,613k → +82,613k` (reading the deduction, the identity would be
+2,156,849k − 82,613k ≠ 2,239,462k). **WRB** FY2021 stores the NCI row twice (displayed +8,525k
+and −8,525k) with no `preferred_sign` in production, so the gate reads the deduction.
+
+**Production caveat (declared limitation).** On a database that predates m013 (no
+`preferred_sign`) the gate reads the displayed sign (C7), so CON-19 blocks 600/1963 = **30.6%**
+of its tested filings — all of them the NCI-deduction presentation, not a business fact. On the
+T-148-era database it blocks 19/1943 = **0.98%**. The production re-gate under `dq-v3` should
+therefore run on a signed (T-148-era) database; re-gating the current unsigned production would
+quarantine the CON-19 affected metrics of ~600 filings. `CON_02`'s 25/233 = 10.7% "blocks" are a
+WARN rule (C4): they record a WARN and quarantine nothing.
+
+**Parameter effect (Phase 3.3, `out/p3_parameter_effect.txt`), on prod_copy.db:** filings whose
+level changes *only* because of the rounding term (L-10 vs T-147's fixed USD 1M): `CON_19` 40,
+`CON_04` 4. Filings whose level changes *only* because of the base (C3 vs T-147's): `CON_08` 2.
+Both together: `CON_19` 1.
+
+**CON-06 (Phase 3.4, `out/p3_con06.txt`):** over the stored 10-Qs of after_t148.db, as the
+pipeline builds the flows (`db.ttm_detail` from `_ytd_columns`), T-105's old 1% relative rule
+flags 405 SOFT rows; DQ-01 flags 891 WARN + 488 BLOCK rows, i.e. 854 computed quarantine rows.
+Per TTM item (old 1% SOFT / DQ-01 warn / DQ-01 block / quarantine rows): revenue 125/181/175/350,
+cogs 88/149/122/122, operating income 86/181/103/206, net income 71/199/88/176, interest expense
+31/144/0/0, capital expenditure 1/9/0/0, stock-based compensation 3/9/0/0, D&A 0/6/0/0, operating
+cash flow 0/13/0/0.
+
+**Written rows (Phase 3.5, `out/p3_written.txt`):** `python -m fundamental_agent quality --db
+after_t148.db --metrics-version metrics-v6` writes `dq-v3` rows; restricted to the shared
+accessions, the written hit filings per rule equal Phase 3.1's after warn+block (CON_02 25,
+CON_04 4, CON_08 3, CON_19 26); quarantine rows CON_08 9, CON_19 103.
+
+### Limitations
+
+- Operands are read only from the filing's own period columns of the stored statement faces; a
+  concept filed only on a note or with a dimension is not captured (`financial_facts` stores
+  none).
+- CON-07/CON-08 on a 10-Q may read the year-to-date column when the quarter column is empty;
+  those tests are counted separately (`ytd` above).
+- Bases can be missing (CON-08's change in cash; CON-03/CON-04's Assets); a not-pass on a missing
+  base is a WARN, never a BLOCK.
+- CON-06's `n_terms` is 2 (the two constructed values): `record_ttm_crosscheck` receives only the
+  identity and the four-quarter sum, not their operands (OPEN QUESTION 2 in the PROGRESS log).
+- On a pre-m013 database the gate reads displayed signs (C7); see the production caveat above.
+
+### Tests (hermetic)
+
+- `tests/test_identity_gate_t150.py`: L-10 unit/rounding (CON-07 four terms → USD 2M); DQ-01
+  boundaries (diff = rounding → pass, diff = threshold → warn, +1 → block); a pass/warn/block
+  case per rule; CON-02 at block level → one WARN row, nothing quarantined; base-missing WARN cap;
+  the fact reader (filed sign, a database without `preferred_sign`, 10-Q quarter/YTD columns); the
+  gate (a BLOCK writes the C6 quarantine rows under the metric group, a WARN one `identity` row, a
+  second run inserts nothing).
+- `tests/test_ttm_t105.py`: CON-06 under DQ-01 (a 1% net-income gap that passed the old rule now
+  blocks and is kept SOFT); a cash-flow gap with no base stays a WARN; a block quarantines the
+  item's TTM metrics.
+- Replaced tests (named): `test_select_refuses_when_the_gate_only_has_an_older_version_s_rows`
+  (`tests/test_cycle.py`) — its `match=r"dq-v1.*dq-v2"` is now
+  `rf"dq-v1.*{DATA_QUALITY_GATE_VERSION}"`; `test_a_cycle_records_the_metric_versions_it_read` —
+  its pinned `"quality": "dq-v2"` is now `DATA_QUALITY_GATE_VERSION`. Both are the `dq-v3` bump.
+  `tests/test_data_quality.py::test_the_seven_gates_are_plan_md_s_table` is unchanged: `RULE_IDS`
+  stays the seven `DQ_*` gates and the CON ids are in `CON_RULE_IDS`/`ALL_RULE_IDS` (OPEN QUESTION
+  3).
+
+### Residual scope / deliberately deferred
+
+- **No migration, no view or contract change.** Metrics engine remains `metrics-v6`; metric values
+  are unchanged. Only `data_quality_issue` gains `dq-v3` rows (append-only).
+- The production re-gate under `dq-v3` is the user's action (precedent `dq-v2`, CHANGELOG T-116).
+- Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` and `universe.db`
+  sha1 `04adf644f892597d5de1b60f11c0cd6cbc271ed1` before and after (start `out/p0_sha1.txt`, end
+  `out/p3_sha1.txt`).
+
+**Scratch paths** (`/workspaces/thesis/scratch/t150/`): `PROGRESS.md`, `prod_copy.db`,
+`after_t148.db`, `out/` (`p0_sha1.txt`, `p0_gates.txt`, `p1_gates.txt`, `p2_extra.json`,
+`p2_extra_tables.json`, `p2_t147_counts.txt`, `p2_reproduce.txt`, `p2_reproduce.json`,
+`p3_counts.txt`, `p3_counts.json`, `p3_changes.txt`, `p3_changes.json`, `p3_con19_example.txt`,
+`p3_parameter_effect.txt`, `p3_con06.txt`, `p3_written.txt`, `p3_written_cli.txt`, `p3_sha1.txt`).
