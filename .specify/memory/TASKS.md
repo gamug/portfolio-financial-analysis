@@ -255,6 +255,10 @@ the final pilot, `T-143`.
       2026-10-09 by the PR #127 review: (f) gains N22 and the residual capex item of `T-071`, and D6 is carried by (g).
       Numbers are production's 5,075 filings and the 17,350 filing-columns the pipeline reads (the target, the prior,
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
+      **Status (2026-10-12).** Part 1 — (a) filed signs, (b) precedence incl. ID-03 steps (i)–(iv), (c) income tax, (d) debt and
+      cash incl. N23 — landed in PR #136 (merged af373a6; migration m013, contract 13, SPEC 1.8.1, engine metrics-v6). Part 2 —
+      (e), (f), (g), the T-070 recheck (j) and the full acceptance (i) — remains, on metrics-v6; the review's findings below,
+      (k), belong to it. **The box stays open.**
       **Split in two PRs (user, 2026-10-11).** **Part 1 landed in PR #136, "fix(fundamental): filed signs, concept precedence,
       income tax, debt and cash (T-148 part 1)" -- (a), (b), (c), (d)** (engine `metrics-v6`, `m013` / contract 13, SPEC
       1.8.0, `docs/model_fixes.md` "T-148 part 1"). **Part 2 follows: (e), (f), (g), the `T-070` recheck (j) and the full
@@ -404,6 +408,23 @@ the final pilot, `T-143`.
         `T-070` adds are: operating cash flow (N3), interest expense (the filed sign, `abs()` removed) and cash (N5);
         the debt inputs of `LEVERAGE_EXTREME` change too. `T-148` therefore repeats `T-070`'s calibration check on
         the rebuilt data and reports it.
+      - (k) **Findings of the PR #136 review (all verified 2026-10-12): cash read with a source, the causes of every remaining
+        limitation, and the MET-00 cost in two columns.**
+        - *Cash, read with a source and flagged.* Part 1 leaves the filings with no cash line the registry reads empty (EV and ROIC
+          empty, MET-00). Three cases have a source and are read in part 2, each flagged: (1) a balance-sheet cash line tagged
+          `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` whose caption names only cash and cash equivalents and
+          with no restricted cash reported (e.g. CSX "Cash and Cash Equivalents" 933M, DHR "Cash and equivalents"; 43 companies).
+          Source: B4 (DQC cash-flow guidance), which requires that element on the cash-flow statement "regardless whether
+          restricted cash is included in the total". (2) A line tagged `CashCashEquivalentsAndShortTermInvestments` captioned
+          "Cash and cash equivalents" (HSIC, TGT, CMI). Source: B4, which describes it as a mis-tag of cash and cash equivalents;
+          EV and invested capital subtract cash and short-term investments anyway (MD-35, MD-02). (3) `Cash` as the only cash line
+          of a non-financial company (ES, SLB, FDXF). Source: B6's definition and B4's list of total-cash elements.
+        - *A causes table in `docs/model_fixes.md`* for every remaining limitation, each with its evidence (the GEHC standard):
+          cash filed only per segment (PCAR, NVR, TXT; the SEC holds no non-dimensional cash total in their 10-Ks since 2024),
+          company-specific or discontinued-operations cash elements (CVX, PODD, GEHC, MDLZ, MMM, AMP, CINF, DVN), REIT debt filed
+          only as secured + unsecured (no source states the identity), and NCI income only in the notes (Mastercard, Ball).
+        - *The MET-00 cost reported in two columns:* "not applicable by rule" (APP-02: EV and ROIC for banks, insurers and other
+          financial firms) and "missing data". The 1,327 EV-empty filings of part 1's `cost` table mix both.
 - [x] **T-149** — **done 2026-10-11, PR #135** (approved after the review's four fixes: APP-10b-3, the `rules` column, T-153's evidence rule, CNP/GEHC tracked). Filing identity (engine `facts-v1` bump if stored facts change; `fundamental_agent`, `cycle`; the
       gateway repo for the period-end field). New from `T-147`; precedes `T-148`. **Must be done before T-153.**
       → `PLAN.md` Work item 8, step 12. Rules PER-02, PER-05, PER-08, ID-07, ID-10, APP-10a, APP-10b, MET-05 (N2).
