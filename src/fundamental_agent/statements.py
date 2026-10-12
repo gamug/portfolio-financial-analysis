@@ -1568,8 +1568,14 @@ class Statements:
         {
             "srt:ConsolidationItemsAxis",
             "us-gaap:StatementBusinessSegmentsAxis",
-            "us-gaap:StatementEquityComponentsAxis",
         }
+    )
+
+    # B3_DQC_0011 line 22: NetIncomeLoss "should be equal to" the
+    # StatementEquityComponentsAxis=RetainedEarningsMember fact, so that equality is
+    # expected, not a promoted slice.
+    _ID16_WHOLE_ENTITY_AXES = _WHOLE_ENTITY_AXES | frozenset(
+        {"us-gaap:StatementEquityComponentsAxis"}
     )
 
     def _total_is_plausible(self, spec: LineItem, column: str, total_value: float) -> bool:
@@ -1615,7 +1621,7 @@ class Statements:
         self, spec: LineItem, column: str, concept: str, value: float
     ) -> bool:
         """Whether a dimensional row of *concept*, on an axis outside
-        _WHOLE_ENTITY_AXES, carries exactly *value* in *column* (ID-16 / ID-09)."""
+        _ID16_WHOLE_ENTITY_AXES, carries exactly *value* in *column* (ID-16 / ID-09)."""
         concepts_to_check = {concept} if " + " not in concept else set()
         if not concepts_to_check:
             return False
@@ -1625,7 +1631,7 @@ class Statements:
                     row.get("abstract")
                     or not row.get("dimension")
                     or row.get("concept") not in concepts_to_check
-                    or row.get("dimension_axis") in self._WHOLE_ENTITY_AXES
+                    or row.get("dimension_axis") in self._ID16_WHOLE_ENTITY_AXES
                 ):
                     continue
                 v = _numeric(row.get(column))
