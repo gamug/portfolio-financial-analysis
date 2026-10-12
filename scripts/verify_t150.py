@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from collections import defaultdict
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +34,7 @@ from fundamental_agent import quality
 from fundamental_agent.pipeline import _TTM_ITEMS, _targets, _YearTask, _ytd_columns
 
 G = "us-gaap_"
+_BLOCK_STOP = 0.05  # F1b hard stop: a rule blocking more than 5% of the filings it tested
 RULES = ("CON-01", "CON-02", "CON-03", "CON-04", "CON-07", "CON-08", "CON-19")
 LEVELS = ("pass", "warn", "block")
 _OCF = G + "NetCashProvidedByUsedInOperatingActivities"
@@ -182,9 +181,12 @@ def cmd_reproduce(args: argparse.Namespace) -> int:
 # -- the gate's real counts (C1-C9), without writing -------------------------------------------
 
 
-def _evaluate(conn: Any, filing_ids: set[int]) -> dict[int, list[quality.IdentityResult]]:
+def _evaluate(conn: Any, filing_ids: set[int]) -> dict[int, list[Any]]:
+    """Every CON identity result of each filing (CON-01..04/07/08/19 from the balance/flow columns
+    and CON-06 proper from the sub-period sets). Each carries ``rule_id`` and ``level``."""
     facts = quality.load_facts(conn, filing_ids)
-    out: dict[int, list[quality.IdentityResult]] = {}
+    subperiods = quality.load_subperiods(conn, filing_ids)
+    out: dict[int, list[Any]] = {}
     for fid, ff in facts.items():
         balance = {c: ff.value(c, ff.instant_column) for c in quality._BALANCE_CONCEPTS}
         flow = {c: ff.value(c, ff.flow_column) for c in quality._FLOW_CONCEPTS}
@@ -193,14 +195,20 @@ def _evaluate(conn: Any, filing_ids: set[int]) -> dict[int, list[quality.Identit
             if ff.ytd_column is not None
             else None
         )
-        out[fid] = quality.evaluate_identities(
-            balance,
-            flow,
-            instant_column=ff.instant_column,
-            flow_column=ff.flow_column,
-            ytd=ytd,
-            ytd_column=ff.ytd_column,
+        rows: list[Any] = list(
+            quality.evaluate_identities(
+                balance,
+                flow,
+                instant_column=ff.instant_column,
+                flow_column=ff.flow_column,
+                ytd=ytd,
+                ytd_column=ff.ytd_column,
+            )
         )
+        sp = subperiods.get(fid)
+        if sp is not None:
+            rows.extend(quality.subperiod_results(sp)[0])
+        out[fid] = rows
     return out
 
 
@@ -222,9 +230,12 @@ def _accession_ids(conn: Any) -> dict[str, int]:
     }
 
 
-def _counts(
-    results: dict[int, list[quality.IdentityResult]], tickers: dict[int, str]
-) -> dict[str, dict[str, Any]]:
+_LEVEL_ORDER = {"pass": 0, "warn": 1, "block": 2}
+
+
+def _counts(results: dict[int, list[Any]], tickers: dict[int, str]) -> dict[str, dict[str, Any]]:
+    """Per rule, the distinct filings (a filing with several CON-06 sets counts once, at its worst
+    level) and the companies of its non-pass filings."""
     counts: dict[str, dict[str, Any]] = {
         rule: {
             "tested": 0,
@@ -238,19 +249,39 @@ def _counts(
         for rule in quality.CON_RULE_IDS
     }
     for fid, rows in results.items():
-        for result in rows:
-            c = counts[result.rule_id]
+        worst, ytd_rules, base_missing_rules = _per_filing_rules(rows)
+        for rule, level in worst.items():
+            c = counts[rule]
             c["tested"] += 1
-            c[result.level] += 1
-            if result.level != "pass":
+            c[level] += 1
+            if level != "pass":
                 c["companies"].add(tickers.get(fid, "?"))
-            if result.ytd:
+            if rule in ytd_rules:
                 c["ytd"] += 1
-            if result.base_missing and result.level != "pass":
+            if rule in base_missing_rules:
                 c["base_missing_caps"] += 1
     for c in counts.values():
         c["companies"] = sorted(c["companies"])
     return counts
+
+
+def _per_filing_rules(rows: list[Any]) -> tuple[dict[str, str], set[str], set[str]]:
+    """``(rule -> worst level, rules with a YTD test, rules with a base-missing cap)`` of one
+    filing's results."""
+    worst: dict[str, str] = {}
+    ytd_rules: set[str] = set()
+    base_missing_rules: set[str] = set()
+    for result in rows:
+        if (
+            result.rule_id not in worst
+            or _LEVEL_ORDER[result.level] > _LEVEL_ORDER[worst[result.rule_id]]
+        ):
+            worst[result.rule_id] = result.level
+        if result.ytd:
+            ytd_rules.add(result.rule_id)
+        if result.base_missing and result.level != "pass":
+            base_missing_rules.add(result.rule_id)
+    return worst, ytd_rules, base_missing_rules
 
 
 def _shared_filing_ids(conn: Any, before_conn: Any) -> tuple[set[int], set[int], dict[int, str]]:
@@ -358,111 +389,60 @@ def cmd_measure(args: argparse.Namespace) -> int:
     return 0
 
 
-# -- CON-06 (F1) -------------------------------------------------------------------------------
-
-_COL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\s*\(([A-Za-z0-9]+)\))?$")
-_QUARTER_GAP = (89, 98)  # PER-08's quarter range, in days
-_YEAR_WINDOW = 372  # days: a quarter more than this before an aggregate is another year
-_MIN_CHAIN = 2  # a "set" of sub-periods needs at least two consecutive quarters
+# -- CON-06 (F1b: proper; F1: the cross-check) ---------------------------------------------------
 
 
-def _col(key: str) -> tuple[str, str] | None:
-    match = _COL_RE.match(key.strip())
-    return (match.group(1), match.group(2) or "INSTANT") if match else None
+def _filing_meta(conn: Any) -> dict[int, tuple[str, str]]:
+    return {
+        int(r[0]): (str(r[1]), str(r[2]))
+        for r in conn.execute(
+            "SELECT f.id, a.ticker, f.fiscal_period FROM sec_filings f "
+            "JOIN assets a ON a.id = f.asset_id"
+        )
+    }
 
 
-def _values_by_key(conn: Any, filing_id: int, concept: str, keys: list[str]) -> list[float | None]:
-    out: list[float | None] = []
-    for key in keys:
-        row = conn.execute(
-            "SELECT value FROM financial_facts WHERE filing_id=? AND concept=? AND period_key=? "
-            "ORDER BY id LIMIT 1",
-            (filing_id, concept, key),
-        ).fetchone()
-        out.append(None if row is None else float(row[0]))
-    return out
-
-
-def _subperiod_chain(group: dict[str, dict[str, str]], agg_date_iso: str) -> list[str]:
-    """The consecutive quarter columns chaining into an aggregate at *agg_date_iso*: the last
-    sub-period may end on the aggregate's own date (a 10-Q's Q3 and its 9-month YTD share the end
-    date), every earlier step is one PER-08 quarter."""
-    agg_date = date.fromisoformat(agg_date_iso)
-    chain = sorted(
-        (
-            (d, k)
-            for d, k in group["q"].items()
-            if 0 <= (agg_date - date.fromisoformat(d)).days <= _YEAR_WINDOW
-        ),
-        key=lambda dk: date.fromisoformat(dk[0]),
-        reverse=True,
-    )
-    previous, accepted = agg_date, []
-    for d, key in chain:
-        gap = (previous - date.fromisoformat(d)).days
-        first = not accepted
-        if (first and gap == 0) or _QUARTER_GAP[0] <= gap <= _QUARTER_GAP[1]:
-            accepted.append(key)
-            previous = date.fromisoformat(d)
-        else:
-            break
-    return accepted
-
-
-def _contiguous_subperiod_filings(
-    conn: Any,
+def _round1_sets(
+    subperiods: dict[int, Any],
 ) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
-    """CON-06 proper: filings whose duration columns hold, for one concept, a complete contiguous
-    set of quarter columns ending at an aggregated (FY/YTD) column of the *same* filing.
-
-    ``structural`` counts a filing when, for some concept, >= 2 consecutive quarter columns chain
-    back-to-back into an aggregate of the same filing. ``genuine`` keeps only those whose quarters
-    actually sum to the aggregate within L-10's rounding (a complete set CON-06 can test). Each
-    value is ``filing_id -> {concept, agg, quarters, agg_value, quarters_sum, rounds}``."""
-    groups: dict[tuple[int, str], dict[str, dict[str, str]]] = defaultdict(
-        lambda: {"q": {}, "agg": {}}
-    )
-    for row in conn.execute(
-        "SELECT filing_id, concept, period_key FROM financial_facts "
-        "WHERE statement IN ('income_statement', 'cash_flow') ORDER BY filing_id, concept, id"
-    ):
-        parsed = _col(str(row["period_key"]))
-        if parsed is None or parsed[1] == "INSTANT":
-            continue
-        d, tag = parsed
-        group = groups[(int(row["filing_id"]), str(row["concept"]))]
-        if tag in ("Q1", "Q2", "Q3", "Q4"):
-            group["q"].setdefault(d, str(row["period_key"]))
-        elif tag in ("FY", "YTD"):
-            group["agg"].setdefault(d, str(row["period_key"]))
+    """The round-1 query's two sets (F1b "redo your query"): *structural* = a chain of >= 2
+    quarters into an aggregate without requiring completeness; *genuine* = that chain also sums to
+    the aggregate. The structural-but-not-genuine filings are explained in the output."""
     structural: dict[int, dict[str, Any]] = {}
     genuine: dict[int, dict[str, Any]] = {}
-    for (fid, concept), group in groups.items():
-        for agg_date_iso, agg_key in sorted(group["agg"].items()):
-            accepted = _subperiod_chain(group, agg_date_iso)
-            if len(accepted) < _MIN_CHAIN:
-                continue
-            quarter_values = _values_by_key(conn, fid, concept, accepted)
-            agg_value = _values_by_key(conn, fid, concept, [agg_key])[0]
-            present = [v for v in (*quarter_values, agg_value) if v is not None]
-            diff = (
-                abs(agg_value - sum(v for v in quarter_values if v is not None))
-                if agg_value is not None and len(present) == len(quarter_values) + 1
-                else None
-            )
-            rounds = diff is not None and diff <= quality.l10_rounding(present)
-            detail = {
-                "concept": concept,
-                "agg": agg_key,
-                "quarters": accepted,
-                "agg_value": agg_value,
-                "quarters_sum": sum(v for v in quarter_values if v is not None),
-                "diff": diff,
-                "rounds": rounds,
-            }
-            structural.setdefault(fid, detail)
-            if rounds:
-                genuine.setdefault(fid, detail)
+    for fid, sp in subperiods.items():
+        for (statement, concept), columns in sorted(sp.duration.items()):
+            quarters: dict[str, str] = {}
+            aggregates: dict[str, str] = {}
+            for column in columns:
+                parts = quality._column_parts(column)
+                if parts is None or parts[1] == "INSTANT":
+                    continue
+                if parts[1] in ("Q1", "Q2", "Q3", "Q4"):
+                    quarters.setdefault(parts[0], column)
+                elif parts[1] in ("FY", "YTD"):
+                    aggregates.setdefault(parts[0], column)
+            for agg_date, agg_column in sorted(aggregates.items()):
+                chain, _gap = quality._subperiod_chain(quarters, agg_date, 999)
+                if len(chain) < quality._SUB_MIN_QUARTERS:
+                    continue
+                quarter_values = [columns[k] for k in chain]
+                agg_value = columns[agg_column]
+                diff = abs(agg_value - sum(quarter_values))
+                rounds = diff <= quality.l10_rounding([*quarter_values, agg_value])
+                detail = {
+                    "statement": statement,
+                    "concept": concept,
+                    "agg": agg_column,
+                    "quarters": chain,
+                    "quarters_sum": sum(quarter_values),
+                    "agg_value": agg_value,
+                    "diff": diff,
+                    "rounds": rounds,
+                }
+                structural.setdefault(fid, detail)
+                if rounds:
+                    genuine.setdefault(fid, detail)
     return structural, genuine
 
 
@@ -524,51 +504,20 @@ def _crosscheck_counts(conn: Any) -> tuple[int, dict[str, dict[str, int]]]:
     return filings, per_item
 
 
-def cmd_con06(args: argparse.Namespace) -> int:
-    conn = open_ro(args.db)
-    structural, genuine = _contiguous_subperiod_filings(conn)
+def _crosscheck_lines(conn: Any) -> list[str]:
     filings, per_item = _crosscheck_counts(conn)
-    items = sorted(per_item)
     lines = [
-        f"T-150 F1 CON-06, db={args.db}",
         "",
-        "CON-06 proper (DQC_0084, within one instance): stored filings whose duration columns hold "
-        "a complete contiguous sub-period set inside one filing",
-        f"  structural (>= 2 consecutive quarters chaining into an FY/YTD column): {len(structural)}",
-        f"  genuine (the quarters also sum to the aggregate within L-10 rounding): {len(genuine)}",
-    ]
-    if genuine:
-        lines.append(
-            f"  HARD STOP (F1): {len(genuine)} filings hold such a set; ids {sorted(genuine)[:20]}"
-        )
-        for fid, detail in list(genuine.items())[:6]:
-            row = conn.execute(
-                "SELECT a.ticker, f.form, f.fiscal_period FROM sec_filings f "
-                "JOIN assets a ON a.id=f.asset_id WHERE f.id=?",
-                (fid,),
-            ).fetchone()
-            lines.append(
-                f"    filing {fid} ({row['ticker']} {row['form']} {row['fiscal_period']}): "
-                f"{detail['concept']} {detail['quarters']} sum={detail['quarters_sum']} vs "
-                f"{detail['agg']} = {detail['agg_value']} (diff {detail['diff']})"
-            )
-    else:
-        lines.append(
-            "  -> CON-06 proper is not testable on the stored statement faces: no filing's "
-            "sub-period columns both chain into and sum to an aggregate column."
-        )
-    lines += [
-        "",
-        f"TTM cross-check (compare this filing's YTD identity with four quarters from earlier filings)"
-        f": 10-Q filings with a target = {filings}",
+        f"TTM cross-check (F1; compares this filing's YTD identity with four quarters from earlier "
+        f"filings): 10-Q filings with a target = {filings}",
         f"{'item':26} {'tested':>7} {'warn':>5} {'block':>6} {'rows written':>13} {'quarantine rows':>16}",
     ]
     total = {"tested": 0, "warn": 0, "block": 0}
-    for item in items:
+    for item in sorted(per_item):
         c = per_item[item]
-        rows_written = c["warn"] + c["block"]
         lines.append(
-            f"{item:26} {c['tested']:>7} {c['warn']:>5} {c['block']:>6} {rows_written:>13} {0:>16}"
+            f"{item:26} {c['tested']:>7} {c['warn']:>5} {c['block']:>6} "
+            f"{c['warn'] + c['block']:>13} {0:>16}"
         )
         for k in total:
             total[k] += c[k]
@@ -576,10 +525,97 @@ def cmd_con06(args: argparse.Namespace) -> int:
         f"{'TOTAL':26} {total['tested']:>7} {total['warn']:>5} {total['block']:>6} "
         f"{total['warn'] + total['block']:>13} {0:>16}"
     )
+    return lines
+
+
+def cmd_con06(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    meta = _filing_meta(conn)
+    subperiods = quality.load_subperiods(conn, set(meta))
+
+    order = {"pass": 0, "warn": 1, "block": 2}
+    worst: dict[int, str] = {}  # filing -> its worst set level (a filing may hold several sets)
+    incomplete: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    base_missing = {"filings": set(), "companies": set()}
+    non_pass: list[dict[str, Any]] = []
+    for fid, sp in subperiods.items():
+        results, incomplete_sets = quality.subperiod_results(sp)
+        for inc in incomplete_sets:
+            incomplete[fid].append(inc)
+        for r in results:
+            if fid not in worst or order[r.level] > order[worst[fid]]:
+                worst[fid] = r.level
+            if r.base_missing and r.level != "pass":
+                base_missing["filings"].add(fid)
+                base_missing["companies"].add(meta[fid][0])
+            if r.level != "pass":
+                non_pass.append(
+                    {
+                        "ticker": meta[fid][0],
+                        "fiscal_period": meta[fid][1],
+                        "statement": r.statement,
+                        "concept": r.concept,
+                        "agg": r.agg_column,
+                        "quarters": list(r.quarter_columns),
+                        "values": list(r.values),
+                        "level": r.level,
+                        "diff": r.diff,
+                        "rounding": r.rounding,
+                        "threshold": r.threshold,
+                        "base": r.base,
+                        "base_missing": r.base_missing,
+                    }
+                )
+    structural, genuine = _round1_sets(subperiods)
+    by_level = {
+        level: {fid for fid, lv in worst.items() if lv == level}
+        for level in ("pass", "warn", "block")
+    }
+    block_share = (len(by_level["block"]) / len(worst)) if worst else 0.0
+    lines = [
+        f"T-150 CON-06, db={args.db}",
+        "",
+        "CON-06 proper (DQC_0084, within one instance): a complete contiguous quarter set matching "
+        "its aggregate column of the same filing (quarters == the aggregate's length, PER-08 gaps)",
+        f"  tested (>= 1 complete set): {len(worst)} filings",
+        f"  pass  {len(by_level['pass'])} filings "
+        f"({len({meta[f][0] for f in by_level['pass']})} companies)",
+        f"  warn  {len(by_level['warn'])} filings "
+        f"({len({meta[f][0] for f in by_level['warn']})} companies)",
+        f"  block {len(by_level['block'])} filings "
+        f"({len({meta[f][0] for f in by_level['block']})} companies)"
+        f"  = {block_share:.1%} of tested",
+        f"  incomplete sets (a partial chain, not tested): {sum(len(v) for v in incomplete.values())} "
+        f"sets across {len(incomplete)} filings",
+        f"  base-missing caps (WARN; the aggregate column has no base): "
+        f"{len(base_missing['filings'])} filings ({len(base_missing['companies'])} companies)",
+        "",
+        f"every non-pass set ({len(non_pass)}):",
+    ]
+    for row in sorted(non_pass, key=lambda r: (r["ticker"], r["concept"], r["agg"])):
+        lines.append(
+            f"  {row['ticker']} {row['fiscal_period']} {row['statement']} {row['concept']} "
+            f"{row['agg']} quarters={row['quarters']} values={row['values']} level={row['level']} "
+            f"diff={row['diff']} rounding={row['rounding']} threshold={row['threshold']} "
+            f"base={row['base']}"
+        )
+    lines += ["", "round-1 query re-explained (F1b 'redo your query'):"]
+    lines.append(
+        f"  structural (a chain of >= 2 quarters, completeness not required): {len(structural)} filings"
+    )
+    lines.append(f"  genuine (that chain also sums to the aggregate): {len(genuine)} filings")
+    for fid in sorted(set(structural) - set(genuine)):
+        detail = structural[fid]
+        lines.append(
+            f"    {meta[fid][0]} filing {fid}: {detail['statement']} {detail['concept']} "
+            f"{detail['agg']} quarters={detail['quarters']} sum={detail['quarters_sum']} vs "
+            f"{detail['agg_value']} (diff {detail['diff']}) -> incomplete: not tested"
+        )
+    lines += _crosscheck_lines(conn)
     text = "\n".join(lines)
     Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
     print(text)
-    return 1 if genuine else 0
+    return 1 if block_share > _BLOCK_STOP else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -600,9 +636,11 @@ def main(argv: list[str] | None = None) -> int:
     meas.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/p3_counts.txt")
     meas.add_argument("--out-json", default="/workspaces/thesis/scratch/t150/out/p3_counts.json")
     meas.set_defaults(func=cmd_measure)
-    con06 = sub.add_parser("con06", help="CON-06: the within-instance query and the cross-check")
+    con06 = sub.add_parser("con06", help="CON-06: the within-instance rule and the cross-check")
     con06.add_argument("--db", required=True)
-    con06.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con06.txt")
+    con06.add_argument(
+        "--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con06_proper.txt"
+    )
     con06.set_defaults(func=cmd_con06)
     args = parser.parse_args(argv)
     return int(args.func(args))

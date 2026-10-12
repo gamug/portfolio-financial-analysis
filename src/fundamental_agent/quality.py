@@ -39,6 +39,7 @@ DQ-01's tolerance and L-10's rounding term:
 | ``CON_02``| ``Assets = AssetsCurrent + AssetsNoncurrent``                 | WARN  |
 | ``CON_03``| ``Liabilities = LiabilitiesCurrent + LiabilitiesNoncurrent``  | WARN  |
 | ``CON_04``| equity incl. NCI ``= StockholdersEquity + MinorityInterest``  | DQ-01 |
+| ``CON_06``| a complete contiguous quarter set ``=`` its aggregate column, inside one filing | DQ-01 |
 | ``CON_07``| change in cash ``=`` operating``+``investing``+``financing``  | WARN  |
 | ``CON_08``| ``NetCashProvidedByUsedInOperatingActivities`` ``=`` continuing ``+`` discontinued | DQ-01 |
 | ``CON_19``| ``ProfitLoss = NetIncomeLoss + NCI income``                   | DQ-01 |
@@ -348,6 +349,7 @@ CON_RULE_IDS: Final[tuple[str, ...]] = (
     "CON_02",
     "CON_03",
     "CON_04",
+    "CON_06",
     "CON_07",
     "CON_08",
     "CON_19",
@@ -472,6 +474,30 @@ _AFFECTED_METRICS: Final[dict[str, tuple[MetricKey, ...]]] = {
 _INCOME_FLOW_ITEMS: Final[frozenset[str]] = frozenset(
     {"net_income", "revenue", "cogs", "operating_income"}
 )
+# CON_06 proper (F1b): the stored TTM-based metrics the checklist's CON-06 row marks ("every ratio
+# that uses TTM flows") -- the union of the per-item map removed in F1. The source is each metric's
+# formula: profitability.py:52 return_on_assets, :53 return_on_equity; efficiency.py:38
+# asset_turnover, :39 inventory_turnover, :40 receivables_turnover; leverage.py:72
+# net_debt_to_ebitda; roic.py:71 return_on_invested_capital; valuation.py:160 free_cash_flow_yield,
+# :163 sbc_adjusted_fcf_yield, :166 enterprise_fcf_yield.
+_CON06_TTM_METRICS: Final[tuple[MetricKey, ...]] = (
+    ("profitability", "return_on_assets"),
+    ("profitability", "return_on_equity"),
+    ("efficiency", "asset_turnover"),
+    ("efficiency", "inventory_turnover"),
+    ("efficiency", "receivables_turnover"),
+    ("leverage", "net_debt_to_ebitda"),
+    ("roic", "return_on_invested_capital"),
+    ("valuation", "free_cash_flow_yield"),
+    ("valuation", "sbc_adjusted_fcf_yield"),
+    ("valuation", "enterprise_fcf_yield"),
+)
+# CON_06 proper's constants: a quarter column chains into an aggregate by PER-08's quarter range;
+# a filed quarter more than a year before an aggregate belongs to another year.
+_SUB_QUARTER_GAP: Final[tuple[int, int]] = (89, 98)
+_SUB_YEAR_WINDOW: Final[int] = 372
+_SUB_MIN_QUARTERS: Final[int] = 2  # a "set" needs at least two quarters
+_FISCAL_QUARTER_RE = re.compile(r"Q([1-4])$")
 # The number of filed values entering the cross-check's two constructions (F1): the year-to-date
 # identity has 3 (current YTD, prior fiscal year, prior-year YTD), the four recorded quarters have
 # 4. Only the two constructed values are available here, so the unit is inferred from those two
@@ -889,6 +915,304 @@ def _identity_evidence(result: IdentityResult) -> dict[str, Any]:
     }
 
 
+# -- CON_06 proper: contiguous sub-periods sum to the aggregate, inside one filing (F1b) ---------
+#
+# DQC_0084 (B3): "values of a durational element for a series of periods of time do not aggregate
+# to the value representing the aggregated period in the instance". A test needs, for one concept
+# on one stored statement face, a **complete** contiguous set of quarter columns (Q1..Qk, PER-08
+# gaps) inside the same filing that exactly spans one of its aggregate columns (YTD or FY): the
+# number of quarters equals the aggregate's length (a 6-month YTD -> 2, 9-month -> 3, FY -> 4).
+# A partial chain (e.g. Q3 + Q2 against a 9-month YTD) is not tested; it is counted separately as
+# an incomplete set.
+
+
+@dataclass(frozen=True)
+class SubperiodFacts:
+    """One filing's duration columns by ``(statement, concept) -> {column: filed value}``, its
+    ``fiscal_period`` and ``period_end`` (which give each aggregate column's expected quarter
+    count from the aggregate's own date)."""
+
+    fiscal_period: str
+    period_end: str
+    duration: Mapping[tuple[str, str], Mapping[str, float]]
+
+
+@dataclass(frozen=True)
+class SubperiodResult:
+    """One complete contiguous sub-period set and its outcome. ``rules``/``column``/``ytd``/
+    ``base_missing`` mirror :class:`IdentityResult` so a consumer can treat them alike."""
+
+    statement: str
+    concept: str
+    agg_column: str
+    quarter_columns: tuple[str, ...]
+    values: tuple[float, ...]  # quarters (in ascending date) then the aggregate
+    level: str
+    diff: float
+    rounding: float
+    threshold: float
+    base: float | None
+    n_terms: int
+    unit: float
+
+    @property
+    def rule_id(self) -> str:
+        return "CON_06"
+
+    @property
+    def column(self) -> str:
+        return self.agg_column
+
+    @property
+    def ytd(self) -> bool:
+        return False
+
+    @property
+    def base_missing(self) -> bool:
+        return self.base is None
+
+
+def _fiscal_quarter_index(fiscal_period: str) -> int:
+    """The number of fiscal quarters the filing's own period spans: the quarter in ``2024Q3`` is
+    3; a 10-K (``FY2024``) is 4. 0 when neither parses."""
+    match = _FISCAL_QUARTER_RE.search(fiscal_period)
+    if match is not None:
+        return int(match.group(1))
+    return 4 if fiscal_period.startswith("FY") else 0
+
+
+def _fiscal_year_end(fiscal_period: str, period_end: str) -> date | None:
+    """The fiscal-year end the filing's own period belongs to: ``period_end`` itself for a 10-K,
+    else ``period_end`` moved forward by the quarters still to come (``fiscal.months_before`` with
+    a negative count). ``None`` when the period end or label does not parse."""
+    index = _fiscal_quarter_index(fiscal_period)
+    if index == 0 or not period_end:
+        return None
+    end = date.fromisoformat(period_end)
+    return end if fiscal_period.startswith("FY") else fiscal.months_before(end, -(4 - index) * 3)
+
+
+def _aggregate_expected(fiscal_period: str, period_end: str, agg_date_iso: str) -> int:
+    """The quarter count an aggregate column at *agg_date_iso* must span to be complete: the
+    aggregate's own fiscal year is found by walking the filing's fiscal-year end back/forward in
+    whole years to the one containing the aggregate, and the count is the months from that year's
+    start to the aggregate over three (a 6-month YTD -> 2, 9-month -> 3, FY -> 4)."""
+    fye = _fiscal_year_end(fiscal_period, period_end)
+    if fye is None:
+        return 0
+    agg = date.fromisoformat(agg_date_iso)
+    while fye > agg and fiscal.months_before(fye, 12) >= agg:
+        fye = fiscal.months_before(fye, 12)
+    while fiscal.months_before(fye, -12) <= agg:
+        fye = fiscal.months_before(fye, -12)
+    start = fiscal.months_before(fye, 12)
+    months = (agg.year - start.year) * 12 + (agg.month - start.month)
+    return round(months / 3)
+
+
+def _subperiod_chain(
+    quarters: Mapping[str, str], agg_date_iso: str, expected: int
+) -> tuple[list[str], int]:
+    """The consecutive quarter columns chaining into an aggregate at *agg_date_iso* (closest
+    first), at most *expected* of them (the aggregate's quarter length, so the chain never runs
+    past the fiscal-year start), and the gap (days) of the first step. The last sub-period may end
+    on the aggregate's own date (a 10-Q's Q3 and its 9-month YTD share the end date); every step
+    but the first is one PER-08 quarter."""
+    agg_date = date.fromisoformat(agg_date_iso)
+    candidates = sorted(
+        (
+            (date.fromisoformat(d), k)
+            for d, k in quarters.items()
+            if 0 <= (agg_date - date.fromisoformat(d)).days <= _SUB_YEAR_WINDOW
+        ),
+        reverse=True,
+    )
+    accepted: list[str] = []
+    previous = agg_date
+    first_gap: int | None = None
+    for d, key in candidates:
+        gap = (previous - d).days
+        valid = gap == 0 if first_gap is None else _SUB_QUARTER_GAP[0] <= gap <= _SUB_QUARTER_GAP[1]
+        if not valid:
+            break
+        accepted.append(key)
+        if first_gap is None:
+            first_gap = gap
+        previous = d
+        if len(accepted) >= expected:
+            break
+    return accepted, (first_gap if first_gap is not None else -1)
+
+
+def _split_duration_columns(
+    columns: Mapping[str, float],
+) -> tuple[dict[str, str], dict[str, tuple[str, str]]]:
+    """``({date: quarter key}, {date: (aggregate key, tag)})`` of one concept's columns."""
+    quarters: dict[str, str] = {}
+    aggregates: dict[str, tuple[str, str]] = {}
+    for column in columns:
+        parts = _column_parts(column)
+        if parts is None or parts[1] == "INSTANT":
+            continue
+        if parts[1] in ("Q1", "Q2", "Q3", "Q4"):
+            quarters.setdefault(parts[0], column)
+        elif parts[1] in ("FY", "YTD"):
+            aggregates.setdefault(parts[0], (column, parts[1]))
+    return quarters, aggregates
+
+
+def _subperiod_base(facts: SubperiodFacts, statement: str, agg_column: str) -> float | None:
+    """DQ-01's base for a CON-06 set, from the aggregate column of the same statement (F1b):
+    ``NetIncomeLoss`` on the income statement, the first filed change in cash on the cash flow."""
+    if statement == "income_statement":
+        return facts.duration.get((statement, _NET_INCOME), {}).get(agg_column)
+    for change_concept in _CHANGE_IN_CASH:
+        candidate = facts.duration.get((statement, change_concept), {}).get(agg_column)
+        if candidate is not None:
+            return candidate
+    return None
+
+
+def subperiod_results(
+    facts: SubperiodFacts,
+) -> tuple[list[SubperiodResult], list[dict[str, Any]]]:
+    """Every complete CON-06 set of one filing and the incomplete sets (a partial chain of >= 2
+    quarters). One entry per (statement, concept, aggregate column)."""
+    results: list[SubperiodResult] = []
+    incomplete: list[dict[str, Any]] = []
+    for (statement, concept), columns in sorted(facts.duration.items()):
+        quarters, aggregates = _split_duration_columns(columns)
+        for agg_date_iso, (agg_column, _agg_tag) in sorted(aggregates.items()):
+            expected = _aggregate_expected(facts.fiscal_period, facts.period_end, agg_date_iso)
+            if expected < _SUB_MIN_QUARTERS:
+                continue
+            chain, first_gap = _subperiod_chain(quarters, agg_date_iso, expected)
+            if len(chain) < _SUB_MIN_QUARTERS:
+                continue
+            if len(chain) != expected or first_gap != 0:
+                incomplete.append(
+                    {
+                        "statement": statement,
+                        "concept": concept,
+                        "agg_column": agg_column,
+                        "quarter_columns": chain,
+                        "expected": expected,
+                    }
+                )
+                continue
+            ordered = list(reversed(chain))  # ascending date order (closest-first -> oldest-first)
+            quarter_values = [columns[k] for k in ordered]
+            agg_value = columns[agg_column]
+            terms = [*quarter_values, agg_value]
+            diff = abs(agg_value - sum(quarter_values))
+            base = _subperiod_base(facts, statement, agg_column)
+            rounding = l10_rounding(terms)
+            threshold = rounding if base is None else max(rounding, MATERIALITY * abs(base))
+            results.append(
+                SubperiodResult(
+                    statement=statement,
+                    concept=concept,
+                    agg_column=agg_column,
+                    quarter_columns=tuple(ordered),
+                    values=tuple(terms),
+                    level=dq01_level(diff, rounding, base),
+                    diff=diff,
+                    rounding=rounding,
+                    threshold=threshold,
+                    base=base,
+                    n_terms=len(terms),
+                    unit=l10_unit(terms),
+                )
+            )
+    return results, incomplete
+
+
+def _subperiod_evidence(result: SubperiodResult) -> dict[str, Any]:
+    return {
+        "rule": "CON_06",
+        "level": result.level,
+        "statement": result.statement,
+        "concept": result.concept,
+        "agg_column": result.agg_column,
+        "quarter_columns": list(result.quarter_columns),
+        "values": list(result.values),
+        "diff": result.diff,
+        "rounding": result.rounding,
+        "unit": result.unit,
+        "n_terms": result.n_terms,
+        "base": result.base,
+        "base_missing": result.base_missing,
+        "threshold": result.threshold,
+    }
+
+
+def con06_issues(results: Iterable[SubperiodResult], metrics: FilingMetrics) -> list[Issue]:
+    """The CON_06 rows of one filing: one SOFT ``identity`` row per non-pass set (keyed by concept
+    and aggregate column, since a filing can hold several), and the quarantined TTM-based metrics
+    (:data:`_CON06_TTM_METRICS`) when the set is material."""
+    out: list[Issue] = []
+    for result in results:
+        if result.level == "pass":
+            continue
+        evidence = _subperiod_evidence(result)
+        metric = (IDENTITY_GROUP, f"CON_06 {result.concept} {result.agg_column}")
+        out.append(Issue("CON_06", "SOFT", False, metric, result.diff, evidence))
+        if result.level == "block":
+            for key in _CON06_TTM_METRICS:
+                stored = metrics.get(key)
+                if stored is not None:
+                    out.append(Issue("CON_06", "SOFT", True, key, stored.value, evidence))
+    return out
+
+
+def load_subperiods(conn: Database, filing_ids: Iterable[int]) -> dict[int, SubperiodFacts]:
+    """``filing_id -> SubperiodFacts``: every duration fact (income statement, cash flow) of each
+    filing, in the filed sign, with the filing's ``fiscal_period``."""
+    ids = sorted(set(int(f) for f in filing_ids))
+    if not ids:
+        return {}
+    ids_json = json.dumps(ids)
+    meta = {
+        int(r[0]): (str(r[1]), str(r[2] or ""))
+        for r in conn.execute(
+            "SELECT id, fiscal_period, period_end FROM sec_filings "
+            "WHERE id IN (SELECT value FROM json_each(?))",
+            (ids_json,),
+        )
+    }
+    sql = {
+        True: (
+            "SELECT filing_id, statement, concept, period_key, value, preferred_sign "
+            "FROM financial_facts WHERE filing_id IN (SELECT value FROM json_each(?)) "
+            "AND statement IN ('income_statement', 'cash_flow') ORDER BY filing_id, id"
+        ),
+        False: (
+            "SELECT filing_id, statement, concept, period_key, value, NULL AS preferred_sign "
+            "FROM financial_facts WHERE filing_id IN (SELECT value FROM json_each(?)) "
+            "AND statement IN ('income_statement', 'cash_flow') ORDER BY filing_id, id"
+        ),
+    }
+    by_filing: dict[int, dict[tuple[str, str], dict[str, float]]] = {}
+    for row in conn.execute(sql[_has_preferred_sign(conn)], (ids_json,)):
+        parts = _column_parts(str(row["period_key"]))
+        displayed = row["value"]
+        if parts is None or parts[1] == "INSTANT" or displayed is None:
+            continue
+        sign = row["preferred_sign"]
+        value = float(displayed) * float(sign) if sign in (1, -1) else float(displayed)
+        by_filing.setdefault(int(row["filing_id"]), {}).setdefault(
+            (str(row["statement"]), str(row["concept"])), {}
+        ).setdefault(str(row["period_key"]), value)
+    return {
+        fid: SubperiodFacts(
+            fiscal_period=meta.get(fid, ("", ""))[0],
+            period_end=meta.get(fid, ("", ""))[1],
+            duration=duration,
+        )
+        for fid, duration in by_filing.items()
+    }
+
+
 # The DQ_* gates in evaluation order (the ``PLAN.md`` Work item 7 table). The identity rules
 # (``CON_*``, T-150) are catalogued in :data:`CON_RULE_IDS` and both sets are in
 # :data:`ALL_RULE_IDS`, which the CLI prints.
@@ -962,6 +1286,7 @@ def gate_version(
     versions = MetricVersions(dict.fromkeys(METRIC_GROUPS, engine_version))
     filings = _load(conn, versions, filing_id)
     facts = load_facts(conn, filings)
+    subperiods = load_subperiods(conn, filings)
     now = _now()
     report = GateReport(filings=len(filings))
     rows: list[tuple[Any, ...]] = []
@@ -970,6 +1295,10 @@ def gate_version(
         filing_facts = facts.get(fid)
         if filing_facts is not None:
             issues.extend(identity_issues(filing_facts, metrics))
+        filing_subperiods = subperiods.get(fid)
+        if filing_subperiods is not None:
+            sub_results, _incomplete = subperiod_results(filing_subperiods)
+            issues.extend(con06_issues(sub_results, metrics))
         for rule_id in {i.rule_id for i in issues}:
             report.filings_by_rule[rule_id] = report.filings_by_rule.get(rule_id, 0) + 1
         for rule_id in {i.rule_id for i in issues if i.severity == "HARD"}:

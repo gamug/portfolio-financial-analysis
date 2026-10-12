@@ -293,6 +293,108 @@ def test_a_block_writes_the_quarantine_rows_and_a_warn_one_identity_row(
     assert quality.gate_version(memory_db, "metrics-v1", filing_id=fid).inserted == 0
 
 
+# -- CON_06 proper (F1b) ------------------------------------------------------------------------
+
+
+def _sp(  # noqa: PLR0913 - one SubperiodFacts fixture, all fields explicit
+    *,
+    concept: str = _PROFIT_LOSS,
+    quarters: dict[str, float] | None = None,
+    agg: float | None = None,
+    net_income: float | None = None,
+    fiscal_period: str = "2024Q3",
+    period_end: str = "2024-09-30",
+    agg_column: str = "2024-09-30 (YTD)",
+) -> quality.SubperiodFacts:
+    cols = dict(quarters or {})
+    if agg is not None:
+        cols[agg_column] = agg
+    duration = {("income_statement", concept): cols}
+    if net_income is not None:
+        duration[("income_statement", _NET_INCOME)] = {agg_column: net_income}
+    return quality.SubperiodFacts(fiscal_period, period_end, duration)
+
+
+_QUARTERS_3 = {
+    "2024-03-31 (Q1)": 100 * MILLION,
+    "2024-06-30 (Q2)": 100 * MILLION,
+    "2024-09-30 (Q3)": 100 * MILLION,
+}
+
+
+def test_con06_pass() -> None:
+    results, incomplete = quality.subperiod_results(
+        _sp(quarters=_QUARTERS_3, agg=300 * MILLION, net_income=300 * MILLION)
+    )
+    assert incomplete == []
+    assert len(results) == 1
+    assert (
+        results[0].level == "pass"
+        and results[0].n_terms == 4
+        and results[0].quarter_columns
+        == (
+            "2024-03-31 (Q1)",
+            "2024-06-30 (Q2)",
+            "2024-09-30 (Q3)",
+        )
+    )
+
+
+def test_con06_warn_and_block() -> None:
+    warn, _ = quality.subperiod_results(
+        _sp(quarters=_QUARTERS_3, agg=304 * MILLION, net_income=1_000 * MILLION)
+    )
+    # rounding 2M, threshold = 0.5% x 1,000M = 5M, diff 4M -> warn
+    assert warn[0].level == "warn"
+    block, _ = quality.subperiod_results(
+        _sp(quarters=_QUARTERS_3, agg=310 * MILLION, net_income=1_000 * MILLION)
+    )
+    assert block[0].level == "block"
+
+
+def test_con06_incomplete_chain_is_not_tested() -> None:
+    # a 9-month YTD with only Q2 + Q3 (Q1 missing) -> incomplete, no result
+    partial = {"2024-06-30 (Q2)": 100 * MILLION, "2024-09-30 (Q3)": 100 * MILLION}
+    results, incomplete = quality.subperiod_results(
+        _sp(quarters=partial, agg=300 * MILLION, net_income=300 * MILLION)
+    )
+    assert results == []
+    assert len(incomplete) == 1 and incomplete[0]["concept"] == _PROFIT_LOSS
+
+
+def test_con06_missing_base_never_blocks() -> None:
+    # no NetIncomeLoss filed -> base missing -> WARN cap even for a huge gap
+    results, _ = quality.subperiod_results(_sp(quarters=_QUARTERS_3, agg=900 * MILLION))
+    assert results[0].level == "warn" and results[0].base_missing is True
+
+
+def test_con06_block_quarantines_the_ttm_metrics(memory_db: Database) -> None:
+    _asset(memory_db)
+    fid = seed_filing(
+        memory_db,
+        1,
+        period_end="2024-09-30",
+        filing_date="2024-11-01",
+        form="10-Q",
+        fiscal_period="2024Q3",
+    )
+    for column, value in _QUARTERS_3.items():
+        _fact(memory_db, fid, "income_statement", _PROFIT_LOSS, column, value)
+    _fact(memory_db, fid, "income_statement", _PROFIT_LOSS, "2024-09-30 (YTD)", 310 * MILLION)
+    _fact(memory_db, fid, "income_statement", _NET_INCOME, "2024-09-30 (YTD)", 1_000 * MILLION)
+    _metric(memory_db, fid, "profitability", "return_on_assets", 0.05)
+
+    quality.gate_version(memory_db, "metrics-v1", filing_id=fid)
+    rows = {
+        (r["rule_id"], r["metric_group"], r["metric_name"], r["quarantined"])
+        for r in memory_db.execute(
+            "SELECT rule_id, metric_group, metric_name, quarantined FROM data_quality_issue"
+        )
+    }
+    assert ("CON_06", "identity", f"CON_06 {_PROFIT_LOSS} 2024-09-30 (YTD)", 0) in rows
+    assert ("CON_06", "profitability", "return_on_assets", 1) in rows
+
+
 def test_a_warn_rule_at_the_material_level_quarantines_nothing(memory_db: Database) -> None:
     _asset(memory_db)
     fid = seed_filing(memory_db, 1, period_end="2024-12-31", filing_date="2025-02-01")
