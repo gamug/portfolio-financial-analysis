@@ -304,25 +304,46 @@ def _last_annual_report_missing(engine: _Engine, predecessor: str, effective: st
 
 
 def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
-    bar = tqdm(tasks, desc="fundamental analysis", unit="task")
-    for task in bar:
-        bar.set_postfix_str(f"{task.ticker} {task.form} {task.year}")
-        _run_task(engine, task)
+    tasks_by_asset: dict[int, list[_YearTask]] = {}
+    for task in tasks:
+        tasks_by_asset.setdefault(task.asset_id, []).append(task)
+
+    bar = tqdm(total=len(tasks), desc="fundamental analysis", unit="task")
+    try:
+        for asset_tasks in tasks_by_asset.values():
+            asset_filings: list[tuple[_YearTask, FilingRef]] = []
+            for task in asset_tasks:
+                bar.set_postfix_str(f"{task.ticker} {task.form} {task.year}")
+                for ref in _list_task_filings(engine, task):
+                    asset_filings.append((task, ref))
+                bar.update(1)
+
+            asset_filings.sort(
+                key=lambda pair: (pair[1].filing_date or "", pair[1].accession_number)
+            )
+            for task, ref in asset_filings:
+                _run_filing(engine, task, ref)
+    finally:
+        bar.close()
 
 
-def _run_task(engine: _Engine, task: _YearTask) -> None:
-    """One (ticker, form, filing-year): list its filings, then ingest each one."""
+def _list_task_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
     try:
         refs = _list_filings(engine, task)
     except EdgarNotFoundError:
         _count(engine, skipped=1)  # the company filed no such form that year
-        return
+        return []
     except Exception as exc:  # one bad company/year must not stop the batch
         _record_failure(engine, task, None, exc)
-        return
+        return []
     selected = _select_filings(task, refs)
     _count(engine, skipped=len(refs) - len(selected))  # amendments: never ingested (L-04)
-    for ref in selected:
+    return selected
+
+
+def _run_task(engine: _Engine, task: _YearTask) -> None:
+    """One (ticker, form, filing-year): list its filings, then ingest each one."""
+    for ref in _list_task_filings(engine, task):
         _run_filing(engine, task, ref)
 
 
