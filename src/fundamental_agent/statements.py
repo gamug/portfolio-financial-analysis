@@ -130,6 +130,11 @@ class LineItem:
     # fallback, never added to PP&E", which a concept-first pass would read before ETR's own
     # ``PaymentsForCapitalImprovements`` (106M against 5.07B); part 2 (f) writes capex's order.
     document_order: bool = False
+    # (concept, flag): when the resolved value comes from that concept, raise the flag (T-148 step 2.1).
+    concept_flags: tuple[tuple[str, str], ...] = ()
+    # (concept, flag): when the item resolves empty and that concept is filed (valued,
+    # non-dimensional) in the column, raise the flag (T-148 step 2.1).
+    unread_flags: tuple[tuple[str, str], ...] = ()
 
 
 _INCOME = ("income_statement",)
@@ -729,9 +734,38 @@ class Statements:
                     return Resolution(None)
                 column = instant
             value, concept, how = self._resolve_column(spec, column)
+            self._apply_resolution_flags(spec, column, value, concept, how)
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
+
+    def _apply_resolution_flags(
+        self,
+        spec: LineItem,
+        column: str,
+        value: float | None,
+        concept: str | None,
+        how: str | None,
+    ) -> None:
+        if value is not None and concept is not None and spec.concept_flags:
+            for c, flag in spec.concept_flags:
+                if concept == c or c in [p.strip() for p in re.split(r"\s+[+-]\s+", concept)]:
+                    self._flag(flag)
+        if value is None and spec.unread_flags:
+            for c, flag in spec.unread_flags:
+                if self._is_concept_filed_in_column(spec, column, c):
+                    self._flag(flag)
+        self._apply_id01_flags(how, concept, value)
+
+    def _apply_id01_flags(self, how: str | None, concept: str | None, value: float | None) -> None:
+        if how == "standard":
+            self._flag("standard_concept_match")
+        elif how in ("label", "label_fallback"):
+            self._flag("label_match")
+        if value is not None and concept is not None:
+            parts = [p.strip() for p in re.split(r"\s+[+-]\s+", concept) if p.strip()]
+            if any(not p.startswith(("us-gaap_", "dei_")) for p in parts):
+                self._flag("extension_concept")
 
     def get(self, item: str, period_key: str) -> float | None:
         """Return the value of registry *item* for *period_key*, or ``None`` (:meth:`resolve`'s
@@ -1451,6 +1485,13 @@ class Statements:
                 if value is not None:
                     return value
         return None
+
+    def _is_concept_filed_in_column(self, spec: LineItem, column: str, concept: str) -> bool:
+        """Whether a non-abstract, non-dimensional row tagged *concept* has a value in *column*."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept and _numeric(row.get(column)) is not None:
+                return True
+        return False
 
     def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
         """One value per distinct ``spec.concepts`` member, first occurrence in

@@ -21,7 +21,7 @@ import pytest
 
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
-from fundamental_agent.statements import Statements, filed_value, iter_facts
+from fundamental_agent.statements import REGISTRY, LineItem, Statements, filed_value, iter_facts
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -524,3 +524,203 @@ def test_a_single_tax_component_is_never_the_tax() -> None:
     assert resolution.flags == ("tax_component_not_total",)
     # and the default rate applies downstream: no tax, no effective rate
     assert effective_tax_rate(resolution.value, 1_000.0) == pytest.approx(0.21)
+
+
+# -- generic flag support: T-148 step 2.1 (ID-01) ------------------------------------------------
+
+
+def test_concept_flags_raised_when_value_comes_from_concept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """concept_flags: when the value comes from that concept, raise the flag."""
+    spec = LineItem(
+        name="test_item",
+        statements=("income_statement",),
+        concepts=("us-gaap_TestConceptA", "us-gaap_TestConceptB"),
+        concept_flags=(("us-gaap_TestConceptA", "flag_a_used"),),
+    )
+    monkeypatch.setitem(REGISTRY, "test_item", spec)
+
+    payload = {
+        "income_statement": [
+            {"concept": "us-gaap_TestConceptA", "2024-12-31 (FY)": 100.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts = Statements.from_payload(payload)
+    res = stmts.resolve("test_item", "2024-12-31 (FY)")
+    assert res.value == 100.0
+    assert res.concept == "us-gaap_TestConceptA"
+    assert "flag_a_used" in res.flags
+
+    # When concept B is resolved, flag_a_used is not raised
+    payload_b = {
+        "income_statement": [
+            {"concept": "us-gaap_TestConceptB", "2024-12-31 (FY)": 200.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts_b = Statements.from_payload(payload_b)
+    res_b = stmts_b.resolve("test_item", "2024-12-31 (FY)")
+    assert res_b.value == 200.0
+    assert "flag_a_used" not in res_b.flags
+
+
+def test_unread_flags_raised_when_item_empty_and_concept_filed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """unread_flags: when the item resolves empty and that concept is filed (valued,
+    non-dimensional) in the column, raise the flag."""
+    spec = LineItem(
+        name="test_item",
+        statements=("cash_flow",),
+        concepts=("us-gaap_DepreciationDepletionAndAmortization",),
+        unread_flags=(("us-gaap_Depreciation", "depreciation_only_not_da"),),
+    )
+    monkeypatch.setitem(REGISTRY, "test_item", spec)
+
+    # Depreciation is filed on cash flow, but target concept is not
+    payload = {
+        "cash_flow": [
+            {"concept": "us-gaap_Depreciation", "2024-12-31 (FY)": 50.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts = Statements.from_payload(payload)
+    res = stmts.resolve("test_item", "2024-12-31 (FY)")
+    assert res.value is None
+    assert "depreciation_only_not_da" in res.flags
+
+    # If the row is dimensional or abstract, it should not trigger unread_flags
+    payload_dim = {
+        "cash_flow": [
+            {
+                "concept": "us-gaap_Depreciation",
+                "2024-12-31 (FY)": 50.0,
+                "preferred_sign": 1.0,
+                "dimension": "some_dim",
+            }
+        ]
+    }
+    stmts_dim = Statements.from_payload(payload_dim)
+    res_dim = stmts_dim.resolve("test_item", "2024-12-31 (FY)")
+    assert res_dim.value is None
+    assert "depreciation_only_not_da" not in res_dim.flags
+
+
+def test_id01_standard_concept_match_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ID-01: raise standard_concept_match when how == 'standard'."""
+    spec = LineItem(
+        name="test_item",
+        statements=("income_statement",),
+        concepts=("us-gaap_NonexistentConcept",),
+        standard=("StandardRevenue",),
+    )
+    monkeypatch.setitem(REGISTRY, "test_item", spec)
+
+    payload = {
+        "income_statement": [
+            {
+                "concept": "us-gaap_AlternateRevenue",
+                "standard_concept": "StandardRevenue",
+                "2024-12-31 (FY)": 500.0,
+                "preferred_sign": 1.0,
+            }
+        ]
+    }
+    stmts = Statements.from_payload(payload)
+    res = stmts.resolve("test_item", "2024-12-31 (FY)")
+    assert res.value == 500.0
+    assert res.how == "standard"
+    assert "standard_concept_match" in res.flags
+
+
+def test_id01_label_match_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ID-01: raise label_match when how in ('label', 'label_fallback')."""
+    # 1. how == "label"
+    spec_label = LineItem(
+        name="test_item_label",
+        statements=("income_statement",),
+        concepts=("us-gaap_Nonexistent",),
+        label_contains=("custom revenues",),
+    )
+    monkeypatch.setitem(REGISTRY, "test_item_label", spec_label)
+    payload_label = {
+        "income_statement": [
+            {
+                "concept": "us-gaap_SomeRevenueLine",
+                "label": "Total custom revenues from ops",
+                "2024-12-31 (FY)": 300.0,
+                "preferred_sign": 1.0,
+            }
+        ]
+    }
+    stmts_label = Statements.from_payload(payload_label)
+    res_label = stmts_label.resolve("test_item_label", "2024-12-31 (FY)")
+    assert res_label.value == 300.0
+    assert res_label.how == "label"
+    assert "label_match" in res_label.flags
+
+    # 2. how == "label_fallback"
+    spec_fallback = LineItem(
+        name="test_item_fallback",
+        statements=("cash_flow",),
+        concepts=("us-gaap_Nonexistent",),
+        label_fallback=r"^capital expenditures",
+    )
+    monkeypatch.setitem(REGISTRY, "test_item_fallback", spec_fallback)
+    payload_fallback = {
+        "cash_flow": [
+            {
+                "concept": "us-gaap_SomeCapexConcept",
+                "label": "Capital expenditures incurred",
+                "2024-12-31 (FY)": 400.0,
+                "preferred_sign": 1.0,
+            }
+        ]
+    }
+    stmts_fallback = Statements.from_payload(payload_fallback)
+    res_fallback = stmts_fallback.resolve("test_item_fallback", "2024-12-31 (FY)")
+    assert res_fallback.value == 400.0
+    assert res_fallback.how == "label_fallback"
+    assert "label_match" in res_fallback.flags
+
+
+def test_id01_extension_concept_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ID-01: raise extension_concept when concept does not start with us-gaap_ or dei_."""
+    spec = LineItem(
+        name="test_item_ext",
+        statements=("income_statement",),
+        concepts=("custom_SpecialRevenue", "us-gaap_StandardRev", "dei_EntityRev"),
+    )
+    monkeypatch.setitem(REGISTRY, "test_item_ext", spec)
+
+    # 1. Custom extension concept
+    payload_custom = {
+        "income_statement": [
+            {"concept": "custom_SpecialRevenue", "2024-12-31 (FY)": 700.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts_custom = Statements.from_payload(payload_custom)
+    res_custom = stmts_custom.resolve("test_item_ext", "2024-12-31 (FY)")
+    assert res_custom.value == 700.0
+    assert "extension_concept" in res_custom.flags
+
+    # 2. us-gaap concept: no extension_concept flag
+    payload_gaap = {
+        "income_statement": [
+            {"concept": "us-gaap_StandardRev", "2024-12-31 (FY)": 800.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts_gaap = Statements.from_payload(payload_gaap)
+    res_gaap = stmts_gaap.resolve("test_item_ext", "2024-12-31 (FY)")
+    assert res_gaap.value == 800.0
+    assert "extension_concept" not in res_gaap.flags
+
+    # 3. dei concept: no extension_concept flag
+    payload_dei = {
+        "income_statement": [
+            {"concept": "dei_EntityRev", "2024-12-31 (FY)": 900.0, "preferred_sign": 1.0}
+        ]
+    }
+    stmts_dei = Statements.from_payload(payload_dei)
+    res_dei = stmts_dei.resolve("test_item_ext", "2024-12-31 (FY)")
+    assert res_dei.value == 900.0
+    assert "extension_concept" not in res_dei.flags
