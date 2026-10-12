@@ -206,3 +206,25 @@ def test_capex_flags_propagate_to_cashflow_and_valuation_inputs() -> None:
     price = ClosePrice("2025-12-31", 50.0)
     val_results = valuation.compute(stmts, FY, price)
     assert val_results[0].inputs.get("flag_capital_expenditure_ppe_family_plus_og_added") == 1.0
+
+
+def test_ppe_and_oil_and_gas_property_and_equipment_flags_acquisitions_contrary_to_a() -> None:
+    """MET-08 (b)(4): When PaymentsToAcquireOilAndGasPropertyAndEquipment is added to a
+    PP&E-family line, raise both ppe_family_plus_og_added and includes_acquisitions_contrary_to_a."""
+    stmts = _cashflow(
+        _row(
+            "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+            "Machinery",
+            500_000_000.0,
+        ),
+        _row(
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "Oil and gas property and equipment",
+            300_000_000.0,
+        ),
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 800_000_000.0
+    assert res.how == "map"
+    assert "ppe_family_plus_og_added" in res.flags
+    assert "includes_acquisitions_contrary_to_a" in res.flags

@@ -1296,6 +1296,8 @@ class Statements:
                 og_values[G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"] = val_og_ppe
         if ppe_values and og_values:
             self._flag("ppe_family_plus_og_added")
+            if G + "PaymentsToAcquireOilAndGasPropertyAndEquipment" in og_values:
+                self._flag("includes_acquisitions_contrary_to_a")
             all_used = {**ppe_values, **og_values}
             return sum(all_used.values()), " + ".join(sorted(all_used.keys())), "map"
         if ppe_values:
