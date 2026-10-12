@@ -236,13 +236,14 @@ def test_c2_the_no_debt_line_zero_rule_is_unchanged() -> None:
 
 
 def test_c3_a_negative_net_element_is_skipped_for_the_caption_fallback() -> None:
-    """COP 2022Q1: ``PaymentsForProceedsFromProductiveAssets`` is filed at -2,332M under the caption
-    "Proceeds from asset dispositions" -- net proceeds, not capex. The tier is skipped, flagged, and
-    the caption fallback resolves the filer's own "Capital expenditures and investments" line."""
+    """COP 2022Q1: ``PaymentsForProceedsFromProductiveAssets`` is filed at -2,332M (a caption that
+    does not name proceeds, so the sign rule decides) -- net proceeds, not capex. The tier is
+    skipped, flagged, and the caption fallback resolves the filer's own "Capital expenditures and
+    investments" line."""
     stmts = _cashflow(
         _row(
             G + "PaymentsForProceedsFromProductiveAssets",
-            "Proceeds from asset dispositions",
+            "Payments for productive assets, net",
             -2_332_000_000.0,
         ),
         _row(
@@ -274,7 +275,7 @@ def test_c3_a_positive_net_element_is_kept_as_the_last_resort() -> None:
 
 def test_c3_a_zero_net_element_is_proceeds_and_the_tier_is_skipped() -> None:
     stmts = _cashflow(
-        _row(G + "PaymentsForProceedsFromProductiveAssets", "Net proceeds", 0.0),
+        _row(G + "PaymentsForProceedsFromProductiveAssets", "Productive assets, net", 0.0),
         _row("x_CapitalExpenditures", "Capital expenditures", 55_000_000.0),
     )
     res = stmts.resolve("capital_expenditure", FY)
@@ -313,8 +314,61 @@ def test_c3_the_new_capex_flag_reaches_the_metric_inputs() -> None:
     )
     results = cashflow.compute(stmts, FY)
     inputs = results[0].inputs
-    assert inputs["flag_capital_expenditure_net_element_net_proceeds"] == 1.0
+    assert inputs["flag_capital_expenditure_net_element_captioned_proceeds"] == 1.0
     assert inputs["flag_capital_expenditure_caption_fallback"] == 1.0
+
+
+def test_c3_a_line_captioned_proceeds_is_skipped_whatever_its_sign() -> None:
+    """C3 addition: COP's 2021-03-31 comparative on "Proceeds from asset dispositions" is displayed
+    -17,000,000 with ``preferred_sign`` -1, a filed **+17,000,000** the sign test alone would read as
+    capex. The caption decides: skipped, flagged ``net_element_captioned_proceeds``, caption
+    fallback tried."""
+    row = _row(
+        G + "PaymentsForProceedsFromProductiveAssets",
+        "Proceeds from asset dispositions",
+        17_000_000.0,
+    )
+    row["preferred_sign"] = -1  # the displayed -17,000,000 negated by the filed sign
+    stmts = _cashflow(
+        {**row, "2025-12-31 (FY)": -17_000_000.0},
+        _row(
+            "cop_PaymentToAcquireProductiveAssetsAndInvestments",
+            "Capital expenditures and investments",
+            1_900_000_000.0,
+        ),
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 1_900_000_000.0
+    assert "net_element_captioned_proceeds" in res.flags
+    assert "net_element_last_resort" not in res.flags
+    assert "caption_fallback" in res.flags
+
+
+def test_c3_a_caption_naming_a_sale_or_disposition_is_also_skipped() -> None:
+    for caption in (
+        "Net proceeds from sale of assets",
+        "Gain on disposition of assets",
+        "Proceeds",
+    ):
+        stmts = _cashflow(_row(G + "PaymentsForProceedsFromProductiveAssets", caption, 5_000_000.0))
+        res = stmts.resolve("capital_expenditure", FY)
+        assert res.value is None and "net_element_captioned_proceeds" in res.flags, caption
+
+
+def test_c3_a_positive_net_payment_caption_is_still_kept() -> None:
+    """A caption that names neither proceeds nor a sale/disposition keeps the sign test: a positive
+    net element is a net payment (the last resort, as before)."""
+    stmts = _cashflow(
+        _row(
+            G + "PaymentsForProceedsFromProductiveAssets",
+            "Payments for productive assets, net",
+            120_000_000.0,
+        )
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 120_000_000.0
+    assert "net_element_last_resort" in res.flags
+    assert "net_element_captioned_proceeds" not in res.flags
 
 
 def test_c1_and_c2_the_new_flags_reach_the_metric_inputs() -> None:

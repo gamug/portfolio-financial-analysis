@@ -284,6 +284,11 @@ DA_SOURCED_CHILDREN: tuple[str, ...] = (
 # A cash-flow row whose concept or caption names D&A: the C1 (c) "only lines" scan.
 _DA_NAME_RE = re.compile(r"depreciat|amorti|deplet", re.IGNORECASE)
 
+# C3 (T-151 part 1): a net-element caption that names proceeds, a sale or a disposition. Such a line
+# is net proceeds whatever its filed sign (COP: "Proceeds from asset dispositions" displayed
+# -17,000,000 with ``preferred_sign`` -1, a filed +17,000,000).
+_NET_ELEMENT_PROCEEDS_RE = re.compile(r"proceeds?|\bsales?\b|disposition", re.IGNORECASE)
+
 # -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
 _CASH_PAREN_RE = re.compile(r"\([^)]*\)")
 _CASH_NOTE_RE = re.compile(r"\(note\s+\w+\)", re.IGNORECASE)
@@ -1500,9 +1505,15 @@ class Statements:
             if val5 is not None:
                 self._flag("productive_assets_fallback")
                 return val5, prod_c, "fallback"
-        val6 = self._concept_value(spec, column, G + "PaymentsForProceedsFromProductiveAssets")
+        val6, caption6 = self._net_element(spec, column)
         if val6 is not None:
-            if val6 <= 0:
+            if _NET_ELEMENT_PROCEEDS_RE.search(caption6):
+                # C3 addition (T-151 part 1): a line captioned as proceeds, a sale or a disposition
+                # is net proceeds whatever its filed sign -- COP's 2021-03-31 comparative is
+                # displayed -17,000,000 with ``preferred_sign`` -1, a filed +17,000,000 the sign
+                # test alone would read as capex. Skipped for the caption fallback.
+                self._flag("net_element_captioned_proceeds")
+            elif val6 <= 0:
                 # C3 (MET-08, T-151 part 1): a net element of zero or below is net **proceeds**,
                 # not capex ("PaymentsForProceedsFrom..." is a net line). The tier is skipped and
                 # the caption fallback is tried; never repaired with abs() (ID-11).
@@ -1515,6 +1526,17 @@ class Statements:
             self._flag("caption_fallback")
             return val7, concept7, how7
         return None
+
+    def _net_element(self, spec: LineItem, column: str) -> tuple[float | None, str]:
+        """The filed value of ``PaymentsForProceedsFromProductiveAssets`` in *column* and its
+        caption (C3, T-151 part 1): the caption is what tells a net **payment** from net proceeds
+        when the sign alone cannot (a negating label displays a payment negative)."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == G + "PaymentsForProceedsFromProductiveAssets":
+                value = self._read(row, column, spec)
+                if value is not None:
+                    return value, str(row.get("label") or "")
+        return None, ""
 
     def _capex_non_reit(
         self, spec: LineItem, column: str
