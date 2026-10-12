@@ -5792,3 +5792,190 @@ GOOGL/GOOG with Alphabet's CIK; `identity.violations`/`require` and m012 on lega
 - **`N1.select_amendment_*` (level a)** replay the *old* rule over SEC history by construction and keep reporting 55 company-years; the acceptance counts are the stored ones.
 
 Scratch paths: `/tmp/t149/prod_copy.db` (migrated copy of production, the trigger check; `triggers.log`), `/tmp/t149/pilot.db` (+ `pilot_n2_on.db`, `pilot_n2_off.db`, `n2_effect.json`, `n2.log`, `compare.log`, `audit_pilot_after.json`), `/tmp/t149/n1_cohort.db` (+ `audit_cohort_after.json`, `n1_cohort.json`), `/tmp/t149/twitter.db`, `/tmp/t149/coreg.log`, `/tmp/t149/cik_vs_ticker.json`, `/tmp/t149/sec_docs/` (the XOM 8-K12B and 8-K), `/tmp/t149/audit_prod_before.json`. Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.
+
+
+---
+
+## T-148 part 1 of 2 — Filed signs, concept precedence, parent net income, income tax, debt and cash (Work item 8, step 11)
+
+**Status.** Implemented on `fix/t148a-filed-signs-precedence-debt` (PR number in the status commit). Methodology change (constitution AI behavior #12): which XBRL concept an
+income-statement or balance-sheet item is read from, in which sign, and what a missing debt, cash or tax means; contract 13 (`m013`); engine `metrics-v6`. This is **part 1** of
+`T-148`'s (a)-(d); **part 2** (revenue / cash flow / banks (e), capex and N22 (f), share counts and flags (g), the `T-070` recheck (j) and the full acceptance (i)) keeps `metrics-v6`:
+**no non-scratch database is built between the two PRs**, so no stored row mixes the two. Everything below was measured on **scratch copies** under `/tmp/t148a/` (listed at the end);
+production `financial.db` was only read, and its SHA-1 is the same before and after (`5c5c0642619bcc2f80aa72f13599bf824f676675`).
+
+### Symptom
+
+Measured on production by `T-147`'s audit (`docs/sec_data_checklist.md`), re-run here on a copy (`audit_sec_checklist.py measure --only resolver,capex,source`). A filing counts once;
+"any column" is `T-147`'s convention (the value is wrong in the target, the prior, a CAGR base or a year-to-date pair), "own period" counts the filing's own period only.
+
+(The audited counts are the first column of the table in "Measurements", 1.)
+
+- **Sign (D1).** edgartools renders a value with a negating label as the negative of the filed one and marks it `preferred_sign = -1`; the pipeline read the displayed value. The income tax of Constellation Brands is
+  displayed -147.2M (filed +147.2M), Apollo's FY2022 benefit +1,069M (filed -1,069M); interest expense and cost of goods are displayed negated in 1,638 and 201 own-period filings (`abs()` in `cashflow`, `valuation` and `leverage` hid the first
+  and the capex cases, and made a negative filed value positive).
+- **Precedence (D2).** `Statements` took the first row *in the statement* whose concept, standard concept or label matched. Philip Morris' "Total stockholders' equity before treasury stock" (`StockholdersEquityBeforeTreasuryStock`,
+  +25,557M, which matches the `total stockholders` label hint) precedes its real equity row (`StockholdersEquity`, "Total PMI stockholders' deficit", -9,994M) and was read as equity; `ProfitLoss` (including the noncontrolling interest) preceded
+  `NetIncomeLoss` (Duke 4,614M against 4,524M; NextEra 5,332M against 6,835M, a 1.5B NCI loss); the "available to common" line stood in for net income when neither was filed (Waters, 15 companies).
+- **Income tax (D3).** The gateway maps `CurrentIncomeTaxExpenseBenefit` to the standard concept "IncomeTaxes", which the registry listed: a current tax alone was the tax (55 filings, 9 companies); Apache files current and deferred without the total.
+- **Debt and cash (D4, N4-N7, N23, D10).** The first of four short-term concepts was the short-term debt (Apple: the term debt due, not the term debt plus the commercial paper); `LongTermDebt` (which includes the current maturities) plus
+  `LongTermDebtCurrent` counted them twice; Consolidated Edison's `OtherLongTermDebtCurrent` / `NotesPayableCurrent`, UDR's `SecuredDebt` / `UnsecuredDebt` and `InterestExpenseDebt` were not read; a missing debt or cash was 0 in the enterprise value
+  (`(total_debt or 0) - (cash or 0)`) and a missing debt left ROIC on equity alone; the cash ratio added the short-term investments to a cash line that contains them; a balance sheet missing at the period end was read from the nearest earlier date.
+
+### Reference and decision
+
+Rule IDs are `docs/checklist_sec/checklist_v1.3.md`'s; sources `sources_register.md`'s.
+
+- **ID-11 / ID-12 (filed sign).** "Invert the sign of a numeric fact whose element has an i:balance value that is inconsistent with the reporting concept being reported." (A1 §6.5.4 p.130) and "Assign a “negating” label to an xs:element with an
+  i:balanceType attribute that is inconsistent with the presentation in related official documents." (A1 §6.5.5 p.130; edgartools: "Presentation hint from presentation linkbase", A5 p.24). The filed value is the displayed value times `preferred_sign`.
+  A wrong sign is **rejected, never repaired**: `abs()` hides a wrong concept (D-06(a)).
+- **ID-13 (DQC_0015).** "The US GAAP taxonomy is designed for the majority of elements to have a positive value, so that the value reported in the XBRL document represents the correct balance type for the element" (B1). The registry's capex payment
+  elements (7) and `InterestAndDebtExpense` / `InterestExpenseDebt` are on the list in **all seven releases 2020-2026** (checked against the pinned lists: `capital_expenditure` 7/7, `interest_expense` 2/2; `PaymentsForProceedsFromProductiveAssets`, a net element, is not).
+- **ID-02a (precedence).** "When there is a choice among different elements that have documentation labels consistent with a set of facts in one or more periods, use the element with the narrowest definition." (A1 §6.5.6 p.131): the exact concepts in the spec's order,
+  then `standard`, then label. **ID-03 / N13 (parent earnings).** "To derive return on equity for the parent company, the net income will have to be cleansed of income from both majority and minority holdings" (C7 p.46); `NetIncomeLoss`: "The portion of profit or loss for the period,
+  net of income taxes, which is attributable to the parent."; `ProfitLoss`: "…including the portion attributable to the noncontrolling interest." (B6).
+- **ID-02b / D-06(c) (tax).** B6, `IncomeTaxExpenseBenefit`: "Amount of current income tax expense (benefit) and deferred income tax expense (benefit) pertaining to continuing operations." A component is never the total.
+- **MET-07 / D-06(d) / D-01 / ID-02b (debt).** B6: `LongTermDebtCurrent` "of long-term debt classified as current. Excludes lease obligation."; `ShortTermBorrowings` "debt having initial terms less than one year or the normal operating cycle, if longer"; `CommercialPaper` "short-term
+  borrowings using unsecured obligations"; `DebtCurrent` "Amount of debt and lease obligation, classified as current."; `LongTermDebt` "…Excludes lease obligation." (no classification, so it includes the current maturities); `LongTermDebtAndCapitalLeaseObligations` "…and lease obligation,
+  classified as noncurrent." S-X 5-02 p.1: line items "if applicable, … should appear on the face of the balance sheets" (D2) -- the partial map and the debt = 0 are inferences from it (D-01, review 3.1).
+- **N23 (FASB US GAAP Taxonomy 2026, `us-gaap-2026.zip` SHA-256 `f4c8b8b5697ba7d825a8614b159611cd25a46640e98a9737cda1e4a672bd4c81`, added to B6 on 2026-10-11).** `UnsecuredDebt`: "Including the current and noncurrent portions, carrying value as of the balance sheet date of
+  uncollateralized debt obligations…"; `SecuredDebt`: "…including the current and noncurrent portions, of collateralized debt obligations… mortgage loans, chattel loans, and any other borrowings secured by assets of the borrower."; `OtherLongTermDebtCurrent`: "Amount of long-term debt classified as other,
+  payable within one year or the operating cycle, if longer."; `NotesPayableCurrent`: "Sum of the carrying values… of the portions of long-term notes payable due within one year or the operating cycle if longer."; `InterestExpenseDebt`: "Amount of the cost of borrowed funds accounted for as interest expense for debt."
+- **MET-00 (missing is not zero).** "The xsi:nil attribute with value true must be used only to convey a value that is different from both “zero” and different from not reporting the fact at all" (A1 §6.7.11 p.137): a missing debt or cash leaves EV and ROIC empty.
+  **MET-09.** "When current earnings are negative, they are not a proxy for the earnings forecasts embedded in the stock price" (C4 p.18): a non-positive interest expense leaves the coverage empty, flagged. **ID-05.** "An element with an i:periodType attribute of instant has values that
+  are only measurable at a point in time" (A1 §6.3.1 p.127): a balance is read at the period end. **PER-08** (the same rounded month end) for a 52/53-week filer.
+
+**Declared decisions** (each is a choice the rules leave open; the measurements below say what it costs):
+
+1. **Rejected, not read as displayed, when the sign is not known.** A negative value of an ID-13 element is rejected (flag `wrong_sign_rejected`); with *no* sign hint (a payload without the field, a fact stored before `m013`) it is rejected too and flagged
+   `sign_unknown_negative_rejected` -- a payment is displayed negative, so the value cannot be told from a wrong sign, and the old `abs()` is exactly what is forbidden. A NULL hint on any other row reads as displayed and is flagged `sign_unverified`. Rejecting only the DQC_0015
+   concepts of the items whose `abs()` goes (capex, interest); (g) extends the list to the other elements the resolver reads.
+2. **A negative filed `InterestExpense` is valid (ID-11) and unusable as a divisor.** It is not on DQC_0015, so it stays: the interest coverage is empty and flagged `flag_interest_expense_negative` (MET-09), and the unlevered FCF yield is empty (neither added back nor made positive).
+3. **Parent net income needs a filed NCI income to subtract.** ID-03: `ProfitLoss` is parent earnings "when NCI income is absent or zero". Absent from the face is not absent from the filing -- Apache's FY2021 10-K files its NCI income under the redeemable / nonredeemable variants, so `ProfitLoss` (1,313M)
+   is 35% above the common stock's 973M -- so only a *filed* NCI row (zero included) lets `ProfitLoss` stand; otherwise the item is empty, flagged `profit_loss_without_nci_income` (the user's wording of N13: "else empty"). **Cost: see "net income left empty" below.**
+4. **"The rest of the balance sheet resolved".** For the partial debt map (D-01 (ii)): total assets and equity -- what the debt ratios divide by. For the zero of "no debt line at all" (ID-02b): also cash. A missing cash is a capture failure of its own: it empties EV and ROIC (MET-00), not the debt.
+5. **"No debt concept / no interest-expense concept is filed" are name patterns on the statement, not values.** `_DEBT_LINE_RE` and `_INTEREST_EXPENSE_LINE_RE` (case-insensitive, any taxonomy -- an extension counts) are looked for in **every non-abstract row of the balance sheet and the income statement, dimensional or not, valued or not**:
+   the gateway's `T-042` empties the non-dimensional row of a total a filer tags only with dimensions (General Motors, Caterpillar, Ford: 109B of debt read as the zero by a first version that tested the column's value -- found by this rebuild). A false positive only turns a zero into a capture failure.
+6. **N4 extends to what the definitions say contains the current maturities**: `DebtCurrent` is not added to a long-term line that includes them; the REIT pair (each "including the current and noncurrent portions") counts as one.
+7. **The REIT pair is read only when no other long-term line is filed.** Next to a company's own long-term line it is a sub-line (MetLife: "collateral financing arrangement" 352M beside 14.5B of long-term debt; found by the replay and fixed before the rebuild).
+   `LineOfCredit`, `SeniorNotes`, `NotesPayable` (non-current), `LoansPayableToBankCurrent` and the other debt-named lines are **not** read (they may overlap by definition); they only block the debt = 0 rule.
+8. **The short-term map's terms.** (`LongTermDebtCurrent`, else `OtherLongTermDebtCurrent`) + (`ShortTermBorrowings`, else `CommercialPaper`, else `NotesPayableCurrent`); a "kind of" concept takes the place of its term, never joins it.
+9. **A balance sheet is the period's own** if dated that day or the same rounded month end (PER-08), the closest; never the nearest earlier date.
+10. **Capex and `net_income_to_common` follow the registry's order** (precedence is for every item): `net_income_to_common` reads the diluted line before the basic one (27 filings, <0.2% apart); capex keeps `PaymentsToAcquireProductiveAssets` before `PaymentsForCapitalImprovements` -- ETR's two 10-Ks read 106M against 5.07B (below). (f) settles capex under MET-08.
+
+### Fix
+
+- `src/fundamental_agent/statements.py`: `Resolution(value, concept, how, flags)` and `Statements.resolve` (`get` is its value); `_read` (the filed sign, the rejections); `_candidates` (precedence); the composite resolvers `_net_income`, `_income_tax`, `_long_term_debt`, `_short_term` / `_short_term_debt`
+  and `total_debt` (`_balance_sheet_resolved`, `_no_debt_line`, `_has_debt_line`, `_has_interest_expense_line`); `_instant_for` (ID-05 / PER-08); `iter_facts` yields `preferred_sign`; `filed_value` for the audit scripts. The T-117/T-140 rebuild arithmetic stays on displayed values.
+- `src/fundamental_agent/metrics/`: no `abs()` in `cashflow`, `valuation`, `leverage`; `leverage` / `roic` / `valuation` read `total_debt`; EV and ROIC need debt, cash (and equity); interest coverage is empty unless interest > 0; `liquidity` does not add the short-term investments to a cash that contains them;
+  the resolution flags ride in the audit inputs as `flag_<item>_<flag>`.
+- `src/kg_schema/` (`ddl.py`, `migrations.py`): `financial_facts.preferred_sign` (`m013`, contract version 13); `fundamental_agent.db.append_financial_facts` writes it; `METRICS_ENGINE_VERSION = "metrics-v6"`.
+- `scripts/`: `sec_xcheck/features.py` reads `Statements.resolve`; `itemcheck.py` accepts the sourced maps (`ok_sourced_map`); `precedence.py` re-resolves document order and concept-first independently (it patched a method the resolver no longer calls); `resolver_measures.py` states N4 / N23 / N5 / N6 as the code now does;
+  `verify_t148a.py` (rebuild, replay, cost, n13, n23, tables).
+- Tests: `tests/test_line_item_resolution.py`, `tests/test_debt_resolution.py`, `tests/test_filed_sign_storage.py`, `tests/test_verify_t148a.py`, on real captures (`tests/fixtures/financials_{PM,ED,UDR,APO,ALGN}_…`, captured 2026-10-11, beside the existing ones).
+
+### Measurements
+
+**Method.** A **full facts-only rebuild of all 503 companies** on the branch (`scripts/verify_t148a.py rebuild`, which runs the pipeline with `verify_t149.py`'s analyst: every metric computed, the rule-based score, **no LLM call**; the gateway live on 2026-10-11/12;
+`--analysis-date 2026-09-02`, production's last filing date). 5,030 year-tasks in 216 minutes: **9,341 filings of 503 companies**; 262 skipped (mostly the 10-K/A and 10-Q/A that `T-149` no longer stores, and the payloads its identity and period checks refuse: EXE, KR, PSKY, ...) and 4 failed (the gateway could not extract GEHC FY2023 and SW; CNP and CSX hit a quarter label already held);
+prices copied from a scratch copy of production; `metrics-v6` only. 1,990,694 stored facts, **2,071 (0.10%) with no sign hint** (the gateway sent none). The audit's own scripts were then run over it:
+`audit_sec_checklist.py measure --only resolver,capex,source`, `scripts/sec_xcheck/itemcheck.py`, `signcheck.py` and `precedence.py` (SEC `companyfacts` cache from `audit_sec_checklist.py fetch`), and `verify_t148a.py cost | n13 | n23 | flags`.
+**Population.** The rebuilt database holds 4,270 filings production does not (4,211 of them 10-Qs: production predates `T-140`/`T-149`, which keep every 10-Q of a year and not the newest) and lacks 5 of production's 5,076 (CNP and CSX 10-Qs, EXE's FY2020 10-K and one 10-Q, KVUE's 10-Q: the failures and skips above). The comparisons therefore use **the 5,071 filings in both**
+(`rebuilt_common.db`, the rebuilt database with the others deleted) beside the whole rebuild. Where the gateway cannot be reached the same code can be replayed over stored facts (`verify_t148a.py replay`: the SEC's filed value gives the hint) -- it was used for the resolver-only effects below, which hold the data fixed.
+
+**1. The audit's rows, before and after** (own-period filings / companies; "any column" = `T-147`'s convention). The first column is production as audited (the same code and data as `docs/sec_data_checklist.md`).
+
+| finding | before: production (5,075 own-period filings) | after: rebuilt, the same 5,071 filings | after: rebuilt, all 9,341 filings |
+|---|---|---|---|
+| `D1.income_tax_negative` | 1450 f / 253 co; any column 1926 f | 402 f / 170 co; any column 937 f | 714 f / 223 co; any column 1564 f |
+| `D2.equity_not_narrowest` | 38 f / 5 co; any column 38 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `D2.net_income_profitloss_over_parent` | 2093 f / 252 co; any column 2247 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `D3.income_tax_component` | 55 f / 9 co; any column 55 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `D4.short_term_debt_order_differs` | 331 f / 52 co; any column 344 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `D6c.tax_current_deferred_without_total` | 19 f / 1 co; any column 19 f | 19 f / 1 co; any column 19 f | 19 f / 1 co; any column 19 f |
+| `D10.ev_debt_or_cash_zero_filled` | 1318 f / 163 co; any column 4993 f | 1116 f / 151 co; any column 4985 f | 2086 f / 156 co; any column 9116 f |
+| `ID11.capital_expenditure_abs_changes_value` | 2449 f / 457 co; any column 4547 f | 0 f / 0 co; any column 3 f | 3 f / 1 co; any column 9 f |
+| `ID11.interest_expense_abs_changes_value` | 1669 f / 202 co; any column 1673 f | 1 f / 1 co; any column 2 f | 2 f / 2 co; any column 5 f |
+| `ID11.stock_based_compensation_abs_changes_value` | 1 f / 1 co; any column 4 f | 1 f / 1 co; any column 4 f | 5 f / 5 co; any column 12 f |
+| `N3.ocf_continuing_resolved` | 66 f / 24 co; any column 191 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `N4.debt_double_count` | 25 f / 7 co; any column 25 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `N5.cash_double_count` | 4 f / 1 co; any column 4 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `N6.balance_from_other_date` | 1 f / 1 co; any column 8 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `N7.debt_absent` | 840 f / 98 co; any column 4987 f | 679 f / 84 co; any column 4983 f | 1328 f / 89 co; any column 9121 f |
+| `N7.lt_debt_only` | 1206 f / 185 co; any column 1211 f | 1362 f / 201 co; any column 1370 f | 2479 f / 212 co; any column 2487 f |
+| `N7.st_debt_only` | 85 f / 19 co; any column 85 f | 123 f / 23 co; any column 123 f | 218 f / 23 co; any column 218 f |
+| `N13.net_income_available_to_common` | 83 f / 15 co; any column 83 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `N14.da_depreciation_alone` | 475 f / 93 co; any column 878 f | 475 f / 93 co; any column 878 f | 856 f / 94 co; any column 1622 f |
+| `ID01.income_tax_label_or_standard_match` | 55 f / 9 co; any column 55 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `ID01.net_income_label_or_standard_match` | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `ID01.equity_label_or_standard_match` | 41 f / 5 co; any column 41 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `ID01.long_term_debt_label_or_standard_match` | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+| `ID01.short_term_debt_label_or_standard_match` | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f | 0 f / 0 co; any column 0 f |
+
+Reading it. **N4, N5, N6, D2 (both rows), D3, D4 and N13 are 0.** `N3.ocf_continuing_resolved` is 0 as a consequence of (b)'s precedence (the total concept precedes the continuing-operations one in the registry): part 2's (e) adds its regression test. `ID11.*` are 0 or the genuine negatives (3 columns of COP's net capex element; 1 filing of a negative filed interest expense).
+**`D1.income_tax_negative` is not 0 and cannot be**: it counts a negative resolved tax, and a tax benefit is negative as filed (402 own-period filings, 170 companies, of which `signcheck.py` finds 396 equal to the SEC's sign); the criterion that D1 is fixed is `signcheck.py`'s FLIPPED = 0 (below). `D10` now counts the filings whose
+debt or cash is empty (EV and ROIC are empty, no longer 0-filled; see 5). `N7.*` rise as the N4 rule (a long-term line that includes the current maturities gets none added) leaves the short-term side empty, and `N14`/`D6c` are part 2's.
+
+**2. The cross-checks against the SEC** (`companyfacts`, same accession and period).
+
+| script | before (production's 377 filings with stored metrics, `metrics-v2`) | after (rebuilt: 5,071 filings in both; 9,341 in all) |
+|---|---|---|
+| `signcheck.py` income tax | FLIPPED 75 (APO 17, SBAC 19, STZ 19, UDR 18, WAT 2), other_value 5 (APA) | **FLIPPED 0**; same sign 4,881 (396 negative); 9,080 of 9,341 in all |
+| `signcheck.py` cost of goods | FLIPPED 19 (STZ) | **FLIPPED 0** (2,839 same sign) |
+| `signcheck.py` interest expense | FLIPPED 94 (ESS, MA, PG, WAT, T) | **FLIPPED 0** (3,073 same sign; BALL 2 differ in value) |
+| `signcheck.py` capex | FLIPPED 123 (13 companies) | **FLIPPED 0** (2,344 same sign; 14 differ in value: DOC, EOG, MTB, WEC -- (f)) |
+| `itemcheck.py` income tax | OTHER_CONCEPT 19 (APA), FLIPPED 75 | **no OTHER_CONCEPT, no FLIPPED**: own concept 4,881, sourced map 14 (APA), empty 114 |
+| `itemcheck.py` equity | OTHER_CONCEPT 29 (PM, STZ, ...) | **no OTHER_CONCEPT**: own concept 4,996, empty 11 |
+| `itemcheck.py` net income | own concept 374 | **no OTHER_CONCEPT, no FLIPPED**: own concept 4,430, **sourced map 264** (`ProfitLoss` less NCI), empty 319 |
+| `precedence.py` (document order vs the resolver) | equity 41 of 5,075 filings differ, net income 2,097, income tax 36, short-term debt 259 (the old script patched a method; it is rewritten) | **resolver == concept-first in every filing of every plain item (True)**; document order would still differ in equity 41, interest 41, pretax 22, `net_income_to_common` 27, operating cash flow 65 |
+
+The audit's source-level scope reproduces, from the stored facts of all 5,075 production filings with the SEC's hint (`verify_t148a.py replay`; filings whose resolved value changed sign): **income tax 1,237 filings (134 companies)**, **cost of goods 201 (26; 211 in any column)**, **interest expense 1,638 (201)**, capex 2,404 own-period filings (452 companies; 4,547 in any column), `pretax_income` 5.
+
+**3. What else moved on the same facts** (replay, old resolver against new, all registry items, own-period filings): net income changes in 2,367 filings (277 companies) -- parent earnings instead of `ProfitLoss` -- and is empty in 306 (55 companies); equity changes in 41 (5: PM, STZ, GIS, IP, COHR); income tax is the map in 19 and
+no longer a component in 55 (9); short-term debt changes in 348 filings (54 companies), empty in 66 and newly found in 96; long-term debt is newly found in 211 (19 companies, the REIT pair) and changes in 5 (TXT, `LongTermDebt` 341M over the combined element 2.9B -- MET-07's narrowest-first on a mis-tagged filer); `net_income_to_common` reads the diluted line in 27; operating cash flow reads the total in 66 (24; N3).
+Debt as a whole: 3,692 unchanged, 463 changed value, 196 were 0-filled and now have a value, 179 were 0-filled and now are the ID-02b zero, 80 were a value and are now empty (EQT, OMC, CME, ...: a short-term line and no recognized long-term one), 465 empty both.
+
+**4. N13 and N23.**
+
+- **N13** (the "available to common" line stood in for net income): **83 production filings (15 companies; WAT among them)** -- 82 in the rebuilt population, 15 companies. **4 now resolve** (`NetIncomeLoss`, or `ProfitLoss` less the NCI income: the old order read the line before a later `NetIncomeLoss` row) and **78 are empty and flagged** `net_income_not_filed`.
+  `NetIncomeLoss` is filed at the SEC for 26 of the 82 -- not on the income statement the gateway returns -- and `NetIncomeLoss` or `ProfitLoss` is on another statement of the stored filing in 57 (`ProfitLoss` on the cash flow in 40). All 9,341 filings: 153 in the population, 146 empty, 7 resolved.
+- **N23**: of 5,070 own-period filings, **SecuredDebt in 180, UnsecuredDebt in 153** (the REIT pair is the long-term debt in **211**), **`InterestExpenseDebt` is the interest expense in 126**, `NotesPayableCurrent` in 84 and `OtherLongTermDebtCurrent` in 35 short-term debts; **291 total debts resolve through an N23 concept**. Of the 840 production filings with no debt line, 679 remain in the common population (N7.debt_absent).
+- **ID-02b outcomes** (common, own period): **177 are the zero** (`no_debt_lines`: a complete balance sheet, no debt concept, no interest-expense concept), **503 are a capture failure** (a debt concept is on the statement, or the balance sheet is incomplete), **123 are short-term debt alone** (empty), 7 a partial map refused; 2,855 are accepted partial maps.
+  General Motors, Caterpillar and Ford file their debt only with dimensions: the gateway's `T-042` empties the non-dimensional `DebtCurrent` / `LongTermDebtAndCapitalLeaseObligations` (GM: 35.7B and 94.6B, in `corrections`) and a first reading of "no debt line" that looked at the column's value made a 109B debt the zero; the rule now looks for the concept anywhere on the statement (GM, CAT and F: 30 of 30 filings are capture failures).
+
+**5. The cost of MET-00** -- filings whose debt, enterprise value or ROIC is now empty where the old code filled a missing term with 0 (`(total_debt or 0) - (cash or 0)`; `sum_present(debt, equity)`; ROIC left cash un-netted when cash was missing). Own-period filings of the 5,071 in both; by sector (`verify_t148a.py cost`):
+
+| sector | filings | debt empty | cash empty | EV empty | ROIC empty | debt = 0 (ID-02b) |
+|---|---:|---:|---:|---:|---:|---:|
+| Communication Services | 230 | 16 | 29 | 36 | 36 | 17 |
+| Consumer Discretionary | 465 | 91 | 56 | 119 | 119 | 42 |
+| Consumer Staples | 359 | 18 | 59 | 77 | 77 | 6 |
+| Energy | 234 | 12 | 44 | 56 | 56 | 8 |
+| Financials | 784 | 204 | 186 | 306 | 306 | 28 |
+| Health Care | 595 | 41 | 58 | 96 | 96 | 34 |
+| Industrials | 828 | 63 | 122 | 158 | 158 | 12 |
+| Information Technology | 691 | 121 | 42 | 162 | 162 | 30 |
+| Materials | 230 | 7 | 16 | 23 | 23 | 0 |
+| Real Estate | 334 | 34 | 31 | 62 | 62 | 0 |
+| Utilities | 321 | 26 | 13 | 38 | 30 | 0 |
+| **All** | **5,071** | **633 (12.5%)** | **656 (12.9%)** | **1,133 (22.3%)** | **1,125 (22.2%)** | **177** |
+
+Why debt is empty: capture failure 503, short-term debt alone 123, partial map refused 7. **Why cash is empty (656): the registry does not read the cash concept the filer uses** -- `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` is on the balance sheet of 390 of those filings (54 companies), `Cash` of 98 (11); the cash line is
+`T-151`'s (metric dictionary), so EV and ROIC for those 656 filings are empty until it is settled. Whole rebuild (9,341): debt empty 1,224, cash empty 1,200, EV 2,121, ROIC 2,108, debt = 0 in 335.
+
+**6. Net income left empty** (decision 3, the user's wording of N13): 319 of 5,071 filings (6.3%): `profit_loss_without_nci_income` 237 (`ProfitLoss` and no filed NCI income -- 43 companies) and `net_income_not_filed` 82 (16). Of the 237, the SEC files **`NetIncomeLoss` for 73** (not on the income statement the gateway returns: ODFL, IQV, NRG, ...), `ProfitLoss` alone for 44 (ALLE:
+a company with no NCI, whose `ProfitLoss` *is* parent earnings), the NCI-income concept itself for 27 (MA, EL: not on the statement either) and neither for 93 (APA's 88: its NCI income is under the redeemable / nonredeemable variants, so `ProfitLoss` there is 35% above the common stock's). Two cheap rules would give most of them back and **are not in this PR**: read the exact `NetIncomeLoss` / `ProfitLoss` from the cash-flow statement when the income statement lacks it (the same fact, annual and year-to-date columns only), and read "NCI income absent" from the balance sheet (no `MinorityInterest`
+and equity equal to parent equity, CON-04). Both need your decision (see the PR).
+
+**7. Other effects to know.** (a) `capital_expenditure` follows the registry order too: ETR's two 10-Ks read `PaymentsToAcquireProductiveAssets` (106M) where document order read `PaymentsForCapitalImprovements` (5.07B) -- (f) settles capex under MET-08. (b) 43 own-period capex values (13 companies: AEP, AOS, ...) are empty in a replay with the SEC's hint but only 4 in the rebuild with the gateway's: the gateway sends the hint (`wrong_sign_rejected` 4, `sign_unknown_negative_rejected` 0).
+(c) `flag_*` audit inputs: partial map 2,855 of 5,071, includes finance leases 1,353, includes leases 857, includes current maturities 644, cash includes short-term investments 27, tax component refused 20, current + deferred 19.
+
+**Residual scope / deliberately deferred.** (e), (f), (g), (j) and the full (i) acceptance are part 2. `LineOfCredit`, non-current `NotesPayable`, `SeniorNotes`, `LoansPayableToBankCurrent` and the other debt-named lines are not read (decision 7); the cash concepts above; the `NetIncomeLoss` / NCI cases above; and the `T-070` calibration check on the rebuilt data (j).
+The D10 row is computed by the audit from stored facts, which keep neither dimensional rows nor values the gateway emptied: the **`cost` table above, read from the metrics the pipeline stored, is the authority for MET-00**.
+
+**Existing databases / migration.** `m013` adds `financial_facts.preferred_sign` (NULL on every existing row; no backfill -- `financial_facts` is append-only on `(filing_id, statement, concept, period_key, filing_version)`); a NULL reads as displayed, flagged. The fix takes effect on a database rebuilt with the branch. Production (`metrics-v2`, 5,076 filings) is untouched.
+The pilot `T-143` and `T-100` start from fresh databases. **No non-scratch database is built between this PR and part 2.**
+
+**Scratch paths** (`/tmp/t148a/`): `prod_copy.db` (a copy of production, sha1 `5c5c0642…` before and after), `rebuilt_full.db` (9,341 filings), `rebuilt_common.db` (5,071), `replay3.db` (the replay), `out/` (`before.json`, `after_common.json`, `after_full.json`, the `itemcheck|signcheck|precedence|cost|n13|n23|flags` logs), `base/` (a worktree of master at `6a80ec3` for the "before").
+Production's SHA-1 was `5c5c0642619bcc2f80aa72f13599bf824f676675` before and after.
+
