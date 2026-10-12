@@ -641,13 +641,18 @@ def _con19_counts(conn: Any) -> dict[str, int]:
         "block": 0,
         "not_tested_operand_not_filed": 0,
         "not_tested_sign_not_stored": 0,
+        "not_tested_nci_tree_incomplete": 0,
     }
     for ff in facts.values():
-        flow = {c: ff.value(c, ff.flow_column) for c in quality._FLOW_CONCEPTS}
+        operand = quality.nci_operand(ff)
+        if operand.incomplete:
+            out["not_tested_nci_tree_incomplete"] += 1
+            continue
         if quality.con19_sign_missing(ff):
             out["not_tested_sign_not_stored"] += 1
             continue
-        result = quality.con19_result(flow, ff.flow_column, quality.nci_operand(ff))
+        flow = {c: ff.value(c, ff.flow_column) for c in quality._FLOW_CONCEPTS}
+        result = quality.con19_result(flow, ff.flow_column, operand)
         if result is None:
             out["not_tested_operand_not_filed"] += 1
         else:
@@ -692,9 +697,15 @@ def cmd_con19fasb(args: argparse.Namespace) -> int:
     old_blocks = new_blocks = 0
     changes: list[tuple[str, str, str, str]] = []
     regressions: list[str] = []
+    incomplete_filings: set[int] = set()
+    incomplete_companies: set[str] = set()
     for fid, ff in facts.items():
         old = _old_con19_level(ff)
-        new_result = _new_con19(ff)
+        operand = quality.nci_operand(ff)
+        if operand.incomplete:
+            incomplete_filings.add(fid)
+            incomplete_companies.add(meta.get(fid, ("?", "?"))[0])
+        new_result = None if operand.incomplete else _new_con19(ff)
         new = new_result.level if new_result is not None else None
         old_blocks += 1 if old == "block" else 0
         new_blocks += 1 if new == "block" else 0
@@ -706,10 +717,12 @@ def cmd_con19fasb(args: argparse.Namespace) -> int:
         if old == "pass" and new in ("warn", "block"):
             regressions.append(f"{ticker} {fiscal_period} {old} -> {new}")
     lines = [
-        f"T-150 F3 CON-19 per the FASB NCI tree, db={args.db}",
+        f"T-150 F3b CON-19 per the FASB NCI tree, db={args.db}",
         "",
         f"CON-19 blocks: before (single generic NCI) {old_blocks}, after (tree) {new_blocks}",
         f"changed filings: {len(changes)}",
+        f"not tested, NCI tree incomplete (F3b): {len(incomplete_filings)} filings "
+        f"({len(incomplete_companies)} companies: {', '.join(sorted(incomplete_companies))})",
         "",
         f"regressions pass -> warn/block: {len(regressions)}",
         *[f"  {r}" for r in regressions[:20]],
@@ -745,7 +758,8 @@ def _con19_line(counts: dict[str, int]) -> str:
         f"tested {counts['tested']} (pass {counts['pass']}, warn {counts['warn']}, "
         f"block {counts['block']}); not tested: operand not filed "
         f"{counts['not_tested_operand_not_filed']}, filed sign not stored "
-        f"{counts['not_tested_sign_not_stored']}"
+        f"{counts['not_tested_sign_not_stored']}, NCI tree incomplete "
+        f"{counts['not_tested_nci_tree_incomplete']}"
     )
 
 

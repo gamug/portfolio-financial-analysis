@@ -740,14 +740,16 @@ def con08_result(
 
 @dataclass(frozen=True)
 class NciOperand:
-    """CON-19's NCI operand (F3): the sum of the filed concepts of the NCI tree, ``concepts`` what
-    was summed, ``values`` their filed values, and ``signed`` whether every one carried a filed
-    sign. ``value`` is ``None`` when no tree concept is filed."""
+    """CON-19's NCI operand (F3/F3b): the sum of the filed concepts of the NCI tree, ``concepts``
+    what was summed, ``values`` their filed values, and ``signed`` whether every one carried a
+    filed sign. ``value`` is ``None`` when no tree concept is filed or the filed tree does not
+    cover the NCI (``incomplete``: one child alone, or grandchildren of one branch only)."""
 
     value: float | None
     concepts: tuple[str, ...]
     values: tuple[float, ...]
     signed: bool
+    incomplete: bool = False
 
 
 def con19_result(
@@ -990,10 +992,30 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
     return out
 
 
+def _nci_survivors(filed: Mapping[str, float], roots: tuple[str, ...]) -> set[str]:
+    """F3: *roots* and each root's filed descendants, dropping a root's descendants when they sum
+    to it within L-10's rounding (a total stands for its breakdown)."""
+    survivors = set(roots)
+    for node in roots:
+        descendants = [c for c in _NCI_DESCENDANTS.get(node, ()) if c in filed]
+        if not descendants:
+            continue
+        node_value, descendant_values = filed[node], [filed[c] for c in descendants]
+        if abs(node_value - sum(descendant_values)) > l10_rounding(
+            [node_value, *descendant_values]
+        ):
+            survivors |= set(descendants)  # the root does not stand for them: sum both sides
+    return survivors
+
+
 def nci_operand(facts: FilingFacts) -> NciOperand:
-    """CON-19's NCI operand (F3) from the filing's income-statement flow column: the sum of the
-    filed NCI-tree concepts, dropping the descendants of a filed concept whose filed descendants
-    sum to it within L-10's rounding (a total shown with its breakdown)."""
+    """CON-19's NCI operand (F3/F3b) from the filing's income-statement flow column.
+
+    F3b coverage: the tree covers the NCI when the generic concept is filed, or when the generic
+    is not filed but **both** direct children are. Then the operand is the sum of the covering
+    concepts plus any filed descendant a covering concept does not stand for (F3). Anything else
+    (one child alone, or grandchildren of one branch only) does not cover the NCI: the operand is
+    ``None`` with ``incomplete`` set, and CON-19 is not tested."""
     column = facts.flow_column
     if column is None:
         return NciOperand(None, (), (), True)
@@ -1004,18 +1026,14 @@ def nci_operand(facts: FilingFacts) -> NciOperand:
             filed[concept] = value
     if not filed:
         return NciOperand(None, (), (), True)
-    survivors = set(filed)
-    for node in _NCI_TREE:
-        if node not in filed:
-            continue
-        descendants = [c for c in _NCI_DESCENDANTS.get(node, ()) if c in filed]
-        if not descendants:
-            continue
-        descendant_values = [filed[c] for c in descendants]
-        if abs(filed[node] - sum(descendant_values)) <= l10_rounding(
-            [filed[node], *descendant_values]
-        ):
-            survivors -= set(descendants)
+    roots: tuple[str, ...]
+    if _NCI_INCOME in filed:
+        roots = (_NCI_INCOME,)
+    elif _NCI_REDEEMABLE in filed and _NCI_NONREDEEMABLE in filed:
+        roots = (_NCI_REDEEMABLE, _NCI_NONREDEEMABLE)
+    else:
+        return NciOperand(None, (), (), True, incomplete=True)
+    survivors = _nci_survivors(filed, roots)
     ordered = tuple(c for c in _NCI_TREE if c in survivors)
     return NciOperand(
         value=sum(filed[c] for c in ordered),

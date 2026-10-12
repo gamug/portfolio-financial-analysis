@@ -513,12 +513,25 @@ def test_con19_nci_total_stands_for_its_breakdown() -> None:
 
 
 def test_con19_nci_children_only_is_tested() -> None:
-    """F3: with no generic filed, the two children's sum is the NCI operand."""
+    """F3b: with no generic filed but **both** direct children filed, the tree covers the NCI."""
     operand = quality.nci_operand(
         _nci_facts({quality._NCI_REDEEMABLE: 10_873_000.0, quality._NCI_NONREDEEMABLE: 104_000.0})
     )
+    assert operand.incomplete is False
     assert operand.concepts == (quality._NCI_REDEEMABLE, quality._NCI_NONREDEEMABLE)
     assert operand.value == 10_977_000.0
+
+
+def test_con19_nci_one_child_alone_is_not_tested() -> None:
+    """F3b: one child alone (the ARES/BX/EXR shape) does not cover the NCI -> not tested."""
+    operand = quality.nci_operand(_nci_facts({quality._NCI_REDEEMABLE: 316_000.0}))
+    assert operand.incomplete is True and operand.value is None
+    grandchild = quality.nci_operand(
+        _nci_facts(
+            {"us-gaap_NoncontrollingInterestInNetIncomeLossPreferredUnitHoldersRedeemable": 1.0}
+        )
+    )
+    assert grandchild.incomplete is True and grandchild.value is None
 
 
 def test_a_warn_rule_at_the_material_level_quarantines_nothing(memory_db: Database) -> None:
