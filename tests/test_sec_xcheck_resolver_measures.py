@@ -65,6 +65,15 @@ def test_n5_cash_and_short_term_investments_counted_twice() -> None:
     )
 
 
+def test_n5_is_not_counted_once_the_liquidity_group_leaves_the_investments_out() -> None:
+    items: dict[str, float | tuple[float, str]] = {
+        "cash": (100.0, G + "CashCashEquivalentsAndShortTermInvestments"),
+        "short_term_investments": 20.0,
+    }
+    assert rm.cash_double_counts(rec(items=items))
+    assert not rm.cash_double_counts(rec(items=items, cash_ratio_flags_investments=True))
+
+
 def test_n6_a_balance_sheet_read_from_another_date() -> None:
     assert rm.instant_not_exact(rec(instant="2022-12-31", instant_exact=False))
     assert not rm.instant_not_exact(rec())
@@ -102,6 +111,23 @@ def test_d6d_short_term_debt_follows_the_disjoint_lines_with_debt_current_last()
         st={G + "LongTermDebtCurrent": 10.0, G + "ShortTermBorrowings": 5.0},
     )
     assert rm.st_debt_differs(today) and rm.st_debt_gap(today) == 5.0
+
+
+def test_d6d_with_n4_and_n23_the_measure_states_the_rule_t148_implements() -> None:
+    """N4: a long-term line that includes the current maturities gets neither ``LongTermDebtCurrent`` nor
+    ``DebtCurrent`` added. N23: ``OtherLongTermDebtCurrent`` and ``NotesPayableCurrent`` take the place of the term
+    they are a kind of when it is not filed."""
+    includes = G + "LongTermDebt"
+    both = {G + "LongTermDebtCurrent": 10.0, G + "ShortTermBorrowings": 5.0}
+    assert rm.proposed_short_term_debt(both, includes) == 5.0
+    assert rm.proposed_short_term_debt({G + "LongTermDebtCurrent": 10.0}, includes) is None
+    assert rm.proposed_short_term_debt({G + "DebtCurrent": 99.0}, includes) is None
+    assert rm.proposed_short_term_debt(both, G + "LongTermDebtNoncurrent") == 15.0
+    ed = {G + "OtherLongTermDebtCurrent": 250.0, G + "NotesPayableCurrent": 1575.0}
+    assert rm.proposed_short_term_debt(ed) == 1825.0
+    assert (
+        rm.proposed_short_term_debt({**ed, G + "LongTermDebtCurrent": 7.0}) == 1582.0
+    )  # not added to it
 
 
 def test_d2_precedence_equity_and_net_income() -> None:
@@ -209,6 +235,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -2479000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
     {
         "concept": "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
@@ -216,6 +243,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -157000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
     {
         "concept": "dow_CashFlowHedgingRelatedToCapitalExpenditures",
@@ -223,6 +251,7 @@ DOW_CASH_FLOW = [
         "2025-12-31 (FY)": -40000000.0,
         "abstract": False,
         "dimension": False,
+        "preferred_sign": -1.0,  # displayed negative, filed positive (ID-12)
     },
 ]
 
@@ -241,7 +270,7 @@ def test_n22_dow_capex_resolves_to_the_gas_field_line_not_the_capital_expenditur
     capex = record["items"]["capital_expenditure"]
     assert capex["concept"] == cx.OG_ED and capex["how"] == "fallback1"
     assert abs(capex["value"]) == 157_000_000.0
-    assert record["capex"][cx.MACHINERY] == -2_479_000_000.0
+    assert record["capex"][cx.MACHINERY] == 2_479_000_000.0  # filed sign (T-148)
     # two captions match (the hedging row has no accrual word), so the caption fallback would refuse anyway:
     # putting the O&G tiers behind the caption is not enough, the concept itself has to be in the registry
     assert set(

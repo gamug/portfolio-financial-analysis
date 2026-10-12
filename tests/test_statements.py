@@ -613,13 +613,12 @@ def test_revenue_total_label_correction_refuses_to_guess_when_between_rows_are_t
     assert stmts.get("revenue", key) is None
 
 
-def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_exists() -> None:
-    """T-096 (docs/model_fixes.md): WAT's real shape -- 14 of 18 `metrics-v2` filings in
-    the 20-ticker sample tag no `us-gaap_NetIncomeLoss`/`us-gaap_ProfitLoss` row at all,
-    only `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (WAT's Oct-2022 10-Q,
-    real value). Left unresolved, `net_income` silently comes back `None` -- and, chained
-    through F4's `ttm_flows` (`db.ttm_flows`/`_recorded_flow`), poisons every later
-    quarter's trailing-twelve-month window that needs this quarter's own value."""
+def test_net_income_is_never_the_available_to_common_line() -> None:
+    """ID-03 / N13 (T-148, replacing T-096's test of the opposite): WAT's real shape -- 14 of 18
+    `metrics-v2` filings in the 20-ticker sample tag no `us-gaap_NetIncomeLoss` /
+    `us-gaap_ProfitLoss` row, only `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic`
+    (WAT's Oct-2022 10-Q, real value). That line is after preferred dividends: it is not the
+    parent's net income, so the item is empty and flagged, not filled with it."""
     key = "2022-10-01 (Q4)"
     stmts = Statements.from_payload(
         _revenue_payload(
@@ -631,14 +630,14 @@ def test_net_income_resolves_the_available_to_common_variant_when_no_plain_tag_e
         )
     )
 
-    assert stmts.get("net_income", key) == 155_998_000.0
+    resolution = stmts.resolve("net_income", key)
+    assert resolution.value is None
+    assert resolution.flags == ("net_income_not_filed",)
 
 
 def test_net_income_still_prefers_the_plain_tag_when_both_are_present() -> None:
-    """The `AvailableToCommonStockholdersBasic` fallback must not disturb the ordinary
-    case (`us-gaap_NetIncomeLoss` present) -- a defensive regression guard; live
-    verification (WAT) found the two never co-occur non-dimensionally in the same
-    filing, but this pins the intended behavior if they ever did."""
+    """`NetIncomeLoss` beats the `AvailableToCommonStockholdersBasic` line when a filer
+    files both (ID-03): the latter is after preferred dividends."""
     key = "2023-12-31 (FY)"
     stmts = Statements.from_payload(
         _revenue_payload(

@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div, sum_present
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
 from fundamental_agent.pricing import ClosePrice
@@ -98,18 +98,25 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     market_cap = shares * price.close if shares is not None else None
 
     cash = stmts.get("cash", period_key)
-    total_debt = sum_present(
-        stmts.get("long_term_debt", period_key),
-        stmts.get("short_term_debt", period_key),
-    )
+    debt_resolution = stmts.total_debt(period_key)
+    total_debt = debt_resolution.value
     enterprise_value = _enterprise_value(market_cap, total_debt, cash)
 
-    fcff = _fcf_to_firm(stmts, period_key, fcfe, stmts.get("interest_expense", period_key))
-    fcff_annual = _fcf_to_firm(stmts, period_key, fcfe_annual, annual.get("interest_expense"))
+    interest_resolution = stmts.resolve("interest_expense", period_key)
+    # a sign the resolver rejected (ID-13) is not "no interest expense": the unlevered flow is empty
+    interest_rejected = any(f.endswith("_rejected") for f in interest_resolution.flags)
+    fcff = _fcf_to_firm(
+        stmts, period_key, fcfe, interest_resolution.value, interest_rejected=interest_rejected
+    )
+    fcff_annual = _fcf_to_firm(
+        stmts,
+        period_key,
+        fcfe_annual,
+        annual.get("interest_expense"),
+        interest_rejected=interest_rejected,
+    )
     sbc_adjusted_fcf = (
-        fcfe_annual - abs(sbc_annual)
-        if fcfe_annual is not None and sbc_annual is not None
-        else None
+        fcfe_annual - sbc_annual if fcfe_annual is not None and sbc_annual is not None else None
     )
 
     inputs = present(
@@ -124,6 +131,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         cash=cash,
         enterprise_value=enterprise_value,
     )
+    inputs.update(flag_inputs("total_debt", debt_resolution.flags))
     inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
     inputs["shares_are_diluted_average"] = float(used_diluted)
     inputs["shares_from_cover_page"] = float(share_count.from_cover)
@@ -154,9 +162,10 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
 def _enterprise_value(
     market_cap: float | None, total_debt: float | None, cash: float | None
 ) -> float | None:
-    if market_cap is None:
+    # MET-00 / D10: a missing debt or cash leaves the enterprise value empty, never read as 0
+    if market_cap is None or total_debt is None or cash is None:
         return None
-    return market_cap + (total_debt or 0.0) - (cash or 0.0)
+    return market_cap + total_debt - cash
 
 
 class _AnnualFlows:
@@ -182,21 +191,30 @@ class _AnnualFlows:
         ocf, capex = self.get("operating_cash_flow"), self.get("capital_expenditure")
         if ocf is None or capex is None:
             return None
-        return ocf - abs(capex)
+        return ocf - capex
 
 
 def _fcf_to_firm(
-    stmts: Statements, period_key: str, fcfe: float | None, interest: float | None
+    stmts: Statements,
+    period_key: str,
+    fcfe: float | None,
+    interest: float | None,
+    *,
+    interest_rejected: bool = False,
 ) -> float | None:
     """Unlevered FCF proxy: FCFE plus after-tax interest expense (no working-capital delta)."""
-    if fcfe is None:
+    if fcfe is None or interest_rejected:
         return None
     if interest is None:
         return fcfe
+    if interest < 0.0:
+        # MET-09 (T-148): a negative filed interest expense is left out, not added back and not
+        # turned positive with abs() (ID-11): the unlevered flow is empty, as the coverage is
+        return None
     rate = effective_tax_rate(
         stmts.get("income_tax", period_key), stmts.get("pretax_income", period_key)
     )
-    return fcfe + abs(interest) * (1.0 - rate)
+    return fcfe + interest * (1.0 - rate)
 
 
 def _day_gap(price_date: str, period_key: str) -> float:

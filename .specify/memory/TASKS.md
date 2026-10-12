@@ -255,6 +255,16 @@ the final pilot, `T-143`.
       2026-10-09 by the PR #127 review: (f) gains N22 and the residual capex item of `T-071`, and D6 is carried by (g).
       Numbers are production's 5,075 filings and the 17,350 filing-columns the pipeline reads (the target, the prior,
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
+      **Split in two PRs (user, 2026-10-11).** **Part 1 landed in PR #136, "fix(fundamental): filed signs, concept precedence,
+      income tax, debt and cash (T-148 part 1)" -- (a), (b), (c), (d)** (engine `metrics-v6`, `m013` / contract 13, SPEC
+      1.8.0, `docs/model_fixes.md` "T-148 part 1"). **Part 2 follows: (e), (f), (g), the `T-070` recheck (j) and the full
+      acceptance (i)**, on `metrics-v6` as well (no non-scratch database is built between the two PRs). The box stays
+      open until part 2 merges. Part 1 also resolved two of part 2's measurements as a consequence of (b)'s precedence:
+      `N3.ocf_continuing_resolved` is 0 (the total concept precedes the continuing-operations one in the registry's order).
+      **Capex is the exception to (b)'s precedence in part 1** (review of PR #136): it keeps master's reading, the first
+      matching row in the statement's order (`LineItem.document_order`), because a concept-first pass reads
+      `PaymentsToAcquireProductiveAssets` -- MET-08 (b)(1)'s flagged fallback, never added to PP&E -- before ETR's own
+      `PaymentsForCapitalImprovements`; (f) writes capex's order under MET-08.
       - (a) **Filed sign (ID-11, ID-12).** Store edgartools' `preferred_sign` (an additive column on `financial_facts`).
         `Statements.get` returns line items in the filed XBRL sign; the `T-117`/`T-140` rebuild arithmetic stays on
         displayed values. **Reject a wrong sign and flag it; do not repair it with `abs()`** (D-06(a); this replaces
@@ -273,7 +283,11 @@ the final pilot, `T-143`.
       - (b) **Precedence (ID-02a, ID-03).** Exact concepts first, in the spec's order, then `standard`, then
         `label_contains`. Net income: `NetIncomeLoss` (attributable to the parent) before `ProfitLoss`, a methodology
         decision, recorded, with its own regression test (a filing that files both); `ProfitLoss` minus
-        `NetIncomeLossAttributableToNoncontrollingInterest` when only `ProfitLoss` is filed. Equity:
+        `NetIncomeLossAttributableToNoncontrollingInterest` when only `ProfitLoss` is filed. **Part 1 implements ID-03
+        literally (review of PR #136), in this order:** (i) `NetIncomeLoss` from any stored statement of the filing and period;
+        (ii) `ProfitLoss` when no income attributable to the NCI is filed on any stored statement (flagged
+        `no_nci_income_filed`); (iii) `ProfitLoss` less `NetIncomeLossAttributableToNoncontrollingInterest` when that total is
+        filed; (iv) else empty, flagged. Equity:
         `StockholdersEquity` first. Measured: equity read from another row in 38 filings
         (5 companies; PM +22.6B vs −12.6B); net income includes NCI in 2,247
         filings (263 companies; 237 on the pilot). **N13, to decide:**
@@ -293,7 +307,9 @@ the final pilot, `T-143`.
         element only when it is the only long-term line, and then flagged "includes finance leases"; a line that
         includes current maturities is not added to `LongTermDebtCurrent` (N4). **ID-02b:** debt = 0 only with no debt line
         at all, no interest concept, and a complete balance sheet (Regulation S-X 5-02 p.1); otherwise a capture failure.
-        **N23 (v1.3):** debt and interest concepts not read today: REIT debt, `OtherLongTermDebtCurrent`, `NotesPayableCurrent`
+        **N23 (v1.3):** debt and interest concepts not read today: REIT debt (**not read in part 1**: no loaded source states
+        debt = `SecuredDebt` + `UnsecuredDebt`, ID-02b, so a REIT that files only those has an empty debt and EV; 211 of
+        5,070 own-period filings, 19 companies -- see `T-151`), `OtherLongTermDebtCurrent`, `NotesPayableCurrent`
         (filed by ED) and `InterestExpenseDebt`; plus interest expense is stored with mixed signs (202 negative of 319 in
         production), to be checked against MET-09's coverage rule. Measured: the D-06(d) order changes 344 filings (53 companies);
         on the filing's own period 840 of 5,075 have no debt line (663 non-financial; 319 file a read interest concept and 177 an unread one;
@@ -351,7 +367,13 @@ the final pilot, `T-143`.
           (e.g. DOW: USD 2.48B + 0.157B), not chosen one over the other;
         - the residual capex item that stood under `T-071` since `T-133`'s review (2026-10-02: filers whose capex is
           `PaymentsToAcquireOtherPropertyPlantAndEquipment` / `...OtherProductiveAssets`, which `T-133`'s single-line
-          lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope.
+          lookup leaves empty rather than partial) is now this bullet's, because capex is `T-148`'s scope;
+        - **a case part 2 must get right under MET-08 (review of PR #136): ETR's two 10-Ks** (FY2022, accession
+          `0000065984-23-000014`, and FY2023) file `PaymentsToAcquireProductiveAssets` (106M and 35M) beside
+          `PaymentsForCapitalImprovements` (5.07B and 4.44B). (b)(1) makes the first "a flagged fallback, never added to PP&E",
+          so the answer is the second; part 1 keeps master's document order and reads it
+          (`tests/test_line_item_resolution.py::test_etr_capex_keeps_master_s_document_order_until_met08_is_written`), and the
+          order (f) writes must keep reading it.
       - (g) **Share counts and the other flags (ID-18, MKT-01 to MKT-04, ID-01, ID-09/16, ID-20, ID-13 to ID-15, PER-06).**
         The share-scale corrector **quarantines instead of correcting** (ID-18): Annex A-03 catches the MCD 10⁶ case
         without the correction (6 of 6 corrected filings). Stored valuation: remove the balance-sheet and diluted
@@ -483,6 +505,13 @@ the final pilot, `T-143`.
         free cash flow 328, operating income 242); a growth or CAGR across the adoption of
         a standard without restated comparatives is flagged: 4 CAGRs cross ASC 842 and 32 lenders'
         net-income CAGRs cross CECL.
+      - **The cash line and the REIT debt total (T-148 part 1 limitation, review of PR #136):** whether a restricted-cash-inclusive
+        line (`CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`) or `Cash` may stand for cash needs a source (D-05,
+        the second author); today EV and ROIC are empty for those filers (372 + 64 of the 656 own-period filings with no cash).
+        The REIT debt total (`SecuredDebt` + `UnsecuredDebt`: no loaded source states the identity) needs a source as well; today
+        debt and EV are empty for those REITs (211 filings, 19 companies). The cash total a filer tags only with dimensions, which
+        the gateway's T-042 empties (88 filings, 9 companies: APO, ARES, BEN, BRK.B, KKR, LEN, NVR, PCAR, TXT), is the gateway's
+        to supply.
       - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
         meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
         ranking decision (D/E = +∞) is `T-071`'s.

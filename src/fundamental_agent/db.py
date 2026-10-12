@@ -67,8 +67,18 @@ _CROSS_ITEM_BAND = 1.25
 # 2021Q1-2023Q3 revenue, and every ratio over it, changes from missing (or a $0 component) to a
 # value; and a 10-Q's fiscal quarter is read from the fiscal year end, not the gateway's tag, so
 # a 52/53-week filer's quarters stop sharing (or leaving unstored) a label.
+# ``metrics-v6`` (T-148, part 1 of 2): line items are read in the sign they were filed in
+# (ID-11/ID-12: the displayed value times edgartools' ``preferred_sign``), so income tax, cost of
+# goods, interest expense and capex change sign where they were displayed negated, and the ``abs()``
+# repairs are gone; concepts are chosen by precedence (exact concepts in the spec's order, then
+# ``standard``, then label: ID-02a), parent net income is ``NetIncomeLoss`` or ``ProfitLoss`` less
+# the noncontrolling interest and never the "available to common" line (ID-03, N13), income tax is
+# the total or current + deferred (ID-02b), debt follows MET-07 / D-01 / D-06(d) / N23 and a
+# missing debt or cash leaves EV and ROIC empty instead of 0 (MET-00), and a balance sheet is read
+# only at its period end (N6). Part 2 keeps ``metrics-v6`` (no non-scratch database is built between
+# the two PRs).
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v5"
+METRICS_ENGINE_VERSION = "metrics-v6"
 
 
 @dataclass(frozen=True)
@@ -475,6 +485,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
     columns = conn.table_columns("financial_facts")
     has_versioned = "filing_version" in columns
     has_correction = "correction_rule" in columns
+    has_sign = "preferred_sign" in columns
     now = _now()
     rows = [
         (
@@ -490,10 +501,21 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
             now,
             run_id,
             fact.get("correction_rule"),
+            fact.get("preferred_sign"),
         )
         for fact in facts
     ]
-    if has_versioned and has_correction:
+    if has_versioned and has_correction and has_sign:
+        conn.executemany(
+            """
+            INSERT OR IGNORE INTO financial_facts
+                (filing_id, statement, concept, standard_concept, label, period_key, value,
+                 filing_version, event_time, ingested_at, run_id, correction_rule, preferred_sign)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+    elif has_versioned and has_correction:
         conn.executemany(
             """
             INSERT OR IGNORE INTO financial_facts
@@ -501,7 +523,7 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
                  filing_version, event_time, ingested_at, run_id, correction_rule)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            rows,
+            [r[:12] for r in rows],
         )
     elif has_versioned:
         conn.executemany(

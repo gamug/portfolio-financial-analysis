@@ -181,6 +181,8 @@ def _quarter() -> Statements:
             "label": concept,
             "abstract": False,
             "dimension": False,
+            # a payment is displayed negative with preferred_sign -1 (ID-12): filed it is positive
+            "preferred_sign": -1.0 if value < 0 and concept.startswith("us-gaap_Payments") else 1.0,
             key: value,
         }
 
@@ -193,6 +195,13 @@ def _quarter() -> Statements:
         row("us-gaap_InterestExpense", 40.0, "income_statement"),
     ]
     balance = [
+        {  # a complete balance sheet (ID-02b: a partial debt map is accepted only on one)
+            "concept": "us-gaap_Assets",
+            "label": "assets",
+            "abstract": False,
+            "dimension": False,
+            "2025-06-30": 50_000.0,
+        },
         {
             "concept": "us-gaap_CommonStockSharesOutstanding",
             "label": "shares",
@@ -234,7 +243,7 @@ def _quarter() -> Statements:
 
 TTM = {
     "operating_cash_flow": 4_100.0,
-    "capital_expenditure": -800.0,
+    "capital_expenditure": 800.0,
     "stock_based_compensation": 190.0,
     "operating_income": 3_500.0,
     "depreciation_amortization": 400.0,

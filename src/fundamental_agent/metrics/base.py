@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 _EPSILON = 1e-9
@@ -50,3 +51,10 @@ def sum_present(*values: float | None) -> float | None:
     """Sum the operands that are not ``None``; ``None`` if every operand is missing."""
     known = [value for value in values if value is not None]
     return float(sum(known)) if known else None
+
+
+def flag_inputs(item: str, flags: Iterable[str]) -> dict[str, float]:
+    """The resolution flags of one line item as audit inputs (T-148): ``flag_<item>_<flag>`` = 1.0
+    -- a partial debt map, a rejected sign, a line that includes leases. Absent when there is none,
+    so an unflagged value carries no key."""
+    return {f"flag_{item}_{flag}": 1.0 for flag in flags}

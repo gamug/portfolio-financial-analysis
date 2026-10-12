@@ -134,7 +134,9 @@ def _waters_q3() -> Statements:
 
 
 def test_a_10q_records_its_year_to_date_from_its_own_columns(memory_db: Database) -> None:
-    """Waters' Q3 2023: net income 134.552M in the quarter, 426.029M in the nine months."""
+    """Waters' Q3 2023: revenue 711.692M in the quarter, 2,136.942M in the nine months. (Net income
+    was this test's flow until T-148: Waters' income statement files only the "available to common"
+    line, which is not parent net income (ID-03), so its net income is empty.)"""
     memory_db.execute("INSERT INTO assets (id, ticker, cik) VALUES (1, 'WAT', '0001000697')")
     stmts = _waters_q3()
     task = _YearTask(1, "WAT", "Waters", "10-Q", 2023, "0001000697")
@@ -149,12 +151,13 @@ def test_a_10q_records_its_year_to_date_from_its_own_columns(memory_db: Database
         completed=set(),
     )
     flows = _ttm_flows(engine, task, stmts, target)
-    assert flows["net_income"].ytd == 426_029_000.0
-    results = [("profitability", MetricResult("return_on_assets", None, "r", {"net_income": 1.0}))]
+    assert "net_income" not in flows
+    assert flows["revenue"].ytd == 2_136_942_000.0
+    results = [("profitability", MetricResult("return_on_assets", None, "r", {"revenue": 1.0}))]
     db.stamp_ytd(results, flows)
     inputs = results[0][1].inputs
-    assert inputs["ytd_net_income"] == 426_029_000.0
-    assert inputs["net_income"] == 1.0  # the single-quarter value is untouched
+    assert inputs["ytd_revenue"] == 2_136_942_000.0
+    assert inputs["revenue"] == 1.0  # the single-quarter value is untouched
     # recorded and read back for the Q4 of its fiscal year (a stand-in 10-K)
     fid = db.upsert_filing(
         memory_db,
@@ -162,5 +165,5 @@ def test_a_10q_records_its_year_to_date_from_its_own_columns(memory_db: Database
         FilingMeta(filing_date="2023-11-02", period_end="2023-09-30"),
     )
     db.record_metrics(memory_db, fid, results)
-    _record(memory_db, "10-K", "FY2023", "2023-12-31", {"net_income": 505_000_000.0})
-    assert _q4(memory_db) == 505_000_000.0 - 426_029_000.0
+    _record(memory_db, "10-K", "FY2023", "2023-12-31", {"revenue": 2_900_000_000.0})
+    assert _q4(memory_db, "revenue") == 2_900_000_000.0 - 2_136_942_000.0

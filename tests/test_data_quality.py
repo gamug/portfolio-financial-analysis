@@ -499,5 +499,7 @@ def test_nee_s_real_10k_now_passes_the_revenue_gate(nee_10k: Any) -> None:
     for group in ("profitability", "cashflow", "efficiency", "leverage"):
         for result in compute_group(group, nee_10k, key):
             fm[(group, result.name)] = StoredMetric(result.value, dict(result.inputs))
-    assert fm[NET].value == pytest.approx(5_332 / 27_412, rel=1e-3)
+    # ID-03 (T-148): net income attributable to NEE, 6,835M -- ProfitLoss (5,332M) includes a
+    # noncontrolling-interest loss of 1,503M that is not NEE's
+    assert fm[NET].value == pytest.approx(6_835 / 27_412, rel=1e-3)
     assert [i for i in evaluate(fm) if i.rule_id == "DQ_REVENUE_POS"] == []

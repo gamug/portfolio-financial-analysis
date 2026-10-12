@@ -597,6 +597,19 @@ def _m012_filing_identity(db: Database) -> None:
     _identity.ensure_triggers(db)
 
 
+# -- m013: the filed sign of a stored fact (T-148) --------------------------------------------
+
+
+def _m013_filed_sign(db: Database) -> None:
+    """Additive: ``financial_facts.preferred_sign`` (ID-12). A no-op for a database without the
+    table. Every existing row keeps NULL -- there is no in-place backfill: ``financial_facts`` is
+    append-only on ``(filing_id, statement, concept, period_key, filing_version)``, so a
+    same-accession re-run cannot add the sign to a stored row, and a NULL reads as the displayed
+    sign, flagged. The fix takes effect on a database rebuilt with the engine that writes it."""
+    if _table_exists(db, "financial_facts"):
+        db.ensure_columns("financial_facts", REQUIRED_COLUMNS["financial_facts"])
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -646,6 +659,11 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "filing identity: every asset with filings has a CIK, an accession spans only assets "
         "of one CIK -- triggers, checked against the stored rows (T-149)",
         _m012_filing_identity,
+    ),
+    (
+        13,
+        "financial_facts.preferred_sign: the filed sign of a stored fact, NULL before it (T-148)",
+        _m013_filed_sign,
     ),
 ]
 
