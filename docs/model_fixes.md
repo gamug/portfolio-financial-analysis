@@ -6055,218 +6055,248 @@ Rule IDs cite `docs/checklist_sec/checklist_v1.3.md`; sources cite `docs/checkli
 
 - **D-02 / CON-11 (Revenue sum).** Source B4: "The Revenues element would be used for the total revenue (ASC 606 and non-ASC 606 revenue)". Condition: a sum of >= 2 components is accepted only when no other valued, non-abstract, non-dimensional income-statement row reads as revenue. Flagged `revenue_606_plus_non606_map`.
 - **D2 / APP-01 (Bank net revenue map).** Source: FASB US GAAP Taxonomy 2026 calculation linkbase (`us-gaap-stm-soi1-cal-2026.xml`, `us-gaap-stm-soi4-cal-2026.xml`): `RevenuesNetOfInterestExpense` = `Revenues` - `InterestExpenseOperating`; `InterestIncomeExpenseNet` = interest income lines - `InterestExpenseOperating`. Combined with B6 definitions and Regulation S-X Article 9: revenue = `InterestIncomeExpenseNet` + `NoninterestIncome`. Flagged `bank_net_revenue_map`.
-- **MET-08 / APP-04b (Capex tiers).** Source B6: definitions of `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsForCapitalImprovements`, and PP&E-family concepts (`PaymentsToAcquireMachineryAndEquipment`, `PaymentsToAcquireFurnitureAndFixtures`, `PaymentsToAcquireOtherPropertyPlantAndEquipment`). Under MET-08 (c), PP&E-family lines and oil & gas lines filed on the same statement are added and flagged `ppe_family_plus_og_added`. Under MET-08 (b)(4), `PaymentsToAcquireOilAndGasPropertyAndEquipment` alone flags `includes_acquisitions_contrary_to_a`. Mineral interests (`PaymentsToAcquireOilAndGasProperty`) is not capex (MET-08 (a)). For equity REITs (APP-04b): capex = corporate PP&E + real-estate acquisitions + development + capital improvements (without acquisition overlap), flagged `fcf_non_standard_reit` and `reit_components`.
-- **MKT-01 to MKT-04, ID-18 (Share counts and market cap).** MKT-01: ratio as-of date D = period end; cover count is latest filing with `available_at <= D` through `market_caps_as_of`. MKT-02: split-adjusted price and shares. MKT-03: class-by-class valuation via `CLASS_LISTING` and cited `CLASS_CONVERSION` ratios; unlisted/unconverted classes flag `market_cap_incomplete_classes`. MKT-04: total basic shares only from common stock; non-common members matching "Preferred", "FullyDiluted", or ending in "UnitsMember" are excluded and flagged `cover_member_not_common_excluded`. ID-18: scale factor anomalies raise `share_scale_suspect` without mutating values.
+- **MET-08 / APP-04b (Capex tiers).** Source B6: definitions of `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsForCapitalImprovements`, and PP&E-family concepts (`PaymentsToAcquireMachineryAndEquipment`, `PaymentsToAcquireFurnitureAndFixtures`, `PaymentsToAcquireOtherPropertyPlantAndEquipment`). Under MET-08 (c), PP&E-family lines and oil & gas lines filed on the same statement are added and flagged `ppe_family_plus_og_added`. Under MET-08 (b)(4), `PaymentsToAcquireOilAndGasPropertyAndEquipment` alone flags `includes_acquisitions_contrary_to_a`. Mineral interests (`PaymentsToAcquireOilAndGasProperty`) is not capex (MET-08 (a)). For equity REITs (APP-04b): capex = corporate PP&E + real-estate acquisitions + development + capital improvements (without acquisition overlap), flagged `fcf_non_standard_reit` and `reit_components`. Allowed filed zero and signed values (`is not None`, R5).
+- **MKT-01 to MKT-04, ID-18 (Share counts and market cap).** MKT-01: ratio as-of date D = period end; cover count is latest filing with `available_at <= D` through `market_caps_as_of`. Multi-form ingestion in `pipeline._drive` ingests chronologically across forms per asset (F1). Removed fallback to filing's own cover count when no `MarketCap` is passed (F2), yielding empty metrics flagged `market_cap_not_computed`. MKT-02: split-adjusted price and shares. MKT-03: class-by-class valuation via `CLASS_LISTING` and cited `CLASS_CONVERSION` ratios; unlisted/unconverted classes flag `market_cap_incomplete_classes`. MKT-04: total basic shares only from common stock; non-common members matching "Preferred", "FullyDiluted", or ending in "UnitsMember" are excluded and flagged `cover_member_not_common_excluded` (F4). ID-18: scale factor anomalies raise `share_scale_suspect` without mutating values.
 - **(k)(1) to (k)(3) (Cash read with a source).** Source B4: cash-flow guidance requires `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` "regardless whether restricted cash is included in the total". (k)(1): accepted when caption names only cash and equivalents and no other restricted line is filed on the balance sheet, flagged `cash_tag_includes_restricted_cash_possible`. (k)(2): `CashCashEquivalentsAndShortTermInvestments` with cash-only caption flags `cash_sti_tag_cash_caption`. (k)(3): `Cash` alone on a classified balance sheet flags `cash_element_only`. ES map: `Cash` + `CashEquivalentsAtCarryingValue` flags `cash_plus_cash_equivalents_map`.
-- **ID-16 / ID-09 (Dimensional equivalence).** A non-dimensional candidate equal to a dimensional fact on an axis outside `_WHOLE_ENTITY_AXES` (and excluding `StatementEquityComponentsAxis` per DQC_0011 line 22) flags `equals_dimensional_member`.
+- **ID-16 / ID-09 (Dimensional equivalence).** Maintained `Statements._WHOLE_ENTITY_AXES` exactly as on master (F3); separate constant `_ID16_WHOLE_ENTITY_AXES` includes `us-gaap:StatementEquityComponentsAxis` per DQC_0011 line 22 (NetIncomeLoss "should be equal to" the RetainedEarningsMember fact, so equality is expected, not a promoted slice). Non-dimensional candidates equal to dimensional facts on other axes flag `equals_dimensional_member`.
 - **PER-06 (D-09).** 10-Q ratios require real TTM flows (`ctx.real_ttm`); single-quarter flow annualizations and x4 fallbacks are strictly prohibited.
 - **N14 / D7 (Depreciation alone is not D&A).** `us-gaap_Depreciation` removed from D&A registry concepts; depreciation alone leaves D&A empty, flagged `depreciation_only_not_da`. `DepreciationAndAmortization` flags `da_element_nonproduction`.
 
-**Declared decisions and measured costs (Section C):**
-1. **D1 (k)(1) Caption test:** 494 own-period filings in full database (261 in common) resolve under Tier 5, flagged `cash_tag_includes_restricted_cash_possible`.
-2. **N14 D&A:** 428 filings across 93 companies leave D&A empty, flagged `depreciation_only_not_da`.
-3. **D2 Banks:** 11 banks resolve via `bank_net_revenue_map`. STT identity: 30 of 43 columns match, 13 differ due to separate provision/fee presentation; STT files an explicit `Revenues` total line, so the map never applies to it.
-4. **D3 CPT:** D-02 condition accepts all 61 columns (19 own-period filings) of CPT; 0 refused.
-5. **D4 MKT-01:** Strict as-of cover count: 8,829 filings ok, 8 stale (>200 days), 504 no cover count (503 first filings of companies). Pipeline `_drive` ingests chronologically across forms per asset, enabling 10-Ks to read prior 10-Q cover counts. Removed fallback to own-filing cover count in valuation.
-6. **D5 ID-16:** EDGAR gateway prevalence across 501 companies: revenue 31, net income 57, equity 54.
-7. **D6 APP-04b:** 28 equity REIT companies identified by runtime predicate (`Real Estate` and `sub_industry LIKE '%REITs'`), 1,197 capex resolutions flagged `fcf_non_standard_reit`, 1,107 `reit_components`, 9 `capital_improvements_overlap_not_added`.
-8. **D7 D&A nonproduction:** 1,356 filings flagged `da_element_nonproduction`.
-9. **ES cash map:** 48 filings resolved via `cash_plus_cash_equivalents_map`.
-10. **MKT-03 multi-class:** 47 companies flagged `market_cap_incomplete_classes`. Visa (`V`) dynamic litigation escrow conversion ratios cause approximate valuation.
-11. **M&E + F&F (MET-08 (c)):** 252 filings resolve PP&E-family lines (`ppe_family_line`), 90 add PP&E-family plus oil & gas (`ppe_family_plus_og_added`).
-12. **F4 Non-common member exclusions:** 3 members excluded (`SeriesBMandatoryConvertiblePreferredStockMember`, `ExchangeableUnitsMember`, `FullyDilutedSharesMember`), 45 filings flagged `cover_member_not_common_excluded`.
-
-### Fix
-
-- `src/fundamental_agent/statements.py`:
-  - Added `concept_flags` and `unread_flags` to `LineItem`. Implemented `_apply_resolution_flags` and ID-01 matching flags (`standard_concept_match`, `label_match`, `extension_concept`).
-  - Added composite resolver `_cash` supporting Tier 1 (`CashAndCashEquivalentsAtCarryingValue`), Tier 2 (`CashCashEquivalentsAndShortTermInvestments` with caption test), Tier 3 (`CashAndDueFromBanks`), Tier 4 (ES map: `Cash` + `CashEquivalentsAtCarryingValue`), Tier 5 ((k)(1) `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` with caption and restriction checks), and Tier 6 ((k)(3) `Cash` alone with classified balance sheet).
-  - Enforced D-02 condition in `_component_row`: sums accepted only when no other row reads as revenue.
-  - Implemented D2 bank net revenue map (`bank_net_revenue_map`) in `_resolve_column`.
-  - Enforced N20/L-09 real-time net-anchor test in `rebuild_total`. Updated N19 label exclusion regex to `\bcosts?\b`.
-  - Implemented tiered capex resolvers `_capex`, `_capex_reit`, `_capex_non_reit`, and `_capex_ppe_and_og` under MET-08 and APP-04b. Added `includes_acquisitions_contrary_to_a` flag when `PaymentsToAcquireOilAndGasPropertyAndEquipment` combines with PP&E lines.
-  - Removed `us-gaap_Depreciation` from D&A concepts; added `depreciation_only_not_da` and `da_element_nonproduction` flags.
-  - Implemented ID-16 `_equals_dimensional_member` scoped to `_ID16_WHOLE_ENTITY_AXES`.
-- `src/fundamental_agent/metrics/valuation.py`:
-  - Derives share counts and prices solely from `ctx.market_cap`. Deleted balance-sheet and diluted share fallbacks and `_ShareCount` scale mutation. Removed own-filing cover count fallback.
-  - Passes `market_cap_<reason>` and forwards `cover_member_not_common_excluded` and `share_scale_suspect` into metric inputs.
-  - Strictly enforces PER-06 (D-09): 10-Q filings require real TTM flows (`ctx.real_ttm`).
-- `src/kg_schema/market_cap.py`:
-  - Added `CLASS_LISTING` and cited `CLASS_CONVERSION` ratios.
-  - Excluded non-common cover members in `cover_total`, `_Count`, `_class_by_class_val`, and `_is_incomplete_classes`. Added `n_excluded` and `cover_member_not_common_excluded` flag.
-  - Removed broad `except Exception` wrapping `queries.resolve_asset_ids`.
-- `src/fundamental_agent/pipeline.py`:
-  - In `pipeline._drive`, grouped tasks by asset and ingested filings in chronological `(filing_date, accession_number)` order across forms, resolving MKT-01 staleness in fresh runs.
-- `scripts/verify_t148b.py`:
-  - Added sub-commands `m1` to `m6`, `id16`, and `recompute`.
+**Declared decisions and measured costs (Section C & Fixes):**
+1. **D1 (k)(1) Caption test:** 494 distinct filings (42 companies, 3,952 metric rows) resolve under Tier 5, flagged `cash_tag_includes_restricted_cash_possible`.
+2. **N14 / D7 D&A:** 856 distinct filings (94 companies, 3,424 metric rows) leave D&A empty, flagged `depreciation_only_not_da`. 691 distinct filings (77 companies, 2,764 metric rows) flagged `da_element_nonproduction`.
+3. **D2 Banks:** 11 banks resolve via `bank_net_revenue_map` (179 filings across 11 companies). STT bank identity: 30 of 43 columns match within 0.5% tolerance, 13 differ due to separate provision/fee/realized securities gain presentation; STT files an explicit `Revenues` total line, so the map never applies to it.
+4. **D3 CPT:** D-02 condition accepts all columns of CPT; 0 refused.
+5. **D4 MKT-01:** Strict as-of cover count: 8,829 filings with market cap. Stale cover counts (>200 days): 8 distinct filings (6 companies, 40 metric rows), flagged `market_cap_stale_shares`. No prior cover count: 503 distinct filings (502 companies, 2,515 metric rows), flagged `market_cap_no_cover_shares`. Pipeline `_drive` ingests chronologically across forms per asset (F1). Removed fallback to filing's own cover count (F2).
+6. **D5 ID-16 & Dimension Collapse Declaration:** The recompute reads stored facts from SQLite (`financial_facts`), which carry no dimensional rows. Therefore, the `equals_dimensional_member` flag cannot appear in the recompute (its prevalence comes from the raw payload fetch, `out/id16.json`), and two payload rows of one concept collapse to the first stored row. In raw payloads across 501 companies: revenue 31, net income 57, equity 54. Revenue hits by axis (`out/id16_revenue_axes.json`): `dei:LegalEntityAxis` (13), `srt:ProductOrServiceAxis` (5), `srt:ConsolidatedEntitiesAxis` (4), `us-gaap:StatementBusinessSegmentsAxis` (3), `srt:MajorCustomersAxis` (2), `srt:ConsolidationItemsAxis` (2), `us-gaap:RelatedPartyTransactionsByRelatedPartyAxis` (1), `srt:RestatementAxis` (1), `us-gaap:ConcentrationRiskByTypeAxis` (1), `revv:SegmentReportingAxis` (1), `us-gaap:ConcentrationRiskByBenchmarkAxis` (1), `us-gaap:TimingOfTransferOfGoodOrServiceAxis` (1), `wec:TypesOfOperatingRevenuesAxis` (1).
+7. **D6 APP-04b:** 28 equity REIT companies identified by runtime predicate, 270 distinct filings (28 companies, 2,430 metric rows) flagged `fcf_non_standard_reit`, 249 distinct filings (26 companies, 2,241 metric rows) flagged `reit_components`, 2 distinct filings (1 company, 18 metric rows) flagged `capital_improvements_overlap_not_added`.
+8. **ES cash map:** 6 distinct filings (1 company, 48 metric rows) resolved via `cash_plus_cash_equivalents_map`.
+9. **MKT-03 multi-class:** 744 distinct filings (47 companies, 3,720 metric rows) flagged `market_cap_incomplete_classes`. Visa (`V`, CIK `0001403161`, 10-K `0001403161-25-000089` Note 15) litigation escrow conversion ratios cause approximate/distorted valuation.
+10. **MET-08 (c) PP&E family:** 38 distinct filings (7 companies, 342 metric rows) flagged `ppe_family_line`, 22 distinct filings (3 companies, 198 metric rows) flagged `ppe_family_plus_og_added`, 10 distinct filings (1 company, 90 metric rows) flagged `includes_acquisitions_contrary_to_a`.
+11. **F4 Non-common member exclusions:** 9 distinct filings (2 companies: BLK and ARES, 45 metric rows) flagged `cover_member_not_common_excluded`.
 
 ### Measurements
 
-#### 1. Metric filled counts before and after (Total filings: 9,341)
-Source: `/workspaces/thesis/scratch/t148b/out/step3_2_before_after.txt`, `/workspaces/thesis/scratch/t148b/out/step3_2_before_after.json`
+#### 1. Method Effect (R2(a): before_recomputed.db vs rebuilt_full3.db)
+Source: `/workspaces/thesis/scratch/t148b/out/r2a_method_effect.txt`, `/workspaces/thesis/scratch/t148b/out/r2a_method_effect.json`
+Evaluated across 9,340 recomputed filings (1 filing 1568 skipped because it has no stored facts).
 
-| Metric | Before Filled (`rebuilt_full3.db`) | After Filled (`after_full.db`) | Diff | After NA (Rule APP-02) | After Missing |
-|---|---:|---:|---:|---:|---:|
-| `market_capitalization` | 8,148 | 8,829 | +681 | 0 | 512 |
-| `enterprise_value` | 6,203 | 7,016 | +813 | 518 | 1,807 |
-| `free_cash_flow_yield` | 7,242 | 8,010 | +768 | 384 | 947 |
-| `sbc_adjusted_fcf_yield` | 5,508 | 6,538 | +1,030 | 597 | 2,206 |
-| `enterprise_fcf_yield` | 5,525 | 6,399 | +874 | 702 | 2,240 |
-| `free_cash_flow_margin` | 7,747 | 8,353 | +606 | 353 | 635 |
-| `free_cash_flow_conversion` | 7,644 | 8,230 | +586 | 354 | 757 |
-| `operating_cash_flow_margin` | 8,542 | 9,005 | +463 | 10 | 326 |
-| `debt_to_equity` | 7,761 | 7,814 | +53 | 349 | 1,178 |
-| `debt_to_assets` | 7,768 | 7,821 | +53 | 349 | 1,171 |
-| `net_debt_to_ebitda` | 4,667 | 3,918 | -749 | 930 | 4,493 |
-| `interest_coverage` | 4,477 | 1,182 | -3,295 | 944 | 7,215 |
-| `nopat` | 6,958 | 1,798 | -5,160 | 939 | 6,604 |
-| `return_on_invested_capital` | 5,552 | 5,713 | +161 | 911 | 2,717 |
-| `return_on_assets` | 9,160 | 8,862 | -298 | 31 | 448 |
-| `return_on_equity` | 9,148 | 8,850 | -298 | 0 | 491 |
-| `revenue_cagr` | 2,352 | 2,409 | +57 | 0 | 20 |
-| `revenue_growth` | 9,115 | 2,412 | -6,703 | 0 | 263 |
-| `operating_income_growth` | 6,939 | 1,796 | -5,143 | 0 | 879 |
-| `net_income_growth` | 9,137 | 2,391 | -6,746 | 0 | 284 |
-| `free_cash_flow_growth` | 4,486 | 2,263 | -2,223 | 101 | 311 |
-| `cash_ratio` | 7,038 | 7,557 | +519 | 0 | 1,784 |
-| `current_ratio` | 7,833 | 7,833 | 0 | 0 | 1,508 |
-| `quick_ratio` | 5,171 | 5,171 | 0 | 0 | 4,170 |
-| `effective_tax_rate` | 9,341 | 9,341 | 0 | 0 | 0 |
-| `gross_margin` | 5,476 | 1,407 | -4,069 | 0 | 7,934 |
-| `operating_margin` | 6,944 | 1,797 | -5,147 | 0 | 7,544 |
-| `net_margin` | 8,961 | 2,378 | -6,583 | 0 | 6,963 |
-| `asset_turnover` | 9,126 | 9,001 | -125 | 0 | 340 |
-| `inventory_turnover` | 4,033 | 3,801 | -232 | 0 | 5,540 |
-| `receivables_turnover` | 6,767 | 6,518 | -249 | 0 | 2,823 |
-| `operating_cash_flow_cagr` | 2,277 | 2,288 | +11 | 45 | 96 |
-| `net_income_cagr` | 2,044 | 2,070 | +26 | 0 | 359 |
-| `capex_intensity` | 7,750 | 8,356 | +606 | 353 | 632 |
+| Metric | Rebuilt3 Filled | Recomputed Filled | Equal | Diff | Rebuilt3 Only | Recomputed Only | Diff Pct |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `market_capitalization` | 8,148 | 8,904 | 8,148 | 0 | 0 | 756 | 9.28% |
+| `enterprise_value` | 6,203 | 6,605 | 6,203 | 0 | 0 | 402 | 6.48% |
+| `free_cash_flow_yield` | 7,242 | 7,842 | 7,242 | 0 | 0 | 600 | 8.29% |
+| `sbc_adjusted_fcf_yield` | 5,508 | 5,950 | 5,508 | 0 | 0 | 442 | 8.02% |
+| `enterprise_fcf_yield` | 5,525 | 5,905 | 5,525 | 0 | 0 | 380 | 6.88% |
+| `return_on_assets` | 9,160 | 9,201 | 8,551 | 609 | 0 | 41 | 7.10% |
+| `return_on_equity` | 9,148 | 9,189 | 8,539 | 609 | 0 | 41 | 7.11% |
+| `asset_turnover` | 9,126 | 9,126 | 8,570 | 556 | 0 | 0 | 6.09% |
+| `receivables_turnover` | 6,767 | 6,767 | 6,505 | 262 | 0 | 0 | 3.87% |
+| `inventory_turnover` | 4,033 | 4,033 | 3,897 | 136 | 0 | 0 | 3.37% |
+| `return_on_invested_capital` | 5,552 | 5,586 | 5,300 | 252 | 0 | 34 | 5.15% |
+| `operating_cash_flow_margin` | 8,542 | 8,865 | 8,326 | 211 | 5 | 328 | 6.37% |
+| `capex_intensity` | 7,750 | 7,996 | 7,574 | 166 | 10 | 256 | 5.57% |
+| `free_cash_flow_margin` | 7,747 | 7,993 | 7,570 | 167 | 10 | 256 | 5.59% |
+| `free_cash_flow_conversion` | 7,644 | 7,975 | 7,474 | 157 | 13 | 344 | 6.72% |
+| `net_debt_to_ebitda` | 4,667 | 4,802 | 4,579 | 88 | 0 | 135 | 4.78% |
+| `net_income_cagr` | 2,044 | 2,070 | 2,044 | 0 | 0 | 26 | 1.27% |
 
-*(Note on flow-based growth and margin metrics: under PER-06/D-09, 10-Q filings strictly require real TTM flows, eliminating artificial single-quarter flow annualizations).*
+*Explanation of metrics with differences >1%:*
+- `market_capitalization` (+756 filings filled in recompute): In the pipeline fresh build of `rebuilt_full3.db`, tasks ran 10-Ks before 10-Qs, so 10-K filings found no prior cover shares within the 200-day limit. In the recompute from stored facts, all filings and cover counts already exist in `filing_cover_shares`, so 10-K filings find them.
+- `enterprise_value`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`, `enterprise_fcf_yield`: Depend on `market_capitalization` and gain the corresponding +380 to +600 filled filings.
+- TTM and flow ratios (`return_on_assets`, `return_on_equity`, `asset_turnover`, `receivables_turnover`, `inventory_turnover`, `return_on_invested_capital`, `operating_cash_flow_margin`, `capex_intensity`, `free_cash_flow_margin`, `free_cash_flow_conversion`): These ratios depend on balance-sheet averages or TTM flow lookups across prior filings. In the recomputed database, prior period filings are present and resolve real flows.
+- Single-period flow ratios without prior lookups (`gross_margin`, `operating_margin`, `net_margin`, `current_ratio`, `cash_ratio`, `quick_ratio`, `interest_coverage`, `nopat`, `revenue_growth`) have exactly 0.00% difference.
 
-#### 2. Resolved line items in inputs
-Source: `/workspaces/thesis/scratch/t148b/out/step3_2_before_after.txt`
+#### 2. The Change (R2(b): after_full.db vs before_recomputed.db like-for-like)
+Source: `/workspaces/thesis/scratch/t148b/out/r2b_change.txt`, `/workspaces/thesis/scratch/t148b/out/r2b_change.json`
+Counted in distinct FILINGS across 9,340 recomputed filings (1 filing 1568 skipped):
 
-| Line Item | Before Filled | After Filled | Diff |
+| Metric | Before Filled (`before_recomputed`) | After Filled (`after_full`) | Net Change | Equal | Diff | Before Only | After Only |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `asset_turnover` | 9,126 | 9,044 | -82 | 8,865 | 0 | 261 | 179 |
+| `capex_intensity` | 7,996 | 8,416 | +420 | 7,872 | 124 | 0 | 420 |
+| `cash_ratio` | 7,038 | 7,557 | +519 | 7,038 | 0 | 0 | 519 |
+| `current_ratio` | 7,833 | 7,833 | +0 | 7,833 | 0 | 0 | 0 |
+| `debt_to_assets` | 7,802 | 7,821 | +19 | 7,802 | 0 | 0 | 19 |
+| `debt_to_equity` | 7,795 | 7,814 | +19 | 7,795 | 0 | 0 | 19 |
+| `effective_tax_rate` | 9,340 | 9,340 | +0 | 9,340 | 0 | 0 | 0 |
+| `enterprise_fcf_yield` | 5,905 | 6,450 | +545 | 355 | 5,502 | 48 | 593 |
+| `enterprise_value` | 6,605 | 7,016 | +411 | 406 | 6,140 | 59 | 470 |
+| `free_cash_flow_conversion` | 7,975 | 8,290 | +315 | 7,851 | 124 | 0 | 315 |
+| `free_cash_flow_growth` | 4,486 | 4,638 | +152 | 4,417 | 69 | 0 | 152 |
+| `free_cash_flow_margin` | 7,993 | 8,413 | +420 | 7,869 | 124 | 0 | 420 |
+| `free_cash_flow_yield` | 7,842 | 8,067 | +225 | 389 | 7,391 | 62 | 287 |
+| `gross_margin` | 5,476 | 5,476 | +0 | 5,476 | 0 | 0 | 0 |
+| `interest_coverage` | 4,477 | 4,477 | +0 | 4,477 | 0 | 0 | 0 |
+| `inventory_turnover` | 4,033 | 3,831 | -202 | 3,831 | 0 | 202 | 0 |
+| `market_capitalization` | 8,904 | 8,829 | -75 | 473 | 8,356 | 75 | 0 |
+| `net_debt_to_ebitda` | 4,802 | 3,943 | -859 | 3,735 | 0 | 1,067 | 208 |
+| `net_income_cagr` | 2,070 | 2,070 | +0 | 2,070 | 0 | 0 | 0 |
+| `net_income_growth` | 9,142 | 9,142 | +0 | 9,142 | 0 | 0 | 0 |
+| `net_margin` | 8,961 | 9,140 | +179 | 8,961 | 0 | 0 | 179 |
+| `nopat` | 6,958 | 6,958 | +0 | 6,958 | 0 | 0 | 0 |
+| `operating_cash_flow_cagr` | 2,288 | 2,288 | +0 | 2,288 | 0 | 0 | 0 |
+| `operating_cash_flow_margin` | 8,865 | 9,044 | +179 | 8,865 | 0 | 0 | 179 |
+| `operating_income_growth` | 6,939 | 6,939 | +0 | 6,939 | 0 | 0 | 0 |
+| `operating_margin` | 6,944 | 6,944 | +0 | 6,944 | 0 | 0 | 0 |
+| `quick_ratio` | 5,171 | 5,171 | +0 | 5,171 | 0 | 0 | 0 |
+| `receivables_turnover` | 6,767 | 6,555 | -212 | 6,555 | 0 | 212 | 0 |
+| `return_on_assets` | 9,201 | 8,907 | -294 | 8,907 | 0 | 294 | 0 |
+| `return_on_equity` | 9,189 | 8,895 | -294 | 8,895 | 0 | 294 | 0 |
+| `return_on_invested_capital` | 5,586 | 5,752 | +166 | 5,401 | 0 | 185 | 351 |
+| `revenue_cagr` | 2,363 | 2,409 | +46 | 2,363 | 0 | 0 | 46 |
+| `revenue_growth` | 9,115 | 9,294 | +179 | 9,115 | 0 | 0 | 179 |
+| `sbc_adjusted_fcf_yield` | 5,950 | 6,590 | +640 | 253 | 5,638 | 59 | 699 |
+
+#### 3. R3 Verification Checks
+- **10-Q Flow Items Check:** Source `/workspaces/thesis/scratch/t148b/out/r3_10q_flows.txt`, `/workspaces/thesis/scratch/t148b/out/r3_10q_flows.json`. Exactly 133 10-Q filings had revenue changes between `after_full` and `before_recomputed`. 100% of these 133 filings are from the 11 Article 9 financial institutions resolving under the D2 bank net revenue map (`InterestIncomeExpenseNet + NoninterestIncome`: BNY 14, CFG 14, COF 14, MTB 14, RF 14, SYF 14, TFC 14, USB 14, HBAN 13, FITB 5, KEY 3). Exactly 0 non-bank 10-Q filings changed revenue.
+- **Margins & Growth Check:** Source `/workspaces/thesis/scratch/t148b/out/r3_margins_growth.txt`. Margins and growth do not use TTM. `gross_margin` (0 changed), `operating_margin` (0 changed), `operating_income_growth` (0 changed), `net_income_growth` (0 changed) had 0 changes. `net_margin` (+179) and `revenue_growth` (+179) changed exclusively on the 179 filings across the 11 banks gaining revenue under the D2 map.
+- **PER-06 TTM Ratio Loss Analysis:** Source `/workspaces/thesis/scratch/t148b/out/r3_per06_ttm_loss.txt`, `/workspaces/thesis/scratch/t148b/out/r3_per06_ttm_loss.json`. 100% of drops in TTM ratios are fully explained by PER-06 removal of artificial single-quarter flow annualizations (`annualized_ttm`) and MET-09 D&A rejection:
+  - `return_on_assets`: 294 dropped, exactly 294 match `annualized_ttm` (0 other drops).
+  - `return_on_equity`: 294 dropped, exactly 294 match `annualized_ttm` (0 other drops).
+  - `asset_turnover`: 261 dropped, exactly 261 match `annualized_ttm` (0 other drops).
+  - `receivables_turnover`: 212 dropped, exactly 212 match `annualized_ttm` (0 other drops).
+  - `inventory_turnover`: 202 dropped, exactly 202 match `annualized_ttm` (0 other drops).
+  - `return_on_invested_capital`: 185 dropped, exactly 185 match `annualized_ttm` (0 other drops).
+  - `net_debt_to_ebitda`: 1,067 dropped, matching 804 `annualized_ttm` + 263 MET-09 `depreciation_only_not_da` (which leaves D&A/EBITDA empty, per N14/D7), 0 unexplained drops.
+
+#### 4. Audit and Resolution Flags Count (inputs_json)
+Source: `/workspaces/thesis/scratch/t148b/out/flag_counts.txt`, `/workspaces/thesis/scratch/t148b/out/flag_counts.json`
+Every count reported in distinct **Companies**, **Filings**, and **Metric Rows** (R6):
+
+| Flag Name | Companies | Filings | Metric Rows |
 |---|---:|---:|---:|
-| `capital_expenditure` | 4,493 | 2,266 | -2,227 |
-| `cash` | 8,141 | 8,671 | +530 |
-| `depreciation_amortization` | 4,361 | 1,719 | -2,642 |
-| `revenue` | 9,135 | 2,414 | -6,721 |
-| `total_debt` | 7,768 | 7,821 | +53 |
+| `annualized_x4` | 167 | 482 | 5,480 |
+| `capital_expenditure_capital_improvements_overlap_not_added` | 1 | 2 | 18 |
+| `capital_expenditure_caption_fallback` | 3 | 16 | 144 |
+| `capital_expenditure_extension_concept` | 2 | 15 | 135 |
+| `capital_expenditure_fcf_non_standard_reit` | 28 | 270 | 2,430 |
+| `capital_expenditure_includes_acquisitions_contrary_to_a` | 1 | 10 | 90 |
+| `capital_expenditure_label_match` | 3 | 16 | 144 |
+| `capital_expenditure_net_element_last_resort` | 6 | 51 | 459 |
+| `capital_expenditure_og_tie_break_c_added` | 1 | 6 | 54 |
+| `capital_expenditure_ppe_family_line` | 7 | 38 | 342 |
+| `capital_expenditure_ppe_family_plus_og_added` | 3 | 22 | 198 |
+| `capital_expenditure_productive_assets_fallback` | 105 | 887 | 7,983 |
+| `capital_expenditure_reit_components` | 26 | 249 | 2,241 |
+| `cash_cash_element_only` | 4 | 30 | 240 |
+| `cash_cash_plus_cash_equivalents_map` | 1 | 6 | 48 |
+| `cash_cash_sti_tag_cash_caption` | 2 | 35 | 280 |
+| `cash_cash_tag_includes_restricted_cash_possible` | 42 | 494 | 3,952 |
+| `cash_includes_short_term_investments` | 2 | 12 | 96 |
+| `cash_sign_unverified` | 2 | 16 | 128 |
+| `cover_member_not_common_excluded` | 2 | 9 | 45 |
+| `depreciation_amortization_da_element_nonproduction` | 77 | 691 | 2,764 |
+| `depreciation_amortization_depreciation_only_not_da` | 94 | 856 | 3,424 |
+| `depreciation_amortization_sign_unverified` | 2 | 9 | 36 |
+| `income_tax_current_plus_deferred` | 1 | 19 | 57 |
+| `income_tax_sign_unverified` | 2 | 20 | 60 |
+| `income_tax_tax_component_not_total` | 2 | 22 | 66 |
+| `interest_expense_negative` | 2 | 2 | 8 |
+| `interest_expense_wrong_sign_rejected` | 1 | 1 | 4 |
+| `market_cap_incomplete_classes` | 47 | 744 | 3,720 |
+| `market_cap_no_cover_shares` | 502 | 503 | 2,515 |
+| `market_cap_stale_shares` | 6 | 8 | 40 |
+| `net_income_net_income_not_filed` | 15 | 101 | 505 |
+| `net_income_no_nci_income_filed` | 48 | 365 | 1,825 |
+| `net_income_profit_loss_nci_income_not_total` | 11 | 72 | 360 |
+| `share_scale_suspect` | 7 | 26 | 130 |
+| `total_debt_capture_failure` | 103 | 1,519 | 18,228 |
+| `total_debt_current_maturities_in_long_term` | 61 | 796 | 9,552 |
+| `total_debt_includes_current_maturities` | 61 | 796 | 9,552 |
+| `total_debt_includes_finance_leases` | 151 | 2,480 | 29,760 |
+| `total_debt_includes_leases` | 102 | 1,517 | 18,204 |
+| `total_debt_no_debt_lines` | 31 | 388 | 4,656 |
+| `total_debt_partial_map` | 312 | 4,950 | 59,400 |
+| `total_debt_partial_map_rejected` | 1 | 12 | 144 |
+| `total_debt_short_term_debt_only` | 25 | 242 | 2,904 |
+| `total_debt_sign_unverified` | 1 | 15 | 180 |
 
-#### 3. Audit and resolution flags count (inputs_json)
-Source: `/workspaces/thesis/scratch/t148b/out/step3_2_before_after.txt`
-
-| Flag | Before | After | Diff |
-|---|---:|---:|---:|
-| `cover_member_not_common_excluded` | 0 | 45 | +45 |
-| `flag_capital_expenditure_capital_improvements_overlap_not_added` | 0 | 9 | +9 |
-| `flag_capital_expenditure_caption_fallback` | 0 | 72 | +72 |
-| `flag_capital_expenditure_extension_concept` | 0 | 72 | +72 |
-| `flag_capital_expenditure_fcf_non_standard_reit` | 0 | 1,197 | +1,197 |
-| `flag_capital_expenditure_includes_acquisitions_contrary_to_a` | 0 | 45 | +45 |
-| `flag_capital_expenditure_label_match` | 0 | 72 | +72 |
-| `flag_capital_expenditure_net_element_last_resort` | 0 | 216 | +216 |
-| `flag_capital_expenditure_og_tie_break_c_added` | 0 | 27 | +27 |
-| `flag_capital_expenditure_ppe_family_line` | 0 | 252 | +252 |
-| `flag_capital_expenditure_ppe_family_plus_og_added` | 0 | 90 | +90 |
-| `flag_capital_expenditure_productive_assets_fallback` | 0 | 4,014 | +4,014 |
-| `flag_capital_expenditure_reit_components` | 0 | 1,107 | +1,107 |
-| `flag_capital_expenditure_wrong_sign_rejected` | 32 | 0 | -32 |
-| `flag_cash_cash_element_only` | 0 | 240 | +240 |
-| `flag_cash_cash_plus_cash_equivalents_map` | 0 | 48 | +48 |
-| `flag_cash_cash_sti_tag_cash_caption` | 0 | 280 | +280 |
-| `flag_cash_cash_tag_includes_restricted_cash_possible` | 0 | 3,952 | +3,952 |
-| `flag_cash_includes_short_term_investments` | 141 | 96 | -45 |
-| `flag_cash_sign_unverified` | 33 | 128 | +95 |
-| `flag_depreciation_amortization_da_element_nonproduction` | 0 | 1,356 | +1,356 |
-| `flag_depreciation_amortization_depreciation_only_not_da` | 0 | 1,712 | +1,712 |
-| `flag_depreciation_amortization_sign_unverified` | 0 | 16 | +16 |
-| `market_cap_incomplete_classes` | 0 | 3,720 | +3,720 |
-| `market_cap_no_cover_shares` | 0 | 2,520 | +2,520 |
-| `market_cap_stale_shares` | 0 | 40 | +40 |
-| `share_scale_suspect` | 0 | 25 | +25 |
-
-#### 4. Acceptance checks (TASKS T-148 (i))
-- `itemcheck.py`: Source `/workspaces/thesis/scratch/t148b/out/itemcheck.txt`
-  - `income_tax`: `ok_own_concept: 2,367`, **0 FLIPPED**, **0 OTHER_CONCEPT**
+#### 5. Acceptance Checks (TASKS T-148 (i))
+- `itemcheck.py`: Source `/workspaces/thesis/scratch/t148b/out/3.3_itemcheck.txt`
+  - `income_tax`: `ok_own_concept: 9,080`, `ok_sourced_map: 14`, **0 FLIPPED**, **0 OTHER_CONCEPT**
   - `equity`: `ok_own_concept: 9,255`, **0 FLIPPED**, **0 OTHER_CONCEPT**
-  - `net_income`: `ok_own_concept: 2,239`, `ok_sourced_map: 138`, **0 FLIPPED**, **0 OTHER_CONCEPT**
-- `signcheck.py`: Source `/workspaces/thesis/scratch/t148b/out/signcheck.txt`
-  - `effective_tax_rate`: 0 FLIPPED (2,179 >= 0, 188 < 0)
-  - `cogs`: 0 FLIPPED (1,383 >= 0)
-  - `interest_expense`: 0 FLIPPED (1,516 >= 0)
-  - `capital_expenditure`: 0 FLIPPED (2,076 >= 0)
-- `precedence.py`: Source `/workspaces/thesis/scratch/t148b/out/precedence.txt`
-  - `resolver == concept-first everywhere: True` (0 / 9,340 differ)
-- `audit_sec_checklist.py measure --only resolver,capex,source`: Source `/workspaces/thesis/scratch/t148b/out/audit_measure.txt`
-  - Target findings: `N3.ocf_continuing_resolved`: **0**; `N4.debt_double_count`: **0**; `N5.cash_double_count`: **0**; `N6.balance_from_other_date`: **0**; `N14.da_depreciation_alone`: **0**; `N22.og_tier_displaces_capex_line`: **0**; `D02.revenue_component_sum`: **0**; `D2.equity_not_narrowest`: **0**; `D2.net_income_profitloss_over_parent`: **0**; `D3.income_tax_component`: **0**; `D4.short_term_debt_order_differs`: **0**; `N12.dead_concepts_filed`: **0**; `N13.net_income_available_to_common`: **0**.
-- `audit_sec_checklist.py l09`: Source `/workspaces/thesis/scratch/t148b/out/l09.txt`, `/workspaces/thesis/scratch/t148b/out/l09.json`
-  - Register rows: 191; Derived values: 115 / 9,341 (4 companies); Refused values: 76 / 9,341 (3 companies); Ex-post checked: 76 / 115 (4 companies); **Ex-post differs: 0 / 76 (0 companies)**.
+  - `net_income`: `ok_own_concept: 8,618`, `ok_sourced_map: 485`, **0 FLIPPED**, **0 OTHER_CONCEPT**
+  - `total_assets`: `ok_own_concept: 9,267`, **0 FLIPPED**, **0 OTHER_CONCEPT**
+  - `operating_income`: `ok_own_concept: 6,909`, **0 FLIPPED**, **0 OTHER_CONCEPT**
+  - `pretax_income`: `ok_own_concept: 8,506`, **0 FLIPPED**, **0 OTHER_CONCEPT**
+  - `revenue`: `ok_own_concept: 9,080`, **0 FLIPPED**, 1 OTHER_CONCEPT (APA derived)
+  - `cash`: `ok_own_concept: 8,090`, **0 FLIPPED**, 517 OTHER_CONCEPT (CSX/AJG (k)(1) restricted-eligible)
+- `signcheck.py`: Source `/workspaces/thesis/scratch/t148b/out/3.3_signcheck.txt`
+  - `effective_tax_rate`: **0 FLIPPED** (8,372 stored>=0, 708 stored<0)
+  - `inventory_turnover`: **0 FLIPPED** (5,377 stored>=0)
+  - `interest_coverage`: **0 FLIPPED** (5,675 stored>=0, 2 stored<0)
+  - `free_cash_flow_margin`: **0 FLIPPED** (4,289 stored>=0, 87 other_value [REIT/DOW additions])
+- `precedence.py`: Source `/workspaces/thesis/scratch/t148b/out/3.3_precedence.txt`
+  - `resolver == concept-first everywhere: True` (**0 / 9,340 differ**)
+- `audit_sec_checklist.py measure --only resolver,capex,source`: Source `/workspaces/thesis/scratch/t148b/out/3.3_audit_measure.txt`
+  - 183 findings recorded; all target findings at **0** (`N3.ocf_continuing_resolved: 0`, `N4.debt_double_count: 0`, `N5.cash_double_count: 0`, `N6.balance_from_other_date: 0`, `N14.da_depreciation_alone: 0`, `N22.og_tier_displaces_capex_line: 0`, `D02.revenue_component_sum: 0`, `D2.equity_not_narrowest: 0`, `D2.net_income_profitloss_over_parent: 0`, `D3.income_tax_component: 0`, `D4.short_term_debt_order_differs: 0`, `N12.dead_concepts_filed: 0`, `N13.net_income_available_to_common: 0`).
+- `audit_sec_checklist.py l09`: Source `/workspaces/thesis/scratch/t148b/out/3.3_audit_l09.txt`
+  - 191 register rows; Derived values: 115 / 9,341 (4 companies); Refused values: 76 / 9,341 (3 companies); Ex-post checked: 76 / 115 (4 companies); **Ex-post differs: 0 / 76 (0 companies)**.
 
-#### 5. T-070 Calibration check
-Source: `/workspaces/thesis/scratch/t148b/out/t070_calibration_check.txt`, `/workspaces/thesis/scratch/t148b/out/t070_calibration_check.json`
+#### 6. T-070 Calibration Check
+Source: `/workspaces/thesis/scratch/t148b/out/3.4_t070_calibration.txt`, `/workspaces/thesis/scratch/t148b/out/3.4_t070_changed_companies.txt`
+Evaluated on latest filings:
 
-| Rule | Scope | Before Hits (`rebuilt_full3.db`) | After Hits (`after_full.db`) | Diff |
-|---|---|---:|---:|---:|
-| `LIQUIDITY_DISTRESS` | All filings | 93 | 43 | -50 |
-| `LIQUIDITY_DISTRESS` | All cos (any filing) | 29 | 18 | -11 |
-| `LIQUIDITY_DISTRESS` | Latest filing | 1 | 0 | -1 |
-| `LEVERAGE_EXTREME` | All filings | 647 | 615 | -32 |
-| `LEVERAGE_EXTREME` | All cos (any filing) | 64 | 63 | -1 |
-| `LEVERAGE_EXTREME` | Latest filing | 30 | 30 | 0 |
-| `NEGATIVE_FCF` | All filings | 804 | 932 | +128 |
-| `NEGATIVE_FCF` | All cos (any filing) | 115 | 121 | +6 |
-| `NEGATIVE_FCF` | Latest filing | 36 | 46 | +10 |
+| Rule | Before Hits | After Hits | Net Change | Added | Dropped |
+|---|---:|---:|---:|---:|---:|
+| `LIQUIDITY_DISTRESS` | 1 | 1 | +0 | 0 | 0 |
+| `LEVERAGE_EXTREME` | 35 | 36 | +1 | 1 (ABBV) | 0 |
+| `NEGATIVE_FCF` | 40 | 46 | +6 | 6 (ARE, CPT, DLR, FRT, LNT, VTR) | 0 |
 
-- Latest filing company transitions:
-  - `LIQUIDITY_DISTRESS`: WBD cleared (1 -> 0 hits).
-  - `LEVERAGE_EXTREME`: 30 hits unchanged before and after.
-  - `NEGATIVE_FCF`: 10 added on latest filing (ARE, CPT, DLR, ETR, EXC, FRT, LNT, PCG, SRE, VTR) due to complete MET-08 capex capture (REIT development/acquisitions, utility capital improvements) correctly reflecting negative free cash flow.
-- Pilot companies (20 names, latest filing):
-  - `LIQUIDITY_DISTRESS`: Before 0, After 0
-  - `LEVERAGE_EXTREME`: Before 2 (MA, SBAC), After 2 (MA, SBAC)
-  - `NEGATIVE_FCF`: Before 1 (AMZN), After 3 (AMZN, CPT, ETR)
+*Details of companies that changed on the latest filing:*
+- **ABBV** (10-Q 2026-06-30): Capex before/after 87,000,000 (`us-gaap_PaymentsToAcquirePropertyPlantAndEquipment`), FCF TTM before/after 8,210,000,000. Negative equity (-.8B) with empty D&A/EBITDA falls back to SOFT review in `LEVERAGE_EXTREME`.
+- **ARE** (10-Q 2026-06-30, REIT): Capex before 49,318,000 -> after 49,318,000 (`us-gaap_PaymentsToDevelopRealEstateAssets`). FCF TTM before None -> after -59,788,000. Triggers `NEGATIVE_FCF`.
+- **CPT** (10-Q 2026-06-30, REIT): Capex before 86,424,000 -> after 86,424,000 (`us-gaap_PaymentsToAcquireRealEstate + us-gaap_PaymentsToDevelopRealEstateAssets`). FCF TTM before +81,634,000 -> after -09,175,000. Triggers `NEGATIVE_FCF`.
+- **DLR** (10-Q 2026-06-30, REIT): Capex before ,784,229,000 -> after ,784,229,000 (`us-gaap_PaymentsToDevelopRealEstateAssets`). FCF TTM before None -> after -06,741,000. Triggers `NEGATIVE_FCF`.
+- **FRT** (10-Q 2026-06-30, REIT): Capex before 5,397,000 -> after 5,397,000 (`us-gaap_PaymentsToAcquireRealEstate`). FCF TTM before None -> after -9,286,000. Triggers `NEGATIVE_FCF`.
+- **LNT** (10-Q 2026-06-30): Capex before 13,000,000 -> after 13,000,000 (`us-gaap_PaymentsToAcquirePropertyPlantAndEquipment`). FCF TTM before None -> after -,056,000,000. Triggers `NEGATIVE_FCF`.
+- **VTR** (10-Q 2026-06-30, REIT): Capex before 49,676,000 -> after 49,676,000 (`us-gaap_PaymentsToDevelopRealEstateAssets`). FCF TTM before None -> after -97,259,000. Triggers `NEGATIVE_FCF`.
 
-#### 6. MET-00 Cost in two columns ("not applicable by rule" / "missing data")
-Source: `/workspaces/thesis/scratch/t148b/out/step3_2_before_after.txt`
+#### 7. MET-00 Cost in Two Columns ("not applicable by rule" / "missing data")
+Source: `/workspaces/thesis/scratch/t148b/out/r2b_change.txt`
 
 | Metric | Total Filings | After Filled | Not Applicable by Rule (APP-02 / APP-04b) | Missing Data |
 |---|---:|---:|---:|---:|
-| `enterprise_value` | 9,341 | 7,016 | 518 | 1,807 |
-| `debt_to_equity` | 9,341 | 7,814 | 349 | 1,178 |
-| `debt_to_assets` | 9,341 | 7,821 | 349 | 1,171 |
-| `return_on_invested_capital` | 9,341 | 5,713 | 911 | 2,717 |
-| `net_debt_to_ebitda` | 9,341 | 3,918 | 930 | 4,493 |
-| `interest_coverage` | 9,341 | 1,182 | 944 | 7,215 |
-| `nopat` | 9,341 | 1,798 | 939 | 6,604 |
-| `return_on_assets` | 9,341 | 8,862 | 31 | 448 |
-| `free_cash_flow_yield` | 9,341 | 8,010 | 384 | 947 |
-| `free_cash_flow_margin` | 9,341 | 8,353 | 353 | 635 |
-| `free_cash_flow_conversion` | 9,341 | 8,230 | 354 | 757 |
+| `enterprise_value` | 9,340 | 7,016 | 518 | 1,806 |
+| `debt_to_equity` | 9,340 | 7,814 | 349 | 1,177 |
+| `debt_to_assets` | 9,340 | 7,821 | 349 | 1,170 |
+| `return_on_invested_capital` | 9,340 | 5,752 | 911 | 2,677 |
+| `net_debt_to_ebitda` | 9,340 | 3,943 | 930 | 4,467 |
+| `interest_coverage` | 9,340 | 4,477 | 944 | 3,919 |
+| `nopat` | 9,340 | 6,958 | 939 | 1,443 |
+| `return_on_assets` | 9,340 | 8,907 | 31 | 402 |
+| `free_cash_flow_yield` | 9,340 | 8,067 | 384 | 889 |
+| `free_cash_flow_margin` | 9,340 | 8,413 | 353 | 574 |
+| `free_cash_flow_conversion` | 9,340 | 8,290 | 354 | 696 |
 
-#### 7. Causes table: remaining limitations, causes and evidence
+#### 8. Causes Table: Remaining Limitations, Causes and Evidence
 Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/thesis/scratch/t148b/out/causes_table.json`
 
 1. **Notes-only restricted cash overstatement & EV effect ((k)(1)).**
-   - Filings affected: 494 (42 companies).
+   - Distinct filings affected: 494 across 42 companies.
    - Cash resolves to `CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` because no uncombined cash line is filed on the balance sheet face, with restricted cash disclosed only in footnotes. Flagged `cash_tag_includes_restricted_cash_possible`.
-   - Evidence: Arthur J. Gallagher & Co. (AJG 10-Q 2023-03-31, accession `0000950170-23-018841`): cash ratio 0.0572, enterprise value $45,722,902,622.
+   - Evidence: Arthur J. Gallagher & Co. (AJG 10-Q 2023-03-31, accession `0000950170-23-018841`).
 2. **D&A limitation: depreciation alone is not D&A (N14 / D7).**
-   - Filings affected: 428 across 93 companies.
+   - Distinct filings affected: 856 across 94 companies.
    - Under MET-07 / D-07, `us-gaap_Depreciation` alone is refused as D&A when no amortization component is filed, leaving D&A empty (flagged `depreciation_only_not_da`).
    - Sample companies: ABBV, ABT, ADI, AON, APTV, AVGO, AVY, BRO, CHD, CIEN, COHR, COR, CPAY, CSX, CTAS, DHR, ECL, EME, EQIX, ES.
 3. **MKT-01 first filings & stale cover counts.**
-   - First filings with no prior available cover count (`no_cover_shares`): 504 filings across 503 companies.
-   - Stale cover counts exceeding 200-day limit (`stale_shares`): 8 filings (DELL 2023-11-03, EXE 2022-12-31, MTD 2023-12-31, MTD 2024-12-31, PSKY 2026-03-31, SMCI 2024-12-31, TRMB 2024-09-27, TRMB 2025-01-03) where delayed reporting exceeded the 200-day threshold.
+   - First filings with no prior available cover count (`market_cap_no_cover_shares`): 503 distinct filings across 502 companies.
+   - Stale cover counts exceeding 200-day limit (`market_cap_stale_shares`): 8 distinct filings across 6 companies (DELL, EXE, MTD, PSKY, SMCI, TRMB) where delayed reporting exceeded the 200-day threshold.
 4. **MKT-03 multi-class incomplete classes & Visa (V).**
-   - 47 companies flagged `market_cap_incomplete_classes`: ABNB, ACN, AOS, APP, ARES, BF.B, BKR, CHTR, CMCSA, CME, CRWD, CVNA, DASH, DDOG, DELL, ECHO, EL, EXPE, F, GDDY, GOOG, GOOGL, HSY, IBKR, LEN, MA, META, MKC, NKE, PLTR, PSKY, RDDT, REGN, RL, SCHW, SPG, STZ, TAP, TKO, TSN, TTD, UHS, UPS, V, VEEV, WBD, WDAY.
-   - Visa Inc. (`V`, CIK `0001403161`): Class B-1, B-2, B-3 and Class C shares do not convert 1:1 into Class A (dynamic conversion rate adjusted under US Retrospective Responsibility Plan litigation escrow), making market cap approximate/off rather than just flagged.
+   - 47 companies (744 distinct filings) flagged `market_cap_incomplete_classes`: ABNB, ACN, AOS, APP, ARES, BF.B, BKR, CHTR, CMCSA, CME, CRWD, CVNA, DASH, DDOG, DELL, ECHO, EL, EXPE, F, GDDY, GOOG, GOOGL, HSY, IBKR, LEN, MA, META, MKC, NKE, PLTR, PSKY, RDDT, REGN, RL, SCHW, SPG, STZ, TAP, TKO, TSN, TTD, UHS, UPS, V, VEEV, WBD, WDAY. Source: `out/mkt03_multiclass_ciks.txt`.
+   - **Visa Inc. (`V`, CIK `0001403161`, 10-K `0001403161-25-000089` Note 15):** Class B-1, Class B-2, and Class C shares do not convert 1:1 into Class A common stock. Note 15 (Stockholders' Equity) table "As-converted class A common stock" discloses for September 30, 2025:
+     - Class A common stock: 1,691M shares
+     - Class B-1 common stock: 5M shares, conversion rate into Class A: **1.5549** (as-converted Class A: 8M)
+     - Class B-2 common stock: 120M shares, conversion rate into Class A: **1.5223** (as-converted Class A: 183M)
+     - Class C common stock: 9M shares, conversion rate into Class A: **4.0000** (as-converted Class A: 36M)
+     - Total as-converted Class A common stock: 1,930M shares.
+     Conversion rates adjust downward dynamically based on deposits into the U.S. litigation escrow account under the U.S. Retrospective Responsibility Plan. Because unadjusted cover shares sum to 1,821,742,809 vs true economic 1,930M as-converted shares, Visa's market cap is distorted rather than merely flagged incomplete.
 5. **CPT-like D-02 revenue sums.**
    - Under D-02, revenue component sums are accepted only when components are the exclusive lines in the statement revenue section. In M1, CPT was evaluated across 61 columns (19 own-period filings): all 61 were taken (100%), 0 refused. No other company had refused sums.
 6. **Segment-only cash (PCAR, NVR, TXT).**
-   - PACCAR (PCAR), NVR Inc. (NVR), and Textron (TXT) file cash only within segmented balance sheets (e.g., Financial Services vs Manufacturing segments) without a consolidated balance sheet line, leaving consolidated cash empty under whole-entity rules.
+   - PACCAR (PCAR), NVR Inc. (NVR), and Textron (TXT) file cash only within segmented balance sheets without a consolidated balance sheet line, leaving consolidated cash empty under whole-entity rules.
 7. **Company-specific / discontinued cash elements.**
    - Filers: CVX, PODD, GEHC, MDLZ, MMM, AMP, CINF, DVN. Cash is combined with discontinued operations or filed under issuer-specific extension concepts, refused by standard taxonomy validation.
 8. **REIT secured + unsecured debt (ID-02b / MET-07).**
@@ -6274,20 +6304,23 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
 9. **Noncontrolling interest income in notes only (MA, BALL).**
    - Mastercard (MA) and Ball Corp (BALL) file `ProfitLoss` on the income statement face without parent `NetIncomeLoss`, disclosing NCI income only in footnotes. Under ID-03 face-only rules, parent net income cannot be formed by subtracting NCI.
 10. **State Street (STT) bank map identity (30/43).**
-    - State Street Corporation (STT) files its own explicit `Revenues` total line on its income statement face, so the bank net revenue map (`InterestIncomeExpenseNet + NoninterestIncome`) never applies to it. In 30 of 43 columns, NII + NonII matches the filed total; in 13 columns, the filed total differs due to separate presentation of provisions and fees.
+    - State Street Corporation (STT) files its own explicit `Revenues` total line on its income statement face, so the bank net revenue map (`InterestIncomeExpenseNet + NoninterestIncome`) never applies to it (0 filings affected).
+    - Source: `out/3.5_stt_mismatches.txt`, `out/3.5_stt_mismatches.json`. In 30 of 43 columns, NII + NonII matches the filed total within 0.5%. In 13 columns, the filed total differs because STT reports `us-gaap_OtherOperatingIncomeExpenseNet` (e.g. net realized gains/losses on securities of -9M in FY2024 `0000093751-25-000111`, or acquisition restructuring) separately from `NoninterestIncome`.
 11. **First Solar (FSLR) classified cash ((k)(3)).**
-    - First Solar Inc. (FSLR) files `us-gaap_Cash` on a classified balance sheet (current_assets and current_liabilities both present). Resolved under Tier 6 (`cash_element_only`).
-    - Accession: `0001274494-22-000035` (10-Q 2022-06-30). Exact balance sheet caption: `"Cash"` (concept `us-gaap_Cash`, value $1,701,217,000).
+    - First Solar Inc. (FSLR) files `us-gaap_Cash` on a classified balance sheet (current assets and liabilities present). Resolved under Tier 6 (`cash_element_only`).
+    - Accessions: `0001274494-22-000020` (10-Q 2022-03-31, value ,450,654,000) and `0001274494-22-000035` (10-Q 2022-06-30, value ,701,217,000).
+    - Exact verbatim balance sheet caption: `"Cash"`.
 
 ### Tests (hermetic)
 
 - `tests/test_cash_resolution.py`: CSX (k)(1) pure caption accepted; caption mentioning restricted cash refused; separate restriction row refused; TGT (k)(2) STI cash caption; ES map (`Cash` + `CashEquivalentsAtCarryingValue`); SLB (k)(3) classified balance sheet `Cash` alone; insurer unclassified balance sheet stays empty; flag propagation to liquidity and valuation.
 - `tests/test_revenue_resolution.py`: CPT FY2025 component sum accepted under D-02; sum refused when extra revenue line exists; BNY Mellon bank net revenue map; bank with filed total bypasses map; N20 ICE net anchor refusal; N19 cost label exclusion; N3 operating cash flow total before continuing; N14/D7 D&A flags in leverage inputs.
-- `tests/test_capex_resolution.py`: DOW FY2025 PP&E-family plus oil & gas added; KKR FY2021 furniture line beats zero oil & gas; ETR FY2022 capital improvements beats productive assets fallback; oil & gas tie break (c) added; REIT capex summing acquisitions and development; REIT capital improvements overlap refused and flagged; mineral interests alone returns None; oil & gas property and equipment + PP&E flags `includes_acquisitions_contrary_to_a`.
-- `tests/test_market_cap.py`: BLK and ARES non-common cover members excluded; FOX/FOXA class-by-class valuation; incomplete classes flagged; as-of date resolution.
-- `tests/test_pipeline.py`: Chronological multi-form ingestion in `pipeline._drive` per asset ensuring 10-K market cap resolves from prior 10-Q cover count in fresh build.
-- `tests/test_metrics_valuation.py`: Metric calculations from `MarketCap`; missing market cap leaves metrics empty with `market_cap_<reason>` flag; PER-06 10-Q strict real TTM flows.
-- `tests/test_verify_t148b.py`: Hermetic tests for M1–M6 measurement helpers and `recompute` subcommand.
+- `tests/test_capex_resolution.py`: DOW FY2025 PP&E-family plus oil & gas added; KKR FY2021 furniture line beats zero oil & gas; ETR FY2022 capital improvements beats productive assets fallback; oil & gas tie break (c) added; REIT capex summing acquisitions and development; REIT capital improvements overlap refused and flagged; mineral interests alone returns None; oil & gas property and equipment + PP&E flags `includes_acquisitions_contrary_to_a`; filed zero and negative values handled correctly (`is not None`, R5).
+- `tests/test_market_cap.py`: BLK and ARES non-common cover members excluded (`cover_member_not_common_excluded`, F4); FOX/FOXA class-by-class valuation; incomplete classes flagged; as-of date resolution; resolve_asset_ids specific exception handling (F6).
+- `tests/test_pipeline.py`: Chronological multi-form ingestion in `pipeline._drive` per asset ensuring 10-K market cap resolves from prior 10-Q cover count in fresh build (F1).
+- `tests/test_metrics_valuation.py`: Metric calculations from `MarketCap`; missing market cap leaves metrics empty with `market_cap_<reason>` flag; fallback to filing cover count removed (F2); PER-06 10-Q strict real TTM flows.
+- `tests/test_statements.py`: Nonnegative concepts pinned hermetically from DQC_0015/DQC_0014 for CI (R4); `_ID16_WHOLE_ENTITY_AXES` separate constant citing DQC_0011 (F3).
+- `tests/test_verify_t148b.py`: Hermetic tests for M1–M6 measurement helpers, DQC comparison subcommand, and 10-Q own-period quarter column recompute resolution (R1).
 - Replaced tests:
   - `test_a_cost_total_label_is_a_false_anchor_that_the_guard_refuses` -> `test_a_cost_total_label_is_never_an_anchor` (`tests/test_sec_xcheck_l09.py`)
   - `test_etr_capex_keeps_master_s_document_order_until_met08_is_written` -> `test_etr_capex_resolves_tier1_under_met08` (`tests/test_line_item_resolution.py`)
@@ -6304,8 +6337,8 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
 ### Residual scope / deliberately deferred
 
 - **No migration, no view or contract change.** Database contract version remains 13 (`m013`), metrics engine remains `metrics-v6`. Flags are persisted in `fundamental_metrics.inputs_json`.
-- **Existing databases:** `after_full.db` holds the recomputed `metrics-v6` metrics for all 9,341 filings. Production database `/workspaces/thesis/data/financial.db` (`5c5c0642619bcc2f80aa72f13599bf824f676675`) and universe database `/workspaces/thesis/data/universe.db` (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`) remain untouched.
+- **Existing databases:** `after_full.db` holds the recomputed `metrics-v6` metrics for all 9,340 filings. Production database `/workspaces/thesis/data/financial.db` (`5c5c0642619bcc2f80aa72f13599bf824f676675`) and universe database `/workspaces/thesis/data/universe.db` (`04adf644f892597d5de1b60f11c0cd6cbc271ed1`) remain untouched.
 - Limitations documented in the causes table (segment-only cash, company-specific/discontinued cash elements, REIT secured/unsecured debt pair, and footnote-only NCI income) are deferred to `T-151`.
 
-**Scratch paths** (`/workspaces/thesis/scratch/t148b/`): `rebuilt_full3.db` (Part 1 rebuild, 9,341 filings, before DB), `after_full.db` (recomputed fresh copy, after DB), `out/` (`recompute_after.log`, `step3_2_before_after.txt`, `step3_2_before_after.json`, `itemcheck.txt`, `signcheck.txt`, `precedence.txt`, `audit_measure.txt`, `l09.txt`, `l09.json`, `t070_calibration_check.txt`, `t070_calibration_check.json`, `causes_table.txt`, `causes_table.json`, `id16.json`, `id16_revenue_axes.txt`, `f4_excluded_members.txt`, `m1_table.txt` to `m6_table.txt`).
+**Scratch paths** (`/workspaces/thesis/scratch/t148b/`): `rebuilt_full3.db` (Part 1 rebuild, 9,341 filings), `before_recomputed.db` (recompute with master's code, 9,340 filings), `after_full.db` (recompute with current branch, 9,340 filings), `out/` (`recompute_before.log`, `recompute_after.log`, `r2a_method_effect.txt`, `r2a_method_effect.json`, `r2b_change.txt`, `r2b_change.json`, `r3_10q_flows.txt`, `r3_10q_flows.json`, `r3_margins_growth.txt`, `r3_per06_ttm_loss.txt`, `r3_per06_ttm_loss.json`, `flag_counts.txt`, `flag_counts.json`, `3.3_itemcheck.txt`, `3.3_signcheck.txt`, `3.3_precedence.txt`, `3.3_audit_measure.txt`, `3.3_audit_l09.txt`, `3.4_t070_calibration.txt`, `3.4_t070_changed_companies.txt`, `3.5_stt_mismatches.txt`, `causes_table.txt`, `id16.json`, `id16_revenue_axes.json`, `mkt03_multiclass_ciks.txt`).
 Production `financial.db` sha1 `5c5c0642619bcc2f80aa72f13599bf824f676675` and `universe.db` sha1 `04adf644f892597d5de1b60f11c0cd6cbc271ed1` before and after.
