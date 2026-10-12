@@ -34,6 +34,7 @@ gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
 | `GET /scores` | `v_score_snapshot` rows. `?ticker=`, `?score_type=`, `?as_of=` (rows already available on D: `available_at <= D`, else `event_time <= D` for cycle scores), paged |
 | `GET /portfolio/positions` | `v_portfolio_position` — `?open_only=true` (default) or `?as_of=` for the stint open then (`as_of` takes precedence over `open_only`) |
 | `GET /portfolio/ranking?cycle_type=SELECTION` | the ranked cohort of the most recent completed cycle of that type (`v_cycle_ranking`) |
+| `GET /portfolio/quant-vs-live` | optimized benchmark weights beside live positions (`v_quant_vs_live`). `?as_of=` (newest book date on or before, no lookahead), `?kind=` (that kind plus `LIVE_ONLY`), `?current_only=true` (default; `false` includes variant books). Live-only positions included ([below](#optimized-vs-live-books-portfolioquant-vs-live-t-083)) |
 | `GET /contract` | the `v_*` view contract the running code defines — `contract_version`, `code_version`, every view with its `frozen` flag and columns in order. Metadata only, no rows ([below](#the-view-contract-contract-t-152)) |
 | `GET /contract/database` | what the connected database has of that contract — `schema_version`, `views_present`, `views_missing` |
 
@@ -127,6 +128,16 @@ import, so `api/contract.py` declares its one table a view reads, `quant_run`;
     `m009` made that change, which is why it raised the version to 9.
   - Five views lack only T-144's appended columns.
   So a consumer of a lagging database reads only the columns its version has.
+
+## Optimized vs live books (`/portfolio/quant-vs-live`, T-083)
+
+`GET /api/v1/portfolio/quant-vs-live` passes through `v_quant_vs_live` verbatim to serve benchmark weights beside live portfolio positions, resolving the most recent book date on or before `as_of` (no lookahead; omitted -> newest book date in the view).
+
+`LIVE_ONLY` rows represent names held in the live `portfolio_position` book that are **held by no current optimized book on that date**, not per kind. For example, a name held by `tangency` but not by `min_var` has no `min_var` row (its benchmark weight in `min_var` is zero and it is not `LIVE_ONLY`). To compare one book with the live book, read all rows of that book's `kind` plus `LIVE_ONLY`:
+
+- Passing `?kind=<name>` returns that kind's rows **plus** that date's `LIVE_ONLY` rows, so live-only positions are never filtered out.
+- Passing `?kind=LIVE_ONLY` returns only `LIVE_ONLY` rows.
+- `current_only=true` (default) filters `is_current = 1` (`LIVE_ONLY` rows are always `is_current = 1`); passing `false` includes variant books as well.
 
 ## Extending it
 
