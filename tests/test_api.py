@@ -140,3 +140,84 @@ def test_positions_as_of_is_honoured_without_open_only(client: TestClient) -> No
     assert client.get("/api/v1/portfolio/positions", params={"as_of": "2024-01-01"}).json() == []
     held = client.get("/api/v1/portfolio/positions", params={"as_of": "2024-07-01"}).json()
     assert [p["ticker"] for p in held] == ["AAPL"]
+
+
+def test_cycle_ranking_returns_only_most_recent_completed_run(
+    tmp_path: Path, universe_db: _UDB
+) -> None:
+    fin = tmp_path / "fin_ranking.db"
+    _seed_fin(fin)
+    udb = universe_db([("AAPL", "2020-01-01", None), ("MSFT", "2020-01-01", None)])
+    settings = ApiSettings(db_path=fin, universe_db_path=udb)
+
+    raw = sqlite3.connect(fin)
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    aid = int(conn.execute("SELECT id FROM assets WHERE ticker = 'AAPL'").fetchone()["id"])
+
+    # Older completed run
+    r1 = int(
+        conn.execute(
+            "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version) "
+            "VALUES ('SELECTION', '2024-06-01', '2024-06-01T00:00:00Z', '2024-06-01T00:05:00Z', 'completed', '{}', 'abc') "
+            "RETURNING id"
+        ).fetchone()["id"]
+    )
+    # Newer failed run
+    r2 = int(
+        conn.execute(
+            "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version) "
+            "VALUES ('SELECTION', '2024-07-01', '2024-07-01T00:00:00Z', '2024-07-01T00:05:00Z', 'failed', '{}', 'abc') "
+            "RETURNING id"
+        ).fetchone()["id"]
+    )
+    # Even newer running run
+    r3 = int(
+        conn.execute(
+            "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version) "
+            "VALUES ('SELECTION', '2024-08-01', '2024-08-01T00:00:00Z', NULL, 'running', '{}', 'abc') "
+            "RETURNING id"
+        ).fetchone()["id"]
+    )
+    # Failed MONITORING run with ranking row (verifies failed run is ignored when no completed run exists)
+    r4 = int(
+        conn.execute(
+            "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version) "
+            "VALUES ('MONITORING', '2024-09-01', '2024-09-01T00:00:00Z', '2024-09-01T00:05:00Z', 'failed', '{}', 'abc') "
+            "RETURNING id"
+        ).fetchone()["id"]
+    )
+
+    conn.execute(
+        "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
+        "VALUES (?, ?, 1, 80.0, '{}', 0, '[]', 1)",
+        (r1, aid),
+    )
+    conn.execute(
+        "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
+        "VALUES (?, ?, 1, 90.0, '{}', 0, '[]', 1)",
+        (r2, aid),
+    )
+    conn.execute(
+        "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
+        "VALUES (?, ?, 1, 95.0, '{}', 0, '[]', 1)",
+        (r3, aid),
+    )
+    conn.execute(
+        "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
+        "VALUES (?, ?, 1, 70.0, '{}', 0, '[]', 1)",
+        (r4, aid),
+    )
+    conn.commit()
+    conn.close()
+
+    with TestClient(create_app(settings)) as c:
+        res = c.get("/api/v1/portfolio/ranking").json()
+        assert len(res) == 1
+        assert res[0]["cycle_date"] == "2024-06-01"
+        assert res[0]["status"] == "completed"
+        assert res[0]["blended_score"] == 80.0
+
+        # Failed run exists for MONITORING, but no completed run exists -> returns []
+        res_mon = c.get("/api/v1/portfolio/ranking", params={"cycle_type": "MONITORING"}).json()
+        assert res_mon == []

@@ -322,46 +322,50 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         },
         code_version=cv,
     )
-    already = done_steps(conn, run_id)
-    report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
-    report.stale_price_bypassed = stale_reason
-    report.dirty_tree_bypassed = dirty_reason
-    report.stale_dq_gate_bypassed = gate_reason
-
-    universe_rows = data.active_universe(
-        conn, settings.universe, cycle_date, settings.universe_db_path
-    )
-    asset_ids = [int(r["id"]) for r in universe_rows]
-    sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
-    ticker_of = {int(r["id"]): str(r["ticker"]) for r in universe_rows}
-    sector_name_of = {int(r["id"]): r["sector"] for r in universe_rows}
-    # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
-    dq = data.data_quality(conn, cycle_date, versions)
-    metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
-    price_obs = data.latest_price_observation(conn, cycle_date, settings.observation_engine_version)
-
-    def _do(step: str, fn: Callable[[], dict]) -> None:
-        if step in already:
-            report.steps_skipped.append(step)
-            return
-        checkpoint(conn, run_id, step, "running")
-        try:
-            detail = fn() or {}
-        except Exception as exc:
-            # Leave a "failed" checkpoint rather than a stuck "running" one (T-097 review) --
-            # e.g. the out-of-order-cycle guard refusing mid-step. Re-raised untouched; the
-            # caller (_run) marks the parent cycle_run failed too.
-            checkpoint(conn, run_id, step, "failed", {"error": str(exc)})
-            raise
-        checkpoint(conn, run_id, step, "done", detail)
-        report.steps_run.append(step)
-
-    # The whole step sequence below is one try block so that ANY exception -- the out-of-order
-    # guard's refusal included -- leaves cycle_run "failed" rather than stuck "running" forever
-    # (T-097 review: cycle_checkpoint's own DDL comment already documents 'failed' as a status,
-    # but nothing wrote it). _do() marks the individual step's checkpoint "failed" first; this
-    # marks the parent run, then re-raises unchanged for the caller (CLI / tests) to handle.
+    # The whole execution after open_cycle is wrapped in try..except so that ANY exception --
+    # including interrupts or failures during data loading or step execution -- leaves cycle_run
+    # "failed" rather than stuck "running" forever (T-142 review). conn.rollback() runs first so
+    # uncommitted writes are undone, then finish_cycle marks the parent run failed before re-raising
+    # unchanged.
     try:
+        already = done_steps(conn, run_id)
+        report = CycleReport(run_id, cycle_type, cycle_date, manifest_tag=tag)
+        report.stale_price_bypassed = stale_reason
+        report.dirty_tree_bypassed = dirty_reason
+        report.stale_dq_gate_bypassed = gate_reason
+
+        universe_rows = data.active_universe(
+            conn, settings.universe, cycle_date, settings.universe_db_path
+        )
+        asset_ids = [int(r["id"]) for r in universe_rows]
+        sector_of = {int(r["id"]): r["sector_id"] for r in universe_rows}
+        ticker_of = {int(r["id"]): str(r["ticker"]) for r in universe_rows}
+        sector_name_of = {int(r["id"]): r["sector"] for r in universe_rows}
+        # Ring-1 data-quality gates (T-065): quarantined metrics read as NULL everywhere below.
+        dq = data.data_quality(conn, cycle_date, versions)
+        metrics = dq.apply(data.latest_metrics(conn, cycle_date, versions))
+        price_obs = data.latest_price_observation(
+            conn, cycle_date, settings.observation_engine_version
+        )
+
+        def _do(step: str, fn: Callable[[], dict]) -> None:
+            if step in already:
+                report.steps_skipped.append(step)
+                return
+            checkpoint(conn, run_id, step, "running")
+            try:
+                detail = fn() or {}
+            except BaseException as exc:
+                # Leave a "failed" checkpoint rather than a stuck "running" one (T-097 review) --
+                # e.g. the out-of-order-cycle guard refusing mid-step. Roll back any uncommitted
+                # writes before writing the checkpoint, which commits (T-142). Re-raised untouched;
+                # the caller (_run) marks the parent cycle_run failed too.
+                conn.rollback()
+                checkpoint(conn, run_id, step, "failed", {"error": str(exc)})
+                raise
+            checkpoint(conn, run_id, step, "done", detail)
+            report.steps_run.append(step)
+
         # -- universe
         _do("universe", lambda: {"assets": len(asset_ids)})
 
@@ -710,7 +714,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             _do("positions", _positions)
 
         finish_cycle(conn, run_id, "completed")
-    except Exception:
+    except BaseException:
+        conn.rollback()
         finish_cycle(conn, run_id, "failed")
         raise
     return report

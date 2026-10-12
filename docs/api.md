@@ -33,7 +33,7 @@ gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
 | `GET /universe/coverage?as_of=YYYY-MM-DD` | per-member core-data coverage — the persisted `v_universe_coverage` rows if the `coverage` command has been run for that date, else computed live (never written). `source` is `persisted` or `computed` |
 | `GET /scores` | `v_score_snapshot` rows. `?ticker=`, `?score_type=`, `?as_of=` (rows already available on D: `available_at <= D`, else `event_time <= D` for cycle scores), paged |
 | `GET /portfolio/positions` | `v_portfolio_position` — `?open_only=true` (default) or `?as_of=` for the stint open then (`as_of` takes precedence over `open_only`) |
-| `GET /portfolio/ranking?cycle_type=SELECTION` | the ranked cohort of the most recent cycle of that type (`v_cycle_ranking`) |
+| `GET /portfolio/ranking?cycle_type=SELECTION` | the ranked cohort of the most recent completed cycle of that type (`v_cycle_ranking`) |
 | `GET /contract` | the `v_*` view contract the running code defines — `contract_version`, `code_version`, every view with its `frozen` flag and columns in order. Metadata only, no rows ([below](#the-view-contract-contract-t-152)) |
 | `GET /contract/database` | what the connected database has of that contract — `schema_version`, `views_present`, `views_missing` |
 

@@ -53,6 +53,15 @@ Projection semantics
                           ``code_version`` (the code tag that produced the run),
                           status, timings and ``params_json``. ``portfolio-reports``
                           enumerates and traces past runs through these.
+                          In ``v_analysis_run``, the units are:
+                          ``planned_units`` is one per (ticker, form, year) task;
+                          ``completed_units`` and ``skipped_units`` are one per filing
+                          (a 10-Q year task has several filings);
+                          ``failed_units`` is one per failed (ticker, form, year) task
+                          or per failed filing.
+                          Because ``planned_units`` and the other three use different
+                          units, completed_units + skipped_units + failed_units need
+                          not equal planned_units.
 ``v_sector``              one row per GICS sector with its member-asset and sub-industry
                           counts (the reference lane's rollup anchor).
 ``v_industry``            one row per GICS sub-industry -> sector (the scrape has no

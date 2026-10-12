@@ -38,10 +38,10 @@ def cycle_ranking(
     cycle_type: str = Query("SELECTION", description="SELECTION or MONITORING"),
     db: Database = Depends(get_db),
 ) -> list[dict[str, Any]]:
-    """The ranked cohort of the most recent cycle of *cycle_type*."""
+    """The ranked cohort of the most recent completed cycle of *cycle_type*."""
     sql = (
         "SELECT * FROM v_cycle_ranking WHERE cycle_type = ? "
-        "AND cycle_date = (SELECT MAX(cycle_date) FROM v_cycle_ranking WHERE cycle_type = ?) "
+        "AND cycle_date = (SELECT MAX(cycle_date) FROM v_cycle_ranking WHERE cycle_type = ? AND status = 'completed') "
         "ORDER BY rank"
     )
     return rows(db, sql, (cycle_type.upper(), cycle_type.upper()))
