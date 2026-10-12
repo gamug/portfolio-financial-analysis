@@ -8,6 +8,7 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 from conftest import seed_filing
 
 from fundamental_agent import db
@@ -131,8 +132,14 @@ def test_k1_allowed_caption_cleaning() -> None:
     assert cleaned in verify.ALLOWED_K1_CAPTIONS
 
 
-def test_cmd_recompute_on_tiny_database(aapl_10k: Statements, tmp_path: Path) -> None:
-    """Hermetic test for verify_t148b.py recompute on a tiny database."""
+def test_cmd_recompute_on_tiny_database(
+    aapl_10k: Statements, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hermetic test for verify_t148b.py recompute on a tiny database.
+
+    The recompute refuses a path outside :data:`verify.RECOMPUTE_SCRATCH_ROOT` (T-151 part 1), so the
+    hermetic test points that root at its own ``tmp_path``."""
+    monkeypatch.setattr(verify, "RECOMPUTE_SCRATCH_ROOT", tmp_path)
     path = tmp_path / "test_recompute.db"
     conn = connect(path)
     db.ensure_schema(conn)
@@ -178,9 +185,12 @@ def test_cmd_recompute_on_tiny_database(aapl_10k: Statements, tmp_path: Path) ->
     check_conn.close()
 
 
-def test_recompute_reads_quarter_column_on_10q(tmp_path: Path) -> None:
+def test_recompute_reads_quarter_column_on_10q(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """R1: on a 10-Q filing where instant, quarter and YTD share the period_end date,
     recompute must target the quarter column and resolve its flow items."""
+    monkeypatch.setattr(verify, "RECOMPUTE_SCRATCH_ROOT", tmp_path)
     path = tmp_path / "test_10q_recompute.db"
     conn = connect(path)
     db.ensure_schema(conn)
@@ -244,3 +254,13 @@ def test_recompute_reads_quarter_column_on_10q(tmp_path: Path) -> None:
     assert inputs["revenue"] == 250_000_000.0
     assert inputs["net_income"] == 50_000_000.0
     check_conn.close()
+
+
+def test_recompute_refuses_a_database_outside_the_scratch_root(tmp_path: Path) -> None:
+    """T-151 part 1 (OPEN QUESTION 5): the recompute deletes and rewrites rows of the current
+    engine, so a database outside ``RECOMPUTE_SCRATCH_ROOT`` -- production, the pilot universe, a
+    /tmp copy -- is refused before anything is opened."""
+    outside = tmp_path / "not_scratch.db"
+    outside.touch()
+    with pytest.raises(SystemExit, match="recompute refuses"):
+        verify.cmd_recompute(argparse.Namespace(db=str(outside), limit=None))

@@ -1023,10 +1023,29 @@ def _recompute_single_filing(
     return True
 
 
+# The recompute deletes and rewrites rows of the current engine, so it only ever runs on a database
+# under the task scratch (T-151 part 1, OPEN QUESTION 5). Tests override the root by monkeypatch;
+# the production default is the scratch tree.
+RECOMPUTE_SCRATCH_ROOT = Path("/workspaces/thesis/scratch")
+
+
+def _refuse_outside_scratch(db_path: str) -> None:
+    """Refuse a *db_path* outside :data:`RECOMPUTE_SCRATCH_ROOT` -- the recompute is destructive and
+    must never touch the read-only production database or the pilot universe."""
+    resolved = Path(db_path).expanduser().resolve()
+    root = RECOMPUTE_SCRATCH_ROOT.expanduser().resolve()
+    if not resolved.is_relative_to(root):
+        raise SystemExit(
+            f"recompute refuses {resolved}: it deletes and rewrites rows, so it runs only on a "
+            f"database under {root} (T-151 part 1)"
+        )
+
+
 def cmd_recompute(args: argparse.Namespace) -> None:
     print(f"fundamental_agent source: {fundamental_agent.__file__}", flush=True)
 
     db_path = args.db
+    _refuse_outside_scratch(db_path)
     conn = connect(db_path)
 
     # 1. Before writing: delete existing rows of the current engine and their quality issues
