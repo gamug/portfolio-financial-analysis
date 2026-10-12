@@ -2044,7 +2044,7 @@ amount (the app).
 - `quant`'s benchmark follows the same rule, pinned against `cycle`'s by a test; the isolation test stays
   green, and `uv run pytest -q`, `ruff` and `mypy` are green.
 
-## Work item 19 — Local follow-ups before the final pilot (added 2026-10-05)
+## Work item 19 — Local follow-ups before the final pilot (added 2026-10-05) — DONE 2026-10-12
 
 **Why**: the user's 2026-10-05 scope decision is to finish this repo before touching the knowledge-graph
 side. Work item 9's `T-083` is the one local piece of that item (our API reading the rewritten
