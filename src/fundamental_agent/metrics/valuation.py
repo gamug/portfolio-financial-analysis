@@ -33,10 +33,11 @@ def _resolve_market_cap(
     float | None,
     float | None,
     bool,
+    bool,
     str | None,
 ]:
     """Resolve (shares, share_price, market_cap_val, share_age_days, split_factor, n_classes,
-    incomplete_classes, missing_reason) strictly under MKT-01 to MKT-04."""
+    incomplete_classes, cover_member_not_common_excluded, missing_reason) strictly under MKT-01 to MKT-04."""
     if market_cap is not None:
         return (
             market_cap.shares,
@@ -46,14 +47,15 @@ def _resolve_market_cap(
             market_cap.split_factor,
             float(market_cap.n_classes),
             market_cap.incomplete_classes,
+            market_cap.cover_member_not_common_excluded,
             None,
         )
     if market_cap_missing is not None:
         p_close = price.close if price is not None else None
-        return (None, p_close, None, None, None, None, False, market_cap_missing)
+        return (None, p_close, None, None, None, None, False, False, market_cap_missing)
 
     p_close = price.close if price is not None else None
-    return (None, p_close, None, None, None, None, False, "not_computed")
+    return (None, p_close, None, None, None, None, False, False, "not_computed")
 
 
 def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit inputs
@@ -83,6 +85,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         split_factor,
         n_classes,
         incomplete_classes,
+        cover_member_not_common_excluded,
         missing_reason,
     ) = _resolve_market_cap(price, market_cap, market_cap_missing)
 
@@ -136,6 +139,8 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         inputs[f"market_cap_{missing_reason}"] = 1.0
     if incomplete_classes:
         inputs["market_cap_incomplete_classes"] = 1.0
+    if cover_member_not_common_excluded:
+        inputs["cover_member_not_common_excluded"] = 1.0
     if share_scale_factors:
         inputs["share_scale_suspect"] = 1.0
 

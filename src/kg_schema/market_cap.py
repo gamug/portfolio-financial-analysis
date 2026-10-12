@@ -64,6 +64,8 @@ class MarketCap:
     split_factor: float
     cik: str | None = None  # the issuer: two listings of one company share it (GOOG/GOOGL)
     incomplete_classes: bool = False
+    n_excluded: int = 0
+    cover_member_not_common_excluded: bool = False
 
 
 @dataclass
@@ -102,6 +104,8 @@ class ShareCount:
     value: float
     as_of_date: str
     n_classes: int  # non-total classes summed into value; 0 for one class or a filed total
+    n_excluded: int = 0
+    cover_member_not_common_excluded: bool = False
 
 
 #: Listed share classes per CIK, cited from cover page Trading Symbol table (MKT-03):
@@ -147,13 +151,21 @@ def _conversion(cik: str | None) -> dict[str, float]:
     return CLASS_CONVERSION.get(str(cik).zfill(10), {}) if cik else {}
 
 
+def _is_excluded_cover_member(member: str) -> bool:
+    if not member:
+        return False
+    local = member.rsplit(":", maxsplit=1)[-1]
+    return "Preferred" in local or "FullyDiluted" in local or local.endswith("UnitsMember")
+
+
 def cover_total(
     entries: Iterable[tuple[str, float, str]], *, cik: str | None = None
 ) -> ShareCount | None:
     """One filing's count from its cover entries ``(class_member, value, as_of_date)``: the filer's
     own total (class ``""``, its newest) when it filed one, else each class's newest value, converted
     to the traded class by :data:`CLASS_CONVERSION` for *cik*, summed and dated by the oldest of
-    them. ``None`` for no entries.
+    them. Non-common members (Preferred, FullyDiluted, *UnitsMember) are excluded per MKT-04.
+    ``None`` for no entries.
 
     The one aggregation the stored valuation metric and the as-of reader share, so the two cannot
     disagree on what a dual-class filer's count is."""
@@ -162,17 +174,24 @@ def cover_total(
     if totals:
         _, value, as_of = max(totals, key=lambda e: e[2])
         return ShareCount(value, as_of, 0)
+    excluded_members: set[str] = set()
     newest: dict[str, tuple[str, float, str]] = {}
     for e in items:
+        if _is_excluded_cover_member(e[0]):
+            excluded_members.add(e[0])
+            continue
         if e[0] not in newest or e[2] > newest[e[0]][2]:
             newest[e[0]] = e
     if not newest:
         return None
     factor = _conversion(cik)
+    n_excluded = len(excluded_members)
     return ShareCount(
         sum(e[1] * factor.get(e[0], 1.0) for e in newest.values()),
         min(e[2] for e in newest.values()),
         len(newest),
+        n_excluded=n_excluded,
+        cover_member_not_common_excluded=n_excluded > 0,
     )
 
 
@@ -185,6 +204,8 @@ class _Count:
     n_classes: int
     cik: str | None = None
     entries: tuple[tuple[str, float, str], ...] = ()
+    n_excluded: int = 0
+    cover_member_not_common_excluded: bool = False
 
 
 def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
@@ -208,6 +229,8 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
                     total.n_classes,
                     entries[0]["cik"],
                     raw_entries,
+                    n_excluded=total.n_excluded,
+                    cover_member_not_common_excluded=total.cover_member_not_common_excluded,
                 )
             )
     return out
@@ -251,6 +274,8 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
     conv_map = CLASS_CONVERSION.get(cik_norm, {})
     newest: dict[str, tuple[str, float, str]] = {}
     for e in count.entries:
+        if _is_excluded_cover_member(e[0]):
+            continue
         if e[0] not in newest or e[2] > newest[e[0]][2]:
             newest[e[0]] = e
     total_val = 0.0
@@ -285,6 +310,8 @@ def _is_incomplete_classes(count: _Count) -> bool:
     conv_map = CLASS_CONVERSION.get(cik_norm, {})
     newest: dict[str, tuple[str, float, str]] = {}
     for e in count.entries:
+        if _is_excluded_cover_member(e[0]):
+            continue
         if e[0] not in newest or e[2] > newest[e[0]][2]:
             newest[e[0]] = e
     non_totals = [m for m in newest if m]
@@ -366,5 +393,7 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             split_factor=factor,
             cik=count.cik,
             incomplete_classes=incomplete,
+            n_excluded=count.n_excluded,
+            cover_member_not_common_excluded=count.cover_member_not_common_excluded,
         )
     return result
