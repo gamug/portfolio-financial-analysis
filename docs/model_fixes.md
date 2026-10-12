@@ -5798,7 +5798,7 @@ Scratch paths: `/tmp/t149/prod_copy.db` (migrated copy of production, the trigge
 
 ## T-148 part 1 of 2 — Filed signs, concept precedence, parent net income, income tax, debt and cash (Work item 8, step 11)
 
-**Status.** Implemented on `fix/t148a-filed-signs-precedence-debt` (PR number in the status commit). Methodology change (constitution AI behavior #12): which XBRL concept an
+**Status.** Implemented on `fix/t148a-filed-signs-precedence-debt`, **PR #136**. Methodology change (constitution AI behavior #12): which XBRL concept an
 income-statement or balance-sheet item is read from, in which sign, and what a missing debt, cash or tax means; contract 13 (`m013`); engine `metrics-v6`. This is **part 1** of
 `T-148`'s (a)-(d); **part 2** (revenue / cash flow / banks (e), capex and N22 (f), share counts and flags (g), the `T-070` recheck (j) and the full acceptance (i)) keeps `metrics-v6`:
 **no non-scratch database is built between the two PRs**, so no stored row mixes the two. Everything below was measured on **scratch copies** under `/tmp/t148a/` (listed at the end);
