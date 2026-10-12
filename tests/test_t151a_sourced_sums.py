@@ -23,7 +23,14 @@ from pathlib import Path
 from typing import Any
 
 from fundamental_agent.metrics import cashflow, leverage
-from fundamental_agent.statements import G, Statements
+from fundamental_agent.statements import (
+    LONG_TERM_DEBT_CHILDREN,
+    LONG_TERM_DEBT_NONCURRENT_CHILDREN,
+    SHORT_TERM_DEBT_LAST,
+    SHORT_TERM_DEBT_MAP,
+    G,
+    Statements,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FY = "2025-12-31 (FY)"
@@ -395,3 +402,30 @@ def test_c1_and_c2_the_new_flags_reach_the_metric_inputs() -> None:
     key = stmts.fy_periods()[-1].key
     debt_inputs = {r.name: r.inputs for r in leverage.compute(stmts, key)}
     assert any("flag_total_debt_debt_sourced_sum" in i for i in debt_inputs.values())
+
+
+def test_the_long_term_sum_and_the_short_term_terms_never_share_a_concept() -> None:
+    """The double-count hard stop (director decision after hard stop 4'): no concept may be in both
+    the long-term sum and the short-term terms of the same total debt. The two trees and the
+    short-term map are disjoint by construction, and a real shape counts each concept once."""
+    cls, dbo = set(LONG_TERM_DEBT_NONCURRENT_CHILDREN), set(LONG_TERM_DEBT_CHILDREN)
+    short = {c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs} | {SHORT_TERM_DEBT_LAST}
+    assert not (cls & dbo)
+    assert not (cls & short)
+    assert not (dbo & short)
+
+    stmts = _balance(
+        _inst(G + "SecuredLongTermDebt", "Secured long-term debt", 1_000_000.0),
+        _inst(G + "UnsecuredLongTermDebt", "Unsecured long-term debt", 2_000_000.0),
+        _inst(G + "LongTermDebtCurrent", "Current maturities", 300_000.0),
+        _inst(G + "ShortTermBorrowings", "Short-term borrowings", 400_000.0),
+        _inst(G + "Assets", "Total assets", 9_000_000.0),
+        _inst(G + "StockholdersEquity", "Equity", 5_000_000.0),
+    )
+    long_term = stmts.resolve("long_term_debt", FY)
+    total = stmts.total_debt(FY)
+    lt_concepts = set((long_term.concept or "").split(" + "))
+    total_concepts = set((total.concept or "").split(" + "))
+    assert lt_concepts <= total_concepts
+    assert not (lt_concepts & (total_concepts - lt_concepts))
+    assert long_term.value == 3_000_000.0 and total.value == 3_700_000.0

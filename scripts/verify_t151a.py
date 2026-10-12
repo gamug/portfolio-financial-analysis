@@ -618,7 +618,11 @@ def _cf_best_entry(
 
 
 def _filled_cases(conn: Any) -> list[dict[str, Any]]:
-    """Every filing and column where C1 or C2 filled the value (the sourced flag was raised)."""
+    """Every filing and column where C1 or C2 filled the value (the sourced flag was raised).
+
+    The value is the **map's own output**: C1's D&A sum, C2's **long-term** sum (never the total
+    debt, which adds the short-term terms -- T-151 part 1, director decision after 4')."""
+    spec_da, spec_lt = REGISTRY["depreciation_amortization"], REGISTRY["long_term_debt"]
     cases: list[dict[str, Any]] = []
     for f in filings(conn):
         stmts = _statements_or_none(conn, int(f["id"]))
@@ -630,6 +634,7 @@ def _filled_cases(conn: Any) -> list[dict[str, Any]]:
             "cik": f["cik"],
             "filing_id": int(f["id"]),
             "form": str(f["form"]),
+            "period_end": str(f["period_end"]),
             "stmts": stmts,
         }
         for p in stmts.periods:
@@ -638,6 +643,11 @@ def _filled_cases(conn: Any) -> list[dict[str, Any]]:
             res = stmts.resolve("depreciation_amortization", p.key)
             if "da_sourced_sum" not in res.flags:
                 continue
+            children = {
+                c: v
+                for c in DA_SOURCED_CHILDREN
+                if (v := stmts._concept_value(spec_da, p.key, c)) is not None
+            }
             cases.append(
                 {
                     **base,
@@ -646,21 +656,26 @@ def _filled_cases(conn: Any) -> list[dict[str, Any]]:
                     "end": p.date,
                     "tag": p.tag,
                     "value": res.value,
-                    "concept": res.concept,
+                    "value_concept": res.concept,
+                    "children": children,
                 }
             )
         own = _own_column(stmts, str(f["form"]), str(f["period_end"]))
-        if own is None:
-            continue
-        total = stmts.total_debt(own)
-        if "debt_sourced_sum" not in total.flags:
-            continue
         column = _balance_column(stmts, str(f["period_end"]))
-        if column is None:
+        if own is None or column is None:
             continue
-        # the tree used: the sum's concept names the children it counted
-        counted = set((total.concept or "").split(" + "))
+        long_term = stmts.resolve("long_term_debt", column)
+        if "debt_sourced_sum" not in long_term.flags:
+            continue
+        counted = set((long_term.concept or "").split(" + "))
         kind = "cls" if counted & set(LONG_TERM_DEBT_NONCURRENT_CHILDREN) else "dbo"
+        children = {
+            c: v
+            for c in (
+                LONG_TERM_DEBT_NONCURRENT_CHILDREN if kind == "cls" else LONG_TERM_DEBT_CHILDREN
+            )
+            if (v := stmts._concept_value(spec_lt, column, c)) is not None
+        }
         cases.append(
             {
                 **base,
@@ -668,8 +683,10 @@ def _filled_cases(conn: Any) -> list[dict[str, Any]]:
                 "column": column,
                 "end": str(f["period_end"]),
                 "tag": "INSTANT",
-                "value": total.value,
-                "concept": total.concept,
+                "value": long_term.value,
+                "value_concept": long_term.concept,
+                "debt_total_concept": stmts.total_debt(own).concept,
+                "children": children,
             }
         )
     return cases
@@ -679,67 +696,74 @@ def _is_own_column(case: dict[str, Any]) -> bool:
     """Whether the case's column is one the filing's own metrics read: its own quarter / fiscal-year
     column, its own year-to-date column (a 10-Q's TTM input), or the debt instant."""
     stmts = case["stmts"]
-    form, end = str(case["form"]), str(case["end"])
+    form, period_end = str(case["form"]), str(case["period_end"])
     if case["kind"] != "da":
-        return bool(case["column"] == _balance_column(stmts, end))
-    if case["column"] == _own_column(stmts, form, end):
+        return bool(case["column"] == _balance_column(stmts, period_end))
+    if case["column"] == _own_column(stmts, form, period_end):
         return True
-    return bool(form.startswith("10-Q") and case["tag"] == "YTD")
+    return bool(form.startswith("10-Q") and case["tag"] == "YTD" and str(case["end"]) == period_end)
 
 
-def _short_term_explains(
-    diff: float, rounding: float, stmts: Statements, column: str
-) -> str | None:
-    """Whether a debt disagreement is a short-term term filed on the same face: the diff equals its
-    value within the rounding term (MET-07's short-term map -- commercial paper, a line of credit,
-    the current maturities)."""
+def _filed_short_term(case: dict[str, Any]) -> dict[str, float]:
+    """The short-term map concepts filed on the case's own face (MET-07)."""
     spec = REGISTRY["short_term_debt"]
     concepts = [c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs] + [SHORT_TERM_DEBT_LAST]
-    for concept in concepts:
-        value = stmts._concept_value(spec, column, concept)
-        if value is not None and abs(diff - value) <= rounding:
-            return concept
-    return None
+    return {
+        c: v
+        for c in concepts
+        if (v := case["stmts"]._concept_value(spec, str(case["column"]), c)) is not None
+    }
 
 
-def _case_cause(case: dict[str, Any]) -> str:
-    """Why an unexplained disagreement is not the map's arithmetic: the filer's own total is a
-    partial tag (it equals one of the tree's children), or the sum over/under-covers it."""
-    children = (
-        LONG_TERM_DEBT_CHILDREN
-        if case["kind"] == "dbo"
-        else LONG_TERM_DEBT_NONCURRENT_CHILDREN
-        if case["kind"] == "cls"
-        else DA_SOURCED_CHILDREN
-    )
-    spec = REGISTRY[
-        "long_term_debt" if case["kind"] in ("cls", "dbo") else "depreciation_amortization"
-    ]
-    stmts = case.get("stmts")
-    if stmts is not None:
-        for concept in children:
-            value = stmts._concept_value(spec, str(case["column"]), concept)
-            if value is not None and abs(value - case["total"]) <= case["rounding"]:
-                return f"the filer's own total equals the filed child {concept.split('_', 1)[-1]}"
-    return (
-        "the sum exceeds the filer's own total"
-        if case["value"] > case["total"]
-        else ("the filer's own total exceeds the sum")
-    )
+def _agreement_rounding(case: dict[str, Any], total: float) -> float:
+    """The agreement band (director decision after 4'): the filer's own total's rounding unit
+    (L-10's rule applied to the total alone) plus L-10's rounding term of the children."""
+    return 0.5 * quality.l10_unit([total]) + quality.l10_rounding(list(case["children"].values()))
 
 
-def _own_only_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [case for case in cases if _is_own_column(case)]
+def _case_class(case: dict[str, Any]) -> str:
+    """The mismatch class of a material disagreement (director decision after 4')."""
+    diff = case["diff"]
+    rounding = case["rounding"]
+    if case["value"] < case["total"]:
+        return "understatement: the map's sum is below the filer's own total"
+    for concept, value in _filed_short_term(case).items():
+        if abs(diff - value) <= rounding:
+            return (
+                "double count: the sum exceeds the total by the filed short-term term "
+                f"{concept.split('_', 1)[-1]}"
+            )
+    for concept in case["children"]:
+        if abs(case["children"][concept] - case["total"]) <= rounding:
+            return (
+                "the filer's own total equals the filed child "
+                f"{concept.split('_', 1)[-1]} (a partial tag)"
+            )
+    return "overlap: the sum exceeds the filer's own total and no single term explains it"
+
+
+def _double_count(case: dict[str, Any]) -> str | None:
+    """A concept in **both** the long-term sum and the short-term terms of the same total debt.
+
+    The structural hard stop of the director's decision after 4': the two concept sets are disjoint
+    by construction, so this can only fire if a future edit breaks that."""
+    long_term = set((case["value_concept"] or "").split(" + "))
+    total = set((case["debt_total_concept"] or "").split(" + "))
+    shared = long_term & (total - long_term)
+    return " + ".join(sorted(shared)) if shared else None
 
 
 def _evaluate_cf_cases(
     cases: list[dict[str, Any]], facts_cache: dict[str, dict[str, Any] | None]
 ) -> tuple[int, int, list[dict[str, Any]]]:
-    """``(covered, agree, disagreements)``: each case against the filer's own total."""
+    """``(covered, agree, disagreements)``: each case's own sum against the filer's own total."""
     covered = 0
     agree = 0
     disagreements: list[dict[str, Any]] = []
     for case in cases:
+        if case["kind"] in ("cls", "dbo"):
+            # the structural hard stop runs on EVERY filled C2 case, covered or not
+            case["double_count"] = _double_count(case)
         cik = str(case["cik"] or "")
         if cik not in facts_cache:
             facts_cache[cik] = _companyfacts(cik)
@@ -751,62 +775,120 @@ def _evaluate_cf_cases(
             case["tag"],
         )
         case["total"] = total
-        case["total_concept"] = concept
+        case["total_concept_used"] = concept
         if total is None or case["value"] is None:
             continue
         covered += 1
-        rounding = quality.l10_rounding([case["value"], total])
+        rounding = _agreement_rounding(case, total)
         diff = abs(case["value"] - total)
         if diff <= rounding:
             agree += 1
             continue
         explained = None
-        if case["kind"] in ("cls", "dbo"):
-            explained = _short_term_explains(diff, rounding, case["stmts"], str(case["column"]))
+        if case["kind"] in ("cls", "dbo") and total > case["value"]:
+            for concept_st, value in _filed_short_term(case).items():
+                if abs(diff - value) <= rounding:
+                    explained = f"the total exceeds the long-term sum by {concept_st}"
         case["diff"] = diff
         case["rounding"] = rounding
         case["explained"] = explained
-        case["material"] = quality.dq01_level(diff, rounding, total) == "block"
+        case["material"] = diff > max(rounding, quality.MATERIALITY * abs(total))
         disagreements.append(case)
     return covered, agree, disagreements
 
 
-def _cf_summary(
+def _material_report(
     cases: list[dict[str, Any]], covered: int, agree: int, disagreements: list[dict[str, Any]]
 ) -> list[str]:
     unexplained = [c for c in disagreements if not c["explained"]]
     material = [c for c in unexplained if c["material"]]
     lines = [
         f"filing/column cases where C1 or C2 filled the value: {len(cases)}",
+        "the value compared: C1's D&A sum; C2's **long-term** sum (never total debt)",
+        "agreement band: 0.5 x unit(filer's total) + L-10 rounding(children)",
         f"coverage: {covered} ({100.0 * covered / max(1, len(cases)):.1f}% of filled) carry the "
         "filer's own total in the same accession",
-        f"agree within L-10's rounding: {agree} ({100.0 * agree / max(1, covered):.1f}% of covered)",
+        f"agree: {agree} ({100.0 * agree / max(1, covered):.1f}% of covered)",
         f"disagree: {len(disagreements)} (explained by a short-term term: "
         f"{len(disagreements) - len(unexplained)})",
-        f"UNEXPLAINED disagreements: {len(unexplained)} "
-        f"({100.0 * len(unexplained) / max(1, covered):.2f}% of covered)   [hard stop 4' if > 2%]",
-        f"  of which material (DQ-01 block: beyond max(rounding, 0.5% x |total|)): {len(material)} "
+        f"UNEXPLAINED: {len(unexplained)} ({100.0 * len(unexplained) / max(1, covered):.2f}% of "
+        f"covered); of which MATERIAL (DQ-01: beyond max(rounding, 0.5% x |total|)): {len(material)} "
         f"({100.0 * len(material) / max(1, covered):.2f}% of covered)",
+        f"double counts (a concept in the long-term sum and the short-term terms): "
+        f"{len([c for c in cases if c.get('double_count')])}   [HARD STOP if any]",
         "",
-        "by kind: filled / covered / agree / disagree / unexplained",
+        "per map: filled / covered / agree / material disagreements",
     ]
     for kind in ("da", "cls", "dbo"):
         group = [c for c in cases if c["kind"] == kind]
         cov = [c for c in group if c.get("total") is not None and c["value"] is not None]
-        dis = [c for c in disagreements if c["kind"] == kind]
-        unexp = [c for c in dis if not c["explained"]]
-        ag = [
-            c
-            for c in cov
-            if abs(c["value"] - c["total"]) <= quality.l10_rounding([c["value"], c["total"]])
-        ]
-        lines.append(f"  {kind}: {len(group)} / {len(cov)} / {len(ag)} / {len(dis)} / {len(unexp)}")
-    causes: Counter[str] = Counter()
-    for case in unexplained:
-        causes[f"{case['kind']}: {_case_cause(case)}"] += 1
-    if causes:
-        lines += ["", "the unexplained disagreements' causes:"]
-        lines += [f"  {n:4}  {cause}" for cause, n in causes.most_common()]
+        ag = [c for c in cov if abs(c["value"] - c["total"]) <= _agreement_rounding(c, c["total"])]
+        mat = [c for c in unexplained if c["kind"] == kind and c["material"]]
+        lines.append(f"  {kind}: {len(group)} / {len(cov)} / {len(ag)} / {len(mat)}")
+    classes: Counter[str] = Counter()
+    for case in material:
+        classes[f"{case['kind']}: {_case_class(case)}"] += 1
+    if classes:
+        lines += ["", "the material disagreements' classes:"]
+        lines += [f"  {n:4}  {cause}" for cause, n in classes.most_common()]
+    lines += ["", "material disagreements by company (one example each):"]
+    seen: set[str] = set()
+    for case in sorted(material, key=lambda c: -c["diff"]):
+        if case["ticker"] in seen:
+            continue
+        seen.add(case["ticker"])
+        lines.append(
+            f"  {case['ticker']} {case['accession']} [{case['kind']}] {case['column']}: sum "
+            f"{case['value']:,.0f} vs total {case['total']:,.0f} "
+            f"({case['total_concept_used']}) diff {case['diff']:,.0f} "
+            f"band {case['rounding']:,.0f} -- {_case_class(case)}"
+        )
+    return lines
+
+
+def _stored_metric_inputs(conn: Any, filing_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``(inputs, values)`` of the filing's stored ``metrics-v7`` rows (first occurrence per key)."""
+    inputs: dict[str, Any] = {}
+    values: dict[str, Any] = {}
+    for row in conn.execute(
+        "SELECT metric_name, value, inputs_json FROM fundamental_metrics "
+        "WHERE filing_id = ? AND engine_version = 'metrics-v7'",
+        (filing_id,),
+    ):
+        values.setdefault(str(row["metric_name"]), row["value"])
+        if row["inputs_json"]:
+            for key, value in json.loads(row["inputs_json"]).items():
+                inputs.setdefault(key, value)
+    return inputs, values
+
+
+def _metric_effect(conn: Any, case: dict[str, Any]) -> list[str]:
+    """The mismatch's effect on EBITDA / net_debt_to_ebitda / enterprise_value, from the stored
+    metric inputs of the same filing (the filer's own total substituted for the map's sum)."""
+    inputs, values = _stored_metric_inputs(conn, int(case["filing_id"]))
+    item = "depreciation_amortization" if case["kind"] == "da" else "total_debt"
+    lines = [
+        f"  {case['ticker']} {case['accession']} [{case['kind']}] {case['column']}: {item} "
+        f"{case['value']:,.0f} (the map's sum) vs the filer's own total {case['total']:,.0f}"
+    ]
+    if case["kind"] == "da":
+        gap = case["total"] - case["value"]
+        ebitda = inputs.get("ebitda_ttm")
+        if ebitda is not None and ebitda + gap != 0:
+            lines.append(
+                f"    EBITDA {ebitda:,.0f} -> {ebitda + gap:,.0f} ({100.0 * gap / ebitda:+.1f}%)"
+            )
+        else:
+            lines.append("    EBITDA not stored for this filing (net_debt_to_ebitda empty)")
+    else:
+        gap = case["value"] - case["total"]
+        enterprise = values.get("enterprise_value")
+        if enterprise is not None:
+            lines.append(
+                f"    enterprise_value {enterprise:,.0f} -> {enterprise - gap:,.0f} "
+                f"({100.0 * (-gap) / enterprise:+.1f}%)"
+            )
+    lines.append(f"    stored net_debt_to_ebitda: {values.get('net_debt_to_ebitda')}")
     return lines
 
 
@@ -814,22 +896,27 @@ def cmd_validate_cf(args: argparse.Namespace) -> int:
     """3.2': each filled sum against the filer's own total, from the local companyfacts cache."""
     conn = open_ro(args.db)
     all_cases = _filled_cases(conn)
-    cases = _own_only_cases(all_cases) if args.own_only else all_cases
+    cases = [c for c in all_cases if _is_own_column(c)] if args.own_only else all_cases
     scope = "the filing's own columns (the 3.1 set)" if args.own_only else "every filled column"
     lines = [
-        f"T-151 part 1, 3.2' validation of the filled sums against the filer's own total "
-        f"(SEC companyfacts, cache {_COMPANYFACTS}), db={args.db}",
+        f"T-151 part 1, 3.2' the filled sums against the filer's own total (SEC companyfacts, "
+        f"cache {_COMPANYFACTS}), db={args.db}",
         f"scope: {scope}",
         "",
     ]
     covered, agree, disagreements = _evaluate_cf_cases(cases, {})
-    lines += _cf_summary(cases, covered, agree, disagreements)
+    unexplained = [c for c in disagreements if not c["explained"]]
+    material = [c for c in unexplained if c["material"]]
+    lines += _material_report(cases, covered, agree, disagreements)
+    lines += ["", "the material mismatches' effect on the metrics (input for part 3's gate):"]
+    for case in material:
+        lines += _metric_effect(conn, case)
     lines += ["", "every disagreement (ticker, accession, column, sum, total, diff):"]
-    for case in sorted(disagreements, key=lambda c: -c["diff"])[:60]:
+    for case in sorted(disagreements, key=lambda c: -c["diff"])[:80]:
         lines.append(
             f"  {case['ticker']} {case['accession']} [{case['kind']}] {case['column']}: sum "
-            f"{case['value']:,.0f} vs total {case['total']:,.0f} ({case['total_concept']}) diff "
-            f"{case['diff']:,.0f} rnd {case['rounding']:,.0f}"
+            f"{case['value']:,.0f} vs total {case['total']:,.0f} "
+            f"({case['total_concept_used']}) diff {case['diff']:,.0f} band {case['rounding']:,.0f}"
             + (" [material]" if case["material"] else "")
             + (f" -- explained by {case['explained']}" if case["explained"] else "")
         )
@@ -839,19 +926,17 @@ def cmd_validate_cf(args: argparse.Namespace) -> int:
         "covered": covered,
         "agree": agree,
         "disagree": len(disagreements),
-        "unexplained": len([c for c in disagreements if not c["explained"]]),
-        "unexplained_material": len(
-            [c for c in disagreements if not c["explained"] and c["material"]]
-        ),
-        "disagreements": [
-            {k: v for k, v in c.items() if k not in ("stmts",)} for c in disagreements
-        ],
+        "unexplained": len(unexplained),
+        "material": len(material),
+        "double_counts": [c["double_count"] for c in cases if c.get("double_count")],
+        "material_by_company": sorted({c["ticker"] for c in material}),
+        "disagreements": [{k: v for k, v in c.items() if k != "stmts"} for c in disagreements],
     }
     Path(args.out_txt).write_text("\n".join(lines) + "\n", encoding="utf-8")
     Path(args.out_json).write_text(
         json.dumps(payload, indent=2, default=str) + "\n", encoding="utf-8"
     )
-    print("\n".join(lines[:30]))
+    print("\n".join(lines[:40]))
     return 0
 
 
