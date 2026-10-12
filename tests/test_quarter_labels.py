@@ -203,8 +203,11 @@ def test_a_stored_fiscal_year_end_counts_a_quarter_whose_payload_has_no_balance_
     assert not isinstance(target, str) and target.fiscal_period == "2023Q2"
 
 
-def test_the_payload_fiscal_year_end_outranks_the_stored_one() -> None:
-    """The filing's own balance sheet is the anchor; the stored 10-K is only asked when it has none."""
+def test_the_stored_fiscal_year_end_confirms_the_payload_one() -> None:
+    """(**Replaced**: ``test_the_payload_fiscal_year_end_outranks_the_stored_one``, T-151 part 1 C4.)
+    The filing's own balance sheet is still the anchor, and the company's own year end (the latest
+    stored 10-K) is now also read for the C4 cross-check: when the two agree the label is unchanged
+    and nothing is overridden."""
     stmts = Statements.from_payload(_wat(WAT_Q2))
     asked: list[str] = []
 
@@ -213,8 +216,62 @@ def test_the_payload_fiscal_year_end_outranks_the_stored_one() -> None:
         return date(2022, 12, 31)
 
     target = _resolve_target(stmts, _task(), lookup)
-    assert asked == []
+    assert asked == ["2023-07-01"]  # read for the C4 cross-check
     assert not isinstance(target, str) and target.fiscal_period == "2023Q2"
+    assert target.label_override is None
+
+
+def _c4_payload(instants: list[str], quarter: str, period_end: str) -> dict[str, Any]:
+    row = {"concept": "x", "label": "x", "abstract": False, "dimension": False}
+    return {
+        "income_statement": [{**row, quarter: 1.0}],
+        "balance_sheet": [{**row, **dict.fromkeys(instants, 1.0)}],
+        "cash_flow": [],
+    }
+
+
+def test_c4_a_payload_year_end_that_disagrees_is_overridden_from_the_companys() -> None:
+    """The CSX shape (0000277948-24-000047): the 10-Q for the quarter ended 2024-06-30 carries the
+    stray note instants 2023-03-31 / 2023-06-30 / 2023-09-30 beside its own balance sheet, so
+    ``payload_fiscal_year_end`` reads 2023-09-30 -- 274 days back, a Q3 -- while the company's own
+    year end is 2024-12-31 (a Q2). The company's wins, and the disagreement is recorded."""
+    payload = _c4_payload(
+        ["2023-03-31", "2023-06-30", "2023-09-30", "2023-12-31", "2024-06-30"],
+        "2024-06-30 (Q2)",
+        "2024-06-30",
+    )
+    stmts = Statements.from_payload(payload)
+    assert payload_fiscal_year_end(
+        ["2023-03-31", "2023-09-30", "2024-06-30"], date(2024, 6, 30)
+    ) == (date(2023, 9, 30))
+    target = _resolve_target(stmts, _task("CSX", 2024), lambda _before: date(2024, 12, 31))
+    assert not isinstance(target, str)
+    assert target.fiscal_period == "2024Q2"
+    assert target.label_override is not None and "2024Q3" in target.label_override
+
+
+def test_c4_a_stray_instant_that_puts_a_first_quarter_at_q3_is_overridden() -> None:
+    """The CNP shape (Q1-2022 labelled 2022Q3): a stray instant 2021-07-20, 254 days before the
+    2022-03-31 period end, is the earliest in the window and reads as a Q3; the company's December
+    year end reads it as a Q1."""
+    payload = _c4_payload(
+        ["2021-03-31", "2021-07-20", "2021-12-31", "2022-03-31"], "2022-03-31 (Q1)", "2022-03-31"
+    )
+    stmts = Statements.from_payload(payload)
+    target = _resolve_target(stmts, _task("CNP", 2022), lambda _before: date(2021, 12, 31))
+    assert not isinstance(target, str)
+    assert target.fiscal_period == "2022Q1"
+    assert target.label_override is not None and "2022Q3" in target.label_override
+
+
+def test_c4_a_52_53_week_filer_keeps_its_label() -> None:
+    """A 52/53-week calendar whose quarter closes a few days after a month boundary (Waters' Q2
+    ends 2023-07-01): the payload's own year end and the stored 10-K agree, so the label stays
+    ``2023Q2`` and nothing is overridden."""
+    stmts = Statements.from_payload(_wat(WAT_Q2))
+    target = _resolve_target(stmts, _task(), lambda _before: date(2022, 12, 31))
+    assert not isinstance(target, str)
+    assert target.fiscal_period == "2023Q2" and target.label_override is None
 
 
 def test_a_company_that_changed_its_fiscal_year_is_labelled_from_its_own_balance_sheet() -> None:

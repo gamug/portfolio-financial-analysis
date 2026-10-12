@@ -158,7 +158,8 @@ def test_cmd_recompute_on_tiny_database(aapl_10k: Statements, tmp_path: Path) ->
 
     check_conn = connect(path)
     metrics_count = check_conn.execute(
-        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = ?",
+        (db.METRICS_ENGINE_VERSION,),
     ).fetchone()[0]
     assert metrics_count > 0
 
@@ -170,7 +171,8 @@ def test_cmd_recompute_on_tiny_database(aapl_10k: Statements, tmp_path: Path) ->
     # Verify idempotence / re-run works and deletes previous rows cleanly
     verify.cmd_recompute(argparse.Namespace(db=str(path), limit=None))
     metrics_count_after = check_conn.execute(
-        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = ?",
+        (db.METRICS_ENGINE_VERSION,),
     ).fetchone()[0]
     assert metrics_count_after == metrics_count
     check_conn.close()
