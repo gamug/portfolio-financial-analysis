@@ -395,49 +395,53 @@ def cmd_refusals(args: argparse.Namespace) -> int:
 # -- 3.4 C3 --------------------------------------------------------------------------------------
 
 
+def _reaches_net_element(stmts: Statements, spec: Any, column: str) -> bool:
+    """Whether the net-element tier is reached in *column*: every earlier tier empty. C3's diff only
+    touches the net tier, so the branch's code answers this for the pre-C3 rule too."""
+    if stmts._capex_tier1(spec, column) is not None:
+        return False
+    if stmts._capex_ppe_and_og(spec, column) is not None:
+        return False
+    for concept in (
+        G + "PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        G + "PaymentsToAcquireProductiveAssets",
+        G + "PaymentsToAcquireOtherProductiveAssets",
+    ):
+        if stmts._concept_value(spec, column, concept) is not None:
+            return False
+    return True
+
+
 def cmd_capex(args: argparse.Namespace) -> int:
-    """3.4 C3: every filing that used the net-element tier before, and where it resolves now."""
-    control_conn, after_conn = open_ro(args.control), open_ro(args.after)
-    tickers = _tickers(after_conn)
+    """3.4 C3: every filing that read the net-element tier under the pre-C3 rule, with its caption,
+    the value it gave then and the tier it resolves to now."""
+    conn = open_ro(args.after)
     spec = REGISTRY["capital_expenditure"]
-    net = G + "PaymentsForProceedsFromProductiveAssets"
     lines: list[str] = []
-    for f in filings(control_conn):
-        fid = int(f["id"])
-        stmts = _statements_or_none(control_conn, fid)
+    for f in filings(conn):
+        stmts = _statements_or_none(conn, int(f["id"]))
         if stmts is None:
             continue
         column = _own_column(stmts, str(f["form"]), str(f["period_end"]))
         if column is None:
             continue
-        net_value = stmts._concept_value(spec, column, net)
-        res_before = stmts.resolve("capital_expenditure", column)
-        if net_value is None or not (
-            {"net_element_last_resort", "net_element_net_proceeds"} & set(res_before.flags)
-        ):
+        before_value, caption = stmts._net_element(spec, column)
+        if before_value is None or not _reaches_net_element(stmts, spec, column):
             continue
-        caption = next(
-            (
-                str(r.get("label") or "")
-                for r in stmts.raw.get("cash_flow", [])
-                if r.get("concept") == net
-            ),
-            "",
-        )
-        after_stmts = _statements_or_none(after_conn, fid)
-        res_after = after_stmts.resolve("capital_expenditure", column) if after_stmts else None
+        res_after = stmts.resolve("capital_expenditure", column)
         now = (
             f"{res_after.value:,.0f} ({res_after.concept}, {res_after.how})"
-            if res_after is not None and res_after.value is not None
-            else f"empty ({','.join(res_after.flags) if res_after else '?'})"
+            if res_after.value is not None
+            else f"empty ({','.join(res_after.flags)})"
         )
         lines.append(
-            f"  {tickers.get(fid, '?')} filing {fid} {f['form']} {f['period_end']}: "
-            f"net element {net_value:,.0f} caption {caption!r} -> {now}"
+            f"  {f['ticker']} filing {f['id']} {f['form']} {f['period_end']}: net element "
+            f"{before_value:,.0f} caption {caption!r} -> {now}"
         )
     head = [
-        f"T-151 part 1, 3.4 C3: filings that read the net element before ({args.control}) and their "
-        f"resolution after ({args.after})",
+        f"T-151 part 1, 3.4 C3: every filing that read the net-element tier under the pre-C3 rule "
+        f"(the branch's code on {args.after}'s facts; C3 changes only the net tier), and where it "
+        "resolves now",
         f"filings that used the net-element tier before: {len(lines)}",
         "",
     ]
@@ -1068,7 +1072,6 @@ def main(argv: list[str] | None = None) -> int:
     re_.add_argument("--out-txt", default="/workspaces/thesis/scratch/t151a/out/p3_refusals.txt")
     re_.set_defaults(func=cmd_refusals)
     ca = sub.add_parser("capex", help="3.4 C3 the net-element filings")
-    ca.add_argument("--control", required=True)
     ca.add_argument("--after", required=True)
     ca.add_argument("--out-txt", default="/workspaces/thesis/scratch/t151a/out/p3_capex_net.txt")
     ca.set_defaults(func=cmd_capex)
