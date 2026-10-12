@@ -347,10 +347,12 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         checkpoint(conn, run_id, step, "running")
         try:
             detail = fn() or {}
-        except Exception as exc:
+        except BaseException as exc:
             # Leave a "failed" checkpoint rather than a stuck "running" one (T-097 review) --
-            # e.g. the out-of-order-cycle guard refusing mid-step. Re-raised untouched; the
-            # caller (_run) marks the parent cycle_run failed too.
+            # e.g. the out-of-order-cycle guard refusing mid-step. Roll back any uncommitted
+            # writes before writing the checkpoint, which commits (T-142). Re-raised untouched;
+            # the caller (_run) marks the parent cycle_run failed too.
+            conn.rollback()
             checkpoint(conn, run_id, step, "failed", {"error": str(exc)})
             raise
         checkpoint(conn, run_id, step, "done", detail)
@@ -710,7 +712,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             _do("positions", _positions)
 
         finish_cycle(conn, run_id, "completed")
-    except Exception:
+    except BaseException:
+        conn.rollback()
         finish_cycle(conn, run_id, "failed")
         raise
     return report

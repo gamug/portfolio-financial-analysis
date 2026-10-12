@@ -395,7 +395,6 @@ def insert_risk_model(conn: Database, meta: RiskModelMeta) -> int:
             meta.manifest_json,
         ),
     )
-    conn.commit()
     row = conn.execute(
         "SELECT id FROM quant_risk_model WHERE as_of = ? AND model_version = ?",
         (meta.as_of, meta.model_version),
@@ -416,7 +415,6 @@ def insert_expected_returns(
                 (model_id, asset_id, mu_model, mu),
             )
             n += 1
-    conn.commit()
     return n
 
 
@@ -437,7 +435,6 @@ def insert_covariance(
                 (model_id, ai, asset_ids[j], float(sigma[i, j])),
             )
             n += 1
-    conn.commit()
     return n
 
 
@@ -567,7 +564,6 @@ def insert_portfolio(conn: Database, row: PortfolioRow) -> int:
                 (*values, row.as_of, row.kind, row.frontier_k, row.engine_version),
             ).fetchone()["id"]
         )
-    conn.commit()
     return pid
 
 
@@ -604,7 +600,6 @@ def sync_positions(
                 (portfolio_id, aid, w, as_of),
             )
             opened += 1
-    conn.commit()
     return opened, closed
 
 
@@ -791,7 +786,6 @@ def insert_frontier_points(
             (model_id, k, tgt, ret, vol, sharpe, status, wjson),
         )
         n += 1
-    conn.commit()
     return n
 
 

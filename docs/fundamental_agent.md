@@ -28,6 +28,15 @@ is a deprecated no-op (membership is synced from `universe.db` every run).
 (uncommitted changes) — its results would come from code `HEAD` alone can't reproduce
 (T-114) — unless `--allow-dirty`, which records why on `analysis_run.params_json`.
 
+### Run log units (`analysis_run` / `v_analysis_run`)
+
+The progress counters in `analysis_run` (and `v_analysis_run`) track work across different units:
+- `planned_units`: one per `(ticker, form, year)` task (`pipeline.py:164`).
+- `completed_units` and `skipped_units`: one per filing (`pipeline.py:336-346`; a 10-Q year task has several filings).
+- `failed_units`: one per failed `(ticker, form, year)` task or per failed filing (`pipeline.py:349-361`).
+
+Because `planned_units` and the other three use different units, `completed_units + skipped_units + failed_units` need not equal `planned_units`.
+
 ## Configuration (`config.py`)
 
 `Settings.load()` requires `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`,
