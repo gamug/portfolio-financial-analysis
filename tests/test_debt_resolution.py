@@ -145,17 +145,21 @@ def test_n4_a_long_term_line_that_includes_current_maturities_gets_none_added() 
     assert G + "LongTermDebtCurrent" not in (total.concept or "")
 
 
-def test_n23_the_reit_pair_is_the_long_term_debt() -> None:
+def test_n23_the_reit_pair_is_not_a_map_and_the_debt_is_a_capture_failure() -> None:
     """UDR files no long-term debt line: its balance sheet is "Secured debt, net" (961M) and
-    "Unsecured debt, net" (4,860M), each "including the current and noncurrent portions" (FASB).
-    Their sum is the long-term debt; 212 of the 840 production filings with no debt line are Real
-    Estate. Interest expense is ``InterestExpenseDebt`` (displayed -196.6M, filed +196.6M)."""
+    "Unsecured debt, net" (4,860M). ID-02b allows a component map only when a loaded source states
+    the identity, and none states debt = secured + unsecured (B6 defines each "including the
+    current and noncurrent portions", so adding them to a short-term line can double count). The
+    long-term debt is empty and the total is a capture failure -- not 0, because the pair is a debt
+    line on the statement. 211 of the 5,070 own-period filings (19 companies) are in this case."""
     stmts = _stmts(UDR)
     key = _key(stmts)
-    resolution = stmts.resolve("long_term_debt", key)
-    assert resolution.value == 961_180_000.0 + 4_860_189_000.0
-    assert resolution.flags == ("includes_current_maturities",)
-    assert stmts.get("interest_expense", key) == 196_619_000.0
+    assert stmts.resolve("long_term_debt", key).value is None
+    total = stmts.total_debt(key)
+    assert total.value is None and "capture_failure" in total.flags
+    assert (
+        stmts.get("interest_expense", key) == 196_619_000.0
+    )  # InterestExpenseDebt (N23) still read
 
 
 def test_the_combined_debt_and_lease_element_is_used_as_the_only_long_term_line_and_flagged() -> (
@@ -179,10 +183,9 @@ def test_the_combined_element_never_outranks_a_narrower_long_term_line() -> None
     assert resolution.value == 40_000_000_000.0 and resolution.flags == ()
 
 
-def test_the_reit_pair_next_to_a_companys_own_long_term_line_is_a_sub_line_not_the_debt() -> None:
+def test_a_secured_debt_line_beside_the_companys_own_long_term_line_is_not_read() -> None:
     """MetLife files "Long-term debt" (14.5B, the combined element) and a "Collateral financing
-    arrangement" (352M, ``SecuredDebt``): the first is the long-term debt; read as the REIT pair
-    the second displaced it (a 14.3B debt became 1.1B)."""
+    arrangement" (352M, ``SecuredDebt``): the first is the long-term debt, the second is not read."""
     payload = copy.deepcopy(_payload(PM))
     template = _row(payload, "balance_sheet", G + "LongTermDebtAndCapitalLeaseObligations")
     _add(payload, "balance_sheet", template, concept=G + "SecuredDebt")

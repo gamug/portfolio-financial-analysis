@@ -23,8 +23,6 @@ OCF_LINES = (
 CURRENT_MATURITIES_INCLUDED = (
     G + "LongTermDebt",
     G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
-    G + "UnsecuredDebt",  # the REIT pair (N23) is "including the current and noncurrent portions"
-    G + "SecuredDebt",
 )
 COMBINED_DEBT_LEASE = (
     G + "LongTermDebtAndCapitalLeaseObligations",

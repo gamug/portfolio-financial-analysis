@@ -21,7 +21,12 @@ before and after). Every write goes to ``--out``.
   filled with 0, by sector.
 * ``n13`` -- the filings that took the "available to common" line as net income (ID-03): how many file
   ``NetIncomeLoss`` (so they resolve now), how many are left empty and flagged.
-* ``n23`` -- the debt and interest concepts the resolver did not read: how many filings now resolve through them.
+* ``n23`` -- the debt and interest concepts the resolver did not read: how many filings now resolve through them, and
+  how many REIT-pair filings (``SecuredDebt`` / ``UnsecuredDebt``, no map: no source) are left without a debt.
+* ``ni`` -- the filings the first version of part 1 left without net income (only ``ProfitLoss``, no NCI-income row,
+  or neither concept on the income statement): which ID-03 step now resolves each, and why the rest stay empty.
+* ``cash`` -- the filings whose cash is empty, by what the balance sheet files instead (restricted-cash-inclusive line
+  alone, ``Cash`` alone, an Article 9 bank, a missed ``CashAndCashEquivalentsAtCarryingValue``, nothing), by sector.
 * ``flags`` -- how often each resolution flag is raised, per item.
 * ``tables`` -- the before/after rows of two ``audit_sec_checklist.py measure`` results.
 """
@@ -32,6 +37,8 @@ import argparse
 import collections
 import hashlib
 import json
+import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -53,18 +60,18 @@ from sec_xcheck.common import (
 )
 
 from fundamental_agent import db as agent_db
+from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.metrics import COMPUTERS
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import _NCI_INCOME_CONCEPTS, Statements, _names_nci_income
 from kg_schema import connect, ensure
 
 G = "us-gaap_"
 N13_CONCEPT = G + "NetIncomeLossAvailableToCommonStockholdersBasic"
 N23_DEBT = (
-    G + "UnsecuredDebt",
-    G + "SecuredDebt",
     G + "OtherLongTermDebtCurrent",
     G + "NotesPayableCurrent",
 )
+REIT_PAIR = (G + "UnsecuredDebt", G + "SecuredDebt")
 N23_INTEREST = G + "InterestExpenseDebt"
 SHOWN = 5  # examples listed
 # why a debt is empty, most specific first (the flags a Resolution of total_debt carries)
@@ -342,6 +349,7 @@ def cmd_n23(args: argparse.Namespace) -> int:
     conn = open_ro(args.db)
     via: collections.Counter[str] = collections.Counter()
     gained: collections.Counter[str] = collections.Counter()
+    reit_filings: list[tuple[str, str, str, bool]] = []
     total = 0
     for f in filings(conn):
         stmts = statements_from_db(conn, f["id"])
@@ -353,8 +361,6 @@ def cmd_n23(args: argparse.Namespace) -> int:
         for concept in N23_DEBT:
             if concept in (lt.concept or "") or concept in (st.concept or ""):
                 via[concept.removeprefix(G)] += 1
-        if any(c in (lt.concept or "") for c in (G + "UnsecuredDebt", G + "SecuredDebt")):
-            gained["long-term debt now resolved (REIT pair)"] += 1
         interest = stmts.resolve("interest_expense", key)
         if interest.concept == N23_INTEREST:
             via["InterestExpenseDebt (interest expense)"] += 1
@@ -365,11 +371,305 @@ def cmd_n23(args: argparse.Namespace) -> int:
             and any(c in (lt.concept or "") + (st.concept or "") for c in N23_DEBT)
         ):
             gained["total debt resolves through an N23 concept"] += 1
+        if lt.value is None and _files_any(stmts, "balance_sheet", REIT_PAIR, key):
+            reit_filings.append((f["ticker"], f["form"], f["period_end"], debt.value is None))
     print(f"{total} own-period filings")
     for name, n in via.most_common():
         print(f"  {n:5d}  {name}")
     for name, n in gained.most_common():
         print(f"  {n:5d}  {name}")
+    print(
+        f"  {len(reit_filings):5d}  filings ({len({r[0] for r in reit_filings})} companies) file the REIT pair and no "
+        f"other long-term line: long-term debt is empty; total debt empty in {sum(r[3] for r in reit_filings)}"
+    )
+    print("  examples:", [r[:3] for r in reit_filings[:SHOWN]])
+    return 0
+
+
+def _files_any(stmts: Statements, statement: str, concepts: tuple[str, ...], key: str) -> bool:
+    """Whether *statement* has a non-dimensional row of one of *concepts* with a value at *key*'s balance-sheet
+    column (an income-statement or cash-flow item: at *key* itself)."""
+    column = stmts.resolve_column("cash", key) if statement == "balance_sheet" else key
+    return column is not None and any(
+        row.get("concept") in concepts and row.get(column) is not None
+        for row in stmts.raw[statement]
+        if not row.get("abstract") and not row.get("dimension")
+    )
+
+
+def _part1_net_income(stmts: Statements, key: str) -> float | None:
+    """What the first version of part 1 read: the income statement alone -- ``NetIncomeLoss``; else ``ProfitLoss``
+    less ``NetIncomeLossAttributableToNoncontrollingInterest`` when that row is filed (zero included); else empty."""
+
+    def income(concept: str) -> float | None:
+        for row in stmts.raw["income_statement"]:
+            if (
+                row.get("concept") == G + concept
+                and not row.get("dimension")
+                and row.get(key) is not None
+            ):
+                return float(row[key]) * (row.get("preferred_sign") or 1.0)
+        return None
+
+    if (parent := income("NetIncomeLoss")) is not None:
+        return parent
+    profit, nci = income("ProfitLoss"), income("NetIncomeLossAttributableToNoncontrollingInterest")
+    return None if profit is None or nci is None else profit - nci
+
+
+def _ni_step(r: Any) -> str:
+    """Which step of ID-03 produced a net-income resolution (``r``: a ``Resolution``)."""
+    if r.value is None:
+        return "iv. empty: " + (r.flags[0] if r.flags else "?")
+    if r.concept == G + "NetIncomeLoss":
+        return "i. NetIncomeLoss from another statement of the filing"
+    if r.how == "map":
+        return "iii. ProfitLoss - NetIncomeLossAttributableToNoncontrollingInterest"
+    return "ii. ProfitLoss, no NCI income filed"
+
+
+def _nci_blockers(stmts: Statements, key: str) -> set[str]:
+    """The rows that make ``ProfitLoss`` unusable as "no NCI income filed": ``concept | label``."""
+    return {
+        f"{str(row.get('concept')).removeprefix(G)} | {row.get('label')}"
+        for row in stmts._valued_rows(key)
+        if _names_nci_income(row)
+    }
+
+
+def _sec_files_net_income(client: SecClient, f: Any) -> bool:
+    docs = [d for c in cik_family(f["cik"]) if (d := client.get("companyfacts", c))]
+    return any(
+        fact["accn"] == f["accession_number"]
+        and fact["end"] == f["period_end"]
+        and concept in ("NetIncomeLoss", "ProfitLoss")
+        for doc in docs
+        for _t, concept, fact in iter_us_gaap(doc)
+    )
+
+
+SEC_NCI_INCOME = (
+    "NetIncomeLossAttributableToNoncontrollingInterest",
+    "NetIncomeLossAttributableToRedeemableNoncontrollingInterest",
+    "NetIncomeLossAttributableToNonredeemableNoncontrollingInterest",
+)
+
+
+def _sec_contradicts_no_nci(client: SecClient, f: Any, profit: float) -> tuple[str, float] | None:
+    """Step (ii) against the source: the SEC files, for the accession and period end, an income attributable to the
+    NCI (``"NCI income filed"``, with its largest share of the same duration's ``ProfitLoss``) or a ``NetIncomeLoss``
+    that differs from the ``ProfitLoss`` of the same duration (``"net income differs"``). ``None`` when neither --
+    including when the SEC files neither."""
+    docs = [d for c in cik_family(f["cik"]) if (d := client.get("companyfacts", c))]
+    by_concept: dict[str, dict[str | None, float]] = collections.defaultdict(dict)
+    for doc in docs:
+        for _t, concept, fact in iter_us_gaap(doc):
+            if fact["accn"] == f["accession_number"] and fact["end"] == f["period_end"]:
+                by_concept[concept][fact.get("start")] = fact["val"]
+    share = max(
+        (
+            abs(v) / abs(by_concept["ProfitLoss"][start])
+            for concept in SEC_NCI_INCOME
+            for start, v in by_concept[concept].items()
+            if v != 0 and by_concept["ProfitLoss"].get(start)
+        ),
+        default=0.0,
+    )
+    if share or any(v != 0 for c in SEC_NCI_INCOME for v in by_concept[c].values()):
+        return "NCI income filed", share
+    if any(
+        not match_value(v, by_concept["ProfitLoss"][start])
+        for start, v in by_concept["NetIncomeLoss"].items()
+        if start in by_concept["ProfitLoss"]
+    ):
+        return "net income differs", 0.0
+    return None
+
+
+def cmd_ni(args: argparse.Namespace) -> int:  # noqa: C901 - a report: one linear pass
+    """ID-03 (the review of PR #136): the filings the first version left without net income, by the step of the rule
+    that now resolves them -- (i) ``NetIncomeLoss`` from another statement of the filing, (ii) ``ProfitLoss`` when no
+    NCI income is filed, (iii) ``ProfitLoss`` less the NCI total -- and why the rest stay empty. Own-period filings."""
+    conn = open_ro(args.db)
+    client = SecClient(cache_dir(args.cache), offline=True)
+    steps: dict[str, list[tuple[str, str, str]]] = collections.defaultdict(list)
+    caught: collections.Counter[str] = collections.Counter()
+    caption_only: list[tuple[str, str, str]] = []
+    sec_has: list[tuple[str, str, str]] = []
+    contradicted: dict[str, list[tuple[str, str, str]]] = collections.defaultdict(list)
+    largest_share = 0.0
+    total = population = 0
+    for f in filings(conn):
+        stmts = statements_from_db(conn, f["id"])
+        key = own_period_key(stmts, f["form"], f["period_end"])
+        if key is None:
+            continue
+        total += 1
+        if _part1_net_income(stmts, key) is not None:
+            continue
+        population += 1
+        ident = (f["ticker"], f["form"], f["period_end"])
+        r = stmts.resolve("net_income", key)
+        steps[_ni_step(r)].append(ident)
+        if r.value is not None and "no_nci_income_filed" in r.flags:
+            contradiction = _sec_contradicts_no_nci(client, f, r.value)
+            if contradiction:
+                contradicted[contradiction[0]].append(ident)
+                largest_share = max(largest_share, contradiction[1])
+        if r.value is None and _sec_files_net_income(client, f):
+            sec_has.append(ident)
+        if "profit_loss_nci_income_not_total" in r.flags:
+            names = _nci_blockers(stmts, key)
+            caught.update(names)
+            if not any(
+                n.split(" | ")[0] in {c.removeprefix(G) for c in _NCI_INCOME_CONCEPTS}
+                for n in names
+            ):
+                caption_only.append(ident)
+    print(
+        f"{total} own-period filings; {population} had no net income in the first version of part 1"
+    )
+    for step in sorted(steps):
+        v = steps[step]
+        print(f"  {len(v):5d} f / {len({x[0] for x in v}):3d} co  {step}")
+        print("        e.g.", v[:SHOWN])
+    print(
+        "  step (ii) against the SEC's companyfacts (a NetIncomeLoss that differs from ProfitLoss, or an NCI income filed):",
+        {k: (len(v), v[:SHOWN]) for k, v in contradicted.items()} or "no contradiction",
+        f"-- the largest NCI income is {largest_share:.2%} of that duration's ProfitLoss",
+    )
+    print(
+        f"  empty, with NetIncomeLoss / ProfitLoss filed at the SEC for the accession: {len(sec_has)}",
+        sec_has[:SHOWN],
+    )
+    print(
+        f"  empty because only a caption or an extension names the NCI income: {len(caption_only)}",
+        caption_only[:SHOWN],
+    )
+    print("  rows that block ProfitLoss as 'NCI income filed' (concept | label):")
+    for name, n in caught.most_common(15):
+        print(f"    {n:4d}  {name}")
+    return 0
+
+
+CASH_CONCEPT = G + "CashAndCashEquivalentsAtCarryingValue"
+RESTRICTED_CASH = G + "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+BANK_LINES = (G + "Deposits", G + "InterestBearingDepositLiabilities", G + "DepositsDomestic")
+CASH_NAME_RE = re.compile("cash", re.IGNORECASE)
+
+
+NO_CASH_LINE = "e. no cash line filed (non-dimensional) at the period end"
+
+
+def _live_no_cash_lines(conn: Any, idents: list[tuple[str, str, str]]) -> None:
+    """Category (e) against the gateway's live payload, one 10-K per company: is a cash line there at all -- filed
+    only with a dimension (the stored facts never keep those), or not on the balance sheet?"""
+    by_key = {(f["ticker"], f["form"], f["period_end"]): f for f in filings(conn)}
+    seen: set[str] = set()
+    with EdgarClient(os.environ["EDGAR_BASE_URL"]) as edgar:
+        for ticker, form, period_end in idents:
+            if ticker in seen or not form.startswith("10-K"):
+                continue
+            seen.add(ticker)
+            f = by_key[(ticker, form, period_end)]
+            payload = edgar.financials(
+                f["cik"], form, int(f["filing_date"][:4]), accession_number=f["accession_number"]
+            )
+            rows = [
+                r
+                for r in payload["balance_sheet"]
+                if CASH_NAME_RE.search(str(r.get("concept"))) and not r.get("abstract")
+            ]
+            dropped = [
+                c
+                for c in payload.get("corrections") or []
+                if c.get("statement") == "balance_sheet"
+                and c.get("concept") == CASH_CONCEPT
+                and c.get("column") == period_end
+            ]
+            print(
+                f"  live {ticker} {form} {period_end}: gateway corrections for the cash total:",
+                [
+                    (c.get("rule"), c.get("reason"), c.get("original"), c.get("corrected"))
+                    for c in dropped
+                ]
+                or "none",
+            )
+            print(
+                f"  live {ticker} {form} {period_end}: cash-like balance-sheet rows (dimensional or not):",
+                sorted(
+                    {f"{r['concept']}{' [dimension]' if r.get('dimension') else ''}" for r in rows}
+                )
+                or "none",
+            )
+
+
+def _cash_category(stmts: Statements, key: str | None) -> str:
+    """Why a filing's cash is empty (the review of PR #136): what the balance sheet files at the period end instead."""
+    column = None if key is None else stmts.resolve_column("cash", key)
+    if column is None:
+        return "z. no balance-sheet column at the period end"
+    rows = [
+        r for r in stmts.raw["balance_sheet"] if not r.get("abstract") and not r.get("dimension")
+    ]
+    cash = {
+        r["concept"]
+        for r in rows
+        if CASH_NAME_RE.search(r["concept"]) and r.get(column) is not None
+    }
+    bank = any(r["concept"] in BANK_LINES for r in rows)
+    named = ", ".join(sorted(c.split("_", 1)[-1] for c in cash))
+    return next(
+        label
+        for applies, label in (
+            (bank, "c. Article 9 bank (deposits on the balance sheet)"),
+            (
+                CASH_CONCEPT in cash,
+                "d. CashAndCashEquivalentsAtCarryingValue is filed and was missed (a bug)",
+            ),
+            (
+                cash == {RESTRICTED_CASH},
+                "a. the restricted-cash-inclusive line is the only cash line",
+            ),
+            (cash == {G + "Cash"}, "b. Cash is the only cash line"),
+            (bool(cash), f"f. other cash line(s): {named}"),
+            (True, NO_CASH_LINE),
+        )
+        if applies
+    )
+
+
+def cmd_cash(args: argparse.Namespace) -> int:
+    """The filings whose cash is empty (the stored leverage inputs carry no ``cash``), by category and by sector,
+    with the EV / ROIC empties they cause."""
+    conn = open_ro(args.db)
+    cats: dict[str, list[tuple[str, str, str]]] = collections.defaultdict(list)
+    sectors: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    total = 0
+    for f in filings(conn):
+        inputs = _leverage_inputs(conn, f["id"])
+        if inputs is None:
+            continue
+        total += 1
+        if "cash" in inputs:
+            continue
+        stmts = statements_from_db(conn, f["id"])
+        key = own_period_key(stmts, f["form"], f["period_end"])
+        cat = _cash_category(stmts, key)
+        cats[cat].append((f["ticker"], f["form"], f["period_end"]))
+        sectors[_sector(conn, f["ticker"])][cat[0]] += 1
+    empty = sum(len(v) for v in cats.values())
+    print(f"{total} filings with leverage inputs; cash empty in {empty} ({empty / total:.1%})")
+    if args.live:
+        _live_no_cash_lines(conn, cats.get(NO_CASH_LINE, []))
+    for cat in sorted(cats):
+        v = cats[cat]
+        print(f"  {len(v):5d} f / {len({x[0] for x in v}):3d} co  {cat}")
+        print("        e.g.", [f"{t} {frm} {pe}" for t, frm, pe in v[:SHOWN]])
+        print("        companies:", sorted({x[0] for x in v}))
+    print("by sector (category letter: filings):")
+    for sector, c in sorted(sectors.items()):
+        print(f"  {sector:26s} {sum(c.values()):4d}  {dict(sorted(c.items()))}")
     return 0
 
 
@@ -430,12 +730,19 @@ def main(argv: list[str] | None = None) -> int:
         ("cost", cmd_cost),
         ("n13", cmd_n13),
         ("n23", cmd_n23),
+        ("ni", cmd_ni),
         ("flags", cmd_flags),
     ):
         p = sub.add_parser(name)
         p.add_argument("--db", required=True)
         p.add_argument("--cache")
         p.set_defaults(fn=fn)
+    p = sub.add_parser("cash")
+    p.add_argument("--db", required=True)
+    p.add_argument(
+        "--live", action="store_true", help="also read category (e)'s 10-Ks from the gateway"
+    )
+    p.set_defaults(fn=cmd_cash)
     p = sub.add_parser("tables")
     p.add_argument("--before", required=True)
     p.add_argument("--after", required=True)

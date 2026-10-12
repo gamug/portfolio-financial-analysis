@@ -124,6 +124,12 @@ class LineItem:
     # The composite resolver this item uses instead of the generic concept lookup (T-148): its
     # name is a key of :data:`_COMPOSITE`. The ``concepts`` stay listed for the audit scripts.
     resolver: str = ""
+    # MET-08 (T-148 part 1 limitation): the item keeps master's order -- the first matching row *in
+    # document order*, whichever of its concepts it carries -- instead of the spec's concept order
+    # (ID-02a). Capex only: MET-08 (b)(1) makes ``PaymentsToAcquireProductiveAssets`` "a flagged
+    # fallback, never added to PP&E", which a concept-first pass would read before ETR's own
+    # ``PaymentsForCapitalImprovements`` (106M against 5.07B); part 2 (f) writes capex's order.
+    document_order: bool = False
 
 
 _INCOME = ("income_statement",)
@@ -151,13 +157,12 @@ SHORT_TERM_DEBT_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 SHORT_TERM_DEBT_LAST = G + "DebtCurrent"
 # Long-term lines that already contain the current maturities: a short-term term that is a kind of
-# current maturity is not added to them (N4). The REIT pair is "including the current and
-# noncurrent portions" in B6/FASB's definitions.
-REIT_DEBT = (G + "UnsecuredDebt", G + "SecuredDebt")
+# current maturity is not added to them (N4). ``UnsecuredDebt`` + ``SecuredDebt`` (a REIT's only
+# debt lines, N23) is **not** a map: no loaded source states debt = secured + unsecured (ID-02b), so
+# a REIT that files nothing else has no debt the resolver reads -- a capture failure, EV empty.
 INCLUDES_CURRENT_MATURITIES = (
     G + "LongTermDebt",
     G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
-    *REIT_DEBT,
 )
 # ID-02b "no debt line at all": a balance-sheet concept that names a debt obligation, and an
 # income-statement concept that names interest expense, in any taxonomy (an extension counts: it
@@ -173,6 +178,26 @@ _NOT_A_DEBT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
+
+# -- Parent net income (ID-03, CON-19; T-148) -------------------------------------------------------
+# The us-gaap elements for income attributable to the noncontrolling interest: the total and its
+# redeemable / nonredeemable parts (B6).
+_NCI_INCOME_CONCEPTS = (
+    G + "NetIncomeLossAttributableToNoncontrollingInterest",
+    G + "NetIncomeLossAttributableToRedeemableNoncontrollingInterest",
+    G + "NetIncomeLossAttributableToNonredeemableNoncontrollingInterest",
+)
+# The conservative inference for any other row (an extension, or a us-gaap line with a filer's own
+# caption): its concept name and caption together name a noncontrolling (minority) interest, speak
+# of an income, and are not a total that *includes* the interest (``...IncludingPortionAttributable
+# ToNoncontrollingInterest``), the pre-tax lines the taxonomy names after it
+# (``...BeforeIncomeTaxes...NoncontrollingInterest``) or a flow with it (dividends, contributions,
+# payments, proceeds).
+_NCI_NAME_RE = re.compile(r"non-?controlling|minority\s*interest", re.IGNORECASE)
+_NCI_INCOME_WORD_RE = re.compile(r"income|loss|earnings|profit|allocation", re.IGNORECASE)
+_NCI_NOT_AN_INCOME_RE = re.compile(
+    r"including|before|payments?|proceeds|dividends?|distributions?|contributions?", re.IGNORECASE
+)
 
 # US-GAAP concept tags are stable across filers and are matched first; ``standard``
 # and ``label`` hints are conservative fallbacks scoped to the same statement.
@@ -300,6 +325,7 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
         ),
+        document_order=True,
         # T-133: an ASC 932 oil & gas producer capitalizes its drilling and development spend
         # under its own concept, so none of the above exists (APA, FANG: no FCF on any 10-K).
         # Development first; an *acquisition* of reserves (FANG's Endeavor deal: $8.9B beside
@@ -817,32 +843,67 @@ class Statements:
     def _net_income(
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
-        """Parent net income (ID-03; N13): ``NetIncomeLoss`` (attributable to the parent); else
-        ``ProfitLoss`` less ``NetIncomeLossAttributableToNoncontrollingInterest``; else empty.
+        """Parent net income (ID-03, CON-19; N13), in this order:
 
-        ``ProfitLoss`` includes the noncontrolling interest, so it is parent earnings only when the
-        statement files the NCI income -- a row with a value, zero included (ID-03: "absent or
-        zero", read as a filed zero: an NCI line that is *absent* from the statement is not a zero,
-        APA's FY2021 10-K files its NCI income under the redeemable/nonredeemable variants and
-        ``ProfitLoss`` is 1,313M against 973M for the common stock). With ``ProfitLoss`` and no NCI
-        income the item is empty, flagged ``profit_loss_without_nci_income``. The "available to
-        common" line is after preferred dividends and is never parent net income: with neither
-        concept the item is empty, flagged ``net_income_not_filed``."""
-        parent = self._concept_value(spec, column, G + "NetIncomeLoss")
+        1. ``NetIncomeLoss`` (attributable to the parent), read from any stored statement of the
+           filing for the same period column: it is the same fact wherever the filer shows it;
+        2. ``ProfitLoss`` (including the noncontrolling interest) when **no** income attributable to
+           the noncontrolling interest is filed on any stored statement of the period
+           (:meth:`_nci_income_filed`): ID-03's "NCI income is absent", then CON-19 makes the two
+           equal. Flagged ``no_nci_income_filed``;
+        3. ``ProfitLoss`` less ``NetIncomeLossAttributableToNoncontrollingInterest`` when that
+           total is filed (a filed zero included);
+        4. empty. ``ProfitLoss`` with NCI income filed only in parts (APA's FY2021 10-K: the
+           redeemable variant alone, 162M) is flagged ``profit_loss_nci_income_not_total``; neither
+           concept, ``net_income_not_filed``.
+
+        The "available to common" line is after preferred dividends and is never parent net income
+        (N13)."""
+        parent = self._filed_anywhere(column, G + "NetIncomeLoss")
         if parent is not None:
             return parent, G + "NetIncomeLoss", "concept"
-        profit = self._concept_value(spec, column, G + "ProfitLoss")
+        profit = self._filed_anywhere(column, G + "ProfitLoss")
         if profit is None:
             self._flag("net_income_not_filed")
             return None, None, None
-        nci_concept = G + "NetIncomeLossAttributableToNoncontrollingInterest"
-        nci = self._concept_value(spec, column, nci_concept)
-        if nci is None:
-            self._flag("profit_loss_without_nci_income")
-            return None, None, None
-        if nci == 0.0:
+        if not self._nci_income_filed(column):
+            self._flag("no_nci_income_filed")
             return profit, G + "ProfitLoss", "concept"
+        nci_concept = G + "NetIncomeLossAttributableToNoncontrollingInterest"
+        nci = self._filed_anywhere(column, nci_concept)
+        if nci is None:
+            self._flag("profit_loss_nci_income_not_total")
+            return None, None, None
         return profit - nci, f"{G}ProfitLoss - {nci_concept}", "map"
+
+    def _valued_rows(self, column: str) -> Iterator[dict[str, Any]]:
+        """Every non-abstract, non-dimensional row of the stored statements that has a value in
+        *column*: the income statement first, then the others. A column key names one period (its
+        date and tag), so a row of another statement with it is the same period of the same
+        filing."""
+        for statement in STATEMENT_KEYS:
+            for row in self.raw.get(statement, []):
+                if (
+                    not row.get("abstract")
+                    and not row.get("dimension")
+                    and _numeric(row.get(column)) is not None
+                ):
+                    yield row
+
+    def _filed_anywhere(self, column: str, concept: str) -> float | None:
+        """The first stored statement's row tagged *concept* that has a value in *column*, in the
+        sign it was filed in."""
+        for row in self._valued_rows(column):
+            if row.get("concept") == concept:
+                return self._read(row, column)
+        return None
+
+    def _nci_income_filed(self, column: str) -> bool:
+        """Whether income attributable to the noncontrolling interest is filed for the period, on
+        any stored statement (ID-03): ``NetIncomeLossAttributableToNoncontrollingInterest`` or its
+        redeemable / nonredeemable variants, **or** -- a conservative inference, declared in
+        ``docs/model_fixes.md`` -- any other row :func:`_names_nci_income` reads as one."""
+        return any(_names_nci_income(row) for row in self._valued_rows(column))
 
     def _income_tax(
         self, spec: LineItem, column: str
@@ -873,9 +934,10 @@ class Statements:
         """Long-term debt (MET-07): the narrowest filed line (ID-02a) -- ``LongTermDebtNoncurrent``,
         then ``LongTermDebt`` (it includes current maturities), then the combined debt-and-lease
         elements, used only because no narrower line is filed and flagged
-        ``includes_finance_leases``, and last the REIT pair ``UnsecuredDebt`` + ``SecuredDebt``
-        (N23; both "including the current and noncurrent portions"), which a REIT files as its
-        only long-term debt lines. A line that includes the current maturities is flagged
+        ``includes_finance_leases``. Any other filed debt line (``SecuredDebt`` + ``UnsecuredDebt``,
+        ``LineOfCredit``, ``NotesPayable``, ``SeniorNotes``, ...) is not read: no loaded source
+        states that it is, or adds up to, long-term debt, and several may overlap (ID-02b); they
+        still block the zero of "no debt line at all". A line that includes the current maturities is flagged
         ``includes_current_maturities``: no current-maturity term is added to it
         (:meth:`_short_term_parts`, N4)."""
         for concept in (G + "LongTermDebtNoncurrent", G + "LongTermDebt"):
@@ -894,13 +956,6 @@ class Statements:
                 if concept in INCLUDES_CURRENT_MATURITIES:
                     self._flag("includes_current_maturities")
                 return value, concept, "concept"
-        # the REIT pair is read only when no other long-term line is filed: next to a company's own
-        # long-term line it is a sub-line (MET's "collateral financing arrangement", 352M against
-        # 14.5B of long-term debt), never the long-term debt
-        reit = {c: v for c in REIT_DEBT if (v := self._concept_value(spec, column, c)) is not None}
-        if reit:
-            self._flag("includes_current_maturities")
-            return sum(reit.values()), " + ".join(reit), "map" if len(reit) > 1 else "concept"
         return None, None, None
 
     def _short_term_parts(
@@ -1288,8 +1343,20 @@ class Statements:
         (ID-02a, T-148): the exact ``concepts`` one concept after the other in the spec's order
         (``concept``), then the rows whose gateway ``standard_concept`` is listed (``standard``),
         then the rows whose label contains a ``label_contains`` hint (``label``). A label or a
-        standard-concept match never outranks an exact concept, wherever it sits in the statement."""
+        standard-concept match never outranks an exact concept, wherever it sits in the statement.
+
+        An item with ``document_order`` (capex, MET-08) keeps master's reading instead: the rows
+        that match by concept, standard concept or label, in the order the statement lists them."""
         rows = list(self._rows_for(spec))
+        if spec.document_order:
+            yield from self._document_order_candidates(spec, rows)
+        else:
+            yield from self._precedence_candidates(spec, rows)
+
+    @staticmethod
+    def _precedence_candidates(
+        spec: LineItem, rows: list[dict[str, Any]]
+    ) -> Iterator[tuple[str, dict[str, Any]]]:
         for concept in spec.concepts:
             for row in rows:
                 if row.get("concept") == concept:
@@ -1309,6 +1376,19 @@ class Statements:
                     and any(hint in label for hint in spec.label_contains)
                 ):
                     yield "label", row
+
+    @staticmethod
+    def _document_order_candidates(
+        spec: LineItem, rows: list[dict[str, Any]]
+    ) -> Iterator[tuple[str, dict[str, Any]]]:
+        """:meth:`_candidates` for an item that keeps master's document order (MET-08, capex)."""
+        for row in rows:
+            if row.get("concept") in spec.concepts:
+                yield "concept", row
+            elif spec.standard and row.get("standard_concept") in spec.standard:
+                yield "standard", row
+            elif any(h in str(row.get("label") or "").lower() for h in spec.label_contains):
+                yield "label", row
 
     def _first_component_row(
         self, spec: LineItem, column: str
@@ -1530,6 +1610,25 @@ def _parse_period(column: str) -> Period | None:
     if instant:
         return Period(key=column, date=instant["date"], tag=INSTANT)
     return None
+
+
+def _names_nci_income(row: dict[str, Any]) -> bool:
+    """Whether *row* is income attributable to a noncontrolling interest (ID-03): one of the three
+    ``us-gaap`` elements, or -- the conservative inference of :data:`_NCI_NAME_RE` -- a row whose
+    concept name and caption name the interest, speak of an income and are not a total that
+    includes it, a pre-tax line or a flow. ``ProfitLoss`` and ``NetIncomeLoss`` are the rows under
+    test, never evidence."""
+    concept = str(row.get("concept") or "")
+    if concept in _NCI_INCOME_CONCEPTS:
+        return True
+    if concept in (G + "ProfitLoss", G + "NetIncomeLoss"):
+        return False
+    text = f"{concept.split('_', 1)[-1]} {row.get('label') or ''}"
+    return bool(
+        _NCI_NAME_RE.search(text)
+        and _NCI_INCOME_WORD_RE.search(text)
+        and not _NCI_NOT_AN_INCOME_RE.search(text)
+    )
 
 
 def _preferred_sign(row: dict[str, Any]) -> float | None:

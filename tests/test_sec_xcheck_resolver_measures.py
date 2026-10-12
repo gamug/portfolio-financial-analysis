@@ -123,8 +123,6 @@ def test_d6d_with_n4_and_n23_the_measure_states_the_rule_t148_implements() -> No
     assert rm.proposed_short_term_debt({G + "LongTermDebtCurrent": 10.0}, includes) is None
     assert rm.proposed_short_term_debt({G + "DebtCurrent": 99.0}, includes) is None
     assert rm.proposed_short_term_debt(both, G + "LongTermDebtNoncurrent") == 15.0
-    reit = f"{G}UnsecuredDebt + {G}SecuredDebt"  # the REIT pair includes them too
-    assert rm.proposed_short_term_debt(both, reit) == 5.0
     ed = {G + "OtherLongTermDebtCurrent": 250.0, G + "NotesPayableCurrent": 1575.0}
     assert rm.proposed_short_term_debt(ed) == 1825.0
     assert (

@@ -57,6 +57,11 @@ WAT = "financials_WAT_10-Q_2023_acc-0001193125-23-271909.json"
 WAT_21 = "financials_WAT_10-Q_2021_acc-0001193125-21-319595.json"
 APO = "financials_APO_10-K_2023_acc-0001858681-23-000007.json"
 PM = "financials_PM_10-K_2026_acc-0001628280-26-005939.json"
+HPE = "financials_HPE_10-K_2024_acc-0001645590-24-000139.json"
+PNC = "financials_PNC_10-K_2024_acc-0000713676-24-000028.json"
+ALLE_Q = "financials_ALLE_10-Q_2025_acc-0001579241-25-000030.json"
+MA = "financials_MA_10-K_2025_acc-0001141391-25-000011.json"
+ETR = "financials_ETR_10-K_2023_acc-0000065984-23-000014.json"
 
 
 # -- (a) the filed sign: ID-11, ID-12 ----------------------------------------------------------
@@ -204,6 +209,27 @@ def test_pm_equity_is_the_stockholders_equity_row_not_the_label_match() -> None:
     assert resolution.concept == "us-gaap_StockholdersEquity" and resolution.how == "concept"
 
 
+def test_etr_capex_keeps_master_s_document_order_until_met08_is_written() -> None:
+    """MET-08 (b)(1): ``PaymentsToAcquireProductiveAssets`` is "a flagged fallback, never added to
+    PP&E". Entergy's FY2022 10-K files it (106M) beside ``PaymentsForCapitalImprovements``
+    (5,065M). Capex is the one item that keeps master's reading -- the first matching row in the
+    statement's order -- in T-148 part 1; a concept-first pass picked the 106M. Part 2 (f) writes
+    capex's precedence under MET-08, and this case must come out right there too."""
+    payload = _payload(ETR)
+    key = "2022-12-31 (FY)"
+    filed = {
+        r["concept"]: r[key]
+        for r in payload["cash_flow"]
+        if r["concept"].startswith("us-gaap_Payments")
+        and not r.get("dimension")
+        and r.get(key) is not None
+    }
+    assert filed["us-gaap_PaymentsToAcquireProductiveAssets"] == 106_193_000.0
+    resolution = Statements.from_payload(payload).resolve("capital_expenditure", key)
+    assert resolution.value == 5_065_126_000.0
+    assert resolution.concept == "us-gaap_PaymentsForCapitalImprovements"
+
+
 def test_a_label_match_is_used_only_when_no_listed_concept_is_filed() -> None:
     stmts = Statements.from_payload(
         {
@@ -264,18 +290,154 @@ def test_a_filing_with_only_profit_loss_takes_it_less_the_nci_income() -> None:
     assert resolution.how == "map"
 
 
-def test_profit_loss_with_no_nci_income_is_not_parent_earnings() -> None:
-    """Apache's FY2021 10-K files ``ProfitLoss`` 1,313M (including noncontrolling interests), the
-    common stock's 973M under the "available to common" line, and its NCI income only as the
-    redeemable/nonredeemable variants -- no ``NetIncomeLossAttributableToNoncontrollingInterest``.
-    The difference cannot be taken, and ``ProfitLoss`` alone would overstate parent earnings by a
-    third: the item is empty and flagged."""
+def test_profit_loss_with_nci_income_filed_only_in_parts_is_empty() -> None:
+    """ID-03 step (iv): Apache's FY2021 10-K files ``ProfitLoss`` 1,313M (including noncontrolling
+    interests), the common stock's 973M under the "available to common" line, and its NCI income
+    only as the redeemable variant (162M) -- no ``NetIncomeLossAttributableToNoncontrollingInterest``
+    total. NCI income *is* filed, so ``ProfitLoss`` is not parent earnings, and the difference
+    cannot be taken: the item is empty and flagged."""
     stmts = _stmts(APA_K)
     key = "2021-12-31 (FY)"
     assert stmts.get("net_income_to_common", key) == 973_000_000.0
     resolution = stmts.resolve("net_income", key)
     assert resolution.value is None
-    assert resolution.flags == ("profit_loss_without_nci_income",)
+    assert resolution.flags == ("profit_loss_nci_income_not_total",)
+
+
+def test_id03_i_net_income_loss_on_another_statement_is_the_same_fact() -> None:
+    """ID-03 step (i): Hewlett Packard Enterprise's income statement files no ``NetIncomeLoss`` --
+    only the cash-flow statement does ("Net earnings attributable to HPE", 2,579M). The same fact,
+    same filing and period: it is the parent's net income."""
+    payload = _payload(HPE)
+    key = "2024-10-31 (FY)"
+    assert not any(
+        r["concept"] == "us-gaap_NetIncomeLoss" and r.get(key) is not None
+        for r in payload["income_statement"]
+    )
+    resolution = Statements.from_payload(payload).resolve("net_income", key)
+    assert resolution.value == 2_579_000_000.0
+    assert resolution.concept == "us-gaap_NetIncomeLoss" and resolution.flags == ()
+
+
+def test_id03_ii_profit_loss_when_no_nci_income_is_filed() -> None:
+    """ID-03 step (ii): Allegion's 10-Q files ``ProfitLoss`` ("Net earnings", 159.7M) and an NCI
+    income row with no value for the quarter: no income attributable to the noncontrolling interest
+    is filed, so CON-19 makes ``ProfitLoss`` the parent's. Flagged."""
+    stmts = _stmts(ALLE_Q)
+    resolution = stmts.resolve("net_income", "2025-06-30 (Q2)")
+    assert resolution.value == 159_700_000.0
+    assert resolution.concept == "us-gaap_ProfitLoss" and resolution.how == "concept"
+    assert resolution.flags == ("no_nci_income_filed",)
+
+
+def test_id03_iii_profit_loss_less_the_nci_income_total() -> None:
+    """ID-03 step (iii): PNC files ``ProfitLoss`` on the cash-flow statement (5,647M) and the NCI
+    income total on the income statement (69M): the parent's earnings are the difference."""
+    stmts = _stmts(PNC)
+    resolution = stmts.resolve("net_income", "2023-12-31 (FY)")
+    assert resolution.value == 5_647_000_000.0 - 69_000_000.0
+    assert resolution.how == "map" and resolution.flags == ()
+
+
+def _allegion_with(row: dict[str, Any], statement: str = "income_statement") -> Statements:
+    payload = copy.deepcopy(_payload(ALLE_Q))
+    payload[statement].append({"abstract": False, "dimension": False, **row})
+    return Statements.from_payload(payload)
+
+
+@pytest.mark.parametrize(
+    ("row", "statement"),
+    [
+        # an extension that names the interest and an income
+        (
+            {
+                "concept": "alle_IncomeAllocatedToMinorityInterestHolders",
+                "label": "Income allocated to minority interest holders",
+            },
+            "income_statement",
+        ),
+        # a us-gaap line with the filer's own caption
+        (
+            {
+                "concept": "us-gaap_IncomeLossFromContinuingOperationsAttributableToNoncontrollingEntity",
+                "label": "Net income attributable to noncontrolling interests",
+            },
+            "income_statement",
+        ),
+        # the same NCI income shown only in the cash-flow reconciliation
+        (
+            {
+                "concept": "us-gaap_NetIncomeLossAttributableToRedeemableNoncontrollingInterest",
+                "label": "Add: noncontrolling interests",
+            },
+            "cash_flow",
+        ),
+    ],
+)
+def test_id03_a_row_that_names_nci_income_keeps_profit_loss_from_being_the_parent_s(
+    row: dict[str, Any], statement: str
+) -> None:
+    """The conservative inference of step (ii) (``docs/model_fixes.md``): any row whose concept and
+    caption name a noncontrolling interest and an income counts as NCI income filed. With no NCI
+    total to subtract, the item is empty."""
+    key = "2025-06-30 (Q2)"
+    stmts = _allegion_with({**row, key: 1_000_000.0}, statement)
+    resolution = stmts.resolve("net_income", key)
+    assert resolution.value is None and resolution.flags == ("profit_loss_nci_income_not_total",)
+
+
+@pytest.mark.parametrize(
+    ("row", "statement"),
+    [
+        # the taxonomy names its pre-tax elements after the interest
+        (
+            {
+                "concept": "us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                "label": "Income before income taxes",
+            },
+            "income_statement",
+        ),
+        # a total that includes the interest
+        (
+            {
+                "concept": "us-gaap_ComprehensiveIncomeNetOfTaxIncludingPortionAttributableToNoncontrollingInterest",
+                "label": "Total comprehensive income",
+            },
+            "income_statement",
+        ),
+        # flows with the interest are not its income
+        (
+            {
+                "concept": "us-gaap_PaymentsToMinorityShareholders",
+                "label": "Distributions to noncontrolling interests",
+            },
+            "cash_flow",
+        ),
+        (
+            {
+                "concept": "us-gaap_GainLossOnInvestments",
+                "label": "(Gain) loss on minority equity investments, net",
+            },
+            "cash_flow",
+        ),
+    ],
+)
+def test_id03_a_row_that_only_names_the_interest_is_not_nci_income(
+    row: dict[str, Any], statement: str
+) -> None:
+    key = "2025-06-30 (Q2)"
+    stmts = _allegion_with({**row, key: 1_000_000.0}, statement)
+    resolution = stmts.resolve("net_income", key)
+    assert resolution.value == 159_700_000.0 and resolution.flags == ("no_nci_income_filed",)
+
+
+def test_id03_ii_reads_only_the_statements_the_filing_stores() -> None:
+    """Declared limitation of step (ii): Mastercard's face statements carry no NCI income (it files
+    9-21M a year, 0.1-0.2% of its 8.7-15.0B ``ProfitLoss``, only in its notes), so ``ProfitLoss``
+    stands, flagged -- the flag is what a reader sees."""
+    stmts = _stmts(MA)
+    resolution = stmts.resolve("net_income", "2024-12-31 (FY)")
+    assert resolution.value == 12_874_000_000.0 and resolution.flags == ("no_nci_income_filed",)
 
 
 def test_an_nci_income_filed_as_zero_makes_profit_loss_the_parent_s() -> None:

@@ -87,3 +87,56 @@ def test_the_cost_table_counts_a_filing_whose_debt_is_empty(
     assert "short_term_debt_only" in out
     verify.cmd_flags(argparse.Namespace(db=str(path)))
     assert "flag_total_debt_short_term_debt_only" in capsys.readouterr().out
+
+
+def _statements_of(fixture: str) -> tuple[Statements, str]:
+    stmts = Statements.from_payload(json.loads((FIXTURES / fixture).read_text())["data"])
+    periods = stmts.quarter_periods() if "10-Q" in fixture else stmts.fy_periods()
+    return stmts, periods[-1].key
+
+
+def test_the_cash_category_names_what_the_balance_sheet_files_instead() -> None:
+    """The review of PR #136: why a filing's cash is empty. A real balance sheet with a cash line is
+    not in the population; strip the line and the category follows what is left."""
+    stmts, key = _statements_of("financials_AAPL_10-K_2023.json")
+    cash = "us-gaap_CashAndCashEquivalentsAtCarryingValue"
+    assert stmts.get("cash", key) is not None
+    assert verify._cash_category(stmts, key).startswith(
+        "d."
+    )  # the resolver reads it: would be a bug
+
+    for concept, expected in (
+        ("us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "a."),
+        ("us-gaap_Cash", "b."),
+        ("us-gaap_Deposits", "c."),
+    ):
+        payload = json.loads((FIXTURES / "financials_AAPL_10-K_2023.json").read_text())["data"]
+        for row in payload["balance_sheet"]:
+            if row["concept"] == cash:
+                row["concept"] = concept if concept != "us-gaap_Deposits" else "us-gaap_Cash"
+        if concept == "us-gaap_Deposits":
+            payload["balance_sheet"].append(
+                {**payload["balance_sheet"][0], "concept": concept, "abstract": False}
+            )
+        replaced = Statements.from_payload(payload)
+        assert verify._cash_category(replaced, key).startswith(expected)
+
+    payload = json.loads((FIXTURES / "financials_AAPL_10-K_2023.json").read_text())["data"]
+    payload["balance_sheet"] = [r for r in payload["balance_sheet"] if r["concept"] != cash]
+    assert verify._cash_category(Statements.from_payload(payload), key).startswith("e.")
+
+
+def test_the_net_income_step_follows_the_rule_that_resolved_it() -> None:
+    steps = {
+        "financials_HPE_10-K_2024_acc-0001645590-24-000139.json": "i.",
+        "financials_ALLE_10-Q_2025_acc-0001579241-25-000030.json": "ii.",
+        "financials_PNC_10-K_2024_acc-0000713676-24-000028.json": "iii.",
+        "financials_APA_10-K_2022_acc-0001784031-22-000009.json": "iv.",
+    }
+    for fixture, step in steps.items():
+        stmts, key = _statements_of(fixture)
+        if step == "iv.":
+            key = "2021-12-31 (FY)"
+        assert verify._ni_step(stmts.resolve("net_income", key)).startswith(step), fixture
+        # the first version of part 1 read the income statement alone: all four were empty
+        assert verify._part1_net_income(stmts, key) is None
