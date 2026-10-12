@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -349,11 +351,18 @@ def test_quant_vs_live_route(tmp_path: Path, universe_db: _UDB) -> None:
         assert [r["ticker"] for r in res_mv if r["kind"] == "LIVE_ONLY"] == ["GOOG"]
         assert {r["ticker"] for r in res_mv if r["kind"] == "min_var"} == {"AAPL", "MSFT"}
 
-        # kind=LIVE_ONLY returns only LIVE_ONLY rows
+        # kind=LIVE_ONLY returns only LIVE_ONLY rows (case-insensitive)
         res_lo = c.get("/api/v1/portfolio/quant-vs-live", params={"kind": "LIVE_ONLY"}).json()
         assert len(res_lo) == 1
         assert res_lo[0]["kind"] == "LIVE_ONLY"
         assert res_lo[0]["ticker"] == "GOOG"
+        assert (
+            c.get("/api/v1/portfolio/quant-vs-live", params={"kind": "live_only"}).json() == res_lo
+        )
+
+        # kind is case-insensitive: MIN_VAR returns the same rows as min_var
+        res_mv_upper = c.get("/api/v1/portfolio/quant-vs-live", params={"kind": "MIN_VAR"}).json()
+        assert res_mv_upper == res_mv
 
         # 4. current_only flag
         # current_only=true (default) hides variant book
@@ -383,3 +392,63 @@ def test_quant_vs_live_partial_database(tmp_path: Path, universe_db: _UDB) -> No
         res = c.get("/api/v1/portfolio/quant-vs-live")
         assert res.status_code == 200
         assert res.json() == []
+
+
+def test_verify_pilot_t083_reconciliation(tmp_path: Path) -> None:
+    fin = tmp_path / "fin_vp.db"
+    _seed_quant_vs_live(fin)
+
+    # 1. PASS on clean fixture
+    res_pass = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/verify_pilot.py", "--db", str(fin)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    t083_pass_lines = [line for line in res_pass.stdout.splitlines() if "T-083" in line]
+    assert len(t083_pass_lines) == 1
+    assert "[PASS] T-083" in t083_pass_lines[0]
+    assert "book dates=2, unreconciled=0, LIVE_ONLY=2" in t083_pass_lines[0]
+
+    # 2. FAIL, naming the ticker, when view drops live_weight from book rows
+    raw = sqlite3.connect(fin)
+    raw.execute("DROP VIEW v_quant_vs_live")
+    raw.execute(
+        """CREATE VIEW v_quant_vs_live AS
+        SELECT qp.as_of, qp.kind, a.ticker, qpos.asset_id,
+               qpos.weight AS benchmark_weight, NULL AS live_weight,
+               COALESCE(qpos.weight, 0) AS active_weight,
+               qp.engine_version, qp.is_current
+        FROM v_quant_portfolio qp
+        JOIN quant_position qpos ON qpos.portfolio_id = qp.id AND qpos.valid_to IS NULL
+        JOIN assets a ON a.id = qpos.asset_id
+        WHERE qp.kind <> 'live_book'
+        UNION ALL
+        SELECT b.as_of, 'LIVE_ONLY' AS kind, a.ticker, pp.asset_id,
+               NULL AS benchmark_weight, pp.weight AS live_weight,
+               -COALESCE(pp.weight, 0) AS active_weight,
+               NULL AS engine_version, 1 AS is_current
+        FROM (SELECT DISTINCT as_of FROM quant_portfolio WHERE kind <> 'live_book') b
+        JOIN portfolio_position pp ON pp.valid_from <= b.as_of
+             AND (pp.valid_to IS NULL OR pp.valid_to > b.as_of)
+        JOIN assets a ON a.id = pp.asset_id
+        WHERE NOT EXISTS (
+            SELECT 1 FROM v_quant_portfolio q2
+            JOIN quant_position p2 ON p2.portfolio_id = q2.id AND p2.valid_to IS NULL
+            WHERE q2.as_of = b.as_of AND p2.asset_id = pp.asset_id
+              AND q2.kind <> 'live_book' AND q2.is_current = 1)
+        """
+    )
+    raw.commit()
+    raw.close()
+
+    res_fail = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/verify_pilot.py", "--db", str(fin)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    t083_fail_lines = [line for line in res_fail.stdout.splitlines() if "T-083" in line]
+    assert len(t083_fail_lines) == 1
+    assert "[FAIL] T-083" in t083_fail_lines[0]
+    assert "AAPL" in t083_fail_lines[0]

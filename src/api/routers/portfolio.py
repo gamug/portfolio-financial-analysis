@@ -92,8 +92,8 @@ def quant_vs_live(
         if kind.upper() == "LIVE_ONLY":
             sql += " AND kind = 'LIVE_ONLY'"
         else:
-            sql += " AND (kind = ? OR kind = 'LIVE_ONLY')"
-            params.append(kind)
+            sql += " AND (kind = ? COLLATE NOCASE OR kind = 'LIVE_ONLY')"
+            params.append(kind.lower())
 
     if current_only:
         sql += " AND is_current = 1"

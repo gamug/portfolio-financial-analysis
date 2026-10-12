@@ -621,16 +621,21 @@ def main() -> int:  # noqa: C901, PLR0915
                 "JOIN portfolio_position pp ON pp.valid_from <= b.as_of "
                 "     AND (pp.valid_to IS NULL OR pp.valid_to > b.as_of) "
                 "JOIN assets a ON a.id = pp.asset_id "
-                "WHERE (b.as_of, a.ticker) NOT IN ( "
-                "  SELECT as_of, ticker FROM v_quant_vs_live "
-                ")"
+                "WHERE NOT EXISTS (SELECT 1 FROM v_quant_vs_live v "
+                "                  WHERE v.as_of = b.as_of AND v.asset_id = pp.asset_id "
+                "                    AND v.live_weight IS NOT NULL)"
             )
             rows = [tuple(r) for r in db.execute(sql_reconcile)]
+            n_book_dates = int(
+                db.execute(
+                    "SELECT COUNT(DISTINCT as_of) FROM quant_portfolio WHERE kind <> 'live_book'"
+                ).fetchone()[0]
+            )
             sql_live_only = "SELECT COUNT(*) FROM v_quant_vs_live WHERE kind = 'LIVE_ONLY'"
             n_live_only = int(db.execute(sql_live_only).fetchone()[0])
             if rows:
                 bad.append(f"{prefix}unreconciled={len(rows)} {rows[:10]}")
-            item = f"{prefix}unreconciled={len(rows)}"
+            item = f"{prefix}book dates={n_book_dates}, unreconciled={len(rows)}"
             if rows:
                 item += f" {rows[:10]}"
             item += f", LIVE_ONLY={n_live_only}"
