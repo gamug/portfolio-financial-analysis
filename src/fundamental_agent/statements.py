@@ -1220,11 +1220,11 @@ class Statements:
         used: dict[str, float] = {}
         for c in base_concepts:
             val = self._concept_value(spec, column, c)
-            if val is not None:
+            if val is not None and val != 0:
                 used[c] = val
 
         capimp = self._concept_value(spec, column, G + "PaymentsForCapitalImprovements")
-        if capimp is not None:
+        if capimp is not None and capimp != 0:
             if any(c in used for c in acq_concepts):
                 self._flag("capital_improvements_overlap_not_added")
             else:
@@ -1275,7 +1275,9 @@ class Statements:
             G + "PaymentsToAcquireOtherPropertyPlantAndEquipment",
         )
         ppe_values = {
-            c: v for c in ppe_concepts if (v := self._concept_value(spec, column, c)) is not None
+            c: v
+            for c in ppe_concepts
+            if (v := self._concept_value(spec, column, c)) is not None and v != 0
         }
         og_finer_concepts = (
             G + "PaymentsToExploreAndDevelopOilAndGasProperties",
@@ -1284,13 +1286,13 @@ class Statements:
         og_values = {
             c: v
             for c in og_finer_concepts
-            if (v := self._concept_value(spec, column, c)) is not None
+            if (v := self._concept_value(spec, column, c)) is not None and v != 0
         }
         if not og_values and ppe_values:
             val_og_ppe = self._concept_value(
                 spec, column, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"
             )
-            if val_og_ppe is not None:
+            if val_og_ppe is not None and val_og_ppe != 0:
                 og_values[G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"] = val_og_ppe
         if ppe_values and og_values:
             self._flag("ppe_family_plus_og_added")

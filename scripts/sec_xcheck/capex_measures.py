@@ -57,11 +57,17 @@ MIN_LINES = 2
 
 def _reit_capex(a: dict[str, float]) -> tuple[float | None, list[str]]:
     flags: list[str] = []
-    parts = [a[k] for k in (PPE, *REAL_ESTATE, G + "PaymentsToDevelopRealEstateAssets") if k in a]
-    if CAPIMP in a and not any(k in a for k in REAL_ESTATE):
-        parts.append(a[CAPIMP])
-    elif CAPIMP in a:
-        flags.append("capital_improvements_overlap_not_added")
+    parts = [
+        a[k]
+        for k in (PPE, *REAL_ESTATE, G + "PaymentsToDevelopRealEstateAssets")
+        if k in a and a[k] != 0
+    ]
+    has_nonzero_real_estate = any(k in a and a[k] != 0 for k in REAL_ESTATE)
+    if CAPIMP in a and a[CAPIMP] != 0:
+        if not has_nonzero_real_estate:
+            parts.append(a[CAPIMP])
+        else:
+            flags.append("capital_improvements_overlap_not_added")
     if not parts and PROD in a:
         return a[PROD], ["productive_assets_fallback"]
     if not parts and OTHER_PRODUCTIVE in a:
