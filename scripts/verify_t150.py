@@ -21,6 +21,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,7 @@ from sec_xcheck import extra_measures, records
 from sec_xcheck.common import open_ro, statements_from_db
 
 from fundamental_agent import db as fundamental_db
+from fundamental_agent import fiscal as fa_fiscal
 from fundamental_agent import quality
 from fundamental_agent.pipeline import _TTM_ITEMS, _targets, _YearTask, _ytd_columns
 
@@ -934,6 +936,207 @@ def _con19_line(counts: dict[str, int]) -> str:
     )
 
 
+_EXACT_EPSILON = 1e-9
+
+
+def _is_multiple(value: float, unit: float) -> bool:
+    return value == 0.0 or abs(value / unit - round(value / unit)) < _EXACT_EPSILON
+
+
+def _rule_terms(ff: quality.FilingFacts, rule: str) -> list[float] | None:
+    spec = _RULE_OPERANDS.get(rule)
+    if spec is None:
+        return None
+    operands, instant = spec
+    column = ff.instant_column if instant else ff.flow_column
+    if column is None:
+        return None
+    values = [ff.value(c, column) for c in operands]
+    if any(v is None for v in values):
+        return None
+    return [float(v) for v in values]
+
+
+def _limits_a(conn: Any, results: dict[int, list[Any]]) -> list[str]:
+    """(a) hits whose every term is a multiple of USD 100,000 and diff within 0.5 x 100,000 x
+    n_terms (tenths-of-millions filers)."""
+    facts = quality.load_facts(conn, set(results))
+    groups: dict[tuple[str, str], set[int]] = {}
+    for fid, rows in results.items():
+        ff = facts.get(fid)
+        if ff is None:
+            continue
+        for r in rows:
+            if r.level == "pass" or r.rule_id not in _RULE_OPERANDS:
+                continue
+            terms = _rule_terms(ff, r.rule_id)
+            if terms is None or not all(_is_multiple(t, 100_000.0) for t in terms):
+                continue
+            if r.diff <= 0.5 * 100_000.0 * r.n_terms:
+                groups.setdefault((r.rule_id, r.level), set()).add(fid)
+    return [
+        f"  (a) tenths-of-millions rounding: {rule} {level}: {len(fids)} filings, "
+        f"{len({_tickers(conn).get(f, '?') for f in fids})} companies"
+        for (rule, level), fids in sorted(groups.items())
+    ]
+
+
+def _raw_value(
+    conn: Any, filing_id: int, concept: str, column: str, statement: str
+) -> float | None:
+    """A concept's stored value, read directly (it may not be an identity concept)."""
+    row = conn.execute(
+        "SELECT value FROM financial_facts WHERE filing_id=? AND statement=? AND concept=? "
+        "AND period_key=? ORDER BY id LIMIT 1",
+        (filing_id, statement, concept, column),
+    ).fetchone()
+    return None if row is None or row[0] is None else float(row[0])
+
+
+def _limits_b(conn: Any, results: dict[int, list[Any]]) -> list[str]:
+    """(b) CON-08 hits where the all-activities discontinued operating cash flow, not the
+    checklist's operand, is filed and continuing + it = total."""
+    discontinued = "us-gaap_NetCashProvidedByUsedInDiscontinuedOperations"
+    facts = quality.load_facts(conn, set(results))
+    filings = set()
+    for fid, rows in results.items():
+        if not any(r.rule_id == "CON_08" and r.level != "pass" for r in rows):
+            continue
+        ff = facts.get(fid)
+        if ff is None or ff.flow_column is None:
+            continue
+        d = _raw_value(conn, fid, discontinued, ff.flow_column, "cash_flow")
+        total = ff.value(quality._OCF, ff.flow_column)
+        cont = ff.value(quality._OCF_CONT, ff.flow_column)
+        if d is None or total is None or cont is None:
+            continue
+        if abs(total - (cont + d)) <= quality.l10_rounding([total, cont, d]):
+            filings.add(fid)
+    tickers = _tickers(conn)
+    return [
+        f"  (b) CON-08 with {discontinued} filed and continuing + it = total: "
+        f"{len(filings)} filings, {len({tickers.get(f, '?') for f in filings})} companies"
+    ]
+
+
+def _limits_c(conn: Any, results: dict[int, list[Any]]) -> list[str]:
+    """(c) CON-19 hits whose diff equals a filed DividendsPreferredStock, or a filed extension
+    income-statement line naming a noncontrolling interest (IVZ; VMRK)."""
+    facts = quality.load_facts(conn, set(results))
+    pref = set()
+    ext = set()
+    for fid, rows in results.items():
+        hits = [r for r in rows if r.rule_id == "CON_19" and r.level != "pass"]
+        if not hits:
+            continue
+        ff = facts.get(fid)
+        if ff is None or ff.flow_column is None:
+            continue
+        column = ff.flow_column
+        dividends = _raw_value(
+            conn, fid, "us-gaap_DividendsPreferredStock", column, "income_statement"
+        )
+        diff = hits[0].diff
+        if dividends is not None and abs(diff - abs(dividends)) <= 1.0:
+            pref.add(fid)
+            continue
+        for row in conn.execute(
+            "SELECT concept, label, value FROM financial_facts WHERE filing_id=? "
+            "AND statement='income_statement' AND period_key=? ORDER BY id",
+            (fid, column),
+        ):
+            concept = str(row["concept"])
+            if concept.startswith("us-gaap_") or row["value"] is None:
+                continue
+            text = f"{concept} {row['label'] or ''}"
+            if ("NoncontrollingInterest" in text or "Noncontrolling" in text) and abs(
+                diff - abs(float(row["value"]))
+            ) <= 1.0:
+                ext.add(fid)
+                break
+    tickers = _tickers(conn)
+    companies = lambda s: len({tickers.get(f, "?") for f in s})  # noqa: E731
+    return [
+        f"  (c) CON-19 hit diff = a filed DividendsPreferredStock (IVZ): {len(pref)} filings, "
+        f"{companies(pref)} companies",
+        f"  (c) CON-19 hit diff = a filed extension NCI line (VMRK); matched by concept name and "
+        f"label: {len(ext)} filings, {companies(ext)} companies",
+    ]
+
+
+def _label_mismatches(conn: Any) -> tuple[set[int], dict[int, str]]:
+    """F5: filings whose ``fiscal_period`` label disagrees with their ``period_end`` under the
+    company's fiscal-year end (its 10-K period ends), PER-08's month-end rounding."""
+    meta = _filing_meta(conn)
+    tenk: dict[int, list[str]] = {}
+    assets = {int(r[0]): int(r[1]) for r in conn.execute("SELECT id, asset_id FROM sec_filings")}
+    for row in conn.execute(
+        "SELECT asset_id, period_end FROM sec_filings WHERE form='10-K' AND period_end IS NOT NULL"
+    ):
+        tenk.setdefault(int(row["asset_id"]), []).append(str(row["period_end"]))
+    for ends in tenk.values():
+        ends.sort()
+    out: dict[int, str] = {}
+    for fid, (_ticker, fiscal_period) in meta.items():
+        row = conn.execute("SELECT period_end FROM sec_filings WHERE id=?", (fid,)).fetchone()
+        index = _label_index(fiscal_period)
+        ends = tenk.get(assets.get(fid, 0))
+        if row is None or row[0] is None or not ends or index is None:
+            continue
+        period_end = str(row[0])
+        end = date.fromisoformat(period_end)
+        # the company's fiscal-year end of the year the filing belongs to: the nearest stored 10-K
+        # period end on/after the filing's own period end (the filing's own, for a 10-K).
+        later = [e for e in ends if date.fromisoformat(e) >= end]
+        if not later:
+            continue
+        fy_end = date.fromisoformat(later[0])
+        start = fa_fiscal.months_before(fy_end, 12)
+        months = (end.year - start.year) * 12 + (end.month - start.month)
+        stored_index = round(months / 3)
+        if stored_index != index:
+            out[fid] = (
+                f"{fiscal_period} label (quarter {index}) but period_end {period_end} is quarter "
+                f"{stored_index} of the fiscal year ending {fy_end}"
+            )
+    return set(out), out
+
+
+def _label_index(fiscal_period: str) -> int | None:
+    """The fiscal quarter a label names: ``2024Q3`` -> 3, ``FY2024`` -> 4."""
+    if fiscal_period[-2:] in ("Q1", "Q2", "Q3", "Q4"):
+        return int(fiscal_period[-1])
+    if fiscal_period.startswith("FY"):
+        return 4
+    return None
+
+
+def cmd_limits(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    results = _evaluate(conn, {int(r[0]) for r in conn.execute("SELECT id FROM sec_filings")})
+    lines = [f"T-150 F5 limitations, db={args.db} (full set)", ""]
+    lines += _limits_a(conn, results)
+    lines += _limits_b(conn, results)
+    lines += _limits_c(conn, results)
+    Path(args.out_txt).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+
+    mismatched, detail = _label_mismatches(conn)
+    tickers = _tickers(conn)
+    lm = [
+        f"T-150 F5 label mismatch (report only), db={args.db}",
+        "",
+        f"filings whose fiscal_period disagrees with period_end under the company's fiscal-year end: "
+        f"{len(mismatched)} filings, {len({tickers.get(f, '?') for f in mismatched})} companies",
+        f"companies: {', '.join(sorted({tickers.get(f, '?') for f in mismatched}))}",
+    ]
+    for fid in sorted(mismatched, key=lambda f: tickers.get(f, "?")):
+        lm.append(f"  {tickers.get(fid, '?')} filing {fid}: {detail[fid]}")
+    Path(args.out_label).write_text("\n".join(lm) + "\n", encoding="utf-8")
+    print("\n".join(lm[:6]))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -964,6 +1167,13 @@ def main(argv: list[str] | None = None) -> int:
         "--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_untested_causes.txt"
     )
     unt.set_defaults(func=cmd_untested)
+    lim = sub.add_parser("limits", help="F5 limitations and the label-mismatch report")
+    lim.add_argument("--db", required=True)
+    lim.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_limits.txt")
+    lim.add_argument(
+        "--out-label", default="/workspaces/thesis/scratch/t150/out/r1_label_mismatch.txt"
+    )
+    lim.set_defaults(func=cmd_limits)
     con06 = sub.add_parser("con06", help="CON-06: the within-instance rule and the cross-check")
     con06.add_argument("--db", required=True)
     con06.add_argument(
