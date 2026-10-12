@@ -14,17 +14,27 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import re
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sec_xcheck.common import filings, open_ro, own_period_key, statements_from_db
 
-from fundamental_agent.statements import REGISTRY
+from fundamental_agent import db, quality
+from fundamental_agent.agents import FilingContext, FundamentalAnalyst, _fallback_assessment
+from fundamental_agent.db import SnapshotRow
+from fundamental_agent.edgar_client import EdgarClient
+from fundamental_agent.pipeline import _Target, _ttm_flows, _YearTask
+from fundamental_agent.pricing import close_on_or_before
+from fundamental_agent.statements import REGISTRY, CoverShares, Period, Statements
+from kg_schema import connect
 from kg_schema.market_cap import market_caps_as_of
 
 # Regexes for D-02 condition (step 2.3)
@@ -688,8 +698,126 @@ def cmd_m6(args: argparse.Namespace) -> None:
         Path(args.out).write_text(json.dumps(out_data, indent=2))
 
 
+def _evaluate_id16_for_company(
+    r: dict[str, Any],
+    edgar: EdgarClient,
+    payloads_dir: Path,
+) -> tuple[dict[str, Any] | None, str | None]:
+    ticker = r["ticker"]
+    cik = r["cik"]
+    form = r["form"]
+    fdate = r["filing_date"]
+    period_end = r["period_end"]
+    acc = r["accession_number"]
+    payload_path = payloads_dir / f"{cik}_{acc}.json"
+
+    try:
+        if payload_path.exists():
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        else:
+            year = int(fdate[:4])
+            payload = edgar.financials(cik, form, year, accession_number=acc)
+            payload_path.write_text(json.dumps(payload), encoding="utf-8")
+
+        stmts = Statements.from_payload(payload)
+        target_key = next(
+            (p.key for p in stmts.periods if p.date == period_end), f"{period_end} (FY)"
+        )
+
+        flags_found: dict[str, Any] = {}
+        for item in ("revenue", "net_income", "equity"):
+            res = stmts.resolve(item, target_key)
+            if "equals_dimensional_member" in res.flags:
+                flags_found[item] = {
+                    "ticker": ticker,
+                    "cik": cik,
+                    "accession_number": acc,
+                    "period_end": period_end,
+                    "value": res.value,
+                    "concept": res.concept,
+                }
+    except Exception as e:
+        return None, str(e)
+    else:
+        return flags_found, None
+
+
+def cmd_id16(args: argparse.Namespace) -> None:
+    db_path = args.db
+    out_path = args.out
+    payloads_dir = Path(args.payloads_dir)
+    payloads_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = open_ro(db_path)
+    query = """
+        SELECT f.id, f.asset_id, a.ticker, a.cik, f.form, f.fiscal_year, f.fiscal_period, f.period_end, f.filing_date, f.accession_number
+        FROM (
+            SELECT f.*, ROW_NUMBER() OVER (PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.id DESC) as rn
+            FROM sec_filings f
+            WHERE f.form LIKE '10-K%'
+        ) f
+        JOIN assets a ON a.id = f.asset_id
+        WHERE f.rn = 1
+        ORDER BY a.ticker
+    """
+    rows = [dict(r) for r in conn.execute(query).fetchall()]
+    if args.limit:
+        rows = rows[: args.limit]
+
+    print(f"Total companies with latest 10-K: {len(rows)}", flush=True)
+
+    gateway_url = os.environ.get("EDGAR_BASE_URL", "http://host.docker.internal:8000/edgar/edgar")
+    flagged: dict[str, list[dict[str, Any]]] = {
+        "revenue": [],
+        "net_income": [],
+        "equity": [],
+    }
+    errors: list[dict[str, Any]] = []
+
+    with EdgarClient(gateway_url) as edgar:
+        for idx, r in enumerate(rows):
+            flags_found, err = _evaluate_id16_for_company(r, edgar, payloads_dir)
+            if err is not None:
+                print(f"[{idx + 1}/{len(rows)}] {r['ticker']:5} ERROR: {err}", flush=True)
+                errors.append({**r, "error": err})
+                continue
+
+            assert flags_found is not None
+            for item, item_data in flags_found.items():
+                flagged[item].append(item_data)
+
+            rev_s = "1" if "revenue" in flags_found else "0"
+            ni_s = "1" if "net_income" in flags_found else "0"
+            eq_s = "1" if "equity" in flags_found else "0"
+            if (idx + 1) % 10 == 0 or idx == len(rows) - 1 or flags_found:
+                print(
+                    f"[{idx + 1}/{len(rows)}] {r['ticker']:5} (flags: rev={rev_s}, ni={ni_s}, eq={eq_s})",
+                    flush=True,
+                )
+
+    counts = {item: len(flagged[item]) for item in flagged}
+    print("\n--- Summary of ID-16 (equals_dimensional_member) ---", flush=True)
+    print(f"Total companies examined: {len(rows)}", flush=True)
+    print(f"Errors: {len(errors)}", flush=True)
+    for item, count in counts.items():
+        print(f"  {item:12}: {count} companies", flush=True)
+
+    if out_path:
+        out_data = {
+            "total_examined": len(rows),
+            "counts": counts,
+            "flagged": flagged,
+            "errors": errors,
+        }
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_path).write_text(json.dumps(out_data, indent=2), encoding="utf-8")
+        print(f"Wrote results to {out_path}", flush=True)
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="T-148 part 2 verification measurements (M1-M6)")
+    parser = argparse.ArgumentParser(
+        description="T-148 part 2 verification measurements (M1-M6, ID16)"
+    )
     subparsers = parser.add_subparsers(dest="cmd", required=True)
 
     p_m1 = subparsers.add_parser("m1", help="M1: Revenue sum under D-02")
@@ -722,8 +850,206 @@ def main() -> None:
     p_m6.add_argument("--out")
     p_m6.set_defaults(func=cmd_m6)
 
+    p_id16 = subparsers.add_parser("id16", help="ID-16: Equals dimensional member flag prevalence")
+    p_id16.add_argument("--db", default="/workspaces/thesis/scratch/t148b/rebuilt_full3.db")
+    p_id16.add_argument("--out", default="/workspaces/thesis/scratch/t148b/out/id16.json")
+    p_id16.add_argument("--payloads-dir", default="/workspaces/thesis/scratch/t148b/payloads")
+    p_id16.add_argument("--limit", type=int, default=None)
+    p_id16.set_defaults(func=cmd_id16)
+
+    p_recompute = subparsers.add_parser(
+        "recompute", help="Recompute all fundamental metrics from stored facts"
+    )
+    p_recompute.add_argument("--db", required=True)
+    p_recompute.add_argument("--limit", type=int, default=None)
+    p_recompute.set_defaults(func=cmd_recompute)
+
     args = parser.parse_args()
     args.func(args)
+
+
+def _recompute_single_filing(
+    conn: Any,
+    analyst: FundamentalAnalyst,
+    f: dict[str, Any],
+    a_info: dict[str, Any],
+    cover_shares: list[CoverShares],
+) -> None:
+    fid = f["id"]
+    aid = f["asset_id"]
+    engine = SimpleNamespace(conn=conn)
+
+    stmts = statements_from_db(conn, fid)
+    stmts.cover_shares = cover_shares
+    stmts.reit = a_info["is_reit"]
+
+    target_period = next((p for p in stmts.periods if p.date == f["period_end"]), None)
+    if target_period is None:
+        tag = "FY" if f["form"] == "10-K" else "Q"
+        target_period = Period(key=f"{f['period_end']} ({tag})", date=f["period_end"], tag=tag)
+    prior_period = stmts.prior_of(target_period)
+
+    target = _Target(
+        period=target_period,
+        fiscal_period=f["fiscal_period"],
+        prior=prior_period,
+        fiscal_year=f["fiscal_year"],
+    )
+    task = _YearTask(
+        asset_id=aid,
+        ticker=a_info["ticker"],
+        company_name=a_info["company_name"],
+        form=f["form"],
+        year=f["fiscal_year"],
+        cik=a_info["cik"],
+        reit=stmts.reit,
+    )
+
+    share_scale_factors = db.detect_share_scale_factors(
+        conn, aid, stmts, target.period.key, exclude_filing_id=fid
+    )
+
+    mc_res = market_caps_as_of(conn, [aid], as_of=f["period_end"])
+    market_cap_obj = mc_res.caps.get(aid)
+    market_cap_missing = mc_res.missing.get(aid)
+
+    ttm = _ttm_flows(engine, task, stmts, target)
+
+    ctx = FilingContext(
+        ticker=task.ticker,
+        company_name=task.company_name,
+        form=task.form,
+        fiscal_period=target.fiscal_period,
+        stmts=stmts,
+        period_key=target.period.key,
+        prior_key=target.prior.key if target.prior else None,
+        price=close_on_or_before(conn, aid, f["period_end"]),
+        share_scale_factors=share_scale_factors,
+        ttm_flows=ttm,
+        cik=task.cik,
+        market_cap=market_cap_obj,
+        market_cap_missing=market_cap_missing,
+    )
+
+    computed = analyst._compute_all(ctx)
+    flat = {f"{g}.{r.name}": r.value for g, r in computed}
+    assessment = _fallback_assessment(flat)
+
+    db.stamp_ytd(computed, ttm)
+    db.record_metrics(conn, fid, computed, event_time=f["period_end"], run_id=None)
+    quality.gate_version(conn, db.METRICS_ENGINE_VERSION, filing_id=fid, run_id=None)
+    quality.record_ttm_crosscheck(
+        conn, fid, aid, ttm, engine_version=db.METRICS_ENGINE_VERSION, run_id=None
+    )
+    db.insert_snapshot(
+        conn,
+        SnapshotRow(
+            asset_id=aid,
+            filing_id=fid,
+            form=f["form"],
+            fiscal_period=target.fiscal_period,
+            score=assessment.score,
+            rating=assessment.rating,
+            narrative=assessment.narrative,
+            strengths=assessment.strengths,
+            risks=assessment.risks,
+            model="deterministic-fallback",
+            metrics=flat,
+            event_time=f["period_end"],
+            prompt_hash=analyst.prompt_hash,
+        ),
+    )
+
+
+def cmd_recompute(args: argparse.Namespace) -> None:
+    db_path = args.db
+    conn = connect(db_path)
+
+    # 1. Before writing: delete existing metrics-v6 rows and their quality issues
+    print(
+        "Deleting existing metrics-v6 rows from fundamental_metrics and data_quality_issue...",
+        flush=True,
+    )
+    conn.execute("DELETE FROM fundamental_metrics WHERE engine_version = 'metrics-v6'")
+    conn.execute("DELETE FROM data_quality_issue WHERE metric_engine_version = 'metrics-v6'")
+    conn.commit()
+
+    # 2. Pre-load assets, their CIK, and their REIT status (M4 predicate)
+    asset_rows = conn.execute("""
+        SELECT a.id, a.ticker, a.cik, a.company_name,
+               CASE WHEN s.name = 'Real Estate' AND a.sub_industry LIKE '%REITs' THEN 1 ELSE 0 END AS is_reit
+        FROM assets a
+        LEFT JOIN sectors s ON s.id = a.sector_id
+    """).fetchall()
+    assets = {
+        r["id"]: {
+            "ticker": r["ticker"],
+            "cik": r["cik"],
+            "company_name": r["company_name"] or r["ticker"],
+            "is_reit": bool(r["is_reit"]),
+        }
+        for r in asset_rows
+    }
+
+    # 3. Pre-load cover shares by filing_id
+    cover_rows = conn.execute("""
+        SELECT filing_id, value, as_of_date, class_member
+        FROM filing_cover_shares
+    """).fetchall()
+    cover_by_filing: dict[int, list[CoverShares]] = defaultdict(list)
+    for cr in cover_rows:
+        cover_by_filing[cr["filing_id"]].append(
+            CoverShares(cr["value"], cr["as_of_date"], cr["class_member"])
+        )
+
+    # 4. Fetch all filings in period-end order per company
+    query = """
+        SELECT f.id, f.asset_id, f.form, f.fiscal_year, f.fiscal_period, f.period_end, f.filing_date, f.accession_number
+        FROM sec_filings f
+        ORDER BY f.asset_id ASC, f.period_end ASC, f.id ASC
+    """
+    filing_rows = list(conn.execute(query).fetchall())
+    if args.limit:
+        filing_rows = filing_rows[: args.limit]
+
+    print(
+        f"Recomputing metrics for {len(filing_rows)} filings across {len(assets)} companies...",
+        flush=True,
+    )
+
+    analyst = FundamentalAnalyst(None, "rule-based")
+    t0 = time.time()
+    for idx, f in enumerate(filing_rows, start=1):
+        _recompute_single_filing(
+            conn, analyst, f, assets[f["asset_id"]], cover_by_filing.get(f["id"], [])
+        )
+        if idx % 500 == 0 or idx == len(filing_rows):
+            conn.commit()
+            dt = time.time() - t0
+            print(
+                f"[{idx}/{len(filing_rows)}] filings recomputed in {dt:.1f}s ({idx / dt:.1f} filings/s)...",
+                flush=True,
+            )
+
+    conn.commit()
+
+    n_filings = conn.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0]
+    n_metrics = conn.execute(
+        "SELECT COUNT(DISTINCT filing_id) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+    ).fetchone()[0]
+    metric_rows = conn.execute(
+        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+    ).fetchone()[0]
+    print("\nRecompute finished:")
+    print(f"  Filings in database:           {n_filings}")
+    print(f"  Filings with metrics-v6 rows:  {n_metrics}")
+    print(f"  Total metrics-v6 rows written: {metric_rows}")
+
+    if not args.limit:
+        assert n_filings == n_metrics, (
+            f"Expected {n_filings} filings to have metrics, found {n_metrics}"
+        )
+        print("Assertion passed: copy has metric rows for every filing!")
 
 
 if __name__ == "__main__":
