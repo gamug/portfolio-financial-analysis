@@ -376,6 +376,48 @@ _MINORITY_INTEREST: Final[str] = G + "MinorityInterest"
 _PROFIT_LOSS: Final[str] = G + "ProfitLoss"
 _NET_INCOME: Final[str] = G + "NetIncomeLoss"
 _NCI_INCOME: Final[str] = G + "NetIncomeLossAttributableToNoncontrollingInterest"
+# F3: CON-19's NCI operand is the NCI calculation tree of ``us-gaap-stm-soi-cal-2026.xml``
+# (fasb2026/us-gaap-2026/stm/, lines 1005-1017): ``NetIncomeLoss`` = ``ProfitLoss`` -
+# ``NetIncomeLossAttributableToNoncontrollingInterest`` (line 1005), the generic = its
+# ``...ToRedeemableNoncontrollingInterest`` (1006) + ``...ToNonredeemableNoncontrollingInterest``
+# (1012), and each of those = five
+# ``NoncontrollingInterestInNetIncomeLoss{...}{Redeemable,Nonredeemable}`` children (1007-1011,
+# 1013-1017).
+_NCI_REDEEMABLE: Final[str] = G + "NetIncomeLossAttributableToRedeemableNoncontrollingInterest"
+_NCI_NONREDEEMABLE: Final[str] = (
+    G + "NetIncomeLossAttributableToNonredeemableNoncontrollingInterest"
+)
+_NCI_PARTS: Final[tuple[str, ...]] = (
+    "JointVenturePartners",
+    "LimitedPartnerships",
+    "OperatingPartnerships",
+    "OtherNoncontrollingInterests",
+    "PreferredUnitHolders",
+)
+_NCI_REDEEMABLE_CHILDREN: Final[tuple[str, ...]] = tuple(
+    f"{G}NoncontrollingInterestInNetIncomeLoss{p}Redeemable" for p in _NCI_PARTS
+)
+_NCI_NONREDEEMABLE_CHILDREN: Final[tuple[str, ...]] = tuple(
+    f"{G}NoncontrollingInterestInNetIncomeLoss{p}Nonredeemable" for p in _NCI_PARTS
+)
+_NCI_DESCENDANTS: Final[dict[str, tuple[str, ...]]] = {
+    _NCI_INCOME: (
+        _NCI_REDEEMABLE,
+        _NCI_NONREDEEMABLE,
+        *_NCI_REDEEMABLE_CHILDREN,
+        *_NCI_NONREDEEMABLE_CHILDREN,
+    ),
+    _NCI_REDEEMABLE: _NCI_REDEEMABLE_CHILDREN,
+    _NCI_NONREDEEMABLE: _NCI_NONREDEEMABLE_CHILDREN,
+}
+# Top-down (a parent before its children), for the "a total stands for its breakdown" rule.
+_NCI_TREE: Final[tuple[str, ...]] = (
+    _NCI_INCOME,
+    _NCI_REDEEMABLE,
+    _NCI_NONREDEEMABLE,
+    *_NCI_REDEEMABLE_CHILDREN,
+    *_NCI_NONREDEEMABLE_CHILDREN,
+)
 _OCF: Final[str] = G + "NetCashProvidedByUsedInOperatingActivities"
 _OCF_CONT: Final[str] = G + "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
 _OCF_DISC: Final[str] = G + "CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations"
@@ -412,6 +454,8 @@ _CONCEPT_STATEMENT: Final[dict[str, str]] = {
     _FCF: "cash_flow",
 }
 _CONCEPT_STATEMENT.update(dict.fromkeys(_CHANGE_IN_CASH, "cash_flow"))
+# the NCI calculation tree (F3) is filed on the income-statement face.
+_CONCEPT_STATEMENT.update(dict.fromkeys(_NCI_TREE, "income_statement"))
 IDENTITY_CONCEPTS: Final[tuple[str, ...]] = tuple(_CONCEPT_STATEMENT)
 _BALANCE_CONCEPTS: Final[tuple[str, ...]] = tuple(
     c for c, s in _CONCEPT_STATEMENT.items() if s == "balance_sheet"
@@ -694,6 +738,51 @@ def con08_result(
     return identity_result("CON_08", (_OCF,), rhs, base, values, column, rounding=rounding, ytd=ytd)
 
 
+@dataclass(frozen=True)
+class NciOperand:
+    """CON-19's NCI operand (F3): the sum of the filed concepts of the NCI tree, ``concepts`` what
+    was summed, ``values`` their filed values, and ``signed`` whether every one carried a filed
+    sign. ``value`` is ``None`` when no tree concept is filed."""
+
+    value: float | None
+    concepts: tuple[str, ...]
+    values: tuple[float, ...]
+    signed: bool
+
+
+def con19_result(
+    values: Mapping[str, float | None], column: str | None, operand: NciOperand
+) -> IdentityResult | None:
+    """CON-19: ``ProfitLoss = NetIncomeLoss + NCI`` over *values*, with the NCI operand the F3
+    tree sum (*operand*). ``None`` when any operand is not filed."""
+    profit_loss = values.get(_PROFIT_LOSS)
+    net_income = values.get(_NET_INCOME)
+    if profit_loss is None or net_income is None or operand.value is None:
+        return None
+    terms = [profit_loss, net_income, *operand.values]
+    left = profit_loss
+    right = net_income + operand.value
+    diff = abs(left - right)
+    rounding = l10_rounding(terms)
+    threshold = max(rounding, MATERIALITY * abs(net_income))
+    return IdentityResult(
+        rule_id="CON_19",
+        level=dq01_level(diff, rounding, net_income),
+        left=left,
+        right=right,
+        diff=diff,
+        rounding=rounding,
+        threshold=threshold,
+        base=net_income,
+        n_terms=len(terms),
+        unit=l10_unit(terms),
+        warn_only=False,
+        column=column,
+        ytd=False,
+        concepts=(_PROFIT_LOSS, _NET_INCOME, *operand.concepts),
+    )
+
+
 def evaluate_identities(  # noqa: PLR0913 - the filing's balance/flow/ytd columns
     balance: Mapping[str, float | None],
     flow: Mapping[str, float | None],
@@ -702,11 +791,13 @@ def evaluate_identities(  # noqa: PLR0913 - the filing's balance/flow/ytd column
     flow_column: str | None = None,
     ytd: Mapping[str, float | None] | None = None,
     ytd_column: str | None = None,
+    nci_operand: NciOperand | None = None,
     skip_con19: bool = False,
 ) -> list[IdentityResult]:
     """Every CON identity over the filing's balance (instant) and flow columns. CON-07/CON-08 on
     a 10-Q are retried on the year-to-date column (C7) when the filing's own quarter column does
-    not hold their operands. *skip_con19* drops CON-19 (F2: its NCI operand has no filed sign)."""
+    not hold their operands. *nci_operand* is CON-19's F3 tree sum; without it CON-19 reads the
+    single generic concept. *skip_con19* drops CON-19 (F2: its NCI operand has no filed sign)."""
     out: list[IdentityResult] = []
     for rule, lhs, rhs, base, warn in _BALANCE_IDENTITIES:
         result = identity_result(rule, lhs, rhs, base, balance, instant_column, warn_only=warn)
@@ -714,7 +805,11 @@ def evaluate_identities(  # noqa: PLR0913 - the filing's balance/flow/ytd column
             out.append(result)
     if not skip_con19:
         for rule, lhs, rhs, base, warn in _INCOME_IDENTITIES:
-            result = identity_result(rule, lhs, rhs, base, flow, flow_column, warn_only=warn)
+            result = (
+                con19_result(flow, flow_column, nci_operand)
+                if nci_operand is not None and rule == "CON_19"
+                else identity_result(rule, lhs, rhs, base, flow, flow_column, warn_only=warn)
+            )
             if result is not None:
                 out.append(result)
     for spec in (con07_result, con08_result):
@@ -895,14 +990,47 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
     return out
 
 
+def nci_operand(facts: FilingFacts) -> NciOperand:
+    """CON-19's NCI operand (F3) from the filing's income-statement flow column: the sum of the
+    filed NCI-tree concepts, dropping the descendants of a filed concept whose filed descendants
+    sum to it within L-10's rounding (a total shown with its breakdown)."""
+    column = facts.flow_column
+    if column is None:
+        return NciOperand(None, (), (), True)
+    filed: dict[str, float] = {}
+    for concept in _NCI_TREE:
+        value = facts.value(concept, column)
+        if value is not None:
+            filed[concept] = value
+    if not filed:
+        return NciOperand(None, (), (), True)
+    survivors = set(filed)
+    for node in _NCI_TREE:
+        if node not in filed:
+            continue
+        descendants = [c for c in _NCI_DESCENDANTS.get(node, ()) if c in filed]
+        if not descendants:
+            continue
+        descendant_values = [filed[c] for c in descendants]
+        if abs(filed[node] - sum(descendant_values)) <= l10_rounding(
+            [filed[node], *descendant_values]
+        ):
+            survivors -= set(descendants)
+    ordered = tuple(c for c in _NCI_TREE if c in survivors)
+    return NciOperand(
+        value=sum(filed[c] for c in ordered),
+        concepts=ordered,
+        values=tuple(filed[c] for c in ordered),
+        signed=all(facts.has_sign(c, column) for c in ordered),
+    )
+
+
 def con19_sign_missing(facts: FilingFacts) -> bool:
     """F2: whether CON-19's NCI operand is filed but carries **no filed sign** (a database without
     the ``preferred_sign`` column, or that row's ``preferred_sign`` is NULL). CON-19 is then not
     tested -- missing data, not a value -- and counted under its own label."""
-    column = facts.flow_column
-    if column is None or facts.value(_NCI_INCOME, column) is None:
-        return False
-    return not facts.has_sign(_NCI_INCOME, column)
+    operand = nci_operand(facts)
+    return operand.value is not None and not operand.signed
 
 
 def identity_issues(
@@ -926,6 +1054,7 @@ def identity_issues(
             flow_column=facts.flow_column,
             ytd=ytd,
             ytd_column=facts.ytd_column,
+            nci_operand=nci_operand(facts),
             skip_con19=con19_sign_missing(facts),
         ),
         metrics,

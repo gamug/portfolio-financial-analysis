@@ -203,6 +203,7 @@ def _evaluate(conn: Any, filing_ids: set[int]) -> dict[int, list[Any]]:
                 flow_column=ff.flow_column,
                 ytd=ytd,
                 ytd_column=ff.ytd_column,
+                nci_operand=quality.nci_operand(ff),
                 skip_con19=quality.con19_sign_missing(ff),
             )
         )
@@ -646,20 +647,83 @@ def _con19_counts(conn: Any) -> dict[str, int]:
         if quality.con19_sign_missing(ff):
             out["not_tested_sign_not_stored"] += 1
             continue
-        result = quality.identity_result(
-            "CON_19",
-            (quality._PROFIT_LOSS,),
-            (quality._NET_INCOME, quality._NCI_INCOME),
-            quality._NET_INCOME,
-            flow,
-            ff.flow_column,
-        )
+        result = quality.con19_result(flow, ff.flow_column, quality.nci_operand(ff))
         if result is None:
             out["not_tested_operand_not_filed"] += 1
         else:
             out["tested"] += 1
             out[result.level] += 1
     return out
+
+
+def _old_con19_level(ff: quality.FilingFacts) -> str | None:
+    """CON-19 as it stood before F3: the single generic NCI concept, no filed sign -> not tested."""
+    column = ff.flow_column
+    if column is None:
+        return None
+    if ff.value(quality._NCI_INCOME, column) is not None and not ff.has_sign(
+        quality._NCI_INCOME, column
+    ):
+        return None
+    flow = {c: ff.value(c, column) for c in quality._FLOW_CONCEPTS}
+    result = quality.identity_result(
+        "CON_19",
+        (quality._PROFIT_LOSS,),
+        (quality._NET_INCOME, quality._NCI_INCOME),
+        quality._NET_INCOME,
+        flow,
+        column,
+    )
+    return result.level if result is not None else None
+
+
+def _new_con19(ff: quality.FilingFacts) -> quality.IdentityResult | None:
+    """CON-19 under F2 + F3 (the tree operand, no filed sign -> not tested)."""
+    if quality.con19_sign_missing(ff):
+        return None
+    flow = {c: ff.value(c, ff.flow_column) for c in quality._FLOW_CONCEPTS}
+    return quality.con19_result(flow, ff.flow_column, quality.nci_operand(ff))
+
+
+def cmd_con19fasb(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    meta = _filing_meta(conn)
+    facts = quality.load_facts(conn, set(meta))
+    old_blocks = new_blocks = 0
+    changes: list[tuple[str, str, str, str]] = []
+    regressions: list[str] = []
+    for fid, ff in facts.items():
+        old = _old_con19_level(ff)
+        new_result = _new_con19(ff)
+        new = new_result.level if new_result is not None else None
+        old_blocks += 1 if old == "block" else 0
+        new_blocks += 1 if new == "block" else 0
+        if old == new:
+            continue
+        concepts = ",".join(new_result.concepts) if new_result is not None else "-"
+        ticker, fiscal_period = meta.get(fid, ("?", "?"))
+        changes.append((fid, ticker, fiscal_period, f"{old} -> {new} [{concepts}]"))
+        if old == "pass" and new in ("warn", "block"):
+            regressions.append(f"{ticker} {fiscal_period} {old} -> {new}")
+    lines = [
+        f"T-150 F3 CON-19 per the FASB NCI tree, db={args.db}",
+        "",
+        f"CON-19 blocks: before (single generic NCI) {old_blocks}, after (tree) {new_blocks}",
+        f"changed filings: {len(changes)}",
+        "",
+        f"regressions pass -> warn/block: {len(regressions)}",
+        *[f"  {r}" for r in regressions[:20]],
+        "",
+        "every changed filing (id, ticker, period, old -> new [concepts summed]):",
+    ]
+    for fid, ticker, fiscal_period, change in sorted(changes, key=lambda c: (c[1], c[2])):
+        lines.append(f"  {ticker} {fiscal_period} filing {fid}: {change}")
+    text = "\n".join(lines)
+    Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
+    print("\n".join(lines[:12]))
+    hard_stop = bool(regressions) or new_blocks > old_blocks
+    print(f"\nhard stop (regression or block count rose): {hard_stop}")
+    return 1 if hard_stop else 0
 
 
 def cmd_con19(args: argparse.Namespace) -> int:
@@ -714,6 +778,12 @@ def main(argv: list[str] | None = None) -> int:
     con19.add_argument("--other", help="a second database to report beside --db")
     con19.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con19_sign.txt")
     con19.set_defaults(func=cmd_con19)
+    con19fasb = sub.add_parser("con19fasb", help="CON-19 per the FASB NCI tree (F3)")
+    con19fasb.add_argument("--db", required=True)
+    con19fasb.add_argument(
+        "--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con19_fasb.txt"
+    )
+    con19fasb.set_defaults(func=cmd_con19fasb)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

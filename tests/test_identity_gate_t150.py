@@ -473,6 +473,54 @@ def test_con19_is_not_tested_when_the_filed_sign_is_not_stored(
     assert "CON_19" not in _results(no_sign)
 
 
+def _nci_facts(values: dict[str, float]) -> quality.FilingFacts:
+    column = "2024-12-31 (FY)"
+    by_key = {("income_statement", c): {column: v} for c, v in values.items()}
+    signed = frozenset(("income_statement", c, column) for c in values)
+    return quality.FilingFacts(
+        form="10-K",
+        period_end="2024-12-31",
+        by_key=by_key,
+        instant_column=None,
+        flow_column=column,
+        ytd_column=None,
+        signed=signed,
+    )
+
+
+def test_con19_nci_udr_shape_sums_the_generic_and_a_child() -> None:
+    """F3 (UDR): the generic NCI and the redeemable child do not sum (they add), so both stand."""
+    operand = quality.nci_operand(
+        _nci_facts({quality._NCI_INCOME: 104_000.0, quality._NCI_REDEEMABLE: 10_873_000.0})
+    )
+    assert operand.concepts == (quality._NCI_INCOME, quality._NCI_REDEEMABLE)
+    assert operand.value == 10_977_000.0
+
+
+def test_con19_nci_total_stands_for_its_breakdown() -> None:
+    """F3: a filed total whose filed descendants sum to it stands for them (descendants dropped)."""
+    operand = quality.nci_operand(
+        _nci_facts(
+            {
+                quality._NCI_INCOME: 10_977_000.0,
+                quality._NCI_REDEEMABLE: 10_873_000.0,
+                quality._NCI_NONREDEEMABLE: 104_000.0,
+            }
+        )
+    )
+    assert operand.concepts == (quality._NCI_INCOME,)
+    assert operand.value == 10_977_000.0
+
+
+def test_con19_nci_children_only_is_tested() -> None:
+    """F3: with no generic filed, the two children's sum is the NCI operand."""
+    operand = quality.nci_operand(
+        _nci_facts({quality._NCI_REDEEMABLE: 10_873_000.0, quality._NCI_NONREDEEMABLE: 104_000.0})
+    )
+    assert operand.concepts == (quality._NCI_REDEEMABLE, quality._NCI_NONREDEEMABLE)
+    assert operand.value == 10_977_000.0
+
+
 def test_a_warn_rule_at_the_material_level_quarantines_nothing(memory_db: Database) -> None:
     _asset(memory_db)
     fid = seed_filing(memory_db, 1, period_end="2024-12-31", filing_date="2025-02-01")
