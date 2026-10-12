@@ -540,11 +540,57 @@ def cmd_untested(args: argparse.Namespace) -> int:
             (ids_after,),
         ).fetchone()[0]
     )
+    concept = "us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+    lost_filings = lost_rows = duration_rows = instant_rows = 0
+    example: tuple[str, str, str, float] | None = None
+    for accession in shared:
+        before_keys = {
+            str(r[0])
+            for r in before_conn.execute(
+                "SELECT period_key FROM financial_facts "
+                "WHERE filing_id=? AND statement='cash_flow' AND concept=?",
+                (before_map[accession], concept),
+            )
+        }
+        after_keys = {
+            str(r[0])
+            for r in conn.execute(
+                "SELECT period_key FROM financial_facts "
+                "WHERE filing_id=? AND statement='cash_flow' AND concept=?",
+                (after_map[accession], concept),
+            )
+        }
+        lost = before_keys - after_keys
+        if not lost:
+            continue
+        lost_filings += 1
+        lost_rows += len(lost)
+        ticker = _tickers(before_conn).get(before_map[accession], "?")
+        for key in sorted(lost):
+            if "(" in key:
+                duration_rows += 1
+            else:
+                instant_rows += 1
+            if example is None:
+                value = before_conn.execute(
+                    "SELECT value FROM financial_facts WHERE filing_id=? AND statement='cash_flow' "
+                    "AND concept=? AND period_key=? ORDER BY id LIMIT 1",
+                    (before_map[accession], concept, key),
+                ).fetchone()
+                example = (ticker, accession, key, float(value[0]) if value else float("nan"))
+
     lines = [
         f"T-150 F4 untested transitions and the fact drop, before {args.before} -> {args.db}",
         "",
         f"shared accessions: {len(shared)}; total changes: {len(changes)}; -> untested: {len(untested)}",
         f"stored facts: before {before_facts}, after {after_facts} (drop {before_facts - after_facts})",
+        "",
+        f"lost cash_flow {concept}: {lost_filings} filings, {lost_rows} rows "
+        f"({duration_rows} on a duration column like (FY)/(Qn)/(YTD), {instant_rows} on an instant)",
+    ]
+    if example is not None:
+        lines.append(f"  example {example[0]} {example[1]} {example[2]} = {example[3]:,.1f}")
+    lines += [
         "",
         "-> untested grouped by (cause, old level):",
     ]

@@ -6503,11 +6503,19 @@ tested 0, filed-sign-not-stored 2,396). CON-06's rows are new (the rule is new).
 database stores fewer facts: **1,197,381 → 1,156,132 (a drop of 41,249)**; every shared filing
 loses rows (5,033/5,033, 0 gained). KKR 10-K FY2021: 372 → 223 facts (149 lost, 0 gained), the
 same 5 columns; `us-gaap_Assets` 528,570,880k and `us-gaap_Liabilities` 412,292,440k (the gateway's
-synthesized double count) are gone. The dominant lost rows are cash-flow rows the newer payload no
-longer carries (`CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents` 11,337 filings,
-`CashAndCashEquivalentsAtCarryingValue` 2,016, …). `statements.iter_facts` was only *extended* (the
-`preferred_sign` key); it drops no row. **Cause not verified** for the specific gateway change (the
-payload cache holds only 2026 accessions, so no pre/post payload exists to diff).
+synthesized double count) are gone. The dominant lost concept is the cash-flow balance
+`us-gaap_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`: **4,547 filings, 11,337
+rows**, and **all 11,337 of those rows sit on a duration column key** (`(FY)`/`(Qn)`/`(YTD)`),
+**0 on an instant** (`out/r1_factdrop.txt`, the committed `verify_t150.py untested`). Other lost
+rows: `CashAndCashEquivalentsAtCarryingValue` on the cash flow 2,016 rows, … `statements.iter_facts`
+was only *extended* (the `preferred_sign` key); it drops no row. **Cause not verified** for the
+specific gateway change (the payload cache holds only 2026 accessions, so no pre/post payload
+exists to diff). **Observation (not a verified cause):** in production every such row sits on a
+duration column, carrying a period change rather than a balance — e.g. LH 10-K FY2023
+`0000920148-24-000014`, cash flow `…CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`
+`2021-12-31 (FY)` = 1,381,400,000 (present before, absent after; the row on `2022-12-31 (FY)` for
+the period-change concept `…PeriodIncreaseDecreaseIncludingExchangeRateEffect` = −1,042,700,000 is
+present in both). The re-ingested payload no longer carries these balance-on-a-duration rows.
 
 **Production caveat (F2).** CON-19 is not tested on a database without `preferred_sign`: on
 prod_copy it is 0 tested / 2,396 filed-sign-not-stored; on the T-148-era database 3,665 tested
