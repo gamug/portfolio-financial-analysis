@@ -888,7 +888,7 @@ def test_select_refuses_when_the_gate_only_has_an_older_version_s_rows(
     _dq_issue(conn, fid, 1, "dq-v1")
     before = conn.execute("SELECT COUNT(*) FROM cycle_run").fetchone()[0]
 
-    with pytest.raises(StaleGateVersion, match=r"dq-v1.*dq-v2"):
+    with pytest.raises(StaleGateVersion, match=rf"dq-v1.*{DATA_QUALITY_GATE_VERSION}"):
         run_selection(_settings(conn), "2026-06-30", conn=conn)
 
     # refused before any cycle_run row is written, like the other prechecks
@@ -1458,7 +1458,8 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
             "profitability": "metrics-v1",
             "valuation": "metrics-v1",
         },
-        "quality": "dq-v2",  # the Ring-1 gate version it read quarantines under (T-065/T-116)
+        # the Ring-1 gate version it read quarantines under (T-065/T-116; current = T-150's bump)
+        "quality": DATA_QUALITY_GATE_VERSION,
     }
 
 

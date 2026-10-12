@@ -432,6 +432,75 @@ def test_the_identity_is_kept_and_a_gap_to_four_quarters_goes_to_review(
     assert (evidence["identity"], evidence["four_quarters"]) == (identity, quarters)
 
 
+def _pending_filing(conn: Database) -> int:
+    return db.upsert_filing(
+        conn,
+        FilingKey(1, "10-Q", 2025, "2025Q3"),
+        FilingMeta(filing_date=filed_after("2025-09-30"), period_end="2025-09-30"),
+    )
+
+
+def test_the_cross_check_tolerance_is_now_dq01(memory_db: Database) -> None:
+    """T-150: a 1% gap on net income passed T-105's 1% relative rule but is material under DQ-01
+    (> 0.5% of the base): the row is kept SOFT, and nothing is quarantined (no stored metric)."""
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    flows = {"net_income": TTMFlow(1_000.0, "ytd", alt=1_010.0)}
+    assert (
+        quality.record_ttm_crosscheck(
+            memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+        )
+        == 1
+    )
+    row = memory_db.execute(
+        "SELECT metric_group, metric_name, severity, quarantined, evidence_json "
+        "FROM data_quality_issue"
+    ).fetchone()
+    evidence = json.loads(row["evidence_json"])
+    assert evidence["level"] == "block"  # 10 > max(1.0, 0.5% x 1000)
+    assert (row["metric_group"], row["metric_name"], row["severity"], row["quarantined"]) == (
+        "ttm",
+        "net_income",
+        "SOFT",
+        0,
+    )
+
+
+def test_a_cash_flow_gap_with_no_base_stays_a_warn(memory_db: Database) -> None:
+    """A cash-flow item has no TTM change in cash to use as base, so a not-pass is a WARN."""
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    flows = {"operating_cash_flow": TTMFlow(1_000.0, "ytd", alt=1_100.0)}
+    quality.record_ttm_crosscheck(
+        memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+    )
+    evidence = json.loads(
+        memory_db.execute("SELECT evidence_json FROM data_quality_issue").fetchone()[0]
+    )
+    assert evidence["level"] == "warn" and evidence["base_missing"] is True
+
+
+def test_a_block_quarantines_the_failed_items_ttm_metrics(memory_db: Database) -> None:
+    _asset(memory_db)
+    fid = _pending_filing(memory_db)
+    db.record_metrics(
+        memory_db,
+        fid,
+        [("profitability", MetricResult("return_on_assets", 0.05, "ratio", {}))],
+    )
+    flows = {"net_income": TTMFlow(1_000.0, "ytd", alt=1_020.0)}
+    quality.record_ttm_crosscheck(
+        memory_db, fid, 1, flows, engine_version=db.METRICS_ENGINE_VERSION
+    )
+    rows = {
+        (r["metric_group"], r["metric_name"], r["quarantined"])
+        for r in memory_db.execute(
+            "SELECT metric_group, metric_name, quarantined FROM data_quality_issue"
+        )
+    }
+    assert rows == {("ttm", "net_income", 0), ("profitability", "return_on_assets", 1)}
+
+
 def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) -> None:
     _asset(memory_db)
     flows = {
