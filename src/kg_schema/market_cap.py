@@ -337,10 +337,7 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     if not wanted:
         return result
     listing_tickers = [ticker for classes in CLASS_LISTING.values() for ticker in classes.values()]
-    try:
-        ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_tickers)
-    except Exception:
-        ticker_to_asset = {}
+    ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_tickers)
     all_needed_assets = sorted(set(wanted) | set(ticker_to_asset.values()))
 
     counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))
