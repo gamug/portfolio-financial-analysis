@@ -249,61 +249,85 @@ def _counts(
     return counts
 
 
+def _shared_filing_ids(conn: Any, before_conn: Any) -> tuple[set[int], set[int], dict[int, str]]:
+    """``(after ids, before ids, after_id -> accession)`` for the accessions present in both."""
+    after_map = _accession_ids(conn)
+    before_map = _accession_ids(before_conn)
+    shared = set(after_map) & set(before_map)
+    return (
+        {after_map[a] for a in shared},
+        {before_map[a] for a in shared},
+        {after_map[a]: a for a in shared},
+    )
+
+
+def _level_changes(
+    after_results: dict[int, list[quality.IdentityResult]],
+    before_results: dict[int, list[quality.IdentityResult]],
+    after_by_acc: dict[int, str],
+    tickers: dict[int, str],
+) -> list[dict[str, Any]]:
+    before_levels = {
+        fid: {r.rule_id: r.level for r in rows} for fid, rows in before_results.items()
+    }
+    changes = []
+    for fid, rows in after_results.items():
+        old_levels = before_levels.get(fid, {})
+        for result in rows:
+            old = old_levels.get(result.rule_id)
+            if old is not None and old != result.level:
+                changes.append(
+                    {
+                        "accession": after_by_acc.get(fid),
+                        "ticker": tickers.get(fid, "?"),
+                        "rule": result.rule_id,
+                        "old": old,
+                        "new": result.level,
+                        "column": result.column,
+                    }
+                )
+    return changes
+
+
 def cmd_measure(args: argparse.Namespace) -> int:
     conn = open_ro(args.db)
-    after_ids = set(_accession_ids(conn)) if args.before else None
-    if args.before:
-        before_conn = open_ro(args.before)
-        before_ids = set(_accession_ids(before_conn))
-        shared = after_ids & before_ids
-        after_map = _accession_ids(conn)
-        before_map = _accession_ids(before_conn)
-        ids_after = {after_map[a] for a in shared}
-        ids_before = {before_map[a] for a in shared}
+    before_conn = open_ro(args.before) if args.before else None
+    if before_conn is not None:
+        ids_after, ids_before, after_by_acc = _shared_filing_ids(conn, before_conn)
     else:
         ids_after = {int(r[0]) for r in conn.execute("SELECT id FROM sec_filings")}
-        ids_before = None
-    counts = _counts(_evaluate(conn, ids_after), _tickers(conn))
+        ids_before, after_by_acc = set(), {}
+    after_results = _evaluate(conn, ids_after)
+    counts = _counts(after_results, _tickers(conn))
 
     changes: list[dict[str, Any]] = []
-    if args.before:
+    before_counts: dict[str, dict[str, Any]] | None = None
+    if before_conn is not None:
         before_results = _evaluate(before_conn, ids_before)
-        after_by_acc = {after_map[a]: a for a in shared}
-        before_levels = {
-            fid: {r.rule_id: r.level for r in rows} for fid, rows in before_results.items()
-        }
-        for fid, rows in _evaluate(conn, ids_after).items():
-            acc = after_by_acc.get(fid)
-            bfid = before_map.get(acc)
-            for result in rows:
-                old = before_levels.get(bfid, {}).get(result.rule_id)
-                if old is not None and old != result.level:
-                    changes.append(
-                        {
-                            "accession": acc,
-                            "ticker": _tickers(conn).get(fid, "?"),
-                            "rule": result.rule_id,
-                            "old": old,
-                            "new": result.level,
-                            "column": result.column,
-                        }
-                    )
+        before_counts = _counts(before_results, _tickers(before_conn))
+        changes = _level_changes(after_results, before_results, after_by_acc, _tickers(conn))
 
-    lines = [
-        f"T-150 Phase 3.1/3.2: gate counts (real parameters C1-C9), db={args.db}",
-    ]
-    if args.before:
-        lines.append(f"restricted to filings present in both (same accession): {len(shared)}")
-    lines += [
-        "",
-        f"{'rule':7} {'tested':>7} {'pass':>7} {'warn':>7} {'block':>6} {'ytd':>5} {'basemiss':>9} companies",
-    ]
-    for rule in quality.CON_RULE_IDS:
-        c = counts[rule]
-        lines.append(
-            f"{rule:7} {c['tested']:>7} {c['pass']:>7} {c['warn']:>7} {c['block']:>6} "
-            f"{c['ytd']:>5} {c['base_missing_caps']:>9} {', '.join(c['companies'])}"
-        )
+    header = (
+        f"{'rule':7} {'tested':>7} {'pass':>7} {'warn':>7} {'block':>6} {'ytd':>5} "
+        f"{'basemiss':>9} companies"
+    )
+
+    def _rows(source: dict[str, dict[str, Any]]) -> list[str]:
+        out = []
+        for rule in quality.CON_RULE_IDS:
+            c = source[rule]
+            out.append(
+                f"{rule:7} {c['tested']:>7} {c['pass']:>7} {c['warn']:>7} {c['block']:>6} "
+                f"{c['ytd']:>5} {c['base_missing_caps']:>9} {', '.join(c['companies'])}"
+            )
+        return out
+
+    lines = [f"T-150 Phase 3.1/3.2: gate counts (real parameters C1-C9), db={args.db}"]
+    if before_conn is not None:
+        lines.append(f"restricted to filings present in both (same accession): {len(ids_after)}")
+    lines += ["", f"AFTER ({args.db})", header, *_rows(counts)]
+    if before_counts is not None:
+        lines += ["", f"BEFORE ({args.before})", header, *_rows(before_counts)]
     text = "\n".join(lines)
     if args.before:
         lines += ["", f"level changes (before {args.before} -> after {args.db}): {len(changes)}"]
@@ -315,7 +339,13 @@ def cmd_measure(args: argparse.Namespace) -> int:
     Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
     Path(args.out_json).write_text(
         json.dumps(
-            {"db": args.db, "before": args.before, "counts": counts, "changes": changes},
+            {
+                "db": args.db,
+                "before": args.before,
+                "counts": counts,
+                "counts_before": before_counts,
+                "changes": changes,
+            },
             indent=1,
         ),
         encoding="utf-8",
