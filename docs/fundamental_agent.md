@@ -31,9 +31,9 @@ is a deprecated no-op (membership is synced from `universe.db` every run).
 ### Run log units (`analysis_run` / `v_analysis_run`)
 
 The progress counters in `analysis_run` (and `v_analysis_run`) track work across different units:
-- `planned_units`: one per `(ticker, form, year)` task (`pipeline.py:164`).
-- `completed_units` and `skipped_units`: one per filing (`pipeline.py:336-346`; a 10-Q year task has several filings).
-- `failed_units`: one per failed `(ticker, form, year)` task or per failed filing (`pipeline.py:349-361`).
+- `planned_units`: one per `(ticker, form, year)` task (`run()` / `db.update_run_plan`).
+- `completed_units` and `skipped_units`: one per filing (`_count()`; a 10-Q year task has several filings).
+- `failed_units`: one per failed `(ticker, form, year)` task or per failed filing (`_record_failure()`).
 
 Because `planned_units` and the other three use different units, `completed_units + skipped_units + failed_units` need not equal `planned_units`.
 

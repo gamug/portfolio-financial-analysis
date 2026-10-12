@@ -1563,10 +1563,14 @@ def test_the_cycle_flag_exists_and_the_cli_exits_1_on_a_refusal(
     assert "metrics-v9" in capsys.readouterr().err
 
 
-def test_interrupted_step_rolls_back_and_marks_failed_on_interrupt(
-    cycle_seed: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("exc_type", [KeyboardInterrupt, RuntimeError])
+def test_step_failure_rolls_back_and_marks_failed(
+    cycle_seed: Database,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exc_type: type[BaseException],
 ) -> None:
-    db_path = tmp_path / "cycle_test.db"
+    db_path = tmp_path / f"cycle_test_{exc_type.__name__}.db"
     file_raw = sqlite3.connect(db_path)
     cycle_seed.raw.backup(file_raw)
     file_raw.close()
@@ -1593,77 +1597,58 @@ def test_interrupted_step_rolls_back_and_marks_failed_on_interrupt(
                 "computed_at, model, run_kind) VALUES (1, 'TECHNICAL', 99.0, '2026-06-30', "
                 "'2026-06-30', 'uncommitted_marker', 'test')"
             )
-            raise KeyboardInterrupt("simulated interrupt")
+            raise exc_type("simulated exception")
         return orig_write_scores(
             c, score_type, cycle_date, raw, normalized, components, run_id=run_id, model=model
         )
 
     monkeypatch.setattr(cycle_orchestrator.writers, "write_scores", _broken_write_scores)
+
+    with pytest.raises(exc_type):
+        run_selection(settings, "2026-06-30", conn=conn)
+
+    fresh = kg_schema.db.connect(db_path)
+    try:
+        uncommitted = fresh.execute(
+            "SELECT COUNT(*) FROM score_snapshot WHERE model = 'uncommitted_marker'"
+        ).fetchone()[0]
+        assert uncommitted == 0
+
+        chk = fresh.execute(
+            "SELECT status FROM cycle_checkpoint WHERE step = 'technical'"
+        ).fetchone()
+        assert chk is not None and chk["status"] == "failed"
+
+        run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
+        assert run_row is not None and run_row["status"] == "failed"
+    finally:
+        conn.close()
+        fresh.close()
+
+
+def test_interrupted_data_read_marks_cycle_failed(
+    cycle_seed: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path = tmp_path / "cycle_test_read.db"
+    file_raw = sqlite3.connect(db_path)
+    cycle_seed.raw.backup(file_raw)
+    file_raw.close()
+
+    conn = kg_schema.db.connect(db_path)
+    settings = CycleSettings(db_path=db_path, top_n=3)
+
+    def _broken_latest_metrics(*args: object, **kwargs: object) -> object:
+        raise KeyboardInterrupt("simulated interrupt during latest_metrics")
+
+    monkeypatch.setattr(cycle_orchestrator.data, "latest_metrics", _broken_latest_metrics)
 
     with pytest.raises(KeyboardInterrupt):
         run_selection(settings, "2026-06-30", conn=conn)
 
     fresh = kg_schema.db.connect(db_path)
-    uncommitted = fresh.execute(
-        "SELECT COUNT(*) FROM score_snapshot WHERE model = 'uncommitted_marker'"
-    ).fetchone()[0]
-    assert uncommitted == 0
-
-    chk = fresh.execute("SELECT status FROM cycle_checkpoint WHERE step = 'technical'").fetchone()
-    assert chk is not None and chk["status"] == "failed"
-
-    run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
-    assert run_row is not None and run_row["status"] == "failed"
-
-
-def test_failed_step_rolls_back_and_marks_failed_on_runtime_error(
-    cycle_seed: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    db_path = tmp_path / "cycle_test_err.db"
-    file_raw = sqlite3.connect(db_path)
-    cycle_seed.raw.backup(file_raw)
-    file_raw.close()
-
-    conn = kg_schema.db.connect(db_path)
-    settings = CycleSettings(db_path=db_path, top_n=3)
-
-    orig_write_scores = cycle_orchestrator.writers.write_scores
-
-    def _broken_write_scores(  # noqa: PLR0913, PLR0917 - matches write_scores signature
-        c: Database,
-        score_type: str,
-        cycle_date: str,
-        raw: dict[int, float],
-        normalized: dict[int, float],
-        components: dict[int, dict[str, float | None]],
-        *,
-        run_id: int,
-        model: str = "deterministic",
-    ) -> int:
-        if score_type == "TECHNICAL":
-            c.execute(
-                "INSERT INTO score_snapshot (asset_id, score_type, raw_value, event_time, "
-                "computed_at, model, run_kind) VALUES (1, 'TECHNICAL', 99.0, '2026-06-30', "
-                "'2026-06-30', 'uncommitted_marker', 'test')"
-            )
-            raise RuntimeError("simulated error")
-        return orig_write_scores(
-            c, score_type, cycle_date, raw, normalized, components, run_id=run_id, model=model
-        )
-
-    monkeypatch.setattr(cycle_orchestrator.writers, "write_scores", _broken_write_scores)
-
-    with pytest.raises(RuntimeError, match="simulated error"):
-        run_selection(settings, "2026-06-30", conn=conn)
-
-    fresh = kg_schema.db.connect(db_path)
-    uncommitted = fresh.execute(
-        "SELECT COUNT(*) FROM score_snapshot WHERE model = 'uncommitted_marker'"
-    ).fetchone()[0]
-    assert uncommitted == 0
-
-    chk = fresh.execute("SELECT status FROM cycle_checkpoint WHERE step = 'technical'").fetchone()
-    assert chk is not None and chk["status"] == "failed"
-
-    run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
-    assert run_row is not None and run_row["status"] == "failed"
+    try:
+        run_row = fresh.execute("SELECT status FROM cycle_run").fetchone()
+        assert run_row is not None and run_row["status"] == "failed"
+    finally:
+        conn.close()
+        fresh.close()

@@ -179,6 +179,14 @@ def test_cycle_ranking_returns_only_most_recent_completed_run(
             "RETURNING id"
         ).fetchone()["id"]
     )
+    # Failed MONITORING run with ranking row (verifies failed run is ignored when no completed run exists)
+    r4 = int(
+        conn.execute(
+            "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version) "
+            "VALUES ('MONITORING', '2024-09-01', '2024-09-01T00:00:00Z', '2024-09-01T00:05:00Z', 'failed', '{}', 'abc') "
+            "RETURNING id"
+        ).fetchone()["id"]
+    )
 
     conn.execute(
         "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
@@ -195,6 +203,11 @@ def test_cycle_ranking_returns_only_most_recent_completed_run(
         "VALUES (?, ?, 1, 95.0, '{}', 0, '[]', 1)",
         (r3, aid),
     )
+    conn.execute(
+        "INSERT INTO cycle_ranking (cycle_run_id, asset_id, rank, blended_score, components_json, vetoed, veto_rules_json, selected) "
+        "VALUES (?, ?, 1, 70.0, '{}', 0, '[]', 1)",
+        (r4, aid),
+    )
     conn.commit()
     conn.close()
 
@@ -205,6 +218,6 @@ def test_cycle_ranking_returns_only_most_recent_completed_run(
         assert res[0]["status"] == "completed"
         assert res[0]["blended_score"] == 80.0
 
-        # No completed run for MONITORING
+        # Failed run exists for MONITORING, but no completed run exists -> returns []
         res_mon = c.get("/api/v1/portfolio/ranking", params={"cycle_type": "MONITORING"}).json()
         assert res_mon == []
