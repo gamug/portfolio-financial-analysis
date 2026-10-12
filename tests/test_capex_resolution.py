@@ -97,7 +97,8 @@ def test_eog_capex_sums_oil_and_gas_and_other_ppe() -> None:
 
 def test_kkr_capex_takes_furniture_beside_zero_oil_and_gas_line() -> None:
     """KKR FY2021: zero PaymentsToExploreAndDevelopOilAndGasProperties beside
-    PaymentsToAcquireFurnitureAndFixtures 100M -> resolves furniture line with ppe_family_line."""
+    PaymentsToAcquireFurnitureAndFixtures 100M -> both read and summed to 100M,
+    flagged ppe_family_plus_og_added."""
     stmts = _cashflow(
         _row("us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties", "Oil and gas", 0.0),
         _row(
@@ -108,8 +109,39 @@ def test_kkr_capex_takes_furniture_beside_zero_oil_and_gas_line() -> None:
     )
     res = stmts.resolve("capital_expenditure", FY)
     assert res.value == 100_000_000.0
-    assert res.concept == "us-gaap_PaymentsToAcquireFurnitureAndFixtures"
-    assert "ppe_family_line" in res.flags
+    assert (
+        res.concept
+        == "us-gaap_PaymentsToAcquireFurnitureAndFixtures + us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties"
+    )
+    assert "ppe_family_plus_og_added" in res.flags
+
+
+def test_capex_filed_zero_resolves_as_zero() -> None:
+    """MET-00 / R5: a filed 0 is a value, not a missing one.
+    PaymentsToAcquireOilAndGasPropertyAndEquipment filed as 0.0 resolves to 0.0."""
+    stmts = _cashflow(
+        _row(
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "Oil and gas property and equipment",
+            0.0,
+        ),
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 0.0
+    assert res.concept == "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment"
+    assert "includes_acquisitions_contrary_to_a" in res.flags
+
+
+def test_reit_capex_filed_zero_resolves_as_zero() -> None:
+    """MET-00 / R5: REIT filing 0.0 for development resolves to 0.0."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToDevelopRealEstateAssets", "Development", 0.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 0.0
+    assert res.concept == "us-gaap_PaymentsToDevelopRealEstateAssets"
+    assert "reit_components" in res.flags
 
 
 def test_mineral_interests_alone_is_not_capex() -> None:
