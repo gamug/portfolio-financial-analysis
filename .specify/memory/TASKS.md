@@ -495,6 +495,10 @@ the final pilot, `T-143`.
       resolver chose). CON-06 (the TTM cross-check, 1% relative, SOFT today) aligns to DQ-01. **Acceptance:** the gates
       reproduce these counts on the same data before `T-148` and show the change after it; hermetic tests on fixtures of
       a failing and a passing identity per rule, and on the tolerance boundary.
+      **Status (2026-10-12): PR #141, box open until merge.** Delivered on `feat/t150-accounting-identities`:
+      the `CON_*` gate in `quality.py` (`dq-v3`), `scripts/verify_t150.py` (`reproduce` reproduces T-147's
+      filing sets exactly; `measure` reports the before/after counts), hermetic tests, and the
+      `docs/model_fixes.md` / `SPEC.md` (1.8.3) entries.
 - [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
       **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
       investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
