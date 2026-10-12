@@ -223,7 +223,7 @@ def test_development_beats_an_acquisition_of_reserves_whatever_the_row_order() -
         "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties", "Development", **{FY: -2_867.0}
     )
     assert _capex(acquire, develop) == 2_867.0
-    assert _capex(acquire) == 8_920.0  # sole line: the best that is known
+    assert _capex(acquire) is None  # MET-08 (a): mineral interests alone is not capex
 
 
 def test_an_oil_and_gas_filer_s_other_property_line_joins_its_oil_and_gas_spend() -> None:
@@ -243,20 +243,21 @@ def test_an_oil_and_gas_filer_s_other_property_line_joins_its_oil_and_gas_spend(
     assert _capex(og) == 6_115.0  # the line is optional
 
 
-def test_other_property_alone_is_not_oil_and_gas_capex() -> None:
-    """The addend rides on an oil and gas tier; on its own it is not a recognised capex line."""
+def test_other_property_alone_is_ppe_family_capex_under_met08() -> None:
+    """MET-08 Tier 2: OtherPropertyPlantAndEquipment is a PP&E-family line; on its own it is capex."""
     other = _row(
         "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment", "Other PP&E", **{FY: -479.0}
     )
-    assert _capex(other) is None
+    assert _capex(other) == 479.0
 
 
-def test_the_net_additions_line_takes_no_addend() -> None:
+def test_ppe_family_line_precedes_net_additions_under_met08() -> None:
+    """MET-08: Tier 2 (PP&E-family) takes precedence over Tier 6 (net element of last resort)."""
     net = _row("us-gaap_PaymentsForProceedsFromProductiveAssets", "Additions, net", **{FY: -100.0})
     other = _row(
         "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment", "Other PP&E", **{FY: -50.0}
     )
-    assert _capex(net, other) == 100.0
+    assert _capex(net, other) == 50.0
 
 
 def test_a_standard_capex_row_is_never_displaced_by_a_fallback() -> None:

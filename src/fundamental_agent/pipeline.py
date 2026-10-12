@@ -98,6 +98,7 @@ class _YearTask:
     cik: str  # the 10-digit string every EDGAR call carries (T-149); the ticker is for display
     # the asset's recorded predecessors (APP-10b, ``cik_succession``): their filings are the asset's too
     predecessors: tuple[str, ...] = ()
+    reit: bool = False
 
     @property
     def ciks(self) -> tuple[str, ...]:
@@ -143,7 +144,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
             )
         chains = {str(a["ticker"]): identity.cik_chain(conn, a["cik"]) for a in assets}
-        tasks = _plan(assets, params, chains)
+        reits = {int(a["id"]): db.is_equity_reit(conn, int(a["id"])) for a in assets}
+        tasks = _plan(assets, params, chains, reits=reits)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
@@ -205,6 +207,7 @@ def _plan(
     assets: Sequence[Row],
     params: RunParams,
     chains: Mapping[str, tuple[str, ...]] | None = None,
+    reits: Mapping[int, bool] | None = None,
 ) -> list[_YearTask]:
     keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
     if keyless:
@@ -222,6 +225,7 @@ def _plan(
             year=year,
             cik=str(identity.normalize_cik(asset["cik"])),
             predecessors=(chains or {}).get(str(asset["ticker"]), ())[1:],
+            reit=bool((reits or {}).get(int(asset["id"]), False)),
         )
         for asset in assets
         for form in params.forms
@@ -476,7 +480,7 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     payload = engine.edgar.financials(
         filer, task.form, task.year, accession_number=ref.accession_number
     )
-    stmts = Statements.from_payload(payload)
+    stmts = Statements.from_payload(payload, reit=task.reit)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))

@@ -209,12 +209,10 @@ def test_pm_equity_is_the_stockholders_equity_row_not_the_label_match() -> None:
     assert resolution.concept == "us-gaap_StockholdersEquity" and resolution.how == "concept"
 
 
-def test_etr_capex_keeps_master_s_document_order_until_met08_is_written() -> None:
-    """MET-08 (b)(1): ``PaymentsToAcquireProductiveAssets`` is "a flagged fallback, never added to
-    PP&E". Entergy's FY2022 10-K files it (106M) beside ``PaymentsForCapitalImprovements``
-    (5,065M). Capex is the one item that keeps master's reading -- the first matching row in the
-    statement's order -- in T-148 part 1; a concept-first pass picked the 106M. Part 2 (f) writes
-    capex's precedence under MET-08, and this case must come out right there too."""
+def test_etr_capex_resolves_tier1_under_met08() -> None:
+    """MET-08 Tier 1: Entergy's FY2022 10-K files PaymentsForCapitalImprovements (5,065M) in statement
+    order before PaymentsToAcquireProductiveAssets (106M). Tier 1 takes PaymentsForCapitalImprovements (5.07B),
+    leaving PaymentsToAcquireProductiveAssets unread."""
     payload = _payload(ETR)
     key = "2022-12-31 (FY)"
     filed = {
@@ -228,6 +226,7 @@ def test_etr_capex_keeps_master_s_document_order_until_met08_is_written() -> Non
     resolution = Statements.from_payload(payload).resolve("capital_expenditure", key)
     assert resolution.value == 5_065_126_000.0
     assert resolution.concept == "us-gaap_PaymentsForCapitalImprovements"
+    assert resolution.how == "concept"
 
 
 def test_a_label_match_is_used_only_when_no_listed_concept_is_filed() -> None:

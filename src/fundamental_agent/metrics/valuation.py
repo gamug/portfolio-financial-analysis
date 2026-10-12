@@ -134,6 +134,8 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     )
     inputs.update(flag_inputs("total_debt", debt_resolution.flags))
     inputs.update(flag_inputs("cash", cash_resolution.flags))
+    capex_resolution = stmts.resolve("capital_expenditure", period_key)
+    inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
     inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
     inputs["shares_are_diluted_average"] = float(used_diluted)
     inputs["shares_from_cover_page"] = float(share_count.from_cover)

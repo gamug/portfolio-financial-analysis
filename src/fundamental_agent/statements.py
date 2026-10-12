@@ -344,48 +344,39 @@ REGISTRY: dict[str, LineItem] = {
     "capital_expenditure": LineItem(
         "capital_expenditure",
         _CASHFLOW,
+        resolver="capex",
         concepts=(
             "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
-            "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
-        ),
-        document_order=True,
-        # T-133: an ASC 932 oil & gas producer capitalizes its drilling and development spend
-        # under its own concept, so none of the above exists (APA, FANG: no FCF on any 10-K).
-        # Development first; an *acquisition* of reserves (FANG's Endeavor deal: $8.9B beside
-        # $2.9B of development) is capex only when the filer reports nothing else. Then the
-        # "net" variant of the plain additions line.
-        fallback_concepts=(
+            "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+            "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
+            "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
             "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasEquipment",
             "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
-            "us-gaap_PaymentsToAcquireOilAndGasProperty",
-            # the same additions line tagged net of disposals (WAT's 10-Ks to FY2024)
+            "us-gaap_PaymentsToAcquireProductiveAssets",
+            "us-gaap_PaymentsToAcquireOtherProductiveAssets",
             "us-gaap_PaymentsForProceedsFromProductiveAssets",
         ),
-        # An oil & gas filer's non-field spending (EOG: $479M beside $6,115M of oil and gas
-        # additions) is its own line; it joins the three oil & gas tiers, not the "net" line.
-        fallback_addends=("us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",),
-        fallback_addend_tiers=3,
-        # A custom concept, found by its caption on the cash-flow statement alone, when exactly one
-        # line reads "capital expenditure(s)" (PSX: "Capital expenditures and investments"). The
-        # statement's non-cash reconciling rows ("change in capital expenditures not yet paid",
-        # "...included in accounts payable") are excluded -- accrual adjustments, never cash spent.
         label_fallback=r"\bcapital expenditures?\b",
         label_fallback_exclude=(
             r"\b(accrued|unpaid|not (yet )?paid|incurred|included|financed|non-?cash|payable"
             r"|change|increase|decrease|proceeds|reimburse\w*|sales?)\b"
         ),
-        # ID-13: DQC_0015 lists every one of these in every release of the window. The net
-        # element ``PaymentsForProceedsFromProductiveAssets`` is not on the list (it is a payment
-        # net of proceeds) and may be negative.
         nonnegative=(
             "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
-            "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
-            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
-            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
-            "us-gaap_PaymentsToAcquireOilAndGasProperty",
+            "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+            "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
             "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
+            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasEquipment",
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "us-gaap_PaymentsToAcquireProductiveAssets",
+            "us-gaap_PaymentsToAcquireOtherProductiveAssets",
+            "us-gaap_PaymentsToAcquireRealEstate",
+            "us-gaap_PaymentsToAcquireRealEstateHeldForInvestment",
+            "us-gaap_PaymentsToDevelopRealEstateAssets",
         ),
     ),
     "stock_based_compensation": LineItem(
@@ -571,6 +562,7 @@ _COMPOSITE = {
     "long_term_debt": "_long_term_debt",
     "short_term_debt": "_short_term_debt",
     "cash": "_cash",
+    "capex": "_capex",
 }
 
 
@@ -609,11 +601,13 @@ class Statements:
     # failed (it fails in isolation, so the statements above are still validated).
     cover_shares: list[CoverShares] = field(default_factory=list)
     cover_error: str | None = None
+    # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
+    reit: bool = False
     # The flags of the resolution in progress (see :meth:`resolve`); never part of the payload.
     _flags: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> Statements:
+    def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
         raw = {key: list(payload.get(key) or []) for key in STATEMENT_KEYS}
         seen: dict[str, Period] = {}
         for rows in raw.values():
@@ -632,6 +626,7 @@ class Statements:
             corrections=corrections,
             cover_shares=_cover_shares(payload),
             cover_error="; ".join(cover_errors) or None,
+            reit=reit,
         )
 
     def fy_periods(self) -> list[Period]:
@@ -1141,6 +1136,161 @@ class Statements:
 
         return None, None, None
 
+    def _capex(self, spec: LineItem, column: str) -> tuple[float | None, str | None, str | None]:
+        """Capex composite resolver under MET-08 and APP-04b (T-148 (f))."""
+        if self.reit:
+            return self._capex_reit(spec, column)
+        return self._capex_non_reit(spec, column)
+
+    def _capex_reit(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        acq_concepts = (
+            G + "PaymentsToAcquireRealEstate",
+            G + "PaymentsToAcquireRealEstateHeldForInvestment",
+        )
+        base_concepts = (
+            G + "PaymentsToAcquirePropertyPlantAndEquipment",
+            *acq_concepts,
+            G + "PaymentsToDevelopRealEstateAssets",
+        )
+        used: dict[str, float] = {}
+        for c in base_concepts:
+            val = self._concept_value(spec, column, c)
+            if val is not None and val > 0:
+                used[c] = val
+
+        capimp = self._concept_value(spec, column, G + "PaymentsForCapitalImprovements")
+        if capimp is not None and capimp > 0:
+            if any(c in used for c in acq_concepts):
+                self._flag("capital_improvements_overlap_not_added")
+            else:
+                used[G + "PaymentsForCapitalImprovements"] = capimp
+
+        if used:
+            self._flag("reit_components")
+            self._flag("fcf_non_standard_reit")
+            total = sum(used.values())
+            concepts_str = " + ".join(sorted(used.keys()))
+            how = "map" if len(used) >= MIN_SUMMED else "concept"
+            return total, concepts_str, how
+
+        # nothing filed -> PaymentsToAcquireProductiveAssets as in tier 5
+        for prod_c in (
+            G + "PaymentsToAcquireProductiveAssets",
+            G + "PaymentsToAcquireOtherProductiveAssets",
+        ):
+            prod = self._concept_value(spec, column, prod_c)
+            if prod is not None and prod > 0:
+                self._flag("productive_assets_fallback")
+                self._flag("fcf_non_standard_reit")
+                return prod, prod_c, "fallback"
+
+        return None, None, None
+
+    def _capex_tier1(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        tier1_concepts = (
+            G + "PaymentsToAcquirePropertyPlantAndEquipment",
+            G + "PaymentsForCapitalImprovements",
+        )
+        for row in self._rows_for(spec):
+            concept = row.get("concept")
+            if concept in tier1_concepts:
+                val = self._read(row, column, spec)
+                if val is not None:
+                    return val, str(concept), "concept"
+        return None
+
+    def _capex_ppe_and_og(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        ppe_concepts = (
+            G + "PaymentsToAcquireMachineryAndEquipment",
+            G + "PaymentsToAcquireFurnitureAndFixtures",
+            G + "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        )
+        ppe_values = {
+            c: v
+            for c in ppe_concepts
+            if (v := self._concept_value(spec, column, c)) is not None and v > 0
+        }
+        og_finer_concepts = (
+            G + "PaymentsToExploreAndDevelopOilAndGasProperties",
+            G + "PaymentsToAcquireOilAndGasEquipment",
+        )
+        og_values = {
+            c: v
+            for c in og_finer_concepts
+            if (v := self._concept_value(spec, column, c)) is not None and v > 0
+        }
+        if not og_values and ppe_values:
+            val_og_ppe = self._concept_value(
+                spec, column, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"
+            )
+            if val_og_ppe is not None and val_og_ppe > 0:
+                og_values[G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"] = val_og_ppe
+        if ppe_values and og_values:
+            self._flag("ppe_family_plus_og_added")
+            all_used = {**ppe_values, **og_values}
+            return sum(all_used.values()), " + ".join(sorted(all_used.keys())), "map"
+        if ppe_values:
+            if len(ppe_values) > 1:
+                self._flag("ppe_family_lines_added")
+                return sum(ppe_values.values()), " + ".join(sorted(ppe_values.keys())), "map"
+            c, v = next(iter(ppe_values.items()))
+            self._flag("ppe_family_line")
+            return v, c, "concept"
+        if og_values:
+            if len(og_values) > 1:
+                self._flag("og_tie_break_c_added")
+                return sum(og_values.values()), " + ".join(sorted(og_values.keys())), "map"
+            c, v = next(iter(og_values.items()))
+            return v, c, "concept"
+        return None
+
+    def _capex_fallback_tiers(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        val4 = self._concept_value(
+            spec, column, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"
+        )
+        if val4 is not None and val4 > 0:
+            self._flag("includes_acquisitions_contrary_to_a")
+            return val4, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment", "fallback"
+        for prod_c in (
+            G + "PaymentsToAcquireProductiveAssets",
+            G + "PaymentsToAcquireOtherProductiveAssets",
+        ):
+            val5 = self._concept_value(spec, column, prod_c)
+            if val5 is not None and val5 > 0:
+                self._flag("productive_assets_fallback")
+                return val5, prod_c, "fallback"
+        val6 = self._concept_value(spec, column, G + "PaymentsForProceedsFromProductiveAssets")
+        if val6 is not None:
+            self._flag("net_element_last_resort")
+            return val6, G + "PaymentsForProceedsFromProductiveAssets", "fallback"
+        val7, concept7, how7 = self._label_fallback_row(spec, column)
+        if val7 is not None:
+            self._flag("caption_fallback")
+            return val7, concept7, how7
+        return None
+
+    def _capex_non_reit(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        res = self._capex_tier1(spec, column)
+        if res is not None:
+            return res
+        res = self._capex_ppe_and_og(spec, column)
+        if res is not None:
+            return res
+        res = self._capex_fallback_tiers(spec, column)
+        if res is not None:
+            return res
+        return None, None, None
+
     def _long_term_debt(
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
@@ -1638,6 +1788,11 @@ class Statements:
                 for extra in spec.fallback_addends:
                     value += self._concept_value(spec, column, extra) or 0.0
             return value, concept, f"fallback{tier + 1}"
+        return self._label_fallback_row(spec, column)
+
+    def _label_fallback_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
         if not spec.label_fallback:
             return None, None, None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)

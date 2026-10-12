@@ -1384,3 +1384,18 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
         (_now(), status, run_id),
     )
     conn.commit()
+
+
+def is_equity_reit(conn: Database, asset_id: int) -> bool:
+    """M4 predicate (D6): assets -> sectors sector name 'Real Estate' and assets.sub_industry ending in 'REITs'."""
+    row = conn.execute(
+        "SELECT s.name AS sector, a.sub_industry "
+        "FROM assets a LEFT JOIN sectors s ON a.sector_id = s.id "
+        "WHERE a.id = ?",
+        (asset_id,),
+    ).fetchone()
+    if not row:
+        return False
+    sector = str(row["sector"] or "")
+    sub_industry = str(row["sub_industry"] or "")
+    return sector == "Real Estate" and sub_industry.endswith("REITs")
