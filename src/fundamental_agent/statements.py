@@ -197,6 +197,11 @@ _ALLOWED_K1_CAPTIONS = frozenset(
 )
 _INVESTMENT_KEYWORDS = ("invest", "marketable", "securit", "short-term", "short term")
 
+# -- Revenue D-02 condition (T-148 (e), D-02, B4) --------------------------------------------------
+_REV_CONCEPT_RE = re.compile(r"Revenue", re.IGNORECASE)
+_REV_CAPTION_RE = re.compile(r"\b(revenues?|sales)\b", re.IGNORECASE)
+_COST_EXPENSE_RE = re.compile(r"\b(costs?|expenses?)\b", re.IGNORECASE)
+
 # -- Parent net income (ID-03, CON-19; T-148) -------------------------------------------------------
 # The us-gaap elements for income attributable to the noncontrolling interest: the total and its
 # redeemable / nonredeemable parts (B6).
@@ -324,8 +329,9 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_DepreciationDepletionAndAmortization",
             "us-gaap_DepreciationAmortizationAndAccretionNet",
             "us-gaap_DepreciationAndAmortization",
-            "us-gaap_Depreciation",
         ),
+        unread_flags=(("us-gaap_Depreciation", "depreciation_only_not_da"),),
+        concept_flags=(("us-gaap_DepreciationAndAmortization", "da_element_nonproduction"),),
     ),
     "operating_cash_flow": LineItem(
         "operating_cash_flow",
@@ -834,6 +840,7 @@ class Statements:
                 spec, column
             )
             return resolved
+        total_value = None
         rebuild_missing_total = False
         if spec.total_concepts:
             total_value, total_concept = self._first_total_row(spec, column)
@@ -847,6 +854,10 @@ class Statements:
                     return total_value, total_concept, "total"
 
         value, concept, how = self._component_row(spec, column)
+        if spec.name == "revenue" and total_value is None and value is None:
+            bank_rev = self._bank_net_revenue(spec, column)
+            if bank_rev is not None:
+                return bank_rev
         if rebuild_missing_total:
             rebuilt = self._rebuild_missing_total(spec, column)
             # A surviving component (APA 2021Q1: a $0 "production revenues" row) is a partial
@@ -854,6 +865,42 @@ class Statements:
             if rebuilt is not None and (value is None or rebuilt >= value):
                 return rebuilt, None, "derived"
         return value, concept, how
+
+    def _bank_net_revenue(self, spec: LineItem, column: str) -> tuple[float, str, str] | None:
+        """D2 bank map (APP-01, FASB 2026 calculation linkbase soi1 / soi4):
+        Revenue = InterestIncomeExpenseNet + NoninterestIncome.
+        soi1: RevenuesNetOfInterestExpense = Revenues - InterestExpenseOperating;
+        soi4: InterestIncomeExpenseNet = Interest income lines - InterestExpenseOperating.
+        """
+        nii = self._concept_value(spec, column, G + "InterestIncomeExpenseNet")
+        nonii = self._concept_value(spec, column, G + "NoninterestIncome")
+        if nii is not None and nonii is not None:
+            self._flag("bank_net_revenue_map")
+            concept = f"{G}InterestIncomeExpenseNet + {G}NoninterestIncome"
+            return nii + nonii, concept, "map"
+        return None
+
+    def _sum_reads_as_only_revenue(self, spec: LineItem, column: str, total: float) -> bool:
+        """D-02 condition: sum of >= 2 streams is returned only when no other valued,
+        non-abstract, non-dimensional income-statement row reads as revenue.
+        B4: 'The Revenues element would be used for the total revenue (ASC 606 and non-ASC 606 revenue)'.
+        """
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept in spec.concepts:
+                continue
+            value = _numeric(row.get(column))
+            if value is None:
+                continue
+            if abs(value - total) <= 0.005 * abs(total):
+                continue
+            local = concept.rsplit("_", 1)[-1]
+            label = str(row.get("label") or "")
+            if (
+                _REV_CONCEPT_RE.search(local) or _REV_CAPTION_RE.search(label)
+            ) and not _COST_EXPENSE_RE.search(label):
+                return False
+        return True
 
     def _component_row(
         self, spec: LineItem, column: str
@@ -865,7 +912,11 @@ class Statements:
             if total is None:
                 return None, None, None
             if len(used) >= MIN_SUMMED:
-                return total, " + ".join(sorted(used)), "sum"
+                if self._sum_reads_as_only_revenue(spec, column, total):
+                    self._flag("revenue_606_plus_non606_map")
+                    return total, " + ".join(sorted(used)), "map"
+                self._flag("revenue_sum_not_only_revenue_lines")
+                return None, None, None
             return total, used[0], "concept"
         value, concept, how = self._first_component_row(spec, column)
         if value is None and (spec.fallback_concepts or spec.label_fallback):
@@ -1358,7 +1409,7 @@ class Statements:
     # single false-positive shape found across every non-APA hit in the 5,076-filing stored
     # set -- ADBE, STE, TER, TSLA, URI, XYZ, all this exact phrase, none a real total).
     _LABEL_TOTAL_RE = re.compile(r"\btotal\b.{0,40}\brevenues?\b", re.IGNORECASE)
-    _LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcost\b", re.IGNORECASE)
+    _LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcosts?\b", re.IGNORECASE)
 
     def _label_total_correction(
         self, spec: LineItem, column: str, total_value: float
@@ -1468,6 +1519,13 @@ class Statements:
             rebuilt = value - sum(between)
             if rebuilt <= 0:
                 return TotalRebuild(label, value, between, None, "not positive")
+            if any(
+                comp_val > rebuilt
+                for row in rows
+                if row.get("concept") in spec.concepts
+                and (comp_val := _numeric(row.get(column))) is not None
+            ):
+                return TotalRebuild(label, value, between, None, "net anchor")
             if any(abs(v) > value * self._BETWEEN_ROW_CEILING for v in between):
                 if self._gateway_original_is(spec, column, rebuilt):
                     return TotalRebuild(label, value, between, rebuilt, corroborated=True)

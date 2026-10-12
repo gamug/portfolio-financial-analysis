@@ -13,7 +13,7 @@ from portfolio_common.db import Database
 from sec_xcheck import l09
 
 from fundamental_agent import db
-from fundamental_agent.statements import Statements, iter_facts
+from fundamental_agent.statements import REGISTRY, Statements, iter_facts
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FY2022 = "financials_APA_10-K_2023_acc-0001784031-23-000007.json"
@@ -83,9 +83,9 @@ def test_a_derivation_whose_guard_fails_is_refused_not_derived() -> None:
     assert d["status"] == "refused" and d["value"] is None and not d["guard_pass"]
 
 
-def test_a_cost_total_label_is_a_false_anchor_that_the_guard_refuses() -> None:
-    """ADP: ``TOTAL COSTS OF REVENUES`` reads as a revenue total because the exclusion matches ``cost`` but not ``costs``;
-    the guard refuses it and the resolver keeps the component sum -- so a refusal is not always an empty value."""
+def test_a_cost_total_label_is_never_an_anchor() -> None:
+    """N19: ``TOTAL COSTS OF REVENUES`` is excluded by _LABEL_TOTAL_EXCLUDE_RE (\bcosts?\b);
+    it is never an anchor, so rebuild_total returns None and the resolver keeps the component."""
     stmts = _income(
         [
             ("us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", 15000.0),
@@ -94,8 +94,8 @@ def test_a_cost_total_label_is_a_false_anchor_that_the_guard_refuses() -> None:
             ("adp_TotalCosts", "TOTAL COSTS OF REVENUES", 8445.0),
         ]
     )
-    (d,) = l09.derivations(stmts)
-    assert d["status"] == "refused" and d["method"] == "T-140"
+    assert l09.derivations(stmts) == []
+    assert stmts.rebuild_total(REGISTRY["revenue"], "2023-12-31 (FY)") is None
     assert stmts.get("revenue", "2023-12-31 (FY)") == 15000.0  # not left empty
 
 
