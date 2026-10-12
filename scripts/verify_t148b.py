@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import json
 import os
 import re
@@ -26,14 +27,16 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sec_xcheck.common import filings, open_ro, own_period_key, statements_from_db
+from sec_xcheck.dqc_lists import dqc14, dqc15
 
+import fundamental_agent
 from fundamental_agent import db, quality
 from fundamental_agent.agents import FilingContext, FundamentalAnalyst, _fallback_assessment
 from fundamental_agent.db import SnapshotRow
 from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import _Target, _ttm_flows, _YearTask
 from fundamental_agent.pricing import close_on_or_before
-from fundamental_agent.statements import REGISTRY, CoverShares, Period, Statements
+from fundamental_agent.statements import REGISTRY, CoverShares, Statements
 from kg_schema import connect
 from kg_schema.market_cap import market_caps_as_of
 
@@ -864,8 +867,55 @@ def main() -> None:
     p_recompute.add_argument("--limit", type=int, default=None)
     p_recompute.set_defaults(func=cmd_recompute)
 
+    p_dqc = subparsers.add_parser(
+        "dqc", help="Verify REGISTRY nonnegative concepts against authoritative DQC lists"
+    )
+    p_dqc.add_argument("--out", default=None)
+    p_dqc.set_defaults(func=cmd_dqc)
+
     args = parser.parse_args()
     args.func(args)
+
+
+def cmd_dqc(args: argparse.Namespace) -> None:
+    dqc_dir = Path("docs/checklist_sec/sec documentation/B_DQC_element_lists")
+    if not dqc_dir.exists():
+        print(f"Error: {dqc_dir} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    d15 = dqc15(dqc_dir)
+    all_d15: set[str] = set()
+    for s in d15.values():
+        all_d15 |= s
+    d14 = dqc14(dqc_dir)
+
+    results: dict[str, Any] = {}
+    mismatches: list[str] = []
+    for item in REGISTRY.values():
+        item_res: dict[str, Any] = {"concepts": {}, "nonnegative": sorted(item.nonnegative)}
+        for c in item.concepts:
+            local = c.split("_", 1)[1] if "_" in c else c
+            is_dqc = (local in all_d15) or (item.name == "revenue" and local in d14)
+            is_nonneg = c in item.nonnegative
+            item_res["concepts"][c] = {"is_dqc": is_dqc, "is_nonnegative": is_nonneg}
+            if is_dqc != is_nonneg:
+                mismatches.append(f"{item.name}.{c}: DQC={is_dqc} vs REGISTRY={is_nonneg}")
+        results[item.name] = item_res
+
+    out_dir = Path("/workspaces/thesis/scratch/t148b/out")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_json = Path(args.out) if args.out else out_dir / "dqc.json"
+    out_txt = out_dir / "dqc.txt"
+
+    out_json.write_text(json.dumps({"results": results, "mismatches": mismatches}, indent=2))
+    with open(out_txt, "w") as f:
+        f.write(f"DQC comparison total items checked: {len(REGISTRY)}\n")
+        f.write(f"Mismatches found: {len(mismatches)}\n")
+        for m in mismatches:
+            f.write(f"  {m}\n")
+    print(f"DQC check finished: {len(mismatches)} mismatches. Wrote {out_json} and {out_txt}")
+    if mismatches:
+        sys.exit(1)
 
 
 def _recompute_single_filing(
@@ -874,19 +924,23 @@ def _recompute_single_filing(
     f: dict[str, Any],
     a_info: dict[str, Any],
     cover_shares: list[CoverShares],
-) -> None:
+) -> bool:
     fid = f["id"]
     aid = f["asset_id"]
     engine = SimpleNamespace(conn=conn)
 
     stmts = statements_from_db(conn, fid)
     stmts.cover_shares = cover_shares
-    stmts.reit = a_info["is_reit"]
+    if hasattr(stmts, "reit"):
+        stmts.reit = a_info["is_reit"]
 
-    target_period = next((p for p in stmts.periods if p.date == f["period_end"]), None)
+    own_key = own_period_key(stmts, f["form"], f["period_end"])
+    if own_key is None:
+        return False
+
+    target_period = next((p for p in stmts.periods if p.key == own_key), None)
     if target_period is None:
-        tag = "FY" if f["form"] == "10-K" else "Q"
-        target_period = Period(key=f"{f['period_end']} ({tag})", date=f["period_end"], tag=tag)
+        return False
     prior_period = stmts.prior_of(target_period)
 
     target = _Target(
@@ -895,15 +949,18 @@ def _recompute_single_filing(
         prior=prior_period,
         fiscal_year=f["fiscal_year"],
     )
-    task = _YearTask(
-        asset_id=aid,
-        ticker=a_info["ticker"],
-        company_name=a_info["company_name"],
-        form=f["form"],
-        year=f["fiscal_year"],
-        cik=a_info["cik"],
-        reit=stmts.reit,
-    )
+
+    year_task_kwargs: dict[str, Any] = {
+        "asset_id": aid,
+        "ticker": a_info["ticker"],
+        "company_name": a_info["company_name"],
+        "form": f["form"],
+        "year": f["fiscal_year"],
+        "cik": a_info["cik"],
+    }
+    if "reit" in {field.name for field in dataclasses.fields(_YearTask)}:
+        year_task_kwargs["reit"] = a_info["is_reit"]
+    task = _YearTask(**year_task_kwargs)
 
     share_scale_factors = db.detect_share_scale_factors(
         conn, aid, stmts, target.period.key, exclude_filing_id=fid
@@ -915,21 +972,25 @@ def _recompute_single_filing(
 
     ttm = _ttm_flows(engine, task, stmts, target)
 
-    ctx = FilingContext(
-        ticker=task.ticker,
-        company_name=task.company_name,
-        form=task.form,
-        fiscal_period=target.fiscal_period,
-        stmts=stmts,
-        period_key=target.period.key,
-        prior_key=target.prior.key if target.prior else None,
-        price=close_on_or_before(conn, aid, f["period_end"]),
-        share_scale_factors=share_scale_factors,
-        ttm_flows=ttm,
-        cik=task.cik,
-        market_cap=market_cap_obj,
-        market_cap_missing=market_cap_missing,
-    )
+    ctx_kwargs: dict[str, Any] = {
+        "ticker": task.ticker,
+        "company_name": task.company_name,
+        "form": task.form,
+        "fiscal_period": target.fiscal_period,
+        "stmts": stmts,
+        "period_key": target.period.key,
+        "prior_key": target.prior.key if target.prior else None,
+        "price": close_on_or_before(conn, aid, f["period_end"]),
+        "share_scale_factors": share_scale_factors,
+        "ttm_flows": ttm,
+        "cik": task.cik,
+    }
+    fc_fields = {field.name for field in dataclasses.fields(FilingContext)}
+    if "market_cap" in fc_fields:
+        ctx_kwargs["market_cap"] = market_cap_obj
+    if "market_cap_missing" in fc_fields:
+        ctx_kwargs["market_cap_missing"] = market_cap_missing
+    ctx = FilingContext(**ctx_kwargs)
 
     computed = analyst._compute_all(ctx)
     flat = {f"{g}.{r.name}": r.value for g, r in computed}
@@ -959,9 +1020,12 @@ def _recompute_single_filing(
             prompt_hash=analyst.prompt_hash,
         ),
     )
+    return True
 
 
 def cmd_recompute(args: argparse.Namespace) -> None:
+    print(f"fundamental_agent source: {fundamental_agent.__file__}", flush=True)
+
     db_path = args.db
     conn = connect(db_path)
 
@@ -1019,10 +1083,13 @@ def cmd_recompute(args: argparse.Namespace) -> None:
 
     analyst = FundamentalAnalyst(None, "rule-based")
     t0 = time.time()
+    skipped_filings: list[dict[str, Any]] = []
     for idx, f in enumerate(filing_rows, start=1):
-        _recompute_single_filing(
+        ok = _recompute_single_filing(
             conn, analyst, f, assets[f["asset_id"]], cover_by_filing.get(f["id"], [])
         )
+        if not ok:
+            skipped_filings.append(f)
         if idx % 500 == 0 or idx == len(filing_rows):
             conn.commit()
             dt = time.time() - t0
@@ -1032,6 +1099,18 @@ def cmd_recompute(args: argparse.Namespace) -> None:
             )
 
     conn.commit()
+
+    if skipped_filings:
+        print(f"\nSkipped {len(skipped_filings)} filings with no own period column:", flush=True)
+        for sf in skipped_filings:
+            print(
+                f"  filing_id={sf['id']}, ticker={assets[sf['asset_id']]['ticker']}, "
+                f"form={sf['form']}, period_end={sf['period_end']}, accession={sf['accession_number']}",
+                flush=True,
+            )
+        out_skipped = Path("/workspaces/thesis/scratch/t148b/out/skipped_no_own_period.json")
+        out_skipped.parent.mkdir(parents=True, exist_ok=True)
+        out_skipped.write_text(json.dumps([dict(sf) for sf in skipped_filings], indent=2))
 
     n_filings = conn.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0]
     n_metrics = conn.execute(
@@ -1046,10 +1125,11 @@ def cmd_recompute(args: argparse.Namespace) -> None:
     print(f"  Total metrics-v6 rows written: {metric_rows}")
 
     if not args.limit:
-        assert n_filings == n_metrics, (
-            f"Expected {n_filings} filings to have metrics, found {n_metrics}"
+        expected_metrics = len(filing_rows) - len(skipped_filings)
+        assert n_metrics == expected_metrics, (
+            f"Expected {expected_metrics} filings to have metrics, found {n_metrics}"
         )
-        print("Assertion passed: copy has metric rows for every filing!")
+        print("Assertion passed: copy has metric rows for every filing with an own period column!")
 
 
 if __name__ == "__main__":
