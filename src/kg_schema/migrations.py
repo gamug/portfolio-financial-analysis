@@ -18,6 +18,7 @@ fresh rather than translated, so those stay as-is.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -26,7 +27,16 @@ from portfolio_common.db import Database
 from . import availability as _availability
 from . import identity as _identity
 from . import queries as _queries
-from .ddl import REQUIRED_COLUMNS
+from .ddl import (
+    M014_REBUILD_COLUMNS,
+    M014_TABLE_REBUILD_STATEMENTS,
+    MAX_ID_QUERIES,
+    MAX_REFERENCE_QUERIES,
+    REQUIRED_COLUMNS,
+    RUN_REFERENCE_MAP,
+    SQLITE_SEQUENCE_QUERIES,
+    TARGET_RUN_TABLES,
+)
 
 Migration = Callable[[Database], None]
 
@@ -610,6 +620,137 @@ def _m013_filed_sign(db: Database) -> None:
         db.ensure_columns("financial_facts", REQUIRED_COLUMNS["financial_facts"])
 
 
+_DROP_VIEWS_M014 = (
+    "DROP VIEW IF EXISTS v_analysis_run",
+    "DROP VIEW IF EXISTS v_pricing_run",
+    "DROP VIEW IF EXISTS v_quant_run",
+    "DROP VIEW IF EXISTS v_cycle_run",
+    "DROP VIEW IF EXISTS v_cycle_ranking",
+    "DROP VIEW IF EXISTS v_weight_scheme",
+    "DROP VIEW IF EXISTS v_weight_component",
+    "DROP VIEW IF EXISTS v_cycle_ranking_component",
+    "DROP VIEW IF EXISTS v_fundamental_metric",
+    "DROP VIEW IF EXISTS v_sec_filing",
+    "DROP VIEW IF EXISTS v_sec_filing_section",
+    "DROP VIEW IF EXISTS v_data_quality_issue",
+)
+
+
+def _seed_table_sequence(db: Database, table: str) -> None:
+    if not _table_exists(db, table):
+        return
+    max_val = int(db.execute(MAX_ID_QUERIES[table]).fetchone()[0])
+    for (src_table, src_col, run_kind), target in RUN_REFERENCE_MAP.items():
+        if target != table or not _table_exists(db, src_table):
+            continue
+        query = MAX_REFERENCE_QUERIES[(src_table, src_col, run_kind)]
+        row = db.execute(query).fetchone()
+        ref_val = int(row[0]) if row and row[0] is not None else 0
+        max_val = max(max_val, ref_val)
+    if max_val <= 0:
+        return
+    row = db.execute(SQLITE_SEQUENCE_QUERIES["select"], (table,)).fetchone()
+    if row is None or max_val > int(row[0]):
+        db.execute(SQLITE_SEQUENCE_QUERIES["delete"], (table,))
+        db.execute(SQLITE_SEQUENCE_QUERIES["insert"], (table, max_val))
+
+
+def _seed_sqlite_sequence(db: Database) -> None:
+    if not _table_exists(db, "sqlite_sequence"):
+        return
+    for table in TARGET_RUN_TABLES:
+        _seed_table_sequence(db, table)
+
+
+# -- m014: non-reusable IDs with AUTOINCREMENT (T-145) -------------------------
+
+
+def _rebuild_run_tables(db: Database, tables: list[str]) -> None:  # noqa: C901
+    # Pre-flight: verify existing tables have the expected columns before any changes
+    for table in tables:
+        if table in REQUIRED_COLUMNS:
+            db.ensure_columns(table, REQUIRED_COLUMNS[table])
+        current_cols = db.table_columns(table)
+        expected_cols = M014_REBUILD_COLUMNS[table]
+        if set(current_cols) != set(expected_cols):
+            raise RuntimeError(
+                f"m014: table {table} columns {current_cols} differ from expected {expected_cols}"
+            )
+
+    _availability.drop_triggers(db)
+    _identity.drop_triggers(db)
+    had_compat_view = _is_view(db, "fundamental_snapshot")
+    if had_compat_view:
+        db.execute("DROP VIEW fundamental_snapshot")
+    for stmt in _DROP_VIEWS_M014:
+        db.execute(stmt)
+
+    db.commit()
+    db.execute("PRAGMA foreign_keys = OFF")
+    fk_status = db.execute("PRAGMA foreign_keys").fetchone()
+    fk_val = fk_status[0] if isinstance(fk_status, tuple) else fk_status["foreign_keys"]
+    if fk_val != 0:
+        raise RuntimeError(f"m014: failed to disable foreign keys (PRAGMA foreign_keys = {fk_val})")
+
+    fk_before_raw = db.execute("PRAGMA foreign_key_check").fetchall()
+    fk_before = [tuple(r) for r in fk_before_raw]
+
+    try:
+        db.execute("BEGIN TRANSACTION")
+        for table in tables:
+            for stmt in M014_TABLE_REBUILD_STATEMENTS[table]:
+                db.execute(stmt)
+
+        fk_after_raw = db.execute("PRAGMA foreign_key_check").fetchall()
+        fk_after = [tuple(r) for r in fk_after_raw]
+        if fk_after != fk_before:
+            db.execute("ROLLBACK")
+            new_violations = [v for v in fk_after if v not in fk_before]
+            readable = [f"{v[0]}:{v[1]} (parent {v[2]})" for v in new_violations]
+            raise RuntimeError(  # noqa: TRY301
+                f"m014: foreign key check failed after rebuild: {readable or fk_after}"
+            )
+        db.execute("COMMIT")
+    except BaseException:
+        with contextlib.suppress(Exception):
+            db.execute("ROLLBACK")
+        raise
+    finally:
+        db.execute("PRAGMA foreign_keys = ON")
+        if had_compat_view:
+            db.create_schema(
+                """
+                CREATE VIEW fundamental_snapshot AS
+                SELECT s.id, s.asset_id, s.filing_id, f.form, f.fiscal_period,
+                       s.raw_value AS score, s.rating, s.narrative, s.strengths_json, s.risks_json,
+                       s.model, s.inputs_json AS metrics_json, s.computed_at AS created_at
+                FROM score_snapshot s
+                JOIN sec_filings f ON f.id = s.filing_id
+                WHERE s.score_type = 'FUNDAMENTAL';
+                """
+            )
+        from .views import ensure_views  # noqa: PLC0415 - avoid circular import with views.py
+
+        ensure_views(db)
+        _availability.ensure_triggers(db)
+        _identity.ensure_triggers(db)
+
+
+def _m014_autoincrement_run_ids(db: Database) -> None:
+    """Non-additive: rebuild cycle_run, analysis_run, pricing_run, quant_run, and sec_filings
+    with AUTOINCREMENT so deleted IDs are never reused. Seed sqlite_sequence from the maximum
+    of each table's own ID and all references pointing to it.
+    """
+    tables_to_rebuild = [
+        t
+        for t in ("cycle_run", "pricing_run", "quant_run", "analysis_run", "sec_filings")
+        if _table_exists(db, t) and "AUTOINCREMENT" not in (db.relation_ddl(t) or "").upper()
+    ]
+    if tables_to_rebuild:
+        _rebuild_run_tables(db, tables_to_rebuild)
+    _seed_sqlite_sequence(db)
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -664,6 +805,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         13,
         "financial_facts.preferred_sign: the filed sign of a stored fact, NULL before it (T-148)",
         _m013_filed_sign,
+    ),
+    (
+        14,
+        "non-reusable ids: AUTOINCREMENT on run tables and sec_filings, sqlite_sequence "
+        "seeded from references (T-145)",
+        _m014_autoincrement_run_ids,
     ),
 ]
 

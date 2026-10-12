@@ -48,11 +48,23 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 from .coverage import DEFAULT_MIN_OBSERVATION_DAYS, CoverageReport, SymbolCoverage
 from .db import connect_ro as _kg_connect_ro
+from .ddl import (
+    ALLOWED_CYCLE_TYPES,
+    INVALID_SEC_FILINGS_ACCESSIONS_QUERY,
+    RUN_REFERENCE_MAP,
+    UNMAPPED_RUN_KIND_QUERIES,
+    UNMAPPED_RUN_KIND_SAMPLE_QUERIES,
+    UNRESOLVED_REFERENCE_QUERIES,
+    UNRESOLVED_REFERENCE_SAMPLE_QUERIES,
+    WRONG_CYCLE_TYPE_QUERIES,
+    WRONG_CYCLE_TYPE_SAMPLE_QUERIES,
+)
 
 SUPPORTED_UNIVERSE = "SP500"
 _ID_CHUNK = 900  # keep under SQLite's bound-parameter limit
@@ -654,6 +666,122 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
     return len(appeared), len(vanished)
 
 
+def unresolved_run_references(db: Database) -> list[dict[str, Any]]:
+    """Find any non-null run/filing ID referencing a target table that does not exist,
+    references with wrong cycle_type, or rows with an unmapped run_kind.
+
+    Returns an empty list when all references resolve correctly.
+    """
+    violations: list[dict[str, Any]] = []
+
+    # 1. Missing targets
+    for (table, col, run_kind), target in RUN_REFERENCE_MAP.items():
+        if not db.relation_exists(table) or not db.relation_exists(target):
+            continue
+        cnt_row = db.execute(UNRESOLVED_REFERENCE_QUERIES[(table, col, run_kind)]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(
+            UNRESOLVED_REFERENCE_SAMPLE_QUERIES[(table, col, run_kind)]
+        ).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        violations.append(
+            {
+                "table": table,
+                "column": col,
+                "run_kind": run_kind,
+                "target": target,
+                "target_table": target,
+                "reason": "missing",
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    # 2. Wrong cycle_type targets
+    for (table, col, run_kind), allowed_types in ALLOWED_CYCLE_TYPES.items():
+        if not db.relation_exists(table) or not db.relation_exists("cycle_run"):
+            continue
+        cnt_row = db.execute(WRONG_CYCLE_TYPE_QUERIES[(table, col, run_kind)]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(WRONG_CYCLE_TYPE_SAMPLE_QUERIES[(table, col, run_kind)]).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        found_types = sorted(set(str(r[1]) for r in sample_rows))
+        violations.append(
+            {
+                "table": table,
+                "column": col,
+                "run_kind": run_kind,
+                "target": "cycle_run",
+                "target_table": "cycle_run",
+                "reason": "wrong_cycle_type",
+                "cycle_type": ", ".join(found_types),
+                "expected_types": list(allowed_types),
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    # 3. Unmapped run_kind rows
+    for table in ("score_snapshot", "price_observation", "universe_membership"):
+        if not db.relation_exists(table):
+            continue
+        cnt_row = db.execute(UNMAPPED_RUN_KIND_QUERIES[table]).fetchone()
+        cnt = int(cnt_row[0]) if cnt_row and cnt_row[0] is not None else 0
+        if cnt == 0:
+            continue
+        max_id = int(cnt_row[1]) if cnt_row and cnt_row[1] is not None else 0
+        sample_rows = db.execute(UNMAPPED_RUN_KIND_SAMPLE_QUERIES[table]).fetchall()
+        sample_ids = [int(r[0]) for r in sample_rows]
+        found_kinds = sorted(set(str(r[1]) for r in sample_rows))
+        violations.append(
+            {
+                "table": table,
+                "column": "run_id",
+                "run_kind": ", ".join(found_kinds),
+                "target": "unknown",
+                "target_table": "unknown",
+                "reason": "unmapped_run_kind",
+                "unresolved_count": cnt,
+                "max_unresolved_id": max_id,
+                "sample_ids": sample_ids,
+            }
+        )
+
+    return violations
+
+
+def invalid_sec_filings_accessions(db: Database) -> list[dict[str, Any]]:
+    """Find any sec_filings rows with invalid accession format or duplicate accession per asset.
+
+    Routes through :data:`kg_schema.ddl.INVALID_SEC_FILINGS_ACCESSIONS_QUERY`.
+    Returns an empty list when all accessions are valid and unique per asset.
+    """
+    if not db.relation_exists("sec_filings"):
+        return []
+    rows = db.execute(INVALID_SEC_FILINGS_ACCESSIONS_QUERY).fetchall()
+    return [
+        {
+            "id": r[0],
+            "asset_id": r[1],
+            "form": r[2],
+            "fiscal_year": r[3],
+            "fiscal_period": r[4],
+            "filing_date": r[5],
+            "accession_number": r[6],
+            "issue": r[7],
+        }
+        for r in rows
+    ]
+
+
 __all__ = [
     "SUPPORTED_UNIVERSE",
     "StaleAsOf",
@@ -662,6 +790,7 @@ __all__ = [
     "connect_ro",
     "current_version",
     "ensure",
+    "invalid_sec_filings_accessions",
     "last_price_date",
     "members_asof",
     "persist_coverage",
@@ -670,4 +799,5 @@ __all__ = [
     "resolve_asset_ids",
     "stale_as_of_reason",
     "symbols_asof",
+    "unresolved_run_references",
 ]

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Pilot re-run verification: one PASS / FAIL / WARN / SKIP line per fix, read-only.
 
     uv run python scripts/verify_pilot.py --db PILOT_DB [--replay-db REPLAY_DB]
@@ -8,10 +9,31 @@ Checks invariants each merged fix guarantees on a freshly built database. Nothin
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import sqlite3
 from collections.abc import Callable
+
+from kg_schema.db import connect_ro
+from kg_schema.queries import invalid_sec_filings_accessions, unresolved_run_references
+
+try:
+    from fundamental_agent.db import METRICS_ENGINE_VERSION
+except ImportError:
+    METRICS_ENGINE_VERSION = ""
+
+try:
+    import verify_t138
+except ImportError:
+    verify_t138 = None  # type: ignore[assignment]
+
+_MIN_DISTINCT_FRONTIER_PTS = 2
+_FLOAT_EPSILON = 1e-9
+_MIN_PRICE_HISTORY_SESSIONS = 2
+_MIN_VOLUME_SHARE = 0.5
+_MAX_MISSING_MARGIN_SHARE = 0.05
 
 RESULTS: list[tuple[str, str, str]] = []
 
@@ -37,7 +59,7 @@ def check(task: str, fn: Callable[[], None]) -> None:
         report(task, "SKIP", f"not checkable on this database ({exc})")
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901, PLR0915
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--replay-db")
@@ -49,7 +71,7 @@ def main() -> int:
         for t in ("analysis_run", "pricing_run", "quant_run", "cycle_run"):
             n = one(
                 c,
-                f"SELECT COUNT(*) FROM {t} WHERE code_version IS NULL OR code_version LIKE '%-dirty'",
+                f"SELECT COUNT(*) FROM {t} WHERE code_version IS NULL OR code_version LIKE '%-dirty'",  # noqa: S608 - table names are our own constants
             )
             if n:
                 bad.append(f"{t}={n}")
@@ -70,7 +92,7 @@ def main() -> int:
                 report("T-107", "FAIL", f"{t} has no available_at column")
                 return
             parts.append(
-                f"{t}={one(c, f'SELECT COUNT(*) FROM {t} WHERE {where} AND available_at IS NULL')}"
+                f"{t}={one(c, f'SELECT COUNT(*) FROM {t} WHERE {where} AND available_at IS NULL')}"  # noqa: S608 - table names and where clauses are our own constants
             )
         ok = all(p.endswith("=0") for p in parts)
         report("T-107", "PASS" if ok else "FAIL", "rows without available_at: " + ", ".join(parts))
@@ -83,10 +105,7 @@ def main() -> int:
         )
         # The fresh pilot database holds one metrics engine version: the one the checked-out code
         # writes (metrics-v4 at pilot-1; metrics-v5 since T-140).
-        try:
-            from fundamental_agent.db import METRICS_ENGINE_VERSION as current
-        except ImportError:  # run outside the repository: only require a single version
-            current = next(iter(v), "")
+        current = METRICS_ENGINE_VERSION or next(iter(v), "")
         report(
             "metrics",
             "PASS" if set(v) == {current} else "FAIL",
@@ -212,7 +231,9 @@ def main() -> int:
             if "degenerate" in statuses:
                 if len(pts) != 1:
                     bad.append((mid, "degenerate with more than one point"))
-            elif len({round(v, 8) for s, v in pts if s != "infeasible"}) < 2:
+            elif (
+                len({round(v, 8) for s, v in pts if s != "infeasible"}) < _MIN_DISTINCT_FRONTIER_PTS
+            ):
                 bad.append((mid, "k identical points not marked degenerate"))
         report("T-112", "PASS" if not bad else "FAIL", f"frontier problems: {bad or 'none'}")
 
@@ -235,7 +256,7 @@ def main() -> int:
             abs(math.expm1(lr) - daily[d]) for d, lr, _ in bench if lr is not None and d in daily
         ]
         worst = max(diffs) if diffs else float("nan")
-        status = "PASS" if diffs and worst < 1e-9 else "WARN"
+        status = "PASS" if diffs and worst < _FLOAT_EPSILON else "WARN"
         report(
             "T-108",
             status,
@@ -304,7 +325,7 @@ def main() -> int:
         rows = c.execute(
             "SELECT date, SUM(volume) FROM price_daily GROUP BY date ORDER BY date DESC LIMIT 21"
         ).fetchall()
-        if len(rows) < 2:
+        if len(rows) < _MIN_PRICE_HISTORY_SESSIONS:
             report("T-131", "SKIP", "not enough price history")
             return
         last_day, last_vol = rows[0]
@@ -312,7 +333,7 @@ def main() -> int:
         share = last_vol / med if med else 0.0
         report(
             "T-131",
-            "PASS" if share >= 0.5 else "FAIL",
+            "PASS" if share >= _MIN_VOLUME_SHARE else "FAIL",
             f"last stored session {last_day}: volume {share:.0%} of the prior 20-day median (partial bar if well below 100%)",
         )
 
@@ -332,7 +353,7 @@ def main() -> int:
     def t131_splits() -> None:
         n = one(
             c,
-            "WITH p AS (SELECT asset_id, close / LAG(close) OVER (PARTITION BY asset_id ORDER BY date) r "
+            "WITH p AS (SELECT asset_id, close / LAG(close) OVER (PARTITION BY asset_id ORDER BY date) r "  # noqa: S608 - static SQL query with constant expressions
             "FROM price_daily) SELECT COUNT(*) FROM p WHERE r IS NOT NULL AND ("
             + " OR ".join(
                 f"abs(r - {f}) < {f} * 0.03" for f in (2, 0.5, 3, 1 / 3, 4, 0.25, 10, 0.1)
@@ -385,7 +406,7 @@ def main() -> int:
         share = (rows[1] or 0) / rows[0] if rows[0] else 0.0
         report(
             "T-133",
-            "PASS" if rows[0] and share < 0.05 else "FAIL",
+            "PASS" if rows[0] and share < _MAX_MISSING_MARGIN_SHARE else "FAIL",
             f"Q2/Q3 10-Q TTM FCF margins missing (latest prior 10-K has an FCF margin): "
             f"{rows[1] or 0}/{rows[0]} ({share:.0%})",
         )
@@ -518,12 +539,7 @@ def main() -> int:
         # tracked scripts/verify_t138.py (validated on PR #121), against each run's own params_json.
         # A fresh pilot database holds only post-T-136 books (no legacy score_proportional run) and
         # only opt-v2 quant books. A recorded relaxation is legitimate but must be explained: WARN.
-        import contextlib
-        import io
-
-        try:
-            import verify_t138  # scripts/ is on sys.path when run as scripts/verify_pilot.py
-        except ImportError:
+        if verify_t138 is None:
             report("WI-18", "SKIP", "scripts/verify_t138.py not found (checkout before PR #121)")
             return
         books = []
@@ -565,6 +581,30 @@ def main() -> int:
         report("WI-18", status, detail)
 
     check("WI-18", wi18_books)
+
+    def t145() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            unresolved = unresolved_run_references(db)
+            invalid_accessions = invalid_sec_filings_accessions(db)
+            for v in unresolved:
+                bad.append(
+                    f"{prefix}{v['table']}.{v['column']}={v['unresolved_count']} ({v['reason']})"
+                )
+            if invalid_accessions:
+                bad.append(f"{prefix}invalid_sec_filings_accessions={len(invalid_accessions)}")
+        report(
+            "T-145",
+            "FAIL" if bad else "PASS",
+            "non-reusable IDs and reference integrity: " + (", ".join(bad) or "clean"),
+        )
+
+    check("T-145", t145)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

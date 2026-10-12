@@ -210,7 +210,7 @@ WHEN NEW.valid_to IS NOT NULL AND NEW.valid_to < NEW.valid_from
 BEGIN SELECT RAISE(ABORT, 'portfolio_position_replay: valid_to before valid_from'); END;
 
 CREATE TABLE IF NOT EXISTS cycle_run (
-    id           INTEGER PRIMARY KEY,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
     cycle_type   TEXT NOT NULL,                -- 'SELECTION'|'MONITORING'|'ENTITY_RESOLUTION'|'REPLAY'
     cycle_date   TEXT NOT NULL,
     started_at   TEXT NOT NULL,
@@ -667,8 +667,1006 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
 
 
 # ---------------------------------------------------------------------------
-# T-107: publication-time guards. Created by `kg_schema.ensure` (and migration m008) once
-# `sec_filings`, `fundamental_metrics` and `score_snapshot` all exist with `available_at`.
+# T-145: Non-reusable IDs (AUTOINCREMENT) & run-reference map
+# ---------------------------------------------------------------------------
+
+TARGET_RUN_TABLES: tuple[str, ...] = (
+    "cycle_run",
+    "analysis_run",
+    "pricing_run",
+    "quant_run",
+    "sec_filings",
+)
+
+# Explicit map of (referencing_table, referencing_column, run_kind_filter) -> target_table
+# where target_table is one of TARGET_RUN_TABLES.
+RUN_REFERENCE_MAP: dict[tuple[str, str, str | None], str] = {
+    ("analysis_run_error", "run_id", None): "analysis_run",
+    ("cycle_checkpoint", "cycle_run_id", None): "cycle_run",
+    ("cycle_ranking", "cycle_run_id", None): "cycle_run",
+    ("data_quality_issue", "filing_id", None): "sec_filings",
+    (
+        "data_quality_issue",
+        "run_id",
+        None,
+    ): "analysis_run",  # nullable: the standalone gate command (cli.py:119) writes NULL
+    ("filing_cover_shares", "filing_id", None): "sec_filings",
+    ("filing_cover_shares", "run_id", None): "analysis_run",
+    ("financial_facts", "filing_id", None): "sec_filings",
+    ("financial_facts", "run_id", None): "analysis_run",
+    ("fundamental_metrics", "filing_id", None): "sec_filings",
+    ("fundamental_metrics", "run_id", None): "analysis_run",
+    ("fundamental_snapshot", "filing_id", None): "sec_filings",
+    ("fundamental_snapshot_legacy", "filing_id", None): "sec_filings",
+    ("media_cooccurrence", "run_id", None): "cycle_run",  # no writer yet
+    ("portfolio_position", "opened_by_cycle", None): "cycle_run",
+    ("portfolio_position", "run_id", None): "cycle_run",
+    ("portfolio_position_replay", "opened_by_cycle", None): "cycle_run",
+    ("portfolio_position_replay", "run_id", None): "cycle_run",
+    ("price_daily", "run_id", None): "pricing_run",
+    ("price_observation", "run_id", "analysis"): "analysis_run",
+    ("price_observation", "run_id", "pricing"): "pricing_run",
+    ("price_observation", "run_id", "cycle"): "cycle_run",
+    ("price_window", "run_id", None): "pricing_run",
+    ("pricing_run_error", "run_id", None): "pricing_run",
+    ("quant_portfolio", "quant_run_id", None): "quant_run",
+    ("quant_risk_model", "quant_run_id", None): "quant_run",
+    ("score_snapshot", "run_id", "analysis"): "analysis_run",
+    ("score_snapshot", "run_id", "pricing"): "pricing_run",
+    ("score_snapshot", "run_id", "cycle"): "cycle_run",
+    ("score_snapshot", "filing_id", None): "sec_filings",
+    ("sec_filing_section", "filing_id", None): "sec_filings",
+    ("sec_filing_section", "run_id", None): "analysis_run",
+    ("sec_filings", "run_id", None): "analysis_run",
+    ("sector_aggregate_snapshot", "run_id", None): "cycle_run",
+    ("shared_executive_edge", "run_id", None): "cycle_run",
+    ("universe_membership", "run_id", "analysis"): "analysis_run",
+    ("universe_membership", "run_id", "pricing"): "pricing_run",
+    ("universe_membership", "run_id", "cycle"): "cycle_run",
+    ("veto", "run_id", None): "cycle_run",
+}
+
+# The set of cycle_type values allowed for each column pointing to cycle_run, derived from
+# the code that writes the column.
+ALLOWED_CYCLE_TYPES: dict[tuple[str, str, str | None], tuple[str, ...]] = {
+    ("shared_executive_edge", "run_id", None): ("ENTITY_RESOLUTION",),
+    ("media_cooccurrence", "run_id", None): ("ENTITY_RESOLUTION",),
+    ("portfolio_position_replay", "run_id", None): ("REPLAY",),
+    ("portfolio_position_replay", "opened_by_cycle", None): ("REPLAY",),
+    ("portfolio_position", "run_id", None): ("SELECTION",),
+    ("portfolio_position", "opened_by_cycle", None): ("SELECTION",),
+    ("veto", "run_id", None): ("SELECTION", "MONITORING", "REPLAY"),
+    ("cycle_checkpoint", "cycle_run_id", None): ("SELECTION", "MONITORING", "REPLAY"),
+    ("cycle_ranking", "cycle_run_id", None): ("SELECTION", "MONITORING", "REPLAY"),
+    ("sector_aggregate_snapshot", "run_id", None): ("SELECTION", "MONITORING", "REPLAY"),
+    ("score_snapshot", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
+    ("price_observation", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
+    ("universe_membership", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
+}
+
+# Matching columns in schema that do NOT hold an ID of one of the five target tables.
+RUN_ID_EXCLUSIONS: dict[tuple[str, str], str] = {
+    ("universe_coverage", "run_id"): "nullable, no writer today (Work item 2 decision)",
+}
+
+# Static literal SQL queries (Constitution Code & Git #10)
+MAX_ID_QUERIES: dict[str, str] = {
+    "cycle_run": "SELECT COALESCE(MAX(id), 0) FROM cycle_run",
+    "analysis_run": "SELECT COALESCE(MAX(id), 0) FROM analysis_run",
+    "pricing_run": "SELECT COALESCE(MAX(id), 0) FROM pricing_run",
+    "quant_run": "SELECT COALESCE(MAX(id), 0) FROM quant_run",
+    "sec_filings": "SELECT COALESCE(MAX(id), 0) FROM sec_filings",
+}
+
+MAX_REFERENCE_QUERIES: dict[tuple[str, str, str | None], str] = {
+    (
+        "analysis_run_error",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM analysis_run_error",
+    (
+        "cycle_checkpoint",
+        "cycle_run_id",
+        None,
+    ): "SELECT COALESCE(MAX(cycle_run_id), 0) FROM cycle_checkpoint",
+    (
+        "cycle_ranking",
+        "cycle_run_id",
+        None,
+    ): "SELECT COALESCE(MAX(cycle_run_id), 0) FROM cycle_ranking",
+    (
+        "data_quality_issue",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM data_quality_issue",
+    (
+        "data_quality_issue",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM data_quality_issue",
+    (
+        "filing_cover_shares",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM filing_cover_shares",
+    (
+        "filing_cover_shares",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM filing_cover_shares",
+    (
+        "financial_facts",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM financial_facts",
+    ("financial_facts", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM financial_facts",
+    (
+        "fundamental_metrics",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM fundamental_metrics",
+    (
+        "fundamental_metrics",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM fundamental_metrics",
+    (
+        "fundamental_snapshot",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM fundamental_snapshot",
+    ("fundamental_snapshot_legacy", "filing_id", None): (
+        "SELECT COALESCE(MAX(filing_id), 0) FROM fundamental_snapshot_legacy"
+    ),
+    (
+        "media_cooccurrence",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM media_cooccurrence",
+    ("portfolio_position", "opened_by_cycle", None): (
+        "SELECT COALESCE(MAX(opened_by_cycle), 0) FROM portfolio_position"
+    ),
+    (
+        "portfolio_position",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM portfolio_position",
+    ("portfolio_position_replay", "opened_by_cycle", None): (
+        "SELECT COALESCE(MAX(opened_by_cycle), 0) FROM portfolio_position_replay"
+    ),
+    ("portfolio_position_replay", "run_id", None): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM portfolio_position_replay"
+    ),
+    ("price_daily", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM price_daily",
+    ("price_observation", "run_id", "analysis"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM price_observation WHERE run_kind = 'analysis'"
+    ),
+    ("price_observation", "run_id", "pricing"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM price_observation WHERE run_kind = 'pricing'"
+    ),
+    ("price_observation", "run_id", "cycle"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM price_observation WHERE run_kind = 'cycle'"
+    ),
+    ("price_window", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM price_window",
+    ("pricing_run_error", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM pricing_run_error",
+    (
+        "quant_portfolio",
+        "quant_run_id",
+        None,
+    ): "SELECT COALESCE(MAX(quant_run_id), 0) FROM quant_portfolio",
+    (
+        "quant_risk_model",
+        "quant_run_id",
+        None,
+    ): "SELECT COALESCE(MAX(quant_run_id), 0) FROM quant_risk_model",
+    ("score_snapshot", "run_id", "analysis"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM score_snapshot WHERE run_kind = 'analysis'"
+    ),
+    ("score_snapshot", "run_id", "pricing"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM score_snapshot WHERE run_kind = 'pricing'"
+    ),
+    ("score_snapshot", "run_id", "cycle"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM score_snapshot WHERE run_kind = 'cycle'"
+    ),
+    ("score_snapshot", "filing_id", None): "SELECT COALESCE(MAX(filing_id), 0) FROM score_snapshot",
+    (
+        "sec_filing_section",
+        "filing_id",
+        None,
+    ): "SELECT COALESCE(MAX(filing_id), 0) FROM sec_filing_section",
+    (
+        "sec_filing_section",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM sec_filing_section",
+    ("sec_filings", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM sec_filings",
+    ("sector_aggregate_snapshot", "run_id", None): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM sector_aggregate_snapshot"
+    ),
+    (
+        "shared_executive_edge",
+        "run_id",
+        None,
+    ): "SELECT COALESCE(MAX(run_id), 0) FROM shared_executive_edge",
+    ("universe_membership", "run_id", "analysis"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM universe_membership WHERE run_kind = 'analysis'"
+    ),
+    ("universe_membership", "run_id", "pricing"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM universe_membership WHERE run_kind = 'pricing'"
+    ),
+    ("universe_membership", "run_id", "cycle"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM universe_membership WHERE run_kind = 'cycle'"
+    ),
+    ("veto", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM veto",
+}
+
+SQLITE_SEQUENCE_QUERIES: dict[str, str] = {
+    "select": "SELECT seq FROM sqlite_sequence WHERE name = ?",
+    "delete": "DELETE FROM sqlite_sequence WHERE name = ?",
+    "insert": "INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)",
+}
+
+UNRESOLVED_REFERENCE_QUERIES: dict[tuple[str, str, str | None], str] = {
+    ("analysis_run_error", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM analysis_run_error r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("cycle_checkpoint", "cycle_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.cycle_run_id), 0) FROM cycle_checkpoint r "
+        "WHERE r.cycle_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.cycle_run_id)"
+    ),
+    ("cycle_ranking", "cycle_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.cycle_run_id), 0) FROM cycle_ranking r "
+        "WHERE r.cycle_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.cycle_run_id)"
+    ),
+    ("data_quality_issue", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM data_quality_issue r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("data_quality_issue", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM data_quality_issue r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("filing_cover_shares", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM filing_cover_shares r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("filing_cover_shares", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM filing_cover_shares r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("financial_facts", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM financial_facts r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("financial_facts", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM financial_facts r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("fundamental_metrics", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM fundamental_metrics r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("fundamental_metrics", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM fundamental_metrics r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("fundamental_snapshot", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM fundamental_snapshot r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("fundamental_snapshot_legacy", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM fundamental_snapshot_legacy r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("media_cooccurrence", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM media_cooccurrence r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("portfolio_position", "opened_by_cycle", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.opened_by_cycle), 0) FROM portfolio_position r "
+        "WHERE r.opened_by_cycle IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.opened_by_cycle)"
+    ),
+    ("portfolio_position", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM portfolio_position r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("portfolio_position_replay", "opened_by_cycle", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.opened_by_cycle), 0) FROM portfolio_position_replay r "
+        "WHERE r.opened_by_cycle IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.opened_by_cycle)"
+    ),
+    ("portfolio_position_replay", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM portfolio_position_replay r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("price_daily", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_daily r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("price_observation", "run_id", "analysis"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_observation r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("price_observation", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_observation r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("price_observation", "run_id", "pricing"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_observation r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("price_window", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_window r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("pricing_run_error", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM pricing_run_error r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("quant_portfolio", "quant_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.quant_run_id), 0) FROM quant_portfolio r "
+        "WHERE r.quant_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.quant_run_id)"
+    ),
+    ("quant_risk_model", "quant_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.quant_run_id), 0) FROM quant_risk_model r "
+        "WHERE r.quant_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.quant_run_id)"
+    ),
+    ("score_snapshot", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM score_snapshot r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("score_snapshot", "run_id", "analysis"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM score_snapshot r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("score_snapshot", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM score_snapshot r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("score_snapshot", "run_id", "pricing"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM score_snapshot r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("sec_filing_section", "filing_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.filing_id), 0) FROM sec_filing_section r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id)"
+    ),
+    ("sec_filing_section", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM sec_filing_section r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("sec_filings", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM sec_filings r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("sector_aggregate_snapshot", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM sector_aggregate_snapshot r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("shared_executive_edge", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM shared_executive_edge r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("universe_membership", "run_id", "analysis"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM universe_membership r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("universe_membership", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM universe_membership r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("universe_membership", "run_id", "pricing"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM universe_membership r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("veto", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM veto r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+}
+
+UNRESOLVED_REFERENCE_SAMPLE_QUERIES: dict[tuple[str, str, str | None], str] = {
+    ("analysis_run_error", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM analysis_run_error r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("cycle_checkpoint", "cycle_run_id", None): (
+        "SELECT DISTINCT r.cycle_run_id FROM cycle_checkpoint r "
+        "WHERE r.cycle_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.cycle_run_id) "
+        "ORDER BY r.cycle_run_id LIMIT 5"
+    ),
+    ("cycle_ranking", "cycle_run_id", None): (
+        "SELECT DISTINCT r.cycle_run_id FROM cycle_ranking r "
+        "WHERE r.cycle_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.cycle_run_id) "
+        "ORDER BY r.cycle_run_id LIMIT 5"
+    ),
+    ("data_quality_issue", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM data_quality_issue r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("data_quality_issue", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM data_quality_issue r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("filing_cover_shares", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM filing_cover_shares r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("filing_cover_shares", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM filing_cover_shares r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("financial_facts", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM financial_facts r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("financial_facts", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM financial_facts r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("fundamental_metrics", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM fundamental_metrics r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("fundamental_metrics", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM fundamental_metrics r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("fundamental_snapshot", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM fundamental_snapshot r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("fundamental_snapshot_legacy", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM fundamental_snapshot_legacy r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("media_cooccurrence", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM media_cooccurrence r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("portfolio_position", "opened_by_cycle", None): (
+        "SELECT DISTINCT r.opened_by_cycle FROM portfolio_position r "
+        "WHERE r.opened_by_cycle IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.opened_by_cycle) "
+        "ORDER BY r.opened_by_cycle LIMIT 5"
+    ),
+    ("portfolio_position", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM portfolio_position r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("portfolio_position_replay", "opened_by_cycle", None): (
+        "SELECT DISTINCT r.opened_by_cycle FROM portfolio_position_replay r "
+        "WHERE r.opened_by_cycle IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.opened_by_cycle) "
+        "ORDER BY r.opened_by_cycle LIMIT 5"
+    ),
+    ("portfolio_position_replay", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM portfolio_position_replay r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_daily", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM price_daily r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_observation", "run_id", "analysis"): (
+        "SELECT DISTINCT r.run_id FROM price_observation r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_observation", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id FROM price_observation r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_observation", "run_id", "pricing"): (
+        "SELECT DISTINCT r.run_id FROM price_observation r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_window", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM price_window r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("pricing_run_error", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM pricing_run_error r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("quant_portfolio", "quant_run_id", None): (
+        "SELECT DISTINCT r.quant_run_id FROM quant_portfolio r "
+        "WHERE r.quant_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.quant_run_id) "
+        "ORDER BY r.quant_run_id LIMIT 5"
+    ),
+    ("quant_risk_model", "quant_run_id", None): (
+        "SELECT DISTINCT r.quant_run_id FROM quant_risk_model r "
+        "WHERE r.quant_run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.quant_run_id) "
+        "ORDER BY r.quant_run_id LIMIT 5"
+    ),
+    ("score_snapshot", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM score_snapshot r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("score_snapshot", "run_id", "analysis"): (
+        "SELECT DISTINCT r.run_id FROM score_snapshot r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("score_snapshot", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id FROM score_snapshot r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("score_snapshot", "run_id", "pricing"): (
+        "SELECT DISTINCT r.run_id FROM score_snapshot r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("sec_filing_section", "filing_id", None): (
+        "SELECT DISTINCT r.filing_id FROM sec_filing_section r "
+        "WHERE r.filing_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sec_filings t WHERE t.id = r.filing_id) "
+        "ORDER BY r.filing_id LIMIT 5"
+    ),
+    ("sec_filing_section", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM sec_filing_section r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("sec_filings", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM sec_filings r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("sector_aggregate_snapshot", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM sector_aggregate_snapshot r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("shared_executive_edge", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM shared_executive_edge r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("universe_membership", "run_id", "analysis"): (
+        "SELECT DISTINCT r.run_id FROM universe_membership r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("universe_membership", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id FROM universe_membership r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("universe_membership", "run_id", "pricing"): (
+        "SELECT DISTINCT r.run_id FROM universe_membership r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("veto", "run_id", None): (
+        "SELECT DISTINCT r.run_id FROM veto r "
+        "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+}
+
+WRONG_CYCLE_TYPE_QUERIES: dict[tuple[str, str, str | None], str] = {
+    ("cycle_checkpoint", "cycle_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.cycle_run_id), 0) FROM cycle_checkpoint r "
+        "JOIN cycle_run t ON t.id = r.cycle_run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("cycle_ranking", "cycle_run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.cycle_run_id), 0) FROM cycle_ranking r "
+        "JOIN cycle_run t ON t.id = r.cycle_run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("media_cooccurrence", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM media_cooccurrence r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('ENTITY_RESOLUTION')"
+    ),
+    ("portfolio_position", "opened_by_cycle", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.opened_by_cycle), 0) FROM portfolio_position r "
+        "JOIN cycle_run t ON t.id = r.opened_by_cycle "
+        "WHERE t.cycle_type NOT IN ('SELECTION')"
+    ),
+    ("portfolio_position", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM portfolio_position r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION')"
+    ),
+    ("portfolio_position_replay", "opened_by_cycle", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.opened_by_cycle), 0) FROM portfolio_position_replay r "
+        "JOIN cycle_run t ON t.id = r.opened_by_cycle "
+        "WHERE t.cycle_type NOT IN ('REPLAY')"
+    ),
+    ("portfolio_position_replay", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM portfolio_position_replay r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('REPLAY')"
+    ),
+    ("price_observation", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM price_observation r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("score_snapshot", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM score_snapshot r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("sector_aggregate_snapshot", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM sector_aggregate_snapshot r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("shared_executive_edge", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM shared_executive_edge r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('ENTITY_RESOLUTION')"
+    ),
+    ("universe_membership", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM universe_membership r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("veto", "run_id", None): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM veto r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+}
+
+WRONG_CYCLE_TYPE_SAMPLE_QUERIES: dict[tuple[str, str, str | None], str] = {
+    ("cycle_checkpoint", "cycle_run_id", None): (
+        "SELECT DISTINCT r.cycle_run_id, t.cycle_type FROM cycle_checkpoint r "
+        "JOIN cycle_run t ON t.id = r.cycle_run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.cycle_run_id LIMIT 5"
+    ),
+    ("cycle_ranking", "cycle_run_id", None): (
+        "SELECT DISTINCT r.cycle_run_id, t.cycle_type FROM cycle_ranking r "
+        "JOIN cycle_run t ON t.id = r.cycle_run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.cycle_run_id LIMIT 5"
+    ),
+    ("media_cooccurrence", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM media_cooccurrence r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('ENTITY_RESOLUTION') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("portfolio_position", "opened_by_cycle", None): (
+        "SELECT DISTINCT r.opened_by_cycle, t.cycle_type FROM portfolio_position r "
+        "JOIN cycle_run t ON t.id = r.opened_by_cycle "
+        "WHERE t.cycle_type NOT IN ('SELECTION') "
+        "ORDER BY r.opened_by_cycle LIMIT 5"
+    ),
+    ("portfolio_position", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM portfolio_position r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("portfolio_position_replay", "opened_by_cycle", None): (
+        "SELECT DISTINCT r.opened_by_cycle, t.cycle_type FROM portfolio_position_replay r "
+        "JOIN cycle_run t ON t.id = r.opened_by_cycle "
+        "WHERE t.cycle_type NOT IN ('REPLAY') "
+        "ORDER BY r.opened_by_cycle LIMIT 5"
+    ),
+    ("portfolio_position_replay", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM portfolio_position_replay r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("price_observation", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM price_observation r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("score_snapshot", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM score_snapshot r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("sector_aggregate_snapshot", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM sector_aggregate_snapshot r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("shared_executive_edge", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM shared_executive_edge r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('ENTITY_RESOLUTION') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("universe_membership", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM universe_membership r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("veto", "run_id", None): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM veto r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+}
+
+UNMAPPED_RUN_KIND_QUERIES: dict[str, str] = {
+    "score_snapshot": (
+        "SELECT COUNT(*), COALESCE(MAX(run_id), 0) FROM score_snapshot "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing'))"
+    ),
+    "price_observation": (
+        "SELECT COUNT(*), COALESCE(MAX(run_id), 0) FROM price_observation "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing'))"
+    ),
+    "universe_membership": (
+        "SELECT COUNT(*), COALESCE(MAX(run_id), 0) FROM universe_membership "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing'))"
+    ),
+}
+
+UNMAPPED_RUN_KIND_SAMPLE_QUERIES: dict[str, str] = {
+    "score_snapshot": (
+        "SELECT DISTINCT run_id, COALESCE(run_kind, 'NULL') FROM score_snapshot "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing')) "
+        "ORDER BY run_id LIMIT 5"
+    ),
+    "price_observation": (
+        "SELECT DISTINCT run_id, COALESCE(run_kind, 'NULL') FROM price_observation "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing')) "
+        "ORDER BY run_id LIMIT 5"
+    ),
+    "universe_membership": (
+        "SELECT DISTINCT run_id, COALESCE(run_kind, 'NULL') FROM universe_membership "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing')) "
+        "ORDER BY run_id LIMIT 5"
+    ),
+}
+
+INVALID_SEC_FILINGS_ACCESSIONS_QUERY: str = """
+SELECT id, asset_id, form, fiscal_year, fiscal_period, filing_date, accession_number,
+       CASE WHEN accession_number IS NULL THEN 'null_accession'
+            WHEN accession_number NOT GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]'
+            THEN 'invalid_format'
+            ELSE 'duplicate_per_asset' END AS issue
+FROM sec_filings
+WHERE accession_number IS NULL
+   OR accession_number NOT GLOB '[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]'
+   OR (asset_id, accession_number) IN (
+       SELECT asset_id, accession_number
+       FROM sec_filings
+       WHERE accession_number IS NOT NULL
+       GROUP BY asset_id, accession_number
+       HAVING COUNT(*) > 1
+   )
+ORDER BY asset_id, id
+"""
+
+M014_REBUILD_COLUMNS: dict[str, tuple[str, ...]] = {
+    "cycle_run": (
+        "id",
+        "cycle_type",
+        "cycle_date",
+        "started_at",
+        "finished_at",
+        "status",
+        "params_json",
+        "code_version",
+    ),
+    "analysis_run": (
+        "id",
+        "started_at",
+        "finished_at",
+        "universe_size",
+        "planned_units",
+        "completed_units",
+        "skipped_units",
+        "failed_units",
+        "params_json",
+        "status",
+        "as_of",
+        "code_version",
+        "fallback_units",
+    ),
+    "pricing_run": (
+        "id",
+        "started_at",
+        "finished_at",
+        "universe_size",
+        "planned_units",
+        "completed_units",
+        "skipped_units",
+        "failed_units",
+        "params_json",
+        "status",
+        "as_of",
+        "code_version",
+    ),
+    "quant_run": (
+        "id",
+        "command",
+        "as_of",
+        "started_at",
+        "finished_at",
+        "status",
+        "engine_version",
+        "params_json",
+        "error",
+        "code_version",
+    ),
+    "sec_filings": (
+        "id",
+        "asset_id",
+        "form",
+        "fiscal_year",
+        "fiscal_period",
+        "filing_date",
+        "accession_number",
+        "period_end",
+        "retrieved_at",
+        "run_id",
+        "available_at",
+        "cik",
+    ),
+}
+
+M014_TABLE_REBUILD_STATEMENTS: dict[str, tuple[str, ...]] = {
+    "cycle_run": (
+        """CREATE TABLE cycle_run__new (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    cycle_type   TEXT NOT NULL,
+    cycle_date   TEXT NOT NULL,
+    started_at   TEXT NOT NULL,
+    finished_at  TEXT,
+    status       TEXT NOT NULL,
+    params_json  TEXT,
+    code_version TEXT,
+    UNIQUE (cycle_type, cycle_date)
+)""",
+        """INSERT INTO cycle_run__new
+    (id, cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version)
+SELECT id, cycle_type, cycle_date, started_at, finished_at, status, params_json, code_version
+FROM cycle_run""",
+        "DROP TABLE cycle_run",
+        "ALTER TABLE cycle_run__new RENAME TO cycle_run",
+    ),
+    "analysis_run": (
+        """CREATE TABLE analysis_run__new (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    universe_size   INTEGER,
+    planned_units   INTEGER,
+    completed_units INTEGER DEFAULT 0,
+    skipped_units   INTEGER DEFAULT 0,
+    failed_units    INTEGER DEFAULT 0,
+    params_json     TEXT,
+    status          TEXT NOT NULL,
+    as_of           TEXT,
+    code_version    TEXT,
+    fallback_units  INTEGER NOT NULL DEFAULT 0
+)""",
+        """INSERT INTO analysis_run__new
+    (id, started_at, finished_at, universe_size, planned_units, completed_units,
+     skipped_units, failed_units, params_json, status, as_of, code_version, fallback_units)
+SELECT id, started_at, finished_at, universe_size, planned_units, completed_units,
+       skipped_units, failed_units, params_json, status, as_of, code_version, fallback_units
+FROM analysis_run""",
+        "DROP TABLE analysis_run",
+        "ALTER TABLE analysis_run__new RENAME TO analysis_run",
+    ),
+    "pricing_run": (
+        """CREATE TABLE pricing_run__new (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    universe_size   INTEGER,
+    planned_units   INTEGER,
+    completed_units INTEGER DEFAULT 0,
+    skipped_units   INTEGER DEFAULT 0,
+    failed_units    INTEGER DEFAULT 0,
+    params_json     TEXT,
+    status          TEXT NOT NULL,
+    as_of           TEXT,
+    code_version    TEXT
+)""",
+        """INSERT INTO pricing_run__new
+    (id, started_at, finished_at, universe_size, planned_units, completed_units,
+     skipped_units, failed_units, params_json, status, as_of, code_version)
+SELECT id, started_at, finished_at, universe_size, planned_units, completed_units,
+       skipped_units, failed_units, params_json, status, as_of, code_version
+FROM pricing_run""",
+        "DROP TABLE pricing_run",
+        "ALTER TABLE pricing_run__new RENAME TO pricing_run",
+    ),
+    "quant_run": (
+        """CREATE TABLE quant_run__new (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    command        TEXT NOT NULL,
+    as_of          TEXT,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    status         TEXT NOT NULL,
+    engine_version TEXT NOT NULL,
+    params_json    TEXT,
+    error          TEXT,
+    code_version   TEXT
+)""",
+        """INSERT INTO quant_run__new
+    (id, command, as_of, started_at, finished_at, status, engine_version, params_json, error, code_version)
+SELECT id, command, as_of, started_at, finished_at, status, engine_version, params_json, error, code_version
+FROM quant_run""",
+        "DROP TABLE quant_run",
+        "ALTER TABLE quant_run__new RENAME TO quant_run",
+    ),
+    "sec_filings": (
+        """CREATE TABLE sec_filings__new (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id         INTEGER NOT NULL REFERENCES assets(id),
+    form             TEXT NOT NULL,
+    fiscal_year      INTEGER NOT NULL,
+    fiscal_period    TEXT NOT NULL,
+    filing_date      TEXT,
+    accession_number TEXT,
+    period_end       TEXT,
+    retrieved_at     TEXT NOT NULL,
+    run_id           INTEGER,
+    available_at     TEXT,
+    cik              TEXT,
+    UNIQUE (asset_id, form, fiscal_period)
+)""",
+        """INSERT INTO sec_filings__new
+    (id, asset_id, form, fiscal_year, fiscal_period, filing_date, accession_number,
+     period_end, retrieved_at, run_id, available_at, cik)
+SELECT id, asset_id, form, fiscal_year, fiscal_period, filing_date, accession_number,
+       period_end, retrieved_at, run_id, available_at, cik
+FROM sec_filings""",
+        "DROP TABLE sec_filings",
+        "ALTER TABLE sec_filings__new RENAME TO sec_filings",
+        """CREATE TRIGGER IF NOT EXISTS trg_sf_accession_insert BEFORE INSERT ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o
+    WHERE o.asset_id = NEW.asset_id AND o.accession_number = NEW.accession_number
+      AND NOT (o.form = NEW.form AND o.fiscal_period = NEW.fiscal_period)
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;""",
+        """CREATE TRIGGER IF NOT EXISTS trg_sf_accession_update
+BEFORE UPDATE OF asset_id, accession_number ON sec_filings
+WHEN NEW.accession_number IS NOT NULL AND EXISTS (
+    SELECT 1 FROM sec_filings o
+    WHERE o.asset_id = NEW.asset_id AND o.accession_number = NEW.accession_number
+      AND o.id <> NEW.id
+)
+BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;""",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# T-107: publication-time guards. Created by  (and migration m008) once
+# ,  and  all exist with .
 # ---------------------------------------------------------------------------
 
 AVAILABILITY_TABLES = ("sec_filings", "fundamental_metrics", "score_snapshot")
