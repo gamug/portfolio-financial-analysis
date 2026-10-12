@@ -264,8 +264,9 @@ the final pilot, `T-143`.
       a 10-K's CAGR base, a 10-Q's year-to-date pair); a filing is counted once.*
       **Status (2026-10-12).** Part 1 — (a) filed signs, (b) precedence incl. ID-03 steps (i)–(iv), (c) income tax, (d) debt and
       cash incl. N23 — landed in PR #136 (merged af373a6; migration m013, contract 13, SPEC 1.8.1, engine metrics-v6). Part 2 —
-      (e), (f), (g), the T-070 recheck (j) and the full acceptance (i) — remains, on metrics-v6; the review's findings below,
-      (k), belong to it. **The box stays open.**
+      (e) revenue & bank net revenue map, (f) capex under MET-08/APP-04b, (g) share counts under MKT-01..04, ID-18, ID-13..15, PER-06,
+      (k) cash read with a source, (j) T-070 recalibration, and (i) full acceptance — in PR #140 (engine metrics-v6, docs/model_fixes.md).
+      **The box stays open.**
       **Split in two PRs (user, 2026-10-11).** **Part 1 landed in PR #136, "fix(fundamental): filed signs, concept precedence,
       income tax, debt and cash (T-148 part 1)" -- (a), (b), (c), (d)** (engine `metrics-v6`, `m013` / contract 13, SPEC
       1.8.0, `docs/model_fixes.md` "T-148 part 1"). **Part 2 follows: (e), (f), (g), the `T-070` recheck (j) and the full
@@ -533,13 +534,12 @@ the final pilot, `T-143`.
         free cash flow 328, operating income 242); a growth or CAGR across the adoption of
         a standard without restated comparatives is flagged: 4 CAGRs cross ASC 842 and 32 lenders'
         net-income CAGRs cross CECL.
-      - **The cash line and the REIT debt total (T-148 part 1 limitation, review of PR #136):** whether a restricted-cash-inclusive
-        line (`CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`) or `Cash` may stand for cash needs a source (D-05,
-        the second author); today EV and ROIC are empty for those filers (372 + 64 of the 656 own-period filings with no cash).
-        The REIT debt total (`SecuredDebt` + `UnsecuredDebt`: no loaded source states the identity) needs a source as well; today
-        debt and EV are empty for those REITs (211 filings, 19 companies). The cash total a filer tags only with dimensions, which
-        the gateway's T-042 empties (88 filings, 9 companies: APO, ARES, BEN, BRK.B, KKR, LEN, NVR, PCAR, TXT), is the gateway's
-        to supply.
+      - **The cash line and the REIT debt total (T-148 part 2 limitation, see `docs/model_fixes.md` causes table):** the
+        REIT debt total (`SecuredDebt` + `UnsecuredDebt`: no loaded source states the identity) needs a source; today debt
+        and EV are empty for those REITs (16 REIT companies). Segment-only cash where filers report cash only within segmented
+        balance sheets (PCAR, NVR, TXT) and company-specific or discontinued-operations cash elements (CVX, PODD, GEHC, MDLZ,
+        MMM, AMP, CINF, DVN) remain unread, with EV and ROIC empty. (Part 2 resolved the restricted-cash-inclusive line under
+        (k)(1) and `Cash` alone with classified balance sheets under (k)(3), flagged).
       - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
         meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
         ranking decision (D/E = +∞) is `T-071`'s.

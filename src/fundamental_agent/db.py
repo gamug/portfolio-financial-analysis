@@ -837,6 +837,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
             else None
         )
         pair = (ytd or {}).get(item)
+        flow_flags: tuple[str, ...] = ()
         if pair and pair.current is not None and pair.prior is not None and pair.prior_end:
             fy_filing = _fiscal_year_between(conn, asset_id, pair.prior_end, period_end)
             fy = (
@@ -849,11 +850,23 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                     fy - pair.prior + pair.current, "ytd", alt=summed, ytd=pair.current
                 )
                 continue
+            if item == "depreciation_amortization" and fy_filing is not None:
+                p_flag = _recorded_input(
+                    conn,
+                    fy_filing,
+                    item,
+                    "flag_depreciation_amortization_depreciation_only_not_da",
+                    engine_version,
+                )
+                if p_flag == 1.0:
+                    flow_flags = ("depreciation_only_not_da",)
         ytd_now = pair.current if pair else None
         if summed is not None:
-            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now)
+            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now, flags=flow_flags)
         elif item in current:
-            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now)
+            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now, flags=flow_flags)
+        elif flow_flags:
+            out[item] = TTMFlow(0.0, "refused", ytd=ytd_now, flags=flow_flags)
     return out
 
 
@@ -1384,3 +1397,18 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
         (_now(), status, run_id),
     )
     conn.commit()
+
+
+def is_equity_reit(conn: Database, asset_id: int) -> bool:
+    """M4 predicate (D6): assets -> sectors sector name 'Real Estate' and assets.sub_industry ending in 'REITs'."""
+    row = conn.execute(
+        "SELECT s.name AS sector, a.sub_industry "
+        "FROM assets a LEFT JOIN sectors s ON a.sector_id = s.id "
+        "WHERE a.id = ?",
+        (asset_id,),
+    ).fetchone()
+    if not row:
+        return False
+    sector = str(row["sector"] or "")
+    sub_industry = str(row["sub_industry"] or "")
+    return sector == "Real Estate" and sub_industry.endswith("REITs")

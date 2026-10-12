@@ -265,6 +265,120 @@ def test_cover_total_is_the_one_aggregation() -> None:
     assert got == ShareCount(5.0, "2026-01-15", 2)
 
 
+def test_fox_is_valued_class_by_class(conn: Database) -> None:
+    """Fox Corporation (MKT-03): Class A trades as FOXA, Class B as FOX.
+    Class A count x FOXA close + Class B count x FOX close."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (10, 'FOX', '0001754301')")
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (11, 'FOXA', '0001754301')")
+    fid = seed_cover_shares(
+        conn, 10, 200.0, as_of_date="2026-07-31", class_member="us-gaap:CommonClassBMember"
+    )
+    seed_cover_shares(
+        conn,
+        10,
+        100.0,
+        as_of_date="2026-07-31",
+        class_member="us-gaap:CommonClassAMember",
+        filing_id=fid,
+    )
+    _price(conn, 10, AS_OF, 25.0)  # FOX = 25.0
+    _price(conn, 11, AS_OF, 30.0)  # FOXA = 30.0
+
+    res = market_caps_as_of(conn, [10], as_of=AS_OF)
+    cap = res.caps[10]
+    # 100 * 30.0 + 200 * 25.0 = 3,000 + 5,000 = 8,000.0
+    assert cap.value == pytest.approx(8_000.0)
+    assert cap.incomplete_classes is False
+
+
+def test_multi_class_with_unconverted_class_is_flagged_incomplete(conn: Database) -> None:
+    """A multi-class CIK with a class neither listed nor converted gets incomplete_classes=True."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (20, 'MULTI', '0001999999')")
+    fid = seed_cover_shares(
+        conn, 20, 100.0, as_of_date="2026-07-31", class_member="us-gaap:CommonClassAMember"
+    )
+    seed_cover_shares(
+        conn,
+        20,
+        50.0,
+        as_of_date="2026-07-31",
+        class_member="us-gaap:CommonClassBMember",
+        filing_id=fid,
+    )
+    _price(conn, 20, AS_OF, 10.0)
+    res = market_caps_as_of(conn, [20], as_of=AS_OF)
+    cap = res.caps[20]
+    assert cap.value == pytest.approx(150.0 * 10.0)
+    assert cap.incomplete_classes is True
+
+
+def test_cover_total_excludes_non_common_members_blk_and_ares() -> None:
+    """MKT-04: Non-common share members (Preferred, FullyDiluted, UnitsMember) are excluded."""
+    # BLK: exclude blk:FullyDilutedSharesMember and blk:ExchangeableUnitsMember
+    blk_entries = [
+        ("blk:FullyDilutedSharesMember", 162_476_186.0, "2026-07-31"),
+        ("blk:ExchangeableUnitsMember", 7_606_927.0, "2026-07-31"),
+        ("us-gaap:CommonStockMember", 154_869_259.0, "2026-07-31"),
+    ]
+    blk_count = cover_total(blk_entries, cik="0002012383")
+    assert blk_count is not None
+    assert blk_count.value == 154_869_259.0
+    assert blk_count.n_classes == 1
+    assert blk_count.n_excluded == 2
+    assert blk_count.cover_member_not_common_excluded is True
+
+    # ARES: exclude ares:SeriesBMandatoryConvertiblePreferredStockMember
+    ares_entries = [
+        ("ares:SeriesBMandatoryConvertiblePreferredStockMember", 30_000_000.0, "2026-08-03"),
+        ("us-gaap:CommonClassAMember", 223_957_742.0, "2026-08-03"),
+        ("us-gaap:CommonClassBMember", 1000.0, "2026-08-03"),
+        ("us-gaap:CommonClassCMember", 102_828_576.0, "2026-08-03"),
+        ("us-gaap:NonvotingCommonStockMember", 3_489_911.0, "2026-08-03"),
+    ]
+    ares_count = cover_total(ares_entries, cik="0001176948")
+    assert ares_count is not None
+    assert ares_count.value == 223_957_742.0 + 1000.0 + 102_828_576.0 + 3_489_911.0
+    assert ares_count.n_classes == 4
+    assert ares_count.n_excluded == 1
+    assert ares_count.cover_member_not_common_excluded is True
+
+
+def test_market_caps_as_of_excludes_non_common_members_blk_and_ares(conn: Database) -> None:
+    """MKT-04: market_caps_as_of reflects excluded members and sets audit flags."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (30, 'BLK', '0002012383')")
+    fid = seed_cover_shares(
+        conn,
+        30,
+        162_476_186.0,
+        as_of_date="2026-07-31",
+        class_member="blk:FullyDilutedSharesMember",
+    )
+    seed_cover_shares(
+        conn,
+        30,
+        7_606_927.0,
+        as_of_date="2026-07-31",
+        class_member="blk:ExchangeableUnitsMember",
+        filing_id=fid,
+    )
+    seed_cover_shares(
+        conn,
+        30,
+        154_869_259.0,
+        as_of_date="2026-07-31",
+        class_member="us-gaap:CommonStockMember",
+        filing_id=fid,
+    )
+    _price(conn, 30, AS_OF, 100.0)
+
+    res = market_caps_as_of(conn, [30], as_of=AS_OF)
+    cap = res.caps[30]
+    assert cap.share_count == 154_869_259.0
+    assert cap.value == pytest.approx(154_869_259.0 * 100.0)
+    assert cap.n_excluded == 2
+    assert cap.cover_member_not_common_excluded is True
+
+
 # -- the result --------------------------------------------------------------------------------
 
 

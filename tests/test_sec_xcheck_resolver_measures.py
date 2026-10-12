@@ -263,13 +263,13 @@ def _dow_record() -> tuple[Statements, Period, dict[str, Any]]:
     return stmts, period, extract(stmts, period.key, metrics=False)
 
 
-def test_n22_dow_capex_resolves_to_the_gas_field_line_not_the_capital_expenditures_line() -> None:
-    """The defect as it stands: the oil & gas tier precedes the caption fallback, so 0.157B displaces 2.479B.
-    ``T-148``(f) fixes the resolver and then replaces the asserted value with 2,479,000,000."""
+def test_n22_dow_capex_resolves_to_machinery_plus_gas_field_lines() -> None:
+    """T-148(f) / MET-08 (c): PP&E-family line and oil & gas line are added, resolving to 2,636,000,000."""
     _, _, record = _dow_record()
     capex = record["items"]["capital_expenditure"]
-    assert capex["concept"] == cx.OG_ED and capex["how"] == "fallback1"
-    assert abs(capex["value"]) == 157_000_000.0
+    assert capex["how"] == "map"
+    assert abs(capex["value"]) == 2_636_000_000.0
+    assert cx.MACHINERY in capex["concept"] and cx.OG_ED in capex["concept"]
     assert record["capex"][cx.MACHINERY] == 2_479_000_000.0  # filed sign (T-148)
     # two captions match (the hedging row has no accrual word), so the caption fallback would refuse anyway:
     # putting the O&G tiers behind the caption is not enough, the concept itself has to be in the registry
@@ -285,6 +285,11 @@ def test_n22_the_measurement_counts_dow_and_not_a_producer_without_a_competing_l
     _, _, features = _dow_record()
     dow = rec(ticker="DOW", sub_industry="Commodity Chemicals")
     dow.f.update(features)
+    dow.f["items"]["capital_expenditure"] = {
+        "concept": cx.OG_ED,
+        "how": "fallback1",
+        "value": -157_000_000.0,
+    }
     assert cx.displaced_by_og_tier(dow) and not cx._is_og_filer(dow)
     assert cx.filed_gap(dow) == 2_479_000_000.0 - 157_000_000.0
     fang = rec(

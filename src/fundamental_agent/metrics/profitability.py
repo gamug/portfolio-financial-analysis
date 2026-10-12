@@ -40,7 +40,7 @@ def compute(
     # docs/model_fixes.md). `inputs["net_income"]` above stays the raw,
     # single-period value regardless -- it's what a later filing's own TTM
     # computation reads back as one of its trailing quarters.
-    net_ttm = (ttm or {}).get("net_income", net)
+    net_ttm = ttm.get("net_income") if ttm is not None else net
     # N2 / MET-05 (T-149): the trailing-year net income the cycle's earnings yield divides by the
     # as-of market cap. A 10-K's is its fiscal year; a 10-Q's is the TTM (``annualized_x4`` in the
     # inputs says it was only one quarter times four, which the cycle then does not use).

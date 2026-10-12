@@ -18,6 +18,7 @@ import pytest
 from fundamental_agent.metrics import leverage, liquidity, roic, valuation
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
+from kg_schema.market_cap import MarketCap
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -406,15 +407,39 @@ def _duke_without_debt() -> Statements:
     return Statements.from_payload(payload)
 
 
+def _duke_mcap(close: float = 100.0) -> MarketCap:
+    shares = 776_461_008.0
+    return MarketCap(
+        asset_id=1,
+        value=shares * close,
+        shares=shares,
+        share_count=shares,
+        share_as_of="2024-12-31",
+        share_age_days=0,
+        filing_id=1,
+        close=close,
+        close_date="2024-12-31",
+        n_classes=0,
+        split_factor=1.0,
+    )
+
+
 def test_enterprise_value_is_empty_when_debt_is_missing_not_market_cap_less_cash() -> None:
     price = ClosePrice(date="2024-12-31", close=100.0)
-    complete = {r.name: r for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price)}
+    mcap = _duke_mcap(100.0)
+    complete = {
+        r.name: r
+        for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price, market_cap=mcap)
+    }
     # debt 84,273M + market cap 77,646M - cash 314M
     assert complete["enterprise_value"].value == pytest.approx(
         776_461_008.0 * 100.0 + 84_273_000_000.0 - 314_000_000.0
     )
 
-    broken = {r.name: r for r in valuation.compute(_duke_without_debt(), "2024-12-31 (FY)", price)}
+    broken = {
+        r.name: r
+        for r in valuation.compute(_duke_without_debt(), "2024-12-31 (FY)", price, market_cap=mcap)
+    }
     assert broken["market_capitalization"].value is not None
     assert broken["enterprise_value"].value is None
     assert broken["enterprise_fcf_yield"].value is None
@@ -509,13 +534,19 @@ def test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty(
     expense is neither added back (it would be subtracted) nor made positive: the yield is empty,
     as the coverage is (MET-09)."""
     price = ClosePrice(date="2024-12-31", close=100.0)
-    ok = {r.name: r for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price)}
+    mcap = _duke_mcap(100.0)
+    ok = {
+        r.name: r
+        for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price, market_cap=mcap)
+    }
     assert ok["enterprise_fcf_yield"].value is not None
     payload = copy.deepcopy(_payload(DUKE))
     _row(payload, "income_statement", G + "InterestExpense")["preferred_sign"] = -1.0
     negative = {
         r.name: r
-        for r in valuation.compute(Statements.from_payload(payload), "2024-12-31 (FY)", price)
+        for r in valuation.compute(
+            Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
+        )
     }
     assert negative["enterprise_fcf_yield"].value is None
     assert negative["free_cash_flow_yield"].value is not None  # the equity yield needs no interest
@@ -525,18 +556,23 @@ def test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one() -> Non
     """``InterestAndDebtExpense`` filed negative is rejected (ID-13) and the item is empty -- but an empty
     interest expense must not read as "no interest": the unlevered FCF yield is empty, not the levered one."""
     price = ClosePrice(date="2024-12-31", close=100.0)
+    mcap = _duke_mcap(100.0)
     payload = copy.deepcopy(_payload(DUKE))
     interest = _row(payload, "income_statement", G + "InterestExpense")
     interest["concept"] = G + "InterestAndDebtExpense"  # Duke's expense under the listed concept
     ok = {
         r.name: r
-        for r in valuation.compute(Statements.from_payload(payload), "2024-12-31 (FY)", price)
+        for r in valuation.compute(
+            Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
+        )
     }
     assert ok["enterprise_fcf_yield"].value is not None
     interest["preferred_sign"] = -1.0  # filed negative
     rejected = {
         r.name: r
-        for r in valuation.compute(Statements.from_payload(payload), "2024-12-31 (FY)", price)
+        for r in valuation.compute(
+            Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
+        )
     }
     assert rejected["enterprise_fcf_yield"].value is None
     assert rejected["free_cash_flow_yield"].value is not None

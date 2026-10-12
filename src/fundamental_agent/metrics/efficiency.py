@@ -31,8 +31,9 @@ def compute(
     # balance-sheet stock -- same 10-Q quarter-vs-annual mismatch as ROA/ROE
     # (F4, docs/model_fixes.md); `inputs` above keeps the raw, single-period
     # values regardless, for a later filing's own TTM computation to read back.
-    revenue_ttm = (ttm or {}).get("revenue", revenue)
-    cogs_ttm = (ttm or {}).get("cogs", cogs)
+    revenue_ttm = ttm.get("revenue") if ttm is not None else revenue
+    cogs_ttm = ttm.get("cogs") if ttm is not None else cogs
+
     return [
         MetricResult("asset_turnover", safe_div(revenue_ttm, assets), "x", inputs),
         MetricResult("inventory_turnover", safe_div(cogs_ttm, inventory), "x", inputs),

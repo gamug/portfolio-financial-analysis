@@ -130,6 +130,11 @@ class LineItem:
     # fallback, never added to PP&E", which a concept-first pass would read before ETR's own
     # ``PaymentsForCapitalImprovements`` (106M against 5.07B); part 2 (f) writes capex's order.
     document_order: bool = False
+    # (concept, flag): when the resolved value comes from that concept, raise the flag (T-148 step 2.1).
+    concept_flags: tuple[tuple[str, str], ...] = ()
+    # (concept, flag): when the item resolves empty and that concept is filed (valued,
+    # non-dimensional) in the column, raise the flag (T-148 step 2.1).
+    unread_flags: tuple[tuple[str, str], ...] = ()
 
 
 _INCOME = ("income_statement",)
@@ -178,6 +183,24 @@ _NOT_A_DEBT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
+
+# -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
+_CASH_PAREN_RE = re.compile(r"\([^)]*\)")
+_CASH_NOTE_RE = re.compile(r"\(note\s+\w+\)", re.IGNORECASE)
+_ALLOWED_K1_CAPTIONS = frozenset(
+    {
+        "cash",
+        "cash and cash equivalents",
+        "cash and equivalents",
+        "cash, cash equivalents",
+    }
+)
+_INVESTMENT_KEYWORDS = ("invest", "marketable", "securit", "short-term", "short term")
+
+# -- Revenue D-02 condition (T-148 (e), D-02, B4) --------------------------------------------------
+_REV_CONCEPT_RE = re.compile(r"Revenue", re.IGNORECASE)
+_REV_CAPTION_RE = re.compile(r"\b(revenues?|sales)\b", re.IGNORECASE)
+_COST_EXPENSE_RE = re.compile(r"\b(costs?|expenses?)\b", re.IGNORECASE)
 
 # -- Parent net income (ID-03, CON-19; T-148) -------------------------------------------------------
 # The us-gaap elements for income attributable to the noncontrolling interest: the total and its
@@ -242,15 +265,25 @@ REGISTRY: dict[str, LineItem] = {
                 "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
             ),
         ),
+        # ID-13/ID-15: DQC_0014 and DQC_0015 non-negative revenue concepts
+        nonnegative=(
+            "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+            "us-gaap_OperatingLeaseLeaseIncome",
+        ),
     ),
     "cogs": LineItem(
         "cogs",
         _INCOME,
+        # ID-20: CostOfGoodsSold and CostOfServices removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_CostOfGoodsAndServicesSold",
             "us-gaap_CostOfRevenue",
-            "us-gaap_CostOfGoodsSold",
-            "us-gaap_CostOfServices",
+        ),
+        # ID-13: DQC_0015 non-negative concepts
+        nonnegative=(
+            "us-gaap_CostOfGoodsAndServicesSold",
+            "us-gaap_CostOfRevenue",
         ),
     ),
     "gross_profit": LineItem("gross_profit", _INCOME, concepts=("us-gaap_GrossProfit",)),
@@ -306,7 +339,12 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_DepreciationDepletionAndAmortization",
             "us-gaap_DepreciationAmortizationAndAccretionNet",
             "us-gaap_DepreciationAndAmortization",
-            "us-gaap_Depreciation",
+        ),
+        unread_flags=(("us-gaap_Depreciation", "depreciation_only_not_da"),),
+        concept_flags=(("us-gaap_DepreciationAndAmortization", "da_element_nonproduction"),),
+        nonnegative=(
+            "us-gaap_DepreciationDepletionAndAmortization",
+            "us-gaap_DepreciationAndAmortization",
         ),
     ),
     "operating_cash_flow": LineItem(
@@ -320,56 +358,47 @@ REGISTRY: dict[str, LineItem] = {
     "capital_expenditure": LineItem(
         "capital_expenditure",
         _CASHFLOW,
+        resolver="capex",
         concepts=(
             "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
-            "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
-        ),
-        document_order=True,
-        # T-133: an ASC 932 oil & gas producer capitalizes its drilling and development spend
-        # under its own concept, so none of the above exists (APA, FANG: no FCF on any 10-K).
-        # Development first; an *acquisition* of reserves (FANG's Endeavor deal: $8.9B beside
-        # $2.9B of development) is capex only when the filer reports nothing else. Then the
-        # "net" variant of the plain additions line.
-        fallback_concepts=(
+            "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+            "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
+            "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
             "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasEquipment",
             "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
-            "us-gaap_PaymentsToAcquireOilAndGasProperty",
-            # the same additions line tagged net of disposals (WAT's 10-Ks to FY2024)
+            "us-gaap_PaymentsToAcquireProductiveAssets",
+            "us-gaap_PaymentsToAcquireOtherProductiveAssets",
             "us-gaap_PaymentsForProceedsFromProductiveAssets",
         ),
-        # An oil & gas filer's non-field spending (EOG: $479M beside $6,115M of oil and gas
-        # additions) is its own line; it joins the three oil & gas tiers, not the "net" line.
-        fallback_addends=("us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",),
-        fallback_addend_tiers=3,
-        # A custom concept, found by its caption on the cash-flow statement alone, when exactly one
-        # line reads "capital expenditure(s)" (PSX: "Capital expenditures and investments"). The
-        # statement's non-cash reconciling rows ("change in capital expenditures not yet paid",
-        # "...included in accounts payable") are excluded -- accrual adjustments, never cash spent.
         label_fallback=r"\bcapital expenditures?\b",
         label_fallback_exclude=(
             r"\b(accrued|unpaid|not (yet )?paid|incurred|included|financed|non-?cash|payable"
             r"|change|increase|decrease|proceeds|reimburse\w*|sales?)\b"
         ),
-        # ID-13: DQC_0015 lists every one of these in every release of the window. The net
-        # element ``PaymentsForProceedsFromProductiveAssets`` is not on the list (it is a payment
-        # net of proceeds) and may be negative.
         nonnegative=(
             "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
-            "us-gaap_PaymentsToAcquireProductiveAssets",
             "us-gaap_PaymentsForCapitalImprovements",
-            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
-            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
-            "us-gaap_PaymentsToAcquireOilAndGasProperty",
+            "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+            "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
             "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
+            "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+            "us-gaap_PaymentsToAcquireOilAndGasEquipment",
+            "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+            "us-gaap_PaymentsToAcquireProductiveAssets",
+            "us-gaap_PaymentsToAcquireOtherProductiveAssets",
+            "us-gaap_PaymentsToAcquireRealEstate",
+            "us-gaap_PaymentsToAcquireRealEstateHeldForInvestment",
+            "us-gaap_PaymentsToDevelopRealEstateAssets",
         ),
     ),
     "stock_based_compensation": LineItem(
         "stock_based_compensation",
         _CASHFLOW,
+        # ID-20: ShareBasedCompensationExpense removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_ShareBasedCompensation",
-            "us-gaap_ShareBasedCompensationExpense",
             "us-gaap_AllocatedShareBasedCompensationExpense",
         ),
         standard=("StockBasedCompensationExpense",),
@@ -385,6 +414,7 @@ REGISTRY: dict[str, LineItem] = {
         _BALANCE,
         concepts=("us-gaap_CommonStockSharesOutstanding",),
         standard=("SharesYearEnd",),
+        nonnegative=("us-gaap_CommonStockSharesOutstanding",),
     ),
     # Weighted-average diluted share count from the income statement -- always
     # reported; use for per-share metrics and as the shares_outstanding fallback.
@@ -395,6 +425,7 @@ REGISTRY: dict[str, LineItem] = {
         _INCOME,
         concepts=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
         standard=("SharesFullyDilutedAverage",),
+        nonnegative=("us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",),
     ),
     # As-filed diluted EPS -- a GAAP-required disclosure, independent of
     # `diluted_shares` (net income divided by it, as reported by the filer
@@ -414,11 +445,26 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
         ),
     ),
-    "total_assets": LineItem("total_assets", _BALANCE, concepts=("us-gaap_Assets",)),
-    "current_assets": LineItem("current_assets", _BALANCE, concepts=("us-gaap_AssetsCurrent",)),
-    "total_liabilities": LineItem("total_liabilities", _BALANCE, concepts=("us-gaap_Liabilities",)),
+    "total_assets": LineItem(
+        "total_assets", _BALANCE, concepts=("us-gaap_Assets",), nonnegative=("us-gaap_Assets",)
+    ),
+    "current_assets": LineItem(
+        "current_assets",
+        _BALANCE,
+        concepts=("us-gaap_AssetsCurrent",),
+        nonnegative=("us-gaap_AssetsCurrent",),
+    ),
+    "total_liabilities": LineItem(
+        "total_liabilities",
+        _BALANCE,
+        concepts=("us-gaap_Liabilities",),
+        nonnegative=("us-gaap_Liabilities",),
+    ),
     "current_liabilities": LineItem(
-        "current_liabilities", _BALANCE, concepts=("us-gaap_LiabilitiesCurrent",)
+        "current_liabilities",
+        _BALANCE,
+        concepts=("us-gaap_LiabilitiesCurrent",),
+        nonnegative=("us-gaap_LiabilitiesCurrent",),
     ),
     "equity": LineItem(
         "equity",
@@ -437,21 +483,40 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_CashCashEquivalentsAndShortTermInvestments",
             "us-gaap_CashAndDueFromBanks",
         ),
+        nonnegative=(
+            "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+            "us-gaap_CashCashEquivalentsAndShortTermInvestments",
+            "us-gaap_CashAndDueFromBanks",
+        ),
+        resolver="cash",
     ),
     "short_term_investments": LineItem(
         "short_term_investments",
         _BALANCE,
+        # ID-20: AvailableForSaleSecuritiesCurrent removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=(
             "us-gaap_ShortTermInvestments",
             "us-gaap_MarketableSecuritiesCurrent",
-            "us-gaap_AvailableForSaleSecuritiesCurrent",
+        ),
+        nonnegative=(
+            "us-gaap_ShortTermInvestments",
+            "us-gaap_MarketableSecuritiesCurrent",
         ),
     ),
-    "inventory": LineItem("inventory", _BALANCE, concepts=("us-gaap_InventoryNet",)),
+    "inventory": LineItem(
+        "inventory",
+        _BALANCE,
+        concepts=("us-gaap_InventoryNet",),
+        nonnegative=("us-gaap_InventoryNet",),
+    ),
     "receivables": LineItem(
         "receivables",
         _BALANCE,
         concepts=(
+            "us-gaap_AccountsReceivableNetCurrent",
+            "us-gaap_ReceivablesNetCurrent",
+        ),
+        nonnegative=(
             "us-gaap_AccountsReceivableNetCurrent",
             "us-gaap_ReceivablesNetCurrent",
         ),
@@ -470,12 +535,19 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_LongTermDebtAndCapitalLeaseObligations",
             "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
         ),
+        nonnegative=(
+            "us-gaap_LongTermDebtNoncurrent",
+            "us-gaap_LongTermDebt",
+            "us-gaap_LongTermDebtAndCapitalLeaseObligations",
+            "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+        ),
         resolver="long_term_debt",
     ),
     "short_term_debt": LineItem(
         "short_term_debt",
         _BALANCE,
         concepts=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
+        nonnegative=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
         resolver="short_term_debt",
     ),
 }
@@ -545,6 +617,8 @@ _COMPOSITE = {
     "income_tax": "_income_tax",
     "long_term_debt": "_long_term_debt",
     "short_term_debt": "_short_term_debt",
+    "cash": "_cash",
+    "capex": "_capex",
 }
 
 
@@ -583,11 +657,13 @@ class Statements:
     # failed (it fails in isolation, so the statements above are still validated).
     cover_shares: list[CoverShares] = field(default_factory=list)
     cover_error: str | None = None
+    # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
+    reit: bool = False
     # The flags of the resolution in progress (see :meth:`resolve`); never part of the payload.
     _flags: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
     @classmethod
-    def from_payload(cls, payload: dict[str, Any]) -> Statements:
+    def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
         raw = {key: list(payload.get(key) or []) for key in STATEMENT_KEYS}
         seen: dict[str, Period] = {}
         for rows in raw.values():
@@ -606,6 +682,7 @@ class Statements:
             corrections=corrections,
             cover_shares=_cover_shares(payload),
             cover_error="; ".join(cover_errors) or None,
+            reit=reit,
         )
 
     def fy_periods(self) -> list[Period]:
@@ -729,9 +806,45 @@ class Statements:
                     return Resolution(None)
                 column = instant
             value, concept, how = self._resolve_column(spec, column)
+            self._apply_resolution_flags(spec, column, value, concept, how)
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
+
+    def _apply_resolution_flags(
+        self,
+        spec: LineItem,
+        column: str,
+        value: float | None,
+        concept: str | None,
+        how: str | None,
+    ) -> None:
+        if value is not None and concept is not None and spec.concept_flags:
+            for c, flag in spec.concept_flags:
+                if concept == c or c in [p.strip() for p in re.split(r"\s+[+-]\s+", concept)]:
+                    self._flag(flag)
+        if value is None and spec.unread_flags:
+            for c, flag in spec.unread_flags:
+                if self._is_concept_filed_in_column(spec, column, c):
+                    self._flag(flag)
+        if (
+            spec.name in ("revenue", "net_income", "equity")
+            and value is not None
+            and concept is not None
+            and self._equals_dimensional_member(spec, column, concept, value)
+        ):
+            self._flag("equals_dimensional_member")
+        self._apply_id01_flags(how, concept, value)
+
+    def _apply_id01_flags(self, how: str | None, concept: str | None, value: float | None) -> None:
+        if how == "standard":
+            self._flag("standard_concept_match")
+        elif how in ("label", "label_fallback"):
+            self._flag("label_match")
+        if value is not None and concept is not None:
+            parts = [p.strip() for p in re.split(r"\s+[+-]\s+", concept) if p.strip()]
+            if any(not p.startswith(("us-gaap_", "dei_")) for p in parts):
+                self._flag("extension_concept")
 
     def get(self, item: str, period_key: str) -> float | None:
         """Return the value of registry *item* for *period_key*, or ``None`` (:meth:`resolve`'s
@@ -785,6 +898,7 @@ class Statements:
                 spec, column
             )
             return resolved
+        total_value = None
         rebuild_missing_total = False
         if spec.total_concepts:
             total_value, total_concept = self._first_total_row(spec, column)
@@ -798,6 +912,10 @@ class Statements:
                     return total_value, total_concept, "total"
 
         value, concept, how = self._component_row(spec, column)
+        if spec.name == "revenue" and total_value is None and value is None:
+            bank_rev = self._bank_net_revenue(spec, column)
+            if bank_rev is not None:
+                return bank_rev
         if rebuild_missing_total:
             rebuilt = self._rebuild_missing_total(spec, column)
             # A surviving component (APA 2021Q1: a $0 "production revenues" row) is a partial
@@ -805,6 +923,42 @@ class Statements:
             if rebuilt is not None and (value is None or rebuilt >= value):
                 return rebuilt, None, "derived"
         return value, concept, how
+
+    def _bank_net_revenue(self, spec: LineItem, column: str) -> tuple[float, str, str] | None:
+        """D2 bank map (APP-01, FASB 2026 calculation linkbase soi1 / soi4):
+        Revenue = InterestIncomeExpenseNet + NoninterestIncome.
+        soi1: RevenuesNetOfInterestExpense = Revenues - InterestExpenseOperating;
+        soi4: InterestIncomeExpenseNet = Interest income lines - InterestExpenseOperating.
+        """
+        nii = self._concept_value(spec, column, G + "InterestIncomeExpenseNet")
+        nonii = self._concept_value(spec, column, G + "NoninterestIncome")
+        if nii is not None and nonii is not None:
+            self._flag("bank_net_revenue_map")
+            concept = f"{G}InterestIncomeExpenseNet + {G}NoninterestIncome"
+            return nii + nonii, concept, "map"
+        return None
+
+    def _sum_reads_as_only_revenue(self, spec: LineItem, column: str, total: float) -> bool:
+        """D-02 condition: sum of >= 2 streams is returned only when no other valued,
+        non-abstract, non-dimensional income-statement row reads as revenue.
+        B4: 'The Revenues element would be used for the total revenue (ASC 606 and non-ASC 606 revenue)'.
+        """
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept in spec.concepts:
+                continue
+            value = _numeric(row.get(column))
+            if value is None:
+                continue
+            if abs(value - total) <= 0.005 * abs(total):
+                continue
+            local = concept.rsplit("_", 1)[-1]
+            label = str(row.get("label") or "")
+            if (
+                _REV_CONCEPT_RE.search(local) or _REV_CAPTION_RE.search(label)
+            ) and not _COST_EXPENSE_RE.search(label):
+                return False
+        return True
 
     def _component_row(
         self, spec: LineItem, column: str
@@ -816,7 +970,11 @@ class Statements:
             if total is None:
                 return None, None, None
             if len(used) >= MIN_SUMMED:
-                return total, " + ".join(sorted(used)), "sum"
+                if self._sum_reads_as_only_revenue(spec, column, total):
+                    self._flag("revenue_606_plus_non606_map")
+                    return total, " + ".join(sorted(used)), "map"
+                self._flag("revenue_sum_not_only_revenue_lines")
+                return None, None, None
             return total, used[0], "concept"
         value, concept, how = self._first_component_row(spec, column)
         if value is None and (spec.fallback_concepts or spec.label_fallback):
@@ -926,6 +1084,276 @@ class Statements:
             )
         if current is not None or deferred is not None:
             self._flag("tax_component_not_total")
+        return None, None, None
+
+    def _cash_sti(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str]:
+        row = next(
+            (
+                r
+                for r in self._rows_for(spec)
+                if r.get("concept") == concept and _numeric(r.get(column)) is not None
+            ),
+            None,
+        )
+        cap = str(row.get("label") or "").lower() if row else ""
+        if any(w in cap for w in _INVESTMENT_KEYWORDS):
+            self._flag("includes_short_term_investments")
+        else:
+            self._flag("cash_sti_tag_cash_caption")
+        return val, concept, "concept"
+
+    def _cash_k1(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str] | None:
+        row = next(
+            (
+                r
+                for r in self._rows_for(spec)
+                if r.get("concept") == concept and _numeric(r.get(column)) is not None
+            ),
+            None,
+        )
+        cap = str(row.get("label") or "") if row else ""
+        cap_clean = _CASH_NOTE_RE.sub("", cap)
+        cap_clean = _CASH_PAREN_RE.sub("", cap_clean).strip().lower()
+        if cap_clean in _ALLOWED_K1_CAPTIONS and "restrict" not in cap_clean:
+            for r in self._rows_for(spec):
+                if r.get("concept") == concept:
+                    continue
+                c_local = str(r.get("concept") or "").rsplit("_", 1)[-1].lower()
+                c_cap = str(r.get("label") or "").lower()
+                if ("restrict" in c_local or "restrict" in c_cap) and _numeric(
+                    r.get(column)
+                ) is not None:
+                    return None
+            self._flag("cash_tag_includes_restricted_cash_possible")
+            return val, concept, "concept"
+        return None
+
+    def _cash_classified(
+        self, spec: LineItem, column: str, val: float, concept: str
+    ) -> tuple[float, str, str] | None:
+        ca = self.get("current_assets", column)
+        cl = self.get("current_liabilities", column)
+        if ca is not None and cl is not None:
+            self._flag("cash_element_only")
+            return val, concept, "concept"
+        return None
+
+    def _cash_primary(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        c1 = G + "CashAndCashEquivalentsAtCarryingValue"
+        val1 = self._concept_value(spec, column, c1)
+        if val1 is not None:
+            return val1, c1, "concept"
+
+        c2 = G + "CashCashEquivalentsAndShortTermInvestments"
+        val2 = self._concept_value(spec, column, c2)
+        if val2 is not None:
+            return self._cash_sti(spec, column, val2, c2)
+
+        c3 = G + "CashAndDueFromBanks"
+        val3 = self._concept_value(spec, column, c3)
+        if val3 is not None:
+            return val3, c3, "concept"
+
+        c_cash = G + "Cash"
+        c_ce = G + "CashEquivalentsAtCarryingValue"
+        val_cash = self._concept_value(spec, column, c_cash)
+        val_ce = self._concept_value(spec, column, c_ce)
+        if val_cash is not None and val_ce is not None:
+            self._flag("cash_plus_cash_equivalents_map")
+            return val_cash + val_ce, f"{c_cash} + {c_ce}", "map"
+
+        return None, None, None
+
+    def _cash(self, spec: LineItem, column: str) -> tuple[float | None, str | None, str | None]:
+        """Cash composite resolver (T-148 (k), B4, B6):
+
+        1. CashAndCashEquivalentsAtCarryingValue;
+        2. CashCashEquivalentsAndShortTermInvestments, caption checked;
+        3. CashAndDueFromBanks;
+        4. ES map: Cash + CashEquivalentsAtCarryingValue;
+        5. (k)(1): CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents,
+           caption checked and no other balance-sheet restricted line;
+        6. (k)(3): Cash alone on a classified balance sheet.
+        """
+        primary = self._cash_primary(spec, column)
+        if primary[0] is not None:
+            return primary
+
+        c_k1 = G + "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"
+        val_k1 = self._concept_value(spec, column, c_k1)
+        if val_k1 is not None:
+            res_k1 = self._cash_k1(spec, column, val_k1, c_k1)
+            return res_k1 if res_k1 is not None else (None, None, None)
+
+        val_cash = self._concept_value(spec, column, G + "Cash")
+        if val_cash is not None:
+            res_c = self._cash_classified(spec, column, val_cash, G + "Cash")
+            if res_c is not None:
+                return res_c
+
+        return None, None, None
+
+    def _capex(self, spec: LineItem, column: str) -> tuple[float | None, str | None, str | None]:
+        """Capex composite resolver under MET-08 and APP-04b (T-148 (f))."""
+        if self.reit:
+            return self._capex_reit(spec, column)
+        return self._capex_non_reit(spec, column)
+
+    def _capex_reit(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        acq_concepts = (
+            G + "PaymentsToAcquireRealEstate",
+            G + "PaymentsToAcquireRealEstateHeldForInvestment",
+        )
+        base_concepts = (
+            G + "PaymentsToAcquirePropertyPlantAndEquipment",
+            *acq_concepts,
+            G + "PaymentsToDevelopRealEstateAssets",
+        )
+        used: dict[str, float] = {}
+        for c in base_concepts:
+            val = self._concept_value(spec, column, c)
+            if val is not None and val != 0:
+                used[c] = val
+
+        capimp = self._concept_value(spec, column, G + "PaymentsForCapitalImprovements")
+        if capimp is not None and capimp != 0:
+            if any(c in used for c in acq_concepts):
+                self._flag("capital_improvements_overlap_not_added")
+            else:
+                used[G + "PaymentsForCapitalImprovements"] = capimp
+
+        if used:
+            self._flag("reit_components")
+            self._flag("fcf_non_standard_reit")
+            total = sum(used.values())
+            concepts_str = " + ".join(sorted(used.keys()))
+            how = "map" if len(used) >= MIN_SUMMED else "concept"
+            return total, concepts_str, how
+
+        # nothing filed -> PaymentsToAcquireProductiveAssets as in tier 5
+        for prod_c in (
+            G + "PaymentsToAcquireProductiveAssets",
+            G + "PaymentsToAcquireOtherProductiveAssets",
+        ):
+            prod = self._concept_value(spec, column, prod_c)
+            if prod is not None:
+                self._flag("productive_assets_fallback")
+                self._flag("fcf_non_standard_reit")
+                return prod, prod_c, "fallback"
+
+        return None, None, None
+
+    def _capex_tier1(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        tier1_concepts = (
+            G + "PaymentsToAcquirePropertyPlantAndEquipment",
+            G + "PaymentsForCapitalImprovements",
+        )
+        for row in self._rows_for(spec):
+            concept = row.get("concept")
+            if concept in tier1_concepts:
+                val = self._read(row, column, spec)
+                if val is not None:
+                    return val, str(concept), "concept"
+        return None
+
+    def _capex_ppe_and_og(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        ppe_concepts = (
+            G + "PaymentsToAcquireMachineryAndEquipment",
+            G + "PaymentsToAcquireFurnitureAndFixtures",
+            G + "PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        )
+        ppe_values = {
+            c: v
+            for c in ppe_concepts
+            if (v := self._concept_value(spec, column, c)) is not None and v != 0
+        }
+        og_finer_concepts = (
+            G + "PaymentsToExploreAndDevelopOilAndGasProperties",
+            G + "PaymentsToAcquireOilAndGasEquipment",
+        )
+        og_values = {
+            c: v
+            for c in og_finer_concepts
+            if (v := self._concept_value(spec, column, c)) is not None and v != 0
+        }
+        if not og_values and ppe_values:
+            val_og_ppe = self._concept_value(
+                spec, column, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"
+            )
+            if val_og_ppe is not None and val_og_ppe != 0:
+                og_values[G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"] = val_og_ppe
+        if ppe_values and og_values:
+            self._flag("ppe_family_plus_og_added")
+            if G + "PaymentsToAcquireOilAndGasPropertyAndEquipment" in og_values:
+                self._flag("includes_acquisitions_contrary_to_a")
+            all_used = {**ppe_values, **og_values}
+            return sum(all_used.values()), " + ".join(sorted(all_used.keys())), "map"
+        if ppe_values:
+            if len(ppe_values) > 1:
+                self._flag("ppe_family_lines_added")
+                return sum(ppe_values.values()), " + ".join(sorted(ppe_values.keys())), "map"
+            c, v = next(iter(ppe_values.items()))
+            self._flag("ppe_family_line")
+            return v, c, "concept"
+        if og_values:
+            if len(og_values) > 1:
+                self._flag("og_tie_break_c_added")
+                return sum(og_values.values()), " + ".join(sorted(og_values.keys())), "map"
+            c, v = next(iter(og_values.items()))
+            return v, c, "concept"
+        return None
+
+    def _capex_fallback_tiers(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        val4 = self._concept_value(
+            spec, column, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment"
+        )
+        if val4 is not None:
+            self._flag("includes_acquisitions_contrary_to_a")
+            return val4, G + "PaymentsToAcquireOilAndGasPropertyAndEquipment", "fallback"
+        for prod_c in (
+            G + "PaymentsToAcquireProductiveAssets",
+            G + "PaymentsToAcquireOtherProductiveAssets",
+        ):
+            val5 = self._concept_value(spec, column, prod_c)
+            if val5 is not None:
+                self._flag("productive_assets_fallback")
+                return val5, prod_c, "fallback"
+        val6 = self._concept_value(spec, column, G + "PaymentsForProceedsFromProductiveAssets")
+        if val6 is not None:
+            self._flag("net_element_last_resort")
+            return val6, G + "PaymentsForProceedsFromProductiveAssets", "fallback"
+        val7, concept7, how7 = self._label_fallback_row(spec, column)
+        if val7 is not None:
+            self._flag("caption_fallback")
+            return val7, concept7, how7
+        return None
+
+    def _capex_non_reit(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        res = self._capex_tier1(spec, column)
+        if res is not None:
+            return res
+        res = self._capex_ppe_and_og(spec, column)
+        if res is not None:
+            return res
+        res = self._capex_fallback_tiers(spec, column)
+        if res is not None:
+            return res
         return None, None, None
 
     def _long_term_debt(
@@ -1139,7 +1567,17 @@ class Statements:
     # duplicate on any other axis (APA FY2021: the equity-method-investee axis) is a
     # slice promoted to a total, not a coincidence (T-128).
     _WHOLE_ENTITY_AXES = frozenset(
-        {"srt:ConsolidationItemsAxis", "us-gaap:StatementBusinessSegmentsAxis"}
+        {
+            "srt:ConsolidationItemsAxis",
+            "us-gaap:StatementBusinessSegmentsAxis",
+        }
+    )
+
+    # B3_DQC_0011 line 22: NetIncomeLoss "should be equal to" the
+    # StatementEquityComponentsAxis=RetainedEarningsMember fact, so that equality is
+    # expected, not a promoted slice.
+    _ID16_WHOLE_ENTITY_AXES = _WHOLE_ENTITY_AXES | frozenset(
+        {"us-gaap:StatementEquityComponentsAxis"}
     )
 
     def _total_is_plausible(self, spec: LineItem, column: str, total_value: float) -> bool:
@@ -1181,6 +1619,28 @@ class Statements:
                     return True
         return False
 
+    def _equals_dimensional_member(
+        self, spec: LineItem, column: str, concept: str, value: float
+    ) -> bool:
+        """Whether a dimensional row of *concept*, on an axis outside
+        _ID16_WHOLE_ENTITY_AXES, carries exactly *value* in *column* (ID-16 / ID-09)."""
+        concepts_to_check = {concept} if " + " not in concept else set()
+        if not concepts_to_check:
+            return False
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if (
+                    row.get("abstract")
+                    or not row.get("dimension")
+                    or row.get("concept") not in concepts_to_check
+                    or row.get("dimension_axis") in self._ID16_WHOLE_ENTITY_AXES
+                ):
+                    continue
+                v = _numeric(row.get(column))
+                if v is not None and math.isclose(v, value, rel_tol=1e-9):
+                    return True
+        return False
+
     # T-117: a later candidate must be no more than this fraction of the Tier 1 total to
     # count as a contradiction, not rounding/immaterial noise -- APA's ratio is ~0.42-0.50
     # (too-large case); its exact-match FY2022 (not a defect) sits at ~1.10, well above.
@@ -1196,7 +1656,7 @@ class Statements:
     # single false-positive shape found across every non-APA hit in the 5,076-filing stored
     # set -- ADBE, STE, TER, TSLA, URI, XYZ, all this exact phrase, none a real total).
     _LABEL_TOTAL_RE = re.compile(r"\btotal\b.{0,40}\brevenues?\b", re.IGNORECASE)
-    _LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcost\b", re.IGNORECASE)
+    _LABEL_TOTAL_EXCLUDE_RE = re.compile(r"\bcosts?\b", re.IGNORECASE)
 
     def _label_total_correction(
         self, spec: LineItem, column: str, total_value: float
@@ -1306,6 +1766,13 @@ class Statements:
             rebuilt = value - sum(between)
             if rebuilt <= 0:
                 return TotalRebuild(label, value, between, None, "not positive")
+            if any(
+                comp_val > rebuilt
+                for row in rows
+                if row.get("concept") in spec.concepts
+                and (comp_val := _numeric(row.get(column))) is not None
+            ):
+                return TotalRebuild(label, value, between, None, "net anchor")
             if any(abs(v) > value * self._BETWEEN_ROW_CEILING for v in between):
                 if self._gateway_original_is(spec, column, rebuilt):
                     return TotalRebuild(label, value, between, rebuilt, corroborated=True)
@@ -1418,6 +1885,11 @@ class Statements:
                 for extra in spec.fallback_addends:
                     value += self._concept_value(spec, column, extra) or 0.0
             return value, concept, f"fallback{tier + 1}"
+        return self._label_fallback_row(spec, column)
+
+    def _label_fallback_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
         if not spec.label_fallback:
             return None, None, None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)
@@ -1451,6 +1923,13 @@ class Statements:
                 if value is not None:
                     return value
         return None
+
+    def _is_concept_filed_in_column(self, spec: LineItem, column: str, concept: str) -> bool:
+        """Whether a non-abstract, non-dimensional row tagged *concept* has a value in *column*."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept and _numeric(row.get(column)) is not None:
+                return True
+        return False
 
     def _matching_component_values(self, spec: LineItem, column: str) -> dict[str, float]:
         """One value per distinct ``spec.concepts`` member, first occurrence in

@@ -33,6 +33,7 @@ class TTMFlow:
     # recorded so a later Q4 can be the fiscal year less the third quarter's nine months.
     # (not part of the flow's identity: it compares equal with or without it)
     ytd: float | None = field(default=None, compare=False)
+    flags: tuple[str, ...] = ()
 
 
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:

@@ -44,8 +44,9 @@ def compute(
 
     rate = effective_tax_rate(tax, pretax)
     nopat = operating * (1.0 - rate) if operating is not None else None
-    operating_annual = ttm.get("operating_income") if ttm else operating
+    operating_annual = ttm.get("operating_income") if ttm is not None else operating
     nopat_annual = operating_annual * (1.0 - rate) if operating_annual is not None else None
+
     # MET-00: invested capital needs debt, equity and cash; a missing one leaves it (and the ROIC)
     # empty -- it is never read as 0
     invested = debt + equity if debt is not None and equity is not None else None

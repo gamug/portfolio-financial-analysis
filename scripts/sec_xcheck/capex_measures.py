@@ -50,7 +50,6 @@ def is_reit(r: Rec) -> bool:
 
 GENERIC_TIERS = (
     (PPE, None),
-    (PROD, "productive_assets_fallback"),
     (CAPIMP, "capital_improvements"),
 )
 MIN_LINES = 2
@@ -58,13 +57,21 @@ MIN_LINES = 2
 
 def _reit_capex(a: dict[str, float]) -> tuple[float | None, list[str]]:
     flags: list[str] = []
-    parts = [a[k] for k in (PPE, *REAL_ESTATE, G + "PaymentsToDevelopRealEstateAssets") if k in a]
-    if CAPIMP in a and not any(k in a for k in REAL_ESTATE):
-        parts.append(a[CAPIMP])
-    elif CAPIMP in a:
-        flags.append("capital_improvements_overlap_not_added")
+    parts = [
+        a[k]
+        for k in (PPE, *REAL_ESTATE, G + "PaymentsToDevelopRealEstateAssets")
+        if k in a and a[k] != 0
+    ]
+    has_nonzero_real_estate = any(k in a and a[k] != 0 for k in REAL_ESTATE)
+    if CAPIMP in a and a[CAPIMP] != 0:
+        if not has_nonzero_real_estate:
+            parts.append(a[CAPIMP])
+        else:
+            flags.append("capital_improvements_overlap_not_added")
     if not parts and PROD in a:
         return a[PROD], ["productive_assets_fallback"]
+    if not parts and OTHER_PRODUCTIVE in a:
+        return a[OTHER_PRODUCTIVE], ["productive_assets_fallback"]
     return (sum(parts), ["reit_components", *flags]) if parts else (None, flags)
 
 
@@ -91,11 +98,16 @@ def target_capex(c: dict[str, float], *, reit: bool = False) -> tuple[float | No
         if concept in a:
             return a[concept], [flag] if flag else []
     value, flags = _oil_and_gas_capex(a)
-    if value is None and OTHER_PPE in a:
+    if value is not None:
+        return value, flags
+    if OTHER_PPE in a:
         return a[OTHER_PPE], [
             "other_ppe_only_rule_silent"
         ]  # MET-08 (b)(3) is silent when it is the only line
-    return value, flags
+    for concept in (PROD, OTHER_PRODUCTIVE):
+        if concept in a:
+            return a[concept], ["productive_assets_fallback"]
+    return None, []
 
 
 def resolved_capex(r: Rec) -> float | None:

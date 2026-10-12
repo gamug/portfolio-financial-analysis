@@ -23,7 +23,7 @@ from fundamental_agent.agents import (
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta
 from fundamental_agent.edgar_client import EdgarError, FilingRef
-from fundamental_agent.metrics import compute_group
+from fundamental_agent.metrics import compute_group, valuation
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.pipeline import (
     _TTM_ITEMS,
@@ -228,6 +228,19 @@ class _StubAnalyst:
         for group in ("profitability", "liquidity", "leverage", "cashflow"):
             for result in compute_group(group, ctx.stmts, ctx.period_key, ctx.prior_key):
                 pairs.append((group, result))
+        if ctx.price is not None:
+            ttm_floats = {k: v.value for k, v in ctx.ttm_flows.items()} if ctx.ttm_flows else None
+            for result in valuation.compute(
+                ctx.stmts,
+                ctx.period_key,
+                ctx.price,
+                share_scale_factors=ctx.share_scale_factors,
+                ttm=ttm_floats,
+                cik=ctx.cik,
+                market_cap=ctx.market_cap,
+                market_cap_missing=ctx.market_cap_missing,
+            ):
+                pairs.append(("valuation", result))
         assessment = FundamentalAssessment(
             score=72.0, rating="bullish", narrative="stub", strengths=["s"], risks=["r"]
         )
@@ -462,3 +475,89 @@ def test_an_interrupted_run_is_marked_failed_not_left_running(
         "SELECT status, finished_at FROM analysis_run ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert status == "failed" and finished is not None
+
+
+def test_10k_market_cap_resolves_from_prior_10q_cover_count_in_fresh_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1: in a fresh build, 10-Q filed before 10-K must be ingested first so that 10-K
+    resolves its market cap from the 10-Q's cover count within 200 days."""
+    raw_k = (
+        (FIXTURES / "financials_AAPL_10-K_2023.json")
+        .read_text()
+        .replace("2023-09-30", "2023-12-31")
+    )
+    k_data = json.loads(raw_k)["data"]
+    k_data["cover"] = {
+        "shares_outstanding": [
+            {"value": 110_000_000.0, "as_of_date": "2024-02-10", "class_member": ""}
+        ]
+    }
+
+    raw_q = (
+        (FIXTURES / "financials_MSFT_10-Q_2024.json")
+        .read_text()
+        .replace("2024-09-30 (Q1)", "2023-09-30 (Q3)")
+        .replace("2024-09-30", "2023-09-30")
+        .replace("2024-06-30", "2022-12-31")
+    )
+    q_data = json.loads(raw_q)["data"]
+    q_data["cover"] = {
+        "shares_outstanding": [
+            {"value": 100_000_000.0, "as_of_date": "2023-10-25", "class_member": ""}
+        ]
+    }
+
+    class _ChronologicalEdgar(_FakeEdgar):
+        def filing_by_year(self, ticker: str, form: str, year: int) -> list[FilingRef]:
+            if form == "10-Q":
+                return [
+                    FilingRef(
+                        "10-Q", "2023-11-05", f"acc-{ticker}-10q", period_of_report="2023-09-30"
+                    )
+                ]
+            return [
+                FilingRef("10-K", "2024-02-15", f"acc-{ticker}-10k", period_of_report="2023-12-31")
+            ]
+
+        def financials(
+            self, ticker: str, form: str, year: int, accession_number: str | None = None
+        ) -> dict[str, Any]:
+            return cast("dict[str, Any]", q_data if form == "10-Q" else k_data)
+
+    monkeypatch.setattr(pipeline, "EdgarClient", _ChronologicalEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
+
+    settings = _settings(tmp_path)
+    conn = sqlite3.connect(settings.db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS price_daily ("
+        "id INTEGER PRIMARY KEY, asset_id INTEGER, date TEXT, close REAL, UNIQUE(asset_id, date))"
+    )
+    conn.execute("INSERT INTO price_daily (asset_id, date, close) VALUES (1, '2023-12-31', 25.0)")
+    conn.commit()
+    conn.close()
+
+    report = pipeline.run(
+        settings,
+        RunParams(
+            forms=["10-K", "10-Q"],
+            since_year=2023,
+            until_year=2024,
+            tickers=["AAPL"],
+            analysis_date="2024-06-30",
+        ),
+    )
+    assert report.completed == 2
+
+    conn = sqlite3.connect(settings.db_path)
+    k_filing_id = conn.execute(
+        "SELECT id FROM sec_filings WHERE form = '10-K' AND fiscal_period = 'FY2023'"
+    ).fetchone()[0]
+    m_row = conn.execute(
+        "SELECT value FROM fundamental_metrics WHERE filing_id = ? AND metric_name = 'market_capitalization'",
+        (k_filing_id,),
+    ).fetchone()
+    assert m_row is not None
+    assert m_row[0] == pytest.approx(2_500_000_000.0)

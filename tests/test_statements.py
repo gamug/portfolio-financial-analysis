@@ -1,12 +1,17 @@
-"""Statement parsing and line-item resolution against real EDGAR captures."""
-
 from __future__ import annotations
 
 from typing import Any
 
 import pytest
 
-from fundamental_agent.statements import INSTANT, Period, Statements, _parse_period, iter_facts
+from fundamental_agent.statements import (
+    INSTANT,
+    REGISTRY,
+    Period,
+    Statements,
+    _parse_period,
+    iter_facts,
+)
 
 
 def _tag(column: str) -> str | None:
@@ -663,8 +668,12 @@ def test_non_revenue_multi_concept_item_keeps_first_match_only() -> None:
     stmts = Statements.from_payload(
         {
             "income_statement": [
-                _income_row("us-gaap_CostOfGoodsSold", "Cost of goods sold", **{key: 100.0}),
-                _income_row("us-gaap_CostOfServices", "Cost of services", **{key: 50.0}),
+                _income_row(
+                    "us-gaap_CostOfGoodsAndServicesSold",
+                    "Cost of goods and services sold",
+                    **{key: 100.0},
+                ),
+                _income_row("us-gaap_CostOfRevenue", "Cost of revenue", **{key: 50.0}),
             ],
             "balance_sheet": [],
             "cash_flow": [],
@@ -721,3 +730,227 @@ def test_the_utility_total_is_still_checked_against_a_named_component() -> None:
         )
     )
     assert stmts.get("revenue", key) == 1_000.0
+
+
+# Pinned nonnegative concepts per line item (ID-13 to ID-15), derived from DQC_0015
+# (releases 1-7) and DQC_0014 (revenue concepts). Pinned hermetically so CI does not
+# depend on git-excluded CSV files under docs/checklist_sec/sec documentation/.
+# Authoritative check against the DQC element lists is in `scripts/verify_t148b.py dqc`.
+EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
+    "revenue": {  # DQC_0014
+        "us-gaap_OperatingLeaseLeaseIncome",
+        "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "us-gaap_RevenueFromContractWithCustomerIncludingAssessedTax",
+    },
+    "cogs": {  # DQC_0015
+        "us-gaap_CostOfGoodsAndServicesSold",
+        "us-gaap_CostOfRevenue",
+    },
+    "interest_expense": {  # DQC_0015
+        "us-gaap_InterestAndDebtExpense",
+        "us-gaap_InterestExpenseDebt",
+    },
+    "depreciation_amortization": {  # DQC_0015
+        "us-gaap_DepreciationAndAmortization",
+        "us-gaap_DepreciationDepletionAndAmortization",
+    },
+    "capital_expenditure": {  # DQC_0015
+        "us-gaap_PaymentsForCapitalImprovements",
+        "us-gaap_PaymentsToAcquireFurnitureAndFixtures",
+        "us-gaap_PaymentsToAcquireMachineryAndEquipment",
+        "us-gaap_PaymentsToAcquireOilAndGasEquipment",
+        "us-gaap_PaymentsToAcquireOilAndGasPropertyAndEquipment",
+        "us-gaap_PaymentsToAcquireOtherProductiveAssets",
+        "us-gaap_PaymentsToAcquireOtherPropertyPlantAndEquipment",
+        "us-gaap_PaymentsToAcquireProductiveAssets",
+        "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
+        "us-gaap_PaymentsToAcquireRealEstate",
+        "us-gaap_PaymentsToAcquireRealEstateHeldForInvestment",
+        "us-gaap_PaymentsToDevelopRealEstateAssets",
+        "us-gaap_PaymentsToExploreAndDevelopOilAndGasProperties",
+    },
+    "shares_outstanding": {  # DQC_0015
+        "us-gaap_CommonStockSharesOutstanding",
+    },
+    "diluted_shares": {  # DQC_0015
+        "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding",
+    },
+    "total_assets": {  # DQC_0015
+        "us-gaap_Assets",
+    },
+    "current_assets": {  # DQC_0015
+        "us-gaap_AssetsCurrent",
+    },
+    "total_liabilities": {  # DQC_0015
+        "us-gaap_Liabilities",
+    },
+    "current_liabilities": {  # DQC_0015
+        "us-gaap_LiabilitiesCurrent",
+    },
+    "cash": {  # DQC_0015
+        "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+        "us-gaap_CashAndDueFromBanks",
+        "us-gaap_CashCashEquivalentsAndShortTermInvestments",
+    },
+    "short_term_investments": {  # DQC_0015
+        "us-gaap_MarketableSecuritiesCurrent",
+        "us-gaap_ShortTermInvestments",
+    },
+    "inventory": {  # DQC_0015
+        "us-gaap_InventoryNet",
+    },
+    "receivables": {  # DQC_0015
+        "us-gaap_AccountsReceivableNetCurrent",
+        "us-gaap_ReceivablesNetCurrent",
+    },
+    "long_term_debt": {  # DQC_0015
+        "us-gaap_LongTermDebt",
+        "us-gaap_LongTermDebtAndCapitalLeaseObligations",
+        "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+        "us-gaap_LongTermDebtNoncurrent",
+    },
+    "short_term_debt": {  # DQC_0015
+        "us-gaap_CommercialPaper",
+        "us-gaap_DebtCurrent",
+        "us-gaap_LongTermDebtCurrent",
+        "us-gaap_NotesPayableCurrent",
+        "us-gaap_OtherLongTermDebtCurrent",
+        "us-gaap_ShortTermBorrowings",
+    },
+}
+
+
+def test_registry_nonnegatives_match_dqc_lists() -> None:
+    """ID-13 to ID-15: nonnegative concepts in REGISTRY match pinned DQC_0015/DQC_0014 sets."""
+    for item_name, item in REGISTRY.items():
+        expected = EXPECTED_NONNEGATIVE_CONCEPTS.get(item_name, set())
+        assert set(item.nonnegative) == expected, f"{item_name}: {item.nonnegative} != {expected}"
+
+
+def test_equals_dimensional_member_flag_raised_when_value_matches_dimensional_row() -> None:
+    """ID-16 / ID-09: when resolved non-dimensional value equals a dimensional row
+    of the same concept on an axis outside _WHOLE_ENTITY_AXES -> flag equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Revenue match
+    payload_rev = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_rev = Statements.from_payload(payload_rev)
+    res_rev = stmts_rev.resolve("revenue", key)
+    assert res_rev.value == 500.0
+    assert "equals_dimensional_member" in res_rev.flags
+
+    # Net income match
+    payload_ni = {
+        "income_statement": [
+            _income_row("us-gaap_NetIncomeLoss", "Net Income", **{key: 150.0}),
+            _slice_row(
+                "us-gaap_NetIncomeLoss",
+                "Slice",
+                "us-gaap:StatementClassOfStockAxis",
+                "us-gaap:CommonClassAMember",
+                **{key: 150.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_ni = Statements.from_payload(payload_ni)
+    res_ni = stmts_ni.resolve("net_income", key)
+    assert res_ni.value == 150.0
+    assert "equals_dimensional_member" in res_ni.flags
+
+    # Equity match
+    payload_eq = {
+        "income_statement": [],
+        "balance_sheet": [
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity",
+                "abstract": False,
+                "dimension": False,
+                "2023-12-31": 1_000.0,
+            },
+            {
+                "concept": "us-gaap_StockholdersEquity",
+                "label": "Equity slice",
+                "abstract": False,
+                "dimension": True,
+                "dimension_axis": "us-gaap:StatementClassOfStockAxis",
+                "dimension_member": "us-gaap:CommonClassAMember",
+                "2023-12-31": 1_000.0,
+            },
+        ],
+        "cash_flow": [],
+    }
+    stmts_eq = Statements.from_payload(payload_eq)
+    res_eq = stmts_eq.resolve("equity", key)
+    assert res_eq.value == 1_000.0
+    assert "equals_dimensional_member" in res_eq.flags
+
+
+def test_equals_dimensional_member_not_raised_for_whole_entity_or_differing_value() -> None:
+    """A whole-entity axis slice or different value does not trigger equals_dimensional_member."""
+    key = "2023-12-31 (FY)"
+    # Whole-entity axis
+    payload_whole = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Segment",
+                "srt:ConsolidationItemsAxis",
+                "us-gaap:OperatingSegmentsMember",
+                **{key: 500.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_whole = Statements.from_payload(payload_whole)
+    res_whole = stmts_whole.resolve("revenue", key)
+    assert res_whole.value == 500.0
+    assert "equals_dimensional_member" not in res_whole.flags
+
+    # Differing value
+    payload_diff = {
+        "income_statement": [
+            _income_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Revenues",
+                **{key: 500.0},
+            ),
+            _slice_row(
+                "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+                "Product slice",
+                "us-gaap:ProductOrServiceAxis",
+                "us-gaap:ProductMember",
+                **{key: 300.0},
+            ),
+        ],
+        "balance_sheet": [],
+        "cash_flow": [],
+    }
+    stmts_diff = Statements.from_payload(payload_diff)
+    res_diff = stmts_diff.resolve("revenue", key)
+    assert res_diff.value == 500.0
+    assert "equals_dimensional_member" not in res_diff.flags

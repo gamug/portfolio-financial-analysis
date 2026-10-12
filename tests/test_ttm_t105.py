@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db, quality
-from fundamental_agent.agents import _flag_annualization
+from fundamental_agent.agents import FilingContext, _flag_annualization
 from fundamental_agent.db import FilingKey, FilingMeta, YTDPair
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.leverage import compute as leverage_compute
@@ -22,7 +23,8 @@ from fundamental_agent.metrics.roic import compute as roic_compute
 from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.pipeline import _targets, _YearTask, _ytd_columns
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import CoverShares, Statements
+from kg_schema.market_cap import MarketCap
 
 
 def _asset(conn: Database) -> int:
@@ -238,7 +240,9 @@ def _quarter() -> Statements:
     }
     for statement, r in rows:
         payload[statement].append(r)
-    return Statements.from_payload(payload)
+    stmts = Statements.from_payload(payload)
+    stmts.cover_shares = [CoverShares(100.0, "2025-06-30")]
+    return stmts
 
 
 TTM = {
@@ -251,6 +255,19 @@ TTM = {
 }
 KEY = "2025-06-30 (Q2)"
 PRICE = ClosePrice(date="2025-06-30", close=400.0)  # market cap 40,000
+MC = MarketCap(
+    asset_id=1,
+    value=40_000.0,
+    shares=100.0,
+    share_count=100.0,
+    share_as_of="2025-06-30",
+    share_age_days=0,
+    filing_id=1,
+    close=400.0,
+    close_date="2025-06-30",
+    n_classes=0,
+    split_factor=1.0,
+)
 
 
 def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
@@ -258,20 +275,20 @@ def _by_name(results: list[MetricResult]) -> dict[str, MetricResult]:
 
 
 def test_fcf_yields_divide_a_year_of_cash_flow_by_the_price() -> None:
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, TTM, market_cap=MC))
     assert out["free_cash_flow_yield"].value == pytest.approx((4_100 - 800) / 40_000)
     assert out["sbc_adjusted_fcf_yield"].value == pytest.approx((4_100 - 800 - 190) / 40_000)
     inputs = out["free_cash_flow_yield"].inputs
     assert inputs["free_cash_flow_to_equity"] == 800.0  # the raw quarter stays on record
     assert inputs["free_cash_flow_to_equity_ttm"] == 3_300.0
     # without TTM (a 10-K) the filing's own period is the year
-    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None))
+    tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None, market_cap=MC))
     assert tenk["free_cash_flow_yield"].value == pytest.approx(800 / 40_000)
 
 
 def test_a_ttm_yield_never_mixes_in_a_raw_quarter() -> None:
     partial = {k: v for k, v in TTM.items() if k != "capital_expenditure"}
-    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial))
+    out = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, partial, market_cap=MC))
     assert out["free_cash_flow_yield"].value is None
 
 
@@ -428,3 +445,50 @@ def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) ->
         )
         == 0
     )
+
+
+def test_prior_10k_refused_da_attaches_flag_to_ttm_flow(memory_db: Database) -> None:
+    """G2: when prior 10-K refused D&A (depreciation_only_not_da), ttm_detail sets flag on TTMFlow."""
+    _asset(memory_db)
+    _record(
+        memory_db,
+        "10-K",
+        "FY2024",
+        "2024-12-31",
+        "leverage",
+        "net_debt_to_ebitda",
+        {"flag_depreciation_amortization_depreciation_only_not_da": 1.0},
+    )
+    flows = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2025-09-30",
+        current={},
+        ytd={"depreciation_amortization": YTDPair(300.0, 400.0, "2024-09-30")},
+    )
+    assert "depreciation_amortization" in flows
+    assert flows["depreciation_amortization"].flags == ("depreciation_only_not_da",)
+
+
+def test_filing_context_ttm_excludes_refused_flows() -> None:
+    """FilingContext.ttm excludes flows whose method is 'refused', so a refused term is never read as 0.0."""
+    stmts = MagicMock()
+    ctx = FilingContext(
+        ticker="TEST",
+        company_name="Test Co",
+        form="10-Q",
+        fiscal_period="Q2",
+        stmts=stmts,
+        period_key="2025-06-30_Q2",
+        prior_key=None,
+        ttm_flows={
+            "revenue": TTMFlow(1_000.0, "ytd"),
+            "depreciation_amortization": TTMFlow(0.0, "refused"),
+            "operating_cash_flow": TTMFlow(200.0, "x4"),
+        },
+    )
+    assert "revenue" in ctx.ttm
+    assert ctx.ttm["revenue"] == 1_000.0
+    assert "operating_cash_flow" in ctx.ttm
+    assert ctx.ttm["operating_cash_flow"] == 200.0
+    assert "depreciation_amortization" not in ctx.ttm

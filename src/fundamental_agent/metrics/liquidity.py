@@ -29,6 +29,7 @@ def compute(
     # contains the short-term investments -- adding them again counted them twice
     cash_includes_investments = (
         cash_resolution.concept == G + "CashCashEquivalentsAndShortTermInvestments"
+        and "cash_sti_tag_cash_caption" not in cash_resolution.flags
     )
     if cash is not None and short_term_investments is not None and not cash_includes_investments:
         cash_like = cash + short_term_investments

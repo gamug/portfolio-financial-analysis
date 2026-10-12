@@ -9,7 +9,6 @@ Companion SOP: ``skills/free_cash_flow_yield/SKILL.md``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import date
 
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
@@ -17,93 +16,86 @@ from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
-from kg_schema.market_cap import cover_total
+from kg_schema.market_cap import MarketCap
 
 GROUP = "valuation"
 
 
-@dataclass(frozen=True)
-class _ShareCount:
-    """Result of resolving a share count for market-cap purposes."""
+def _resolve_market_cap(
+    price: ClosePrice | None,
+    market_cap: MarketCap | None,
+    market_cap_missing: str | None,
+) -> tuple[
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    bool,
+    bool,
+    str | None,
+]:
+    """Resolve (shares, share_price, market_cap_val, share_age_days, split_factor, n_classes,
+    incomplete_classes, cover_member_not_common_excluded, missing_reason) strictly under MKT-01 to MKT-04."""
+    if market_cap is not None:
+        return (
+            market_cap.shares,
+            market_cap.close,
+            market_cap.value,
+            float(market_cap.share_age_days),
+            market_cap.split_factor,
+            float(market_cap.n_classes),
+            market_cap.incomplete_classes,
+            market_cap.cover_member_not_common_excluded,
+            None,
+        )
+    if market_cap_missing is not None:
+        p_close = price.close if price is not None else None
+        return (None, p_close, None, None, None, None, False, False, market_cap_missing)
 
-    shares: float | None
-    used_diluted_fallback: bool
-    scale_correction_factor: float | None = None
-    from_cover: bool = False
-
-
-def _share_count(
-    stmts: Statements, period_key: str, scale_factors: dict[str, float], cik: str | None = None
-) -> _ShareCount:
-    """Shares for market cap: the cover-page count (T-132), else the balance sheet's
-    point-in-time count, else weighted-average diluted.
-
-    The cover count is the filing's own number of shares outstanding on a date near its filing
-    (:func:`kg_schema.market_cap.cover_total`); it needs no scale correction and is never replaced
-    by ``CommonStockSharesIssued`` (the registry no longer reads it).
-
-    *scale_factors* (from
-    :func:`fundamental_agent.db.detect_share_scale_factors`) corrects a share
-    count this company's own filing history shows to be off by an exact power
-    of ten -- a known SEC XBRL share-count scale/tagging defect, not a real
-    capital-structure event (see ``docs/model_fixes.md``, F1). Applying it here
-    is a deterministic unit conversion, not a fabricated value -- the same
-    category of operation as ``Statements._instant_for``'s own
-    nearest-earlier-column resolution.
-    """
-    cover = cover_total(
-        ((c.class_member, c.value, c.as_of_date) for c in stmts.cover_shares), cik=cik
-    )
-    if cover is not None:
-        return _ShareCount(cover.value, False, from_cover=True)
-    shares = stmts.get("shares_outstanding", period_key)
-    if shares is not None and shares > 0.0:
-        factor = scale_factors.get("shares_outstanding")
-        return _ShareCount(shares * factor if factor else shares, False, factor)
-    diluted = stmts.get("diluted_shares", period_key)
-    if diluted is not None and diluted > 0.0:
-        factor = scale_factors.get("diluted_shares")
-        return _ShareCount(diluted * factor if factor else diluted, True, factor)
-    return _ShareCount(None, False)
+    p_close = price.close if price is not None else None
+    return (None, p_close, None, None, None, None, False, False, "not_computed")
 
 
 def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit inputs
     stmts: Statements,
     period_key: str,
-    price: ClosePrice,
+    price: ClosePrice | None = None,
     share_scale_factors: dict[str, float] | None = None,
     ttm: dict[str, float] | None = None,
     *,
     cik: str | None = None,
+    market_cap: MarketCap | None = None,
+    market_cap_missing: str | None = None,
 ) -> list[MetricResult]:
-    """FCF-yield family for *period_key*, valued at *price* (a period-end close).
-
-    *share_scale_factors* corrects a detected share-count scale defect (see
-    :func:`_share_count`) before the share count is multiplied by *price*.
-
-    *ttm* (a 10-Q's trailing-twelve-month flows, T-105): a yield divides a year of cash flow
-    by a price level, so on a 10-Q the FCF, SBC and interest behind it are the TTM values --
-    a single quarter understated every 10-Q yield about 4x. The raw single-period values stay
-    in the audit inputs; the annual-basis ones are added as ``*_ttm``.
-    """
+    """FCF-yield family for *period_key*, valued under MKT-01 to MKT-04 and PER-06."""
     _, fcfe = free_cash_flow(stmts, period_key)
     net_income = stmts.get("net_income", period_key)
     sbc = stmts.get("stock_based_compensation", period_key)
-    annual = _AnnualFlows(stmts, period_key, ttm or {})
+    annual = _AnnualFlows(stmts, period_key, ttm)
     fcfe_annual = annual.fcf()
     sbc_annual = annual.get("stock_based_compensation")
-    share_count = _share_count(stmts, period_key, share_scale_factors or {}, cik)
-    shares, used_diluted = share_count.shares, share_count.used_diluted_fallback
 
-    market_cap = shares * price.close if shares is not None else None
+    (
+        shares,
+        share_price,
+        market_cap_val,
+        share_age_days,
+        split_factor,
+        n_classes,
+        incomplete_classes,
+        cover_member_not_common_excluded,
+        missing_reason,
+    ) = _resolve_market_cap(price, market_cap, market_cap_missing)
 
-    cash = stmts.get("cash", period_key)
+    cash_resolution = stmts.resolve("cash", period_key)
+    cash = cash_resolution.value
     debt_resolution = stmts.total_debt(period_key)
     total_debt = debt_resolution.value
-    enterprise_value = _enterprise_value(market_cap, total_debt, cash)
+    enterprise_value = _enterprise_value(market_cap_val, total_debt, cash)
 
     interest_resolution = stmts.resolve("interest_expense", period_key)
-    # a sign the resolver rejected (ID-13) is not "no interest expense": the unlevered flow is empty
     interest_rejected = any(f.endswith("_rejected") for f in interest_resolution.flags)
     fcff = _fcf_to_firm(
         stmts, period_key, fcfe, interest_resolution.value, interest_rejected=interest_rejected
@@ -125,18 +117,33 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         stock_based_compensation=sbc,
         net_income=net_income,
         shares=shares,
-        share_price=price.close,
-        market_capitalization=market_cap,
+        share_price=share_price,
+        market_capitalization=market_cap_val,
         total_debt=total_debt,
         cash=cash,
         enterprise_value=enterprise_value,
     )
     inputs.update(flag_inputs("total_debt", debt_resolution.flags))
-    inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
-    inputs["shares_are_diluted_average"] = float(used_diluted)
-    inputs["shares_from_cover_page"] = float(share_count.from_cover)
-    if share_count.scale_correction_factor is not None:
-        inputs["shares_scale_correction_factor"] = share_count.scale_correction_factor
+    inputs.update(flag_inputs("cash", cash_resolution.flags))
+    capex_resolution = stmts.resolve("capital_expenditure", period_key)
+    inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
+    if price is not None:
+        inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
+    if share_age_days is not None:
+        inputs["share_age_days"] = share_age_days
+    if split_factor is not None:
+        inputs["split_factor"] = split_factor
+    if n_classes is not None:
+        inputs["n_classes"] = n_classes
+    if missing_reason is not None:
+        inputs[f"market_cap_{missing_reason}"] = 1.0
+    if incomplete_classes:
+        inputs["market_cap_incomplete_classes"] = 1.0
+    if cover_member_not_common_excluded:
+        inputs["cover_member_not_common_excluded"] = 1.0
+    if share_scale_factors:
+        inputs["share_scale_suspect"] = 1.0
+
     if annual.is_ttm:
         inputs.update(
             present(
@@ -147,11 +154,13 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         )
 
     return [
-        MetricResult("market_capitalization", market_cap, "usd", inputs),
+        MetricResult("market_capitalization", market_cap_val, "usd", inputs),
         MetricResult("enterprise_value", enterprise_value, "usd", inputs),
-        MetricResult("free_cash_flow_yield", safe_div(fcfe_annual, market_cap), "ratio", inputs),
         MetricResult(
-            "sbc_adjusted_fcf_yield", safe_div(sbc_adjusted_fcf, market_cap), "ratio", inputs
+            "free_cash_flow_yield", safe_div(fcfe_annual, market_cap_val), "ratio", inputs
+        ),
+        MetricResult(
+            "sbc_adjusted_fcf_yield", safe_div(sbc_adjusted_fcf, market_cap_val), "ratio", inputs
         ),
         MetricResult(
             "enterprise_fcf_yield", safe_div(fcff_annual, enterprise_value), "ratio", inputs
@@ -169,29 +178,29 @@ def _enterprise_value(
 
 
 class _AnnualFlows:
-    """The flows a yield needs, on an annual basis: a 10-Q's TTM values when *ttm* has any
-    (and then *only* those -- never a raw quarter beside a TTM one), else the filing's own
+    """The flows a yield needs, on an annual basis: a 10-Q's TTM values when *ttm* is provided
+    (and then *only* those -- never a raw quarter beside a TTM one, PER-06), else the filing's own
     period values, which on a 10-K are already annual."""
 
-    def __init__(self, stmts: Statements, period_key: str, ttm: dict[str, float]) -> None:
+    def __init__(self, stmts: Statements, period_key: str, ttm: dict[str, float] | None) -> None:
         self._stmts, self._key, self._ttm = stmts, period_key, ttm
 
     @property
     def is_ttm(self) -> bool:
-        return bool(self._ttm)
+        return self._ttm is not None
 
     def get(self, item: str) -> float | None:
-        if self._ttm:
+        if self._ttm is not None:
             return self._ttm.get(item)
         return self._stmts.get(item, self._key)
 
     def fcf(self) -> float | None:
-        if not self._ttm:
-            return free_cash_flow(self._stmts, self._key)[1]
-        ocf, capex = self.get("operating_cash_flow"), self.get("capital_expenditure")
-        if ocf is None or capex is None:
-            return None
-        return ocf - capex
+        if self._ttm is not None:
+            ocf, capex = self.get("operating_cash_flow"), self.get("capital_expenditure")
+            if ocf is None or capex is None:
+                return None
+            return ocf - capex
+        return free_cash_flow(self._stmts, self._key)[1]
 
 
 def _fcf_to_firm(

@@ -45,6 +45,7 @@ from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
 from kg_schema import connect, identity, rundate
+from kg_schema.market_cap import market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 
@@ -98,6 +99,7 @@ class _YearTask:
     cik: str  # the 10-digit string every EDGAR call carries (T-149); the ticker is for display
     # the asset's recorded predecessors (APP-10b, ``cik_succession``): their filings are the asset's too
     predecessors: tuple[str, ...] = ()
+    reit: bool = False
 
     @property
     def ciks(self) -> tuple[str, ...]:
@@ -143,7 +145,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
             )
         chains = {str(a["ticker"]): identity.cik_chain(conn, a["cik"]) for a in assets}
-        tasks = _plan(assets, params, chains)
+        reits = {int(a["id"]): db.is_equity_reit(conn, int(a["id"])) for a in assets}
+        tasks = _plan(assets, params, chains, reits=reits)
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
@@ -205,6 +208,7 @@ def _plan(
     assets: Sequence[Row],
     params: RunParams,
     chains: Mapping[str, tuple[str, ...]] | None = None,
+    reits: Mapping[int, bool] | None = None,
 ) -> list[_YearTask]:
     keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
     if keyless:
@@ -222,6 +226,7 @@ def _plan(
             year=year,
             cik=str(identity.normalize_cik(asset["cik"])),
             predecessors=(chains or {}).get(str(asset["ticker"]), ())[1:],
+            reit=bool((reits or {}).get(int(asset["id"]), False)),
         )
         for asset in assets
         for form in params.forms
@@ -299,25 +304,46 @@ def _last_annual_report_missing(engine: _Engine, predecessor: str, effective: st
 
 
 def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
-    bar = tqdm(tasks, desc="fundamental analysis", unit="task")
-    for task in bar:
-        bar.set_postfix_str(f"{task.ticker} {task.form} {task.year}")
-        _run_task(engine, task)
+    tasks_by_asset: dict[int, list[_YearTask]] = {}
+    for task in tasks:
+        tasks_by_asset.setdefault(task.asset_id, []).append(task)
+
+    bar = tqdm(total=len(tasks), desc="fundamental analysis", unit="task")
+    try:
+        for asset_tasks in tasks_by_asset.values():
+            asset_filings: list[tuple[_YearTask, FilingRef]] = []
+            for task in asset_tasks:
+                bar.set_postfix_str(f"{task.ticker} {task.form} {task.year}")
+                for ref in _list_task_filings(engine, task):
+                    asset_filings.append((task, ref))
+                bar.update(1)
+
+            asset_filings.sort(
+                key=lambda pair: (pair[1].filing_date or "", pair[1].accession_number)
+            )
+            for task, ref in asset_filings:
+                _run_filing(engine, task, ref)
+    finally:
+        bar.close()
 
 
-def _run_task(engine: _Engine, task: _YearTask) -> None:
-    """One (ticker, form, filing-year): list its filings, then ingest each one."""
+def _list_task_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
     try:
         refs = _list_filings(engine, task)
     except EdgarNotFoundError:
         _count(engine, skipped=1)  # the company filed no such form that year
-        return
+        return []
     except Exception as exc:  # one bad company/year must not stop the batch
         _record_failure(engine, task, None, exc)
-        return
+        return []
     selected = _select_filings(task, refs)
     _count(engine, skipped=len(refs) - len(selected))  # amendments: never ingested (L-04)
-    for ref in selected:
+    return selected
+
+
+def _run_task(engine: _Engine, task: _YearTask) -> None:
+    """One (ticker, form, filing-year): list its filings, then ingest each one."""
+    for ref in _list_task_filings(engine, task):
         _run_filing(engine, task, ref)
 
 
@@ -476,7 +502,7 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     payload = engine.edgar.financials(
         filer, task.form, task.year, accession_number=ref.accession_number
     )
-    stmts = Statements.from_payload(payload)
+    stmts = Statements.from_payload(payload, reit=task.reit)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
@@ -812,6 +838,10 @@ def _analyze_one(
         engine.conn, task.asset_id, stmts, target.period.key, exclude_filing_id=filing_id
     )
 
+    mc_res = market_caps_as_of(engine.conn, [task.asset_id], as_of=target.period.date)
+    market_cap_obj = mc_res.caps.get(task.asset_id)
+    market_cap_missing = mc_res.missing.get(task.asset_id)
+
     ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
@@ -825,7 +855,10 @@ def _analyze_one(
         share_scale_factors=share_scale_factors,
         ttm_flows=ttm,
         cik=_asset_cik(engine, task.asset_id),
+        market_cap=market_cap_obj,
+        market_cap_missing=market_cap_missing,
     )
+
     result = engine.analyst.analyze(ctx)
     db.stamp_ytd(result.metrics, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
     db.record_metrics(
