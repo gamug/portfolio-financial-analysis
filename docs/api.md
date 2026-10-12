@@ -229,9 +229,10 @@ unaffected: `fundamental_agent run` gates inline under `dq-v3`.
 
 `python -m api orchestrate --analysis-date D [--top-n N] [--weight-scheme S] [--max-name-weight F]
 [--max-sector-weight F] [--db PATH] [--universe-db PATH] [--news-db PATH]` runs the same pipeline in
-the foreground over the same code (the same step table and argv builder), printing one line per step
-(name, status, `run_id`, seconds) and, on failure, the failing step's output tail. It exits `0` when
-every step completed or was skipped, `1` otherwise. The paths default to the environment variables
+the foreground over the same code (the same step table and argv builder), printing a `<step>
+running ...` line when each step starts and its result line (name, status, `run_id`, seconds) when it
+ends — both flushed, so a multi-hour run is not silent — then a final summary and, on failure, the
+failing step's output tail. It exits `0` when every step completed or was skipped, `1` otherwise. The paths default to the environment variables
 the packages use (`KG_FINANCIAL_DB` / `KG_UNIVERSE_DB` / `KG_NEWS_DB`, the news path defaulting as
 above). Plain `python -m api` (no arguments) still starts the server.
 

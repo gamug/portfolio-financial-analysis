@@ -28,6 +28,7 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -372,7 +373,6 @@ def _news_available(path: Path) -> bool:
 
 
 def _run_one(spec: StepSpec, state: StepState, ctx: RunContext) -> None:
-    _set(state, status="running", started_at=_now())
     before = (
         _quant_max_id(ctx.paths.db_path, command=None, after=0)
         if spec.quant_command is not None
@@ -397,19 +397,35 @@ def _run_one(spec: StepSpec, state: StepState, ctx: RunContext) -> None:
         _set(state, reason=capture_reason)
 
 
-def execute_run(run: RunState, ctx: RunContext) -> None:
-    """Run *run*'s steps in order, mutating its state. The first non-zero exit stops the
-    run (D5); later steps are ``not_run``. A missing news source skips only
-    ``entity_resolution`` (D6)."""
+StepCallback = Callable[[StepState], None]
+
+
+def _notify(on_step_change: StepCallback | None, state: StepState) -> None:
+    if on_step_change is not None:
+        on_step_change(state)
+
+
+def execute_run(
+    run: RunState, ctx: RunContext, *, on_step_change: StepCallback | None = None
+) -> None:
+    """Run *run*'s steps in order, mutating its state. The first step that fails -- a
+    non-zero exit (D5) or an exception -- ends the run; later steps are ``not_run``. A
+    missing news source skips only ``entity_resolution`` (D6).
+
+    *on_step_change* is called on every status transition (a step starts, then ends), so
+    the CLI wrapper can print a line per step live; the HTTP path passes none. A
+    ``KeyboardInterrupt``/``SystemExit`` records the state first, then propagates, so the
+    process still exits non-zero and the caller can still print the run's state."""
     specs = steps_for(run.kind)
     with _LOCK:
         run.status = "running"
         run.started_at = _now()
     failed = False
     try:
-        for spec, state in zip(specs, run.steps, strict=True):
+        for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
             if failed:
                 _set(state, status="not_run")
+                _notify(on_step_change, state)
                 continue
             if spec.name == "entity_resolution" and not _news_available(ctx.paths.news_db_path):
                 _set(
@@ -417,8 +433,28 @@ def execute_run(run: RunState, ctx: RunContext) -> None:
                     status="skipped",
                     reason=(f"no news source configured ({ctx.paths.news_db_path} not found)"),
                 )
+                _notify(on_step_change, state)
                 continue
-            _run_one(spec, state, ctx)
+            _set(state, status="running", started_at=_now())
+            _notify(on_step_change, state)
+            try:
+                _run_one(spec, state, ctx)
+            except BaseException as exc:  # a step that raises must never look completed
+                _set(
+                    state,
+                    status="failed",
+                    finished_at=_now(),
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+                failed = True
+                _notify(on_step_change, state)
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    for later in run.steps[index + 1 :]:  # record the rest, then propagate
+                        _set(later, status="not_run")
+                        _notify(on_step_change, later)
+                    raise
+                continue
+            _notify(on_step_change, state)
             if state.status == "failed":
                 failed = True
     finally:
@@ -429,10 +465,10 @@ def execute_run(run: RunState, ctx: RunContext) -> None:
                 _REGISTRY.active = None
 
 
-def run_now(kind: str, ctx: RunContext) -> RunState:
+def run_now(kind: str, ctx: RunContext, *, on_step_change: StepCallback | None = None) -> RunState:
     """The foreground path (the CLI wrapper): build and execute in this thread."""
     run = new_run(kind, ctx)
-    execute_run(run, ctx)
+    execute_run(run, ctx, on_step_change=on_step_change)
     return run
 
 
@@ -498,20 +534,37 @@ def _seconds(started_at: str | None, finished_at: str | None) -> str:
     return f"{delta.total_seconds():.1f}s"
 
 
+def _result_line(state: StepState) -> str:
+    run_id = "-" if state.run_id is None else str(state.run_id)
+    line = (
+        f"{state.name} {state.status} run_id={run_id} "
+        f"{_seconds(state.started_at, state.finished_at)}"
+    )
+    if state.reason:
+        line += f" ({state.reason})"
+    return line
+
+
+def print_step_change(state: StepState) -> None:
+    """The CLI wrapper's live line: ``<step> running ...`` when it starts, its result line
+    when it ends -- flushed, so a multi-hour run is not silent until it finishes."""
+    if state.status == "running":
+        print(f"{state.name} running ...", flush=True)
+    else:
+        print(_result_line(state), flush=True)
+
+
 def print_run(run: RunState) -> None:
-    """One line per step (name, status, run_id, seconds), then the failing step's tail."""
-    for state in run.steps:
-        run_id = "-" if state.run_id is None else str(state.run_id)
-        line = (
-            f"{state.name} {state.status} run_id={run_id} "
-            f"{_seconds(state.started_at, state.finished_at)}"
-        )
-        if state.reason:
-            line += f" ({state.reason})"
-        print(line)
+    """The final summary, and on failure the failing step's output tail."""
+    completed = sum(1 for s in run.steps if s.status == "completed")
+    skipped = sum(1 for s in run.steps if s.status == "skipped")
+    print(
+        f"\n{run.kind}: {run.status} "
+        f"({completed} completed, {skipped} skipped, {len(run.steps)} steps)"
+    )
     failed = next((s for s in run.steps if s.status == "failed"), None)
     if failed is not None:
-        print(f"\n{failed.name} failed (exit {failed.exit_code}); last output lines:")
+        print(f"{failed.name} failed (exit {failed.exit_code}); last output lines:")
         for line in failed.output_tail:
             print(f"  {line}")
 
@@ -534,6 +587,11 @@ def cli_main(argv: list[str]) -> int:
         max_name_weight=args.max_name_weight,
         max_sector_weight=args.max_sector_weight,
     )
-    run = run_now(_PIPELINE_KIND, ctx)
+    run = new_run(_PIPELINE_KIND, ctx)
+    try:
+        execute_run(run, ctx, on_step_change=print_step_change)
+    except (KeyboardInterrupt, SystemExit):
+        print_run(run)  # print the state, then let the interrupt exit the process
+        raise
     print_run(run)
     return 0 if run.status == "completed" else 1

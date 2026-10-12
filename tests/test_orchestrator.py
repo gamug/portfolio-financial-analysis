@@ -58,10 +58,16 @@ def _touch(path: Path) -> Path:
 
 
 class FakeRunner:
-    """Records every (argv, env) and answers by ``(package, command)``."""
+    """Records every (argv, env) and answers by ``(package, command)``; an entry in
+    ``errors`` raises instead (to exercise a step that never returns)."""
 
-    def __init__(self, answers: dict[tuple[str, str], tuple[int, str]] | None = None) -> None:
+    def __init__(
+        self,
+        answers: dict[tuple[str, str], tuple[int, str]] | None = None,
+        errors: dict[tuple[str, str], BaseException] | None = None,
+    ) -> None:
         self.answers = answers or {}
+        self.errors = errors or {}
         self.calls: list[tuple[list[str], dict[str, str]]] = []
         self.on_call: Callable[[list[str]], None] | None = None
 
@@ -69,7 +75,10 @@ class FakeRunner:
         self.calls.append((list(argv), dict(env)))
         if self.on_call is not None:
             self.on_call(argv)
-        code, output = self.answers.get((argv[2], argv[3]), (0, ""))
+        key = (argv[2], argv[3])
+        if key in self.errors:
+            raise self.errors[key]
+        code, output = self.answers.get(key, (0, ""))
         return orch.CommandResult(returncode=code, output=output)
 
     def argvs(self) -> list[list[str]]:
@@ -440,6 +449,37 @@ def test_first_failure_stops_the_run_and_marks_later_steps_not_run(
     assert failed.output_tail == ["no filings, refusing"]
 
 
+def test_a_raising_step_fails_the_run_with_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner(errors={("fundamental_agent", "run"): OSError("gateway died")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    step = next(s for s in run.steps if s.name == "fundamental")
+    assert step.status == "failed"
+    assert step.reason == "OSError: gateway died"
+    assert step.finished_at is not None
+    assert run.status == "failed"
+    assert run.steps[0].status == "completed"  # pricing, before it
+    assert all(s.status == "not_run" for s in run.steps[2:])  # everything after it
+
+
+def test_keyboard_interrupt_records_the_state_then_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = _ctx(tmp_path)
+    fake = FakeRunner(errors={("pricing_agent", "run"): KeyboardInterrupt()})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.new_run("pipeline", ctx)
+    with pytest.raises(KeyboardInterrupt):
+        orch.execute_run(run, ctx)
+    assert run.status == "failed"
+    assert run.steps[0].status == "failed"
+    assert run.steps[0].reason is not None and run.steps[0].reason.startswith("KeyboardInterrupt")
+    assert all(s.status == "not_run" for s in run.steps[1:])
+
+
 def test_missing_news_source_skips_entity_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -523,6 +563,86 @@ def test_cli_wrapper_exit_one_and_prints_the_failing_tail(
     out = capsys.readouterr().out
     assert "fundamental failed" in out
     assert "gate refused: dq-v2 vs dq-v3" in out
+
+
+def test_cli_prints_each_step_start_then_result_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    answers = {
+        ("pricing_agent", "run"): (0, "\nrun 1: ok"),
+        ("fundamental_agent", "run"): (0, "\nrun 2: ok"),
+        ("entity_resolution", "build"): (0, "cycle 3: 0 edges"),
+        ("cycle", "select"): (0, "select 4 2026-10-02: ok"),
+    }
+    monkeypatch.setattr(orch, "run_command", FakeRunner(answers))
+    code = orch.cli_main(
+        [
+            "--analysis-date",
+            "2026-10-02",
+            "--db",
+            str(tmp_path / "fin.db"),
+            "--universe-db",
+            str(tmp_path / "universe.db"),
+            "--news-db",
+            str(news),
+        ]
+    )
+    assert code == 0
+    lines = capsys.readouterr().out.splitlines()
+    starts = [line for line in lines if line.endswith(" running ...")]
+    assert starts == [
+        f"{name} running ..."
+        for name in (
+            "pricing",
+            "fundamental",
+            "entity_resolution",
+            "cycle_select",
+            "quant_actions",
+            "quant_returns",
+            "quant_risk_model",
+            "quant_optimize",
+            "quant_evaluate",
+        )
+    ]
+
+    def _result(name: str) -> int:
+        return next(
+            i for i, line in enumerate(lines) if line.startswith(f"{name} ") and " run_id=" in line
+        )
+
+    for name in ("pricing", "fundamental", "entity_resolution", "cycle_select"):
+        assert lines.index(f"{name} running ...") < _result(name)
+
+
+def test_cli_keyboard_interrupt_prints_the_state_and_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner(
+        {("pricing_agent", "run"): (0, "\nrun 1: ok")},
+        errors={("fundamental_agent", "run"): KeyboardInterrupt()},
+    )
+    monkeypatch.setattr(orch, "run_command", fake)
+    with pytest.raises(KeyboardInterrupt):
+        orch.cli_main(
+            [
+                "--analysis-date",
+                "2026-10-02",
+                "--db",
+                str(tmp_path / "fin.db"),
+                "--universe-db",
+                str(tmp_path / "universe.db"),
+                "--news-db",
+                str(news),
+            ]
+        )
+    out = capsys.readouterr().out
+    assert "pricing running ..." in out
+    assert "pricing completed run_id=1" in out
+    assert "fundamental running ..." in out
+    assert "fundamental failed" in out
+    assert "pipeline: failed" in out
 
 
 def test_cli_wrapper_uses_the_same_argv_as_the_http_path(

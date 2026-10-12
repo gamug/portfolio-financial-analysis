@@ -42,8 +42,13 @@ def _client(tmp_path: Path, *, news_exists: bool = True) -> TestClient:
 
 
 class FakeRunner:
-    def __init__(self, answers: dict[tuple[str, str], tuple[int, str]] | None = None) -> None:
+    def __init__(
+        self,
+        answers: dict[tuple[str, str], tuple[int, str]] | None = None,
+        errors: dict[tuple[str, str], BaseException] | None = None,
+    ) -> None:
         self.answers = answers or {}
+        self.errors = errors or {}
         self.calls: list[tuple[list[str], dict[str, str]]] = []
         self.gate: threading.Event | None = None
         self.started = threading.Event()
@@ -53,7 +58,10 @@ class FakeRunner:
         self.started.set()
         if self.gate is not None:
             assert self.gate.wait(timeout=10)
-        code, output = self.answers.get((argv[2], argv[3]), (0, ""))
+        key = (argv[2], argv[3])
+        if key in self.errors:
+            raise self.errors[key]
+        code, output = self.answers.get(key, (0, ""))
         return orch.CommandResult(returncode=code, output=output)
 
 
@@ -119,6 +127,25 @@ def test_status_is_running_then_completed_and_second_post_is_409(
 def test_unknown_handle_is_404(tmp_path: Path) -> None:
     with _client(tmp_path) as client:
         assert client.get("/api/v1/run/does-not-exist").status_code == 404
+
+
+def test_a_raising_step_fails_the_run_and_frees_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeRunner(_IDS, errors={("pricing_agent", "run"): OSError("gateway died")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    with _client(tmp_path) as client:
+        r = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
+        assert r.status_code == 202
+        handle = r.json()["handle"]
+        done = _wait(client, f"/api/v1/run/{handle}", {"failed", "completed"})
+        assert done["status"] == "failed"
+        assert done["steps"][0]["status"] == "failed"
+        assert done["steps"][0]["reason"] == "OSError: gateway died"
+        assert all(s["status"] == "not_run" for s in done["steps"][1:])
+        # The active slot was cleared: a new run is accepted, not a stale 409.
+        again = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
+        assert again.status_code == 202
 
 
 @pytest.mark.parametrize(
