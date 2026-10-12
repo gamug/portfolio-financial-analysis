@@ -26,6 +26,16 @@ def compute(
     interest = interest_resolution.value
     da_resolution = stmts.resolve("depreciation_amortization", period_key)
     dep_amort = da_resolution.value
+    da_flags = set(da_resolution.flags)
+    if ttm is not None:
+        for p in stmts.periods:
+            if p.tag == "YTD" or (p.is_quarter and p.key != period_key):
+                r = stmts.resolve("depreciation_amortization", p.key)
+                if "depreciation_only_not_da" in r.flags:
+                    da_flags.add("depreciation_only_not_da")
+                    break
+        if ttm.get("flag_depreciation_amortization_depreciation_only_not_da"):
+            da_flags.add("depreciation_only_not_da")
 
     net_debt = debt - cash if debt is not None and cash is not None else None
     ebitda = None
@@ -48,7 +58,7 @@ def compute(
 
     inputs.update(flag_inputs("total_debt", debt_resolution.flags))
     inputs.update(flag_inputs("interest_expense", interest_resolution.flags))
-    inputs.update(flag_inputs("depreciation_amortization", da_resolution.flags))
+    inputs.update(flag_inputs("depreciation_amortization", da_flags))
     # MET-09: interest coverage is empty when interest expense is not positive. Zero is not
     # defined; a negative filed value (a net interest income, a wrong sign the resolver did not
     # reject) is flagged, never turned positive with abs() (ID-11).

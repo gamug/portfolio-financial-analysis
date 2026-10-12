@@ -444,3 +444,26 @@ def test_no_review_when_the_two_agree_or_only_one_exists(memory_db: Database) ->
         )
         == 0
     )
+
+
+def test_prior_10k_refused_da_attaches_flag_to_ttm_flow(memory_db: Database) -> None:
+    """G2: when prior 10-K refused D&A (depreciation_only_not_da), ttm_detail sets flag on TTMFlow."""
+    _asset(memory_db)
+    _record(
+        memory_db,
+        "10-K",
+        "FY2024",
+        "2024-12-31",
+        "leverage",
+        "net_debt_to_ebitda",
+        {"flag_depreciation_amortization_depreciation_only_not_da": 1.0},
+    )
+    flows = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2025-09-30",
+        current={},
+        ytd={"depreciation_amortization": YTDPair(300.0, 400.0, "2024-09-30")},
+    )
+    assert "depreciation_amortization" in flows
+    assert flows["depreciation_amortization"].flags == ("depreciation_only_not_da",)

@@ -837,6 +837,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
             else None
         )
         pair = (ytd or {}).get(item)
+        flow_flags: tuple[str, ...] = ()
         if pair and pair.current is not None and pair.prior is not None and pair.prior_end:
             fy_filing = _fiscal_year_between(conn, asset_id, pair.prior_end, period_end)
             fy = (
@@ -849,11 +850,23 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                     fy - pair.prior + pair.current, "ytd", alt=summed, ytd=pair.current
                 )
                 continue
+            if item == "depreciation_amortization" and fy_filing is not None:
+                p_flag = _recorded_input(
+                    conn,
+                    fy_filing,
+                    item,
+                    "flag_depreciation_amortization_depreciation_only_not_da",
+                    engine_version,
+                )
+                if p_flag == 1.0:
+                    flow_flags = ("depreciation_only_not_da",)
         ytd_now = pair.current if pair else None
         if summed is not None:
-            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now)
+            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now, flags=flow_flags)
         elif item in current:
-            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now)
+            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now, flags=flow_flags)
+        elif flow_flags:
+            out[item] = TTMFlow(0.0, "refused", ytd=ytd_now, flags=flow_flags)
     return out
 
 

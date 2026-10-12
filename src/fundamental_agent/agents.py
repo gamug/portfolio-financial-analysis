@@ -156,7 +156,9 @@ class FilingContext:
         """The flows whose trailing twelve months were actually built (T-105 ``ytd`` or
         ``quarters``), without the ``x4`` fallback -- one quarter times four is that quarter's
         ratio again, not a trailing year."""
-        return {item: f.value for item, f in self.ttm_flows.items() if f.method != "x4"}
+        return {
+            item: f.value for item, f in self.ttm_flows.items() if f.method in ("ytd", "quarters")
+        }
 
 
 # The flows each group annualizes on a 10-Q (F4, T-105): its ratios' TTM numerators.
@@ -178,7 +180,14 @@ def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
     """The *ttm* argument for *group*'s ``compute``. On a 10-Q every group takes
     the real trailing-twelve-month flows only (:attr:`FilingContext.real_ttm`, PER-06/D-09);
     on a 10-K, ``None`` says "already annual"."""
-    return ctx.real_ttm if ctx.form == "10-Q" else None
+    if ctx.form != "10-Q":
+        return None
+    res = dict(ctx.real_ttm)
+    if group == "leverage":
+        da_flow = ctx.ttm_flows.get("depreciation_amortization")
+        if da_flow and "depreciation_only_not_da" in da_flow.flags:
+            res["flag_depreciation_amortization_depreciation_only_not_da"] = 1.0
+    return res
 
 
 def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str, TTMFlow]) -> None:
@@ -190,10 +199,16 @@ def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str
         items = [flows[i] for i in _GROUP_TTM_ITEMS.get(group, ()) if i in flows]
         if not items:
             continue
-        if any(f.method == "x4" for f in items):
-            result.inputs["annualized_x4"] = 1.0
-        else:
-            result.inputs["annualized_ttm"] = 1.0
+        real_items = [f for f in items if f.method != "refused"]
+        if real_items:
+            if any(f.method == "x4" for f in real_items):
+                result.inputs["annualized_x4"] = 1.0
+            else:
+                result.inputs["annualized_ttm"] = 1.0
+        if group == "leverage":
+            da_flow = flows.get("depreciation_amortization")
+            if da_flow and "depreciation_only_not_da" in da_flow.flags:
+                result.inputs["flag_depreciation_amortization_depreciation_only_not_da"] = 1.0
 
 
 @dataclass(frozen=True)

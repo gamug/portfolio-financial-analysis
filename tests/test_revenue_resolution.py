@@ -234,3 +234,45 @@ def test_n14_d7_depreciation_amortization_flags() -> None:
     # Verify flags propagate to leverage metrics inputs
     res_lev = leverage.compute(stmts_da, FY)
     assert res_lev[0].inputs.get("flag_depreciation_amortization_da_element_nonproduction") == 1.0
+
+
+def test_leverage_10q_ytd_refused_da_carries_flag() -> None:
+    """G2: On a 10-Q, when YTD D&A refused Depreciation alone, leverage inputs carry flag."""
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": [],
+            "cash_flow": [
+                {
+                    "concept": "us-gaap_Depreciation",
+                    "label": "Depreciation",
+                    "abstract": False,
+                    "dimension": False,
+                    "2025-06-30 (Q2)": None,
+                    "2025-06-30 (YTD)": 100_000_000.0,
+                },
+            ],
+            "corrections": [],
+        }
+    )
+    # Compute leverage on the quarter column with ttm dict present (10-Q context)
+    res = leverage.compute(stmts, "2025-06-30 (Q2)", ttm={})
+    assert res[0].inputs.get("flag_depreciation_amortization_depreciation_only_not_da") == 1.0
+
+
+def test_leverage_10q_prior_10k_refused_da_carries_flag() -> None:
+    """G2: On a 10-Q, when prior 10-K refused D&A, leverage inputs carry flag."""
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": [],
+            "cash_flow": [],
+            "corrections": [],
+        }
+    )
+    res = leverage.compute(
+        stmts,
+        "2025-06-30 (Q2)",
+        ttm={"flag_depreciation_amortization_depreciation_only_not_da": 1.0},
+    )
+    assert res[0].inputs.get("flag_depreciation_amortization_depreciation_only_not_da") == 1.0
