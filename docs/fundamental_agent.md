@@ -97,10 +97,10 @@ then `standard`, then label hints (ID-02a, T-148). `Statements.resolve(item, per
 `financial_facts.preferred_sign` stores (`m013`); a row without one reads as displayed and is flagged
 `sign_unverified`; a negative filed value of a capex payment or `InterestAndDebtExpense` /
 `InterestExpenseDebt` (DQC_0015) is rejected and flagged `wrong_sign_rejected`, never `abs()`-ed. The
-T-117/T-140 revenue rebuild arithmetic stays on displayed values. The composite items --
-`net_income` (ID-03: `NetIncomeLoss`, else `ProfitLoss` less the NCI income, else empty),
+T-117/T-140 revenue rebuild arithmetic stays on displayed values. Capex alone keeps the first matching row in the statement's order (`LineItem.document_order`, MET-08) until T-148 (f). The composite items --
+`net_income` (ID-03: `NetIncomeLoss` from any stored statement; else `ProfitLoss` when no NCI income is filed; else `ProfitLoss` less the NCI total; else empty),
 `income_tax` (ID-02b: the total, else current + deferred on the face), `long_term_debt` and
-`short_term_debt` (MET-07, D-06(d), N4, N23) -- and `Statements.total_debt` (D-01, ID-02b: the partial
+`short_term_debt` (MET-07, D-06(d), N4, N23; the REIT pair `SecuredDebt` + `UnsecuredDebt` is not read: no source states the identity) -- and `Statements.total_debt` (D-01, ID-02b: the partial
 map, short-term alone, the debt = 0 rule, the capture failure) are described in SPEC FR-001. Revenue prefers an aggregate (`total_concepts`: `Revenues`,
 `RevenuesNetOfInterestExpense` for banks, `RegulatedAndUnregulatedOperatingRevenue` for
 utilities — T-102) over summing its named components, subject to T-095's too-small
