@@ -149,7 +149,9 @@ class FilingContext:
 
     @property
     def ttm(self) -> dict[str, float]:
-        return {item: flow.value for item, flow in self.ttm_flows.items()}
+        return {
+            item: flow.value for item, flow in self.ttm_flows.items() if flow.method != "refused"
+        }
 
     @property
     def real_ttm(self) -> dict[str, float]:

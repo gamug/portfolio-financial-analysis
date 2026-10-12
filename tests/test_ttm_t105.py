@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from conftest import filed_after
 from portfolio_common.db import Database
 
 from fundamental_agent import db, quality
-from fundamental_agent.agents import _flag_annualization
+from fundamental_agent.agents import FilingContext, _flag_annualization
 from fundamental_agent.db import FilingKey, FilingMeta, YTDPair
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.leverage import compute as leverage_compute
@@ -467,3 +468,27 @@ def test_prior_10k_refused_da_attaches_flag_to_ttm_flow(memory_db: Database) -> 
     )
     assert "depreciation_amortization" in flows
     assert flows["depreciation_amortization"].flags == ("depreciation_only_not_da",)
+
+
+def test_filing_context_ttm_excludes_refused_flows() -> None:
+    """FilingContext.ttm excludes flows whose method is 'refused', so a refused term is never read as 0.0."""
+    stmts = MagicMock()
+    ctx = FilingContext(
+        ticker="TEST",
+        company_name="Test Co",
+        form="10-Q",
+        fiscal_period="Q2",
+        stmts=stmts,
+        period_key="2025-06-30_Q2",
+        prior_key=None,
+        ttm_flows={
+            "revenue": TTMFlow(1_000.0, "ytd"),
+            "depreciation_amortization": TTMFlow(0.0, "refused"),
+            "operating_cash_flow": TTMFlow(200.0, "x4"),
+        },
+    )
+    assert "revenue" in ctx.ttm
+    assert ctx.ttm["revenue"] == 1_000.0
+    assert "operating_cash_flow" in ctx.ttm
+    assert ctx.ttm["operating_cash_flow"] == 200.0
+    assert "depreciation_amortization" not in ctx.ttm
