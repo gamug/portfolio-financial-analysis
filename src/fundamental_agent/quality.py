@@ -65,11 +65,14 @@ HARD and no asset veto (DQ-01 blocks the inputs, it does not veto the company).
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Final
 
 from portfolio_common.db import Database
@@ -497,7 +500,35 @@ _CON06_TTM_METRICS: Final[tuple[MetricKey, ...]] = (
 _SUB_QUARTER_GAP: Final[tuple[int, int]] = (89, 98)
 _SUB_YEAR_WINDOW: Final[int] = 372
 _SUB_MIN_QUARTERS: Final[int] = 2  # a "set" needs at least two quarters
-_FISCAL_QUARTER_RE = re.compile(r"Q([1-4])$")
+
+# The FASB 2026 US-GAAP schema's element ids and additive-duration concepts
+# (``type='xbrli:monetaryItemType'`` + ``xbrli:periodType='duration'``), generated from
+# ``elts/us-gaap-2026.xsd`` in the pinned zip by ``scripts/build_us_gaap_types.py`` (the schema,
+# a loaded B6 source, is not the filing's calculation linkbase -- L-07 is untouched). CON-06 tests
+# only the additive-duration concepts; shares / per-share / other non-monetary concepts and every
+# concept the 2026 schema does not declare are not tested, and counted separately.
+_DATA_DIR: Final[Path] = Path(__file__).resolve().parent / "data"
+_SCHEMA_ELEMENTS_FILE: Final[Path] = _DATA_DIR / "us_gaap_2026_elements.txt"
+_ADDITIVE_FILE: Final[Path] = _DATA_DIR / "us_gaap_2026_duration_monetary.txt"
+
+
+@lru_cache(maxsize=2)
+def _concept_set(path: str) -> frozenset[str]:
+    lines = Path(path).read_text(encoding="utf-8").splitlines()
+    return frozenset(line for line in lines if line and not line.startswith("#"))
+
+
+def schema_concepts() -> frozenset[str]:
+    """Every element id the FASB 2026 US-GAAP schema declares."""
+    return _concept_set(str(_SCHEMA_ELEMENTS_FILE))
+
+
+def additive_duration_concepts() -> frozenset[str]:
+    """The schema's additive duration amounts (monetary + duration), the only concepts CON-06
+    tests."""
+    return _concept_set(str(_ADDITIVE_FILE))
+
+
 # The number of filed values entering the cross-check's two constructions (F1): the year-to-date
 # identity has 3 (current YTD, prior fiscal year, prior-year YTD), the four recorded quarters have
 # 4. Only the two constructed values are available here, so the unit is inferred from those two
@@ -915,25 +946,33 @@ def _identity_evidence(result: IdentityResult) -> dict[str, Any]:
     }
 
 
-# -- CON_06 proper: contiguous sub-periods sum to the aggregate, inside one filing (F1b) ---------
+# -- CON_06 proper: contiguous sub-periods sum to the aggregate, inside one filing (F1b/F1c) ----
 #
 # DQC_0084 (B3): "values of a durational element for a series of periods of time do not aggregate
 # to the value representing the aggregated period in the instance". A test needs, for one concept
 # on one stored statement face, a **complete** contiguous set of quarter columns (Q1..Qk, PER-08
-# gaps) inside the same filing that exactly spans one of its aggregate columns (YTD or FY): the
-# number of quarters equals the aggregate's length (a 6-month YTD -> 2, 9-month -> 3, FY -> 4).
-# A partial chain (e.g. Q3 + Q2 against a 9-month YTD) is not tested; it is counted separately as
-# an incomplete set.
+# gaps) inside the same filing that exactly spans one of its aggregate columns (YTD or FY).
+#
+# F1c-1: only amounts that add are tested -- the concepts the FASB 2026 US-GAAP schema
+# (``elts/us-gaap-2026.xsd``) declares ``xbrli:monetaryItemType`` + ``xbrli:periodType='duration'``
+# (:func:`additive_duration_concepts`). A share count (``WeightedAverageNumberOfDilutedShares
+# Outstanding`` is ``sharesItemType``), a per-share ratio and every concept the schema does not
+# declare are not tested and counted separately. The schema is a loaded B6 source, not the
+# filing's calculation linkbase, so L-07 is untouched.
+#
+# F1c-2: an aggregate's expected quarter count comes from its own dates and the company's
+# fiscal-year end (the 10-K period ends, :func:`_aggregate_expected`), never from the filing's
+# ``fiscal_period`` label. A partial chain is not tested; counted separately as an incomplete set.
 
 
 @dataclass(frozen=True)
 class SubperiodFacts:
-    """One filing's duration columns by ``(statement, concept) -> {column: filed value}``, its
-    ``fiscal_period`` and ``period_end`` (which give each aggregate column's expected quarter
-    count from the aggregate's own date)."""
+    """One filing's duration columns by ``(statement, concept) -> {column: filed value}`` and the
+    company's fiscal-year end as ``(month, day)`` (from its 10-K period ends; ``None`` when the
+    company has no stored 10-K), which gives each aggregate column's expected quarter count from
+    the aggregate's own date."""
 
-    fiscal_period: str
-    period_end: str
+    fiscal_year_end_md: tuple[int, int] | None
     duration: Mapping[tuple[str, str], Mapping[str, float]]
 
 
@@ -972,40 +1011,27 @@ class SubperiodResult:
         return self.base is None
 
 
-def _fiscal_quarter_index(fiscal_period: str) -> int:
-    """The number of fiscal quarters the filing's own period spans: the quarter in ``2024Q3`` is
-    3; a 10-K (``FY2024``) is 4. 0 when neither parses."""
-    match = _FISCAL_QUARTER_RE.search(fiscal_period)
-    if match is not None:
-        return int(match.group(1))
-    return 4 if fiscal_period.startswith("FY") else 0
+def _next_fiscal_year_end(day: date, month: int, day_of_month: int) -> date:
+    """The first date on/after *day* with the fiscal-year-end *(month, day_of_month)* (a month end
+    stays a month end)."""
+    for year in (day.year, day.year + 1):
+        last = calendar.monthrange(year, month)[1]
+        candidate = date(year, month, min(day_of_month, last))
+        if candidate >= day:
+            return candidate
+    return date(day.year + 1, month, calendar.monthrange(day.year + 1, month)[1])
 
 
-def _fiscal_year_end(fiscal_period: str, period_end: str) -> date | None:
-    """The fiscal-year end the filing's own period belongs to: ``period_end`` itself for a 10-K,
-    else ``period_end`` moved forward by the quarters still to come (``fiscal.months_before`` with
-    a negative count). ``None`` when the period end or label does not parse."""
-    index = _fiscal_quarter_index(fiscal_period)
-    if index == 0 or not period_end:
-        return None
-    end = date.fromisoformat(period_end)
-    return end if fiscal_period.startswith("FY") else fiscal.months_before(end, -(4 - index) * 3)
-
-
-def _aggregate_expected(fiscal_period: str, period_end: str, agg_date_iso: str) -> int:
+def _aggregate_expected(fye_md: tuple[int, int] | None, agg_date_iso: str) -> int:
     """The quarter count an aggregate column at *agg_date_iso* must span to be complete: the
-    aggregate's own fiscal year is found by walking the filing's fiscal-year end back/forward in
-    whole years to the one containing the aggregate, and the count is the months from that year's
-    start to the aggregate over three (a 6-month YTD -> 2, 9-month -> 3, FY -> 4)."""
-    fye = _fiscal_year_end(fiscal_period, period_end)
-    if fye is None:
+    months from its fiscal-year start to the aggregate, over three (a 6-month YTD -> 2, 9-month
+    -> 3, FY -> 4). The fiscal-year end comes from the company's 10-K period ends (*fye_md*),
+    never from the filing's ``fiscal_period`` label (F1c-2)."""
+    if fye_md is None:
         return 0
     agg = date.fromisoformat(agg_date_iso)
-    while fye > agg and fiscal.months_before(fye, 12) >= agg:
-        fye = fiscal.months_before(fye, 12)
-    while fiscal.months_before(fye, -12) <= agg:
-        fye = fiscal.months_before(fye, -12)
-    start = fiscal.months_before(fye, 12)
+    fy_end = _next_fiscal_year_end(agg, fye_md[0], fye_md[1])
+    start = fiscal.months_before(fy_end, 12)
     months = (agg.year - start.year) * 12 + (agg.month - start.month)
     return round(months / 3)
 
@@ -1075,19 +1101,31 @@ def _subperiod_base(facts: SubperiodFacts, statement: str, agg_column: str) -> f
 
 def subperiod_results(
     facts: SubperiodFacts,
-) -> tuple[list[SubperiodResult], list[dict[str, Any]]]:
-    """Every complete CON-06 set of one filing and the incomplete sets (a partial chain of >= 2
-    quarters). One entry per (statement, concept, aggregate column)."""
+) -> tuple[list[SubperiodResult], list[dict[str, Any]], dict[str, int]]:
+    """Every complete CON-06 set of one filing, the incomplete sets (a partial chain of >= 2
+    quarters) and the two not-testable counters (``type_not_in_schema`` for a concept the 2026
+    schema does not declare -- an extension or a pre-2026 element; ``not_additive`` for a declared
+    concept that is not a monetary duration). One entry per (statement, concept, aggregate
+    column)."""
+    schema = schema_concepts()
+    additive = additive_duration_concepts()
     results: list[SubperiodResult] = []
     incomplete: list[dict[str, Any]] = []
+    not_tested = {"type_not_in_schema": 0, "not_additive": 0}
     for (statement, concept), columns in sorted(facts.duration.items()):
         quarters, aggregates = _split_duration_columns(columns)
         for agg_date_iso, (agg_column, _agg_tag) in sorted(aggregates.items()):
-            expected = _aggregate_expected(facts.fiscal_period, facts.period_end, agg_date_iso)
+            expected = _aggregate_expected(facts.fiscal_year_end_md, agg_date_iso)
             if expected < _SUB_MIN_QUARTERS:
                 continue
             chain, first_gap = _subperiod_chain(quarters, agg_date_iso, expected)
             if len(chain) < _SUB_MIN_QUARTERS:
+                continue
+            if concept not in schema:
+                not_tested["type_not_in_schema"] += 1
+                continue
+            if concept not in additive:
+                not_tested["not_additive"] += 1
                 continue
             if len(chain) != expected or first_gap != 0:
                 incomplete.append(
@@ -1124,7 +1162,7 @@ def subperiod_results(
                     unit=l10_unit(terms),
                 )
             )
-    return results, incomplete
+    return results, incomplete, not_tested
 
 
 def _subperiod_evidence(result: SubperiodResult) -> dict[str, Any]:
@@ -1165,21 +1203,44 @@ def con06_issues(results: Iterable[SubperiodResult], metrics: FilingMetrics) -> 
     return out
 
 
+def _fiscal_year_end_md(ends: Iterable[str]) -> tuple[int, int] | None:
+    """The company's fiscal-year-end ``(month, day)``: the most common of its stored 10-K period
+    ends (the latest such end breaks a tie). ``None`` when it has none (F1c-2)."""
+    parsed = [date.fromisoformat(e) for e in ends if e]
+    if not parsed:
+        return None
+    counts: dict[tuple[int, int], int] = {}
+    latest: dict[tuple[int, int], date] = {}
+    for end in parsed:
+        md = (end.month, end.day)
+        counts[md] = counts.get(md, 0) + 1
+        latest[md] = max(latest.get(md, end), end)
+    return max(counts, key=lambda md: (counts[md], latest[md]))
+
+
 def load_subperiods(conn: Database, filing_ids: Iterable[int]) -> dict[int, SubperiodFacts]:
     """``filing_id -> SubperiodFacts``: every duration fact (income statement, cash flow) of each
-    filing, in the filed sign, with the filing's ``fiscal_period``."""
+    filing, in the filed sign, with the company's fiscal-year end (from its 10-K period ends)."""
     ids = sorted(set(int(f) for f in filing_ids))
     if not ids:
         return {}
     ids_json = json.dumps(ids)
-    meta = {
-        int(r[0]): (str(r[1]), str(r[2] or ""))
+    assets = {
+        int(r[0]): int(r[1])
         for r in conn.execute(
-            "SELECT id, fiscal_period, period_end FROM sec_filings "
-            "WHERE id IN (SELECT value FROM json_each(?))",
+            "SELECT id, asset_id FROM sec_filings WHERE id IN (SELECT value FROM json_each(?))",
             (ids_json,),
         )
     }
+    tenk: dict[int, list[str]] = {}
+    if assets:
+        for row in conn.execute(
+            "SELECT asset_id, period_end FROM sec_filings WHERE form = '10-K' "
+            "AND period_end IS NOT NULL AND asset_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(sorted(set(assets.values()))),),
+        ):
+            tenk.setdefault(int(row["asset_id"]), []).append(str(row["period_end"]))
+    fye_by_asset = {asset: _fiscal_year_end_md(ends) for asset, ends in tenk.items()}
     sql = {
         True: (
             "SELECT filing_id, statement, concept, period_key, value, preferred_sign "
@@ -1205,8 +1266,7 @@ def load_subperiods(conn: Database, filing_ids: Iterable[int]) -> dict[int, Subp
         ).setdefault(str(row["period_key"]), value)
     return {
         fid: SubperiodFacts(
-            fiscal_period=meta.get(fid, ("", ""))[0],
-            period_end=meta.get(fid, ("", ""))[1],
+            fiscal_year_end_md=fye_by_asset.get(assets.get(fid, 0)),
             duration=duration,
         )
         for fid, duration in by_filing.items()
@@ -1297,7 +1357,7 @@ def gate_version(
             issues.extend(identity_issues(filing_facts, metrics))
         filing_subperiods = subperiods.get(fid)
         if filing_subperiods is not None:
-            sub_results, _incomplete = subperiod_results(filing_subperiods)
+            sub_results, _incomplete, _not_tested = subperiod_results(filing_subperiods)
             issues.extend(con06_issues(sub_results, metrics))
         for rule_id in {i.rule_id for i in issues}:
             report.filings_by_rule[rule_id] = report.filings_by_rule.get(rule_id, 0) + 1

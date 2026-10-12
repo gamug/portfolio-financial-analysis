@@ -302,8 +302,7 @@ def _sp(  # noqa: PLR0913 - one SubperiodFacts fixture, all fields explicit
     quarters: dict[str, float] | None = None,
     agg: float | None = None,
     net_income: float | None = None,
-    fiscal_period: str = "2024Q3",
-    period_end: str = "2024-09-30",
+    fye_md: tuple[int, int] | None = (12, 31),
     agg_column: str = "2024-09-30 (YTD)",
 ) -> quality.SubperiodFacts:
     cols = dict(quarters or {})
@@ -312,7 +311,7 @@ def _sp(  # noqa: PLR0913 - one SubperiodFacts fixture, all fields explicit
     duration = {("income_statement", concept): cols}
     if net_income is not None:
         duration[("income_statement", _NET_INCOME)] = {agg_column: net_income}
-    return quality.SubperiodFacts(fiscal_period, period_end, duration)
+    return quality.SubperiodFacts(fye_md, duration)
 
 
 _QUARTERS_3 = {
@@ -323,7 +322,7 @@ _QUARTERS_3 = {
 
 
 def test_con06_pass() -> None:
-    results, incomplete = quality.subperiod_results(
+    results, incomplete, _nt = quality.subperiod_results(
         _sp(quarters=_QUARTERS_3, agg=300 * MILLION, net_income=300 * MILLION)
     )
     assert incomplete == []
@@ -341,12 +340,12 @@ def test_con06_pass() -> None:
 
 
 def test_con06_warn_and_block() -> None:
-    warn, _ = quality.subperiod_results(
+    warn, _, _nt = quality.subperiod_results(
         _sp(quarters=_QUARTERS_3, agg=304 * MILLION, net_income=1_000 * MILLION)
     )
     # rounding 2M, threshold = 0.5% x 1,000M = 5M, diff 4M -> warn
     assert warn[0].level == "warn"
-    block, _ = quality.subperiod_results(
+    block, _, _nt = quality.subperiod_results(
         _sp(quarters=_QUARTERS_3, agg=310 * MILLION, net_income=1_000 * MILLION)
     )
     assert block[0].level == "block"
@@ -355,7 +354,7 @@ def test_con06_warn_and_block() -> None:
 def test_con06_incomplete_chain_is_not_tested() -> None:
     # a 9-month YTD with only Q2 + Q3 (Q1 missing) -> incomplete, no result
     partial = {"2024-06-30 (Q2)": 100 * MILLION, "2024-09-30 (Q3)": 100 * MILLION}
-    results, incomplete = quality.subperiod_results(
+    results, incomplete, _nt = quality.subperiod_results(
         _sp(quarters=partial, agg=300 * MILLION, net_income=300 * MILLION)
     )
     assert results == []
@@ -364,12 +363,45 @@ def test_con06_incomplete_chain_is_not_tested() -> None:
 
 def test_con06_missing_base_never_blocks() -> None:
     # no NetIncomeLoss filed -> base missing -> WARN cap even for a huge gap
-    results, _ = quality.subperiod_results(_sp(quarters=_QUARTERS_3, agg=900 * MILLION))
+    results, _, _nt = quality.subperiod_results(_sp(quarters=_QUARTERS_3, agg=900 * MILLION))
     assert results[0].level == "warn" and results[0].base_missing is True
+
+
+def test_con06_a_shares_concept_is_not_tested() -> None:
+    """F1c-1: ``WeightedAverageNumberOfDilutedSharesOutstanding`` is ``sharesItemType``, so its
+    complete set is not an additive amount and is not tested."""
+    shares = "us-gaap_WeightedAverageNumberOfDilutedSharesOutstanding"
+    results, _, not_tested = quality.subperiod_results(
+        _sp(concept=shares, quarters=_QUARTERS_3, agg=300 * MILLION, net_income=300 * MILLION)
+    )
+    assert results == [] and not_tested["not_additive"] == 1
+
+
+def test_con06_an_extension_concept_is_not_tested() -> None:
+    """F1c-1: a concept the 2026 schema does not declare (an extension) is not tested."""
+    results, _, not_tested = quality.subperiod_results(
+        _sp(concept="eqr_AllocationOfNetIncome", quarters=_QUARTERS_3, agg=300 * MILLION)
+    )
+    assert results == [] and not_tested["type_not_in_schema"] == 1
+
+
+def test_con06_length_comes_from_dates_not_the_label() -> None:
+    """F1c-2: a 6-month YTD (two quarters, fye 12-31) is tested on its own dates; the filing's
+    ``fiscal_period`` label is never read (the CSX 2024Q3 shape: a Q3 label on a 2024-06-30 end)."""
+    two = {"2024-03-31 (Q1)": 100 * MILLION, "2024-06-30 (Q2)": 100 * MILLION}
+    results, incomplete, _ = quality.subperiod_results(
+        _sp(
+            quarters=two, agg=200 * MILLION, net_income=200 * MILLION, agg_column="2024-06-30 (YTD)"
+        )
+    )
+    assert incomplete == []
+    assert len(results) == 1 and results[0].level == "pass" and results[0].n_terms == 3
 
 
 def test_con06_block_quarantines_the_ttm_metrics(memory_db: Database) -> None:
     _asset(memory_db)
+    # a stored 10-K sets the company's fiscal-year end (F1c-2), which the gate reads, not a label.
+    seed_filing(memory_db, 1, period_end="2023-12-31", filing_date="2024-02-15", form="10-K")
     fid = seed_filing(
         memory_db,
         1,

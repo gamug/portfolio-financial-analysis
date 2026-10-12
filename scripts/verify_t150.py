@@ -537,9 +537,12 @@ def cmd_con06(args: argparse.Namespace) -> int:
     worst: dict[int, str] = {}  # filing -> its worst set level (a filing may hold several sets)
     incomplete: dict[int, list[dict[str, Any]]] = defaultdict(list)
     base_missing = {"filings": set(), "companies": set()}
+    not_tested = {"type_not_in_schema": 0, "not_additive": 0}
     non_pass: list[dict[str, Any]] = []
     for fid, sp in subperiods.items():
-        results, incomplete_sets = quality.subperiod_results(sp)
+        results, incomplete_sets, clean_not_tested = quality.subperiod_results(sp)
+        for key in clean_not_tested:
+            not_tested[key] += clean_not_tested[key]
         for inc in incomplete_sets:
             incomplete[fid].append(inc)
         for r in results:
@@ -587,6 +590,10 @@ def cmd_con06(args: argparse.Namespace) -> int:
         f"  = {block_share:.1%} of tested",
         f"  incomplete sets (a partial chain, not tested): {sum(len(v) for v in incomplete.values())} "
         f"sets across {len(incomplete)} filings",
+        f"  not tested, type not in the 2026 schema (extension / pre-2026): "
+        f"{not_tested['type_not_in_schema']} sets",
+        f"  not tested, not an additive amount (shares / per share / other): "
+        f"{not_tested['not_additive']} sets",
         f"  base-missing caps (WARN; the aggregate column has no base): "
         f"{len(base_missing['filings'])} filings ({len(base_missing['companies'])} companies)",
         "",
