@@ -19,17 +19,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sec_xcheck import extra_measures, records
-from sec_xcheck.common import open_ro
+from sec_xcheck.common import open_ro, statements_from_db
 
+from fundamental_agent import db as fundamental_db
 from fundamental_agent import quality
+from fundamental_agent.pipeline import _TTM_ITEMS, _targets, _YearTask, _ytd_columns
 
 G = "us-gaap_"
 RULES = ("CON-01", "CON-02", "CON-03", "CON-04", "CON-07", "CON-08", "CON-19")
@@ -354,6 +358,230 @@ def cmd_measure(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- CON-06 (F1) -------------------------------------------------------------------------------
+
+_COL_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\s*\(([A-Za-z0-9]+)\))?$")
+_QUARTER_GAP = (89, 98)  # PER-08's quarter range, in days
+_YEAR_WINDOW = 372  # days: a quarter more than this before an aggregate is another year
+_MIN_CHAIN = 2  # a "set" of sub-periods needs at least two consecutive quarters
+
+
+def _col(key: str) -> tuple[str, str] | None:
+    match = _COL_RE.match(key.strip())
+    return (match.group(1), match.group(2) or "INSTANT") if match else None
+
+
+def _values_by_key(conn: Any, filing_id: int, concept: str, keys: list[str]) -> list[float | None]:
+    out: list[float | None] = []
+    for key in keys:
+        row = conn.execute(
+            "SELECT value FROM financial_facts WHERE filing_id=? AND concept=? AND period_key=? "
+            "ORDER BY id LIMIT 1",
+            (filing_id, concept, key),
+        ).fetchone()
+        out.append(None if row is None else float(row[0]))
+    return out
+
+
+def _subperiod_chain(group: dict[str, dict[str, str]], agg_date_iso: str) -> list[str]:
+    """The consecutive quarter columns chaining into an aggregate at *agg_date_iso*: the last
+    sub-period may end on the aggregate's own date (a 10-Q's Q3 and its 9-month YTD share the end
+    date), every earlier step is one PER-08 quarter."""
+    agg_date = date.fromisoformat(agg_date_iso)
+    chain = sorted(
+        (
+            (d, k)
+            for d, k in group["q"].items()
+            if 0 <= (agg_date - date.fromisoformat(d)).days <= _YEAR_WINDOW
+        ),
+        key=lambda dk: date.fromisoformat(dk[0]),
+        reverse=True,
+    )
+    previous, accepted = agg_date, []
+    for d, key in chain:
+        gap = (previous - date.fromisoformat(d)).days
+        first = not accepted
+        if (first and gap == 0) or _QUARTER_GAP[0] <= gap <= _QUARTER_GAP[1]:
+            accepted.append(key)
+            previous = date.fromisoformat(d)
+        else:
+            break
+    return accepted
+
+
+def _contiguous_subperiod_filings(
+    conn: Any,
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]]]:
+    """CON-06 proper: filings whose duration columns hold, for one concept, a complete contiguous
+    set of quarter columns ending at an aggregated (FY/YTD) column of the *same* filing.
+
+    ``structural`` counts a filing when, for some concept, >= 2 consecutive quarter columns chain
+    back-to-back into an aggregate of the same filing. ``genuine`` keeps only those whose quarters
+    actually sum to the aggregate within L-10's rounding (a complete set CON-06 can test). Each
+    value is ``filing_id -> {concept, agg, quarters, agg_value, quarters_sum, rounds}``."""
+    groups: dict[tuple[int, str], dict[str, dict[str, str]]] = defaultdict(
+        lambda: {"q": {}, "agg": {}}
+    )
+    for row in conn.execute(
+        "SELECT filing_id, concept, period_key FROM financial_facts "
+        "WHERE statement IN ('income_statement', 'cash_flow') ORDER BY filing_id, concept, id"
+    ):
+        parsed = _col(str(row["period_key"]))
+        if parsed is None or parsed[1] == "INSTANT":
+            continue
+        d, tag = parsed
+        group = groups[(int(row["filing_id"]), str(row["concept"]))]
+        if tag in ("Q1", "Q2", "Q3", "Q4"):
+            group["q"].setdefault(d, str(row["period_key"]))
+        elif tag in ("FY", "YTD"):
+            group["agg"].setdefault(d, str(row["period_key"]))
+    structural: dict[int, dict[str, Any]] = {}
+    genuine: dict[int, dict[str, Any]] = {}
+    for (fid, concept), group in groups.items():
+        for agg_date_iso, agg_key in sorted(group["agg"].items()):
+            accepted = _subperiod_chain(group, agg_date_iso)
+            if len(accepted) < _MIN_CHAIN:
+                continue
+            quarter_values = _values_by_key(conn, fid, concept, accepted)
+            agg_value = _values_by_key(conn, fid, concept, [agg_key])[0]
+            present = [v for v in (*quarter_values, agg_value) if v is not None]
+            diff = (
+                abs(agg_value - sum(v for v in quarter_values if v is not None))
+                if agg_value is not None and len(present) == len(quarter_values) + 1
+                else None
+            )
+            rounds = diff is not None and diff <= quality.l10_rounding(present)
+            detail = {
+                "concept": concept,
+                "agg": agg_key,
+                "quarters": accepted,
+                "agg_value": agg_value,
+                "quarters_sum": sum(v for v in quarter_values if v is not None),
+                "diff": diff,
+                "rounds": rounds,
+            }
+            structural.setdefault(fid, detail)
+            if rounds:
+                genuine.setdefault(fid, detail)
+    return structural, genuine
+
+
+def _crosscheck_counts(conn: Any) -> tuple[int, dict[str, dict[str, int]]]:
+    """Per TTM item: tested (an identity and four quarters were both computable), warn and block
+    under DQ-01 (as :func:`quality.record_ttm_crosscheck` computes it)."""
+    per_item: dict[str, dict[str, int]] = defaultdict(lambda: {"tested": 0, "warn": 0, "block": 0})
+    filings = 0
+    for f in conn.execute(
+        "SELECT f.id, f.asset_id, f.fiscal_year, f.fiscal_period, a.ticker, a.cik "
+        "FROM sec_filings f JOIN assets a ON a.id = f.asset_id WHERE f.form = '10-Q'"
+    ):
+        stmts = statements_from_db(conn, int(f["id"]))
+        task = _YearTask(
+            int(f["asset_id"]),
+            f["ticker"],
+            f["ticker"],
+            "10-Q",
+            int(f["fiscal_year"]),
+            str(f["cik"] or ""),
+        )
+        target = next(
+            (t for t in _targets(stmts, task) if t.fiscal_period == f["fiscal_period"]), None
+        )
+        if target is None:
+            continue
+        filings += 1
+        current = {
+            item: v for item in _TTM_ITEMS if (v := stmts.get(item, target.period.key)) is not None
+        }
+        cur_key, prior_key, prior_end = _ytd_columns(stmts, target)
+        ytd = (
+            {
+                item: fundamental_db.YTDPair(
+                    stmts.get(item, cur_key), stmts.get(item, prior_key), prior_end
+                )
+                for item in _TTM_ITEMS
+            }
+            if cur_key and prior_key
+            else {}
+        )
+        if not current and not ytd:
+            continue
+        flows = fundamental_db.ttm_detail(
+            conn, int(f["asset_id"]), period_end=target.period.date, current=current, ytd=ytd
+        )
+        ni = flows.get("net_income")
+        for item, flow in flows.items():
+            if flow.method != "ytd" or flow.alt is None:
+                continue
+            per_item[item]["tested"] += 1
+            base = ni.value if item in quality._INCOME_FLOW_ITEMS and ni is not None else None
+            rounding = (
+                0.5 * quality.l10_unit([flow.value, flow.alt]) * quality._TTM_CROSSCHECK_TERMS
+            )
+            level = quality.dq01_level(abs(flow.value - flow.alt), rounding, base)
+            if level != "pass":
+                per_item[item][level] += 1
+    return filings, per_item
+
+
+def cmd_con06(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    structural, genuine = _contiguous_subperiod_filings(conn)
+    filings, per_item = _crosscheck_counts(conn)
+    items = sorted(per_item)
+    lines = [
+        f"T-150 F1 CON-06, db={args.db}",
+        "",
+        "CON-06 proper (DQC_0084, within one instance): stored filings whose duration columns hold "
+        "a complete contiguous sub-period set inside one filing",
+        f"  structural (>= 2 consecutive quarters chaining into an FY/YTD column): {len(structural)}",
+        f"  genuine (the quarters also sum to the aggregate within L-10 rounding): {len(genuine)}",
+    ]
+    if genuine:
+        lines.append(
+            f"  HARD STOP (F1): {len(genuine)} filings hold such a set; ids {sorted(genuine)[:20]}"
+        )
+        for fid, detail in list(genuine.items())[:6]:
+            row = conn.execute(
+                "SELECT a.ticker, f.form, f.fiscal_period FROM sec_filings f "
+                "JOIN assets a ON a.id=f.asset_id WHERE f.id=?",
+                (fid,),
+            ).fetchone()
+            lines.append(
+                f"    filing {fid} ({row['ticker']} {row['form']} {row['fiscal_period']}): "
+                f"{detail['concept']} {detail['quarters']} sum={detail['quarters_sum']} vs "
+                f"{detail['agg']} = {detail['agg_value']} (diff {detail['diff']})"
+            )
+    else:
+        lines.append(
+            "  -> CON-06 proper is not testable on the stored statement faces: no filing's "
+            "sub-period columns both chain into and sum to an aggregate column."
+        )
+    lines += [
+        "",
+        f"TTM cross-check (compare this filing's YTD identity with four quarters from earlier filings)"
+        f": 10-Q filings with a target = {filings}",
+        f"{'item':26} {'tested':>7} {'warn':>5} {'block':>6} {'rows written':>13} {'quarantine rows':>16}",
+    ]
+    total = {"tested": 0, "warn": 0, "block": 0}
+    for item in items:
+        c = per_item[item]
+        rows_written = c["warn"] + c["block"]
+        lines.append(
+            f"{item:26} {c['tested']:>7} {c['warn']:>5} {c['block']:>6} {rows_written:>13} {0:>16}"
+        )
+        for k in total:
+            total[k] += c[k]
+    lines.append(
+        f"{'TOTAL':26} {total['tested']:>7} {total['warn']:>5} {total['block']:>6} "
+        f"{total['warn'] + total['block']:>13} {0:>16}"
+    )
+    text = "\n".join(lines)
+    Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
+    print(text)
+    return 1 if genuine else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -372,6 +600,10 @@ def main(argv: list[str] | None = None) -> int:
     meas.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/p3_counts.txt")
     meas.add_argument("--out-json", default="/workspaces/thesis/scratch/t150/out/p3_counts.json")
     meas.set_defaults(func=cmd_measure)
+    con06 = sub.add_parser("con06", help="CON-06: the within-instance query and the cross-check")
+    con06.add_argument("--db", required=True)
+    con06.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con06.txt")
+    con06.set_defaults(func=cmd_con06)
     args = parser.parse_args(argv)
     return int(args.func(args))
 

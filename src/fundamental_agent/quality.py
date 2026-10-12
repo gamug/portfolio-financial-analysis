@@ -51,7 +51,9 @@ filed the level is decided on ``rounding`` alone and a not-pass is a WARN, never
 (``base_missing``). **L-10.** ``decimals`` is not captured, so ``rounding = 0.5 x unit x
 n_terms``: ``n_terms`` the filed values entering the identity, ``unit`` the largest of USD 1M and
 USD 1k that divides every term exactly, else USD 1. ``CON_06`` is the existing
-:func:`record_ttm_crosscheck` (``DQ_TTM_CROSSCHECK``), whose tolerance becomes DQ-01's.
+:func:`record_ttm_crosscheck` (``DQ_TTM_CROSSCHECK``): it compares one filing's year-to-date
+identity with four quarters taken from *earlier* filings (not DQC_0084's within-one-instance
+check), takes DQ-01's level, and writes only a SOFT review row -- never a quarantine.
 
 A hit writes one SOFT row under the pseudo-group ``identity`` (``metric_name`` = the rule, like
 the ``ttm`` group), so no consumer reads it as a metric; a BLOCK also writes the affected
@@ -466,35 +468,15 @@ _AFFECTED_METRICS: Final[dict[str, tuple[MetricKey, ...]]] = {
     "CON_19": _CON19_METRICS,
 }
 
-# C9: CON-06's "TTM-based metrics" per failed TTM flow item -- the stored metrics whose formula
-# divides by that item's trailing-twelve-month value (`agents._GROUP_TTM_ITEMS` names the item's
-# group; the source is the metric module itself). file:line in the PR.
-_TTM_BASED_METRICS: Final[dict[str, tuple[MetricKey, ...]]] = {
-    "net_income": (("profitability", "return_on_assets"), ("profitability", "return_on_equity")),
-    "revenue": (("efficiency", "asset_turnover"), ("efficiency", "receivables_turnover")),
-    "cogs": (("efficiency", "inventory_turnover"),),
-    "operating_income": (
-        ("leverage", "net_debt_to_ebitda"),
-        ("roic", "return_on_invested_capital"),
-    ),
-    "depreciation_amortization": (("leverage", "net_debt_to_ebitda"),),
-    "operating_cash_flow": (
-        ("valuation", "free_cash_flow_yield"),
-        ("valuation", "sbc_adjusted_fcf_yield"),
-        ("valuation", "enterprise_fcf_yield"),
-    ),
-    "capital_expenditure": (
-        ("valuation", "free_cash_flow_yield"),
-        ("valuation", "sbc_adjusted_fcf_yield"),
-        ("valuation", "enterprise_fcf_yield"),
-    ),
-    "stock_based_compensation": (("valuation", "sbc_adjusted_fcf_yield"),),
-    "interest_expense": (("valuation", "enterprise_fcf_yield"),),
-}
 # The TTM flow items filed on the income statement (C3: CON-06's base is then the TTM net income).
 _INCOME_FLOW_ITEMS: Final[frozenset[str]] = frozenset(
     {"net_income", "revenue", "cogs", "operating_income"}
 )
+# The number of filed values entering the cross-check's two constructions (F1): the year-to-date
+# identity has 3 (current YTD, prior fiscal year, prior-year YTD), the four recorded quarters have
+# 4. Only the two constructed values are available here, so the unit is inferred from those two
+# (declared) and `n_terms` is this constant.
+_TTM_CROSSCHECK_TERMS: Final[int] = 7
 
 
 _EXACT_EPSILON: Final[float] = 1e-9
@@ -1043,23 +1025,6 @@ TTM_CROSSCHECK_RULE: Final[str] = "DQ_TTM_CROSSCHECK"
 TTM_CROSSCHECK_TOLERANCE: Final[float] = 0.01
 
 
-def _stored_metric_values(
-    conn: Database, filing_id: int, engine_version: str
-) -> dict[MetricKey, float | None]:
-    versions = MetricVersions(dict.fromkeys(METRIC_GROUPS, engine_version))
-    return {
-        (str(r["metric_group"]), str(r["metric_name"])): r["value"]
-        for r in conn.execute(
-            """
-            SELECT m.metric_group, m.metric_name, m.value FROM fundamental_metrics m
-            WHERE (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
-              AND m.filing_id = ?
-            """,
-            (versions.json_param(), filing_id),
-        )
-    }
-
-
 def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provenance
     conn: Database,
     filing_id: int,
@@ -1070,24 +1035,28 @@ def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provena
     run_id: int | None = None,
 ) -> int:
     """Where a flow's TTM was computable both ways -- the year-to-date identity (its value) and
-    four recorded quarters (:attr:`TTMFlow.alt`) -- and they disagree, record a SOFT row under the
-    pseudo-group ``ttm`` (never a metric group, so no consumer reads it as a metric).
+    four recorded quarters (:attr:`TTMFlow.alt`) -- and they disagree, record one SOFT,
+    **unquarantined** row under the pseudo-group ``ttm`` (never a metric group, so no consumer
+    reads it as a metric). Nothing is quarantined or vetoed.
 
-    Neither side is treated as the truth, so the identity itself is never discarded: it uses the
-    filing's own *restated* comparative column, while the quarters are as-filed -- after AT&T's
-    2022 WarnerMedia spin-off its Q1 2022 cogs were $10.351B as filed and $6.036B restated, and
-    the four-quarter sum is the wrong side. A gap is still worth a look: it can equally mean a
-    concept resolved differently in one filing.
+    Neither side is treated as the truth: the identity uses the filing's own *restated* comparative
+    column, while the quarters are as-filed -- after AT&T's 2022 WarnerMedia spin-off its Q1 2022
+    cogs were $10.351B as filed and $6.036B restated, and the four-quarter sum is the wrong side.
+    A gap is still worth a look: it can equally mean a concept resolved differently in one filing.
 
-    **T-150**: the 1% relative tolerance is now DQ-01's. ``diff = |identity - four_quarters|``;
-    ``rounding`` is L-10's (``0.5 x unit x n_terms`` over the two constructions' values); the base
-    is the flow's own TTM net income when the item is an income-statement flow, absent for a
-    cash-flow flow (no TTM change in cash is built), so a cash-flow not-pass is a WARN, never a
-    BLOCK. Above ``max(rounding, 0.5% x |base|)`` the item is material: the row is written and the
-    item's TTM-based metrics (:data:`_TTM_BASED_METRICS`) are quarantined too. Returns the rows
+    **This is not CON-06 as the checklist writes it.** DQC_0084 checks that a durational element's
+    sub-periods aggregate "in the instance" -- within one filing -- whereas this check compares one
+    filing's year-to-date identity with four quarters taken from *earlier* filings. It keeps T-105's
+    "neither side is the truth"; it is a review flag, never a quarantine.
+
+    **T-150** (F1, correcting C9): the level is DQ-01's -- ``diff = |identity - four_quarters|``;
+    ``rounding = 0.5 x unit x n_terms`` with ``n_terms = :data:`_TTM_CROSSCHECK_TERMS``` (F1) and
+    the unit inferred from the two constructed values (declared, since their operands are not
+    available here); the base is the flow's own TTM net income when the item is an income-statement
+    flow, absent for a cash-flow flow (no TTM change in cash is built), so a cash-flow not-pass is a
+    WARN, never a BLOCK. The level and every DQ-01 term go in the evidence. Returns the rows
     inserted."""
     now = _now()
-    stored = _stored_metric_values(conn, filing_id, engine_version)
     ni_flow = flows.get("net_income")
     rows: list[tuple[Any, ...]] = []
     for item, flow in sorted(flows.items()):
@@ -1095,7 +1064,8 @@ def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provena
             continue
         base = ni_flow.value if item in _INCOME_FLOW_ITEMS and ni_flow is not None else None
         terms = [flow.value, flow.alt]
-        rounding = l10_rounding(terms)
+        unit = l10_unit(terms)
+        rounding = 0.5 * unit * _TTM_CROSSCHECK_TERMS
         diff = abs(flow.value - flow.alt)
         level = dq01_level(diff, rounding, base)
         if level == "pass":
@@ -1106,8 +1076,8 @@ def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provena
             "four_quarters": flow.alt,
             "diff": diff,
             "rounding": rounding,
-            "unit": l10_unit(terms),
-            "n_terms": len(terms),
+            "unit": unit,
+            "n_terms": _TTM_CROSSCHECK_TERMS,
             "base": base,
             "base_missing": base is None,
             "threshold": threshold,
@@ -1131,26 +1101,6 @@ def record_ttm_crosscheck(  # noqa: PLR0913 - the filing's identity plus provena
                 run_id,
             )
         )
-        if level == "block":
-            for group, name in _TTM_BASED_METRICS.get(item, ()):
-                if (group, name) in stored:
-                    rows.append(
-                        (
-                            filing_id,
-                            asset_id,
-                            group,
-                            name,
-                            engine_version,
-                            TTM_CROSSCHECK_RULE,
-                            "SOFT",
-                            1,
-                            stored[(group, name)],
-                            json.dumps(evidence, sort_keys=True),
-                            GATE_VERSION,
-                            now,
-                            run_id,
-                        )
-                    )
     before = _count_issues(conn)
     conn.executemany(
         """
