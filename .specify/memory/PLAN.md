@@ -38,6 +38,13 @@ orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, t
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
+**Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
+`T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
+Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
+of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
+fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
+waits for `T-071`.
+
 - **Work item 8's order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit).** `T-077` (prices and Kenneth
   French factors) and `T-070` (the price-based technical score) read no SEC statement data, so they run while the user
   builds the SEC data-treatment checklist. `T-147` (the audit against the checklist) follows, and sorts the defects

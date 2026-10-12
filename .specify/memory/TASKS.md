@@ -29,6 +29,13 @@ consumes; `T-084` waits on data-mining's `urls.db`) are **deferred until after `
 prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement). One task per PR throughout,
 each ending with its status commit after approval.
 
+**Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
+`T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
+Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
+of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
+fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
+waits for `T-071`.
+
 **Superseded by `T-100` (2026-10-05):** `T-079` (the bundled LLM re-run) — `T-100` starts from a fresh
 database and runs the LLM on every filing, so a separate re-run would pay for the same calls twice — and
 `T-075` (the Ring-2 narrative bridge) — a stop-gap for production's old narratives, and production stays
@@ -777,7 +784,7 @@ that constitution AI behavior #10 asks to be approved first.
 
 - [ ] **T-083** *(moved from Work item 9, text unchanged)* Update `api`/`kg_schema` read paths to consume the
       rewritten `v_quant_vs_live`. **Needs T-042.** → `PLAN.md` Work item 9, step 4.
-- [ ] **T-142** PR #112 review follow-ups, each with a regression test (item (d) is documentation):
+- [x] **T-142** — **done 2026-10-12, PR #137** (approved after one review round: the try block now starts right after open_cycle, so an interrupt during the data loads also leaves the run 'failed'; the ranking endpoint skips failed, running and reverted runs). PR #112 review follow-ups, each with a regression test (item (d) is documentation):
       - (a) `cycle/orchestrator.py`: catch `BaseException` and call `conn.rollback()` before writing a
         failed checkpoint or a failed `cycle_run` (today a failure partway through a step saves its
         half-written writes, and a Ctrl-C leaves the run at `running`).
