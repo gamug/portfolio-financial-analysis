@@ -126,7 +126,7 @@ def _run_quality(args: argparse.Namespace) -> int:
     print(f"data-quality gates {quality.GATE_VERSION}")
     for version, report in reports.items():
         print(f"\n{version}: {report.filings} filings gated, {report.inserted} new issue rows")
-        for rule_id in quality.RULE_IDS:
+        for rule_id in quality.ALL_RULE_IDS:
             hit = report.filings_by_rule.get(rule_id, 0)
             hard = report.hard_by_rule.get(rule_id, 0)
             print(f"  {rule_id:<17} {hit:>6} filings  ({hard} HARD)")
