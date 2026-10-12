@@ -1,13 +1,16 @@
 # `api/`
 
-A thin, **read-only** FastAPI surface over this repo's outputs — the `v_*`
-read-contract views in `KG_FINANCIAL_DB` and the point-in-time universe in
-`universe.db`. It exists so `portfolio-reports` / `portfolio-app` (and ad-hoc
-callers) have a stable network boundary instead of opening the SQLite files
-directly.
+A thin FastAPI surface over this repo's outputs — the `v_*` read-contract views
+in `KG_FINANCIAL_DB` and the point-in-time universe in `universe.db` on the read
+side, plus (from Work item 2, `T-011`) the run endpoints that sequence the agent
+CLIs. It exists so `portfolio-reports` / `portfolio-app` (and ad-hoc callers) have
+a stable network boundary instead of opening the SQLite files directly.
 
-The agents stay CLI-driven and own every write. **Nothing in `api/` mutates a
-database** — it only ever opens them `mode=ro`.
+The agents stay CLI-driven and own every write. The read endpoints — and the run
+**status** route — only ever open a database `mode=ro`; a run endpoint starts each
+step as a subprocess, so the API process itself opens no write-capable connection.
+Access control for the run endpoints is deferred (SPEC FR-015): they are for the
+dev container / pilot only.
 
 ```bash
 uv run python -m api                                  # serve on API_HOST:API_PORT (default 0.0.0.0:8010)
@@ -45,13 +48,16 @@ gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
 ```
 src/api/
   app.py            create_app(settings=None) -> FastAPI   (the factory)
-  __main__.py       python -m api  ->  uvicorn.run(create_app, factory=True)
-  config.py         ApiSettings
+  __main__.py       python -m api  ->  uvicorn.run(create_app, factory=True);
+                    python -m api orchestrate --analysis-date D  ->  the CLI wrapper
+  config.py         ApiSettings (db_path / universe_db_path / news_db_path)
   db.py             connect_ro() + rows() helper (missing view -> [])
   dependencies.py   get_settings / get_db / get_universe_db / page_params
   models.py         response models (views passed through verbatim return dicts)
   contract.py       build_contract(): the v_* view contract, built once per process (T-152)
-  routers/          health · runs · universe · scores · portfolio · contract
+  orchestrator.py   the step table, the runner, run-id capture, the CLI wrapper (T-011)
+  routers/          health · runs · universe · scores · portfolio · contract ·
+                    run (the POST run endpoints) · run_status (GET state)
 ```
 
 ## The view contract (`/contract`, T-152)
@@ -139,12 +145,106 @@ import, so `api/contract.py` declares its one table a view reads, `quant_run`;
 - Passing `?kind=LIVE_ONLY` returns only `LIVE_ONLY` rows.
 - `current_only=true` (default) filters `is_current = 1` (`LIVE_ONLY` rows are always `is_current = 1`); passing `false` includes variant books as well.
 
+## Run endpoints (Work item 2, T-011)
+
+The repo's single entry point for orchestrated and remote runs (constitution Tech stack #3, SPEC
+FR-014). Each step is started as the same `python -m <package>` subprocess the CLI uses — not an
+import — so every child keeps its own guards (the clean tree T-114, the price spine T-110, the
+data-quality gate version, the construction/resume checks) and its own write connection. The API
+process opens no write-capable connection: it only reads a step's own run-log row back (`mode=ro`)
+to report its `run_id`.
+
+### `POST /api/v1/run/{pipeline,<step>}`
+
+| Route | Runs | Body fields beyond `analysis_date` |
+|---|---|---|
+| `POST /api/v1/run/pipeline` | the 9 steps in order | `top_n`, `weight_scheme`, `max_name_weight`, `max_sector_weight` |
+| `POST /api/v1/run/pricing-agent` | `pricing_agent run --store-daily --observations` | — |
+| `POST /api/v1/run/fundamental-agent` | `fundamental_agent run` | — |
+| `POST /api/v1/run/entity-resolution` | `entity_resolution build` | — |
+| `POST /api/v1/run/cycle/select` | `cycle select` | `top_n`, `weight_scheme`, `max_name_weight`, `max_sector_weight` |
+| `POST /api/v1/run/cycle/monitor` | `cycle monitor` | — |
+| `POST /api/v1/run/quant/backfill-actions` | `quant backfill-actions` | — |
+| `POST /api/v1/run/quant/build-returns` | `quant build-returns` | — |
+| `POST /api/v1/run/quant/build-risk-model` | `quant build-risk-model` | `top_n`, `max_name_weight`, `max_sector_weight` |
+| `POST /api/v1/run/quant/optimize` | `quant optimize` | `top_n`, `max_name_weight`, `max_sector_weight` |
+| `POST /api/v1/run/quant/evaluate` | `quant evaluate` | — |
+
+- `analysis_date` (`YYYY-MM-DD`) is required on every route. `top_n` is an int ≥ 1; the two caps are
+  in `(0, 1]`; `weight_scheme` is one of cycle's schemes (`score_tilt`, `equal`, `score_proportional`,
+  `inverse_vol`). A setting not given is not passed, so the CLI's own default applies. A value a
+  route does not accept — and any other field (a preference flag, an `--allow-*` override, a `--db` /
+  `--universe-db` / `--news-db`, `universe`, `tickers`) — is `422` (`extra="forbid"`). The preference
+  flags, every `--allow-*` override, `--force`/`--fresh` and `migrate` cannot be built at all: the
+  step table and its argv builder have no slot for them.
+- **The database paths come from the server's settings, never the request** (D7): `KG_FINANCIAL_DB`
+  (`ApiSettings.db_path`), `KG_UNIVERSE_DB` (`universe_db_path`) and `KG_NEWS_DB` (`news_db_path`,
+  resolved exactly as `entity_resolution` does). So the final pilot's 20-ticker sample is run by
+  starting the API with `KG_UNIVERSE_DB` at a 20-ticker `universe.db`; a caller cannot point a run at
+  another database. The same three paths are exported to each child *and* passed as
+  `--db`/`--universe-db`/`--news-db`. No secret is stored in the run state or logged.
+- A route answers **`202`** immediately with
+  `{"handle": "<uuid4>", "status_url": "/api/v1/run/<handle>"}` — the request is never held open; the
+  run continues in a background thread.
+- **One run at a time per process.** A `POST` while a run is active is **`409`** with the active
+  `handle` and its `status_url`.
+- There is **no** route for `migrate`, `cycle backfill`, `cycle undo-run` or `coverage`.
+
+### `GET /api/v1/run/{handle}` — poll
+
+Returns the run state: `handle`, `kind`, `analysis_date`, `settings` (only the values given),
+`status` (`pending` / `running` / `completed` / `failed`), `started_at`/`finished_at`, and `steps[]`
+— each step's `name`, `argv` (without the interpreter path), `status`
+(`pending`/`running`/`completed`/`failed`/`skipped`/`not_run`), timings, `exit_code`, `run_id`,
+`reason` and the last 40 lines of combined output. An unknown handle is **`404`**. It is a read
+router: it starts no run and imports no run router.
+
+### Current limits (until later Work item 2 tasks)
+
+- **In-memory state (until `T-012`).** The run state lives in the API process and is lost on
+  restart; `T-012` records the orchestrator-level provenance in the shared DB and makes this route
+  read it.
+- **First failure stops the run (until `T-013`).** The first step that exits non-zero ends the run;
+  later steps are recorded `not_run`. `T-013` isolates an independent step's failure.
+- **`entity_resolution` skip (D6).** If the resolved news path (`KG_NEWS_DB`, else
+  `entity_resolution`'s default `/workspaces/thesis/data/urls.db`) does not exist, the step is
+  recorded `skipped` with reason `no news source configured (<path> not found)`, is not run, and
+  does not fail the run. The full incremental-run behaviour is `T-017`.
+- **A step that exits 0 but prints no run id** (a changed CLI output format) is recorded with reason
+  `run_id not captured`, so the drift shows up instead of a silent `null`.
+
+### The data-quality gate
+
+`cycle select` refuses a database whose `data_quality_issue` rows exist only under an older gate
+version than the current one (`dq-v3`), so a cycle would read every quarantine and HARD `DQ_*` veto
+as clean. The `quality` backfill is not an orchestrator step, so an orchestrated run against a
+database last gated under `dq-v1`/`dq-v2` stops at `cycle_select`: the step is recorded `failed`
+with the refusal (naming both versions) in its output tail, and the run stops. This is expected; the
+orchestrator never passes `--allow-stale-dq-gate`. Fix a **scratch** database on the CLI —
+`uv run python -m fundamental_agent quality --db <scratch db> --metrics-version <its engine version>`
+— never production (re-gating production is the user's action). A run from an empty database is
+unaffected: `fundamental_agent run` gates inline under `dq-v3`.
+
+### CLI wrapper
+
+`python -m api orchestrate --analysis-date D [--top-n N] [--weight-scheme S] [--max-name-weight F]
+[--max-sector-weight F] [--db PATH] [--universe-db PATH] [--news-db PATH]` runs the same pipeline in
+the foreground over the same code (the same step table and argv builder), printing one line per step
+(name, status, `run_id`, seconds) and, on failure, the failing step's output tail. It exits `0` when
+every step completed or was skipped, `1` otherwise. The paths default to the environment variables
+the packages use (`KG_FINANCIAL_DB` / `KG_UNIVERSE_DB` / `KG_NEWS_DB`, the news path defaulting as
+above). Plain `python -m api` (no arguments) still starts the server.
+
+Access control for the run endpoints is **deferred** (SPEC FR-015, Work item 20): this repo is not a
+production deployment, so they are for the dev container / pilot only and must not be reachable from
+an untrusted network (the API binds `0.0.0.0` by default).
+
 ## Extending it
 
 - **New read**: add a router module under `routers/`, register it in
   `routers/__init__.py:ALL`. Prefer returning the `v_*` view verbatim (a `dict`)
   and adding a concrete model in `models.py` only where the shape is stable.
-- **Triggering agent runs over HTTP** is deliberately *not* here — that is
-  `portfolio-reports`' job. If ever added it must be a separate, explicitly
-  auth-guarded router, and it would shell out to the CLIs / call the pipelines
-  rather than duplicate their logic.
+- **Triggering agent runs**: see [Run endpoints](#run-endpoints-work-item-2-t-011). Add a step by
+  adding a `StepSpec` to `api/orchestrator.py`'s table (and a route for it in `api/routers/run.py`);
+  the builder has no slot for a preference or override flag, by design. Access control (SPEC
+  FR-015) is still owed before any non-dev deployment.

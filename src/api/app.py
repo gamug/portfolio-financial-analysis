@@ -22,7 +22,10 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     app = FastAPI(
         title=settings.title,
         version=__version__,
-        summary="Read-only HTTP surface over the v_* read-contract views and universe.db.",
+        summary=(
+            "Read-only data surface over the v_* read-contract views and universe.db, "
+            "plus the run endpoints that sequence the agent CLIs (T-011)."
+        ),
         root_path=settings.root_path,
     )
     app.state.settings = settings

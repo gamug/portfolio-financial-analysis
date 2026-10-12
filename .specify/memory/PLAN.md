@@ -258,8 +258,12 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    - **Access control is deferred (user, 2026-10-06)**: this is not a production deployment, so the run
      endpoints are for the dev container / pilot until Work item 20 (`SPEC.md` FR-015) adds it.
      **`T-100` is invoked through the orchestrator's CLI wrapper** (same code as the HTTP endpoints), run from the dev container or the local host that holds the production `KG_FINANCIAL_DB`; this repo has no production *deployment* yet, so FR-015's "dev / pilot only" limits where the HTTP run endpoints may be reachable, not whether the full-universe *data* run may happen. If it is driven over HTTP instead, `:8010` must not be exposed beyond that host.
-   - Where the orchestration code lives (a new top-level package vs. inside `api/`) is decided in `T-011`; a new
-     package still has to meet Project structure #1's bar.
+   - **Where the orchestration code lives** (decided in `T-011`, 2026-10-12): **inside `api/`** — `src/api/orchestrator.py`
+     (the step table, the runner and the CLI wrapper) and `src/api/routers/run.py` + `src/api/routers/run_status.py`
+     (the run and status endpoints). Reason: Project structure #1's bar for a new top-level package is a genuinely
+     independent subsystem with its own numeric or service dependencies; the orchestrator has no dependencies of its
+     own — it only sequences the existing packages as subprocesses — so a new package would add a placement with no
+     dependency justification.
 2. Reuse each package's own idempotency (FR-004/FR-001/FR-006/FR-013) rather
    than re-implementing skip logic — the orchestrator's job is sequencing
    and failure surfacing, not duplicating each package's resume state.
