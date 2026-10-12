@@ -893,7 +893,12 @@ that constitution AI behavior #10 asks to be approved first.
         (`T-083`, `T-142`, `T-145`), so nothing moves to `CHANGELOG.md`.
       **Acceptance:** the tests above; a `GET /api/v1/contract` against a running instance returns every view with
       its columns in order and `contract_version` (10 once `T-144`'s marker migration has landed).
-- [ ] **T-145** Non-reusable ids. → `PLAN.md` Work item 19, step 4.
+- [x] **T-145** — **done 2026-10-12, PR #139** (approved after two review rounds: the check also verifies
+    the run type, so production's 14,172 shared_executive_edge rows on run 1, a SELECTION run, FAIL and are
+    reported, not repaired; m014 is one transaction checked against the foreign-key state before it, and
+    keeps every trigger, index and view; accession numbers are unique per asset, since production's 30 shared
+    ones are dual-class pairs GOOG/GOOGL, FOX/FOXA, NWS/NWSA; scripts/verify_pilot.py is now tracked).
+    Non-reusable ids. → `PLAN.md` Work item 19, step 4.
       - `AUTOINCREMENT` on `cycle_run`, `analysis_run`, `pricing_run`, `quant_run` and `sec_filings`: in the
         DDL, plus a migration for existing databases (`migrate`, FR-011), tested on a copy — foreign keys,
         `T-107` triggers and views intact. The rebuild seeds `sqlite_sequence` with the highest id referenced
