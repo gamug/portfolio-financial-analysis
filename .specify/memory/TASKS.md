@@ -482,23 +482,6 @@ the final pilot, `T-143`.
       n1,periods,extra`) shows 0 amendments stored, 0 originals lost to an amendment, the N2 effect separately; regression
       tests for (a), (c), (d), (e), (f), (g); the replaced test named above; database invariant enforced on writes; co-registrant
       utility test passes.
-- [ ] **T-150** Accounting identities with DQ-01 and L-10 (`fundamental_agent/quality.py`; gate version bump). New from `T-147`;
-      runs after `T-148`, whose equity and net-income choices CON-04 and CON-19 verify, so the identities are measured once.
-      → `PLAN.md` Work item 8, step 13. Rules CON-01 to CON-04, CON-06, CON-07, CON-19, CON-08 (as a check on `T-148`'s
-      choice) and DQ-01 (**threshold = max(rounding, 0.5% × |base|)**: within rounding passes, above rounding and below
-      the threshold WARNs, above it is material and the inputs are blocked). **L-10 / DQ-01 rounding term:** `0.5 × unit × terms`,
-      where the unit is inferred when `decimals` is not captured (L-10). The identities read the stored facts of one
-      filing and period (no dimensions), not the metrics, so they are a new gate beside `DQ_*`.
-      Measured (DQ-01 BLOCK, own period): CON-19 44 filings of 2,045 at the source (8 companies) and
-      36 on the stored rows; CON-02 24 of 237 (3 companies: AEP, JKHY, PPL); CON-01 0 at the source,
-      3 stored (KKR); CON-03 and CON-07 nothing at the source; CON-04 4 stored, none at the source (the equity row the
-      resolver chose). CON-06 (the TTM cross-check, 1% relative, SOFT today) aligns to DQ-01. **Acceptance:** the gates
-      reproduce these counts on the same data before `T-148` and show the change after it; hermetic tests on fixtures of
-      a failing and a passing identity per rule, and on the tolerance boundary.
-      **Status (2026-10-12): PR #141, box open until merge.** Delivered on `feat/t150-accounting-identities`:
-      the `CON_*` gate in `quality.py` (`dq-v3`), `scripts/verify_t150.py` (`reproduce` reproduces T-147's
-      filing sets exactly; `measure` reports the before/after counts), hermetic tests, and the
-      `docs/model_fixes.md` / `SPEC.md` (1.9.1) entries.
 - [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
       **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
       investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
