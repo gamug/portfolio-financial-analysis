@@ -261,6 +261,9 @@ _UNFILTERED_OK = {
         "v_fundamental_metric (T-144) lists every version with an is_current flag; "
         "tests/test_kg_view_contract.py pins that flag to resolve_metric_versions"
     ),
+    "kg_schema/ddl.py": (
+        "static SQL queries for id referencing and m014 autoincrement sequence seeding"
+    ),
 }
 _READ = re.compile(r"\b(?:FROM|JOIN)\s+fundamental_metrics\b", re.IGNORECASE)
 

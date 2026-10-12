@@ -224,6 +224,7 @@ are present / it hasn't already run).
 | m011 | the temporal price vetoes' columns (`T-070`, contract 11), additive: `price_observation.sma_200` / `ret_5d` / `vol_5d` / `mu_60d_base` / `vol_60d_base` (the `priceobs-v2` fields) and `veto.expires_on` / `expiry_history_json`, added with `Database.ensure_columns` from `REQUIRED_COLUMNS` (m009 rebuilds `veto` without them, so this migration puts them back; a fresh database has them from the DDL). Every existing row keeps NULL. `v_price_observation` and `v_veto` gain their appended columns from `views.py` on every `ensure` |
 | m012 | the filing-identity invariant (`T-149`, contract 12): changes no table. Drops and re-creates `ddl.IDENTITY_TRIGGERS` and **refuses (rolls back) a database whose stored rows already break them** — `kg_schema.identity.violations`: an asset with filings and no CIK, an accession on assets of different CIKs, or a filing whose `cik` is outside its asset's chain (a trigger never checks the rows already there) — so a database at contract 12 holds the invariant for every row. `apply_migrations` drops the guards while migrations run and restores them, like the T-107 ones |
 | m013 | `financial_facts.preferred_sign REAL` (`T-148`, contract 13): edgartools' +1/−1 hint, the displayed `value` times it being the value in the filed sign (ID-11/ID-12). Additive, `NULL` on every existing row -- **no backfill**: `financial_facts` is append-only on `(filing_id, statement, concept, period_key, filing_version)`, so a same-accession re-run cannot add it, and a `NULL` reads as the displayed sign, flagged. The fix takes effect on a database rebuilt with the engine that writes it. No view changes |
+| m014 | non-reusable IDs with AUTOINCREMENT (`T-145`, contract 14): rebuilds `cycle_run`, `analysis_run`, `pricing_run`, `quant_run`, and `sec_filings` with AUTOINCREMENT so deleted IDs are never reused; seeds `sqlite_sequence` from the maximum of each table's own ID and all referencing columns; adds read-only check functions `unresolved_run_references` and `invalid_sec_filings_accessions`. |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -311,7 +312,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 
 ### Versions and deployment
 
-- `schema_version` **13** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes; `m013` adds `financial_facts.preferred_sign`, `T-148`). The views themselves are rebuilt
+- `schema_version` **14** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes; `m013` adds `financial_facts.preferred_sign`, `T-148`; `m014` adds AUTOINCREMENT on run tables and `sec_filings`, `T-145`). The views themselves are rebuilt
   by every `ensure`, so a database gets them as soon as any process on the new code opens it,
   whether or not it has been migrated; `migrate` is what raises the floor.
 - **Every process that opens the database is upgraded (or stopped) before `migrate` runs.**

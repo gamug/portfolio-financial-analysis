@@ -27,7 +27,7 @@ from pricing_agent import db as pricing_db
 
 QUANT_RUN_DDL = """
 CREATE TABLE IF NOT EXISTS quant_run (
-    id             INTEGER PRIMARY KEY,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     command        TEXT NOT NULL,
     as_of          TEXT,
     started_at     TEXT NOT NULL,

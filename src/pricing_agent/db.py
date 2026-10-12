@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS price_daily (
 );
 
 CREATE TABLE IF NOT EXISTS pricing_run (
-    id              INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at      TEXT NOT NULL,
     finished_at     TEXT,
     universe_size   INTEGER,

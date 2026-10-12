@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS assets (
 );
 
 CREATE TABLE IF NOT EXISTS sec_filings (
-    id               INTEGER PRIMARY KEY,
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
     asset_id         INTEGER NOT NULL REFERENCES assets(id),
     form             TEXT NOT NULL,
     fiscal_year      INTEGER NOT NULL,
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS fundamental_snapshot (
 );
 
 CREATE TABLE IF NOT EXISTS analysis_run (
-    id              INTEGER PRIMARY KEY,
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at      TEXT NOT NULL,
     finished_at     TEXT,
     universe_size   INTEGER,

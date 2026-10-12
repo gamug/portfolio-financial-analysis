@@ -37,7 +37,7 @@ _WEIGHT_CHANGE = 1e-12  # a weight delta smaller than this is a no-op
 # creates them before it (re)builds the views.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS quant_run (
-    id             INTEGER PRIMARY KEY,
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
     command        TEXT NOT NULL,
     as_of          TEXT,
     started_at     TEXT NOT NULL,
