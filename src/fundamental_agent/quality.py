@@ -702,19 +702,21 @@ def evaluate_identities(  # noqa: PLR0913 - the filing's balance/flow/ytd column
     flow_column: str | None = None,
     ytd: Mapping[str, float | None] | None = None,
     ytd_column: str | None = None,
+    skip_con19: bool = False,
 ) -> list[IdentityResult]:
     """Every CON identity over the filing's balance (instant) and flow columns. CON-07/CON-08 on
     a 10-Q are retried on the year-to-date column (C7) when the filing's own quarter column does
-    not hold their operands."""
+    not hold their operands. *skip_con19* drops CON-19 (F2: its NCI operand has no filed sign)."""
     out: list[IdentityResult] = []
     for rule, lhs, rhs, base, warn in _BALANCE_IDENTITIES:
         result = identity_result(rule, lhs, rhs, base, balance, instant_column, warn_only=warn)
         if result is not None:
             out.append(result)
-    for rule, lhs, rhs, base, warn in _INCOME_IDENTITIES:
-        result = identity_result(rule, lhs, rhs, base, flow, flow_column, warn_only=warn)
-        if result is not None:
-            out.append(result)
+    if not skip_con19:
+        for rule, lhs, rhs, base, warn in _INCOME_IDENTITIES:
+            result = identity_result(rule, lhs, rhs, base, flow, flow_column, warn_only=warn)
+            if result is not None:
+                out.append(result)
     for spec in (con07_result, con08_result):
         result = spec(flow, flow_column)
         if result is None and ytd_column is not None and ytd:
@@ -739,6 +741,10 @@ class FilingFacts:
     instant_column: str | None
     flow_column: str | None
     ytd_column: str | None
+    # (statement, concept, column) rows whose value carried a ``preferred_sign`` (T-148/m013). A
+    # row stored without one (a database that predates m013, or a gateway row with no hint) has no
+    # filed sign -- F2 treats that as missing data, not a value.
+    signed: frozenset[tuple[str, str, str]] = frozenset()
 
     def value(
         self, concept: str, column: str | None, *, any_statement: bool = False
@@ -754,6 +760,12 @@ class FilingFacts:
                     return value
             return None
         return self.by_key.get((_CONCEPT_STATEMENT[concept], concept), {}).get(column)
+
+    def has_sign(self, concept: str, column: str | None) -> bool:
+        """Whether the concept's own-statement row in *column* carried a ``preferred_sign``."""
+        if column is None:
+            return False
+        return (_CONCEPT_STATEMENT[concept], concept, column) in self.signed
 
 
 _COLUMN_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\s*\(([A-Za-z0-9]+)\))?$")
@@ -850,16 +862,23 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
         )
     }
     by_filing: dict[int, dict[tuple[str, str], dict[str, float]]] = {}
+    signed_filing: dict[int, set[tuple[str, str, str]]] = {}
     for row in conn.execute(_FACTS_SQL[_has_preferred_sign(conn)], (ids_json, concepts_json)):
         displayed = row["value"]
         if displayed is None:
             continue
         sign = row["preferred_sign"]
         value = float(displayed) * float(sign) if sign in (1, -1) else float(displayed)
-        columns = by_filing.setdefault(int(row["filing_id"]), {}).setdefault(
-            (str(row["statement"]), str(row["concept"])), {}
+        fid = int(row["filing_id"])
+        statement, concept, column = (
+            str(row["statement"]),
+            str(row["concept"]),
+            str(row["period_key"]),
         )
-        columns.setdefault(str(row["period_key"]), value)
+        columns = by_filing.setdefault(fid, {}).setdefault((statement, concept), {})
+        columns.setdefault(column, value)
+        if sign in (1, -1):
+            signed_filing.setdefault(fid, set()).add((statement, concept, column))
     out: dict[int, FilingFacts] = {}
     for fid, by_key in by_filing.items():
         form, period_end = meta.get(fid, ("", ""))
@@ -871,8 +890,19 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
             instant_column=_instant_column(keys, period_end),
             flow_column=_flow_column(keys, form, period_end),
             ytd_column=_ytd_column(keys, period_end),
+            signed=frozenset(signed_filing.get(fid, ())),
         )
     return out
+
+
+def con19_sign_missing(facts: FilingFacts) -> bool:
+    """F2: whether CON-19's NCI operand is filed but carries **no filed sign** (a database without
+    the ``preferred_sign`` column, or that row's ``preferred_sign`` is NULL). CON-19 is then not
+    tested -- missing data, not a value -- and counted under its own label."""
+    column = facts.flow_column
+    if column is None or facts.value(_NCI_INCOME, column) is None:
+        return False
+    return not facts.has_sign(_NCI_INCOME, column)
 
 
 def identity_issues(
@@ -896,6 +926,7 @@ def identity_issues(
             flow_column=facts.flow_column,
             ytd=ytd,
             ytd_column=facts.ytd_column,
+            skip_con19=con19_sign_missing(facts),
         ),
         metrics,
     )

@@ -427,6 +427,52 @@ def test_con06_block_quarantines_the_ttm_metrics(memory_db: Database) -> None:
     assert ("CON_06", "profitability", "return_on_assets", 1) in rows
 
 
+def test_con19_is_not_tested_when_the_filed_sign_is_not_stored(
+    memory_db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2: a database without the ``preferred_sign`` column still tests CON-01; CON-19 is not
+    tested (its NCI operand has no filed sign)."""
+    _asset(memory_db)
+    fid = seed_filing(memory_db, 1, period_end="2024-12-31", filing_date="2025-02-01")
+    _fact(memory_db, fid, "balance_sheet", _ASSETS, "2024-12-31", 10 * BILLION)
+    _fact(memory_db, fid, "balance_sheet", _LIAB_EQ, "2024-12-31", 10 * BILLION)
+    _fact(memory_db, fid, "income_statement", _PROFIT_LOSS, "2024-12-31 (FY)", 1_000 * MILLION)
+    _fact(memory_db, fid, "income_statement", _NET_INCOME, "2024-12-31 (FY)", 800 * MILLION)
+    _fact(
+        memory_db,
+        fid,
+        "income_statement",
+        _NCI_INCOME,
+        "2024-12-31 (FY)",
+        -200 * MILLION,
+        sign=-1.0,
+    )
+
+    def _results(facts: quality.FilingFacts) -> set[str]:
+        balance = {c: facts.value(c, facts.instant_column) for c in quality._BALANCE_CONCEPTS}
+        flow = {c: facts.value(c, facts.flow_column) for c in quality._FLOW_CONCEPTS}
+        return {
+            r.rule_id
+            for r in quality.evaluate_identities(
+                balance,
+                flow,
+                instant_column=facts.instant_column,
+                flow_column=facts.flow_column,
+                skip_con19=quality.con19_sign_missing(facts),
+            )
+        }
+
+    with_sign = quality.load_facts(memory_db, [fid])[fid]
+    assert quality.con19_sign_missing(with_sign) is False
+    assert _results(with_sign) >= {"CON_01", "CON_19"}
+
+    monkeypatch.setattr(quality, "_has_preferred_sign", lambda conn: False)
+    no_sign = quality.load_facts(memory_db, [fid])[fid]
+    assert quality.con19_sign_missing(no_sign) is True
+    assert "CON_01" in _results(no_sign)
+    assert "CON_19" not in _results(no_sign)
+
+
 def test_a_warn_rule_at_the_material_level_quarantines_nothing(memory_db: Database) -> None:
     _asset(memory_db)
     fid = seed_filing(memory_db, 1, period_end="2024-12-31", filing_date="2025-02-01")

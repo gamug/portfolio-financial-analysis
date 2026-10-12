@@ -203,6 +203,7 @@ def _evaluate(conn: Any, filing_ids: set[int]) -> dict[int, list[Any]]:
                 flow_column=ff.flow_column,
                 ytd=ytd,
                 ytd_column=ff.ytd_column,
+                skip_con19=quality.con19_sign_missing(ff),
             )
         )
         sp = subperiods.get(fid)
@@ -625,6 +626,65 @@ def cmd_con06(args: argparse.Namespace) -> int:
     return 1 if block_share > _BLOCK_STOP else 0
 
 
+def _con19_counts(conn: Any) -> dict[str, int]:
+    """CON-19 on one database: tested (pass/warn/block), operand not filed, and "filed sign not
+    stored" (F2) -- the last two are not tested."""
+    ids = {int(r[0]) for r in conn.execute("SELECT id FROM sec_filings")}
+    facts = quality.load_facts(conn, ids)
+    out = {
+        "filings": len(ids),
+        "with_identity_facts": len(facts),
+        "tested": 0,
+        "pass": 0,
+        "warn": 0,
+        "block": 0,
+        "not_tested_operand_not_filed": 0,
+        "not_tested_sign_not_stored": 0,
+    }
+    for ff in facts.values():
+        flow = {c: ff.value(c, ff.flow_column) for c in quality._FLOW_CONCEPTS}
+        if quality.con19_sign_missing(ff):
+            out["not_tested_sign_not_stored"] += 1
+            continue
+        result = quality.identity_result(
+            "CON_19",
+            (quality._PROFIT_LOSS,),
+            (quality._NET_INCOME, quality._NCI_INCOME),
+            quality._NET_INCOME,
+            flow,
+            ff.flow_column,
+        )
+        if result is None:
+            out["not_tested_operand_not_filed"] += 1
+        else:
+            out["tested"] += 1
+            out[result.level] += 1
+    return out
+
+
+def cmd_con19(args: argparse.Namespace) -> int:
+    conn = open_ro(args.db)
+    counts = _con19_counts(conn)
+    lines = [f"T-150 F2 CON-19 filed-sign, db={args.db}", "", _con19_line(counts)]
+    if args.other:
+        other = _con19_counts(open_ro(args.other))
+        lines += ["", f"db={args.other}", _con19_line(other)]
+    text = "\n".join(lines)
+    Path(args.out_txt).write_text(text + "\n", encoding="utf-8")
+    print(text)
+    return 0
+
+
+def _con19_line(counts: dict[str, int]) -> str:
+    return (
+        f"  filings {counts['filings']}, with identity facts {counts['with_identity_facts']}; "
+        f"tested {counts['tested']} (pass {counts['pass']}, warn {counts['warn']}, "
+        f"block {counts['block']}); not tested: operand not filed "
+        f"{counts['not_tested_operand_not_filed']}, filed sign not stored "
+        f"{counts['not_tested_sign_not_stored']}"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -649,6 +709,11 @@ def main(argv: list[str] | None = None) -> int:
         "--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con06_proper.txt"
     )
     con06.set_defaults(func=cmd_con06)
+    con19 = sub.add_parser("con19", help="CON-19's filed-sign measure (F2)")
+    con19.add_argument("--db", required=True)
+    con19.add_argument("--other", help="a second database to report beside --db")
+    con19.add_argument("--out-txt", default="/workspaces/thesis/scratch/t150/out/r1_con19_sign.txt")
+    con19.set_defaults(func=cmd_con19)
     args = parser.parse_args(argv)
     return int(args.func(args))
 
