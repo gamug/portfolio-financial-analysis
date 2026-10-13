@@ -133,8 +133,17 @@ def _m006_at_target_shape(db: Database) -> bool:
 
 
 def _m007_at_target_shape(db: Database) -> bool:
-    """m007's target: the NULL-safe unique book key is enforced."""
-    return not _table_exists(db, "quant_portfolio") or db.relation_exists("ux_quant_portfolio_book")
+    """m007's target: the NULL-safe unique book key is enforced.
+
+    ``relation_exists`` cannot answer this -- an index is neither a table nor a view -- so the
+    index list is read through ``pragma_index_list`` (a literal, with the name bound)."""
+    if not _table_exists(db, "quant_portfolio"):
+        return True
+    row = db.execute(
+        "SELECT 1 FROM pragma_index_list('quant_portfolio') WHERE name = ?",
+        ("ux_quant_portfolio_book",),
+    ).fetchone()
+    return row is not None
 
 
 def _m009_at_target_shape(db: Database) -> bool:
@@ -171,6 +180,31 @@ def at_current_shape(db: Database) -> bool:
     Read-only. A database that answers True has nothing a migration would change, so ``ensure`` may
     record it as born at the current shape (D2) instead of letting ``migrate`` replay the rebuilds."""
     return all(check(db) for check in REBUILD_GUARDS.values())
+
+
+#: The description ``ensure`` records on every version of a database that is already at the current
+#: shape (D2) -- distinct from the migrations' own descriptions, so the stamping is visible.
+STAMPED_DESCRIPTION = "stamped: created at the current shape"
+
+
+def stamp_current_shape(db: Database) -> int:
+    """Record every migration as applied on a database that is already at the current shape.
+
+    A database created by ``kg_schema.ensure`` alone (no ``run_migrations``) -- the path both agents'
+    ``ensure_schema`` take -- has no ``schema_version`` rows, so ``python -m <agent> migrate`` would
+    replay m001..m014 on it. When the floor is empty **and** every table a migration would rebuild is
+    already at that migration's target shape (:func:`at_current_shape`), every version is recorded here
+    and nothing is replayed. A database with an empty floor but an older shape is left alone: ``migrate``
+    then runs the real rebuilds, which no longer drop a column the current code adds.
+
+    Returns the number of versions recorded (0 when the floor is already set, or the shape is older)."""
+    if _queries.current_version(db) != 0:
+        return 0
+    if not at_current_shape(db):
+        return 0
+    for version, _description, _fn in MIGRATIONS:
+        _queries.record(db, version, STAMPED_DESCRIPTION)
+    return len(MIGRATIONS)
 
 
 # -- m001 --------------------------------------------------------------------
