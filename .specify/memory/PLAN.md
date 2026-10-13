@@ -278,7 +278,11 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    should hard-block on their real upstream dependencies. The full edge set: `cycle` ← `pricing_agent` +
    `fundamental_agent`; `quant` ← `pricing_agent` **+ `fundamental_agent`** (its market cap reads the cover-page
    share count that `fundamental_agent` writes to `filing_cover_shares`, via `kg_schema.market_cap`; staleness
-   is bounded by `market_cap_max_share_age_days`); `entity_resolution` ← nothing in this repo.
+   is bounded by `market_cap_max_share_age_days`); `entity_resolution` ← nothing in this repo; `quant evaluate`
+   ← `cycle select` (T-013, 2026-10-13) — quant evaluate snapshots the live portfolio_position book at `--from`
+   (`quant/evaluate.py:163`), which defaults to the earliest book's as-of -- D itself on a fresh database -- so it
+   runs only after cycle select completed; this is a run-order edge only: quant still imports no other package and
+   its optimizer stays blind to `score_snapshot`/`cycle_ranking`.
 5. **Incremental detection (`T-017`) composes with steps 2 and 4.** Each step has a pending signal ("is there
    upstream data for `--analysis-date` that this step has not processed?"). A run executes the steps that are
    pending **plus their downstream dependents** (step 4's graph), and skips the rest; step 2's idempotency still

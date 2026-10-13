@@ -95,12 +95,15 @@ class RunContext:
 class StepSpec:
     """One subprocess step. ``command``/``flags``/``settings`` are the only pieces; there
     is deliberately no field for a preference or override flag (D2). ``run_kind`` is the
-    run-log table this step's own id belongs to (T-012), a literal per step."""
+    run-log table this step's own id belongs to (T-012), a literal per step. ``depends_on``
+    names the upstream steps whose failure or blockage blocks this one (T-013): direct edges
+    only -- blocking is transitive through them."""
 
     name: str
     package: str
     command: tuple[str, ...]
     run_kind: str
+    depends_on: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
     settings: tuple[str, ...] = ()
     with_news_db: bool = False
@@ -108,12 +111,22 @@ class StepSpec:
     quant_command: str | None = None
 
 
+# T-013 dependency edges (direct only; blocking is transitive through them). Reasons: cycle
+# reads pricing's and fundamental's tables; quant reads prices and the cover-page share count
+# fundamental writes (kg_schema.market_cap, PLAN step 4), and ``backfill-actions`` reads its
+# asset list from ``assets``, so the quant chain starts after both; each quant command needs
+# the previous one's output; ``quant evaluate`` snapshots the live ``portfolio_position`` book
+# at ``--from`` (quant/evaluate.py:163, quant/db.py:631), which defaults to the earliest book's
+# as-of -- D itself on a fresh database -- so it must not run after a failed select. Nothing
+# reads entity_resolution's output (``shared_executive_edge``) in cycle or quant, so nothing
+# depends on it.
 _PIPELINE: tuple[StepSpec, ...] = (
     StepSpec(
         "pricing",
         "pricing_agent",
         ("run",),
         run_kind="pricing",
+        depends_on=(),
         flags=("--store-daily", "--observations"),
         run_id_regex=r"^run (\d+):",
     ),
@@ -122,6 +135,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "fundamental_agent",
         ("run",),
         run_kind="analysis",
+        depends_on=(),
         run_id_regex=r"^run (\d+):",
     ),
     StepSpec(
@@ -129,6 +143,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "entity_resolution",
         ("build",),
         run_kind="cycle",
+        depends_on=(),
         with_news_db=True,
         run_id_regex=r"^cycle (\d+):",
     ),
@@ -137,6 +152,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "cycle",
         ("select",),
         run_kind="cycle",
+        depends_on=("pricing", "fundamental"),
         settings=("top_n", "weight_scheme", "max_name_weight", "max_sector_weight"),
         run_id_regex=r"^select (\d+)\s",
     ),
@@ -145,6 +161,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant",
         ("backfill-actions",),
         run_kind="quant",
+        depends_on=("pricing", "fundamental"),
         quant_command="backfill-actions",
     ),
     StepSpec(
@@ -152,6 +169,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant",
         ("build-returns",),
         run_kind="quant",
+        depends_on=("quant_actions",),
         quant_command="build-returns",
     ),
     StepSpec(
@@ -159,6 +177,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant",
         ("build-risk-model",),
         run_kind="quant",
+        depends_on=("quant_returns",),
         settings=("top_n", "max_name_weight", "max_sector_weight"),
         quant_command="build-risk-model",
     ),
@@ -167,6 +186,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant",
         ("optimize",),
         run_kind="quant",
+        depends_on=("quant_risk_model",),
         settings=("top_n", "max_name_weight", "max_sector_weight"),
         quant_command="optimize",
     ),
@@ -175,6 +195,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant",
         ("evaluate",),
         run_kind="quant",
+        depends_on=("quant_optimize", "cycle_select"),
         quant_command="evaluate",
     ),
 )
@@ -274,7 +295,7 @@ def run_command(argv: list[str], env: dict[str, str]) -> CommandResult:
 class StepState:
     name: str
     argv: list[str]
-    status: str = "pending"  # pending|running|completed|failed|skipped|not_run
+    status: str = "pending"  # pending|running|completed|failed|skipped|blocked|not_run
     started_at: str | None = None
     finished_at: str | None = None
     exit_code: int | None = None
@@ -637,42 +658,86 @@ def _notify(on_step_change: StepCallback | None, state: StepState) -> None:
         on_step_change(state)
 
 
+# A step whose direct upstream ended in one of these is blocked, not run (T-013).
+_BLOCKING = ("failed", "blocked")
+# Step name -> its position in _PIPELINE, so a blocked reason lists upstreams in step order.
+_PIPELINE_ORDER: dict[str, int] = {s.name: i for i, s in enumerate(_PIPELINE)}
+
+
+def _is_blocked(spec: StepSpec, status_of: dict[str, str]) -> bool:
+    """True when any direct upstream of *spec* ended ``failed`` or ``blocked``."""
+    return any(status_of.get(name) in _BLOCKING for name in spec.depends_on)
+
+
+def _blocked_reason(spec: StepSpec, status_of: dict[str, str]) -> str:
+    """``blocked by <name> (<status>)[, ...]``: the blocking direct upstreams, in step order."""
+    blocking = sorted(
+        (name for name in spec.depends_on if status_of.get(name) in _BLOCKING),
+        key=_PIPELINE_ORDER.__getitem__,
+    )
+    return "blocked by " + ", ".join(f"{name} ({status_of[name]})" for name in blocking)
+
+
+def _execute_step(
+    spec: StepSpec,
+    state: StepState,
+    ctx: RunContext,
+    status_of: dict[str, str],
+    on_step_change: StepCallback | None,
+) -> None:
+    """Decide and run one step: ``blocked``, ``skipped`` or run. Records ``state.status`` and
+    ``status_of``; a failed provenance write or a ``KeyboardInterrupt``/``SystemExit``
+    propagates to :func:`execute_run` (the run stops there)."""
+    if _is_blocked(spec, status_of):
+        _set(state, status="blocked", reason=_blocked_reason(spec, status_of))
+        _notify(on_step_change, state)
+        status_of[spec.name] = "blocked"
+        return
+    if spec.name == "entity_resolution" and not _news_available(ctx.paths.news_db_path):
+        _set(
+            state,
+            status="skipped",
+            reason=(f"no news source configured ({ctx.paths.news_db_path} not found)"),
+        )
+        _notify(on_step_change, state)
+        status_of[spec.name] = "skipped"
+        return
+    _set(state, status="running", started_at=_now())
+    _notify(on_step_change, state)
+    try:
+        _run_one(spec, state, ctx)
+    except _ProvenanceWriteFailed:
+        raise  # a failed write stops the run, never an isolated step failure
+    except (KeyboardInterrupt, SystemExit):
+        raise  # the run stops; recorded by the caller
+    except Exception as exc:  # a step that raises must never look completed
+        _set(state, status="failed", finished_at=_now(), reason=f"{type(exc).__name__}: {exc}")
+    _notify(on_step_change, state)
+    status_of[spec.name] = state.status
+
+
 def execute_run(
     run: RunState, ctx: RunContext, *, on_step_change: StepCallback | None = None
 ) -> None:
-    """Run *run*'s steps in order, mutating its state. The first step that fails -- a
-    non-zero exit (D5), an exception, or a provenance write that fails (T-012) -- ends the
-    run; later steps are ``not_run``. A
-    missing news source skips only ``entity_resolution`` (D6).
+    """Run *run*'s steps in order, mutating its state.
 
-    *on_step_change* is called on every status transition (a step starts, then ends), so
-    the CLI wrapper can print a line per step live; the HTTP path passes none. A
-    ``KeyboardInterrupt``/``SystemExit`` records the state first, then propagates, so the
-    process still exits non-zero and the caller can still print the run's state. A provenance
-    write that fails after the run started stops the run (no further child starts), records
-    the in-memory state as failed and clears the active handle."""
+    A step is ``blocked`` (no child starts) when a direct upstream ended ``failed`` or
+    ``blocked``; a missing news source skips only ``entity_resolution`` (D6). A step that
+    exits non-zero, or whose run raises an ``Exception``, is ``failed`` and the run continues
+    with the next step (T-013). A ``_ProvenanceWriteFailed``, or any ``BaseException`` that is
+    not an ``Exception`` (``KeyboardInterrupt``/``SystemExit``/``GeneratorExit``/...), stops
+    the run: the current step is ``failed``, every later step ``not_run``, the run ``failed``,
+    and the exception is re-raised when it is not an ``Exception`` -- so the process still
+    exits non-zero and the caller can print the run's state. *on_step_change* is called on
+    every status transition."""
     specs = steps_for(run.kind)
+    status_of: dict[str, str] = {}
     failed = False
     try:
         for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
             try:
-                if failed:
-                    _set(state, status="not_run")
-                    _notify(on_step_change, state)
-                    continue
-                if spec.name == "entity_resolution" and not _news_available(ctx.paths.news_db_path):
-                    _set(
-                        state,
-                        status="skipped",
-                        reason=(f"no news source configured ({ctx.paths.news_db_path} not found)"),
-                    )
-                    _notify(on_step_change, state)
-                    continue
-                _set(state, status="running", started_at=_now())
-                _notify(on_step_change, state)
-                _run_one(spec, state, ctx)
-                _notify(on_step_change, state)
-                if state.status == "failed":
+                _execute_step(spec, state, ctx, status_of, on_step_change)
+                if status_of[spec.name] == "failed":
                     failed = True
             except _ProvenanceWriteFailed as exc:
                 # A write failed after the run started: stop, no further child runs.
@@ -680,11 +745,14 @@ def execute_run(
                 log.exception("orchestrator run %s failed", run.handle)
                 _fail_run(run, state, str(exc), index, on_step_change)
                 break
-            except BaseException as exc:  # a step that raises must never look completed
+            except BaseException as exc:
+                # Any other BaseException (KeyboardInterrupt, SystemExit, GeneratorExit, ...)
+                # must not leave the run "completed" with a step still "running": stop it.
                 failed = True
                 _fail_run(run, state, f"{type(exc).__name__}: {exc}", index, on_step_change)
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                if not isinstance(exc, Exception):
                     raise
+                break
     finally:
         _finish_run(run, failed)
 
@@ -783,17 +851,22 @@ def print_step_change(state: StepState) -> None:
 
 
 def print_run(run: RunState) -> None:
-    """The final summary, and on failure the failing step's output tail."""
-    completed = sum(1 for s in run.steps if s.status == "completed")
-    skipped = sum(1 for s in run.steps if s.status == "skipped")
+    """The final summary, then every failed step's output tail (T-013: more than one)."""
+    counts = {
+        status: sum(1 for s in run.steps if s.status == status)
+        for status in ("completed", "skipped", "failed", "blocked", "not_run")
+    }
     print(
         f"\n{run.kind}: {run.status} "
-        f"({completed} completed, {skipped} skipped, {len(run.steps)} steps)"
+        f"({counts['completed']} completed, {counts['skipped']} skipped, "
+        f"{counts['failed']} failed, {counts['blocked']} blocked, "
+        f"{counts['not_run']} not_run, {len(run.steps)} steps)"
     )
-    failed = next((s for s in run.steps if s.status == "failed"), None)
-    if failed is not None:
-        print(f"{failed.name} failed (exit {failed.exit_code}); last output lines:")
-        for line in failed.output_tail:
+    for step in run.steps:
+        if step.status != "failed":
+            continue
+        print(f"{step.name} failed (exit {step.exit_code}); last output lines:")
+        for line in step.output_tail:
             print(f"  {line}")
 
 

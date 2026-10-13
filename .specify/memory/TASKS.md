@@ -81,7 +81,12 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
   provenance (step, run_id, start/end, status) reusing the existing
       run-log `v_*` pattern; every run endpoint, single-step included, writes a row; the status endpoint reads
       it. → step 3.
-- [ ] **T-013** Per-step failure isolation: an independent step's failure (e.g. `entity_resolution`) does not
+- [x] **T-013** — **done 2026-10-13, PR #149** (approved with no review round: StepSpec.depends_on with the
+  PLAN step 4 graph plus quant_evaluate <- cycle_select; a failed or raising step is `failed` and the run
+  continues, a step with a failed/blocked direct upstream is `blocked`, `not_run` only when the run itself
+  stops; real-data runs on a 5-ticker scratch database through the CLI and HTTP; verify_pilot's T-013 check,
+  T-012's failed-run rule relaxed; SPEC 1.12.0). Per-step failure isolation: an independent step's failure
+  (e.g. `entity_resolution`) does not
       block steps with no real dependency on it; a dependent step (`cycle` on
       `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent` and `fundamental_agent`, the latter for
       the cover-page share count behind market cap) does hard-block. → step 4.
