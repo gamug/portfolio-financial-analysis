@@ -616,9 +616,10 @@ def test_j1_a_roic_with_a_refused_prior_invested_capital_stays_capture_failure()
     assert roic.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
 
 
-def test_j1_an_ev_with_an_unrelated_prior_ic_flag_is_missing_input() -> None:
-    """The EV's own terms resolve; a sibling's prior invested-capital flag must not decide it. The
-    market cap is missing, so the EV is empty with `missing_input`."""
+def test_k1_an_ev_with_no_cover_shares_is_prior_year_missing() -> None:
+    """K1: a market cap that needs the *previous* filing's cover count is an absent prior input
+    (`prior_year_missing`, rank 4), not a capture failure. The sibling prior invested-capital flag
+    must not decide it either (J1)."""
     # the EV's own terms resolve (a complete current balance sheet); the *prior* invested capital
     # cannot be formed (no prior equity), which is a sibling flag
     # a filed short-term line makes the debt resolve without the balance-sheet check, so the prior
@@ -634,16 +635,32 @@ def test_j1_an_ev_with_an_unrelated_prior_ic_flag_is_missing_input() -> None:
     ev = next(r for _g, r in pairs if r.name == "enterprise_value")
     assert ev.value is None
     assert any("prior_invested_capital" in key for key in ev.inputs)
-    assert ev.inputs["provenance"]["empty_reason"] == provenance.MISSING_INPUT
+    assert ev.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING
 
 
-def test_j1_a_market_cap_capture_failure_stays_on_the_valuation_yields() -> None:
+def test_k1_a_no_cover_shares_yield_is_prior_year_missing() -> None:
+    """K1 (round 3's J1 test, corrected expectation): `no_cover_shares` names the absent earlier
+    filing, so the yield's reason is `prior_year_missing`, not `capture_failure`."""
     stmts = _j1_payload()
     pairs = [
         ("valuation", r)
         for r in valuation_compute(
             stmts, KEY, market_cap_missing="no_cover_shares", cik="0000000001"
         )
+    ]
+    provenance.attach(pairs, stmts, KEY)
+    yield_ = next(r for _g, r in pairs if r.name == "free_cash_flow_yield")
+    assert yield_.value is None
+    assert yield_.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING
+
+
+def test_k1_a_stale_shares_yield_is_capture_failure() -> None:
+    """K1: the other market-cap keys name a count that exists but cannot be used -- a capture
+    failure, not an absent filing."""
+    stmts = _j1_payload()
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(stmts, KEY, market_cap_missing="stale_shares", cik="0000000001")
     ]
     provenance.attach(pairs, stmts, KEY)
     yield_ = next(r for _g, r in pairs if r.name == "free_cash_flow_yield")

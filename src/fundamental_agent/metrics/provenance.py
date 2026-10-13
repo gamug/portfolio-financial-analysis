@@ -208,7 +208,14 @@ OWN_TERMS: dict[str, tuple[str, ...]] = {
     # leverage.py: `net_debt = capital.net_debt(cap)` (debt - cash - STI) and the EBITDA terms
     "net_debt_to_ebitda": ("total_debt", "net_debt", "short_term_investments"),
     # valuation.py: EV = market cap + debt + nci - cash - sti (MD-35)
-    "enterprise_value": ("total_debt", "net_debt", "nci", "short_term_investments"),
+    "enterprise_value": (
+        "total_debt",
+        "net_debt",
+        "nci",
+        "short_term_investments",
+        "market_cap",
+        "share_scale",
+    ),
     # roic.py: `capital.invested_capital(cap, income_filed=...)` (MD-02)
     "return_on_invested_capital": ("invested_capital", "nci", "short_term_investments"),
     "return_on_invested_capital_effective_rate": (
@@ -216,9 +223,16 @@ OWN_TERMS: dict[str, tuple[str, ...]] = {
         "nci",
         "short_term_investments",
     ),
-    # valuation.py: MD-38's EV terms and its working capital (`unclassified_balance_sheet` names the
-    # metric itself, so `_names` catches it)
-    "enterprise_fcf_yield": ("total_debt", "net_debt", "nci", "short_term_investments"),
+    # valuation.py: MD-38's EV terms (its denominator) and its working capital
+    # (`unclassified_balance_sheet` names the metric itself, so `_names` catches it)
+    "enterprise_fcf_yield": (
+        "total_debt",
+        "net_debt",
+        "nci",
+        "short_term_investments",
+        "market_cap",
+        "share_scale",
+    ),
     # valuation.py: the market-cap read (`flag_market_cap_<reason>`, `flag_share_scale_suspect`)
     "market_capitalization": ("market_cap", "share_scale"),
     "free_cash_flow_yield": ("market_cap", "share_scale"),
@@ -289,7 +303,12 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
     ("capture_failure", CAPTURE_FAILURE),
     ("refused", CAPTURE_FAILURE),
     ("unclassified_balance_sheet", CAPTURE_FAILURE),
-    # J1: a market cap the reader could not form (no cover count, a scale suspect, ...)
+    # K1: the reader could not form the market cap because the *previous* filing's cover count is
+    # absent -- the earlier filing lies outside the window (`kg_schema.market_cap`). The same cause
+    # as an absent prior column, so rank 4. It must precede the generic `market_cap_` entry.
+    ("market_cap_no_cover_shares", PRIOR_YEAR_MISSING),
+    # J1: a market cap the reader could not form (a scale suspect, a stale or incomplete count)
+    ("share_scale_suspect", CAPTURE_FAILURE),
     ("market_cap_", CAPTURE_FAILURE),
     ("prior_year_bs_missing", PRIOR_YEAR_MISSING),
     ("prior_year_assets_missing", PRIOR_YEAR_MISSING),
@@ -315,9 +334,13 @@ def _names(key_rest: str, labels: tuple[str, ...], metric: str) -> bool:
 
 
 def _candidate_keys(result: MetricResult) -> list[str]:
-    """The keys of the metric's inputs that carry a resolution's flags: the ``flag_*`` ones and the
-    market-cap capture (``market_cap_<reason>``, valuation.py)."""
-    return [key for key in result.inputs if key.startswith(("flag_", "market_cap_"))]
+    """The keys of the metric's inputs that carry a resolution's flags: the ``flag_*`` ones, the
+    market-cap capture (``market_cap_<reason>``) and the share-scale suspect (valuation.py)."""
+    return [
+        key
+        for key in result.inputs
+        if key.startswith(("flag_", "market_cap_")) or key == "share_scale_suspect"
+    ]
 
 
 def _relevant_flags(result: MetricResult, items: tuple[str, ...]) -> list[str]:
@@ -415,11 +438,14 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                 return reason
             if capital is not None and capital.source is None:
                 return PRIOR_YEAR_MISSING
-    # 4. a capture flag on one of the metric's OWN terms (J1): a group shares one inputs dict, so a
+    # 4. a flag on one of the metric's OWN terms (J1): a group shares one inputs dict, so a
     # sibling's flag (another metric's debt, invested capital, market cap) must not decide this one.
+    # K1: the market cap that needs the previous filing's cover count ranks as an absent prior input.
     for key in _candidate_keys(result):
-        if _is_own_flag(key, result, tuple(items)) and _flag_reason([key]) == CAPTURE_FAILURE:
-            return CAPTURE_FAILURE
+        if _is_own_flag(key, result, tuple(items)):
+            reason = _flag_reason([key])
+            if reason in (CAPTURE_FAILURE, PRIOR_YEAR_MISSING):
+                return reason
     return MISSING_INPUT
 
 
