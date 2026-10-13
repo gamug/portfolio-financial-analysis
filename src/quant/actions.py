@@ -51,6 +51,10 @@ from quant.state import fail_run, finish_run, open_run, set_run_params
 
 _MAX_ERROR_MESSAGES = 20  # per-run cap on the messages kept in quant_run.params_json
 
+#: The first day ``backfill-actions`` and ``build-returns`` cover when the CLI is given no ``--from``
+#: (what the orchestrator runs); ``quant pending`` reads the gateway over the same window (T-017).
+DEFAULT_FROM = "2022-01-01"
+
 
 class GatewayUnavailable(RuntimeError):
     """The pricing gateway cannot serve corporate actions, and there is no other source."""

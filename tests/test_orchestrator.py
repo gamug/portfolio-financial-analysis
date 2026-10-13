@@ -7,7 +7,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
@@ -61,19 +61,35 @@ def _touch(path: Path) -> Path:
 
 class FakeRunner:
     """Records every (argv, env) and answers by ``(package, command)``; an entry in
-    ``errors`` raises instead (to exercise a step that never returns)."""
+    ``errors`` raises instead (to exercise a step that never returns).
+
+    A ``pending`` check (T-017) is answered from ``checks`` by package -- default ``pending: yes
+    test`` -- and recorded in ``check_calls``, never in ``calls``, so a test about the steps
+    reads the steps only."""
 
     def __init__(
         self,
         answers: dict[tuple[str, str], tuple[int, str]] | None = None,
         errors: dict[tuple[str, str], BaseException] | None = None,
+        checks: Mapping[str, tuple[int, str] | BaseException] | None = None,
     ) -> None:
         self.answers = answers or {}
         self.errors = errors or {}
+        self.checks: Mapping[str, tuple[int, str] | BaseException] = checks or {}
         self.calls: list[tuple[list[str], dict[str, str]]] = []
+        self.check_calls: list[tuple[list[str], dict[str, str], float | None]] = []
         self.on_call: Callable[[list[str]], None] | None = None
 
-    def __call__(self, argv: list[str], env: dict[str, str]) -> orch.CommandResult:
+    def __call__(
+        self, argv: list[str], env: dict[str, str], timeout: float | None = None
+    ) -> orch.CommandResult:
+        if argv[3] == "pending":
+            self.check_calls.append((list(argv), dict(env), timeout))
+            answer = self.checks.get(argv[2], (0, "pending: yes test"))
+            if isinstance(answer, BaseException):
+                raise answer
+            return orch.CommandResult(returncode=answer[0], output=answer[1])
+        assert timeout is None  # a step has no timeout
         self.calls.append((list(argv), dict(env)))
         if self.on_call is not None:
             self.on_call(argv)
@@ -383,7 +399,7 @@ def test_run_id_capture_reads_the_printed_line_and_the_quant_table(
         "quant_optimize": 4,
         "quant_evaluate": 5,
     }
-    assert all(s.reason is None for s in run.steps)
+    assert not any("run_id not captured" in (s.reason or "") for s in run.steps)
 
 
 def test_a_completed_step_without_a_run_line_gets_the_capture_reason(

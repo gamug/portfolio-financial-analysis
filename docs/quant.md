@@ -637,3 +637,12 @@ migration). What a consumer sees differently:
 - Re-introducing a `QUANTITATIVE` `score_type` is deliberately **not** done — the
   Markowitz output is a portfolio, not a per-asset score, and lives entirely in the
   `quant_*` tables. `score_snapshot` is untouched.
+
+## `pending` (T-017)
+
+`python -m quant pending --analysis-date D` is the orchestrator's one check on the quant chain
+(read-only, one line `pending: yes|no <evidence>`, imports only `kg_schema`). Yes when the returns
+end before the newest member bar, a default objective has no non-live book with `as_of` in
+[last session, D], a book `evaluate` would score lags behind its newest forward return, or the
+pricing gateway lists a dividend/split `corporate_action` lacks (one GET per member). Books with no
+positions are "unscorable" and members the gateway cannot serve are "unavailable": listed, not pending.

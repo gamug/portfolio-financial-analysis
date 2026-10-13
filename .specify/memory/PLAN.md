@@ -291,6 +291,9 @@ already checkpointed internally (`cycle_run`/`cycle_checkpoint`).
    from the pricing gateway, not just prices). When `KG_NEWS_DB` is not configured or does not exist,
    `entity_resolution` reports "no news source configured", is not pending, and does not fail (the same rule as
    the semantic check).
+   *(Shipped signals (T-017, 2026-10-13): `docs/api.md`, "The incremental run" — one line per signal; each step's
+   `pending` subcommand is read-only, one line `pending: yes|no <evidence>`, and the runner records
+   `pending: ...`, `pending upstream: ...` or `not pending: ...` on the step's `reason`.)*
 
 **Acceptance surface (user, 2026-10-06)**: both the HTTP API and a CLI wrapper over the same orchestrator code.
 `T-014`, `T-015` and the final pilot `T-143` are each accepted through **both**, so neither can pass without

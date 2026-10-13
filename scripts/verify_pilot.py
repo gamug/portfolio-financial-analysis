@@ -735,6 +735,74 @@ def main() -> int:  # noqa: C901, PLR0915
 
     check("T-013", t013)
 
+    def t017() -> None:  # noqa: C901 - one branch per incremental-run rule
+        # The incremental run (T-017): a step is skipped "not pending" only when no direct upstream
+        # ran on a pending signal, cycle_select is never skipped for being not pending, and every
+        # skip says why. The dependency table and the always-run flag are the runner's own,
+        # imported -- never a copy. Read-only; no pipeline run recorded is SKIP, not FAIL.
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        specs = orchestrator.steps_for("pipeline")
+        deps = {s.name: s.depends_on for s in specs}
+        always = {s.name for s in specs if s.always_run}
+        checked_runs = 0
+        skipped_steps = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            if not db.relation_exists("orchestrator_run") or not db.relation_exists(
+                "orchestrator_step"
+            ):
+                continue
+            run_ids = [
+                int(r[0])
+                for r in db.execute(
+                    "SELECT id FROM orchestrator_run WHERE kind = 'pipeline'"
+                ).fetchall()
+            ]
+            by_run: dict[int, dict[str, tuple[str, str]]] = {}
+            for run_id, step, status, reason in db.execute(
+                "SELECT orchestrator_run_id, step, status, reason FROM orchestrator_step"
+            ).fetchall():
+                by_run.setdefault(int(run_id), {})[str(step)] = (str(status), str(reason or ""))
+            checked_runs += len(run_ids)
+            for run_id in run_ids:
+                steps = by_run.get(run_id, {})
+                ran_pending = {
+                    step
+                    for step, (status, reason) in steps.items()
+                    if status == "completed" and reason.startswith("pending") and step not in always
+                }
+                for step, (status, reason) in steps.items():
+                    if status != "skipped":
+                        continue
+                    skipped_steps += 1
+                    where = f"{prefix}run {run_id}: {step}"
+                    if reason.startswith("not pending") and any(
+                        up in ran_pending for up in deps.get(step, ())
+                    ):
+                        bad.append(f"{where} skipped not pending with an upstream that ran pending")
+                    if step in always and reason.startswith("not pending"):
+                        bad.append(f"{where} is always-run but skipped not pending")
+                    if not (
+                        reason.startswith("not pending:")
+                        or reason.startswith("no news source configured")
+                    ):
+                        bad.append(f"{where} skipped without a recognised reason ({reason!r})")
+        if checked_runs == 0:
+            report("T-017", "SKIP", "no pipeline runs recorded")
+            return
+        report(
+            "T-017",
+            "FAIL" if bad else "PASS",
+            f"incremental run: {checked_runs} runs, {skipped_steps} skipped steps; "
+            + ("; ".join(bad[:10]) or "clean"),
+        )
+
+    check("T-017", t017)
+
     def t083() -> None:
         paths = [("db", args.db)]
         if args.replay_db:

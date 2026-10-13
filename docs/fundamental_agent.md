@@ -338,8 +338,17 @@ production-copy verification: `docs/model_fixes.md`, T-065.
 `run` subcommand (flags above), `quality` (the gate backfill over every stored filing; no LLM
 variables needed; exit 1 if no metrics are stored for `--metrics-version`),
 `repair-accessions` (dry run unless `--apply`; gateway only, no LLM variables; exit 1 while
-any accession is left unresolved) and `migrate` →
-`kg_schema.cli.run_migrate`.
+any accession is left unresolved), `pending` (T-017: read-only, one line `pending: yes|no <evidence>`,
+no LLM variables; `fundamental_agent/pending.py`) and `migrate` → `kg_schema.cli.run_migrate`.
+
+**Exit code of `run` (T-017, `failures.py`).** Every recorded failure is classed `data` or
+`service` by an explicit allowlist (`failures.classify`): `data` = stage `period`/`identity`, or a
+message with `unsuccessful payload`, `reconciliation failed`, `refusing to overwrite` or `refusing
+to replace` -- the filing fails the same way on every run. Everything else, including an unknown
+error, a gateway outage (`failed after N attempts`), an HTTP status error and an LLM provider
+error, is `service`. `run` exits 1 only when **nothing completed and at least one failure is
+`service`**; data failures are still recorded in `analysis_run_error`, logged and printed with
+their class (`[data]` / `[service]`). A run whose only failures are known data failures exits 0.
 
 ## Gotchas
 
