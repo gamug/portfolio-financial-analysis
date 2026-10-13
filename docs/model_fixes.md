@@ -6607,3 +6607,175 @@ CON_04 4, CON_06 1, CON_08 3, CON_19 19); quarantine rows CON_08 9, CON_19 72.
 `p2_extra.json`, `p2_extra_tables.json`, `p2_t147_counts.txt`, `p2_con01_tested.txt`,
 `p2_reproduce.txt`, `p2_reproduce.json`, `p3_counts.txt`, `p3_changes.txt`, `p3_con19_example.txt`,
 `p3_sha1.txt`; and the fix round's `r1_*.txt/.json`).
+
+## T-151 part 1 — sourced D&A and debt sums, the net capex element, the period label
+
+`T-151` has three parts (user, 2026-10-12): part 1 is line-item resolution (this section), part 2 the
+metric definitions, part 3 the dictionary, the applicability matrix, provenance, the company card and
+the post-rebuild fidelity gate. Part 1 keeps the engine `metrics-v7`; parts 2 and 3 keep it too.
+
+**Sources (the pinned FASB 2026 taxonomy).** Zip
+`docs/checklist_sec/sec_xcheck/fasb_2026_dl/us-gaap-2026.zip`, SHA-256
+`f4c8b8b5697ba7d825a8614b159611cd25a46640e98a9737cda1e4a672bd4c81` (checked at the start of the task,
+`out/p0_sha1.txt`). The calculation arcs and the B6 documentation labels are quoted in the code
+comments beside `DA_SOURCED_CHILDREN`, `LONG_TERM_DEBT_NONCURRENT_CHILDREN` and
+`LONG_TERM_DEBT_CHILDREN` (`src/fundamental_agent/statements.py`): `stm/us-gaap-stm-scf-indir-cal-2026.xml`
+(`DepreciationDepletionAndAmortization` → `Depreciation` order 10, `AdjustmentForAmortization` 20,
+`OtherDepreciationAndAmortization` 30, `Depletion` 40; `AdjustmentForAmortization` →
+`AmortizationOfIntangibleAssets` 30 among its 22 children), `stm/us-gaap-stm-sfp-cls-cal-2026.xml`
+(`LongTermDebtNoncurrent`, 15 children, orders 10–150), `stm/us-gaap-stm-sfp-dbo-cal-2026.xml`
+(`LongTermDebt`, 15 children), and `elts/us-gaap-doc-2026.xml` for the definitions.
+
+**C1 — the sourced D&A sum (ID-02b; MD-01).** When none of the three `depreciation_amortization`
+concepts is filed in the column, D&A is the sum of the filed **D&A-nature** children of the arc —
+`Depreciation` (required) + `Depletion` / `OtherDepreciationAndAmortization` /
+`AmortizationOfIntangibleAssets` — flagged `da_sourced_sum`, `how = "map"`, each child in its filed
+sign (ID-12). "Only lines" (C1 (c)): any other cash-flow line whose concept or caption names
+depreciation, amortization or depletion — including `AdjustmentForAmortization` itself and extension
+D&A lines — refuses the sum (`da_sum_refused_other_lines`) and D&A stays empty. `Depreciation` alone
+stays refused (`depreciation_only_not_da`). The director's decision after hard stop 4' confirmed that
+`AdjustmentForAmortization` is **not** added: its children include non-D&A items (financing costs,
+debt discount).
+
+**C2 — the sourced long-term-debt sums (ID-02b; MET-07).** Read only when no concept `_long_term_debt`
+reads today is filed in the column: (i) the filed children of `LongTermDebtNoncurrent` (the sfp-cls
+arc; excludes the current maturities), else (ii) the filed children of `LongTermDebt` (the sfp-dbo
+arc; B6 defines `SecuredDebt`/`UnsecuredDebt` "including the current and noncurrent portions", so it
+is flagged `includes_current_maturities` and N4 adds no current-maturity term). "Only lines": every
+debt-named balance-sheet line (`_DEBT_LINE_RE` and not `_NOT_A_DEBT_LINE_RE`, as the debt = 0 rule
+uses) must be a child of the tree used or a short-term map concept, else `debt_sum_refused_other_lines`
+and the debt stays empty. Flagged `debt_sourced_sum`. The code comment that said no loaded source
+states the REIT identity is removed, and `_long_term_debt`'s docstring is rewritten.
+
+**C3 — the net capex element (MET-08's last resort).** `PaymentsForProceedsFromProductiveAssets` is
+read only when its **filed** value is > 0 and its caption does **not** name proceeds, a sale or a
+disposition. A filed value ≤ 0 is net proceeds (`net_element_net_proceeds`); a caption naming proceeds
+is net proceeds whatever the sign (`net_element_captioned_proceeds` — COP's 2021-03-31 comparative is
+displayed −17,000,000 with `preferred_sign` −1, a filed **+17,000,000** the sign test alone would read
+as capex). Either way the tier is skipped and the caption fallback is tried.
+
+**C4 — the period label (PER-08, T-149).** `_targets` labels a 10-Q from its period end and the
+fiscal year end `payload_fiscal_year_end` reads off the payload's balance-sheet instants — the
+**earliest** instant 30–330 days back. A payload whose face carries stray note instants therefore
+selects a quarter end for the year end: CSX `0000277948-24-000047` (period end 2024-06-30, the
+payload's 2023-09-30 → `2024Q3`, the company's own 2024-12-31 → `2024Q2`) and CNP's Q1-2022 (a stray
+2021-07-20 → `2022Q3`, December year end → `2022Q1`). The company's own year end (the latest stored
+10-K before the period) now wins; a disagreement is flagged on `_Target.label_override` and logged in
+the run's list as a warning (`analysis_run_error` stage `label`), never a skipped filing. A company
+with no stored 10-K, or a changed fiscal year whose new year end is not recorded, keeps the payload's
+label (the FERG shape).
+
+**C5 — engine `metrics-v7`.** `METRICS_ENGINE_VERSION` `metrics-v6` → `metrics-v7` (`db.py`, comment
+in v6's style). `scripts/verify_t148b.py recompute` now deletes the rows of `db.METRICS_ENGINE_VERSION`
+instead of a hard-coded `metrics-v6`, and **refuses any database path outside
+`RECOMPUTE_SCRATCH_ROOT`** (`/workspaces/thesis/scratch`) before opening it — it deletes and rewrites
+rows, so it must never touch the read-only production database. A scratch copy is **never migrated**
+(the director confirmed that `apply_migrations` on a database created fresh by `ensure()` replays
+`m002` and drops `preferred_sign` and `correction_rule`; the trap is reported separately as a bug on
+master).
+
+**C6 — every new flag** reaches the metrics as `flag_<item>_<flag>` inputs, as T-148's do: D&A and
+debt through the leverage group, capex through the cash-flow and valuation groups.
+
+### The measurements (control = master's code, after = this branch's, same stored facts)
+
+`/workspaces/thesis/scratch/t151a/`: `control.db` (9,340 filings, 296,755 `metrics-v6` rows,
+`out/p2_control.log`) and `after.db` (9,340 filings, 296,755 `metrics-v7` rows, `out/p2_after.log`).
+
+- **3.1 changes** (`out/p3_changes.txt`, `.json`; `scripts/verify_t151a.py changes`): D&A **filled 200
+  filings (28 companies)**, emptied 0, changed 0; `total_debt` / `long_term_debt` **filled 196 (17)**,
+  emptied 0, changed 0; capex **changed 3 filings (1 company, COP)**, filled 0, emptied 0; EBITDA
+  filled 223 (21); `net_debt_to_ebitda` filled 334; `enterprise_value` filled 186; ROIC filled 114;
+  `enterprise_fcf_yield` filled 184 and changed 9 (all COP); `free_cash_flow_margin` / `_conversion` /
+  `_yield` and `capex_intensity` changed 9 (all COP); `sbc_adjusted_fcf_yield` and `interest_coverage`
+  unchanged. Flags raised after and not before: `da_sourced_sum` 200,
+  `da_sum_refused_other_lines` 173, `debt_sourced_sum` 196, `debt_sum_refused_other_lines` 430,
+  `includes_current_maturities` 110, `net_element_net_proceeds` 1, `net_element_captioned_proceeds` 4,
+  `caption_fallback` 4. **Hard stop 3 does not fire:** no D&A or debt value that was non-empty
+  changed, and capex changed only in COP, the filings that used the net-element tier.
+- **3.2' the filled sums against the filer's own total** (`out/p3_validation_cf.txt`, `.json`;
+  `out/p3_validation_cf_own.txt` for the own-column scope; `out/p3_cf_example_{ESS,SYK,WELL}.txt`):
+  the value compared is **C1's D&A sum and C2's long-term sum** (never the total debt), the agreement
+  band is `0.5 × unit(filer's total) + L-10 rounding(children)`, and the bar is DQ-01's materiality.
+  Every filled column: **1,072 filled cases** (da 876, cls 86, dbo 110); coverage **217 (20.2%)** carry
+  the filer's own total with the same accession; **agree 172 (79.3% of covered)**; disagree 45;
+  **material 25 (11.52% of covered)**. Per map (filled / covered / agree / material): da
+  876/130/118/**12**, cls 86/19/19/**0**, dbo 110/68/35/**13**. Own-column scope: 590 filled, coverage
+  140 (23.7%), agree 102 (72.9%), material **18 (12.86%)**. A **double-count check runs over every
+  filled C2 case** (no concept may be in both the long-term sum and the short-term terms of the same
+  total debt): **0 found** (query + test).
+- **3.2'' the face cases** (`out/p3_face_cases.txt`; report only): **81** cases where a filed total and
+  ≥1 of its children are on the same face — (a) the filer's total excludes a child its caption names
+  4 filings / 1 company (HD: "Depreciation and amortization, excluding amortization of intangible
+  assets"), (b) the total is smaller than one of its own children 23 / 4 (MSCI, BEN), (c) a partial
+  breakdown 54 / 6 (CNP, XYZ), (d) other 0. This concerns the **existing** resolver, which reads the
+  filed total as D&A today even when the filer uses it for a partial line; the director decides later
+  whether it becomes a fix.
+- **3.3 refusals** (`out/p3_refusals.txt`): D&A **629 filings (71 companies)**, debt **537 (39)**,
+  grouped by the outside concept. D&A's top outside concepts are `AdjustmentForAmortization` 262,
+  `AmortizationOfFinancingCostsAndDiscounts` 93, `AmortizationOfFinancingCosts` 82,
+  `AmortizationOfDebtDiscountPremium` 34, `OperatingLeaseRightOfUseAssetAmortizationExpense` 20; the
+  scan matches the **caption** too, so a line that names amortization in its caption refuses even when
+  its concept does not (the conservative default of OPEN QUESTION 1). Debt's are `SeniorNotes` 147,
+  `NotesPayable` 94, `OtherBorrowings` 84, `LongTermDebtAndCapitalLeaseObligationsCurrent` 49.
+- **3.4 C3** (`out/p3_capex_net.txt`): **51 filings** reached the net-element tier under the pre-C3
+  rule; only COP's three change — 10-Q 2022Q1 −2,332,000,000 → 3,161,000,000, 2023Q1 −188,000,000 →
+  2,897,000,000, 2024Q1 −173,000,000 → 2,916,000,000 — each to the extension
+  `cop_PaymentToAcquireProductiveAssetsAndInvestments` ("Capital expenditures and investments") via the
+  caption fallback; the caption includes investments (MET-08 (b)(1)'s productive-assets fallback).
+- **3.4 C4** (`out/p3_labels.txt`): on `after.db` the rule's own effect is **1 label** (CSX `2024Q3` →
+  `2024Q2`); the function differs from the stored label in 2 (CSX and CNP, whose stored `2022Q3` is the
+  same defect, its stray instants not stored). On `prod_copy.db` the rule's own effect is **0**; 74
+  stored labels differ from the function under both the old and the new rule (pre-T-140 stale labels).
+- **3.5 audit groups** (`out/p3_audit_diff.txt`, `out/p3_audit_control.json`, `out/p3_audit_after.json`;
+  the control run uses master's code): **13 keys changed** — `ID11.capital_expenditure_abs_changes_value`
+  17 → **0** (the `abs()` repairs are gone), `MET08.cause.net_element_last_resort` absent → **18** (a
+  new cause key), `N7.lt_debt_only` 3,766 → 3,998 (195 → 207 companies), `N7.debt_absent` 16,336 →
+  16,104, `N7.st_debt_only` 455 → 347, `D10.ev_debt_or_cash_zero_filled` 16,810 → 16,470,
+  `ID01.capital_expenditure_custom_concept` 140 → 158,
+  `ID01.capital_expenditure_label_or_standard_match` 187 → 206, `MET08.custom_caption_fallback` 187 →
+  206, `MET08.target_differs` 474 → 492, `MET09.net_debt_ebitda_on_nonpositive_ebitda` 61 → 62,
+  `N9.net_cash_positive_ebitda` 346 → 373, `APP07.debt_to_equity_on_negative_equity` 577 → 582.
+- **3.6 data-quality gates** (`out/p3_quality_control.log`, `out/p3_quality_after.log`): the only rule
+  that moves is `DQ_NEG_EQUITY`, 603 filings in both and **87 → 88 HARD**; every other rule is
+  identical (no change above 10 filings).
+- **3.7** production and universe sha1 unchanged (`out/p3_sha1.txt`).
+
+### The mismatching companies (input for part 3's fidelity gate)
+
+3.2' is a measurement and a **declared limitation**: T-151 part 3's post-rebuild fidelity gate is the
+mechanism that keeps a value a filer contradicts out of the scores. The **25 material mismatches** of
+the filled sums, by company (filings): **SYK 10 (da)**, **ESS 7 (dbo)**, **WELL 6 (dbo)**, **VLTO 2
+(da)** — the classes are:
+- **the filer's own total equals one filed child (a partial tag)** — ESS `0000920522-22-000019`: our
+  long-term sum `SecuredDebt` 638,957,000 + `UnsecuredDebt` 5,307,196,000 + `LineOfCredit` 341,257,000
+  = 6,287,410,000, while the filer's `LongTermDebt` fact is 638,959,000, equal to its own
+  `SecuredDebt`; its stored `net_debt_to_ebitda` is 5.94.
+- **overlap: the sum exceeds the filer's own total and no single term explains it** — WELL
+  `0000766704-22-000061`: 15,100,944,000 against `LongTermDebt` 14,600,333,000 (Δ 500,611,000).
+- **understatement: the map's sum is below the filer's own total** — SYK `0000310764-25-000129`
+  (2024-09-30 YTD): `Depreciation` 319,000,000 + `AmortizationOfIntangibleAssets` 467,000,000 =
+  786,000,000 against the filer's `DepreciationDepletionAndAmortization` 1,080,000,000 (Δ 294,000,000,
+  27%); its `net_debt_to_ebitda` is empty, so the effect is on EBITDA alone. VLTO `0001967680-25-000136`
+  is the reverse (58,000,000 against 17,000,000).
+
+The effect on the metrics, from each filing's own stored inputs (`out/p3_validation_cf.txt`): ESS's
+`enterprise_value` moves by −0.8% to +0.2% between the two values (e.g. `0000920522-22-000062`:
+21,899,362,233 → 21,717,537,233) with `net_debt_to_ebitda` 4.73–6.15; SYK's EBITDA would be 294,000,000
+higher (its `net_debt_to_ebitda` is empty, so nothing to restate); WELL's `LongTermDebt` differs by up
+to 3.4% of the total.
+
+### Correction notes (the earlier sections, not rewritten)
+
+- **Correction (T-151 part 1, 2026-10-13):** under T-148 part 1 item 7 and the part 2 causes table
+  items 2, 8 and 13, a loaded source now exists and the item is implemented here. Item 7 (the REIT
+  pair): the FASB 2026 `sfp-dbo` arc makes `LongTermDebt = SecuredDebt + UnsecuredDebt + …`, so the
+  pair is the sourced long-term debt — 196 filings (17 companies) fill debt, `debt_sourced_sum`, 110
+  with `includes_current_maturities`. Item 8 (REIT secured + unsecured): the same map; of the 19
+  companies listed, 17 now resolve. Item 2 (D&A: `Depreciation` alone is not D&A): C1 fills D&A in
+  **200 filings (28 companies)** and refuses 629 (71) where another D&A-named line is filed. Item 13
+  (COP's net element): the caption test skips it and the extension resolves capex — 3 filings, −2,332M
+  → 3,161M, −188M → 2,897M, −173M → 2,916M.
+- **Correction (T-151 part 1, 2026-10-13):** under part 2's causes items 3 and 9, the first-filing
+  count is **our data window**, not a filer fact (no prior cover count exists inside it), and MA/BALL's
+  empty parent net income follows the face-only rule (ID-03), a declared choice, not a missing source.
