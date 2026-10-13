@@ -636,23 +636,24 @@ def test_a_refused_begin_run_does_not_clear_the_active_stop(tmp_path: Path) -> N
 
 
 def test_run_command_kills_the_child_when_the_registration_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No window between the spawn and the registration: a failure there still kills the child."""
-    marker = tmp_path / "child_finished"
+    """No window between the spawn and the registration: if it fails, the child is killed.
+
+    The fake records the ``Popen`` it is handed and raises; the test then waits for that process
+    and requires it to be killed by a signal (the child sleeps 30 s, so a live one cannot finish)."""
+    recorded: list[subprocess.Popen[str]] = []
 
     def boom(proc: subprocess.Popen[str]) -> None:
+        recorded.append(proc)
         raise RuntimeError("registration failed")
 
     monkeypatch.setattr(orch, "_register_child", boom)
     with pytest.raises(RuntimeError):
         orch.run_command(
-            [
-                sys.executable,
-                "-c",
-                f"import time; time.sleep(3); open({str(marker)!r}, 'w').close()",
-            ],
+            [sys.executable, "-c", "import time; time.sleep(30)"],
             dict(os.environ),
         )
-    time.sleep(0.5)
-    assert not marker.exists()
+    assert len(recorded) == 1
+    assert recorded[0].wait(timeout=5) is not None  # a live 30 s child would time out here
+    assert recorded[0].returncode is not None and recorded[0].returncode < 0  # killed, not finished

@@ -404,7 +404,14 @@ def run_command(
                 text=True,
                 pass_fds=(_LOCK_STATE.fd,) if _LOCK_STATE.fd is not None else (),
             )
-            _register_child(child)
+            try:
+                _register_child(child)
+            except BaseException:
+                # anything failing after the spawn must still kill the child (T-015): no window
+                # leaves an orphan holding the lock
+                child.kill()
+                child.wait()
+                raise
             return child
 
     try:
