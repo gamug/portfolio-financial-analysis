@@ -7045,6 +7045,112 @@ The definition changes make five existing assertions wrong; each is replaced, no
 `tests/test_metric_definitions_t151b.py` adds **33** tests (the formula, every empty/flag case, the
 boundaries, a 10-Q case and the REIT tax case). `pytest -q` **2,281 passed** (`out/p1a_gates.txt`).
 
+### Fix round 1 (F1–F10; PR #147 review)
+
+Reviewer A re-checked part 2 and found ten defects; the director answered R-1 to R-5. Each fix has its
+tests and its measurement under `out/f1_*`. The control database is unchanged (master's code); only
+`after.db` was recomputed (`out/f1_p2_after.log`, 9,340 filings, 315,435 rows).
+
+- **F1 — the NOPAT tax is decided on a different period than the flow it taxes (bug).**
+  `nopat_tax_rate` read the quarter's operating income (and a REIT's quarter rate) on a 10-Q while the
+  ratios taxed the TTM operating income. The rate now takes the flow it taxes
+  (`metrics/tax.py:nopat_tax_rate(operating_income, *, reit, tax, pretax, rate_missing)`), and
+  `income_tax`/`pretax_income` join the TTM items (a REIT's rate is TTM tax / TTM pre-tax income;
+  `reit_ttm_rate_missing`, NOPAT empty, when it cannot be built). `_group_ttm` marks a flow whose TTM
+  could not be built (`flag_<item>_ttm_not_built`). The `nopat` and `effective_tax_rate` metrics keep
+  the filing's own period; `return_on_invested_capital_effective_rate` uses the TTM effective rate on a
+  10-Q. **Acceptance** (`out/f1_counts.json`): TTM operating loss taxed **272/64 → 0/0**; TTM operating
+  profit untaxed **153/88 → 0/0**; REIT 10-Q on the quarter's rate **216/16 → 0/0**. (The reviewer's
+  pre-fix counts 107/57, 108/71 and 157 were measured on the *pre-fix branch*; the control here is
+  master's code, a different NOPAT basis — see R-10.) Example: ALB `0000915913-25-000084` quarter OI
+  19.8M, TTM OI −1,577.3M → rate 0, NOPAT_ttm −1,577.3M; ABNB `0001559720-23-000010` quarter OI −5M,
+  TTM OI 1,802.0M → 21%, NOPAT_ttm 1,423.58M. The audit predicate
+  `MET03.nopat_taxed_on_operating_loss` now reads the TTM NOPAT on a 10-Q (its control count re-taken
+  with master's code).
+- **F2 — a new TTM item changed the group's `annualized_x4` stamp (bug).** `_GROUP_TTM_ITEMS` is back
+  to master's lists (profitability: `net_income`; valuation: OCF, capex, SBC, interest), so a crude
+  operating-income TTM no longer drops a filing whose net-income TTM is real (the earnings-yield gate,
+  MET-05, reads profitability's stamp). The added items carry `flag_<item>_annualized_x4`. **Acceptance**
+  (`out/f1_counts.json`): usable `net_income_ttm` rows **8,914/498 → 8,914/498** (the five filings —
+  CVNA `0001690820-24-000165`, `-000272`, `-000345`; PSA `0001628280-26-027487`, `-050612` — are back).
+  New flags (`out/f1_flags.txt`): `flag_operating_income_annualized_x4` 216/92,
+  `flag_income_tax_annualized_x4` 256/111, `flag_pretax_income_annualized_x4` 298/111,
+  `flag_depreciation_amortization_annualized_x4` 85/57.
+- **F3 — a redeemable NCI filed as one part was dropped (bug).** `_redeemable_nci` sums the parts that
+  ARE filed when the total is not, flagged `redeemable_nci_filed_parts` (the face lines are the
+  redeemable-NCI lines the filer presents — the only-lines reasoning of the sourced D&A sum, ID-02b);
+  `redeemable_nci_partial` is gone. **Acceptance:** `redeemable_nci_partial` **→ 0**;
+  `flag_redeemable_nci_filed_parts` **109 filings / 10 companies** (MCK, BRK.B, UDR, LHX, WBD, ES, ACGL,
+  HLT, HON, TER — the ten the reviewer named), `out/f1_flags.txt`.
+- **F4 — the NCI and capital-combination flags never reached the inputs (gap).**
+  `capital.combination_flags` writes the flags of the NCI, short-term-investment, invested-capital and
+  net-debt resolutions under `flag_prior_*` / `flag_current_*`. **Acceptance** (`out/f1_flags.txt`,
+  filings/companies): `flag_prior_nci_nci_capture_failure` 957/284,
+  `flag_prior_invested_capital_invested_capital_capture_failure` 3,166/502,
+  `flag_current_net_debt_net_debt_capture_failure` 1,323/94,
+  `flag_prior_short_term_investments_short_term_investments_in_cash` 8/1.
+- **F5 — D4 gaps in the CAGR group.** A CAGR from a base ≤ 0 is flagged
+  `flag_<series>_cagr_growth_base_not_positive` (`out/f1_flags.txt`: net income 222/128, operating cash
+  flow 98/56, revenue 0), and the CECL flag is the net-income CAGR's alone
+  (`flag_net_income_cagr_crosses_cecl` 33/33; `PER14.net_income_cagr_crosses_cecl` **0 → 33/33** in
+  `out/f1_counts.json`).
+- **F6 — the `flags` measurement counted metric rows (measurement bug).** `verify_t151b.py flags` counts
+  distinct `filing_id`s. Corrected numbers are in `out/f1_flags.txt`; the part-2 section's flag counts
+  below are re-taken from it (e.g. `flag_prior_total_assets_prior_year_bs_missing` was 7,594 "filings"
+  — it is 1,516 10-Qs × 5 valuation rows + 3).
+- **F7 — the TTM unlevered-FCF input was a single quarter (bug).** `free_cash_flow_to_firm_ttm` is
+  master's TTM proxy again (`fcff_annual`); the MD-38 numerator has its own name.
+- **F8 — R-3, the raw `effective_tax_rate` (director decision).** The filing's own rate is kept as filed
+  (the clamp had no source); a rate < 0 or > 1 is flagged
+  `flag_effective_tax_rate_outside_unit_interval` on the `effective_tax_rate` row and
+  `flag_return_on_invested_capital_effective_rate_outside_unit_interval` on the robustness row.
+  **Acceptance:** 396 filings / 167 companies (split 10-K/10-Q in `out/f1_flags.txt`).
+- **F9 — the cycle consumers of the changed metrics (D5's RECORD).** Verified against the code:
+  - `src/cycle/scores/valorization.py:21-23` (value): `valuation.free_cash_flow_yield`,
+    `valuation.enterprise_fcf_yield` (MD-38 now; empty more often — F10 splits the reason),
+    `earnings_yield`; `:29-32` (quality): `profitability.return_on_equity` (prior-year equity now),
+    `roic.return_on_invested_capital`, `cashflow.free_cash_flow_margin`, `leverage.debt_to_equity`;
+    `:39-54` (`_leverage_for_ranking`, a negative D/E → `inf`).
+  - `src/cycle/data.py:99-108` `latest_trailing_net_income`: reads `net_income_ttm` from the
+    `return_on_assets` row's inputs (F2 restores the five filings it lost).
+  - `src/cycle/rules/builtin.py:96-103` `_LeverageRule`: `leverage.debt_to_equity` (now empty on
+    negative equity, but it was already quarantined by `DQ_NEG_EQUITY`, 603 filings identical
+    before/after) plus `net_debt_to_ebitda`/`interest_coverage`. `orchestrator.py`'s `float("inf")`
+    for `dq.negative_equity` still applies; a net-cash ND/EBITDA (now a valid negative, N9) is still
+    read as "unresolved". How a flagged value should rank is **T-071**'s.
+  - `src/fundamental_agent/quality.py:236` `_net_debt` (debt − cash) does not subtract short-term
+    investments, unlike D9's net debt — declared, not changed (the gates are out of scope).
+- **F10 — `prior_wc_missing` also fired when the prior-year quarter IS stored (bug).** `_md38` flags
+  `prior_wc_missing` only when the prior column is absent (`Capital.source is None`); a column that is
+  stored but whose balance sheet is not classified uses
+  `flag_enterprise_fcf_yield_unclassified_balance_sheet`, as does the current column. **Acceptance**
+  (`out/f1_flags.txt`): `flag_enterprise_fcf_yield_prior_wc_missing` 1,517/502;
+  `flag_enterprise_fcf_yield_unclassified_balance_sheet` 1,809/110. R-5's breakdown is re-taken here
+  (the previous 1,236 "prior_wc_missing" were mostly unclassified balance sheets).
+
+### R-3, R-4 and R-5 (director's answers)
+
+- **R-3** → F8 (the raw rate kept, flagged outside [0, 1]).
+- **R-4** accepted as a declared limitation, with its breakdown re-taken by the committed
+  `verify_t151b.py roa` (`out/f1_roa_breakdown.txt`, filings/companies): Financials 947/50,
+  Industrials 278/18, Real Estate 234/13, Health Care 188/10, Materials 162/10, Energy 158/9, Consumer
+  Discretionary 154/9, Communication Services 95/5, Consumer Staples 67/4, Information Technology 61/4,
+  Utilities 38/2; **total 2,382 filings / 134 companies** file no operating income. No
+  operating-income derivation in this task.
+- **R-5** accepted after F10 (the breakdown above).
+
+**The audit's `metrics` group, re-taken** (`out/f1_audit_control.json` with master's `src`,
+`out/f1_audit_after.json` with this branch, `out/f1_audit_diff.txt`): **14 keys changed, every
+acceptance row 0** — `N10.tax_rate_21_on_nonpositive_pretax` 1,319/209 → 0,
+`N10.tax_rate_21_on_loss` 547/158 → 0, `MET03.nopat_taxed_on_operating_loss` **105/61 → 0** (the
+predicate now reads the TTM NOPAT on a 10-Q; the reviewer's pre-fix count was 107/57),
+`MET03.nopat_on_filed_rate` 7,997/472 → 0, `MET09.*` 62/38 and 301/115 → 0,
+`N15.roe_on_negative_equity` 586/50 → 0, `APP07.debt_to_equity_on_negative_equity` 582/51 → 0,
+`N15.roic_on_nonpositive_capital` 91/11 → 0, the four `MET04.*` → 0, and
+`N9.net_cash_positive_ebitda` 373/66 → 414/68 (the valid net-cash values, kept). The data-quality
+gates are **identical** to part 2's (`out/f1_quality_after.log` vs `out/p3_quality_control.log`);
+production and universe sha1 unchanged (`out/f1_sha1.txt`).
+
 ### Declared limitations and findings
 
 - **The `effective_tax_rate` metric is no longer clamped (D3).** 497 filings / 199 companies store a raw
