@@ -132,3 +132,29 @@ def test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback() -> No
 def test_a_clean_metric_is_not_withheld() -> None:
     result = MetricResult("net_margin", 0.1, "ratio", {})
     assert agents.withheld_metrics([("profitability", result)]) == {}
+
+
+def test_an_empty_value_keeps_its_own_reason_when_a_gate_would_quarantine_it() -> None:
+    """K5: a negative-equity filing can trip DQ_NEG_EQUITY, which quarantines D/E and ROE. Both are already
+    empty (APP-07), so neither is relabelled as a data-quality matter -- negative equity is not a data error:
+    ROE keeps its own `not_applicable` reason."""
+    results = [
+        (
+            "profitability",
+            MetricResult(
+                "return_on_equity",
+                None,
+                "ratio",
+                {"equity": -1.0, "provenance": {"empty_reason": "not_applicable"}},
+            ),
+        ),
+        ("leverage", MetricResult("debt_to_equity", None, "ratio", {"equity": -1.0})),
+        (
+            "leverage",
+            MetricResult("net_debt_to_ebitda", 8.0, "x", {"total_debt": 9.0, "cash": 1.0}),
+        ),
+    ]
+    assert agents.withheld_metrics(results) == {}
+    assert agents._metric_lines("profitability", [results[0][1]], {}) == [
+        "return_on_equity: empty (not_applicable)"
+    ]

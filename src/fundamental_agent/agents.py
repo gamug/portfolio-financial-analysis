@@ -140,7 +140,9 @@ def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str,
 
     The gates are ``quality``'s own, run on the in-memory results with its own functions and constants
     (Annex A-01 to A-05, the identity gates), so the prompt withholds exactly what ``cycle`` would read as
-    NULL -- never a second, hand-copied threshold."""
+    NULL -- never a second, hand-copied threshold. Only a metric that **has** a value is withheld: an empty
+    value keeps its own reason (``empty (<reason>)``), which is the metric's own cause, not a data-quality
+    one (fix round 1, K5)."""
     filing: quality.FilingMetrics = {
         (group, result.name): quality.StoredMetric(result.value, result.inputs)
         for group, result in results
@@ -148,7 +150,7 @@ def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str,
     return {
         issue.metric: issue.rule_id
         for issue in quality.evaluate(filing)
-        if issue.severity == "HARD"
+        if issue.severity == "HARD" and issue.value is not None
     }
 
 
