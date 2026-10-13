@@ -26,11 +26,18 @@ def test_two_filings_in_one_run_share_the_same_prompt_hash() -> None:
 
 
 def test_changing_one_specialist_prompt_changes_the_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T-076: a specialist's prompt is its skill (and the generated blocks), so rewriting one skill
+    changes the version hash. Replaces the T-113 version that patched the removed inline prompts."""
     before = _prompt_version_hash("deepseek-chat")
-    monkeypatch.setitem(
-        agents._INLINE_SPECIALIST_PROMPTS,
-        "profitability",
-        "a rewritten profitability specialist prompt",
+    real = agents.load_skill
+    monkeypatch.setattr(
+        agents,
+        "load_skill",
+        lambda group: (
+            "a rewritten profitability specialist prompt"
+            if group == "profitability"
+            else real(group)
+        ),
     )
     after = _prompt_version_hash("deepseek-chat")
     assert before != after

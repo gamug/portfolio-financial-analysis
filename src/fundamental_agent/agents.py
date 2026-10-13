@@ -28,7 +28,7 @@ from fundamental_agent.metrics import (
 from fundamental_agent.metrics import valuation as valuation_metrics
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.skills import load_skill
+from fundamental_agent.skills import group_applicability, group_definitions, load_skill
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
 
@@ -52,43 +52,50 @@ for financial firms, skip growth/cagr when there is no multi-period comparison);
 valuation whenever free-cash-flow-yield numbers are present.
 After gathering the readings, give a short synthesis in plain language."""
 
-# Short fallback briefs, used when a group has no skills/<name>/SKILL.md SOP mapped.
-_INLINE_SPECIALIST_PROMPTS = {
-    "profitability": "You read profitability ratios (margins, ROA, ROE). "
-    "State whether profitability is strong, adequate or weak and why.",
-    "liquidity": "You read liquidity ratios (current, quick, cash). "
-    "State whether short-term solvency looks comfortable or tight.",
-    "leverage": "You read leverage ratios (debt/equity, debt/assets, interest coverage, "
-    "net debt/EBITDA). State whether the balance sheet is conservative or stretched.",
-    "cashflow": "You read cash-flow quality (operating cash flow margin, free cash flow "
-    "margin and conversion, capex intensity). State whether cash generation backs earnings.",
-    "efficiency": "You read efficiency ratios (asset, inventory, receivables turnover). "
-    "State whether the asset base is used efficiently.",
-    "growth": "You read year-over-year growth (revenue, operating income, net income, free "
-    "cash flow). State whether the trajectory is improving or deteriorating.",
-    "roic": "You read return on invested capital and the effective tax rate. "
-    "State whether the company earns above its cost of capital.",
-    "cagr": "You read multi-year compound annual growth rates (revenue, net income, "
-    "operating cash flow). State whether long-run growth is strong, flat or declining.",
-    "valuation": "You read free-cash-flow yield (equity and enterprise), its "
-    "SBC-adjusted variant and market capitalisation. State whether the price paid for "
-    "the company's cash generation looks cheap, fair or rich, and flag SBC dilution.",
-}
+# The fixed lead of every specialist's system prompt (T-076, D2): no recompute, and the company type comes
+# from the code's own `not_applicable` reason, never from the model (APP-00, T-071).
+_SPECIALIST_LEAD = (
+    "You are the {group} specialist in a fundamental-analysis pipeline. The numbers are already "
+    "computed for you -- do not recompute them and do not ask for filing text. Use only the numbers "
+    "given. Give a concise 1-2 sentence assessment for the orchestrator, applying any caveat the "
+    "procedure below would raise. The brief carries no company type: an empty metric whose reason is "
+    "`not_applicable` is the code's own decision that the metric does not apply to this company, so read "
+    "that reason as the company type -- never reclassify the company yourself."
+)
+
+
+def _generated_definitions(group: str) -> str:
+    """The group's metric definitions, from the generated checklist data (T-076, D1/D2)."""
+    lines = [f"--- GENERATED: the {group} metrics' definitions (checklist Annex B) ---"]
+    lines += [
+        f"{row['metric']} [{row['md_id']}, {row['basis']}]: {row['formula']}"
+        for row in group_definitions(group)
+    ]
+    return "\n".join(lines)
+
+
+def _generated_applicability(group: str) -> str:
+    """The group's applicability rows, from the generated checklist matrix (T-076, D1/D2)."""
+    lines = [f"--- GENERATED: the {group} metrics' applicability (checklist matrix) ---"]
+    lines += [
+        f"{row['metric']}: {row['company_type']} {row['code']}"
+        + (f" ({row['rule']})" if row["rule"] else "")
+        for row in group_applicability(group)
+    ]
+    return "\n".join(lines)
 
 
 def _specialist_system_prompt(group: str) -> str:
-    """Build a specialist's system prompt from its SKILL.md SOP when one exists."""
-    lead = (
-        f"You are the {group} specialist in a fundamental-analysis pipeline. The ratios "
-        "are already computed for you -- do not recompute them and do not ask for filing "
-        "text. Give a concise 1-2 sentence assessment for the orchestrator, applying any "
-        "caveat the procedure below would raise (negative base, interest netting, "
-        "unclassified balance sheet, lease/SBC distortions)."
-    )
+    """A specialist's system prompt: a fixed lead, the checklist's generated data, then its skill."""
+    parts = [
+        _SPECIALIST_LEAD.format(group=group),
+        _generated_definitions(group),
+        _generated_applicability(group),
+    ]
     sop = load_skill(group)
-    if sop is None:
-        return f"{lead}\n\n{_INLINE_SPECIALIST_PROMPTS[group]}"
-    return f"{lead}\n\n--- STANDARD OPERATING PROCEDURE: {group} ---\n{sop}"
+    if sop is not None:
+        parts.append(f"--- SKILL: {group} ---\n{sop}")
+    return "\n\n".join(parts)
 
 
 _SYNTHESIS_PROMPT = """Produce the final fundamental assessment for this filing.
