@@ -111,6 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
     card_cmd.add_argument("--db", required=True, help="database to read (opened read-only)")
     card_cmd.add_argument("--cik", required=True, help="the company's CIK (APP-10a)")
     card_cmd.add_argument("--date", required=True, help="as-of date YYYY-MM-DD (point-in-time)")
+    card_cmd.add_argument(
+        "--metrics-version",
+        help="the stored engine version to read (default: the current one)",
+    )
     card_cmd.add_argument("--out", help="write the card to this file (default: stdout)")
 
     fidelity_cmd = sub.add_parser(
@@ -211,7 +215,7 @@ def _run_card(args: argparse.Namespace) -> int:
 
     conn = connect_ro(resolve_db_path(args.db))
     try:
-        card = build_card(conn, args.cik, args.date)
+        card = build_card(conn, args.cik, args.date, metrics_version=args.metrics_version)
     finally:
         conn.close()
     text = render(card)

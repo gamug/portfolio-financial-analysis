@@ -12,7 +12,31 @@ from portfolio_common.db import Database
 from fundamental_agent import db
 from fundamental_agent.card import build_card, render
 from fundamental_agent.fidelity import dq01_tolerance, run_fidelity
+from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.statements import Statements, iter_facts
+
+# a stored provenance block, as metrics/provenance.py writes it
+_PROVENANCE = {
+    "accession": "0000320193-23-000106",
+    "period": "2023-09-30 (FY)",
+    "rule_ids": ["MD-10", "MET-02", "APP-07"],
+    "items": {
+        "net_income": [
+            {"basis": "ttm", "concept": "us-gaap_NetIncomeLoss", "how": "concept", "flags": []}
+        ],
+        "equity": [
+            {
+                "basis": "prior_year",
+                "concept": "us-gaap_StockholdersEquity",
+                "how": "concept",
+                "flags": [],
+                "source": "filing",
+            }
+        ],
+    },
+    "flags": [],
+    "empty_reason": None,
+}
 
 
 def _seed(memory_db: Database, aapl_10k: Statements) -> int:
@@ -32,23 +56,43 @@ def _seed(memory_db: Database, aapl_10k: Statements) -> int:
     return filing_id
 
 
-def test_card_prints_the_profile_the_filing_and_the_metrics(
+def test_card_prints_the_stored_row_not_a_recomputation(
     memory_db: Database, aapl_10k: Statements
 ) -> None:
-    _seed(memory_db, aapl_10k)
+    """G3: the card reads the stored rows. The stored value (9.99) is not what the code would
+    compute for Apple's ROE, and it is what the card prints."""
+    filing_id = _seed(memory_db, aapl_10k)
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "profitability",
+                MetricResult("return_on_equity", 9.99, "ratio", {"provenance": _PROVENANCE}),
+            ),
+            # a row recorded without a provenance block
+            ("profitability", MetricResult("net_margin", 0.5, "ratio", {})),
+        ],
+    )
     card = build_card(memory_db, "0000320193", "2023-12-31")
     assert card.ticker == "AAPL"
     assert card.filing["form"] == "10-K"
     assert card.filing["accession"] == "0000320193-23-000106"
     assert card.is_reit is False
+    assert "metrics-v7" in card.metrics_version
+    roe = next(m for m in card.metrics if m["name"] == "return_on_equity")
+    assert roe["value"] == 9.99
+    assert "MD-10" in roe["rule_ids"]
+    assert roe["provenance"]["items"]["net_income"][0]["basis"] == "ttm"
     text = render(card)
     assert "Company card — AAPL" in text
-    assert "Filing: 10-K FY2023" in text
-    assert "profitability.return_on_equity" in text
-    # the metrics carry their rule IDs and the provenance block
-    roe = next(m for m in card.metrics if m["name"] == "return_on_equity")
-    assert "MD-10" in roe["rule_ids"]
-    assert roe["provenance"]["items"]["net_income"][0]["concept"] == "us-gaap_NetIncomeLoss"
+    assert "9.990000" in text
+    # the line items come from the stored provenance, with their basis
+    equity = next(item for item in card.line_items if item["item"] == "equity")
+    assert equity["basis"] == "prior_year"
+    assert equity["source"] == "filing"
+    # a row without a provenance block says so
+    assert "provenance: not stored (recompute needed)" in text
 
 
 def test_card_uses_the_latest_filing_available_on_or_before_the_date(
