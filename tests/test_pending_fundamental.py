@@ -12,7 +12,9 @@ from conftest import cik_for, seed_fundamental_score, write_universe_db
 from fundamental_agent import cli, pending, pipeline
 from fundamental_agent.db import ensure_schema
 from fundamental_agent.edgar_client import EdgarError, EdgarNotFoundError, FilingRef
+from fundamental_agent.pending import Verdict, _Lister, _Plan
 from kg_schema import connect
+from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
 
 D = "2026-10-02"
@@ -297,6 +299,89 @@ def test_a_predecessor_whose_last_10k_is_not_listed_is_unlinked_not_pending(fx: 
     assert line.startswith("pending: no")
     assert f"1 unlinked predecessor (AAA {PRED})" in line
     assert not any(c == PRED and f == "10-Q" for c, f, _ in edgar.calls)  # never listed
+
+
+def _successor_listing(
+    fx: Fixture, edgar: FakeEdgar, *, form: str = "10-K", period: str = "2025-12-31"
+) -> None:
+    """The predecessor's last annual report is listed under the successor's (AAA's) CIK and stored
+    (so the successor's own listing is not what makes the step pending)."""
+    fx.scored("AAA", PRED_LAST_10K, "2026-02-15", form="10-K")
+    edgar.listing[(cik_for("AAA"), "10-K", 2025)] = [
+        FilingRef(form, "2026-02-15", PRED_LAST_10K, cik=cik_for("AAA"), period_of_report=period)
+    ]
+
+
+def test_the_last_annual_report_under_the_successor_links_the_predecessor(fx: Fixture) -> None:
+    edgar = _succession(fx, linked=False)
+    _successor_listing(fx, edgar)
+    edgar.listing[(PRED, "10-Q", 2025)] = [_ref("0000000999-25-000007", "2025-08-01", PRED)]
+    line = fx.line(edgar)
+    assert "unlinked predecessor" not in line
+    assert "0000000999-25-000007" in line
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "why"),
+    [
+        ({"form": "10-K/A"}, "an amendment does not count"),
+        ({"period": "2024-06-30"}, "a period outside the 371-day window does not count"),
+    ],
+)
+def test_a_decoy_under_the_successor_does_not_count(
+    fx: Fixture, kwargs: dict[str, str], why: str
+) -> None:
+    edgar = _succession(fx, linked=False)
+    _successor_listing(fx, edgar, **kwargs)
+    assert f"1 unlinked predecessor (AAA {PRED})" in fx.line(edgar)
+
+
+def test_a_successor_listing_that_cannot_be_read_fails_the_check_not_unlinks(
+    fx: Fixture,
+) -> None:
+    """An outage while checking the successor must never read as "unlinked, not pending" either."""
+    edgar = _succession(fx, linked=False)
+
+    def down(cik: str, form: str, year: int) -> list[FilingRef]:
+        if cik == cik_for("AAA") and form == "10-K":
+            raise EdgarError("/filing_by_year failed after 3 attempts")
+        return []
+
+    edgar.filing_by_year = down  # type: ignore[method-assign]
+    with pytest.raises(EdgarError):
+        fx.line(edgar)
+
+
+def test_pending_fails_the_check_on_a_successor_listing_error() -> None:
+    """The check itself reads the successor's listing: an outage there fails it (never "unlinked")."""
+    succ, pred = "0000000002", "0000000001"
+
+    class Down:
+        def filing_by_year(self, cik: str, form: str, year: int) -> list[FilingRef]:
+            if cik == succ and form == "10-K":
+                raise EdgarError("/filing_by_year failed after 3 attempts")
+            return []
+
+    plan = _Plan(
+        ciks={"AAA": [(succ, True), (pred, True)]},
+        windows={"AAA": [2022, 2023, 2024, 2025, 2026]},
+        effective={(succ, pred): "2026-01-01"},
+    )
+    member = UniverseMember(
+        symbol="AAA",
+        security="AAA Inc.",
+        cik=succ,
+        gics_sector=None,
+        gics_sub_industry=None,
+        hq_location=None,
+        date_added=None,
+        founded=None,
+        valid_from="2020-01-01",
+        valid_to=None,
+    )
+    lister = _Lister(Down(), D, plan, Verdict(), None)  # type: ignore[arg-type]
+    with pytest.raises(EdgarError, match="could not be read"):
+        lister._unlinked(member, pred)
 
 
 def test_a_linked_predecessor_filing_not_stored_is_pending(fx: Fixture) -> None:

@@ -109,8 +109,9 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
 - **`universe.db` reads (read-only, never written here):** `connect_ro`
   (re-exports `kg_schema.db.connect_ro`), `members_asof(universe_db,
   analysis_date, *, universe="SP500") -> list[UniverseMember]` (predicate
-  `valid_from <= D AND (valid_to IS NULL OR valid_to > D)`, deduped by symbol
-  keeping the latest stint; rejects any universe other than `SP500`),
+  `valid_from <= D AND (valid_to IS NULL OR valid_to >= D)` — `valid_to` is the last
+  day of membership, the day before the removal takes effect, inclusive — deduped by
+  symbol keeping the latest stint; rejects any universe other than `SP500`),
   `symbols_asof(...)`, and `resolve_asset_ids(financial_db, symbols) ->
   (mapping, missing)` (pure read, case-insensitive `assets.ticker` match,
   chunked `in_clause` — creating a brand-new `assets` row stays with the

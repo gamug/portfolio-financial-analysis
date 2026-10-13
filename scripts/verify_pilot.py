@@ -15,10 +15,16 @@ import json
 import math
 import sqlite3
 from collections.abc import Callable
+from datetime import date, timedelta
 
 from api import orchestrator
 from kg_schema.db import connect_ro
-from kg_schema.queries import invalid_sec_filings_accessions, unresolved_run_references
+from kg_schema.env import universe_database_path
+from kg_schema.queries import (
+    invalid_sec_filings_accessions,
+    members_asof,
+    unresolved_run_references,
+)
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
@@ -58,6 +64,37 @@ def check(task: str, fn: Callable[[], None]) -> None:
         fn()
     except sqlite3.Error as exc:
         report(task, "SKIP", f"not checkable on this database ({exc})")
+
+
+def members_asof_mismatches(fin_db_path: str, universe_path: str) -> tuple[int, list[str]]:
+    """Dates where ``members_asof`` disagrees with a closed-interval read of the universe file (T-153a).
+
+    The dates checked are every ``cycle_run.cycle_date``, every ``valid_to`` in the file, and each
+    ``valid_to + 1`` day: a leave date and the day after are exactly what a ``>`` predicate gets wrong.
+    Returns ``(dates_checked, mismatches)``; both connections are read-only."""
+    fin = connect_ro(fin_db_path)
+    universe = connect_ro(universe_path)
+    dates = {str(r["cycle_date"]) for r in fin.execute("SELECT DISTINCT cycle_date FROM cycle_run")}
+    for r in universe.execute(
+        "SELECT DISTINCT valid_to FROM universe_membership WHERE valid_to IS NOT NULL"
+    ):
+        leave = date.fromisoformat(str(r["valid_to"]))
+        dates.add(leave.isoformat())
+        dates.add((leave + timedelta(days=1)).isoformat())
+    mismatches: list[str] = []
+    for as_of in sorted(dates):
+        closed = {
+            str(r["symbol"])
+            for r in universe.execute(
+                "SELECT symbol FROM universe_membership WHERE valid_from <= ? "
+                "AND (valid_to IS NULL OR valid_to >= ?)",
+                (as_of, as_of),
+            )
+        }
+        got = {m.symbol for m in members_asof(universe, as_of)}
+        if got != closed:
+            mismatches.append(f"{as_of}: members_asof={len(got)} closed={len(closed)}")
+    return len(dates), mismatches
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -902,6 +939,27 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-083", t083)
+
+    def t153a() -> None:
+        universe_path = universe_database_path()
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        dates_checked = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n, mismatches = members_asof_mismatches(path, universe_path)
+            dates_checked = max(dates_checked, n)
+            bad += [f"{prefix}{m}" for m in mismatches]
+        report(
+            "T-153a",
+            "FAIL" if bad else "PASS",
+            f"members_asof vs the closed-interval read of {universe_path}: {dates_checked} dates; "
+            + ("; ".join(bad[:6]) if bad else "agrees on every date"),
+        )
+
+    check("T-153a", t153a)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(
