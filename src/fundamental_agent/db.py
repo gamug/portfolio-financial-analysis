@@ -77,8 +77,21 @@ _CROSS_ITEM_BAND = 1.25
 # missing debt or cash leaves EV and ROIC empty instead of 0 (MET-00), and a balance sheet is read
 # only at its period end (N6). Part 2 keeps ``metrics-v6`` (no non-scratch database is built between
 # the two PRs).
+# ``metrics-v7`` (T-151 part 1 of 3): the line items gain their sourced component maps. D&A is the
+# filed ``DepreciationDepletionAndAmortization`` / ``DepreciationAndAmortization`` /
+# ``DepreciationAmortizationAndAccretionNet``, else the sum of the filed D&A-nature children of the
+# FASB 2026 cash-flow arc (``Depreciation`` + ``Depletion`` / ``OtherDepreciationAndAmortization`` /
+# ``AmortizationOfIntangibleAssets``), refused when any other D&A-named line is on the face
+# (C1); long-term debt falls back to the filed children of ``LongTermDebtNoncurrent`` (sfp-cls arc)
+# or ``LongTermDebt`` (sfp-dbo arc, flagged ``includes_current_maturities``) -- the REIT
+# ``SecuredDebt`` + ``UnsecuredDebt`` shape resolves -- refused when a debt-named balance-sheet line
+# is outside the tree used (C2); the net capex element
+# ``PaymentsForProceedsFromProductiveAssets`` is read only when filed above zero, a net-proceeds
+# value being skipped for the caption fallback (C3); and a 10-Q's quarter label follows the
+# company's own fiscal year end, overriding a payload balance-sheet instant that disagrees (C4).
+# Every new flag reaches the metrics as ``flag_<item>_<flag>`` inputs, as T-148's do (C6).
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v6"
+METRICS_ENGINE_VERSION = "metrics-v7"
 
 
 @dataclass(frozen=True)

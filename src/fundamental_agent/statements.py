@@ -162,12 +162,70 @@ SHORT_TERM_DEBT_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 SHORT_TERM_DEBT_LAST = G + "DebtCurrent"
 # Long-term lines that already contain the current maturities: a short-term term that is a kind of
-# current maturity is not added to them (N4). ``UnsecuredDebt`` + ``SecuredDebt`` (a REIT's only
-# debt lines, N23) is **not** a map: no loaded source states debt = secured + unsecured (ID-02b), so
-# a REIT that files nothing else has no debt the resolver reads -- a capture failure, EV empty.
+# current maturity is not added to them (N4).
 INCLUDES_CURRENT_MATURITIES = (
     G + "LongTermDebt",
     G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+)
+# The sourced long-term-debt sums (C2, ID-02b; T-151 part 1). Each map is the calculation arc of a
+# FASB 2026 total, read **only when no concept the resolver reads today is filed** in the column.
+# The fasb zip ``docs/checklist_sec/sec_xcheck/fasb_2026_dl/us-gaap-2026.zip``
+# (sha256 f4c8b8b5697ba7d825a8614b159611cd25a46640e98a9737cda1e4a672bd4c81) holds the arcs:
+#   ``stm/us-gaap-stm-sfp-cls-cal-2026.xml`` -- LongTermDebtNoncurrent (15 children, orders 10-150):
+#     LongTermLineOfCredit, CommercialPaperNoncurrent, ConstructionLoanNoncurrent,
+#     SecuredLongTermDebt, SubordinatedLongTermDebt, UnsecuredLongTermDebt, ConvertibleDebtNoncurrent,
+#     ConvertibleSubordinatedDebtNoncurrent, LongTermTransitionBond, LongTermPollutionControlBond,
+#     JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrustNoncurrent, LongTermNotesAndLoans,
+#     SpecialAssessmentBondNoncurrent, LongtermFederalHomeLoanBankAdvancesNoncurrent,
+#     OtherLongTermDebtNoncurrent.
+#   ``stm/us-gaap-stm-sfp-dbo-cal-2026.xml`` -- LongTermDebt (15 children, orders 10-150):
+#     SecuredDebt, UnsecuredDebt, SubordinatedDebt, ConvertibleDebt, ConvertibleSubordinatedDebt,
+#     JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrust, LineOfCredit,
+#     LongtermCommercialPaperCurrentAndNoncurrent, LongtermTransitionBondCurrentAndNoncurrent,
+#     LongtermPollutionControlBondCurrentAndNoncurrent,
+#     LongtermConstructionLoanCurrentAndNoncurrent, NotesAndLoansPayable, SpecialAssessmentBond,
+#     OtherLongTermDebt, FederalHomeLoanBankAdvancesLongTerm.
+# B6 definitions (``elts/us-gaap-doc-2026.xml``): LongTermDebtNoncurrent "Amount, after deduction of
+# unamortized premium (discount) and debt issuance cost, of long-term debt classified as
+# noncurrent. Excludes lease obligation."; LongTermDebt the same "... of long-term debt. Excludes
+# lease obligation."; SecuredDebt "Carrying value as of the balance sheet date, including the
+# current and noncurrent portions, of collateralized debt obligations ..."; UnsecuredDebt
+# "Including the current and noncurrent portions, carrying value as of the balance sheet date of
+# uncollateralized debt obligations ..." -- the dbo tree carries the current maturities too, so its
+# map is flagged ``includes_current_maturities`` (N4). The cls tree excludes them.
+LONG_TERM_DEBT_NONCURRENT_CHILDREN: tuple[str, ...] = (
+    G + "LongTermLineOfCredit",
+    G + "CommercialPaperNoncurrent",
+    G + "ConstructionLoanNoncurrent",
+    G + "SecuredLongTermDebt",
+    G + "SubordinatedLongTermDebt",
+    G + "UnsecuredLongTermDebt",
+    G + "ConvertibleDebtNoncurrent",
+    G + "ConvertibleSubordinatedDebtNoncurrent",
+    G + "LongTermTransitionBond",
+    G + "LongTermPollutionControlBond",
+    G + "JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrustNoncurrent",
+    G + "LongTermNotesAndLoans",
+    G + "SpecialAssessmentBondNoncurrent",
+    G + "LongtermFederalHomeLoanBankAdvancesNoncurrent",
+    G + "OtherLongTermDebtNoncurrent",
+)
+LONG_TERM_DEBT_CHILDREN: tuple[str, ...] = (
+    G + "SecuredDebt",
+    G + "UnsecuredDebt",
+    G + "SubordinatedDebt",
+    G + "ConvertibleDebt",
+    G + "ConvertibleSubordinatedDebt",
+    G + "JuniorSubordinatedDebentureOwedToUnconsolidatedSubsidiaryTrust",
+    G + "LineOfCredit",
+    G + "LongtermCommercialPaperCurrentAndNoncurrent",
+    G + "LongtermTransitionBondCurrentAndNoncurrent",
+    G + "LongtermPollutionControlBondCurrentAndNoncurrent",
+    G + "LongtermConstructionLoanCurrentAndNoncurrent",
+    G + "NotesAndLoansPayable",
+    G + "SpecialAssessmentBond",
+    G + "OtherLongTermDebt",
+    G + "FederalHomeLoanBankAdvancesLongTerm",
 )
 # ID-02b "no debt line at all": a balance-sheet concept that names a debt obligation, and an
 # income-statement concept that names interest expense, in any taxonomy (an extension counts: it
@@ -183,6 +241,53 @@ _NOT_A_DEBT_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
+
+# -- Depreciation, depletion and amortization (MD-01, ID-02b; T-151 part 1, C1) --------------------
+# The sourced D&A sum, from the FASB 2026 cash-flow calculation arc
+# ``stm/us-gaap-stm-scf-indir-cal-2026.xml`` (same zip, sha256 f4c8b8b5...):
+#   DepreciationDepletionAndAmortization -> Depreciation (order 10),
+#     AdjustmentForAmortization (20), OtherDepreciationAndAmortization (30), Depletion (40);
+#   AdjustmentForAmortization -> CostOfGoodsAndServicesSoldAmortization (10),
+#     PresentValueOfFutureInsuranceProfitsAmortizationExpense1 (20),
+#     AmortizationOfIntangibleAssets (30), DeferredPolicyAcquisitionCostAmortizationExpense (40),
+#     DeferredSalesInducementsAmortizationExpense (50), AmortizationOfValueOfBusinessAcquiredVOBA
+#     (60), AmortizationOfDeferredLoanOriginationFeesNet (70), AmortizationOfMortgageServicingRightsMSRs
+#     (80), AccretionAmortizationOfDiscountsAndPremiumsInvestments (90), AmortizationOfAcquisitionCosts
+#     (100), AmortizationOfDeferredSalesCommissions (110), FinanceLeaseRightOfUseAssetAmortization
+#     (120), AmortizationOfPowerContractsEmissionCredits (130), AmortizationOfNuclearFuelLease (140),
+#     AmortizationOfRegulatoryAsset (150), AmortizationOfAdvanceRoyalty (160),
+#     AmortizationOfDeferredPropertyTaxes (170), AmortizationOfRateDeferral (180),
+#     AmortizationOfDeferredHedgeGains (190), OtherAmortizationOfDeferredCharges (200),
+#     AmortizationOfFinancingCostsAndDiscounts (210), AmortizationAndDepreciationOfDecontaminating-
+#     AndDecommissioningAssets (220).
+# B6 definitions (``elts/us-gaap-doc-2026.xml``): DepreciationDepletionAndAmortization "The
+# aggregate expense recognized in the current period that allocates the cost of tangible assets,
+# intangible assets, or depleting assets to periods that benefit from use of the assets.";
+# Depreciation "The amount of expense recognized in the current period that reflects the allocation
+# of the cost of tangible assets over the assets' useful lives."; Depletion "The noncash expense
+# charged against earnings to recognize the consumption of natural resources.";
+# OtherDepreciationAndAmortization "Amount of expense charged against earnings to allocate the cost
+# of tangible and intangible assets over their remaining economic lives, classified as other.";
+# AmortizationOfIntangibleAssets "Amount of amortization expense for finite-lived intangible asset.
+# Excludes goodwill and capitalized cost for software to be sold, leased, or marketed.";
+# AdjustmentForAmortization "The aggregate amount of recurring noncash expense charged against
+# earnings in the period to allocate the cost of assets over their estimated remaining economic
+# lives." The D&A-**nature** children are the four below; the other children of
+# AdjustmentForAmortization (financing costs, debt discount or premium, deferred charges, loan fees,
+# ...) are not D&A, and a filed one refuses the sum ("only lines", C1 (c)).
+DA_SOURCED_CHILDREN: tuple[str, ...] = (
+    G + "Depreciation",
+    G + "Depletion",
+    G + "OtherDepreciationAndAmortization",
+    G + "AmortizationOfIntangibleAssets",
+)
+# A cash-flow row whose concept or caption names D&A: the C1 (c) "only lines" scan.
+_DA_NAME_RE = re.compile(r"depreciat|amorti|deplet", re.IGNORECASE)
+
+# C3 (T-151 part 1): a net-element caption that names proceeds, a sale or a disposition. Such a line
+# is net proceeds whatever its filed sign (COP: "Proceeds from asset dispositions" displayed
+# -17,000,000 with ``preferred_sign`` -1, a filed +17,000,000).
+_NET_ELEMENT_PROCEEDS_RE = re.compile(r"proceeds?|\bsales?\b|disposition", re.IGNORECASE)
 
 # -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
 _CASH_PAREN_RE = re.compile(r"\([^)]*\)")
@@ -346,6 +451,9 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_DepreciationDepletionAndAmortization",
             "us-gaap_DepreciationAndAmortization",
         ),
+        # C1 (T-151 part 1): when none of the three concepts is filed, the sourced sum of the
+        # filed D&A-nature children (``DA_SOURCED_CHILDREN``) or a refusal.
+        resolver="da",
     ),
     "operating_cash_flow": LineItem(
         "operating_cash_flow",
@@ -619,6 +727,7 @@ _COMPOSITE = {
     "short_term_debt": "_short_term_debt",
     "cash": "_cash",
     "capex": "_capex",
+    "da": "_depreciation_amortization",
 }
 
 
@@ -1199,6 +1308,70 @@ class Statements:
 
         return None, None, None
 
+    def _depreciation_amortization(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """D&A (MD-01, ID-02b; C1, T-151 part 1): the filed aggregate first, unchanged, else the
+        sourced sum of the filed D&A-nature children, else a refusal."""
+        value, concept, how = self._component_row(spec, column)
+        if value is not None:
+            return value, concept, how
+        return self._da_sourced_sum(spec, column)
+
+    def _da_sourced_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """The sourced D&A sum (C1, ID-02b; T-151 part 1). Read only when none of the
+        ``depreciation_amortization`` concepts is filed in the column.
+
+        Conditions: (a) ``Depreciation`` is filed -- without it the sum is not D&A and
+        ``depreciation_only_not_da`` / empty stays as today (:data:`DA_SOURCED_CHILDREN`'s
+        ``unread_flags``); (b) at least one amortization or depletion child is filed
+        (``Depletion``, ``OtherDepreciationAndAmortization``, ``AmortizationOfIntangibleAssets``) --
+        depreciation alone stays refused; (c) **only lines**: every other cash-flow line whose
+        concept or caption names depreciation, amortization or depletion must be one of the four
+        :data:`DA_SOURCED_CHILDREN` -- any other (an outside amortization of
+        ``AdjustmentForAmortization``, ``AdjustmentForAmortization`` itself, an extension D&A line)
+        refuses the sum, flagged ``da_sum_refused_other_lines``. Each child keeps its filed sign
+        (ID-12). Flagged ``da_sourced_sum``."""
+        children = DA_SOURCED_CHILDREN
+        depreciation = self._concept_value(spec, column, G + "Depreciation")
+        if depreciation is None:
+            return None, None, None
+        amortization_or_depletion = [
+            c
+            for c in children
+            if c != G + "Depreciation" and self._concept_value(spec, column, c) is not None
+        ]
+        if not amortization_or_depletion:
+            return None, None, None
+        if self.da_lines_outside_sourced(spec):
+            self._flag("da_sum_refused_other_lines")
+            return None, None, None
+        filed = {c: self._concept_value(spec, column, c) for c in children}
+        self._flag("da_sourced_sum")
+        return (
+            sum(v for v in filed.values() if v is not None),
+            " + ".join(sorted(c for c, v in filed.items() if v is not None)),
+            "map",
+        )
+
+    def da_lines_outside_sourced(self, spec: LineItem) -> list[str]:
+        """The cash-flow lines whose concept or caption names depreciation, amortization or
+        depletion yet are not one of :data:`DA_SOURCED_CHILDREN` (C1 (c), "only lines"): a
+        non-empty list refuses the sourced sum. Matched on the concept's local name or the row's
+        caption, case-insensitively."""
+        outside: list[str] = []
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept in DA_SOURCED_CHILDREN:
+                continue
+            local = concept.split("_", 1)[-1]
+            label = str(row.get("label") or "")
+            if (_DA_NAME_RE.search(local) or _DA_NAME_RE.search(label)) and concept not in outside:
+                outside.append(concept)
+        return outside
+
     def _capex(self, spec: LineItem, column: str) -> tuple[float | None, str | None, str | None]:
         """Capex composite resolver under MET-08 and APP-04b (T-148 (f))."""
         if self.reit:
@@ -1332,15 +1505,40 @@ class Statements:
             if val5 is not None:
                 self._flag("productive_assets_fallback")
                 return val5, prod_c, "fallback"
-        val6 = self._concept_value(spec, column, G + "PaymentsForProceedsFromProductiveAssets")
+        val6, caption6 = self._net_element(spec, column)
         if val6 is not None:
-            self._flag("net_element_last_resort")
-            return val6, G + "PaymentsForProceedsFromProductiveAssets", "fallback"
-        val7, concept7, how7 = self._label_fallback_row(spec, column)
+            if _NET_ELEMENT_PROCEEDS_RE.search(caption6):
+                # C3 addition (T-151 part 1): a line captioned as proceeds, a sale or a disposition
+                # is net proceeds whatever its filed sign -- COP's 2021-03-31 comparative is
+                # displayed -17,000,000 with ``preferred_sign`` -1, a filed +17,000,000 the sign
+                # test alone would read as capex. Skipped for the caption fallback.
+                self._flag("net_element_captioned_proceeds")
+            elif val6 <= 0:
+                # C3 (MET-08, T-151 part 1): a net element of zero or below is net **proceeds**,
+                # not capex ("PaymentsForProceedsFrom..." is a net line). The tier is skipped and
+                # the caption fallback is tried; never repaired with abs() (ID-11).
+                self._flag("net_element_net_proceeds")
+            else:
+                self._flag("net_element_last_resort")
+                return val6, G + "PaymentsForProceedsFromProductiveAssets", "fallback"
+        val7, concept7, how7 = self._label_fallback_row(
+            spec, column, exclude=(G + "PaymentsForProceedsFromProductiveAssets",)
+        )
         if val7 is not None:
             self._flag("caption_fallback")
             return val7, concept7, how7
         return None
+
+    def _net_element(self, spec: LineItem, column: str) -> tuple[float | None, str]:
+        """The filed value of ``PaymentsForProceedsFromProductiveAssets`` in *column* and its
+        caption (C3, T-151 part 1): the caption is what tells a net **payment** from net proceeds
+        when the sign alone cannot (a negating label displays a payment negative)."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == G + "PaymentsForProceedsFromProductiveAssets":
+                value = self._read(row, column, spec)
+                if value is not None:
+                    return value, str(row.get("label") or "")
+        return None, ""
 
     def _capex_non_reit(
         self, spec: LineItem, column: str
@@ -1359,15 +1557,21 @@ class Statements:
     def _long_term_debt(
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
-        """Long-term debt (MET-07): the narrowest filed line (ID-02a) -- ``LongTermDebtNoncurrent``,
-        then ``LongTermDebt`` (it includes current maturities), then the combined debt-and-lease
-        elements, used only because no narrower line is filed and flagged
-        ``includes_finance_leases``. Any other filed debt line (``SecuredDebt`` + ``UnsecuredDebt``,
-        ``LineOfCredit``, ``NotesPayable``, ``SeniorNotes``, ...) is not read: no loaded source
-        states that it is, or adds up to, long-term debt, and several may overlap (ID-02b); they
-        still block the zero of "no debt line at all". A line that includes the current maturities is flagged
-        ``includes_current_maturities``: no current-maturity term is added to it
-        (:meth:`_short_term_parts`, N4)."""
+        """Long-term debt (MET-07, ID-02a, C2; T-151 part 1).
+
+        The narrowest filed line first (ID-02a): ``LongTermDebtNoncurrent`` (excludes the current
+        maturities), then ``LongTermDebt`` (they are included, flagged
+        ``includes_current_maturities``), then the combined debt-and-lease elements, used only
+        because no narrower line is filed and flagged ``includes_finance_leases``.
+
+        When **none** of those four is filed, the two sourced sums of :data:`LONG_TERM_DEBT_CHILDREN`
+        are tried (:meth:`_long_term_debt_sum`): the filed children of ``LongTermDebtNoncurrent``
+        (the sfp-cls arc, excluding current maturities), else the filed children of ``LongTermDebt``
+        (the sfp-dbo arc, including them, flagged ``includes_current_maturities``). Both need
+        **every** debt-named balance-sheet line to be a child of the tree used or a short-term map
+        concept, else the sum is refused (``debt_sum_refused_other_lines``) and the debt stays
+        empty. A line that includes the current maturities raises ``includes_current_maturities``:
+        no current-maturity term is added to it (:meth:`_short_term_parts`, N4)."""
         for concept in (G + "LongTermDebtNoncurrent", G + "LongTermDebt"):
             value = self._concept_value(spec, column, concept)
             if value is not None:
@@ -1384,7 +1588,58 @@ class Statements:
                 if concept in INCLUDES_CURRENT_MATURITIES:
                     self._flag("includes_current_maturities")
                 return value, concept, "concept"
+        return self._long_term_debt_sum(spec, column)
+
+    def _long_term_debt_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """The two sourced long-term-debt sums (C2, ID-02b; T-151 part 1).
+
+        Read in order only when no concept :meth:`_long_term_debt` reads today is filed:
+        (i) the filed children of ``LongTermDebtNoncurrent`` (the sfp-cls arc; excludes the current
+        maturities); else (ii) the filed children of ``LongTermDebt`` (the sfp-dbo arc; includes
+        them, flagged ``includes_current_maturities``). "Only lines": every debt-named balance-sheet
+        line (:data:`_DEBT_LINE_RE` and not :data:`_NOT_A_DEBT_LINE_RE`, as the zero rule uses) must
+        be a child of the tree used or a short-term map concept, else the sum is refused
+        (``debt_sum_refused_other_lines``) and the debt stays empty as today. Flagged
+        ``debt_sourced_sum``."""
+        for children, current_maturities in (
+            (LONG_TERM_DEBT_NONCURRENT_CHILDREN, False),
+            (LONG_TERM_DEBT_CHILDREN, True),
+        ):
+            filed = {
+                c: v for c in children if (v := self._concept_value(spec, column, c)) is not None
+            }
+            if not filed:
+                continue
+            if self.debt_lines_outside(children):
+                self._flag("debt_sum_refused_other_lines")
+                return None, None, None
+            self._flag("debt_sourced_sum")
+            if current_maturities:
+                self._flag("includes_current_maturities")
+            return sum(filed.values()), " + ".join(sorted(filed)), "map"
         return None, None, None
+
+    def debt_lines_outside(self, children: tuple[str, ...]) -> list[str]:
+        """The debt-named balance-sheet lines that are not a child of *children* nor a short-term
+        map concept (C2's "only lines", ID-02b): an empty list is what lets the sourced sum stand.
+        A line the filer put on the balance sheet counts whatever the gateway left of its value,
+        the same scan the debt = 0 rule uses (:meth:`_has_debt_line`)."""
+        allowed = (
+            set(children)
+            | {c for _term, concepts in SHORT_TERM_DEBT_MAP for c in concepts}
+            | {SHORT_TERM_DEBT_LAST}
+        )
+        outside: list[str] = []
+        for row in self._statement_rows("balance_sheet"):
+            concept = str(row.get("concept") or "")
+            local = concept.split("_", 1)[-1]
+            if not _DEBT_LINE_RE.search(local) or _NOT_A_DEBT_LINE_RE.search(local):
+                continue
+            if concept not in allowed and concept not in outside:
+                outside.append(concept)
+        return outside
 
     def _short_term_parts(
         self, spec: LineItem, column: str, *, current_maturities_in_long_term: bool
@@ -1888,8 +2143,11 @@ class Statements:
         return self._label_fallback_row(spec, column)
 
     def _label_fallback_row(
-        self, spec: LineItem, column: str
+        self, spec: LineItem, column: str, exclude: tuple[str, ...] = ()
     ) -> tuple[float | None, str | None, str | None]:
+        """The single caption-matched row, or nothing. *exclude* names concepts the caller has
+        already decided against (capex excludes the net element C3 rejected, so a caption like
+        "Capital expenditures, net" cannot re-take it)."""
         if not spec.label_fallback:
             return None, None, None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)
@@ -1897,6 +2155,8 @@ class Statements:
         unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
         found: dict[str, float] = {}
         for row in self._rows_for(spec):
+            if str(row.get("concept")) in exclude:
+                continue
             label = str(row.get("label") or "")
             if not wanted.search(label) or unwanted.search(label):
                 continue

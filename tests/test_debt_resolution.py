@@ -146,18 +146,23 @@ def test_n4_a_long_term_line_that_includes_current_maturities_gets_none_added() 
     assert G + "LongTermDebtCurrent" not in (total.concept or "")
 
 
-def test_n23_the_reit_pair_is_not_a_map_and_the_debt_is_a_capture_failure() -> None:
-    """UDR files no long-term debt line: its balance sheet is "Secured debt, net" (961M) and
-    "Unsecured debt, net" (4,860M). ID-02b allows a component map only when a loaded source states
-    the identity, and none states debt = secured + unsecured (B6 defines each "including the
-    current and noncurrent portions", so adding them to a short-term line can double count). The
-    long-term debt is empty and the total is a capture failure -- not 0, because the pair is a debt
-    line on the statement. 211 of the 5,070 own-period filings (19 companies) are in this case."""
+def test_c2_the_reit_pair_is_the_sourced_long_term_debt_sum() -> None:
+    """(**Replaced**: ``test_n23_the_reit_pair_is_not_a_map_and_the_debt_is_a_capture_failure``,
+    T-151 part 1 C2.) UDR files no long-term debt line: its balance sheet is "Secured debt, net"
+    (961.18M) and "Unsecured debt, net" (4,860.19M). The FASB 2026 ``sfp-dbo`` calculation arc makes
+    ``LongTermDebt = SecuredDebt + UnsecuredDebt`` -- the loaded source ID-02b asks for -- so the
+    pair is the sourced long-term debt: summed, flagged ``debt_sourced_sum`` and
+    ``includes_current_maturities`` (B6 defines each "including the current and noncurrent
+    portions"), and no current-maturity term is added to the total (N4)."""
     stmts = _stmts(UDR)
     key = _key(stmts)
-    assert stmts.resolve("long_term_debt", key).value is None
+    resolution = stmts.resolve("long_term_debt", key)
+    assert resolution.value == 5_821_369_000.0
+    assert resolution.concept == (f"{G}SecuredDebt + {G}UnsecuredDebt")
+    assert resolution.flags == ("debt_sourced_sum", "includes_current_maturities")
     total = stmts.total_debt(key)
-    assert total.value is None and "capture_failure" in total.flags
+    assert total.value == 5_821_369_000.0  # no short-term term is filed, so it is not added
+    assert "debt_sourced_sum" in total.flags and "includes_current_maturities" in total.flags
     assert (
         stmts.get("interest_expense", key) == 196_619_000.0
     )  # InterestExpenseDebt (N23) still read
@@ -352,20 +357,44 @@ def test_an_unread_debt_line_makes_a_missing_debt_a_capture_failure() -> None:
     "concept",
     [
         "LinesOfCreditCurrent",
-        "LineOfCredit",
         "SeniorNotes",
         "MortgageLoansPayable",
-        "ConvertibleDebtNoncurrent",
     ],
 )
-def test_a_debt_concept_by_any_of_its_names_is_a_debt_line(concept: str) -> None:
-    """The pattern for "a debt line is filed" is case-insensitive and reads the plural names too: a
-    filer whose only debt is a line of credit has debt the resolver did not find, not none."""
+def test_a_debt_concept_by_any_of_its_names_outside_the_trees_is_still_a_debt_line(
+    concept: str,
+) -> None:
+    """(**Replaced**: ``test_a_debt_concept_by_any_of_its_names_is_a_debt_line``, whose ``LineOfCredit``
+    and ``ConvertibleDebtNoncurrent`` cases are now sourced children, T-151 part 1 C2.) The pattern
+    for "a debt line is filed" is case-insensitive and reads the plural names too: a filer whose
+    only debt is a line of credit has debt the resolver did not find, not none. These three names
+    are no child of either sourced tree, so with no tree child filed the sum is not attempted and
+    the debt stays a capture failure."""
     payload = copy.deepcopy(_payload(ALGN))
     template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
     _add(payload, "balance_sheet", template, concept=G + concept)
     stmts = Statements.from_payload(payload)
     assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
+
+
+@pytest.mark.parametrize("concept", ["LineOfCredit", "ConvertibleDebtNoncurrent"])
+def test_a_sourced_debt_child_is_read_by_the_sum_when_no_total_is_filed(concept: str) -> None:
+    """(**Replaced**: the ``LineOfCredit`` / ``ConvertibleDebtNoncurrent`` cases of
+    ``test_a_debt_concept_by_any_of_its_names_is_a_debt_line``, T-151 part 1 C2.) ``LineOfCredit``
+    is a child of ``LongTermDebt`` (sfp-dbo) and ``ConvertibleDebtNoncurrent`` a child of
+    ``LongTermDebtNoncurrent`` (sfp-cls): with no total filed, each is the sourced sum's only term,
+    and it is read."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + concept)
+    stmts = Statements.from_payload(payload)
+    resolution = stmts.resolve("long_term_debt", _key(stmts))
+    assert resolution.value is not None and resolution.concept == G + concept
+    assert resolution.flags == (
+        ("debt_sourced_sum", "includes_current_maturities")
+        if concept == "LineOfCredit"
+        else ("debt_sourced_sum",)
+    )
 
 
 def test_a_convertible_preferred_stock_is_not_a_debt_line() -> None:

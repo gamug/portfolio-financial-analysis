@@ -113,6 +113,9 @@ class _Target:
     fiscal_period: str
     prior: Period | None
     fiscal_year: int  # the year the label carries (fiscal.label_year), stored beside it
+    # C4 (T-151 part 1): why the quarter label was overridden from the company's own fiscal year
+    # end, or ``None`` when the payload's year end agreed. Logged by the caller as a warning.
+    label_override: str | None = None
 
 
 @dataclass
@@ -516,6 +519,11 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
         _record_unusable(engine, task, ref, mismatch)  # ID-07 is a BLOCK: not stored, recorded
         return 0, 1
 
+    if resolved.label_override is not None:
+        # C4 (T-151 part 1): not a failure -- the filing is stored with the corrected label; the
+        # run's list carries it as a warning, as T-149 records its checks.
+        _record_label_override(engine, task, resolved, ref)
+
     done = skipped = 0
     for target in [resolved]:
         if target.period.date > as_of:
@@ -578,6 +586,23 @@ def _record_unusable(engine: _Engine, task: _YearTask, ref: FilingRef, reason: s
         engine.conn,
         engine.report.run_id,
         RunError(task.ticker, task.form, str(task.year), "period", message),
+    )
+
+
+def _record_label_override(
+    engine: _Engine, task: _YearTask, target: _Target, ref: FilingRef
+) -> None:
+    """C4 (PER-08, T-151 part 1): a quarter label the payload's fiscal year end disagreed with,
+    overridden from the company's own year end. The filing **is** stored, with the corrected label,
+    so this is a warning in the run's list, never a skipped filing."""
+    message = f"{ref.accession_number}: {target.label_override}"
+    engine.report.errors.append(
+        f"{task.ticker} {task.form} {target.fiscal_period} [warning] label: {message}"
+    )
+    db.record_error(
+        engine.conn,
+        engine.report.run_id,
+        RunError(task.ticker, task.form, target.fiscal_period, "label", message),
     )
 
 
@@ -658,7 +683,28 @@ def _resolve_quarter(
     label = quarter_label(end, fye)
     if label is None:
         return f"{period.date} is not a quarter end of the fiscal year ending {fye}"
-    return _Target(period, label, stmts.prior_of(period), label_year(end))
+    # C4 (PER-08, T-151 part 1). A 10-Q's quarter label follows its period end and the *company's*
+    # fiscal year end -- the latest stored 10-K before the period. ``payload_fiscal_year_end`` reads
+    # the earliest balance-sheet instant 30-330 days back, so a payload whose face carries stray
+    # note instants selects a quarter end for the year end and labels the filing a quarter it is
+    # not: CSX 0000277948-24-000047 (period end 2024-06-30, the payload's 2023-09-30 -> 2024Q3, its
+    # own year end 2024-12-31 -> 2024Q2) and CNP's Q1-2022 (a stray 2021-07-20 -> 2022Q3, Dec year
+    # end -> 2022Q1). The company's own year end wins; a disagreement is flagged and logged by the
+    # caller. A company with no stored 10-K, or a changed fiscal year whose new year end is not
+    # recorded, keeps the payload's label.
+    label_override = None
+    known = fye_lookup(period.date) if fye_lookup else None
+    if known is not None:
+        preferred = quarter_label(end, known)
+        if preferred is not None and preferred != label:
+            label_override = (
+                f"label {label} overridden to {preferred}: the payload's fiscal year end {fye} "
+                f"disagrees with the company's own {known} for period end {period.date} (C4/PER-08)"
+            )
+            label = preferred
+    return _Target(
+        period, label, stmts.prior_of(period), label_year(end), label_override=label_override
+    )
 
 
 def _columns(stmts: Statements) -> str:

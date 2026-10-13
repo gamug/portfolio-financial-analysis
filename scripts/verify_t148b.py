@@ -1023,19 +1023,41 @@ def _recompute_single_filing(
     return True
 
 
+# The recompute deletes and rewrites rows of the current engine, so it only ever runs on a database
+# under the task scratch (T-151 part 1, OPEN QUESTION 5). Tests override the root by monkeypatch;
+# the production default is the scratch tree.
+RECOMPUTE_SCRATCH_ROOT = Path("/workspaces/thesis/scratch")
+
+
+def _refuse_outside_scratch(db_path: str) -> None:
+    """Refuse a *db_path* outside :data:`RECOMPUTE_SCRATCH_ROOT` -- the recompute is destructive and
+    must never touch the read-only production database or the pilot universe."""
+    resolved = Path(db_path).expanduser().resolve()
+    root = RECOMPUTE_SCRATCH_ROOT.expanduser().resolve()
+    if not resolved.is_relative_to(root):
+        raise SystemExit(
+            f"recompute refuses {resolved}: it deletes and rewrites rows, so it runs only on a "
+            f"database under {root} (T-151 part 1)"
+        )
+
+
 def cmd_recompute(args: argparse.Namespace) -> None:
     print(f"fundamental_agent source: {fundamental_agent.__file__}", flush=True)
 
     db_path = args.db
+    _refuse_outside_scratch(db_path)
     conn = connect(db_path)
 
-    # 1. Before writing: delete existing metrics-v6 rows and their quality issues
+    # 1. Before writing: delete existing rows of the current engine and their quality issues
+    # (T-151 part 1: ``metrics-v6`` -> ``metrics-v7``; read from the code, never hard-coded, so the
+    # recompute always replaces the version the resolver is about to write)
+    engine = db.METRICS_ENGINE_VERSION
     print(
-        "Deleting existing metrics-v6 rows from fundamental_metrics and data_quality_issue...",
+        f"Deleting existing {engine} rows from fundamental_metrics and data_quality_issue...",
         flush=True,
     )
-    conn.execute("DELETE FROM fundamental_metrics WHERE engine_version = 'metrics-v6'")
-    conn.execute("DELETE FROM data_quality_issue WHERE metric_engine_version = 'metrics-v6'")
+    conn.execute("DELETE FROM fundamental_metrics WHERE engine_version = ?", (engine,))
+    conn.execute("DELETE FROM data_quality_issue WHERE metric_engine_version = ?", (engine,))
     conn.commit()
 
     # 2. Pre-load assets, their CIK, and their REIT status (M4 predicate)
@@ -1114,15 +1136,16 @@ def cmd_recompute(args: argparse.Namespace) -> None:
 
     n_filings = conn.execute("SELECT COUNT(*) FROM sec_filings").fetchone()[0]
     n_metrics = conn.execute(
-        "SELECT COUNT(DISTINCT filing_id) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+        "SELECT COUNT(DISTINCT filing_id) FROM fundamental_metrics WHERE engine_version = ?",
+        (engine,),
     ).fetchone()[0]
     metric_rows = conn.execute(
-        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = 'metrics-v6'"
+        "SELECT COUNT(*) FROM fundamental_metrics WHERE engine_version = ?", (engine,)
     ).fetchone()[0]
     print("\nRecompute finished:")
     print(f"  Filings in database:           {n_filings}")
-    print(f"  Filings with metrics-v6 rows:  {n_metrics}")
-    print(f"  Total metrics-v6 rows written: {metric_rows}")
+    print(f"  Filings with {engine} rows:  {n_metrics}")
+    print(f"  Total {engine} rows written: {metric_rows}")
 
     if not args.limit:
         expected_metrics = len(filing_rows) - len(skipped_filings)
