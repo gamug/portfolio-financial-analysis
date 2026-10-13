@@ -6858,12 +6858,13 @@ existing migration tests build) still widens its key and backfills `filing_versi
 with the later columns surviving; (d) reviewer A's reproduction; and the data-carrying migrations
 (m001, m008, m010–m013, m015) changing no row on replay.
 
-**Declared limitation (open question for the director).** A database created by `ensure()` alone is
-**not** at the migrations' target shape — its `financial_facts`/`fundamental_metrics` keys are the
-pre-m002/m003 ones and `ux_quant_portfolio_book` is absent (measured: `out/p3_stamp.txt`) — so D2 does
-not stamp it, and `migrate` still replays m002/m003/m007/m014 there (now without losing a value, which
-is what 3.2 measures). Aligning the agents' declared DDL with the migrations' target shapes would make
-D2 stamp a fresh database too; it changes `ensure()`'s documented contract (the versioned key would no
-longer need `migrate`) and four existing fixtures/tests
-(`test_quant_book_key`, `test_quant_ddl`, `test_quant_pipeline`, `test_metric_versions`), so it is left
-to the director.
+**Declared limitation (decided by reviewer A, 2026-10-13, PR #146).** A database created by `ensure()`
+alone is **not** at the migrations' target shape — its `financial_facts`/`fundamental_metrics` keys are
+the pre-m002/m003 ones and `ux_quant_portfolio_book` is absent (measured: `out/p3_stamp.txt`) — so D2
+does not stamp it, and `migrate` still replays m002/m003/m007/m014 there, now without losing a value
+(which is what 3.2 measures). Aligning the agents' declared DDL with the migrations' target shapes is
+**not** part of T-154: it would change `ensure()`'s documented contract (the versioned key would no
+longer need `migrate`) and four existing fixtures/tests (`test_quant_book_key`, `test_quant_ddl`,
+`test_quant_pipeline`, `test_metric_versions`). **Consequence for T-143 (the pilot) and T-100
+(production): create the fresh database, then run `python -m fundamental_agent migrate` once before any
+data, so the versioned unique keys exist.**
