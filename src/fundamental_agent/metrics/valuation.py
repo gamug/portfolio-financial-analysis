@@ -15,7 +15,12 @@ from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
-from fundamental_agent.metrics.tax import REIT_TTM_RATE_MISSING, nopat, nopat_tax_rate
+from fundamental_agent.metrics.tax import (
+    REIT_TTM_RATE_MISSING,
+    nopat,
+    nopat_tax_rate,
+    outside_unit_interval,
+)
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
@@ -255,6 +260,10 @@ def _md38(
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
     if rate_reason == REIT_TTM_RATE_MISSING:
         inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
+    # H7 (APP-04c, director's predicate): the flag fires only when NOPAT is formed -- operating
+    # income present on the ratio's basis -- and the rate applied to it is outside [0, 1].
+    if operating_annual is not None and outside_unit_interval(rate):
+        inputs["flag_nopat_tax_rate_outside_unit_interval"] = 1.0
     inputs.update(
         present(
             nopat=nopat_annual,

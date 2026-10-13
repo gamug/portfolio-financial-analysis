@@ -4,17 +4,21 @@ run|quality|repair-accessions|migrate|coverage``."""
 from __future__ import annotations
 
 import argparse
+import csv
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from fundamental_agent import db, quality, repair
+from fundamental_agent.card import build_card, render
 from fundamental_agent.config import DEFAULT_EDGAR_BASE_URL, Settings
 from fundamental_agent.edgar_client import EdgarClient
+from fundamental_agent.fidelity import run_fidelity
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args, resolve_db_path, run_migrate
+from kg_schema.queries import connect_ro
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 
@@ -101,6 +105,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
 
+    card_cmd = sub.add_parser(
+        "card", help="print one company's card for an as-of date (read-only; T-151 part 3, D15)"
+    )
+    card_cmd.add_argument("--db", required=True, help="database to read (opened read-only)")
+    card_cmd.add_argument("--cik", required=True, help="the company's CIK (APP-10a)")
+    card_cmd.add_argument("--date", required=True, help="as-of date YYYY-MM-DD (point-in-time)")
+    card_cmd.add_argument(
+        "--metrics-version",
+        help="the stored engine version to read (default: the current one)",
+    )
+    card_cmd.add_argument("--out", help="write the card to this file (default: stdout)")
+
+    fidelity_cmd = sub.add_parser(
+        "fidelity",
+        help="compare the stored line items with the SEC's companyfacts (read-only; D16)",
+    )
+    fidelity_cmd.add_argument("--db", required=True, help="database to read (opened read-only)")
+    fidelity_cmd.add_argument(
+        "--companyfacts-dir", required=True, help="the SEC companyfacts cache directory"
+    )
+    fidelity_cmd.add_argument("--golden", help="an optional golden_set.csv to compare against too")
+    fidelity_cmd.add_argument("--out", help="the report file (default: stdout)")
+    fidelity_cmd.add_argument("--csv", help="write the mismatching (filing, item) pairs here")
+
     add_coverage_parser(sub)
     return parser
 
@@ -182,7 +210,45 @@ def _run_repair(args: argparse.Namespace) -> int:
     return 1 if pending else 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run_card(args: argparse.Namespace) -> int:
+    # Read-only: connect_ro never opens a write connection.
+
+    conn = connect_ro(resolve_db_path(args.db))
+    try:
+        card = build_card(conn, args.cik, args.date, metrics_version=args.metrics_version)
+    finally:
+        conn.close()
+    text = render(card)
+    if args.out:
+        Path(args.out).write_text(text)
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
+def _run_fidelity(args: argparse.Namespace) -> int:
+
+    conn = connect_ro(resolve_db_path(args.db))
+    try:
+        report, mismatches = run_fidelity(conn, args.companyfacts_dir, golden=args.golden)
+    finally:
+        conn.close()
+    if args.out:
+        Path(args.out).write_text(report)
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(report)
+    if args.csv and mismatches:
+        with Path(args.csv).open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(mismatches[0]))
+            writer.writeheader()
+            writer.writerows(mismatches)
+        print(f"wrote {args.csv}")
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one dispatch branch per command
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
@@ -192,6 +258,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_quality(args)
     if args.command == "repair-accessions":
         return _run_repair(args)
+    if args.command == "card":
+        return _run_card(args)
+    if args.command == "fidelity":
+        return _run_fidelity(args)
     settings = Settings.load()
     updates: dict[str, object] = {}
     if args.db:

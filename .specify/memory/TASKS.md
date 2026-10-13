@@ -20,7 +20,7 @@ defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05; Work item 19 (local follow-ups, `T-144`, `T-152`, `T-142`, `T-145`, `T-083`) is closed 2026-10-12.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
-finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) →
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) →
 **Work item 19** (done 2026-10-12) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
@@ -30,7 +30,7 @@ prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement).
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -157,7 +157,7 @@ knowledge graph.
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
 **Order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit and `phase3_decisions.md`):** `T-141` → `T-077` →
-`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`.
+`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`.
 - **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
   technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
   (`T-147`'s input). The audit (`T-147`) then sorts the defects into four tasks, in the order of their dependencies:
@@ -496,100 +496,7 @@ the final pilot, `T-143`.
       n1,periods,extra`) shows 0 amendments stored, 0 originals lost to an amendment, the N2 effect separately; regression
       tests for (a), (c), (d), (e), (f), (g); the replaced test named above; database invariant enforced on writes; co-registrant
       utility test passes.
-- [ ] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
-      **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
-      investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
-      keeps its skills redesign). → `PLAN.md` Work item 8, step 14. Delivers `docs/metric_dictionary.md`: generated
-      directly from Annex B of `checklist_v1.3.md` (formula, one source, inference flag, 17 formulas "source pending" per D-05
-      until the second author is loaded); renames the audit key `free_cash_flow_to_equity` to `free_cash_flow` (OCF − capex, not FCFE).
-      Definitions and the measured scope:
-      - **MD-02 and MD-35:** invested capital and EV include noncontrolling interest (as MD-02 defines it: redeemable NCI
-        included between liabilities and equity; CON-04's identity when no balance is filed; 0 only with no NCI income;
-        otherwise a capture failure) and net short-term investments (when filed apart from cash); **MD-38:** (NOPAT (MD-05,
-        MET-03's 21%) − (capex (MET-08) − D&A (MD-01) + Δ non-cash working capital)) / EV (MD-35), with non-cash working capital
-        = (current assets − cash − short-term investments) − (current liabilities − short-term debt), its change between the ends
-        of the prior and the current year; empty when a term is missing or the balance sheet is not classified (REITs, banks).
-      - **The applicability matrix as data:** v1.3's matrix (35 metrics × 6 company types → applies, adjusted, or not applicable,
-        with the reason) becomes a data file the code reads, instead of conditions scattered through the code.
-      - **Traceability test:** fails when a metric in the dictionary has no implementation, when an implementation, map entry or
-        veto has no rule ID, or when the code and the matrix disagree.
-      - **Provenance on every metric:** its filing (accession), the XBRL concept of each line item, the rule IDs applied, the
-        flags, and the reason when it is left empty.
-      - **Company card:** for a CIK and a date it prints the profile, the filing used, each line item's concept and value, the
-        rules applied and the result. Used for the thesis and for debugging.
-      - **Gate after every rebuild:** T-147's comparison with the SEC's own data (same CIK and filing) and the golden set
-        (`golden_set.csv`), with a minimum fidelity. A value that doesn't match its own company's SEC data can't reach the scores.
-      - **MET-01 / MET-02:** ROA = operating income × (1 − t) / total assets at the **start** of the year, not
-        applicable to financial firms; ROIC and ROE divide by capital at the end of the prior year, never the ending
-        capital (ROE for banks stays, C2). A 10-Q's "end of the prior year" is the prior 10-K's balance.
-      - **MET-03 / APP-04c:** NOPAT's tax is the 21% federal marginal rate for everyone except REITs (their own
-        effective rate when pre-tax income is positive, else 0), tax 0 on an operating loss. Measured:
-        NOPAT uses the filing's own rate in 4,320 filings (471 companies); it is reduced by a tax on an operating
-        loss in 198 of 203 loss filings; **N10:** `effective_tax_rate` shows 21% when pre-tax income is
-        missing or ≤ 0 in 743 filings (172 companies; L-05 says empty); the 21% default hits
-        125 of 314 REIT filings (15 companies). MET-03 also reports ROIC at the effective rate as robustness.
-      - **MET-09 / N9:** a negative denominator is left out of the continuous score and flagged, not discarded with the
-        sign: **N9** — 177 filings (63 companies) have net cash and positive EBITDA, which T-116 treats as unresolved;
-        net debt/EBITDA with EBITDA ≤ 0 in 41 filings and FCF conversion with net income ≤ 0 in 160.
-      - **MET-04 / PER-12 to PER-14:** growth from a base ≤ 0 is empty and flagged (net income 394 filings,
-        free cash flow 328, operating income 242); a growth or CAGR across the adoption of
-        a standard without restated comparatives is flagged: 4 CAGRs cross ASC 842 and 32 lenders'
-        net-income CAGRs cross CECL.
-      - **The cash line and the REIT debt total (T-148 part 2 limitation, see `docs/model_fixes.md` causes table):** the
-        REIT debt total (`SecuredDebt` + `UnsecuredDebt`: no loaded source states the identity) needs a source; today debt
-        and EV are empty for those REITs (16 REIT companies). Segment-only cash where filers report cash only within segmented
-        balance sheets (PCAR, NVR, TXT) and company-specific or discontinued-operations cash elements (CVX, PODD, GEHC, MDLZ,
-        MMM, AMP, CINF, DVN) remain unread, with EV and ROIC empty. (Part 2 resolved the restricted-cash-inclusive line under
-        (k)(1) and `Cash` alone with classified balance sheets under (k)(3), flagged).
-      - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
-        meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
-        ranking decision (D/E = +∞) is `T-071`'s.
-      **Acceptance:** `docs/metric_dictionary.md` generated from Annex B; applicability matrix data file loaded;
-      traceability test passes; metric provenance and company card delivered; post-rebuild SEC fidelity gate enforced;
-      the audit's `metrics` group re-run on a rebuilt database shows 0 for N10, N15 and the MET-03/MET-09 rows;
-      regression tests per definition on real captured fixtures; a `docs/model_fixes.md` entry.
-      **Split (user, 2026-10-12).** T-151 runs as three parts, one PR each: **part 1** — line-item
-      resolution (the sourced D&A and debt sums, the net capex element, the period label; engine
-      `metrics-v7`); **part 2** — the metric definitions (MET-01/02/03/04/09, N9/N10/N15, MD-02/35/38,
-      EBITDA persisted, net debt minus short-term investments, the `free_cash_flow` rename; its
-      acceptance includes the audit's `metrics` group at 0); **part 3** — the dictionary from Annex B,
-      the applicability matrix as data, the traceability test, provenance, the company card and the
-      post-rebuild fidelity gate. **Status (2026-10-13): part 1 done — PR #144, reviewed and
-      approved by reviewer A ("ready to merge"; the review round's two fixes are the capex caption
-      fallback no longer re-taking a rejected net element, and the pointers under T-148's corrected
-      items). The box stays open until part 3 merges, so this merge does not move T-151 to
-      `CHANGELOG.md`.** Branch `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the
-      mismatching companies are declared there as input for part 3's gate.
-      **Status (2026-10-13): part 2 done — PR #147** (branch `feat/t151b-metric-definitions`;
-      `docs/model_fixes.md` "T-151 part 2"; engine stays `metrics-v7`). D1/D2: ROA/ROE/ROIC divide by
-      the capital at the end of the prior fiscal year (the filing's own comparative, else the stored
-      prior 10-K), never the ending capital; D3: NOPAT at MET-03's 21% (a REIT's own rate, 0 on a
-      loss), `effective_tax_rate` empty when pre-tax ≤ 0 (L-05); D4: growth empty and flagged from a
-      base ≤ 0, the ASC 842 / CECL flags; D5: the non-positive denominators (MET-09 / N9); D6/D7:
-      NCI and short-term investments in invested capital and EV; D8: MD-38 in C10's EBIT form; D9:
-      `ebitda` persisted, net debt less short-term investments; D10: `free_cash_flow` rename. The
-      audit's `metrics` group on a database rebuilt with the branch (`out/p3_audit_diff.txt`, 14 keys):
-      **N10, N15, the MET-03 and MET-09 rows all 0** (NOPAT on the filing's own rate 7,997/472 → 0,
-      on an operating loss 394/102 → 0, `effective_tax_rate` = 21% with pre-tax ≤ 0 1,319/209 → 0,
-      REITs at 21% 197/17 → 0, ROIC with invested capital ≤ 0 89/11 → 0; N9 net cash kept, 373 → 414).
-      Declared findings: the metric is no longer clamped (497/199 raw rates outside [0, 0.5], UNH
-      1222%), ROA is empty for 2,292 filings with no operating income, MD-38 empty for 1,236 10-Qs
-      whose prior-year quarter is not stored; PER-13's `debt_to_assets`/`asset_turnover` flags are not
-      implemented (D4 scopes it to growth/CAGR). Tests: `tests/test_metric_definitions_t151b.py` (+33),
-      five replaced (`out/p1a_gates.txt`: 2,281 passed).
-      **Fix round 1 (2026-10-13): F1–F10, PR #147** (`docs/model_fixes.md` "Fix round 1"). F1: the
-      NOPAT tax follows the flow it taxes (the TTM on a 10-Q; a REIT's TTM rate; `reit_ttm_rate_missing`);
-      F2: the group `annualized_x4` stamp keeps master's items (usable `net_income_ttm` 8,914/498
-      restored) with per-item flags; F3: a redeemable NCI filed as one part is kept
-      (`redeemable_nci_filed_parts`, 109/10); F4: the NCI / invested-capital / net-debt /
-      short-term-investment flags reach the inputs; F5: the CAGR base flag and the CECL flag on the
-      net-income CAGR alone; F6: the flag counts count distinct filings; F7: the TTM unlevered-FCF
-      input is the TTM proxy; F8: the raw `effective_tax_rate` is kept and flagged outside [0, 1]
-      (396/167); F9: the cycle consumers recorded (valorization, `latest_trailing_net_income`,
-      `_LeverageRule`, `quality._net_debt`); F10: `prior_wc_missing` only when the prior column is
-      absent, `unclassified_balance_sheet` otherwise. The audit's `metrics` group is 0 on every
-      acceptance row (`out/f1_audit_diff.txt`, 14 keys); F1's acceptance: TTM loss taxed 272/64 → 0,
-      TTM profit untaxed 153/88 → 0, REIT on the quarter's rate 216/16 → 0 (`out/f1_counts.json`).
+- [x] **T-151** Metric dictionary and definitions — **done 2026-10-13, PR #148** (parts 1–3: PR #144, PR #147, PR #148). The entry, its measurements and its open declared limitations moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-151` (closed task)"). → `PLAN.md` Work item 8, step 14.
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
@@ -954,7 +861,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
-2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` → `T-076` → `T-073` → `T-074` → `T-071`) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
 `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3

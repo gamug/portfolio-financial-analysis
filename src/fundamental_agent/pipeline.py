@@ -821,7 +821,12 @@ def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | 
 
 
 def _ttm_flows(
-    engine: _Engine, task: _YearTask, stmts: Statements, target: _Target
+    engine: _Engine,
+    task: _YearTask,
+    stmts: Statements,
+    target: _Target,
+    *,
+    accession: str | None = None,
 ) -> dict[str, TTMFlow]:
     """This filing's flow inputs, annualized to trailing-twelve-months on a 10-Q
     (F4, T-105, docs/model_fixes.md) -- empty for a 10-K, which already reports an
@@ -845,7 +850,12 @@ def _ttm_flows(
     if not current and not ytd:
         return {}
     return db.ttm_detail(
-        engine.conn, task.asset_id, period_end=target.period.date, current=current, ytd=ytd
+        engine.conn,
+        task.asset_id,
+        period_end=target.period.date,
+        current=current,
+        ytd=ytd,
+        accession=accession,
     )
 
 
@@ -895,9 +905,16 @@ def _analyze_one(
     # T-151 part 2: the company profile (D3/D4) and the prior-year capital the return, leverage and
     # valuation ratios divide by (MET-01/02, MD-02/35/38). The prior-year quarter's balance sheet is
     # another filing's, so it is read here, never inside a metric.
-    db.attach_context(engine.conn, task.asset_id, task.form, target.period.key, stmts)
+    db.attach_context(
+        engine.conn,
+        task.asset_id,
+        task.form,
+        target.period.key,
+        stmts,
+        accession=meta.accession_number,
+    )
 
-    ttm = _ttm_flows(engine, task, stmts, target)
+    ttm = _ttm_flows(engine, task, stmts, target, accession=meta.accession_number)
     ctx = FilingContext(
         ticker=task.ticker,
         company_name=task.company_name,

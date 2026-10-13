@@ -6749,6 +6749,12 @@ debt through the leverage group, capex through the cash-flow and valuation group
 
 ### The mismatching companies (input for part 3's fidelity gate)
 
+**Correction (T-151 part 3 fix round 2, 2026-10-13; the history below is not rewritten).** Part 1's
+validation compared VLTO's 9-month sum with the **quarter** fact: `0001967680-25-000136` 58M against
+17M and `-25-000125` 41M against 20M. The filer's **9-month** `DepreciationDepletionAndAmortization`
+facts equal the sums (58M and 41M; R-11's query, `out/f1_fidelity_report.txt`). VLTO's two pairs are
+therefore not mismatches, and the material mismatches of the filled sums are **23**, not 25.
+
 3.2' is a measurement and a **declared limitation**: T-151 part 3's post-rebuild fidelity gate is the
 mechanism that keeps a value a filer contradicts out of the scores. The **25 material mismatches** of
 the filled sums, by company (filings): **SYK 10 (da)**, **ESS 7 (dbo)**, **WELL 6 (dbo)**, **VLTO 2
@@ -7087,8 +7093,8 @@ tests and its measurement under `out/f1_*`. The control database is unchanged (m
   net-debt resolutions under `flag_prior_*` / `flag_current_*`. **Acceptance** (`out/f1_flags.txt`,
   filings/companies): `flag_prior_nci_nci_capture_failure` 957/284,
   `flag_prior_invested_capital_invested_capital_capture_failure` 3,166/502,
-  `flag_current_net_debt_net_debt_capture_failure` 1,323/94,
-  `flag_prior_short_term_investments_short_term_investments_in_cash` 8/1.
+  `flag_current_net_debt_capture_failure` 1,323/94,
+  `flag_prior_short_term_investments_short_term_investments_in_cash` 11/1.
 - **F5 — D4 gaps in the CAGR group.** A CAGR from a base ≤ 0 is flagged
   `flag_<series>_cagr_growth_base_not_positive` (`out/f1_flags.txt`: net income 222/128, operating cash
   flow 98/56, revenue 0), and the CECL flag is the net-income CAGR's alone
@@ -7172,3 +7178,420 @@ production and universe sha1 unchanged (`out/f1_sha1.txt`).
 - **The company type is today's GICS snapshot** (L-03): APP-02 (ROA/ROIC/EV NA for financial firms),
   APP-04's REIT flags and the applicability matrix are `T-071`'s; this part applies only APP-04c's REIT
   tax (from `db.is_equity_reit`) and PER-14's lender set (from the GICS sub-industry).
+
+## T-151 part 3 — the metric dictionary, the applicability matrix, traceability, provenance, the company card and the fidelity gate
+
+Part 3 of `T-151` (user, 2026-10-12), stacked on part 2's branch. The engine stays **`metrics-v7`**.
+Sources: the frozen checklist v1.3 (Annex B, the applicability matrix, D-05) and T-147's cross-check
+(`scripts/sec_xcheck/`). Scratch `/workspaces/thesis/scratch/t151c/`.
+
+### D12 — the dictionary and the matrix are generated, never hand-written
+
+`scripts/build_metric_dictionary.py` reads `docs/checklist_sec/checklist_v1.3.md` (local, git-excluded)
+and writes two **tracked** files:
+
+- `docs/metric_dictionary.md` — every Annex B row (ID, metric, kind, formula, basis, source, quote,
+  note), the "source pending" rows listed again for the second author, with a header naming the
+  generator, the checklist version and the checklist file's **sha256**
+  (`d53fbe6e5a1d9a8061e4c834c193afdbe9ab5cdb389831dff396c00c588d6aa8`);
+- `src/fundamental_agent/data/applicability_matrix.csv` — one row per cell: metric, company type
+  (`art_9_filer`, `art_7_insurer`, `other_financial`, `reit`, `negative_equity`, `multi_class`), code
+  (A / ADJ / NA) and the rule ID that justifies it.
+
+**Parsed exactly as the checklist states** (`out/p3_dictionary.txt`): Annex B **39 rows** (Inference
+14, Source pending 17, Sourced 8) and the matrix **35 metrics x 6 company types = 210 cells**. The four
+Annex B names not in the matrix are its building blocks (`ebitda`, `free cash flow`, `invested
+capital`, `net debt`) — the annex is the matrix plus those.
+
+### D13 — the traceability test
+
+`tests/test_traceability.py` (10 tests), reading only tracked files:
+
+- **(a)** every dictionary metric maps to an implementation: the 35 matrix metrics to a
+  `MetricResult` name a module produces (collected from `COMPUTERS` and `valuation`), the four
+  building blocks to their helper (`metrics/capital.py`, `metrics/cashflow.py`), and `earnings_yield`
+  to `cycle` (Annex B marks it VALORIZATION);
+- **(b)** every computed metric has a dictionary row. The **allowlist is one entry**:
+  `return_on_invested_capital_effective_rate`, with its reason (T-151 part 2's D3 robustness metric;
+  Annex B was frozen before it, and it is a variant of MD-11). The test also asserts
+  `metrics/provenance.py`'s declarations cover exactly the computed metrics;
+- **(c)** every resolver map or tier has a rule ID: `statements.RESOLVER_RULE_IDS` names each map and
+  composite resolver with the checklist rules it implements, and `RESOLVER_MAPS` lists the names the
+  test requires. **Added here (RECORDED):** the rule IDs of `revenue.total_concepts` /
+  `sum_components` / `synonym_groups`, `net_income`, `income_tax`, `cash`, `capex`, `da`,
+  `long_term_debt`, `short_term_debt`, `redeemable_nci`, `SHORT_TERM_DEBT_MAP`,
+  `SHORT_TERM_DEBT_LAST`, `INCLUDES_CURRENT_MATURITIES`, `LONG_TERM_DEBT_NONCURRENT_CHILDREN`,
+  `LONG_TERM_DEBT_CHILDREN`, `DA_SOURCED_CHILDREN`, `REDEEMABLE_NCI_CONCEPTS`,
+  `SHORT_TERM_INVESTMENT_CONCEPTS`, `_NCI_INCOME_CONCEPTS` and `_COMPOSITE` — 21 names, no map left
+  without a source;
+- **(d)** the matrix and the code agree **where the code can know the company type today**: the
+  `negative_equity` cells for `return_on_equity` and `debt_to_equity` are NA and the code empties and
+  flags them (APP-07); the `reit` cell for `nopat` is ADJ and the code taxes a REIT at its own rate
+  (APP-04c); `enterprise_fcf_yield` is NA for a REIT and the code empties it on an unclassified
+  balance sheet (MD-38). For financial firms (Art. 9, Art. 7, other financial) the test only asserts
+  the 105 cells exist: **the code-vs-matrix check waits for T-071**, which delivers APP-00's
+  company-type profile (`company_types.csv`); today the code knows the GICS sector and the REIT
+  overlay only.
+
+### D14 — provenance on every metric
+
+Every metric's inputs carry one `provenance` block (the existing `inputs_json`, no schema change):
+the filing's **accession**, the period, the **rule IDs** (checklist rules and Annex B's MD- rows),
+each line item's **concept** and **how it was read** (T-148's `Resolution`: `concept`, `map`,
+`fallbackN`, `label_fallback`, `derived`, ...), the metric's **flags**, and, when the value is empty,
+an **empty reason** from the fixed list `missing_input`, `not_applicable`, `denominator_not_positive`,
+`growth_base_not_positive`, `capture_failure`, `prior_year_missing`.
+
+The declarations live in `src/fundamental_agent/metrics/provenance.py` (one entry per metric: its
+items and its rule IDs) and `attach` runs once per filing in `_compute_all`, so the metric modules
+keep their formulas. Each result gets **its own copy** of the inputs dict: a group shares one dict
+across its metrics, so writing the block in place left every row of the group carrying the last
+metric's provenance (a bug the tests caught, `test_each_metric_of_a_group_gets_its_own_provenance`).
+`Statements` gains the accession, passed by the pipeline and the recompute through
+`db.attach_context`. Tests: `tests/test_metric_provenance.py` (9).
+
+### D15 — the company card
+
+`python -m fundamental_agent card --db PATH --cik CIK --date YYYY-MM-DD [--out FILE]`, read-only
+(`connect_ro`, never a write connection). It prints the profile (ticker, sector, sub-industry, REIT
+yes/no, negative equity yes/no), the filing used as of the date (**the latest whose `available_at`
+is on or before the date**, PER-01), each line item with its concept, value and how it was read, each
+metric with its value, flags, rule IDs and provenance, and the empty metrics with their reason. A
+10-Q's trailing twelve months are built the way the pipeline builds them, so its flow ratios are
+annual. Tests: `tests/test_company_card.py` (the profile/filing/metrics, the as-of pick, an unknown
+CIK, DQ-01's unit inference, the fidelity comparison). Five companies on `t151c/after.db` as of
+2024-12-31 → `out/card_ABBV.txt`, `card_O.txt`, `card_KKR.txt`, `card_COP.txt`, `card_JPM.txt`.
+
+**Recorded from the cards:** `O` (Realty Income) prints `REIT yes`, its debt a `capture_failure`
+(the REIT's only debt lines are the secured/unsecured pair the sourced sum refuses), and no
+classified balance sheet (its liquidity and MD-38 are empty); `JPM` prints `sector Financials`,
+`REIT no`, with ROE 0.164 and no operating income (APP-02's NA metrics are empty, as the matrix says;
+the applicability decision is T-071's); `ABBV` prints a `da_sourced_sum` and
+`includes_finance_leases` on its debt, both flagged.
+
+### D16 — the post-rebuild fidelity gate
+
+`python -m fundamental_agent fidelity --db PATH --companyfacts-dir DIR [--golden FILE] [--out FILE]
+[--csv FILE]`, read-only towards the database. For every filing and each **resolved line item** it
+finds the SEC `companyfacts` fact with the **same accession and period** (T-147's matching:
+`scripts/sec_xcheck/xcheck.py` — same accession, concept and period end, the period key's tag against
+the fact's duration; a balance-sheet item is an instant, ID-05) and compares the stored value within
+**DQ-01**'s tolerance, `max(L-10 rounding, 0.5% x |value|)`, the unit inferred (USD 1M, else USD 1K,
+else USD 1). A **map** is compared against the aggregate concept it implements — the D&A children's
+sum against `DepreciationDepletionAndAmortization`, the long-term-debt children against
+`LongTermDebtNoncurrent` / `LongTermDebt`, the redeemable-NCI parts against their total — which is
+part 1's filled-sum-against-the-filer's-own-total comparison, now inside the gate.
+
+**The gate:** a minimum fidelity per item, `MIN_FIDELITY = 0.98` (a constant with a comment; the
+measured rates let the reviewer set it). It **reports** only: wiring it into the cycle (keeping a
+mismatching value out of the scores) is the next step, decided after review. Run on `t151c/after.db`
+→ `out/fidelity_report.txt`, `out/fidelity_mismatches.csv` (24.5s):
+
+- **9,340 filings compared.** Per item, `compared / matched / mismatched / no fact / fidelity`:
+  `depreciation_amortization` 3,520 / 3,517 / **3** / 185 / **99.9%**; `long_term_debt` 7,545 / 7,532
+  / **13** / 96 / **99.8%**; every other item **100.0%** (e.g. `revenue` 9,026 compared, `equity`
+  9,237, `total_assets` 9,249, `cash` 8,591, `net_income` 8,544, `income_tax` 9,062, `eps_diluted`
+  8,829). **No item is below the 98% gate.**
+- **16 mismatching (filing, item) pairs**, by company: **ESS 7** (`long_term_debt`), **WELL 6**
+  (`long_term_debt`), **SYK 2** (`depreciation_amortization`), **ROK 1**
+  (`depreciation_amortization` 78M against the filer's 79M, a 1M gap just above the 0.5M rounding
+  term — borderline). Part 1's known cases appear for **SYK**, **ESS** and **WELL**; **VLTO does
+  not**: its `depreciation_amortization` resolves **empty** on its own period column in this database
+  (part 1's VLTO case was a year-to-date column, which this gate does not read). ESS
+  `0000920522-22-000019` is the clearest: our sum 6,287,410,000 against the filer's own
+  `LongTermDebt` 638,959,000 (the filer's total equals one filed child, a partial tag — part 1's
+  class 1).
+- **The golden set:** `grep -r golden_set` finds `docs/sec_golden_set.md` (T-147's prose table of 23
+  tickers, semantic choices only) and no `golden_set.csv`; the report **RECORDS** that the CSV does
+  not exist. Wiring the prose golden set in (its `agree = no` rows) is left for the task that turns
+  it into a CSV.
+
+### Fix round 1 (G1–G6; PR #148 review)
+
+Reviewer A re-checked part 3 and found six defects. `t151c/after.db` is part 2's fixed database copied
+and recomputed with this branch (`out/f1_p3_after.log`).
+
+- **G1 — no stored metric carried the provenance block (D14 not delivered on data).** The database was
+  part 2's copy and had never been recomputed with part 3's code. Recomputed with this branch
+  (`out/f1_p3_after.log`, 9,340 filings, 315,435 rows). **Acceptance**
+  (`scripts/verify_t151c.py provenance`, `out/f1_provenance.json` / `.txt`): rows **315,435**, with a
+  `provenance` block **315,435**, without **0**; empty rows without a reason **0**, with an unknown
+  reason **0**. Reasons (filings/companies, one example each): `missing_input` 8,980/503 (A
+  `0001090872-22-000007`, `return_on_assets`), `growth_base_not_positive` 1,600/336 (ABNB
+  `0001559720-22-000006`, `operating_income_growth`), `capture_failure` 1,572/278 (A
+  `0001090872-22-000007`, `free_cash_flow_yield`), `not_applicable` 648/56 (ABBV
+  `0001551152-25-000040`, `debt_to_equity`), `denominator_not_positive` 616/108 (ABNB
+  `0001559720-22-000006`, `free_cash_flow_conversion`), `prior_year_missing` 1/1 (KVUE
+  `0001944048-24-000057`, `return_on_assets`).
+- **G2 — the provenance items were read at the wrong column for TTM flows and prior-year capital.**
+  Each item entry now carries a **basis** (`period`, `ttm`, `prior_year`, `prior_quarter`); a TTM flow
+  its **method** and columns (`ytd`, `alt`, its flow flags), a capital item the `Capital`'s **source**;
+  an item read on two bases lists both (MD-38's working capital: `period` and `prior_year`).
+  `attach` takes the filing's `ttm_flows`. Tests: the TTM method and columns, the prior-year source,
+  MD-38's two bases (`tests/test_metric_provenance.py`).
+- **G3 — the card recomputed instead of reading what is stored.** `card.build_card` reads the
+  `fundamental_metrics` rows the cycle reads (value, inputs, provenance) for the engine versions a
+  consumer resolves (`kg_schema.versions`' per-group filter, the same `VERSION_FILTER_SQL` every reader
+  applies), with `--metrics-version` to pin one; the line items come from the stored provenance, and a
+  row without a block prints `provenance: not stored (recompute needed)`. It never recomputes (the
+  10-Q TTM is no longer built at read time). Test: the card prints the stored value (9.99) where the
+  code would compute another. Re-run on the recomputed database → `out/f1_card_<ticker>.txt`.
+- **G4 — the empty reason picked the wrong cause.** `_empty_reason` follows G4's precedence, the first
+  failing term in the formula's order: `not_applicable` and the denominators from a flag naming the
+  metric, then a current-period input that is not filed (`missing_input`), then an input filed but
+  refused or an unclassified balance sheet (`capture_failure`), then an absent prior column
+  (`prior_year_missing`). O's ROIC now says `missing_input` (no operating income) rather than
+  `prior_year_missing`. No new code was needed (`not_classified` was not added). Tests: the two G4
+  cases.
+- **G5 — the fidelity tolerance ignored L-10's `n_terms`, and the YTD columns the TTM reads were
+  skipped.** `dq01_tolerance(value, n_terms)` uses L-10's `0.5 × unit × n_terms` (a sourced sum against
+  the filer's own total: the parts + 1), so **ROK `0001024478-26-000005`'s 1M gap on a 78M two-part sum
+  is within tolerance and is no longer a mismatch**. The gate compares every **YTD duration column that
+  ends on the filing's period end** as well as the own period column, reported **per item and per column
+  kind** (`own`, `ytd`) — see the table below. **VLTO does not appear**: its YTD sum (58M) equals the
+  filer's own YTD `DepreciationDepletionAndAmortization` (58M); part 1's 17M was the quarter fact, a
+  different basis (R-11). `MIN_FIDELITY` stays 0.98. **Acceptance**
+  (`out/f1_fidelity_report.txt` / `.csv`): the per-item × kind table (a sample — every other item is
+  100.0%):
+
+  | item | kind | compared | matched | mismatched | no fact | fidelity |
+  |---|---|---|---|---|---|---|
+  | `depreciation_amortization` | own | 3,520 | 3,518 | 2 | 185 | 99.9% |
+  | `depreciation_amortization` | ytd | 3,110 | 3,107 | 3 | 227 | 99.9% |
+  | `long_term_debt` | own | 7,545 | 7,532 | 13 | 96 | 99.8% |
+  | `long_term_debt` | ytd | 3,602 | 3,597 | 5 | 68 | 99.9% |
+
+  **No item is below the 98% gate**; the mismatching pairs are **23** (ESS 10, SYK 5, WELL 8; 15 on
+  the `own` column and 8 on `ytd`). **VLTO does not appear** and **ROK is resolved** (both above).
+- **G6 — what wiring the gate would need (RECORD; not implemented).** (a) **Where a mismatch would be
+  stored:** the existing `data_quality_issue` table, one row per `(filing, item)` with a new rule id
+  `DQ_FIDELITY`, the item's stored value and the SEC's as `evidence`, and `quarantined = 1` — **no new
+  table without approval**. (b) **Which metrics it would quarantine:** `quality.py`'s item → metrics
+  map (`_MCAP_DERIVED` is the model: one source item blocks every metric derived from it). A
+  mismatching `long_term_debt` blocks `debt_to_equity`, `debt_to_assets`, `net_debt_to_ebitda`,
+  `enterprise_value`, `enterprise_fcf_yield` and `return_on_invested_capital` — **not
+  `interest_coverage`**, which reads operating income and interest expense, never debt. ROIC reads
+  the **prior-year** debt (MET-02), so a mismatch in the current filing does not reach *that filing's*
+  ROIC; it reaches the next year's. A mismatching `depreciation_amortization` blocks `ebitda`,
+  `net_debt_to_ebitda` and `enterprise_fcf_yield`. (c) **The cycle's refusal:** `cycle` reads a quarantined metric as NULL (the
+  existing `data_quality_issue` contract), and a HARD issue also raises the company-level DATA_QUALITY
+  veto; the gate's per-item rate suggests a **SOFT** review row first, promoted to HARD once the
+  reviewer sets the threshold.
+
+### Fix round 2 (H1–H7; PR #148 review, second round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f2_p3_after.log`, 9,340 filings,
+315,435 rows) and then again after H7's predicate (`out/f2_p3_after2.log`).
+
+- **H1 — an optional term counted as a "missing input".** `provenance.OPTIONAL` now marks the items
+  whose formula substitutes 0 when they are not filed — `cogs`/`gross_profit` in the gross margin
+  (`gross = revenue - cogs` when `gross_profit` is absent; J1 corrects this to an **alternative
+  pair**: each alone is optional, but both absent is a missing input), short-term investments
+  (`capital.net_short_term_investments`),
+  short-term debt (`statements._total_debt`: `lt + (st or 0)`, and `capital.working_capital`),
+  `minority_interest`/`redeemable_nci` (`capital.nci`'s 0 when no NCI income) — each with the code
+  line that substitutes the 0. An optional item is never a `missing_input`; its own refusal flag still
+  counts (step 3). **Acceptance** (`out/f2_reasons.txt`, the four debt metrics with a debt-refusal
+  flag): **1,737 rows**; after the fix `capture_failure` **1,418 rows / 430 filings / 33 companies**,
+  `prior_year_missing` 7 / 7 / 5, and `missing_input` **312 rows** — those have a **non-optional**
+  term missing first (the numerator: Realty Income's shape has no operating income; ACGL/ARE), which
+  G4's precedence puts ahead of the capture failure. Before, the plan measured **1,721** such rows
+  naming an optional item (D/E 399, D/A 399, EV 333, ND/EBITDA 590). Realty Income
+  `0000726728-24-000130`'s D/E, D/A and EV now say `capture_failure` (its long-term sum refuses).
+- **H2 — a TTM that could not be formed counted as "missing input".** A `ttm` item counts as present
+  only when its trailing twelve months were formed (method `ytd` or `quarters`); `x4` →
+  `prior_year_missing`, a refusal → `capture_failure`. **Acceptance** (every item filed, a TTM not
+  formed): **3,212 rows / 439 filings** (the plan measured 2,680 / 449) — `prior_year_missing`
+  **3,062 rows / 439 filings**, `capture_failure` 115/62, `not_applicable` 30/30, `denominator` 5/5;
+  before, all of them fell through to `missing_input` (A `0001090872-22-000007`, `return_on_assets`,
+  method `x4`).
+- **H3 — the `prior` basis described a column the metric never read.** `_prior_basis` follows the
+  metric's own rule: `prior_quarter` on a 10-Q (MD-38's `prior_quarter_capital_at`), `prior_year` on
+  a 10-K; when the prior-year quarter is not stored the entry has `source: null` and step 3 returns
+  `prior_year_missing`. **Acceptance** (the 1,517 MD-38 rows flagged `prior_wc_missing`: 1,516 10-Q +
+  1 10-K, `out/f2_reasons.txt`): `prior_year_missing` **820**, `missing_input` **638** (an earlier
+  term failed — ABNB's D&A is not filed at the YTD column), `capture_failure` **59** (a refused debt
+  or an unclassified balance sheet). Before: `missing_input` 1,378, `capture_failure` 139, and
+  `prior_year_missing` **1** in the whole database; now 820 + the rest.
+- **H4 — the TTM entry did not record the value or the columns it used.** `TTMFlow` gains two
+  non-identity fields (`compare=False`): `columns`, the `(label, period_key, accession)` of each
+  column the TTM combined (the `ytd` method: the prior fiscal year, the prior year-to-date and this
+  year's year-to-date, with the accession that supplied each; `quarters`: the four quarters), and
+  `terms`, the `(label, value)` of each term. The provenance entry records the TTM's own `value`, its
+  `terms` and `columns`, and renames `alt` to **`four_quarter_check`** (the four-quarter cross-check,
+  never the value). Test: a `ytd` TTM whose entry gives `value = prior FY + ytd − prior ytd` from the
+  recorded columns.
+- **H5 — the fidelity gate compared balance-sheet items twice.** The `ytd` kind applies to duration
+  items only (an instant item has no year-to-date column, ID-05). **Acceptance**
+  (`out/f2_fidelity_report.txt` / `.csv`): `depreciation_amortization` own 3,520/3,518/2 (99.9%),
+  ytd 3,110/3,107/3 (99.9%); `long_term_debt` own 7,545/7,532/13 (99.8%) and **no ytd row** (a
+  balance-sheet item); the mismatching pairs are **18** (ESS 7, SYK 5, WELL 6; **15 own + 3 ytd**, all
+  3 ytd being SYK's D&A) and **no item is below the 98% gate**. Before: 23 pairs (ESS 10, SYK 5,
+  WELL 8; 15 own + 8 ytd), the duplicates being the instant items compared twice.
+- **H6 — the documents.** Part 1's "mismatching companies" section gains the dated VLTO correction
+  above; G6's paragraph drops `interest_coverage` from the `long_term_debt` list and says ROIC reads
+  the prior-year debt.
+- **H7 — a REIT's negative rate on the main ratios carried no flag (APP-04c).** The director's
+  predicate: NOPAT is formed (operating income present on the ratio's basis — TTM on a 10-Q, the
+  period on a 10-K) and the rate applied to it is outside [0, 1]; a row without operating income
+  applies no rate and gets no flag. **Acceptance** (`out/f2_reasons.json`, on
+  `return_on_invested_capital`): **11 rows / 3 companies** — 10-Q 9 (HST `0000950170-22-008085`
+  −0.307, KIM 5, WY 3) and 10-K 2 (KIM `0001437749-23-004541`, WY `0001193125-26-051422`); of these
+  **4 rows / 1 company (WY) have a stored ROIC value**, the other 7 rows are empty. The plan's "9 rows
+  / 3 companies" counted the 10-Qs only (the reviewer's omission). Before: no flag on any row.
+
+### Fix round 3 (J1; PR #148 review, third round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f3_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **J1 — `capture_failure` read from another metric's flags.** `_empty_reason` step 4 returned
+  `capture_failure` for **any** `flag_*` capture key in the metric's inputs, and a group shares one
+  inputs dict, so a metric picked up its siblings' flags — O's `gross_margin` said `capture_failure`
+  because of the profitability group's prior-debt flag, while it files neither COGS nor gross profit.
+  Step 4 now reads only the metric's **own** flags: those naming the metric or one of its items, plus
+  the combination terms its formula reads (`provenance.OWN_TERMS`, one entry per metric naming the
+  code line: `total_debt` for D/E, D/A and EV; `net_debt` for ND/EBITDA and EV; `nci` for EV; prior
+  `invested_capital` for ROIC; the market-cap capture for the valuation yields). The market-cap
+  capture key (`market_cap_<reason>`, no `flag_` prefix) is read too. J1 also declares the gross
+  margin's **alternative pair**: `cogs` or `gross_profit` (each alone is optional; both absent is a
+  `missing_input`) — the only such pair in the codebase (the quick ratio needs both of its terms).
+
+  **Acceptance** (`out/f3_reasons.txt` / `.json`, block `J1`; the reviewer's `v3.py` table as the
+  before): the rows whose `capture_failure` came only from a sibling flag — `gross_margin` 773/54,
+  `enterprise_value` 644/171, `free_cash_flow_yield` 286/204, `sbc_adjusted_fcf_yield` 242/169,
+  `effective_tax_rate` 123/41, `return_on_equity` 15/2, `interest_coverage` 11/4, `ebitda` 6/6,
+  `market_capitalization` 4/4, `operating_margin`/`net_margin` 2/2 — are now **0**: a database-wide
+  query finds no `capture_failure` row without an own flag key or an own item's refusal (the script
+  reports `without an own flag: 0` for every metric). The rows that stay `capture_failure` carry
+  their own cause: `enterprise_value` 1,042 rows (`flag_current_nci_nci_capture_failure` 117,
+  `flag_prior_nci…` 40, `flag_current_net_debt_net_debt_capture_failure` 389, `flag_prior_net_debt…`
+  54, `flag_total_debt_capture_failure` 12, `flag_total_debt_debt_sum_refused_other_lines` 430); the
+  valuation yields 435 / 357 rows (`market_cap_no_cover_shares` 420 / 344, `…incomplete_classes`
+  8 / 6, `…stale_shares` 7 / 7); `ebitda` 155 (`flag_depreciation_amortization_da_sum_refused_other_lines`);
+  `market_capitalization` 8 (`market_cap_no_cover_shares`). `gross_margin`'s 3,864 empty rows are
+  all `missing_input` now.
+
+  **The reason distribution, old vs new** (`out/f2_provenance.txt` vs `out/f3_provenance.txt`,
+  filings / companies): `capture_failure` 2,366/276 → **2,144/475**; `missing_input` 8,887/503 →
+8,888/503; the other four unchanged. The company count rises because J1 also **names** the
+  market-cap capture on the valuation yields: those keys (`market_cap_<reason>`) are not `flag_` keys,
+  so before J1 they fell through to `missing_input` — ~772 rows move the other way
+  (`missing_input` → `capture_failure`) across many companies, while ~994 sibling-flag rows move
+  out.
+
+**The reason distribution, old vs new** (`out/f1_provenance.txt` vs `out/f2_provenance.txt`,
+filings / companies): `missing_input` 8,980/503 → **8,887/503**; `capture_failure` 1,572/278 →
+**2,366/276**; `prior_year_missing` 1/1 → **1,054/326**; `growth_base_not_positive` 1,600/336 →
+1,600/336; `not_applicable` 648/56 → 648/56; `denominator_not_positive` 616/108 → 616/108. The two
+moves are H1 (a refused input is a capture failure) and H2/H3 (an unformed TTM or an absent prior
+column is `prior_year_missing`), each taking rows that used to fall through to `missing_input`.
+
+### Fix round 4 (K1; PR #148 review, fourth round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f4_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **K1 — `market_cap_no_cover_shares` is a data-window gap, not a failed input.** The key fires when
+  the reader cannot form the market cap at the period end because the **previous** filing's cover
+  count is absent (`kg_schema.market_cap` takes the latest count available at the as-of). That is the
+  same cause as an absent prior column, so it now maps to `prior_year_missing` (rank 4) for every
+  metric that reads the market cap: `market_capitalization`, `enterprise_value` (its `OWN_TERMS` gain
+  `market_cap`/`share_scale`), the two FCF yields and `enterprise_fcf_yield` (MD-38's denominator is
+  EV). The other market-cap keys — `market_cap_stale_shares`, `market_cap_incomplete_classes`,
+  `share_scale_suspect` — name a count that exists but cannot be used, so they stay `capture_failure`;
+  `share_scale_suspect` is now read at all (`_candidate_keys`). Step 4 keeps the formula's precedence
+  (steps 1–3 first, then the own flags), and the market-cap read keys are read in rank order, so the
+  one filing that carries both `market_cap_no_cover_shares` and `share_scale_suspect` (COP
+  `0001562762-22-000031`) takes `capture_failure` (rank 3), not `prior_year_missing` (rank 4).
+
+  **Acceptance** (`out/f4_reasons.txt` / `.json`, block `K1`; the same script on the pre-fix database
+  as the before, `out/f4_k1_before.txt` — both are the empty rows that carry a market-cap read key
+  `market_cap_*` / `share_scale_suspect`, rows / companies):
+
+  | metric | before | after |
+  |---|---|---|
+  | `market_capitalization` | `missing_input` 503/494, `capture_failure` 8/8 | `missing_input` 503/494, `prior_year_missing` 8/8 |
+  | `enterprise_value` | `missing_input` 485/364, `capture_failure` 160/146 | `prior_year_missing` 389/388, `missing_input` 183/68, `capture_failure` 73/58 |
+  | `free_cash_flow_yield` | `capture_failure` 435/423, `missing_input` 90/37, `prior_year_missing` 51/48 | `prior_year_missing` 470/466, `missing_input` 90/37, `capture_failure` 16/12 |
+  | `sbc_adjusted_fcf_yield` | `capture_failure` 357/347, `missing_input` 204/113, `prior_year_missing` 51/48 | `prior_year_missing` 395/392, `missing_input` 204/113, `capture_failure` 13/10 |
+  | `enterprise_fcf_yield` | `missing_input` 716/381, `capture_failure` 117/51, `prior_year_missing` 165/106 | `missing_input` 546/214, `prior_year_missing` 335/260, `capture_failure` 117/48 |
+
+  The per-metric totals are unchanged (511, 645, 576, 612, 998), so every transition is accounted
+  for. The rows that keep `missing_input` have an earlier failing term (e.g. `shares_outstanding` is
+  not stored as a fact, so `market_capitalization`'s 495 `no_cover_shares` rows keep it); the rows
+  that keep `capture_failure` carry `market_cap_stale_shares` / `market_cap_incomplete_classes` /
+  `share_scale_suspect`, or an own debt/NCI refusal.
+
+  **The `no_cover_shares` population**: 503 filings, **502** are the company's first filing in the
+  window (the earliest stored filing, by filing date then period end). The one exception is BALL
+  `0001558370-22-007145` (2022-03-31): its earlier filing `0001558370-22-001251` (2022-02-16) **is**
+  stored but has **0** `filing_cover_shares` rows, so there is no usable count at that period end
+  either.
+
+  **The reason distribution, old vs new** (`out/f3_provenance.txt` vs `out/f4_provenance.txt`,
+  filings / companies): `capture_failure` 2,144/475 → **1,756/163**; `prior_year_missing` 1,054/326 →
+  **1,456/492**; `missing_input` 8,888/503 → **8,887/503**; the other three unchanged. The move is the
+  503 `no_cover_shares` filings out of `capture_failure` (and their companies, 475 → 163) into
+  `prior_year_missing`, minus the rows an earlier term decides.
+
+### Fix round 5 (L1; PR #148 review, fifth round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f5_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **L1 — `market_capitalization` declared statement items its formula never reads.**
+  `ITEMS["market_capitalization"]` declared `shares_outstanding` and `diluted_shares` at the period
+  column, but the value is the filing's cover-page count x the close from `kg_schema.market_cap`
+  (MKT-01..04, `valuation._resolve_market_cap`). Step 2 therefore found `shares_outstanding` unfiled
+  and returned `missing_input` before the market-cap keys were read: 495 of the 503 `no_cover_shares`
+  rows kept the wrong reason, and the block told the reader the value came from the statements' share
+  lines. The entry now declares **no statement item**, and its block records the market cap's own
+  source from the inputs the row already stores: `source` = `kg_schema.market_cap`, `how` = the cover
+  count x the close, plus `shares`, `share_age_days`, `split_factor`, `n_classes`, `share_price` and
+  `price_date_offset_days` when present. The empty reason then follows the market-cap keys (K1).
+
+  **The ITEMS check (the five valuation metrics, against their formula code).** No mismatch beyond
+  `market_capitalization`: `enterprise_value` declares `long_term_debt`, `short_term_debt`, `cash`,
+  `short_term_investments`, `minority_interest`, `redeemable_nci`, matching
+  `_enterprise_value(market_cap, cap.debt, cap.cash, nci, sti)`; `free_cash_flow_yield` declares
+  `operating_cash_flow` / `capital_expenditure` (ttm), matching `annual.fcf()`;
+  `sbc_adjusted_fcf_yield` adds `stock_based_compensation`, matching `fcfe_annual - sbc_annual`;
+  `enterprise_fcf_yield` declares the numerator's items (`operating_income`, `income_tax`,
+  `pretax_income`, `capital_expenditure`, `depreciation_amortization` at ttm) and the working-capital
+  items at period and prior, matching `_md38` (its denominator is the `enterprise_value` metric, whose
+  own entry declares the debt/cash/NCI/STI items). Two transitive items are read *inside* the NCI
+  resolution — `capital.nci` falls back to `equity_incl_nci - equity`, and `stmts.nci_income_filed`
+  reads the NCI income line: they are **not** declared, following ROIC's convention (it declares
+  `minority_interest`/`redeemable_nci`/`equity`, not `equity_incl_nci`), because declaring them would
+  make step 2 return `missing_input` for filings that do not need them (R-15).
+
+  **Acceptance** (`out/f5_reasons.txt` / `.json`, block `K1`; the before is round 4's
+  `out/f4_reasons.txt` / `f4_k1_before.txt`): `market_capitalization`'s 503 `no_cover_shares` rows are
+  **502 `prior_year_missing`** (502 filings / 501 companies) and **1 `capture_failure`** — the
+  exception is COP `0001562762-22-000031`, which also carries `share_scale_suspect` and keeps the
+  rank-3 reason (round 4's R-14). The metric's empty rows are `prior_year_missing` 502 and
+  `capture_failure` 9 (was `missing_input` 503, `prior_year_missing` 8): the 8 rows carrying
+  `market_cap_stale_shares` / `market_cap_incomplete_classes` / `share_scale_suspect` now take
+  `capture_failure` instead of the `missing_input` step 2 gave them. The other four metrics are
+  unchanged from round 4 (`enterprise_value` 73/183/389, `free_cash_flow_yield` 16/90/470,
+  `sbc_adjusted_fcf_yield` 13/204/395, `enterprise_fcf_yield` 117/546/335).
+
+  **The reason distribution, old vs new** (`out/f4_provenance.txt` vs `out/f5_provenance.txt`,
+  filings / companies): `missing_input` 8,887/503 → **8,849/502**; `prior_year_missing` 1,456/492 →
+  **1,466/502**; `capture_failure` 1,756/163, `denominator_not_positive` 616/108,
+  `growth_base_not_positive` 1,600/336 and `not_applicable` 648/56 unchanged. The move is
+  `market_capitalization`'s 511 empty rows: 495 `missing_input` → `prior_year_missing`, 8
+  `missing_input` → `capture_failure` (the other market-cap keys), COP `missing_input` →
+  `capture_failure`, and the 8 already-`prior_year_missing` rows unchanged.
+
+### Declared limitations
+
+- The provenance block's items carry the basis they were read on (G2); the prior-year column's own
+  resolution flags still also appear as the `flag_prior_*` inputs.
+- A group shares one inputs dict, so `flag_nopat_tax_rate_outside_unit_interval` (H7) is present on
+  every row of `profitability`, `roic` and `valuation`, as every other group flag is; the predicate
+  (NOPAT formed and the rate outside [0, 1]) decides whether it is set at all.
+- The code-vs-matrix check for financial firms waits for **T-071** (APP-00's company-type profile).
+- The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded
+  (G6 records what wiring it would need).

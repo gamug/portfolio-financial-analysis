@@ -18,7 +18,13 @@ from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
 from fundamental_agent.config import Settings
-from fundamental_agent.metrics import CORE_GROUPS, OPTIONAL_GROUPS, MetricResult, compute_group
+from fundamental_agent.metrics import (
+    CORE_GROUPS,
+    OPTIONAL_GROUPS,
+    MetricResult,
+    compute_group,
+    provenance,
+)
 from fundamental_agent.metrics import valuation as valuation_metrics
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
@@ -296,7 +302,9 @@ def _prompt_version_hash(model_name: str) -> str:
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
-    def __init__(self, model: OpenAIModel, model_name: str) -> None:
+    def __init__(self, model: OpenAIModel | None, model_name: str) -> None:
+        # ``model`` is None for the deterministic path (``_compute_all`` and the recompute script,
+        # which never call the LLM); ``analyze`` needs a real model.
         self.prompt_hash = _prompt_version_hash(model_name)
         self._model = model
         self.model_name = model_name
@@ -350,6 +358,9 @@ class FundamentalAnalyst:
                 out.append((valuation_metrics.GROUP, result))
 
         _flag_annualization(out, ctx.ttm_flows)
+        # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
+        # method and columns come from the filing's own flows).
+        provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:
