@@ -555,6 +555,22 @@ the final pilot, `T-143`.
       items). The box stays open until part 3 merges, so this merge does not move T-151 to
       `CHANGELOG.md`.** Branch `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the
       mismatching companies are declared there as input for part 3's gate.
+- [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
+      shape (code fix and hermetic tests only; no pipeline rerun). A database created by
+      `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
+      columns but 0 rows in `schema_version`, so `python -m <agent> migrate` replayed m001…m015 and
+      each rebuilding migration dropped the columns a later release added (`preferred_sign`,
+      `correction_rule`; reviewer A's `mig_repro.py`). **Status (2026-10-13): done — PR #146** (branch
+      `fix/t154-migrate-replay`; `docs/model_fixes.md` "T-154"). D1: every rebuilding migration (m002,
+      m003, m004, m005, m006, m007, m009, m014) checks its target shape first and returns early when it
+      is already there, and each rebuild carries the columns the current code adds; D2: a database that
+      is already at the current shape records every version (`"stamped: created at the current
+      shape"`), so `migrate` applies nothing there. 3.2 (`scripts/verify_t154.py replay`,
+      `out/p2_check.txt`): a copy of `/workspaces/thesis/scratch/t148b/after_full.db` migrated with
+      `preferred_sign` 1,988,623 and `correction_rule` 109 unchanged, its keys widened. Open question
+      for the director: a database created by `ensure()` alone is not at the migrations' target shapes
+      (the pre-m002/m003 keys, no `ux_quant_portfolio_book`), so D2 does not stamp it and `migrate`
+      still replays m002/m003/m007/m014 there — aligning the declared DDL is the director's call.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,
