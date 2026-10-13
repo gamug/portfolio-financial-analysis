@@ -324,10 +324,22 @@ def _prior_basis(stmts: Statements, basis: str) -> str:
     return "prior_quarter" if stmts.prior_quarter_capital is not None else "prior_year"
 
 
+def _ttm_column(stmts: Statements, period_key: str) -> str:
+    """The column a 10-Q's TTM is built from: its year-to-date column ending on the period end, else
+    the period's own column."""
+    end = period_key[:10]
+    for period in stmts.periods:
+        if period.tag == "YTD" and period.date == end:
+            return str(period.key)
+    return period_key
+
+
 def _resolve(
     stmts: Statements, period_key: str, item: str, basis: str
 ) -> tuple[Resolution, Capital | None]:
     """The resolution of *item* on *basis*, and the ``Capital`` it came from when it is a prior one."""
+    if basis == "ttm":
+        return stmts.resolve(item, _ttm_column(stmts, period_key)), None
     if basis in ("prior_year", "prior_quarter"):
         capital = (
             stmts.prior_quarter_capital_at(period_key)
