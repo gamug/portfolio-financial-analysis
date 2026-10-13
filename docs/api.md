@@ -23,8 +23,10 @@ uv run uvicorn --factory api.app:create_app --reload  # dev, autoreload
 
 `ApiSettings.load()` needs `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`).
 Optional: `KG_UNIVERSE_DB` (default `/workspaces/thesis/data/universe.db`),
-`API_HOST` (default `0.0.0.0`), `API_PORT` (default `8010` — the data-mining
-gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
+`KG_NEWS_DB` (default `/workspaces/thesis/data/urls.db`; the `entity_resolution`
+news source, passed to that step), `API_HOST` (default `0.0.0.0`), `API_PORT`
+(default `8010` — the data-mining gateway owns `:8000`–`:8005`), `API_ROOT_PATH`
+(when mounted behind a proxy).
 
 ## Endpoints (`/api/v1`)
 
@@ -41,6 +43,7 @@ gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
 | `GET /portfolio/quant-vs-live` | optimized benchmark weights beside live positions (`v_quant_vs_live`). `?as_of=` (newest book date on or before, no lookahead), `?kind=` (that kind plus `LIVE_ONLY`), `?current_only=true` (default; `false` includes variant books). Live-only positions included ([below](#optimized-vs-live-books-portfolioquant-vs-live-t-083)) |
 | `GET /contract` | the `v_*` view contract the running code defines — `contract_version`, `code_version`, every view with its `frozen` flag and columns in order. Metadata only, no rows ([below](#the-view-contract-contract-t-152)) |
 | `GET /contract/database` | what the connected database has of that contract — `schema_version`, `views_present`, `views_missing` |
+| `POST /run/…` · `GET /run/{handle}` | the run endpoints — the orchestrator and its ten steps, plus the status poll ([below](#run-endpoints-work-item-2-t-011)) |
 
 `GET /` redirects to `/docs`.
 
@@ -204,7 +207,7 @@ and **survives an API restart**. An unknown handle — or a database without the
 is **`404`**. It is a read router: it starts no run and imports no run router. The views' columns
 are unchanged, but both can now carry the value `abandoned` (T-015, as `blocked` for `T-013`).
 
-### Current limits (until later Work item 2 tasks)
+### Run behaviour
 
 - **A killed process is reconciled by the next run (`T-015`).** A run that writes takes an exclusive
   `fcntl.flock` on `<KG_FINANCIAL_DB>.orchestrator.lock` before it records anything, and every child
