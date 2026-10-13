@@ -18,7 +18,13 @@ from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
 from fundamental_agent.config import Settings
-from fundamental_agent.metrics import CORE_GROUPS, OPTIONAL_GROUPS, MetricResult, compute_group
+from fundamental_agent.metrics import (
+    CORE_GROUPS,
+    OPTIONAL_GROUPS,
+    MetricResult,
+    compute_group,
+    provenance,
+)
 from fundamental_agent.metrics import valuation as valuation_metrics
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
@@ -331,6 +337,8 @@ class FundamentalAnalyst:
                 out.append((valuation_metrics.GROUP, result))
 
         _flag_annualization(out, ctx.ttm_flows)
+        # T-151 part 3 (D14): the provenance block on every metric, in one place.
+        provenance.attach(out, ctx.stmts, ctx.period_key)
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:

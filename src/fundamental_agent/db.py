@@ -1550,13 +1550,20 @@ def prior_capital(
         )
 
 
-def attach_context(
-    conn: Database, asset_id: int, form: str, period_key: str, stmts: Statements
+def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements it enriches
+    conn: Database,
+    asset_id: int,
+    form: str,
+    period_key: str,
+    stmts: Statements,
+    *,
+    accession: str | None = None,
 ) -> None:
-    """Attach the company profile and the prior-year capital to *stmts* before its metrics are
-    computed (T-151 part 2). One call so every entry point (the pipeline and the recompute script)
-    enriches the same way."""
+    """Attach the company profile, the prior-year capital and the filing's accession to *stmts*
+    before its metrics are computed (T-151 parts 2 and 3). One call so every entry point (the
+    pipeline and the recompute script) enriches the same way."""
     sector, sub_industry = company_profile(conn, asset_id)
     stmts.sector = sector
     stmts.sub_industry = sub_industry
+    stmts.accession = accession
     prior_capital(conn, asset_id, form, period_key, stmts)

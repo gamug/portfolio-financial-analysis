@@ -770,6 +770,59 @@ _COMPOSITE = {
 }
 
 
+# The rule IDs of every resolver map and tier (T-151 part 3, D13 (c)): each map and each composite
+# resolver cites the checklist rule it implements, so a map without a source is visible. The test
+# ``tests/test_traceability.py`` fails when a name in :data:`RESOLVER_MAPS` is missing here.
+RESOLVER_RULE_IDS: dict[str, tuple[str, ...]] = {
+    "revenue.total_concepts": ("CON-11", "B4_DQC_Revenue_Guidance"),
+    "revenue.sum_components": ("ID-02b", "B4_DQC_Revenue_Guidance"),
+    "revenue.synonym_groups": ("ID-02a", "B4_DQC_Revenue_Guidance"),
+    "net_income": ("ID-03", "CON-19", "N13"),
+    "income_tax": ("ID-02b", "D-06(c)"),
+    "cash": ("ID-02b", "B4_DQC_Revenue_Guidance", "D-06(a)"),
+    "capex": ("MET-08", "APP-04b"),
+    "da": ("MD-01", "ID-02b"),
+    "long_term_debt": ("MET-07", "ID-02a", "ID-02b"),
+    "short_term_debt": ("MET-07", "D-06(d)", "N4"),
+    "redeemable_nci": ("MD-02", "CON-04", "D6"),
+    "SHORT_TERM_DEBT_MAP": ("MET-07", "D-06(d)", "N4"),
+    "SHORT_TERM_DEBT_LAST": ("MET-07", "D-06(d)"),
+    "INCLUDES_CURRENT_MATURITIES": ("N4",),
+    "LONG_TERM_DEBT_NONCURRENT_CHILDREN": ("ID-02b", "MET-07"),
+    "LONG_TERM_DEBT_CHILDREN": ("ID-02b", "MET-07", "N4"),
+    "DA_SOURCED_CHILDREN": ("ID-02b", "MD-01"),
+    "REDEEMABLE_NCI_CONCEPTS": ("MD-02", "CON-04", "D6"),
+    "SHORT_TERM_INVESTMENT_CONCEPTS": ("MD-02", "MD-03", "MD-35", "D6"),
+    "_NCI_INCOME_CONCEPTS": ("ID-03", "CON-19"),
+    "_COMPOSITE": ("ID-02b",),
+}
+
+# Every map or tier constant a reader must find in :data:`RESOLVER_RULE_IDS`.
+RESOLVER_MAPS: tuple[str, ...] = (
+    "SHORT_TERM_DEBT_MAP",
+    "SHORT_TERM_DEBT_LAST",
+    "INCLUDES_CURRENT_MATURITIES",
+    "LONG_TERM_DEBT_NONCURRENT_CHILDREN",
+    "LONG_TERM_DEBT_CHILDREN",
+    "DA_SOURCED_CHILDREN",
+    "REDEEMABLE_NCI_CONCEPTS",
+    "SHORT_TERM_INVESTMENT_CONCEPTS",
+    "_NCI_INCOME_CONCEPTS",
+    "_COMPOSITE",
+    "net_income",
+    "income_tax",
+    "cash",
+    "capex",
+    "da",
+    "long_term_debt",
+    "short_term_debt",
+    "redeemable_nci",
+    "revenue.total_concepts",
+    "revenue.sum_components",
+    "revenue.synonym_groups",
+)
+
+
 @dataclass(frozen=True)
 class Resolution:
     """What :meth:`Statements.resolve` read for one line item and one period (T-148).
@@ -835,6 +888,9 @@ class Statements:
     # the code cannot know it here (D13). ``None`` in a hermetic fixture.
     sector: str | None = None
     sub_industry: str | None = None
+    # T-151 part 3 (D14): the filing's accession, recorded in every metric's ``provenance`` block.
+    # Set by the pipeline / recompute (:func:`fundamental_agent.db.attach_context`).
+    accession: str | None = None
     # T-151 part 2 (MET-01/02, MD-02/35/38): the capital at the prior fiscal year end, and (a 10-Q
     # only) at the prior year's same quarter. Resolved by ``fundamental_agent.db.prior_capital``
     # because the second reads another filing's stored facts; ``None`` in a hermetic fixture, where

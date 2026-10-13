@@ -941,8 +941,9 @@ def _recompute_single_filing(
     target_period = next((p for p in stmts.periods if p.key == own_key), None)
     if target_period is None:
         return False
-    # T-151 part 2: the company profile and the prior-year capital (MET-01/02, MD-02/35/38).
-    db.attach_context(conn, aid, f["form"], own_key, stmts)
+    # T-151 parts 2 and 3: the company profile, the prior-year capital (MET-01/02, MD-02/35/38)
+    # and the filing's accession (D14's provenance).
+    db.attach_context(conn, aid, f["form"], own_key, stmts, accession=f["accession_number"])
     prior_period = stmts.prior_of(target_period)
 
     target = _Target(

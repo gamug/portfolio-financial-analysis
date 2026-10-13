@@ -4,18 +4,23 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 _EPSILON = 1e-9
 
 
 @dataclass(frozen=True)
 class MetricResult:
-    """One computed ratio plus the raw inputs it came from (for auditability)."""
+    """One computed ratio plus the raw inputs it came from (for auditability).
+
+    ``inputs`` holds the flat audit values (``flag_<item>_<flag>`` = 1.0 among them) and, from
+    T-151 part 3 (D14), one ``provenance`` block per metric (a nested dict), so the value type is
+    ``Any``."""
 
     name: str
     value: float | None
     unit: str  # "ratio" | "pct" | "x" | "usd"
-    inputs: dict[str, float] = field(default_factory=dict)
+    inputs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
