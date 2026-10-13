@@ -400,6 +400,47 @@ def cmd_counts(args: argparse.Namespace) -> None:
     print(f"\nWrote {args.out}")
 
 
+def cmd_roa(args: argparse.Namespace) -> None:
+    """R-4's breakdown: the empty ``return_on_assets`` rows that file no operating income, by GICS
+    sector (the director's R-4 answer asks for the numbers re-taken with a committed script)."""
+    conn = open_ro(args.db)
+    rows = _rows_by_filing(conn, args.engine)
+    sectors = {
+        int(r["filing_id"]): (r["sector"], int(r["asset_id"]))
+        for r in conn.execute(
+            "SELECT f.id AS filing_id, COALESCE(s.name, '?') AS sector, f.asset_id "
+            "FROM sec_filings f JOIN assets a ON a.id = f.asset_id "
+            "LEFT JOIN sectors s ON s.id = a.sector_id"
+        )
+    }
+    filings: dict[str, set[int]] = defaultdict(set)
+    companies: dict[str, set[int]] = defaultdict(set)
+    total = 0
+    for fid, filing in rows.items():
+        row = filing.get("return_on_assets")
+        if row is None or row["value"] is not None:
+            continue
+        if row["inputs"].get("operating_income") is not None:
+            continue
+        sector, asset_id = sectors.get(fid, ("?", 0))
+        filings[sector].add(fid)
+        companies[sector].add(asset_id)
+        total += 1
+    payload = {
+        sector: {"filings": len(filings[sector]), "companies": len(companies[sector])}
+        for sector in sorted(filings)
+    }
+    payload["TOTAL"] = {
+        "filings": total,
+        "companies": len(set().union(*companies.values()) if companies else set()),
+    }
+    Path(args.out).write_text(json.dumps(payload, indent=2))
+    for sector in sorted(payload):
+        entry = payload[sector]
+        print(f"{sector:<28}{entry['filings']:>6} filings {entry['companies']:>5} companies")
+    print(f"Wrote {args.out}")
+
+
 def cmd_audit_diff(args: argparse.Namespace) -> None:
     """(d) the keys of ``audit_sec_checklist measure --only metrics`` that changed, control vs after."""
 
@@ -436,6 +477,11 @@ def main() -> None:
         if name == "changes":
             p.add_argument("--top", type=int, default=20)
         p.set_defaults(func=func)
+    p = sub.add_parser("roa")
+    p.add_argument("--db", required=True)
+    p.add_argument("--engine", default="metrics-v7")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_roa)
     p = sub.add_parser("audit-diff")
     p.add_argument("--control-json", required=True)
     p.add_argument("--after-json", required=True)
