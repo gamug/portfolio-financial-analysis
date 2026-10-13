@@ -632,7 +632,7 @@ def main() -> int:  # noqa: C901, PLR0915
             step_rows = [
                 tuple(r)
                 for r in db.execute(
-                    "SELECT orchestrator_run_id, ordinal, status, run_kind, run_id "
+                    "SELECT orchestrator_run_id, ordinal, status, run_kind, run_id, reason "
                     "FROM orchestrator_step ORDER BY orchestrator_run_id, ordinal"
                 ).fetchall()
             ]
@@ -648,8 +648,15 @@ def main() -> int:  # noqa: C901, PLR0915
                 ):
                     bad.append(f"{prefix}run {run_id}: completed with a non-completed/skipped step")
                 # T-013: a failed run may have several failed steps (independent failures).
-                if status == "failed" and not any(s[2] == "failed" for s in steps):
-                    bad.append(f"{prefix}run {run_id}: failed without a failed step")
+                # T-015: or no failed step at all, when a graceful stop prevented the step it
+                # landed on -- that step is `not_run` with reason `stopped: ...`.
+                if status == "failed" and not (
+                    any(s[2] == "failed" for s in steps)
+                    or any(str(s[5] or "").startswith("stopped:") for s in steps)
+                ):
+                    bad.append(
+                        f"{prefix}run {run_id}: failed without a failed step or a stop reason"
+                    )
                 if status in ("completed", "failed") and finished_at is None:
                     bad.append(f"{prefix}run {run_id}: finished run without finished_at")
                 for s in steps:
@@ -734,6 +741,57 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-013", t013)
+
+    def t015() -> None:  # noqa: C901 - one branch per T-015 invariant
+        # The run lock and abandoned-run reconcile (T-015): at most one run per database is
+        # `running`, an `abandoned` run has `finished_at` and no step left `running`/`pending`, and
+        # an `abandoned` step belongs to an `abandoned` run. Read-only; no orchestrator run is SKIP.
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        checked_runs = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            if not db.relation_exists("orchestrator_run"):
+                continue
+            runs = [
+                tuple(r)
+                for r in db.execute(
+                    "SELECT id, status, finished_at FROM orchestrator_run"
+                ).fetchall()
+            ]
+            if not runs:
+                continue
+            checked_runs += len(runs)
+            run_status = {int(rid): str(st) for rid, st, _ in runs}
+            abandoned = {int(rid) for rid, st, _ in runs if st == "abandoned"}
+            running = [rid for rid, st, _ in runs if st == "running"]
+            if len(running) > 1:
+                bad.append(f"{prefix}{len(running)} runs are running at once: {running}")
+            for rid, st, finished_at in runs:
+                if st == "abandoned" and finished_at is None:
+                    bad.append(f"{prefix}run {rid}: abandoned without finished_at")
+            for run_id, step, status in db.execute(
+                "SELECT orchestrator_run_id, step, status FROM orchestrator_step"
+            ).fetchall():
+                rid = int(run_id)
+                if rid in abandoned and status in ("running", "pending"):
+                    bad.append(f"{prefix}run {rid}: abandoned but step {step} is {status}")
+                if status == "abandoned" and run_status.get(rid) != "abandoned":
+                    bad.append(f"{prefix}step {step} of run {rid}: abandoned but its run is not")
+        if checked_runs == 0:
+            report("T-015", "SKIP", "no orchestrator runs recorded")
+            return
+        report(
+            "T-015",
+            "FAIL" if bad else "PASS",
+            f"run lock / abandoned reconcile: {checked_runs} runs; "
+            + ("; ".join(bad[:10]) or "clean"),
+        )
+
+    check("T-015", t015)
 
     def t017() -> None:  # noqa: C901 - one branch per incremental-run rule
         # The incremental run (T-017): a step is skipped "not pending" only when no direct upstream

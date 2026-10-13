@@ -122,7 +122,13 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       pricing → fundamental → entity_resolution → cycle → quant for one `--analysis-date` on a fresh universe
       with no pre-existing data. → `PLAN.md` acceptance criteria, first bullet. *(2026-10-05: the final pilot,
       `T-143`, doubles as this check — one orchestrator run on a fresh database, through both surfaces.)*
-- [ ] **T-015** Verify: killing the orchestrator mid-run and re-invoking it (over HTTP and the CLI) does not
+- [x] **T-015** — **done 2026-10-13, PR #154** (approved after two review rounds: a cross-process run
+  lock beside the database that every child inherits, so an orphaned step keeps it and a re-invocation,
+  or a CLI run beside an HTTP run, is refused; the next run reconciles a dead process's run to `abandoned`;
+  SIGTERM to the CLI and the API's shutdown kill the current child and record `stopped: ...`, also when the
+  stop lands before a step starts; real kills K1-K5 on scratch copies with no completed output rewritten;
+  verify_pilot's T-015 check and T-012's stop rule; SPEC 1.15.0). Verify: killing the orchestrator mid-run
+  and re-invoking it (over HTTP and the CLI) does not
       redo an already-completed step. → second acceptance criterion.
 - [ ] **T-016** Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
       only before the orchestrator ships, in the same change as the code: `SPEC.md` §3 diagram label
