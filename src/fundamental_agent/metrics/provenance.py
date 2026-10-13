@@ -14,6 +14,8 @@ Each stored metric's inputs carry one ``provenance`` block:
 * for ``market_capitalization``, which reads no statement item, the market cap's own source
   (``kg_schema.market_cap``: the cover-page count x the close on the as-of date, L1);
 * the rule IDs applied (the checklist rules and Annex B's ``MD-`` rows);
+* the rule the applicability matrix's NA/ADJ cell was decided by, when the metric belongs to a
+  company type the matrix constrains (T-071 part 1, P4; ``applicability_rule``);
 * the resolution flags;
 * and, when the value is empty, a reason from a fixed list of codes (G4's precedence).
 
@@ -298,8 +300,19 @@ _CAPITAL_FIELDS: dict[str, str] = {
     "short_term_debt": "short_term_debt",
 }
 
+# T-071 part 1 (P4): the applicability layer's audit inputs, written by
+# `fundamental_agent.applicability.apply_applicability`. `flag_<metric>_not_applicable` /
+# `flag_<metric>_adj` name the matrix's cell; `applicability_rule` records the rule that decided it.
+NOT_APPLICABLE_FLAG = "not_applicable"
+ADJUSTED_FLAG = "adj"
+UNKNOWN_TYPE_FLAG = "company_type_unknown"
+APPLICABILITY_RULE = "applicability_rule"
+
 # The flag -> the reason it names, in G4's precedence order.
 _FLAG_REASONS: tuple[tuple[str, str], ...] = (
+    # T-071 part 1 (P4): the matrix's own NA cell (APP-00, APP-01..09) -- rank 1, with negative
+    # equity, because it is the code's decision that the metric does not apply to this company.
+    ("not_applicable", NOT_APPLICABLE),
     ("negative_equity", NOT_APPLICABLE),
     ("growth_base_not_positive", GROWTH_BASE_NOT_POSITIVE),
     ("denominator_negative", DENOMINATOR_NOT_POSITIVE),
@@ -595,6 +608,11 @@ def build(
     }
     if result.name == "market_capitalization":
         block["market_cap"] = _market_cap_provenance(result)
+    # T-071 part 1 (P4): the rule the applicability matrix's NA/ADJ cell was decided by, when the
+    # layer stamped one (``fundamental_agent.applicability.apply_applicability``).
+    rule = result.inputs.get(APPLICABILITY_RULE)
+    if rule:
+        block["applicability_rule"] = rule
     return block
 
 

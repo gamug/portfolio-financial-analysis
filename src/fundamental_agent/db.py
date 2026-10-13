@@ -23,6 +23,7 @@ from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
 from kg_schema import identity
+from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
 
@@ -1478,18 +1479,18 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
 
 
 def is_equity_reit(conn: Database, asset_id: int) -> bool:
-    """M4 predicate (D6): assets -> sectors sector name 'Real Estate' and assets.sub_industry ending in 'REITs'."""
-    row = conn.execute(
-        "SELECT s.name AS sector, a.sub_industry "
-        "FROM assets a LEFT JOIN sectors s ON a.sector_id = s.id "
-        "WHERE a.id = ?",
-        (asset_id,),
-    ).fetchone()
-    if not row:
+    """M4 predicate (D6), read from the company profile (T-071 part 1, APP-00).
+
+    The profile's ``reit`` overlay, keyed by the asset's CIK (APP-10a) -- the one source every
+    package reads for the type. An asset whose CIK has no profile is ``False``, never a guessed type.
+    The GICS predicate this replaces (sector ``Real Estate`` and a sub-industry ending in ``REITs``)
+    is how the profile's own ``reit`` column was derived, and the two agree on every pilot asset
+    (measured in T-071 part 1)."""
+    row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    if not row or not row["cik"]:
         return False
-    sector = str(row["sector"] or "")
-    sub_industry = str(row["sub_industry"] or "")
-    return sector == "Real Estate" and sub_industry.endswith("REITs")
+    profile = profile_as_of(str(row["cik"]))
+    return bool(profile and profile.reit)
 
 
 # -- the prior-year capital and the company profile (MET-01/02, MD-02/35/38; T-151 part 2) ---------
@@ -1533,8 +1534,9 @@ def statements_from_facts(conn: Database, filing_id: int) -> Statements:
 
 
 def company_profile(conn: Database, asset_id: int) -> tuple[str | None, str | None]:
-    """The company's GICS sector and sub-industry (today's snapshot, L-03) -- what the code can
-    know of the company type before T-071 delivers ``company_types.csv``."""
+    """The company's GICS sector and sub-industry (today's snapshot, L-03) -- the fallback for a CIK
+    the company profile does not hold (T-071 part 1 reads the tracked profile first, in
+    :func:`attach_context`)."""
     row = conn.execute(
         "SELECT s.name AS sector, a.sub_industry FROM assets a "
         "LEFT JOIN sectors s ON a.sector_id = s.id WHERE a.id = ?",
@@ -1625,10 +1627,19 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     accession: str | None = None,
 ) -> None:
     """Attach the company profile, the prior-year capital and the filing's accession to *stmts*
-    before its metrics are computed (T-151 parts 2 and 3). One call so every entry point (the
-    pipeline and the recompute script) enriches the same way."""
-    sector, sub_industry = company_profile(conn, asset_id)
-    stmts.sector = sector
-    stmts.sub_industry = sub_industry
+    before its metrics are computed (T-151 parts 2 and 3; T-071 part 1's profile). One call so every
+    entry point (the pipeline and the recompute script) enriches the same way.
+
+    The sector and sub-industry come from the **company profile** (T-071 part 1, APP-00/APP-04c/PER-14:
+    an APP-00 type and a GICS snapshot), falling back to the assets table only for a CIK the profile
+    does not hold -- never a guessed type. The two agree on every pilot asset."""
+    row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    cik = str(row["cik"]) if row and row["cik"] else None
+    profile = profile_as_of(cik, period_key[:10]) if cik else None
+    if profile is not None:
+        stmts.sector = profile.sector
+        stmts.sub_industry = profile.sub_industry
+    else:
+        stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
     stmts.accession = accession
     prior_capital(conn, asset_id, form, period_key, stmts)
