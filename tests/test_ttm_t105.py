@@ -195,43 +195,33 @@ def _quarter() -> Statements:
         row("us-gaap_OperatingIncomeLoss", 900.0, "income_statement"),
         row("us-gaap_DepreciationDepletionAndAmortization", 100.0),
         row("us-gaap_InterestExpense", 40.0, "income_statement"),
+        row("us-gaap_IncomeTaxExpenseBenefit", 200.0, "income_statement"),
+        row(
+            "us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+            1_000.0,
+            "income_statement",
+        ),
     ]
+
+    def balance_row(concept: str, label: str, current: float, prior: float) -> dict[str, Any]:
+        # T-151 part 2: MET-01/MET-02 divide by the prior fiscal year end, which a 10-Q's own
+        # balance sheet carries as its comparative column (2024-12-31).
+        return {
+            "concept": concept,
+            "label": label,
+            "abstract": False,
+            "dimension": False,
+            "2025-06-30": current,
+            "2024-12-31": prior,
+        }
+
     balance = [
-        {  # a complete balance sheet (ID-02b: a partial debt map is accepted only on one)
-            "concept": "us-gaap_Assets",
-            "label": "assets",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 50_000.0,
-        },
-        {
-            "concept": "us-gaap_CommonStockSharesOutstanding",
-            "label": "shares",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 100.0,
-        },
-        {
-            "concept": "us-gaap_LongTermDebt",
-            "label": "debt",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 10_000.0,
-        },
-        {
-            "concept": "us-gaap_CashAndCashEquivalentsAtCarryingValue",
-            "label": "cash",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 2_000.0,
-        },
-        {
-            "concept": "us-gaap_StockholdersEquity",
-            "label": "equity",
-            "abstract": False,
-            "dimension": False,
-            "2025-06-30": 20_000.0,
-        },
+        # a complete balance sheet (ID-02b: a partial debt map is accepted only on one)
+        balance_row("us-gaap_Assets", "assets", 50_000.0, 50_000.0),
+        balance_row("us-gaap_CommonStockSharesOutstanding", "shares", 100.0, 100.0),
+        balance_row("us-gaap_LongTermDebt", "debt", 10_000.0, 10_000.0),
+        balance_row("us-gaap_CashAndCashEquivalentsAtCarryingValue", "cash", 2_000.0, 2_000.0),
+        balance_row("us-gaap_StockholdersEquity", "equity", 20_000.0, 20_000.0),
     ]
     payload: dict[str, list[Any]] = {
         "income_statement": [],
@@ -279,8 +269,8 @@ def test_fcf_yields_divide_a_year_of_cash_flow_by_the_price() -> None:
     assert out["free_cash_flow_yield"].value == pytest.approx((4_100 - 800) / 40_000)
     assert out["sbc_adjusted_fcf_yield"].value == pytest.approx((4_100 - 800 - 190) / 40_000)
     inputs = out["free_cash_flow_yield"].inputs
-    assert inputs["free_cash_flow_to_equity"] == 800.0  # the raw quarter stays on record
-    assert inputs["free_cash_flow_to_equity_ttm"] == 3_300.0
+    assert inputs["free_cash_flow"] == 800.0  # the raw quarter stays on record
+    assert inputs["free_cash_flow_ttm"] == 3_300.0
     # without TTM (a 10-K) the filing's own period is the year
     tenk = _by_name(valuation_compute(_quarter(), KEY, PRICE, None, None, market_cap=MC))
     assert tenk["free_cash_flow_yield"].value == pytest.approx(800 / 40_000)
@@ -301,13 +291,15 @@ def test_net_debt_to_ebitda_uses_a_year_of_ebitda() -> None:
 
 
 def test_roic_uses_a_year_of_nopat_and_nopat_stays_the_quarter() -> None:
+    """NOPAT's tax is MET-03's 21% (not the filing's own rate, D3); the denominator is the invested
+    capital at the prior fiscal year end (MET-02), which the 10-Q's comparative column carries."""
     out = _by_name(roic_compute(_quarter(), KEY, None, TTM))
-    rate = out["effective_tax_rate"].value
-    assert rate is not None
+    # the filing's own rate is reported: income tax 200 / pre-tax 1,000
+    assert out["effective_tax_rate"].value == pytest.approx(0.20)
     assert out["return_on_invested_capital"].value == pytest.approx(
-        3_500 * (1 - rate) / (10_000 + 20_000 - 2_000)
+        3_500 * (1 - 0.21) / (10_000 + 20_000 - 2_000)
     )
-    assert out["nopat"].value == pytest.approx(900 * (1 - rate))
+    assert out["nopat"].value == pytest.approx(900 * (1 - 0.21))
 
 
 def test_each_group_is_stamped_with_how_it_was_annualized() -> None:

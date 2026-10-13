@@ -11,9 +11,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
+from fundamental_agent.metrics.tax import nopat, nopat_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
@@ -71,84 +73,61 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
 ) -> list[MetricResult]:
     """FCF-yield family for *period_key*, valued under MKT-01 to MKT-04 and PER-06."""
     _, fcfe = free_cash_flow(stmts, period_key)
-    net_income = stmts.get("net_income", period_key)
-    sbc = stmts.get("stock_based_compensation", period_key)
     annual = _AnnualFlows(stmts, period_key, ttm)
     fcfe_annual = annual.fcf()
     sbc_annual = annual.get("stock_based_compensation")
+    mc = _resolve_market_cap(price, market_cap, market_cap_missing)
+    (shares, share_price, market_cap_val, *_rest) = mc
 
-    (
-        shares,
-        share_price,
-        market_cap_val,
-        share_age_days,
-        split_factor,
-        n_classes,
-        incomplete_classes,
-        cover_member_not_common_excluded,
-        missing_reason,
-    ) = _resolve_market_cap(price, market_cap, market_cap_missing)
-
-    cash_resolution = stmts.resolve("cash", period_key)
-    cash = cash_resolution.value
-    debt_resolution = stmts.total_debt(period_key)
-    total_debt = debt_resolution.value
-    enterprise_value = _enterprise_value(market_cap_val, total_debt, cash)
+    # MD-35 (D7): EV = market cap + debt + NCI - cash - short-term investments. Empty when market
+    # cap, debt, cash or NCI is missing (MET-00). Preferred stock is not added (pending the second
+    # author, Annex B).
+    cap = stmts.capital_at(period_key)
+    nci_res = capital.nci(cap, income_filed=stmts.nci_income_filed(period_key))
+    sti_res = capital.net_short_term_investments(cap)
+    enterprise_value = _enterprise_value(
+        market_cap_val, cap.debt.value, cap.cash.value, nci_res.value, sti_res.value
+    )
 
     interest_resolution = stmts.resolve("interest_expense", period_key)
     interest_rejected = any(f.endswith("_rejected") for f in interest_resolution.flags)
     fcff = _fcf_to_firm(
         stmts, period_key, fcfe, interest_resolution.value, interest_rejected=interest_rejected
     )
-    fcff_annual = _fcf_to_firm(
-        stmts,
-        period_key,
-        fcfe_annual,
-        annual.get("interest_expense"),
-        interest_rejected=interest_rejected,
+
+    inputs = present(
+        free_cash_flow=fcfe,
+        free_cash_flow_to_firm=fcff,
+        stock_based_compensation=stmts.get("stock_based_compensation", period_key),
+        net_income=stmts.get("net_income", period_key),
+        shares=shares,
+        share_price=share_price,
+        market_capitalization=market_cap_val,
+        total_debt=cap.debt.value,
+        cash=cap.cash.value,
+        short_term_investments=sti_res.value,
+        nci=nci_res.value,
+        enterprise_value=enterprise_value,
     )
+    inputs.update(flag_inputs("total_debt", cap.debt.flags))
+    inputs.update(flag_inputs("cash", cap.cash.flags))
+    inputs.update(capital.capital_flags(cap, "current"))
+    capex_resolution = stmts.resolve("capital_expenditure", period_key)
+    inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
+    _market_cap_inputs(inputs, mc, price, period_key, share_scale_factors)
+
+    # MD-38 (D8): (NOPAT - (capex - D&A + Δ non-cash working capital)) / EV.
+    fcff_annual = _md38(stmts, period_key, cap, annual, inputs)
+
     sbc_adjusted_fcf = (
         fcfe_annual - sbc_annual if fcfe_annual is not None and sbc_annual is not None else None
     )
 
-    inputs = present(
-        free_cash_flow_to_equity=fcfe,
-        free_cash_flow_to_firm=fcff,
-        stock_based_compensation=sbc,
-        net_income=net_income,
-        shares=shares,
-        share_price=share_price,
-        market_capitalization=market_cap_val,
-        total_debt=total_debt,
-        cash=cash,
-        enterprise_value=enterprise_value,
-    )
-    inputs.update(flag_inputs("total_debt", debt_resolution.flags))
-    inputs.update(flag_inputs("cash", cash_resolution.flags))
-    capex_resolution = stmts.resolve("capital_expenditure", period_key)
-    inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
-    if price is not None:
-        inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
-    if share_age_days is not None:
-        inputs["share_age_days"] = share_age_days
-    if split_factor is not None:
-        inputs["split_factor"] = split_factor
-    if n_classes is not None:
-        inputs["n_classes"] = n_classes
-    if missing_reason is not None:
-        inputs[f"market_cap_{missing_reason}"] = 1.0
-    if incomplete_classes:
-        inputs["market_cap_incomplete_classes"] = 1.0
-    if cover_member_not_common_excluded:
-        inputs["cover_member_not_common_excluded"] = 1.0
-    if share_scale_factors:
-        inputs["share_scale_suspect"] = 1.0
-
     if annual.is_ttm:
         inputs.update(
             present(
-                free_cash_flow_to_equity_ttm=fcfe_annual,
-                free_cash_flow_to_firm_ttm=fcff_annual,
+                free_cash_flow_ttm=fcfe_annual,
+                free_cash_flow_to_firm_ttm=fcff,
                 stock_based_compensation_ttm=sbc_annual,
             )
         )
@@ -168,13 +147,114 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     ]
 
 
-def _enterprise_value(
-    market_cap: float | None, total_debt: float | None, cash: float | None
+_MarketCap = tuple[
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    bool,
+    bool,
+    str | None,
+]
+
+
+def _market_cap_inputs(
+    inputs: dict[str, float],
+    mc: _MarketCap,
+    price: ClosePrice | None,
+    period_key: str,
+    share_scale_factors: dict[str, float] | None,
+) -> None:
+    """Record how the market cap was read (MKT-01 to MKT-04): the price offset, the share age, the
+    split factor, the class count, and why it is missing or incomplete when it is."""
+    (
+        _shares,
+        _close,
+        _value,
+        share_age_days,
+        split_factor,
+        n_classes,
+        incomplete_classes,
+        cover_member_not_common_excluded,
+        missing_reason,
+    ) = mc
+    if price is not None:
+        inputs["price_date_offset_days"] = _day_gap(price.date, period_key)
+    if share_age_days is not None:
+        inputs["share_age_days"] = share_age_days
+    if split_factor is not None:
+        inputs["split_factor"] = split_factor
+    if n_classes is not None:
+        inputs["n_classes"] = n_classes
+    if missing_reason is not None:
+        inputs[f"market_cap_{missing_reason}"] = 1.0
+    if incomplete_classes:
+        inputs["market_cap_incomplete_classes"] = 1.0
+    if cover_member_not_common_excluded:
+        inputs["cover_member_not_common_excluded"] = 1.0
+    if share_scale_factors:
+        inputs["share_scale_suspect"] = 1.0
+
+
+def _md38(
+    stmts: Statements,
+    period_key: str,
+    cap: capital.Capital,
+    annual: _AnnualFlows,
+    inputs: dict[str, float],
 ) -> float | None:
-    # MET-00 / D10: a missing debt or cash leaves the enterprise value empty, never read as 0
-    if market_cap is None or total_debt is None or cash is None:
+    """MD-38 (D8): the unlevered free cash flow numerator of ``enterprise_fcf_yield`` =
+    NOPAT - (capex - D&A + Δ non-cash working capital), or ``None`` when a term is missing or the
+    balance sheet is not classified (MET-00). The Δ is the prior fiscal year end (a 10-K) or the
+    prior year's same quarter (a 10-Q, ``prior_wc_missing`` when it is not stored)."""
+    rate, rate_reason = nopat_tax_rate(stmts, period_key)
+    nopat_annual = nopat(annual.get("operating_income"), rate)
+    capex_annual = annual.get("capital_expenditure")
+    da_annual = annual.get("depreciation_amortization")
+    wc_current = capital.working_capital(cap)
+    prior_cap = (
+        stmts.prior_quarter_capital_at(period_key)
+        if annual.is_ttm
+        else stmts.prior_year_capital(period_key)
+    )
+    wc_prior = capital.working_capital(prior_cap)
+    delta_wc = (
+        wc_current.value - wc_prior.value
+        if wc_current.value is not None and wc_prior.value is not None
+        else None
+    )
+    inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
+    inputs.update(
+        present(
+            nopat=nopat_annual,
+            noncash_working_capital=wc_current.value,
+            noncash_working_capital_prior=wc_prior.value,
+            delta_working_capital=delta_wc,
+        )
+    )
+    inputs.update(capital.capital_flags(prior_cap, "prior"))
+    if annual.is_ttm and wc_prior.value is None:
+        inputs["flag_enterprise_fcf_yield_prior_wc_missing"] = 1.0
+    if nopat_annual is None or capex_annual is None or da_annual is None or delta_wc is None:
         return None
-    return market_cap + total_debt - cash
+    return nopat_annual - (capex_annual - da_annual + delta_wc)
+
+
+def _enterprise_value(
+    market_cap: float | None,
+    total_debt: float | None,
+    cash: float | None,
+    nci_value: float | None,
+    sti_value: float | None,
+) -> float | None:
+    """MD-35 (D7): market cap + debt + NCI - cash - short-term investments. MET-00: a missing
+    market cap, debt, cash or NCI (a capture failure, D6) leaves the enterprise value empty, never
+    read as 0."""
+    if market_cap is None or total_debt is None or cash is None or nci_value is None:
+        return None
+    return market_cap + total_debt + nci_value - cash - (sti_value or 0.0)
 
 
 class _AnnualFlows:

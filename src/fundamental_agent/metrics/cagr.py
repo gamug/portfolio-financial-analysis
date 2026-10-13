@@ -8,6 +8,12 @@ has no FY columns and yields nothing.
 from __future__ import annotations
 
 from fundamental_agent.metrics.base import MetricResult, present
+from fundamental_agent.metrics.growth import (
+    ASC842_FIRST_YEAR_BEGINS,
+    CECL_FIRST_YEAR_BEGINS,
+    LENDER_SUB_INDUSTRIES,
+    crosses_adoption,
+)
 from fundamental_agent.statements import Statements
 
 GROUP = "cagr"
@@ -21,7 +27,7 @@ _SERIES = (
 
 def _cagr(begin: float | None, end: float | None, years: int) -> float | None:
     # Undefined / uninformative unless BOTH endpoints are positive (SKILL.md
-    # "Zero/Negative Boundary"). A negative `end` over a positive `begin` also makes
+    # "Zero/Negative Boundary"; MET-04, D4). A negative `end` over a positive `begin` also makes
     # the fractional power complex, which float() then rejects.
     if begin is None or end is None or begin <= 0.0 or end <= 0.0 or years < 1:
         return None
@@ -44,16 +50,23 @@ def compute(
     begin_period = earlier[0]
     years = target.year - begin_period.year
 
+    # PER-12 to PER-14 (D4): the base fiscal year began before the adoption of ASC 842 (every CAGR)
+    # or CECL (a lender's net-income CAGR). The value is kept and flagged.
+    inputs: dict[str, float] = {"years": float(years)}
+    asc842 = crosses_adoption(stmts, begin_period.key, target.key, ASC842_FIRST_YEAR_BEGINS)
+    cecl = stmts.sub_industry in LENDER_SUB_INDUSTRIES and crosses_adoption(
+        stmts, begin_period.key, target.key, CECL_FIRST_YEAR_BEGINS
+    )
+    if asc842:
+        inputs["flag_crosses_asc842"] = 1.0
+    if cecl:
+        inputs["flag_crosses_cecl"] = 1.0
+
     results: list[MetricResult] = []
     for item, name in _SERIES:
         begin = stmts.get(item, begin_period.key)
         end = stmts.get(item, target.key)
-        results.append(
-            MetricResult(
-                name,
-                _cagr(begin, end, years),
-                "ratio",
-                present(begin=begin, end=end, years=float(years)),
-            )
-        )
+        item_inputs = dict(inputs)
+        item_inputs.update(present(begin=begin, end=end))
+        results.append(MetricResult(name, _cagr(begin, end, years), "ratio", item_inputs))
     return results
