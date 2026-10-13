@@ -190,6 +190,41 @@ OPTIONAL: dict[str, frozenset[str]] = {
     "enterprise_fcf_yield": frozenset({"short_term_debt", "short_term_investments"}),
 }
 
+# J1: the alternative items a formula accepts -- each alone is optional (H1), but **all absent** is a
+# missing input. The gross margin is the only one: `gross = revenue - cogs` when `gross_profit` is not
+# filed (profitability.py), so it needs one of the two.
+ALTERNATIVES: dict[str, tuple[tuple[str, ...], ...]] = {
+    "gross_margin": (("cogs", "gross_profit"),),
+}
+
+# J1: the combination terms each metric's formula reads -- the flags of those resolutions belong to
+# the metric. A group shares one inputs dict, so step 4 must not read a sibling's flags
+# (`capital_flags`/`combination_flags` write them under the group's own keys). Each entry names the
+# code line that reads the term.
+OWN_TERMS: dict[str, tuple[str, ...]] = {
+    # leverage.py: `debt = cap.debt` (statements.total_debt)
+    "debt_to_equity": ("total_debt",),
+    "debt_to_assets": ("total_debt",),
+    # leverage.py: `net_debt = capital.net_debt(cap)` (debt - cash - STI) and the EBITDA terms
+    "net_debt_to_ebitda": ("total_debt", "net_debt", "short_term_investments"),
+    # valuation.py: EV = market cap + debt + nci - cash - sti (MD-35)
+    "enterprise_value": ("total_debt", "net_debt", "nci", "short_term_investments"),
+    # roic.py: `capital.invested_capital(cap, income_filed=...)` (MD-02)
+    "return_on_invested_capital": ("invested_capital", "nci", "short_term_investments"),
+    "return_on_invested_capital_effective_rate": (
+        "invested_capital",
+        "nci",
+        "short_term_investments",
+    ),
+    # valuation.py: MD-38's EV terms and its working capital (`unclassified_balance_sheet` names the
+    # metric itself, so `_names` catches it)
+    "enterprise_fcf_yield": ("total_debt", "net_debt", "nci", "short_term_investments"),
+    # valuation.py: the market-cap read (`flag_market_cap_<reason>`, `flag_share_scale_suspect`)
+    "market_capitalization": ("market_cap", "share_scale"),
+    "free_cash_flow_yield": ("market_cap", "share_scale"),
+    "sbc_adjusted_fcf_yield": ("market_cap", "share_scale"),
+}
+
 # metric name -> rule IDs applied (checklist rules and Annex B's MD- rows).
 RULE_IDS: dict[str, tuple[str, ...]] = {
     "gross_margin": ("MD-06", "CON-11"),
@@ -254,6 +289,8 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
     ("capture_failure", CAPTURE_FAILURE),
     ("refused", CAPTURE_FAILURE),
     ("unclassified_balance_sheet", CAPTURE_FAILURE),
+    # J1: a market cap the reader could not form (no cover count, a scale suspect, ...)
+    ("market_cap_", CAPTURE_FAILURE),
     ("prior_year_bs_missing", PRIOR_YEAR_MISSING),
     ("prior_year_assets_missing", PRIOR_YEAR_MISSING),
     ("prior_year_equity_missing", PRIOR_YEAR_MISSING),
@@ -262,23 +299,40 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _names(key_rest: str, labels: tuple[str, ...], metric: str) -> bool:
+    """Whether a flag key's remainder names *metric* or one of *labels* (an item or a term), in the
+    ``<label>``, ``prior_<label>``, ``current_<label>`` or ``total_<label>`` form."""
+    if metric in key_rest:
+        return True
+    return any(
+        key_rest.startswith(label)
+        or f"_{label}_" in key_rest
+        or key_rest.startswith(f"prior_{label}")
+        or key_rest.startswith(f"current_{label}")
+        or key_rest.startswith(f"total_{label}")
+        for label in labels
+    )
+
+
+def _candidate_keys(result: MetricResult) -> list[str]:
+    """The keys of the metric's inputs that carry a resolution's flags: the ``flag_*`` ones and the
+    market-cap capture (``market_cap_<reason>``, valuation.py)."""
+    return [key for key in result.inputs if key.startswith(("flag_", "market_cap_"))]
+
+
 def _relevant_flags(result: MetricResult, items: tuple[str, ...]) -> list[str]:
-    """The ``flag_*`` keys of the metric's inputs that name the metric or one of its items -- the
-    group shares one inputs dict, so its unrelated flags are left out."""
-    out: list[str] = []
-    for key in result.inputs:
-        if not key.startswith("flag_"):
-            continue
-        rest = key[len("flag_") :]
-        if result.name in rest or any(
-            rest.startswith(item)
-            or f"_{item}_" in rest
-            or rest.startswith(f"prior_{item}")
-            or rest.startswith(f"current_{item}")
-            for item in items
-        ):
-            out.append(key)
-    return sorted(out)
+    """The flag keys of the metric's inputs that name the metric or one of its items -- the group
+    shares one inputs dict, so its unrelated flags are left out."""
+    return sorted(key for key in _candidate_keys(result) if _is_own_flag(key, result, items))
+
+
+def _is_own_flag(key: str, result: MetricResult, items: tuple[str, ...]) -> bool:
+    """J1: whether a flag key belongs to the metric -- it names the metric or one of its items, or
+    one of the combination terms its formula reads (``OWN_TERMS``). Step 4 must not read a
+    sibling's flags (a group shares one inputs dict)."""
+    rest = key[len("flag_") :] if key.startswith("flag_") else key
+    terms = OWN_TERMS.get(result.name, ())
+    return _names(rest, (*items, *terms), result.name)
 
 
 def _flag_reason(flags: Any) -> str | None:
@@ -321,6 +375,14 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
     unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
     for item, entry in items.items():
         if item in optional:
+            # J1: an alternative pair -- each member alone is optional, but all of them absent is a
+            # missing input (the gross margin's `cogs` / `gross_profit`).
+            for group in ALTERNATIVES.get(result.name, ()):
+                if item in group and all(
+                    _resolve(stmts, period_key, member, "period")[0].value is None
+                    for member in group
+                ):
+                    return MISSING_INPUT
             continue
         for raw_basis in _bases(entry):
             basis = _prior_basis(stmts, period_key, raw_basis)
@@ -353,9 +415,10 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                 return reason
             if capital is not None and capital.source is None:
                 return PRIOR_YEAR_MISSING
-    # 4. a metric-specific capture flag (an unclassified balance sheet)
-    for key in result.inputs:
-        if key.startswith("flag_") and _flag_reason([key]) == CAPTURE_FAILURE:
+    # 4. a capture flag on one of the metric's OWN terms (J1): a group shares one inputs dict, so a
+    # sibling's flag (another metric's debt, invested capital, market cap) must not decide this one.
+    for key in _candidate_keys(result):
+        if _is_own_flag(key, result, tuple(items)) and _flag_reason([key]) == CAPTURE_FAILURE:
             return CAPTURE_FAILURE
     return MISSING_INPUT
 

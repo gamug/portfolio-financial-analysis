@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import pytest
+
 from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.cashflow import compute as cashflow_compute
@@ -301,6 +303,8 @@ def _h1_payload(*, short_term_debt: float | None = None) -> Statements:
             "Cash",
             **{"2024-12-31": 60.0, "2023-12-31": 50.0},
         ),
+    ]
+    balance += [
         _row(G + "SecuredDebt", "Secured debt", **{"2024-12-31": 200.0, "2023-12-31": 190.0}),
         _row(G + "SeniorNotes", "Senior notes", **{"2024-12-31": 210.0, "2023-12-31": 200.0}),
     ]
@@ -514,3 +518,134 @@ def test_h4_a_ytd_ttm_entry_gives_the_value_from_its_columns() -> None:
     columns = {label: (key, accession) for label, key, accession in entry["columns"]}
     assert columns["prior_fiscal_year"] == ("2023-12-31", "0000000000-24-000001")
     assert columns["ytd"] == ("2024-06-30 (YTD)", "0000000000-24-000002")
+
+
+# -- J1: step 4 reads only the metric's own flags --------------------------------------------------
+
+
+def _j1_payload(
+    *,
+    cogs: float | None = None,
+    equity: bool = True,
+    debt_refused: bool = True,
+    prior_equity: bool = True,
+    short_term_debt: bool = False,
+) -> Statements:
+    """A payload whose debt refuses (a filed sourced child beside a line outside the tree), so the
+    group's inputs carry a prior-debt capture flag; optionally no COGS/gross profit, no equity and no
+    cash-flow lines."""
+    income = [
+        _row(G + "RevenueFromContractWithCustomerExcludingAssessedTax", "Revenue", **{KEY: 100.0}),
+        _row(G + "OperatingIncomeLoss", "Operating income", **{KEY: 20.0}),
+        _row(G + "IncomeTaxExpenseBenefit", "Income tax", **{KEY: 4.0}),
+        _row(
+            G
+            + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+            "Pretax",
+            **{KEY: 24.0},
+        ),
+    ]
+    if cogs is not None:
+        income.append(_row(G + "CostOfGoodsAndServicesSold", "COGS", **{KEY: 40.0}))
+    balance = [
+        _row(G + "Assets", "Assets", **{"2024-12-31": 1_100.0, "2023-12-31": 1_000.0}),
+        _row(
+            G + "CashAndCashEquivalentsAtCarryingValue",
+            "Cash",
+            **{"2024-12-31": 60.0, "2023-12-31": 50.0},
+        ),
+    ]
+    if debt_refused:
+        balance += [
+            _row(G + "SecuredDebt", "Secured debt", **{"2024-12-31": 200.0, "2023-12-31": 190.0}),
+            _row(G + "SeniorNotes", "Senior notes", **{"2024-12-31": 210.0, "2023-12-31": 200.0}),
+        ]
+    else:
+        balance.append(
+            _row(G + "LongTermDebt", "Debt", **{"2024-12-31": 210.0, "2023-12-31": 200.0})
+        )
+    if short_term_debt:
+        balance += [
+            _row(G + "LongTermDebtCurrent", "ST debt", **{"2024-12-31": 20.0, "2023-12-31": 20.0}),
+            _row(
+                G + "ShortTermBorrowings", "Borrowings", **{"2024-12-31": 10.0, "2023-12-31": 10.0}
+            ),
+        ]
+    if equity:
+        columns = {"2024-12-31": 450.0}
+        if prior_equity:
+            columns["2023-12-31"] = 400.0
+        balance.append(_row(G + "StockholdersEquity", "Equity", **columns))
+    flow = [
+        _row(G + "NetCashProvidedByUsedInOperatingActivities", "OCF", **{KEY: 90.0}),
+        _row(G + "PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{KEY: 30.0}),
+    ]
+    return Statements.from_payload(
+        {"income_statement": income, "balance_sheet": balance, "cash_flow": flow}
+    )
+
+
+def test_j1_a_gross_margin_with_neither_cogs_nor_gross_profit_is_missing_input() -> None:
+    """J1: the gross margin's `cogs`/`gross_profit` is an alternative pair -- both absent is a
+    missing input, and the group's prior-debt refusal must not decide it."""
+    stmts = _j1_payload()
+    pairs = [("profitability", r) for r in profitability_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    gross = next(r for _g, r in pairs if r.name == "gross_margin")
+    assert gross.value is None
+    assert any("prior_debt_capture_failure" in key for key in gross.inputs)
+    assert gross.inputs["provenance"]["empty_reason"] == provenance.MISSING_INPUT
+
+
+def test_j1_a_gross_margin_with_one_of_the_pair_is_not_a_missing_input() -> None:
+    stmts = _j1_payload(cogs=40.0)
+    pairs = [("profitability", r) for r in profitability_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    gross = next(r for _g, r in pairs if r.name == "gross_margin")
+    assert gross.value == pytest.approx(0.6)
+    assert gross.inputs["provenance"]["empty_reason"] is None
+
+
+def test_j1_a_roic_with_a_refused_prior_invested_capital_stays_capture_failure() -> None:
+    stmts = _j1_payload()
+    pairs = [("roic", r) for r in roic_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    roic = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
+    assert roic.value is None
+    # the prior invested capital is ROIC's own denominator, so its refusal is the cause
+    assert roic.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
+
+
+def test_j1_an_ev_with_an_unrelated_prior_ic_flag_is_missing_input() -> None:
+    """The EV's own terms resolve; a sibling's prior invested-capital flag must not decide it. The
+    market cap is missing, so the EV is empty with `missing_input`."""
+    # the EV's own terms resolve (a complete current balance sheet); the *prior* invested capital
+    # cannot be formed (no prior equity), which is a sibling flag
+    # a filed short-term line makes the debt resolve without the balance-sheet check, so the prior
+    # net debt resolves while the prior invested capital (its equity) does not
+    stmts = _j1_payload(debt_refused=False, prior_equity=False, short_term_debt=True)
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(
+            stmts, KEY, market_cap_missing="no_cover_shares", cik="0000000001"
+        )
+    ]
+    provenance.attach(pairs, stmts, KEY)
+    ev = next(r for _g, r in pairs if r.name == "enterprise_value")
+    assert ev.value is None
+    assert any("prior_invested_capital" in key for key in ev.inputs)
+    assert ev.inputs["provenance"]["empty_reason"] == provenance.MISSING_INPUT
+
+
+def test_j1_a_market_cap_capture_failure_stays_on_the_valuation_yields() -> None:
+    stmts = _j1_payload()
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(
+            stmts, KEY, market_cap_missing="no_cover_shares", cik="0000000001"
+        )
+    ]
+    provenance.attach(pairs, stmts, KEY)
+    yield_ = next(r for _g, r in pairs if r.name == "free_cash_flow_yield")
+    assert yield_.value is None
+    assert yield_.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
