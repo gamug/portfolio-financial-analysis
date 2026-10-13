@@ -125,3 +125,24 @@ def test_the_generated_blocks_carry_the_groups_data() -> None:
             row["basis"] in {"Sourced", "Inference", "Source pending"} for row in definitions
         )
         assert all(row["code"] in {"A", "ADJ", "NA"} for row in applicability)
+
+
+# -- T-076 fix round 1 (K1, K2) ------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("group", sorted(GROUP_METRICS))
+def test_no_skill_restates_applicability(group: str) -> None:
+    """K1: the generated matrix block is the single source; a skill defines the reason code only."""
+    text = load_skill(group) or ""
+    assert "not_applicable" in text
+    assert "not applicable" not in text.lower(), group
+    headings = [line.lower() for line in text.splitlines() if line.startswith("## ")]
+    assert not any("applicab" in heading for heading in headings), (group, headings)
+
+
+@pytest.mark.parametrize("group", sorted(GROUP_METRICS))
+def test_no_skill_tells_the_model_to_compare_with_history_or_peers(group: str) -> None:
+    """K2: the specialist sees only its own filing's numbers."""
+    text = (load_skill(group) or "").lower()
+    for word in ("history", "peer"):
+        assert word not in text, (group, word)
