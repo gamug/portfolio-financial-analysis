@@ -29,7 +29,9 @@ def test_profitability_matches_apple_fy2023(aapl_10k: Statements) -> None:
     assert m["gross_margin"] == pytest.approx(0.4413, abs=1e-4)
     assert m["operating_margin"] == pytest.approx(0.2982, abs=1e-4)
     assert m["net_margin"] == pytest.approx(0.2531, abs=1e-4)
-    assert m["return_on_equity"] == pytest.approx(1.5608, abs=1e-3)
+    # MET-02 (D2, T-151 part 2): parent net income / parent equity at the end of the prior fiscal
+    # year (FY2022 50,672M), not the ending equity (FY2023 62,146M).
+    assert m["return_on_equity"] == pytest.approx(96995 / 50672, abs=1e-3)
 
 
 def test_liquidity_matches_apple_fy2023(aapl_10k: Statements) -> None:

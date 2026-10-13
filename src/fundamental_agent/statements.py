@@ -13,7 +13,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Any
 
@@ -327,6 +327,30 @@ _NCI_NOT_AN_INCOME_RE = re.compile(
     r"including|before|payments?|proceeds|dividends?|distributions?|contributions?", re.IGNORECASE
 )
 
+# -- Noncontrolling interest (MD-02, MD-35; D6, T-151 part 2) ---------------------------------------
+# NCI = the NCI in equity (B6: ``MinorityInterest``) + the redeemable NCI presented between
+# liabilities and equity. The FASB 2026 sfp-cls calculation arc
+# ``stm/us-gaap-stm-sfp-cls-cal-2026.xml`` (orders 10/20/30) makes
+# ``RedeemableNoncontrollingInterestEquityCarryingAmount`` =
+# ``...CommonCarryingAmount`` + ``...PreferredCarryingAmount`` + ``...OtherCarryingAmount``, so the
+# total is read when filed and the three parts summed only when all three are filed (ID-02b).
+# ``StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest`` = ``StockholdersEquity``
+# + ``MinorityInterest`` (CON-04, the same arc, order 20) is the identity MD-02 falls back to when no
+# NCI balance is filed.
+REDEEMABLE_NCI_CONCEPTS: tuple[str, ...] = (
+    "us-gaap_RedeemableNoncontrollingInterestEquityCarryingAmount",
+    "us-gaap_RedeemableNoncontrollingInterestEquityCommonCarryingAmount",
+    "us-gaap_RedeemableNoncontrollingInterestEquityPreferredCarryingAmount",
+    "us-gaap_RedeemableNoncontrollingInterestEquityOtherCarryingAmount",
+)
+# The short-term investments the MD-02/MD-03/MD-35 netting reads, when filed apart from cash
+# (D6). ``AvailableForSaleSecuritiesDebtSecuritiesCurrent`` (named by the checklist) is declared in
+# no taxonomy release of the 2020-2026 window (ID-20, ``sec_xcheck/taxonomy_absence_log.md``).
+SHORT_TERM_INVESTMENT_CONCEPTS: tuple[str, ...] = (
+    "us-gaap_ShortTermInvestments",
+    "us-gaap_MarketableSecuritiesCurrent",
+)
+
 # US-GAAP concept tags are stable across filers and are matched first; ``standard``
 # and ``label`` hints are conservative fallbacks scoped to the same statement.
 REGISTRY: dict[str, LineItem] = {
@@ -602,13 +626,27 @@ REGISTRY: dict[str, LineItem] = {
         "short_term_investments",
         _BALANCE,
         # ID-20: AvailableForSaleSecuritiesCurrent removed (sec_xcheck/taxonomy_absence_log.md)
+        concepts=SHORT_TERM_INVESTMENT_CONCEPTS,
+        nonnegative=SHORT_TERM_INVESTMENT_CONCEPTS,
+    ),
+    # NCI (MD-02, MD-35; D6): the NCI in equity, the redeemable NCI between liabilities and equity,
+    # and the equity-including-NCI total CON-04's identity needs. See the constants above.
+    "minority_interest": LineItem(
+        "minority_interest",
+        _BALANCE,
+        concepts=("us-gaap_MinorityInterest",),
+    ),
+    "redeemable_nci": LineItem(
+        "redeemable_nci",
+        _BALANCE,
+        concepts=REDEEMABLE_NCI_CONCEPTS,
+        resolver="redeemable_nci",
+    ),
+    "equity_incl_nci": LineItem(
+        "equity_incl_nci",
+        _BALANCE,
         concepts=(
-            "us-gaap_ShortTermInvestments",
-            "us-gaap_MarketableSecuritiesCurrent",
-        ),
-        nonnegative=(
-            "us-gaap_ShortTermInvestments",
-            "us-gaap_MarketableSecuritiesCurrent",
+            "us-gaap_StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
         ),
     ),
     "inventory": LineItem(
@@ -728,6 +766,7 @@ _COMPOSITE = {
     "cash": "_cash",
     "capex": "_capex",
     "da": "_depreciation_amortization",
+    "redeemable_nci": "_redeemable_nci",
 }
 
 
@@ -746,6 +785,29 @@ class Resolution:
     concept: str | None = None
     how: str | None = None
     flags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Capital:
+    """The balance-sheet building blocks at one instant column (T-151 part 2).
+
+    ``source`` names where the column came from: ``"filing"`` (the filing's own comparative),
+    ``"prior_10k"`` / ``"prior_10q"`` (a stored earlier filing of the same company), or ``None``
+    when the filing was resolved on its own (a hermetic fixture). Each item carries its own
+    :class:`Resolution` (value, concept, how, flags) so a metric can record provenance."""
+
+    source: str | None
+    total_assets: Resolution
+    equity: Resolution
+    cash: Resolution
+    short_term_investments: Resolution
+    minority_interest: Resolution
+    redeemable_nci: Resolution
+    equity_incl_nci: Resolution
+    current_assets: Resolution
+    current_liabilities: Resolution
+    debt: Resolution
+    short_term_debt: Resolution
 
 
 @dataclass
@@ -768,6 +830,17 @@ class Statements:
     cover_error: str | None = None
     # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
     reit: bool = False
+    # T-151 part 2 (D3/D4): the company's GICS sector and sub-industry -- today's snapshot (L-03),
+    # read for APP-04c (REIT tax) and PER-14 (CECL: banks and lenders). The Article type is T-071's;
+    # the code cannot know it here (D13). ``None`` in a hermetic fixture.
+    sector: str | None = None
+    sub_industry: str | None = None
+    # T-151 part 2 (MET-01/02, MD-02/35/38): the capital at the prior fiscal year end, and (a 10-Q
+    # only) at the prior year's same quarter. Resolved by ``fundamental_agent.db.prior_capital``
+    # because the second reads another filing's stored facts; ``None`` in a hermetic fixture, where
+    # the filing's own comparative column is used instead (:meth:`prior_year_capital`).
+    prior_capital: Capital | None = None
+    prior_quarter_capital: Capital | None = None
     # The flags of the resolution in progress (see :meth:`resolve`); never part of the payload.
     _flags: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
 
@@ -1816,6 +1889,108 @@ class Statements:
             if _INTEREST_EXPENSE_LINE_RE.match(local):
                 return True
         return False
+
+    # -- capital at the prior fiscal year end (MET-01/02, MD-02/03/35/38; D1/D2/D6/D7/D8, T-151 part 2)
+
+    def _redeemable_nci(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Redeemable NCI between liabilities and equity (MD-02, D6): the filed total, else the three
+        carrying-amount parts when all three are filed (the FASB 2026 sfp-cls arc, orders 10/20/30;
+        ID-02b -- a component is never the total)."""
+        total = self._concept_value(spec, column, REDEEMABLE_NCI_CONCEPTS[0])
+        if total is not None:
+            return total, REDEEMABLE_NCI_CONCEPTS[0], "concept"
+        # F3: when the total is not filed, the parts that ARE filed are the redeemable-NCI lines the
+        # filer presents on the face (``financial_facts`` holds the face lines only), so they are
+        # summed -- the same only-lines reasoning as the sourced D&A sum (ID-02b). The total is
+        # still preferred when it is filed.
+        parts = {c: self._concept_value(spec, column, c) for c in REDEEMABLE_NCI_CONCEPTS[1:]}
+        filed = {c: v for c, v in parts.items() if v is not None}
+        if not filed:
+            return None, None, None
+        if len(filed) == len(parts):
+            self._flag("redeemable_nci_sum")
+        else:
+            self._flag("redeemable_nci_filed_parts")
+        return sum(filed.values()), " + ".join(sorted(filed)), "map"
+
+    def nci_income_filed(self, period_key: str) -> bool:
+        """Whether income attributable to NCI is filed for the period (ID-03/CON-19): the public
+        wrapper of :meth:`_nci_income_filed` MD-02's zero rule reads (D6)."""
+        return self._nci_income_filed(period_key)
+
+    def prior_fiscal_year_end_key(self, period_key: str) -> str | None:
+        """The instant column at the end of the fiscal year before the one *period_key* closes
+        (MET-01/MET-02, MD-02/35; D1, T-151 part 2).
+
+        A 10-K carries it as its comparative balance sheet: the instant one year before the period
+        end (PER-08, :func:`fiscal.is_year_apart`). A 10-Q's balance sheet shows the prior fiscal
+        year end beside the current column (Regulation S-X 10-01;
+        :func:`fiscal.payload_fiscal_year_end`). ``None`` when the payload carries neither."""
+        try:
+            target = date.fromisoformat(period_key[:10])
+        except ValueError:
+            return None
+        instants = self.instant_periods()
+        period = next((p for p in self.periods if p.key == period_key), None)
+        if period is not None and period.is_fy:
+            cands = [
+                p for p in instants if fiscal.is_year_apart(date.fromisoformat(p.date), target)
+            ]
+        else:
+            fye = fiscal.payload_fiscal_year_end((p.date for p in instants), target)
+            cands = (
+                [p for p in instants if fiscal.same_period_end(date.fromisoformat(p.date), fye)]
+                if fye is not None
+                else []
+            )
+        if not cands:
+            return None
+        return min(
+            cands, key=lambda p: (abs((date.fromisoformat(p.date) - target).days), p.date)
+        ).key
+
+    def capital_at(self, column: str | None) -> Capital:
+        """The balance-sheet building blocks at the instant *column* (T-151 part 2). ``None`` (no
+        column, a missing comparative) leaves every item empty, flagged ``prior_year_bs_missing``."""
+        if column is None:
+            miss = Resolution(None, None, None, ("prior_year_bs_missing",))
+            return Capital(None, *([miss] * 11))
+        return Capital(
+            source=None,
+            total_assets=self.resolve("total_assets", column),
+            equity=self.resolve("equity", column),
+            cash=self.resolve("cash", column),
+            short_term_investments=self.resolve("short_term_investments", column),
+            minority_interest=self.resolve("minority_interest", column),
+            redeemable_nci=self.resolve("redeemable_nci", column),
+            equity_incl_nci=self.resolve("equity_incl_nci", column),
+            current_assets=self.resolve("current_assets", column),
+            current_liabilities=self.resolve("current_liabilities", column),
+            debt=self.total_debt(column),
+            short_term_debt=self.resolve("short_term_debt", column),
+        )
+
+    def prior_year_capital(self, period_key: str) -> Capital:
+        """Capital at the end of the prior fiscal year (MET-01/MET-02; D1/D2, T-151 part 2): the
+        pipeline's resolved value when it set one (a stored prior 10-K fills a missing comparative),
+        else the filing's own comparative column."""
+        if self.prior_capital is not None:
+            return self.prior_capital
+        key = self.prior_fiscal_year_end_key(period_key)
+        if key is None:
+            return self.capital_at(None)
+        cap = self.capital_at(key)
+        return replace(cap, source="filing")
+
+    def prior_quarter_capital_at(self, period_key: str) -> Capital:
+        """Capital at the prior year's same quarter end (MD-38's Δ, a 10-Q; D8, T-151 part 2). Only
+        the pipeline can resolve it: the 10-Q's own balance sheet carries the prior fiscal year end,
+        not the prior-year quarter (the stored prior-year 10-Q does). Empty in a hermetic fixture."""
+        if self.prior_quarter_capital is not None:
+            return self.prior_quarter_capital
+        return self.capital_at(None)
 
     # Dimension axes whose slice may legitimately equal the consolidated total: a
     # single-segment filer discloses its one segment's revenue, which *is* the total. A

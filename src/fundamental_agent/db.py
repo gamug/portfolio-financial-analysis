@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -21,7 +21,7 @@ from portfolio_common.db import Database, Row
 import kg_schema
 from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import REGISTRY, CoverShares, Statements
+from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
 from kg_schema import identity
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
@@ -661,6 +661,10 @@ _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
     "depreciation_amortization": ("leverage", "net_debt_to_ebitda"),
     "interest_expense": ("leverage", "interest_coverage"),
     "stock_based_compensation": ("valuation", "free_cash_flow_yield"),
+    # F1 (T-151 part 2 fix 1): the roic group's effective_tax_rate row carries both on the filing's
+    # own period, so a REIT's TTM rate can be built the way the other TTM flows are.
+    "income_tax": ("roic", "effective_tax_rate"),
+    "pretax_income": ("roic", "effective_tax_rate"),
 }
 
 
@@ -1425,3 +1429,138 @@ def is_equity_reit(conn: Database, asset_id: int) -> bool:
     sector = str(row["sector"] or "")
     sub_industry = str(row["sub_industry"] or "")
     return sector == "Real Estate" and sub_industry.endswith("REITs")
+
+
+# -- the prior-year capital and the company profile (MET-01/02, MD-02/35/38; T-151 part 2) ---------
+
+_FACTS_SELECT_HAS_SIGN = (
+    "SELECT statement, concept, label, standard_concept, period_key, value, preferred_sign "
+    "FROM financial_facts WHERE filing_id = ? ORDER BY id"
+)
+_FACTS_SELECT = (
+    "SELECT statement, concept, label, standard_concept, period_key, value, NULL AS preferred_sign "
+    "FROM financial_facts WHERE filing_id = ? ORDER BY id"
+)
+
+
+def statements_from_facts(conn: Database, filing_id: int) -> Statements:
+    """Rebuild a :class:`Statements` from the stored ``financial_facts`` of one filing (the
+    pipeline's own reader; ``scripts/sec_xcheck/common.py`` has an equivalent for the audit
+    scripts). ``financial_facts`` stores no abstract or dimensional rows, so the rebuilt payload
+    carries one row per ``(statement, concept)`` -- enough to resolve every balance-sheet item
+    :func:`prior_capital` reads."""
+    has_sign = "preferred_sign" in conn.table_columns("financial_facts")
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in conn.execute(_FACTS_SELECT_HAS_SIGN if has_sign else _FACTS_SELECT, (filing_id,)):
+        row = rows.setdefault(
+            (r["statement"], r["concept"]),
+            {
+                "concept": r["concept"],
+                "label": r["label"],
+                "standard_concept": r["standard_concept"],
+                "abstract": False,
+                "dimension": False,
+            },
+        )
+        if r["preferred_sign"] is not None:
+            row.setdefault("preferred_sign", r["preferred_sign"])
+        row.setdefault(r["period_key"], r["value"])
+    payload: dict[str, list[Any]] = {"income_statement": [], "balance_sheet": [], "cash_flow": []}
+    for (statement, _concept), row in rows.items():
+        payload.setdefault(statement, []).append(row)
+    return Statements.from_payload(payload)
+
+
+def company_profile(conn: Database, asset_id: int) -> tuple[str | None, str | None]:
+    """The company's GICS sector and sub-industry (today's snapshot, L-03) -- what the code can
+    know of the company type before T-071 delivers ``company_types.csv``."""
+    row = conn.execute(
+        "SELECT s.name AS sector, a.sub_industry FROM assets a "
+        "LEFT JOIN sectors s ON a.sector_id = s.id WHERE a.id = ?",
+        (asset_id,),
+    ).fetchone()
+    if not row:
+        return None, None
+    return (row["sector"] or None, row["sub_industry"] or None)
+
+
+def _filing_with_period_end(
+    conn: Database, asset_id: int, form: str, target: date
+) -> tuple[int, str] | None:
+    """The stored *form* filing of *asset_id* whose period end rounds to the same month end as
+    *target* (PER-08), and that period end."""
+    rows = conn.execute(
+        "SELECT id, period_end FROM sec_filings "
+        "WHERE asset_id = ? AND form = ? AND period_end IS NOT NULL ORDER BY period_end",
+        (asset_id, form),
+    ).fetchall()
+    for row in rows:
+        period_end = str(row["period_end"])
+        try:
+            parsed = date.fromisoformat(period_end[:10])
+        except ValueError:
+            continue
+        if fiscal.same_period_end(parsed, target):
+            return int(row["id"]), period_end
+    return None
+
+
+def _capital_from_stored(
+    conn: Database, asset_id: int, form: str, target: date | None
+) -> Capital | None:
+    """Capital at the balance-sheet column of the stored *form* filing ending on *target* (a
+    different filing's own facts), or ``None`` when there is no such filing."""
+    if target is None:
+        return None
+    found = _filing_with_period_end(conn, asset_id, form, target)
+    if found is None:
+        return None
+    filing_id, period_end = found
+    prior = statements_from_facts(conn, filing_id)
+    return replace(
+        prior.capital_at(period_end), source="prior_10k" if form == "10-K" else "prior_10q"
+    )
+
+
+def prior_capital(
+    conn: Database, asset_id: int, form: str, period_key: str, stmts: Statements
+) -> None:
+    """Resolve and attach the prior-year capital a filing's ratios divide by (T-151 part 2):
+
+    * ``stmts.prior_capital`` -- the end of the prior fiscal year (MET-01/MET-02, MD-02/35): the
+      filing's own comparative column when it carries one (D1 step 1), else the stored prior 10-K's
+      balance sheet (step 2), else empty (flagged ``prior_year_bs_missing``, step 3);
+    * ``stmts.prior_quarter_capital`` -- the prior year's same quarter (MD-38's Δ, a 10-Q; D8),
+      from the stored prior-year 10-Q. ``None`` for a 10-K.
+
+    Only the pipeline calls this: it reads another filing's stored facts, which a hermetic
+    ``Statements`` does not have."""
+    try:
+        target = date.fromisoformat(period_key[:10])
+    except ValueError:
+        return
+    own_key = stmts.prior_fiscal_year_end_key(period_key)
+    if own_key is not None:
+        stmts.prior_capital = replace(stmts.capital_at(own_key), source="filing")
+    else:
+        fye = latest_fiscal_year_end(conn, asset_id, period_key[:10])
+        target_date = date.fromisoformat(fye[:10]) if fye else None
+        stmts.prior_capital = _capital_from_stored(conn, asset_id, "10-K", target_date) or (
+            stmts.capital_at(None)
+        )
+    if form == "10-Q":
+        stmts.prior_quarter_capital = _capital_from_stored(
+            conn, asset_id, "10-Q", fiscal.one_year_before(target)
+        )
+
+
+def attach_context(
+    conn: Database, asset_id: int, form: str, period_key: str, stmts: Statements
+) -> None:
+    """Attach the company profile and the prior-year capital to *stmts* before its metrics are
+    computed (T-151 part 2). One call so every entry point (the pipeline and the recompute script)
+    enriches the same way."""
+    sector, sub_industry = company_profile(conn, asset_id)
+    stmts.sector = sector
+    stmts.sub_industry = sub_industry
+    prior_capital(conn, asset_id, form, period_key, stmts)

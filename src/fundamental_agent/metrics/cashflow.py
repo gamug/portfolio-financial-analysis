@@ -72,10 +72,21 @@ def compute(
                 capital_expenditure_ttm=capex,
             )
         )
+    # MET-09 / N9 (D5): free-cash-flow conversion over a non-positive net income inverts the
+    # ordering. Net income = 0 -> not defined (empty, no flag); net income < 0 -> empty, flagged
+    # denominator_negative. A negative *numerator* (FCF) over a positive net income is a valid
+    # negative value.
+    fcf_conversion = None
+    if fcf is not None and net_income is not None:
+        if net_income < 0.0:
+            inputs["flag_free_cash_flow_conversion_denominator_negative"] = 1.0
+        elif net_income > 0.0:
+            fcf_conversion = fcf / net_income
+
     return [
         MetricResult("operating_cash_flow_margin", safe_div(ocf, revenue), "ratio", inputs),
         MetricResult("free_cash_flow_margin", safe_div(fcf, revenue), "ratio", inputs),
-        MetricResult("free_cash_flow_conversion", safe_div(fcf, net_income), "x", inputs),
+        MetricResult("free_cash_flow_conversion", fcf_conversion, "x", inputs),
         MetricResult(
             "capex_intensity",
             safe_div(capex, revenue),

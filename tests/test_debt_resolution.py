@@ -460,9 +460,9 @@ def test_enterprise_value_is_empty_when_debt_is_missing_not_market_cap_less_cash
         r.name: r
         for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price, market_cap=mcap)
     }
-    # debt 84,273M + market cap 77,646M - cash 314M
+    # MD-35 (D7, T-151 part 2): debt 84,273M + market cap 77,646M + NCI 1,129M - cash 314M
     assert complete["enterprise_value"].value == pytest.approx(
-        776_461_008.0 * 100.0 + 84_273_000_000.0 - 314_000_000.0
+        776_461_008.0 * 100.0 + 84_273_000_000.0 + 1_129_000_000.0 - 314_000_000.0
     )
 
     broken = {
@@ -558,10 +558,11 @@ def test_a_negative_filed_interest_expense_leaves_the_coverage_empty_and_flagged
     assert result.inputs["flag_interest_expense_negative"] == 1.0
 
 
-def test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty() -> None:
-    """The enterprise FCF yield adds the after-tax interest back to free cash flow. A negative filed
-    expense is neither added back (it would be subtracted) nor made positive: the yield is empty,
-    as the coverage is (MET-09)."""
+def test_a_negative_filed_interest_expense_empties_the_unlevered_fcf_input_not_the_metric() -> None:
+    """MD-38 (D8, T-151 part 2) is C10's EBIT form, so the enterprise FCF yield no longer reads
+    interest expense. The unlevered-FCF *input* still does: a negative filed expense is neither
+    added back (it would be subtracted) nor made positive -- the input is empty (MET-09, ID-11) --
+    while the metric itself is unchanged."""
     price = ClosePrice(date="2024-12-31", close=100.0)
     mcap = _duke_mcap(100.0)
     ok = {
@@ -569,6 +570,7 @@ def test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty(
         for r in valuation.compute(_stmts(DUKE), "2024-12-31 (FY)", price, market_cap=mcap)
     }
     assert ok["enterprise_fcf_yield"].value is not None
+    assert ok["free_cash_flow_yield"].inputs["free_cash_flow_to_firm"] is not None
     payload = copy.deepcopy(_payload(DUKE))
     _row(payload, "income_statement", G + "InterestExpense")["preferred_sign"] = -1.0
     negative = {
@@ -577,13 +579,15 @@ def test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty(
             Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
         )
     }
-    assert negative["enterprise_fcf_yield"].value is None
     assert negative["free_cash_flow_yield"].value is not None  # the equity yield needs no interest
+    assert "free_cash_flow_to_firm" not in negative["free_cash_flow_yield"].inputs
+    assert negative["enterprise_fcf_yield"].value == pytest.approx(ok["enterprise_fcf_yield"].value)
 
 
 def test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one() -> None:
-    """``InterestAndDebtExpense`` filed negative is rejected (ID-13) and the item is empty -- but an empty
-    interest expense must not read as "no interest": the unlevered FCF yield is empty, not the levered one."""
+    """``InterestAndDebtExpense`` filed negative is rejected (ID-13) and the item is empty -- but an
+    empty interest expense must not read as "no interest": the unlevered-FCF input is empty, not the
+    levered one. The MD-38 metric (D8) no longer reads interest at all."""
     price = ClosePrice(date="2024-12-31", close=100.0)
     mcap = _duke_mcap(100.0)
     payload = copy.deepcopy(_payload(DUKE))
@@ -595,7 +599,7 @@ def test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one() -> Non
             Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
         )
     }
-    assert ok["enterprise_fcf_yield"].value is not None
+    assert ok["free_cash_flow_yield"].inputs["free_cash_flow_to_firm"] is not None
     interest["preferred_sign"] = -1.0  # filed negative
     rejected = {
         r.name: r
@@ -603,8 +607,9 @@ def test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one() -> Non
             Statements.from_payload(payload), "2024-12-31 (FY)", price, market_cap=mcap
         )
     }
-    assert rejected["enterprise_fcf_yield"].value is None
     assert rejected["free_cash_flow_yield"].value is not None
+    assert "free_cash_flow_to_firm" not in rejected["free_cash_flow_yield"].inputs
+    assert rejected["enterprise_fcf_yield"].value == pytest.approx(ok["enterprise_fcf_yield"].value)
 
 
 def test_a_zero_interest_expense_leaves_the_coverage_empty() -> None:

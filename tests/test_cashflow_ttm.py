@@ -184,7 +184,25 @@ def test_all_groups_take_real_ttm_flows_only_without_x4_fallback() -> None:
     assert _group_ttm("efficiency", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
     assert _group_ttm("leverage", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
     assert _group_ttm("roic", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
-    assert _group_ttm("valuation", ctx) == {"operating_cash_flow": 1_200.0, "net_income": 500.0}
+    # F1: valuation needs capital_expenditure, whose TTM fell back to x4 -- the real flows plus the
+    # "not built" marker (so a REIT's TTM rate can tell "not built" from "not filed")
+    assert _group_ttm("valuation", ctx) == {
+        "operating_cash_flow": 1_200.0,
+        "net_income": 500.0,
+        "flag_capital_expenditure_ttm_not_built": 1.0,
+    }
+
+
+def test_a_real_net_income_keeps_the_group_stamp_with_a_crude_operating_income() -> None:
+    # F2: a crude operating income does not stamp the group; it carries its own flag, and the
+    # profitability stamp stays the earnings-yield gate's (net income).
+    ctx = _ctx(
+        "10-Q", {"net_income": TTMFlow(500.0, "ytd"), "operating_income": TTMFlow(1.0, "x4")}
+    )
+    assert _group_ttm("profitability", ctx) == {
+        "net_income": 500.0,
+        "flag_operating_income_ttm_not_built": 1.0,
+    }
 
 
 def test_a_10k_is_given_no_ttm_for_any_group_but_a_10q_with_nothing_real_is_given_an_empty_one() -> (

@@ -177,6 +177,16 @@ _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# F2 (T-151 part 2 fix 1): the items part 2 added to a group. The group's ``annualized_x4`` stamp
+# keeps master's item lists -- the earnings-yield gate (MET-05) reads profitability's stamp, and a
+# crude operating-income TTM must not drop a filing whose net-income TTM is real. Each added item
+# carries its own ``flag_<item>_annualized_x4`` instead.
+_GROUP_TTM_EXTRA_ITEMS: dict[str, tuple[str, ...]] = {
+    "profitability": ("operating_income", "income_tax", "pretax_income"),
+    "roic": ("income_tax", "pretax_income"),
+    "valuation": ("operating_income", "depreciation_amortization", "income_tax", "pretax_income"),
+}
+
 
 def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
     """The *ttm* argument for *group*'s ``compute``. On a 10-Q every group takes
@@ -185,6 +195,12 @@ def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
     if ctx.form != "10-Q":
         return None
     res = dict(ctx.real_ttm)
+    # F1: mark a flow the group needs but whose TTM could not be built (x4 or refused), so a metric
+    # can tell "not built" from "not filed" (a REIT's TTM rate).
+    for item in (*_GROUP_TTM_ITEMS.get(group, ()), *_GROUP_TTM_EXTRA_ITEMS.get(group, ())):
+        flow = ctx.ttm_flows.get(item)
+        if flow is not None and flow.method in ("x4", "refused"):
+            res[f"flag_{item}_ttm_not_built"] = 1.0
     if group == "leverage":
         da_flow = ctx.ttm_flows.get("depreciation_amortization")
         if da_flow and "depreciation_only_not_da" in da_flow.flags:
@@ -211,6 +227,11 @@ def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str
             da_flow = flows.get("depreciation_amortization")
             if da_flow and "depreciation_only_not_da" in da_flow.flags:
                 result.inputs["flag_depreciation_amortization_depreciation_only_not_da"] = 1.0
+        # F2: an added item's x4 fallback gets its own flag, never the group's stamp.
+        for item in _GROUP_TTM_EXTRA_ITEMS.get(group, ()):
+            flow = flows.get(item)
+            if flow is not None and flow.method == "x4":
+                result.inputs[f"flag_{item}_annualized_x4"] = 1.0
 
 
 @dataclass(frozen=True)

@@ -74,7 +74,11 @@ def test_enterprise_value_and_yield_use_net_debt(aapl_10k: Statements) -> None:
         sum_present(aapl_10k.get("long_term_debt", key), aapl_10k.get("short_term_debt", key))
     )
     cash = _num(aapl_10k.get("cash", key))
-    assert m["enterprise_value"] == pytest.approx(market_cap + debt - cash, rel=1e-9)
+    # MD-35 (D7, T-151 part 2): EV = market cap + debt + NCI - cash - short-term investments.
+    # Apple files no NCI (no NCI income either, so NCI = 0) and 31,590M of marketable securities
+    # current, which are netted like cash.
+    sti = _num(aapl_10k.get("short_term_investments", key))
+    assert m["enterprise_value"] == pytest.approx(market_cap + debt - cash - sti, rel=1e-9)
     # net cash or modest net debt -> enterprise yield close to but not equal to equity yield
     assert m["enterprise_fcf_yield"] > 0.0
     assert m["enterprise_fcf_yield"] != m["free_cash_flow_yield"]

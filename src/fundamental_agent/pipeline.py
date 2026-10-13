@@ -778,6 +778,10 @@ _TTM_ITEMS = (
     "depreciation_amortization",
     "interest_expense",
     "stock_based_compensation",
+    # F1 (T-151 part 2 fix 1): a REIT's own rate on a 10-Q is its TTM tax / TTM pre-tax income, on
+    # the same basis as the TTM operating income the ratios tax.
+    "income_tax",
+    "pretax_income",
 )
 
 
@@ -887,6 +891,11 @@ def _analyze_one(
     mc_res = market_caps_as_of(engine.conn, [task.asset_id], as_of=target.period.date)
     market_cap_obj = mc_res.caps.get(task.asset_id)
     market_cap_missing = mc_res.missing.get(task.asset_id)
+
+    # T-151 part 2: the company profile (D3/D4) and the prior-year capital the return, leverage and
+    # valuation ratios divide by (MET-01/02, MD-02/35/38). The prior-year quarter's balance sheet is
+    # another filing's, so it is read here, never inside a metric.
+    db.attach_context(engine.conn, task.asset_id, task.form, target.period.key, stmts)
 
     ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
