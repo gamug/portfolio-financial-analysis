@@ -666,3 +666,26 @@ def test_k1_a_stale_shares_yield_is_capture_failure() -> None:
     yield_ = next(r for _g, r in pairs if r.name == "free_cash_flow_yield")
     assert yield_.value is None
     assert yield_.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
+
+
+def test_k1_a_no_cover_shares_row_with_a_scale_suspect_is_capture_failure() -> None:
+    """K1: the market-cap read keys are read in the formula's precedence -- a count that exists but
+    cannot be used (the scale suspect) precedes the absent earlier filing (COP `0001562762-22-000031`
+    is the one such filing in the window)."""
+    stmts = _j1_payload()
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(
+            stmts,
+            KEY,
+            market_cap_missing="no_cover_shares",
+            share_scale_factors={"2024-12-31": 2.0},
+            cik="0000000001",
+        )
+    ]
+    provenance.attach(pairs, stmts, KEY)
+    yield_ = next(r for _g, r in pairs if r.name == "free_cash_flow_yield")
+    assert yield_.value is None
+    assert yield_.inputs["market_cap_no_cover_shares"] == 1.0
+    assert yield_.inputs["share_scale_suspect"] == 1.0
+    assert yield_.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE

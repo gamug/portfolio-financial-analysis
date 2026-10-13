@@ -333,14 +333,25 @@ def _names(key_rest: str, labels: tuple[str, ...], metric: str) -> bool:
     )
 
 
+def _is_market_cap_read(key: str) -> bool:
+    """A key of the market-cap read (``valuation._market_cap_inputs``): ``market_cap_<reason>`` or
+    the share-scale suspect."""
+    return key.startswith("market_cap_") or key == "share_scale_suspect"
+
+
 def _candidate_keys(result: MetricResult) -> list[str]:
     """The keys of the metric's inputs that carry a resolution's flags: the ``flag_*`` ones, the
-    market-cap capture (``market_cap_<reason>``) and the share-scale suspect (valuation.py)."""
-    return [
-        key
-        for key in result.inputs
-        if key.startswith(("flag_", "market_cap_")) or key == "share_scale_suspect"
-    ]
+    market-cap capture (``market_cap_<reason>``) and the share-scale suspect (valuation.py). The
+    market-cap read keys are written together and read in the formula's precedence (K1): a count that
+    exists but cannot be used (``capture_failure``) precedes the absent earlier filing
+    (``prior_year_missing``)."""
+    keys = [key for key in result.inputs if key.startswith("flag_") or _is_market_cap_read(key)]
+    market = [key for key in keys if _is_market_cap_read(key)]
+    if len(market) > 1:
+        ranked = sorted(market, key=lambda key: 0 if _flag_reason([key]) == CAPTURE_FAILURE else 1)
+        pool = iter(ranked)
+        keys = [next(pool) if _is_market_cap_read(key) else key for key in keys]
+    return keys
 
 
 def _relevant_flags(result: MetricResult, items: tuple[str, ...]) -> list[str]:
