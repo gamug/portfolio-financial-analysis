@@ -572,6 +572,20 @@ the final pilot, `T-143`.
       whose prior-year quarter is not stored; PER-13's `debt_to_assets`/`asset_turnover` flags are not
       implemented (D4 scopes it to growth/CAGR). Tests: `tests/test_metric_definitions_t151b.py` (+33),
       five replaced (`out/p1a_gates.txt`: 2,281 passed).
+      **Status (2026-10-13): part 3 done — PR #148** (branch `feat/t151c-dictionary-provenance`,
+      stacked on part 2; `docs/model_fixes.md` "T-151 part 3"). D12: `docs/metric_dictionary.md` and
+      `src/fundamental_agent/data/applicability_matrix.csv` generated from Annex B (39 rows) and the
+      matrix (35 × 6 = 210 cells) by `scripts/build_metric_dictionary.py`. D13: the traceability test
+      (a dictionary metric without an implementation, a computed metric without a row — one allowlist
+      entry —, a resolver map without a rule ID, and the matrix-vs-code cells the code can know
+      today). D14: a `provenance` block on every metric (accession, rule IDs, each item's concept and
+      how it was read, the flags, the empty reason). D15: the read-only company card. D16: the
+      post-rebuild fidelity gate — 9,340 filings compared, `depreciation_amortization` 99.9% (3
+      mismatches) and `long_term_debt` 99.8% (13), every other item 100%, no item below the 98% gate;
+      16 mismatching pairs (ESS 7, WELL 6, SYK 2, ROK 1), and no `golden_set.csv` exists (RECORDED).
+      Tests: `tests/test_traceability.py` (10), `tests/test_metric_provenance.py` (9),
+      `tests/test_company_card.py` (5). **The box stays open until the reviewer closes T-151 after
+      both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current

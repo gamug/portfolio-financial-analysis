@@ -7066,3 +7066,140 @@ boundaries, a 10-Q case and the REIT tax case). `pytest -q` **2,281 passed** (`o
 - **The company type is today's GICS snapshot** (L-03): APP-02 (ROA/ROIC/EV NA for financial firms),
   APP-04's REIT flags and the applicability matrix are `T-071`'s; this part applies only APP-04c's REIT
   tax (from `db.is_equity_reit`) and PER-14's lender set (from the GICS sub-industry).
+
+## T-151 part 3 — the metric dictionary, the applicability matrix, traceability, provenance, the company card and the fidelity gate
+
+Part 3 of `T-151` (user, 2026-10-12), stacked on part 2's branch. The engine stays **`metrics-v7`**.
+Sources: the frozen checklist v1.3 (Annex B, the applicability matrix, D-05) and T-147's cross-check
+(`scripts/sec_xcheck/`). Scratch `/workspaces/thesis/scratch/t151c/`.
+
+### D12 — the dictionary and the matrix are generated, never hand-written
+
+`scripts/build_metric_dictionary.py` reads `docs/checklist_sec/checklist_v1.3.md` (local, git-excluded)
+and writes two **tracked** files:
+
+- `docs/metric_dictionary.md` — every Annex B row (ID, metric, kind, formula, basis, source, quote,
+  note), the "source pending" rows listed again for the second author, with a header naming the
+  generator, the checklist version and the checklist file's **sha256**
+  (`d53fbe6e5a1d9a8061e4c834c193afdbe9ab5cdb389831dff396c00c588d6aa8`);
+- `src/fundamental_agent/data/applicability_matrix.csv` — one row per cell: metric, company type
+  (`art_9_filer`, `art_7_insurer`, `other_financial`, `reit`, `negative_equity`, `multi_class`), code
+  (A / ADJ / NA) and the rule ID that justifies it.
+
+**Parsed exactly as the checklist states** (`out/p3_dictionary.txt`): Annex B **39 rows** (Inference
+14, Source pending 17, Sourced 8) and the matrix **35 metrics x 6 company types = 210 cells**. The four
+Annex B names not in the matrix are its building blocks (`ebitda`, `free cash flow`, `invested
+capital`, `net debt`) — the annex is the matrix plus those.
+
+### D13 — the traceability test
+
+`tests/test_traceability.py` (10 tests), reading only tracked files:
+
+- **(a)** every dictionary metric maps to an implementation: the 35 matrix metrics to a
+  `MetricResult` name a module produces (collected from `COMPUTERS` and `valuation`), the four
+  building blocks to their helper (`metrics/capital.py`, `metrics/cashflow.py`), and `earnings_yield`
+  to `cycle` (Annex B marks it VALORIZATION);
+- **(b)** every computed metric has a dictionary row. The **allowlist is one entry**:
+  `return_on_invested_capital_effective_rate`, with its reason (T-151 part 2's D3 robustness metric;
+  Annex B was frozen before it, and it is a variant of MD-11). The test also asserts
+  `metrics/provenance.py`'s declarations cover exactly the computed metrics;
+- **(c)** every resolver map or tier has a rule ID: `statements.RESOLVER_RULE_IDS` names each map and
+  composite resolver with the checklist rules it implements, and `RESOLVER_MAPS` lists the names the
+  test requires. **Added here (RECORDED):** the rule IDs of `revenue.total_concepts` /
+  `sum_components` / `synonym_groups`, `net_income`, `income_tax`, `cash`, `capex`, `da`,
+  `long_term_debt`, `short_term_debt`, `redeemable_nci`, `SHORT_TERM_DEBT_MAP`,
+  `SHORT_TERM_DEBT_LAST`, `INCLUDES_CURRENT_MATURITIES`, `LONG_TERM_DEBT_NONCURRENT_CHILDREN`,
+  `LONG_TERM_DEBT_CHILDREN`, `DA_SOURCED_CHILDREN`, `REDEEMABLE_NCI_CONCEPTS`,
+  `SHORT_TERM_INVESTMENT_CONCEPTS`, `_NCI_INCOME_CONCEPTS` and `_COMPOSITE` — 21 names, no map left
+  without a source;
+- **(d)** the matrix and the code agree **where the code can know the company type today**: the
+  `negative_equity` cells for `return_on_equity` and `debt_to_equity` are NA and the code empties and
+  flags them (APP-07); the `reit` cell for `nopat` is ADJ and the code taxes a REIT at its own rate
+  (APP-04c); `enterprise_fcf_yield` is NA for a REIT and the code empties it on an unclassified
+  balance sheet (MD-38). For financial firms (Art. 9, Art. 7, other financial) the test only asserts
+  the 105 cells exist: **the code-vs-matrix check waits for T-071**, which delivers APP-00's
+  company-type profile (`company_types.csv`); today the code knows the GICS sector and the REIT
+  overlay only.
+
+### D14 — provenance on every metric
+
+Every metric's inputs carry one `provenance` block (the existing `inputs_json`, no schema change):
+the filing's **accession**, the period, the **rule IDs** (checklist rules and Annex B's MD- rows),
+each line item's **concept** and **how it was read** (T-148's `Resolution`: `concept`, `map`,
+`fallbackN`, `label_fallback`, `derived`, ...), the metric's **flags**, and, when the value is empty,
+an **empty reason** from the fixed list `missing_input`, `not_applicable`, `denominator_not_positive`,
+`growth_base_not_positive`, `capture_failure`, `prior_year_missing`.
+
+The declarations live in `src/fundamental_agent/metrics/provenance.py` (one entry per metric: its
+items and its rule IDs) and `attach` runs once per filing in `_compute_all`, so the metric modules
+keep their formulas. Each result gets **its own copy** of the inputs dict: a group shares one dict
+across its metrics, so writing the block in place left every row of the group carrying the last
+metric's provenance (a bug the tests caught, `test_each_metric_of_a_group_gets_its_own_provenance`).
+`Statements` gains the accession, passed by the pipeline and the recompute through
+`db.attach_context`. Tests: `tests/test_metric_provenance.py` (9).
+
+### D15 — the company card
+
+`python -m fundamental_agent card --db PATH --cik CIK --date YYYY-MM-DD [--out FILE]`, read-only
+(`connect_ro`, never a write connection). It prints the profile (ticker, sector, sub-industry, REIT
+yes/no, negative equity yes/no), the filing used as of the date (**the latest whose `available_at`
+is on or before the date**, PER-01), each line item with its concept, value and how it was read, each
+metric with its value, flags, rule IDs and provenance, and the empty metrics with their reason. A
+10-Q's trailing twelve months are built the way the pipeline builds them, so its flow ratios are
+annual. Tests: `tests/test_company_card.py` (the profile/filing/metrics, the as-of pick, an unknown
+CIK, DQ-01's unit inference, the fidelity comparison). Five companies on `t151c/after.db` as of
+2024-12-31 → `out/card_ABBV.txt`, `card_O.txt`, `card_KKR.txt`, `card_COP.txt`, `card_JPM.txt`.
+
+**Recorded from the cards:** `O` (Realty Income) prints `REIT yes`, its debt a `capture_failure`
+(the REIT's only debt lines are the secured/unsecured pair the sourced sum refuses), and no
+classified balance sheet (its liquidity and MD-38 are empty); `JPM` prints `sector Financials`,
+`REIT no`, with ROE 0.164 and no operating income (APP-02's NA metrics are empty, as the matrix says;
+the applicability decision is T-071's); `ABBV` prints a `da_sourced_sum` and
+`includes_finance_leases` on its debt, both flagged.
+
+### D16 — the post-rebuild fidelity gate
+
+`python -m fundamental_agent fidelity --db PATH --companyfacts-dir DIR [--golden FILE] [--out FILE]
+[--csv FILE]`, read-only towards the database. For every filing and each **resolved line item** it
+finds the SEC `companyfacts` fact with the **same accession and period** (T-147's matching:
+`scripts/sec_xcheck/xcheck.py` — same accession, concept and period end, the period key's tag against
+the fact's duration; a balance-sheet item is an instant, ID-05) and compares the stored value within
+**DQ-01**'s tolerance, `max(L-10 rounding, 0.5% x |value|)`, the unit inferred (USD 1M, else USD 1K,
+else USD 1). A **map** is compared against the aggregate concept it implements — the D&A children's
+sum against `DepreciationDepletionAndAmortization`, the long-term-debt children against
+`LongTermDebtNoncurrent` / `LongTermDebt`, the redeemable-NCI parts against their total — which is
+part 1's filled-sum-against-the-filer's-own-total comparison, now inside the gate.
+
+**The gate:** a minimum fidelity per item, `MIN_FIDELITY = 0.98` (a constant with a comment; the
+measured rates let the reviewer set it). It **reports** only: wiring it into the cycle (keeping a
+mismatching value out of the scores) is the next step, decided after review. Run on `t151c/after.db`
+→ `out/fidelity_report.txt`, `out/fidelity_mismatches.csv` (24.5s):
+
+- **9,340 filings compared.** Per item, `compared / matched / mismatched / no fact / fidelity`:
+  `depreciation_amortization` 3,520 / 3,517 / **3** / 185 / **99.9%**; `long_term_debt` 7,545 / 7,532
+  / **13** / 96 / **99.8%**; every other item **100.0%** (e.g. `revenue` 9,026 compared, `equity`
+  9,237, `total_assets` 9,249, `cash` 8,591, `net_income` 8,544, `income_tax` 9,062, `eps_diluted`
+  8,829). **No item is below the 98% gate.**
+- **16 mismatching (filing, item) pairs**, by company: **ESS 7** (`long_term_debt`), **WELL 6**
+  (`long_term_debt`), **SYK 2** (`depreciation_amortization`), **ROK 1**
+  (`depreciation_amortization` 78M against the filer's 79M, a 1M gap just above the 0.5M rounding
+  term — borderline). Part 1's known cases appear for **SYK**, **ESS** and **WELL**; **VLTO does
+  not**: its `depreciation_amortization` resolves **empty** on its own period column in this database
+  (part 1's VLTO case was a year-to-date column, which this gate does not read). ESS
+  `0000920522-22-000019` is the clearest: our sum 6,287,410,000 against the filer's own
+  `LongTermDebt` 638,959,000 (the filer's total equals one filed child, a partial tag — part 1's
+  class 1).
+- **The golden set:** `grep -r golden_set` finds `docs/sec_golden_set.md` (T-147's prose table of 23
+  tickers, semantic choices only) and no `golden_set.csv`; the report **RECORDS** that the CSV does
+  not exist. Wiring the prose golden set in (its `agree = no` rows) is left for the task that turns
+  it into a CSV.
+
+### Declared limitations
+
+- The provenance block records each item at the **filing's own period column**; for a metric whose
+  denominator is the prior-year capital (ROA/ROE/ROIC, MD-38) the prior-year column's own
+  resolutions appear as the `flag_prior_*` inputs, not as the block's items.
+- The fidelity gate reads the filing's **own period column** only; part 1's YTD-column cases (VLTO)
+  are outside it.
+- The code-vs-matrix check for financial firms waits for **T-071** (APP-00's company-type profile).
+- The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded.
