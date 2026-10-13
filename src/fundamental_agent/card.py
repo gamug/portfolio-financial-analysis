@@ -237,7 +237,9 @@ def render(card: Card) -> str:
     lines += ["", "Empty metrics (with the reason):"]
     for entry in card.empty:
         concepts = ", ".join(
-            f"{item}={info.get('concept') or '-'}" for item, info in entry["items"].items()
+            f"{item}[{info.get('basis')}]={info.get('concept') or '-'}"
+            for item, entries in entry["items"].items()
+            for info in entries
         )
         lines.append(f"  {entry['name']:<44}{entry['reason'] or '-':<26}{concepts}")
     return "\n".join(lines) + "\n"

@@ -6,10 +6,12 @@ import json
 from typing import Any
 
 from fundamental_agent.metrics import provenance
-from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.metrics.base import MetricResult, TTMFlow
+from fundamental_agent.metrics.cashflow import compute as cashflow_compute
 from fundamental_agent.metrics.efficiency import compute as efficiency_compute
 from fundamental_agent.metrics.profitability import compute as profitability_compute
 from fundamental_agent.metrics.roic import compute as roic_compute
+from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.statements import Statements
 
 G = "us-gaap_"
@@ -68,9 +70,13 @@ def test_a_filled_metric_carries_its_provenance() -> None:
     assert block["period"] == KEY
     assert "MD-10" in block["rule_ids"]
     assert block["empty_reason"] is None
-    assert block["items"]["net_income"]["concept"] == G + "NetIncomeLoss"
-    assert block["items"]["net_income"]["how"] == "concept"
-    assert block["items"]["equity"]["concept"] == G + "StockholdersEquity"
+    # G2: each item is a list of (basis, concept, how, flags) entries
+    assert block["items"]["net_income"][0]["concept"] == G + "NetIncomeLoss"
+    assert block["items"]["net_income"][0]["how"] == "concept"
+    assert block["items"]["net_income"][0]["basis"] == "ttm"
+    assert block["items"]["equity"][0]["concept"] == G + "StockholdersEquity"
+    assert block["items"]["equity"][0]["basis"] == "prior_year"
+    assert block["items"]["equity"][0]["source"] == "filing"
 
 
 def test_an_empty_metric_carries_a_reason_from_the_fixed_list() -> None:
@@ -147,3 +153,117 @@ def test_a_metric_with_no_declaration_gets_an_empty_item_map() -> None:
     assert block["items"] == {}
     assert block["rule_ids"] == []
     assert block["empty_reason"] is None
+
+
+# -- G2: the basis of each item ---------------------------------------------------------------
+
+
+def test_a_ttm_flow_item_records_its_method_and_columns() -> None:
+    stmts = _payload()
+    # a 10-Q's FCF margin reads its flows on the TTM basis; here the flows are given explicitly
+    flows = {"operating_cash_flow": TTMFlow(1_200.0, "ytd", ytd=900.0)}
+    pairs = [
+        ("cashflow", r)
+        for r in cashflow_compute(stmts, KEY, None, {"operating_cash_flow": 1_200.0})
+    ]
+    provenance.attach(pairs, stmts, KEY, flows)
+    result = next(r for _g, r in pairs if r.name == "free_cash_flow_margin")
+    entry = result.inputs["provenance"]["items"]["operating_cash_flow"][0]
+    assert entry["basis"] == "ttm"
+    assert entry["method"] == "ytd"
+    assert entry["ytd"] == 900.0
+
+
+def test_a_prior_year_capital_item_records_its_source() -> None:
+    stmts = _payload()
+    pairs = [("roic", r) for r in roic_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    result = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
+    entry = result.inputs["provenance"]["items"]["equity"][0]
+    assert entry["basis"] == "prior_year"
+    assert entry["source"] == "filing"
+    assert entry["concept"] == G + "StockholdersEquity"
+
+
+def test_md38_lists_the_working_capital_on_both_bases() -> None:
+    stmts = _payload()
+    pairs = [("valuation", r) for r in valuation_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    result = next(r for _g, r in pairs if r.name == "enterprise_fcf_yield")
+    bases = [entry["basis"] for entry in result.inputs["provenance"]["items"]["current_assets"]]
+    assert bases == ["period", "prior_year"]
+
+
+# -- G4: the empty reason's precedence ------------------------------------------------------------
+
+
+def test_no_operating_income_with_a_refused_debt_is_missing_input_for_roic() -> None:
+    """G4: the numerator's absence is the first failing term, before the refused debt (a capture
+    failure) or the prior column (which is present here)."""
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "NetIncomeLoss", "Net income", **{KEY: 80.0}),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{KEY: 120.0},
+                ),
+                _row(G + "IncomeTaxExpenseBenefit", "Income tax", **{KEY: 20.0}),
+            ],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-12-31": 1_100.0, "2023-12-31": 1_000.0}),
+                _row(
+                    G + "StockholdersEquity", "Equity", **{"2024-12-31": 450.0, "2023-12-31": 400.0}
+                ),
+                _row(
+                    G + "CashAndCashEquivalentsAtCarryingValue",
+                    "Cash",
+                    **{"2024-12-31": 60.0, "2023-12-31": 50.0},
+                ),
+                # a debt-named line outside the sourced children: the long-term sum refuses
+                _row(
+                    G + "SeniorNotes", "Senior notes", **{"2024-12-31": 210.0, "2023-12-31": 200.0}
+                ),
+            ],
+            "cash_flow": [],
+        }
+    )
+    stmts.accession = "0000000000-24-000001"
+    pairs = [("roic", r) for r in roic_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    roic = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
+    assert roic.value is None
+    assert roic.inputs["provenance"]["empty_reason"] == provenance.MISSING_INPUT
+
+
+def test_an_absent_prior_column_is_prior_year_missing() -> None:
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "OperatingIncomeLoss", "Operating income", **{KEY: 100.0}),
+                _row(G + "NetIncomeLoss", "Net income", **{KEY: 80.0}),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{KEY: 120.0},
+                ),
+                _row(G + "IncomeTaxExpenseBenefit", "Income tax", **{KEY: 20.0}),
+            ],
+            "balance_sheet": [
+                # only the current column: no comparative, and no prior 10-K
+                _row(G + "Assets", "Assets", **{"2024-12-31": 1_100.0}),
+                _row(G + "StockholdersEquity", "Equity", **{"2024-12-31": 450.0}),
+                _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", **{"2024-12-31": 60.0}),
+                _row(G + "LongTermDebt", "Debt", **{"2024-12-31": 210.0}),
+            ],
+            "cash_flow": [],
+        }
+    )
+    pairs = [("roic", r) for r in roic_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    roic = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
+    assert roic.value is None
+    assert roic.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING

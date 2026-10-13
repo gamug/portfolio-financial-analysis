@@ -48,7 +48,7 @@ def test_card_prints_the_profile_the_filing_and_the_metrics(
     # the metrics carry their rule IDs and the provenance block
     roe = next(m for m in card.metrics if m["name"] == "return_on_equity")
     assert "MD-10" in roe["rule_ids"]
-    assert roe["provenance"]["items"]["net_income"]["concept"] == "us-gaap_NetIncomeLoss"
+    assert roe["provenance"]["items"]["net_income"][0]["concept"] == "us-gaap_NetIncomeLoss"
 
 
 def test_card_uses_the_latest_filing_available_on_or_before_the_date(

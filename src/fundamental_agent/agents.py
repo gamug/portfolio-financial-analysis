@@ -358,8 +358,9 @@ class FundamentalAnalyst:
                 out.append((valuation_metrics.GROUP, result))
 
         _flag_annualization(out, ctx.ttm_flows)
-        # T-151 part 3 (D14): the provenance block on every metric, in one place.
-        provenance.attach(out, ctx.stmts, ctx.period_key)
+        # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
+        # method and columns come from the filing's own flows).
+        provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:

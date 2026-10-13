@@ -1,13 +1,17 @@
-"""Provenance on every metric (T-151 part 3, D14).
+"""Provenance on every metric (T-151 part 3, D14; fix round 1, G2).
 
 Each stored metric's inputs carry one ``provenance`` block:
 
 * the filing's accession (PER-01's availability is derived from it);
-* for each line item the metric reads, its XBRL concept and how it was read (``concept`` / ``map`` /
-  ``fallback`` / ..., T-148's :class:`~fundamental_agent.statements.Resolution`);
+* for each line item the metric reads, its XBRL concept, how it was read (``concept`` / ``map`` /
+  ``fallback`` / ..., T-148's :class:`~fundamental_agent.statements.Resolution`) and **the basis it
+  was read on** (G2): ``period`` (the filing's own period column), ``ttm`` (the trailing twelve
+  months of a 10-Q, with the method and the columns it used), ``prior_year`` or ``prior_quarter``
+  (the capital at the prior fiscal year end or the prior year's same quarter, with the ``Capital``'s
+  source). A metric that reads an item on two bases lists both;
 * the rule IDs applied (the checklist rules and Annex B's ``MD-`` rows);
 * the resolution flags;
-* and, when the value is empty, a reason from a fixed list of codes.
+* and, when the value is empty, a reason from a fixed list of codes (G4's precedence).
 
 The declarations live here, one entry per metric name, so the metric modules keep their formulas and
 the audit trail is added in one place (:func:`attach`). No schema change: the block goes inside the
@@ -19,10 +23,10 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
-from fundamental_agent.metrics.base import MetricResult
-from fundamental_agent.statements import Resolution, Statements
+from fundamental_agent.metrics.base import MetricResult, TTMFlow
+from fundamental_agent.statements import Capital, Resolution, Statements
 
-# The fixed list of empty-reason codes (D14).
+# The fixed list of empty-reason codes (D14; G4's precedence is applied by :func:`_empty_reason`).
 MISSING_INPUT = "missing_input"
 NOT_APPLICABLE = "not_applicable"
 DENOMINATOR_NOT_POSITIVE = "denominator_not_positive"
@@ -39,97 +43,123 @@ EMPTY_REASONS = (
     PRIOR_YEAR_MISSING,
 )
 
-# metric name -> (registry items it reads, rule IDs applied). The items are the registry keys of
-# ``statements.py``; ``total_debt`` / ``nci`` are resolved by their helpers, named here for the
-# concept/how trail.
-ITEMS: dict[str, tuple[str, ...]] = {
-    "gross_margin": ("revenue", "cogs", "gross_profit"),
-    "operating_margin": ("revenue", "operating_income"),
-    "net_margin": ("revenue", "net_income"),
-    "return_on_assets": ("operating_income", "total_assets", "income_tax", "pretax_income"),
-    "return_on_equity": ("net_income", "equity"),
-    "return_on_invested_capital": (
-        "operating_income",
-        "income_tax",
-        "pretax_income",
-        "equity",
-        "long_term_debt",
-        "short_term_debt",
-        "cash",
-        "short_term_investments",
-        "minority_interest",
-        "redeemable_nci",
-    ),
-    "return_on_invested_capital_effective_rate": (
-        "operating_income",
-        "income_tax",
-        "pretax_income",
-        "equity",
-        "long_term_debt",
-        "short_term_debt",
-        "cash",
-        "short_term_investments",
-        "minority_interest",
-        "redeemable_nci",
-    ),
-    "effective_tax_rate": ("income_tax", "pretax_income"),
-    "nopat": ("operating_income", "income_tax", "pretax_income"),
-    "ebitda": ("operating_income", "depreciation_amortization"),
-    "debt_to_equity": ("long_term_debt", "short_term_debt", "equity"),
-    "debt_to_assets": ("long_term_debt", "short_term_debt", "total_assets"),
-    "interest_coverage": ("operating_income", "interest_expense"),
-    "net_debt_to_ebitda": (
-        "long_term_debt",
-        "short_term_debt",
-        "cash",
-        "short_term_investments",
-        "operating_income",
-        "depreciation_amortization",
-    ),
-    "current_ratio": ("current_assets", "current_liabilities"),
-    "quick_ratio": ("current_assets", "current_liabilities", "inventory"),
-    "cash_ratio": ("cash", "short_term_investments", "current_liabilities"),
-    "asset_turnover": ("revenue", "total_assets"),
-    "inventory_turnover": ("cogs", "inventory"),
-    "receivables_turnover": ("revenue", "receivables"),
-    "revenue_growth": ("revenue",),
-    "operating_income_growth": ("operating_income",),
-    "net_income_growth": ("net_income",),
-    "free_cash_flow_growth": ("operating_cash_flow", "capital_expenditure"),
-    "operating_cash_flow_margin": ("operating_cash_flow", "revenue"),
-    "free_cash_flow_margin": ("operating_cash_flow", "capital_expenditure", "revenue"),
-    "free_cash_flow_conversion": ("operating_cash_flow", "capital_expenditure", "net_income"),
-    "capex_intensity": ("capital_expenditure", "revenue"),
-    "revenue_cagr": ("revenue",),
-    "net_income_cagr": ("net_income",),
-    "operating_cash_flow_cagr": ("operating_cash_flow",),
-    "market_capitalization": ("shares_outstanding", "diluted_shares"),
-    "enterprise_value": (
-        "long_term_debt",
-        "short_term_debt",
-        "cash",
-        "short_term_investments",
-        "minority_interest",
-        "redeemable_nci",
-    ),
-    "free_cash_flow_yield": ("operating_cash_flow", "capital_expenditure"),
-    "sbc_adjusted_fcf_yield": (
-        "operating_cash_flow",
-        "capital_expenditure",
-        "stock_based_compensation",
-    ),
-    "enterprise_fcf_yield": (
-        "operating_income",
-        "income_tax",
-        "pretax_income",
-        "capital_expenditure",
-        "depreciation_amortization",
-        "current_assets",
-        "current_liabilities",
-        "cash",
-        "short_term_investments",
-        "short_term_debt",
-    ),
+# The basis of each item a metric reads (G2): "period" (the filing's own period column), "ttm" (the
+# trailing twelve months of a 10-Q), "prior_year" (the prior fiscal year end) or "prior_quarter"
+# (the prior year's same quarter). "prior" means whichever of the last two the filing has (a 10-Q
+# carries a prior-year quarter, a 10-K its own prior-year column).
+ITEMS: dict[str, dict[str, str | tuple[str, ...]]] = {
+    "gross_margin": {"revenue": "period", "cogs": "period", "gross_profit": "period"},
+    "operating_margin": {"revenue": "period", "operating_income": "period"},
+    "net_margin": {"revenue": "period", "net_income": "period"},
+    "return_on_assets": {
+        "operating_income": "ttm",
+        "income_tax": "ttm",
+        "pretax_income": "ttm",
+        "total_assets": "prior_year",
+    },
+    "return_on_equity": {"net_income": "ttm", "equity": "prior_year"},
+    "return_on_invested_capital": {
+        "operating_income": "ttm",
+        "income_tax": "ttm",
+        "pretax_income": "ttm",
+        "equity": "prior_year",
+        "long_term_debt": "prior_year",
+        "short_term_debt": "prior_year",
+        "cash": "prior_year",
+        "short_term_investments": "prior_year",
+        "minority_interest": "prior_year",
+        "redeemable_nci": "prior_year",
+    },
+    "return_on_invested_capital_effective_rate": {
+        "operating_income": "ttm",
+        "income_tax": "ttm",
+        "pretax_income": "ttm",
+        "equity": "prior_year",
+        "long_term_debt": "prior_year",
+        "short_term_debt": "prior_year",
+        "cash": "prior_year",
+        "short_term_investments": "prior_year",
+        "minority_interest": "prior_year",
+        "redeemable_nci": "prior_year",
+    },
+    "effective_tax_rate": {"income_tax": "period", "pretax_income": "period"},
+    "nopat": {"operating_income": "period", "income_tax": "period", "pretax_income": "period"},
+    "ebitda": {"operating_income": "period", "depreciation_amortization": "period"},
+    "debt_to_equity": {"long_term_debt": "period", "short_term_debt": "period", "equity": "period"},
+    "debt_to_assets": {
+        "long_term_debt": "period",
+        "short_term_debt": "period",
+        "total_assets": "period",
+    },
+    "interest_coverage": {"operating_income": "period", "interest_expense": "period"},
+    "net_debt_to_ebitda": {
+        "long_term_debt": "period",
+        "short_term_debt": "period",
+        "cash": "period",
+        "short_term_investments": "period",
+        "operating_income": "ttm",
+        "depreciation_amortization": "ttm",
+    },
+    "current_ratio": {"current_assets": "period", "current_liabilities": "period"},
+    "quick_ratio": {
+        "current_assets": "period",
+        "current_liabilities": "period",
+        "inventory": "period",
+    },
+    "cash_ratio": {
+        "cash": "period",
+        "short_term_investments": "period",
+        "current_liabilities": "period",
+    },
+    "asset_turnover": {"revenue": "ttm", "total_assets": "period"},
+    "inventory_turnover": {"cogs": "ttm", "inventory": "period"},
+    "receivables_turnover": {"revenue": "ttm", "receivables": "period"},
+    "revenue_growth": {"revenue": "period"},
+    "operating_income_growth": {"operating_income": "period"},
+    "net_income_growth": {"net_income": "period"},
+    "free_cash_flow_growth": {"operating_cash_flow": "period", "capital_expenditure": "period"},
+    "operating_cash_flow_margin": {"operating_cash_flow": "ttm", "revenue": "ttm"},
+    "free_cash_flow_margin": {
+        "operating_cash_flow": "ttm",
+        "capital_expenditure": "ttm",
+        "revenue": "ttm",
+    },
+    "free_cash_flow_conversion": {
+        "operating_cash_flow": "ttm",
+        "capital_expenditure": "ttm",
+        "net_income": "ttm",
+    },
+    "capex_intensity": {"capital_expenditure": "ttm", "revenue": "ttm"},
+    "revenue_cagr": {"revenue": "period"},
+    "net_income_cagr": {"net_income": "period"},
+    "operating_cash_flow_cagr": {"operating_cash_flow": "period"},
+    "market_capitalization": {"shares_outstanding": "period", "diluted_shares": "period"},
+    "enterprise_value": {
+        "long_term_debt": "period",
+        "short_term_debt": "period",
+        "cash": "period",
+        "short_term_investments": "period",
+        "minority_interest": "period",
+        "redeemable_nci": "period",
+    },
+    "free_cash_flow_yield": {"operating_cash_flow": "ttm", "capital_expenditure": "ttm"},
+    "sbc_adjusted_fcf_yield": {
+        "operating_cash_flow": "ttm",
+        "capital_expenditure": "ttm",
+        "stock_based_compensation": "ttm",
+    },
+    "enterprise_fcf_yield": {
+        "operating_income": "ttm",
+        "income_tax": "ttm",
+        "pretax_income": "ttm",
+        "capital_expenditure": "ttm",
+        "depreciation_amortization": "ttm",
+        "current_assets": ("period", "prior"),
+        "current_liabilities": ("period", "prior"),
+        "cash": ("period", "prior"),
+        "short_term_investments": ("period", "prior"),
+        "short_term_debt": ("period", "prior"),
+    },
 }
 
 # metric name -> rule IDs applied (checklist rules and Annex B's MD- rows).
@@ -172,13 +202,30 @@ RULE_IDS: dict[str, tuple[str, ...]] = {
     "enterprise_fcf_yield": ("MD-38", "MD-05", "MD-01", "MET-08", "APP-02"),
 }
 
-# The empty-reason codes each flag maps to (D14's fixed list).
+# The registry item -> the ``Capital`` field that resolved it (the prior-year bases).
+_CAPITAL_FIELDS: dict[str, str] = {
+    "total_assets": "total_assets",
+    "equity": "equity",
+    "cash": "cash",
+    "short_term_investments": "short_term_investments",
+    "minority_interest": "minority_interest",
+    "redeemable_nci": "redeemable_nci",
+    "equity_incl_nci": "equity_incl_nci",
+    "current_assets": "current_assets",
+    "current_liabilities": "current_liabilities",
+    "long_term_debt": "debt",
+    "short_term_debt": "short_term_debt",
+}
+
+# The flag -> the reason it names, in G4's precedence order.
 _FLAG_REASONS: tuple[tuple[str, str], ...] = (
+    ("negative_equity", NOT_APPLICABLE),
     ("growth_base_not_positive", GROWTH_BASE_NOT_POSITIVE),
     ("denominator_negative", DENOMINATOR_NOT_POSITIVE),
     ("invested_capital_not_positive", DENOMINATOR_NOT_POSITIVE),
-    ("negative_equity", NOT_APPLICABLE),
     ("capture_failure", CAPTURE_FAILURE),
+    ("refused", CAPTURE_FAILURE),
+    ("unclassified_balance_sheet", CAPTURE_FAILURE),
     ("prior_year_bs_missing", PRIOR_YEAR_MISSING),
     ("prior_year_assets_missing", PRIOR_YEAR_MISSING),
     ("prior_year_equity_missing", PRIOR_YEAR_MISSING),
@@ -206,47 +253,159 @@ def _relevant_flags(result: MetricResult, items: tuple[str, ...]) -> list[str]:
     return sorted(out)
 
 
-def _empty_reason(stmts: Statements, period_key: str, result: MetricResult) -> str:
-    """The reason a metric is empty (D14's fixed codes): a flag naming the metric, else an input's
-    own resolution flag, else ``missing_input``."""
+def _flag_reason(flags: Any) -> str | None:
+    for flag, reason in _FLAG_REASONS:
+        if any(flag in raised for raised in flags):
+            return reason
+    return None
+
+
+def _bases(entry: str | tuple[str, ...]) -> tuple[str, ...]:
+    return (entry,) if isinstance(entry, str) else entry
+
+
+def _empty_reason(  # noqa: C901, PLR0912 - G4's precedence, one linear pass
+    stmts: Statements, period_key: str, result: MetricResult
+) -> str:
+    """G4's precedence, the first failing term in the formula's order:
+
+    1. ``not_applicable`` (APP-07's negative equity) and the denominators/growth bases, from a flag
+       naming the metric;
+    2. ``missing_input``: a current-period numerator or denominator input that is not filed;
+    3. ``capture_failure``: an input filed but refused or not formable (an unclassified balance
+       sheet);
+    4. ``prior_year_missing``: the prior column or the prior-year filing itself is absent;
+    5. ``missing_input`` as the default."""
+    items = ITEMS.get(result.name, {})
+    # 1. a flag naming the metric (negative equity, a denominator, a growth base)
     for key in result.inputs:
         if key.startswith("flag_") and result.name in key:
-            for flag, reason in _FLAG_REASONS:
-                if flag in key:
-                    return reason
-    for item in ITEMS.get(result.name, ()):
-        resolution: Resolution = stmts.resolve(item, period_key)
-        for flag, reason in _FLAG_REASONS:
-            if any(flag in raised for raised in resolution.flags):
+            reason = _flag_reason([key])
+            if reason in (NOT_APPLICABLE, DENOMINATOR_NOT_POSITIVE, GROWTH_BASE_NOT_POSITIVE):
                 return reason
+    # 2. a current-period numerator/denominator input that is not filed
+    unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
+    for item, entry in items.items():
+        for basis in _bases(entry):
+            if _prior_basis(stmts, basis) not in ("period", "ttm"):
+                continue
+            if unclassified and item in (
+                "current_assets",
+                "current_liabilities",
+                "cash",
+                "short_term_debt",
+                "short_term_investments",
+            ):
+                continue
+            resolution, _capital = _resolve(stmts, period_key, item, basis)
+            if resolution.value is None and _flag_reason(resolution.flags) is None:
+                return MISSING_INPUT
+    # 3. an input filed but refused, or a prior column that is absent
+    for item, entry in items.items():
+        for basis in _bases(entry):
+            resolution, capital = _resolve(stmts, period_key, item, basis)
+            reason = _flag_reason(resolution.flags)
+            if reason in (CAPTURE_FAILURE, PRIOR_YEAR_MISSING):
+                return reason
+            if capital is not None and capital.source is None:
+                return PRIOR_YEAR_MISSING
+    # 4. a metric-specific capture flag (an unclassified balance sheet)
+    for key in result.inputs:
+        if key.startswith("flag_") and _flag_reason([key]) == CAPTURE_FAILURE:
+            return CAPTURE_FAILURE
     return MISSING_INPUT
 
 
-def _item_provenance(stmts: Statements, period_key: str, item: str) -> dict[str, Any]:
-    resolution: Resolution = stmts.resolve(item, period_key)
+def _prior_basis(stmts: Statements, basis: str) -> str:
+    """``"prior"`` means the prior-year quarter when the filing has one (a 10-Q), else the prior
+    fiscal year end."""
+    if basis != "prior":
+        return basis
+    return "prior_quarter" if stmts.prior_quarter_capital is not None else "prior_year"
+
+
+def _resolve(
+    stmts: Statements, period_key: str, item: str, basis: str
+) -> tuple[Resolution, Capital | None]:
+    """The resolution of *item* on *basis*, and the ``Capital`` it came from when it is a prior one."""
+    if basis in ("prior_year", "prior_quarter"):
+        capital = (
+            stmts.prior_quarter_capital_at(period_key)
+            if basis == "prior_quarter"
+            else stmts.prior_year_capital(period_key)
+        )
+        field = _CAPITAL_FIELDS.get(item)
+        if field is not None:
+            return getattr(capital, field), capital
+        return stmts.resolve(item, period_key), capital
+    return stmts.resolve(item, period_key), None
+
+
+def _flow_columns(flow: TTMFlow | None) -> dict[str, Any]:
+    if flow is None:
+        return {}
     return {
+        "method": flow.method,
+        "ytd": flow.ytd,
+        "alt": flow.alt,
+        "flow_flags": list(flow.flags),
+    }
+
+
+def _item_provenance(
+    stmts: Statements,
+    period_key: str,
+    item: str,
+    basis: str,
+    ttm_flows: dict[str, TTMFlow] | None,
+) -> dict[str, Any]:
+    basis = _prior_basis(stmts, basis)
+    resolution, capital = _resolve(stmts, period_key, item, basis)
+    entry: dict[str, Any] = {
+        "basis": basis,
         "concept": resolution.concept,
         "how": resolution.how,
         "flags": list(resolution.flags),
     }
+    if basis == "ttm":
+        entry.update(_flow_columns((ttm_flows or {}).get(item)))
+    if capital is not None:
+        entry["source"] = capital.source
+    return entry
 
 
-def build(stmts: Statements, period_key: str, result: MetricResult) -> dict[str, Any]:
-    """The ``provenance`` block of one metric result (D14)."""
-    items = ITEMS.get(result.name, ())
+def build(
+    stmts: Statements,
+    period_key: str,
+    result: MetricResult,
+    ttm_flows: dict[str, TTMFlow] | None = None,
+) -> dict[str, Any]:
+    """The ``provenance`` block of one metric result (D14; G2's bases)."""
+    items = ITEMS.get(result.name, {})
     return {
         "accession": stmts.accession,
         "period": period_key,
         "rule_ids": list(RULE_IDS.get(result.name, ())),
-        "items": {item: _item_provenance(stmts, period_key, item) for item in items},
-        "flags": _relevant_flags(result, items),
+        "items": {
+            item: [
+                _item_provenance(stmts, period_key, item, basis, ttm_flows)
+                for basis in ((bases,) if isinstance(bases, str) else bases)
+            ]
+            for item, bases in items.items()
+        },
+        "flags": _relevant_flags(result, tuple(items)),
         "empty_reason": None
         if result.value is not None
         else _empty_reason(stmts, period_key, result),
     }
 
 
-def attach(results: list[tuple[str, MetricResult]], stmts: Statements, period_key: str) -> None:
+def attach(
+    results: list[tuple[str, MetricResult]],
+    stmts: Statements,
+    period_key: str,
+    ttm_flows: dict[str, TTMFlow] | None = None,
+) -> None:
     """Add the ``provenance`` block to every result's inputs (D14). Called once per filing, after
     the metric groups have run and before the rows are written.
 
@@ -255,5 +414,8 @@ def attach(results: list[tuple[str, MetricResult]], stmts: Statements, period_ke
     metric's provenance. ``MetricResult`` is frozen, so the list entry is replaced."""
     for index, (group, result) in enumerate(results):
         inputs = dict(result.inputs)
-        inputs["provenance"] = build(stmts, period_key, result)
+        inputs["provenance"] = build(stmts, period_key, result, ttm_flows)
         results[index] = (group, replace(result, inputs=inputs))
+
+
+__all__ = ["EMPTY_REASONS", "ITEMS", "RULE_IDS", "attach", "build"]
