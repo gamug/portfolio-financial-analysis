@@ -840,3 +840,36 @@ def test_a_stored_but_unclassified_prior_column_is_not_prior_wc_missing() -> Non
     inputs = out["enterprise_fcf_yield"].inputs
     assert "flag_enterprise_fcf_yield_prior_wc_missing" not in inputs
     assert inputs["flag_enterprise_fcf_yield_unclassified_balance_sheet"] == 1.0
+
+
+# -- H7: a REIT's negative rate on the main ratios ----------------------------------------------
+
+
+def test_h7_a_reit_negative_ttm_rate_flags_the_main_ratios() -> None:
+    """APP-04c: a REIT keeps its own rate; a negative one inflates NOPAT, so ROA, ROIC and MD-38
+    carry `flag_nopat_tax_rate_outside_unit_interval` (the robustness row has its own)."""
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=10.0, quarter_pretax=100.0)
+    stmts.reit = True
+    # TTM tax -40 / pre-tax 130 -> -0.3077 (HST 0000950170-22-008085's shape)
+    ttm = {"operating_income": 400.0, "income_tax": -40.0, "pretax_income": 130.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_reit_effective"] == 1.0
+    assert roic["nopat"].inputs["flag_nopat_tax_rate_outside_unit_interval"] == 1.0
+    assert (
+        roic["return_on_invested_capital"].inputs["flag_nopat_tax_rate_outside_unit_interval"]
+        == 1.0
+    )
+    prof = _flat(profitability_compute(stmts, Q, None, ttm))
+    assert prof["return_on_assets"].inputs["flag_nopat_tax_rate_outside_unit_interval"] == 1.0
+    val = _flat(
+        valuation_compute(stmts, Q, ClosePrice("2024-06-30", 50.0), ttm=ttm, market_cap=_mcap())
+    )
+    assert val["enterprise_fcf_yield"].inputs["flag_nopat_tax_rate_outside_unit_interval"] == 1.0
+
+
+def test_h7_a_positive_rate_is_not_flagged() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0)
+    stmts.reit = True
+    ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert "flag_nopat_tax_rate_outside_unit_interval" not in roic["nopat"].inputs
