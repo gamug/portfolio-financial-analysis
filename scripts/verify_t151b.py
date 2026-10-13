@@ -326,7 +326,7 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         ):
             base = inp(filing, name).get(base_key)
             if base is not None and base <= 0.0 and metric(filing, name) is not None:
-                add(f"MET04.{name}_base_nonpositive")
+                add(f"MET04.{name}_base_nonpositive", asset)
 
         for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
             if inp(filing, name).get("flag_crosses_asc842") == 1.0:
