@@ -9,13 +9,31 @@ from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.cashflow import compute as cashflow_compute
 from fundamental_agent.metrics.efficiency import compute as efficiency_compute
+from fundamental_agent.metrics.leverage import compute as leverage_compute
 from fundamental_agent.metrics.profitability import compute as profitability_compute
 from fundamental_agent.metrics.roic import compute as roic_compute
 from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.statements import Statements
+from kg_schema.market_cap import MarketCap
 
 G = "us-gaap_"
 KEY = "2024-12-31 (FY)"
+
+
+def _mcap(value: float = 5_000.0) -> MarketCap:
+    return MarketCap(
+        asset_id=1,
+        value=value,
+        shares=100.0,
+        share_count=100.0,
+        share_as_of="2024-06-30",
+        share_age_days=0,
+        filing_id=1,
+        close=value / 100.0,
+        close_date="2024-06-30",
+        n_classes=0,
+        split_factor=1.0,
+    )
 
 
 def _row(concept: str, label: str, **periods: float) -> dict[str, Any]:
@@ -267,3 +285,198 @@ def test_an_absent_prior_column_is_prior_year_missing() -> None:
     roic = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
     assert roic.value is None
     assert roic.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING
+
+
+# -- H1: an optional item is never a missing_input ---------------------------------------------
+
+
+def _h1_payload(*, short_term_debt: float | None = None) -> Statements:
+    """A payload whose only debt line is ``SeniorNotes`` -- outside the sourced long-term sum, so
+    the debt refuses (``debt_sum_refused_other_lines``)."""
+    balance = [
+        _row(G + "Assets", "Assets", **{"2024-12-31": 1_100.0, "2023-12-31": 1_000.0}),
+        _row(G + "StockholdersEquity", "Equity", **{"2024-12-31": 450.0, "2023-12-31": 400.0}),
+        _row(
+            G + "CashAndCashEquivalentsAtCarryingValue",
+            "Cash",
+            **{"2024-12-31": 60.0, "2023-12-31": 50.0},
+        ),
+        _row(G + "SecuredDebt", "Secured debt", **{"2024-12-31": 200.0, "2023-12-31": 190.0}),
+        _row(G + "SeniorNotes", "Senior notes", **{"2024-12-31": 210.0, "2023-12-31": 200.0}),
+    ]
+    if short_term_debt is not None:
+        balance.append(
+            _row(G + "LongTermDebtCurrent", "ST debt", **{"2024-12-31": short_term_debt})
+        )
+    return Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "OperatingIncomeLoss", "Operating income", **{KEY: 100.0}),
+                _row(G + "NetIncomeLoss", "Net income", **{KEY: 80.0}),
+            ],
+            "balance_sheet": balance,
+            "cash_flow": [],
+        }
+    )
+
+
+def test_h1_a_refused_debt_is_a_capture_failure_not_a_missing_input() -> None:
+    stmts = _h1_payload()  # no short-term debt line at all
+    pairs = [("leverage", r) for r in leverage_compute(stmts, KEY)]
+    provenance.attach(pairs, stmts, KEY)
+    d_to_e = next(r for _g, r in pairs if r.name == "debt_to_equity")
+    assert d_to_e.value is None
+    # the short-term debt is optional (statements._total_debt: lt + (st or 0)), so the cause is the
+    # refused long-term sum, not a missing short-term line
+    assert d_to_e.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
+
+
+def test_h1_absent_nci_lines_do_not_make_an_enterprise_value_missing() -> None:
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [_row(G + "NetIncomeLoss", "Net income", **{KEY: 80.0})],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-12-31": 1_100.0, "2023-12-31": 1_000.0}),
+                _row(
+                    G + "StockholdersEquity", "Equity", **{"2024-12-31": 450.0, "2023-12-31": 400.0}
+                ),
+                _row(
+                    G + "CashAndCashEquivalentsAtCarryingValue",
+                    "Cash",
+                    **{"2024-12-31": 60.0, "2023-12-31": 50.0},
+                ),
+                _row(G + "LongTermDebt", "Debt", **{"2024-12-31": 210.0, "2023-12-31": 200.0}),
+            ],
+            "cash_flow": [],
+        }
+    )
+    # a market cap makes the EV computable; the NCI lines are absent and no NCI income is filed
+    pairs = [("valuation", r) for r in valuation_compute(stmts, KEY, market_cap=_mcap())]
+    provenance.attach(pairs, stmts, KEY)
+    ev = next(r for _g, r in pairs if r.name == "enterprise_value")
+    assert ev.value is not None  # the NCI lines being absent is not a missing input
+    assert ev.inputs["provenance"]["empty_reason"] is None
+
+
+# -- H2: a TTM that was not formed --------------------------------------------------------------
+
+
+def test_h2_a_first_year_10q_is_prior_year_missing() -> None:
+    q = "2024-06-30 (Q2)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _row(
+                    G + "OperatingIncomeLoss",
+                    "Operating income",
+                    **{q: 25.0, "2024-06-30 (YTD)": 50.0},
+                ),
+                _row(G + "NetIncomeLoss", "Net income", **{q: 20.0, "2024-06-30 (YTD)": 40.0}),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{q: 30.0, "2024-06-30 (YTD)": 60.0},
+                ),
+                _row(
+                    G + "IncomeTaxExpenseBenefit",
+                    "Income tax",
+                    **{q: 5.0, "2024-06-30 (YTD)": 10.0},
+                ),
+            ],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-06-30": 1_100.0, "2023-12-31": 1_000.0}),
+                _row(
+                    G + "StockholdersEquity", "Equity", **{"2024-06-30": 450.0, "2023-12-31": 400.0}
+                ),
+                _row(
+                    G + "CashAndCashEquivalentsAtCarryingValue",
+                    "Cash",
+                    **{"2024-06-30": 60.0, "2023-12-31": 50.0},
+                ),
+                _row(G + "LongTermDebt", "Debt", **{"2024-06-30": 210.0, "2023-12-31": 200.0}),
+            ],
+            "cash_flow": [],
+        }
+    )
+    # the metric's TTM is empty (the flow was not formed) and the provenance is told why
+    pairs = [("roic", r) for r in roic_compute(stmts, q, None, {})]
+    flows = {"operating_income": TTMFlow(100.0, "x4")}
+    provenance.attach(pairs, stmts, q, flows)
+    roic = next(r for _g, r in pairs if r.name == "return_on_invested_capital")
+    assert roic.value is None
+    assert roic.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING
+
+
+# -- H3: the prior basis follows the metric's own rule -------------------------------------------
+
+
+def test_h3_md38_on_a_10q_without_the_prior_quarter_is_prior_year_missing() -> None:
+    q = "2024-06-30 (Q2)"
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [
+                _row(
+                    G + "OperatingIncomeLoss",
+                    "Operating income",
+                    **{q: 25.0, "2024-06-30 (YTD)": 50.0},
+                ),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{q: 30.0, "2024-06-30 (YTD)": 60.0},
+                ),
+                _row(
+                    G + "IncomeTaxExpenseBenefit",
+                    "Income tax",
+                    **{q: 5.0, "2024-06-30 (YTD)": 10.0},
+                ),
+            ],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-06-30": 1_100.0}),
+                _row(G + "AssetsCurrent", "Current assets", **{"2024-06-30": 300.0}),
+                _row(G + "LiabilitiesCurrent", "Current liabilities", **{"2024-06-30": 150.0}),
+                _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", **{"2024-06-30": 60.0}),
+                _row(G + "LongTermDebt", "Debt", **{"2024-06-30": 210.0}),
+                _row(G + "StockholdersEquity", "Equity", **{"2024-06-30": 450.0}),
+            ],
+            "cash_flow": [
+                _row(
+                    G + "PaymentsToAcquirePropertyPlantAndEquipment",
+                    "Capex",
+                    **{q: 10.0, "2024-06-30 (YTD)": 20.0},
+                ),
+                _row(
+                    G + "DepreciationDepletionAndAmortization",
+                    "D&A",
+                    **{q: 5.0, "2024-06-30 (YTD)": 10.0},
+                ),
+            ],
+        }
+    )
+    # the TTM flows are formed (the YTD columns are filed), so the only failing term is the prior
+    # working capital
+    flows = {
+        "operating_income": TTMFlow(50.0, "ytd"),
+        "income_tax": TTMFlow(10.0, "ytd"),
+        "pretax_income": TTMFlow(60.0, "ytd"),
+        "capital_expenditure": TTMFlow(20.0, "ytd"),
+        "depreciation_amortization": TTMFlow(10.0, "ytd"),
+    }
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(
+            stmts, q, market_cap=_mcap(), ttm={k: v.value for k, v in flows.items()}
+        )
+    ]
+    provenance.attach(pairs, stmts, q, flows)
+    efy = next(r for _g, r in pairs if r.name == "enterprise_fcf_yield")
+    assert efy.value is None
+    block = efy.inputs["provenance"]
+    # MD-38 on a 10-Q reads the prior year's same quarter, which is not stored here
+    bases = [entry["basis"] for entry in block["items"]["current_assets"]]
+    assert bases == ["period", "prior_quarter"]
+    prior = block["items"]["current_assets"][1]
+    assert prior["source"] is None
+    assert block["empty_reason"] == provenance.PRIOR_YEAR_MISSING

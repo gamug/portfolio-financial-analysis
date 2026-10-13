@@ -162,6 +162,32 @@ ITEMS: dict[str, dict[str, str | tuple[str, ...]]] = {
     },
 }
 
+# H1 (fix round 2): the items whose formula substitutes 0 when they are not filed -- such an item is
+# never a ``missing_input`` (its own refusal or capture flag still counts, step 3). Each entry names
+# the code line that substitutes the 0.
+OPTIONAL: dict[str, frozenset[str]] = {
+    # profitability: `gross = revenue - cogs` when `gross_profit` is not filed (gross_margin)
+    "gross_margin": frozenset({"gross_profit", "cogs"}),
+    # liquidity: `cash_like = cash + short_term_investments` only when both are filed (cash_ratio)
+    "cash_ratio": frozenset({"short_term_investments"}),
+    # statements._total_debt: `lt_value + (st_value or 0.0)` -- a short-term term not filed is 0
+    "debt_to_equity": frozenset({"short_term_debt"}),
+    "debt_to_assets": frozenset({"short_term_debt"}),
+    # capital.net_short_term_investments: 0 when nothing is filed; capital.nci: 0 when no NCI income
+    "net_debt_to_ebitda": frozenset({"short_term_debt", "short_term_investments"}),
+    "enterprise_value": frozenset(
+        {"short_term_debt", "short_term_investments", "minority_interest", "redeemable_nci"}
+    ),
+    "return_on_invested_capital": frozenset(
+        {"short_term_debt", "short_term_investments", "minority_interest", "redeemable_nci"}
+    ),
+    "return_on_invested_capital_effective_rate": frozenset(
+        {"short_term_debt", "short_term_investments", "minority_interest", "redeemable_nci"}
+    ),
+    # capital.working_capital: `cl - (std or 0.0)`; capital.net_short_term_investments
+    "enterprise_fcf_yield": frozenset({"short_term_debt", "short_term_investments"}),
+}
+
 # metric name -> rule IDs applied (checklist rules and Annex B's MD- rows).
 RULE_IDS: dict[str, tuple[str, ...]] = {
     "gross_margin": ("MD-06", "CON-11"),
@@ -264,19 +290,25 @@ def _bases(entry: str | tuple[str, ...]) -> tuple[str, ...]:
     return (entry,) if isinstance(entry, str) else entry
 
 
-def _empty_reason(  # noqa: C901, PLR0912 - G4's precedence, one linear pass
-    stmts: Statements, period_key: str, result: MetricResult
+def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear pass
+    stmts: Statements,
+    period_key: str,
+    result: MetricResult,
+    ttm_flows: dict[str, TTMFlow] | None = None,
 ) -> str:
     """G4's precedence, the first failing term in the formula's order:
 
     1. ``not_applicable`` (APP-07's negative equity) and the denominators/growth bases, from a flag
        naming the metric;
-    2. ``missing_input``: a current-period numerator or denominator input that is not filed;
+    2. ``missing_input``: a current-period numerator or denominator input that is not filed and that
+       the formula does not replace with 0 (H1: an optional item is never a ``missing_input``); a
+       TTM item counts as present only when its trailing twelve months were formed (H2);
     3. ``capture_failure``: an input filed but refused or not formable (an unclassified balance
        sheet);
     4. ``prior_year_missing``: the prior column or the prior-year filing itself is absent;
     5. ``missing_input`` as the default."""
     items = ITEMS.get(result.name, {})
+    optional = OPTIONAL.get(result.name, frozenset())
     # 1. a flag naming the metric (negative equity, a denominator, a growth base)
     for key in result.inputs:
         if key.startswith("flag_") and result.name in key:
@@ -286,8 +318,11 @@ def _empty_reason(  # noqa: C901, PLR0912 - G4's precedence, one linear pass
     # 2. a current-period numerator/denominator input that is not filed
     unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
     for item, entry in items.items():
-        for basis in _bases(entry):
-            if _prior_basis(stmts, basis) not in ("period", "ttm"):
+        if item in optional:
+            continue
+        for raw_basis in _bases(entry):
+            basis = _prior_basis(stmts, period_key, raw_basis)
+            if basis not in ("period", "ttm"):
                 continue
             if unclassified and item in (
                 "current_assets",
@@ -297,12 +332,19 @@ def _empty_reason(  # noqa: C901, PLR0912 - G4's precedence, one linear pass
                 "short_term_investments",
             ):
                 continue
+            if basis == "ttm":
+                # H2: the item is filed at the YTD column, but the ratio needs its trailing twelve
+                # months; a flow that was not formed (x4, or refused) is not a present input.
+                flow = (ttm_flows or {}).get(item)
+                if flow is not None and flow.method not in ("ytd", "quarters"):
+                    return PRIOR_YEAR_MISSING if flow.method == "x4" else CAPTURE_FAILURE
             resolution, _capital = _resolve(stmts, period_key, item, basis)
             if resolution.value is None and _flag_reason(resolution.flags) is None:
                 return MISSING_INPUT
     # 3. an input filed but refused, or a prior column that is absent
     for item, entry in items.items():
-        for basis in _bases(entry):
+        for raw_basis in _bases(entry):
+            basis = _prior_basis(stmts, period_key, raw_basis)
             resolution, capital = _resolve(stmts, period_key, item, basis)
             reason = _flag_reason(resolution.flags)
             if reason in (CAPTURE_FAILURE, PRIOR_YEAR_MISSING):
@@ -316,12 +358,19 @@ def _empty_reason(  # noqa: C901, PLR0912 - G4's precedence, one linear pass
     return MISSING_INPUT
 
 
-def _prior_basis(stmts: Statements, basis: str) -> str:
-    """``"prior"`` means the prior-year quarter when the filing has one (a 10-Q), else the prior
-    fiscal year end."""
+def _is_ten_q(stmts: Statements, period_key: str) -> bool:
+    """Whether the filing's own period is a 10-Q's (a quarter or a year-to-date column)."""
+    period = next((p for p in stmts.periods if p.key == period_key), None)
+    return period is not None and (period.is_quarter or period.tag == "YTD")
+
+
+def _prior_basis(stmts: Statements, period_key: str, basis: str) -> str:
+    """``"prior"`` follows the metric's own rule (H3): MD-38 on a 10-Q uses the prior year's same
+    quarter (``valuation._md38``: ``annual.is_ttm`` -> ``prior_quarter_capital_at``); on a 10-K the
+    prior fiscal year end."""
     if basis != "prior":
         return basis
-    return "prior_quarter" if stmts.prior_quarter_capital is not None else "prior_year"
+    return "prior_quarter" if _is_ten_q(stmts, period_key) else "prior_year"
 
 
 def _ttm_column(stmts: Statements, period_key: str) -> str:
@@ -371,7 +420,7 @@ def _item_provenance(
     basis: str,
     ttm_flows: dict[str, TTMFlow] | None,
 ) -> dict[str, Any]:
-    basis = _prior_basis(stmts, basis)
+    basis = _prior_basis(stmts, period_key, basis)
     resolution, capital = _resolve(stmts, period_key, item, basis)
     entry: dict[str, Any] = {
         "basis": basis,
@@ -408,7 +457,7 @@ def build(
         "flags": _relevant_flags(result, tuple(items)),
         "empty_reason": None
         if result.value is not None
-        else _empty_reason(stmts, period_key, result),
+        else _empty_reason(stmts, period_key, result, ttm_flows),
     }
 
 
