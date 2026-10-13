@@ -1957,17 +1957,19 @@ class Statements:
         total = self._concept_value(spec, column, REDEEMABLE_NCI_CONCEPTS[0])
         if total is not None:
             return total, REDEEMABLE_NCI_CONCEPTS[0], "concept"
+        # F3: when the total is not filed, the parts that ARE filed are the redeemable-NCI lines the
+        # filer presents on the face (``financial_facts`` holds the face lines only), so they are
+        # summed -- the same only-lines reasoning as the sourced D&A sum (ID-02b). The total is
+        # still preferred when it is filed.
         parts = {c: self._concept_value(spec, column, c) for c in REDEEMABLE_NCI_CONCEPTS[1:]}
-        if all(v is not None for v in parts.values()):
+        filed = {c: v for c, v in parts.items() if v is not None}
+        if not filed:
+            return None, None, None
+        if len(filed) == len(parts):
             self._flag("redeemable_nci_sum")
-            return (
-                sum(v for v in parts.values() if v is not None),
-                " + ".join(sorted(parts)),
-                "map",
-            )
-        if any(v is not None for v in parts.values()):
-            self._flag("redeemable_nci_partial")
-        return None, None, None
+        else:
+            self._flag("redeemable_nci_filed_parts")
+        return sum(filed.values()), " + ".join(sorted(filed)), "map"
 
     def nci_income_filed(self, period_key: str) -> bool:
         """Whether income attributable to NCI is filed for the period (ID-03/CON-19): the public

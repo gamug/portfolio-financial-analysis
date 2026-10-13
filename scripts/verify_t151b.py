@@ -174,7 +174,9 @@ def cmd_flags(args: argparse.Namespace) -> None:
     engine = args.engine
 
     def scan(conn: Any) -> dict[str, tuple[int, set[int]]]:
-        counts: dict[str, int] = defaultdict(int)
+        # F6: count distinct filings, not metric rows -- a flag shared by a group's inputs is one
+        # per metric row otherwise (5 valuation rows, 3 CAGR series, ...).
+        filings: dict[str, set[int]] = defaultdict(set)
         companies: dict[str, set[int]] = defaultdict(set)
         for r in conn.execute(
             "SELECT m.filing_id, m.inputs_json, f.asset_id FROM fundamental_metrics m "
@@ -183,9 +185,9 @@ def cmd_flags(args: argparse.Namespace) -> None:
         ):
             for flag in json.loads(r["inputs_json"] or "{}"):
                 if flag.startswith("flag_"):
-                    counts[flag] += 1
+                    filings[flag].add(int(r["filing_id"]))
                     companies[flag].add(int(r["asset_id"]))
-        return {flag: (counts[flag], companies[flag]) for flag in counts}
+        return {flag: (len(filings[flag]), companies[flag]) for flag in filings}
 
     c = scan(control)
     a = scan(after)
@@ -241,6 +243,7 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         int(r["id"]): int(r["asset_id"])
         for r in conn.execute("SELECT id, asset_id FROM sec_filings")
     }
+    forms = {int(r["id"]): str(r["form"]) for r in conn.execute("SELECT id, form FROM sec_filings")}
     reits = _reit_assets(conn)
 
     def metric(filing: dict[str, dict[str, Any]], name: str) -> float | None:
@@ -298,6 +301,42 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         if operating is not None and operating < 0.0 and nopat is not None and nopat > operating:
             add("MET03.nopat_taxed_on_operating_loss", asset)
 
+        # F1: the NOPAT tax follows the flow it taxes. The TTM operating income the ratios tax is
+        # `operating_income_ttm` (this branch); master's inputs have only `nopat_ttm` and the rate
+        # it used, so it is derived from those.
+        ttm_oi = nopat_inputs.get("operating_income_ttm")
+        nopat_ttm = nopat_inputs.get("nopat_ttm")
+        rate_used = nopat_inputs.get("nopat_ttm_tax_rate_value")
+        if rate_used is None:
+            rate_used = nopat_inputs.get("effective_tax_rate")  # master's inputs
+        if ttm_oi is None and nopat_ttm is not None and rate_used is not None and rate_used < 1.0:
+            ttm_oi = nopat_ttm / (1.0 - rate_used)
+        if ttm_oi is not None and nopat_ttm is not None:
+            if ttm_oi < 0.0 and nopat_ttm > ttm_oi:
+                add("F1.ttm_operating_loss_taxed", asset)
+            # a rate of 0 is legitimate for a REIT (APP-04c taxes it at its own rate, which may be
+            # 0) and for a REIT with pre-tax income <= 0 -- neither is "untaxed by mistake"
+            legitimate_zero = (
+                asset in reits
+                or nopat_inputs.get("nopat_ttm_tax_rate_reit_no_rate") == 1.0
+                or nopat_inputs.get("nopat_ttm_tax_rate_operating_loss") == 1.0
+            )
+            if (
+                ttm_oi > 0.0
+                and not legitimate_zero
+                and abs(nopat_ttm - ttm_oi) <= 1e-6 * max(1.0, abs(ttm_oi))
+            ):
+                add("F1.ttm_operating_profit_untaxed", asset)
+        # a REIT 10-Q taxed at its own period rate instead of its TTM rate
+        if (
+            asset in reits
+            and forms.get(fid, "").startswith("10-Q")
+            and nopat_ttm is not None
+            and rate_used is not None
+            and rate_used == rate_metric
+        ):
+            add("F1.reit_10q_on_the_quarters_rate", asset)
+
         ic = inp(filing, "return_on_invested_capital")
         ic_value = ic.get("invested_capital")
         if ic_value is None:  # master's inputs: invested capital = equity + debt - cash
@@ -348,8 +387,30 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
             if inp(filing, name).get("flag_crosses_asc842") == 1.0:
                 add(f"PER13.{name}_crosses_asc842", asset)
-        if inp(filing, "net_income_cagr").get("flag_crosses_cecl") == 1.0:
+        if inp(filing, "net_income_cagr").get("flag_net_income_cagr_crosses_cecl") == 1.0:
             add("PER14.net_income_cagr_crosses_cecl", asset)
+        # F5: a CAGR from a base <= 0 is flagged (all three series)
+        for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
+            if inp(filing, name).get(f"flag_{name}_growth_base_not_positive") == 1.0:
+                add(f"F5.{name}_growth_base_not_positive", asset)
+        # F2: the earnings-yield gate -- a usable trailing net income on the return_on_assets row
+        if inp(filing, "return_on_assets").get("net_income_ttm") is not None:
+            add("F2.usable_net_income_ttm", asset)
+        # F3: a redeemable NCI filed as one part is kept (no more partial drop)
+        if (
+            inp(filing, "return_on_invested_capital").get(
+                "flag_prior_redeemable_nci_redeemable_nci_partial"
+            )
+            == 1.0
+        ):
+            add("F3.redeemable_nci_partial", asset)
+        if (
+            inp(filing, "return_on_invested_capital").get(
+                "flag_prior_redeemable_nci_redeemable_nci_filed_parts"
+            )
+            == 1.0
+        ):
+            add("F3.redeemable_nci_filed_parts", asset)
 
     return {key: (counts[key], len(asset_sets[key])) for key in counts}
 
@@ -370,6 +431,47 @@ def cmd_counts(args: argparse.Namespace) -> None:
         print(f"{key:<56}{cf:>6}/{cc:<8}{af:>6}/{ac:<8}")
     Path(args.out).write_text(json.dumps(payload, indent=2))
     print(f"\nWrote {args.out}")
+
+
+def cmd_roa(args: argparse.Namespace) -> None:
+    """R-4's breakdown: the empty ``return_on_assets`` rows that file no operating income, by GICS
+    sector (the director's R-4 answer asks for the numbers re-taken with a committed script)."""
+    conn = open_ro(args.db)
+    rows = _rows_by_filing(conn, args.engine)
+    sectors = {
+        int(r["filing_id"]): (r["sector"], int(r["asset_id"]))
+        for r in conn.execute(
+            "SELECT f.id AS filing_id, COALESCE(s.name, '?') AS sector, f.asset_id "
+            "FROM sec_filings f JOIN assets a ON a.id = f.asset_id "
+            "LEFT JOIN sectors s ON s.id = a.sector_id"
+        )
+    }
+    filings: dict[str, set[int]] = defaultdict(set)
+    companies: dict[str, set[int]] = defaultdict(set)
+    total = 0
+    for fid, filing in rows.items():
+        row = filing.get("return_on_assets")
+        if row is None or row["value"] is not None:
+            continue
+        if row["inputs"].get("operating_income") is not None:
+            continue
+        sector, asset_id = sectors.get(fid, ("?", 0))
+        filings[sector].add(fid)
+        companies[sector].add(asset_id)
+        total += 1
+    payload = {
+        sector: {"filings": len(filings[sector]), "companies": len(companies[sector])}
+        for sector in sorted(filings)
+    }
+    payload["TOTAL"] = {
+        "filings": total,
+        "companies": len(set().union(*companies.values()) if companies else set()),
+    }
+    Path(args.out).write_text(json.dumps(payload, indent=2))
+    for sector in sorted(payload):
+        entry = payload[sector]
+        print(f"{sector:<28}{entry['filings']:>6} filings {entry['companies']:>5} companies")
+    print(f"Wrote {args.out}")
 
 
 def cmd_audit_diff(args: argparse.Namespace) -> None:
@@ -408,6 +510,11 @@ def main() -> None:
         if name == "changes":
             p.add_argument("--top", type=int, default=20)
         p.set_defaults(func=func)
+    p = sub.add_parser("roa")
+    p.add_argument("--db", required=True)
+    p.add_argument("--engine", default="metrics-v7")
+    p.add_argument("--out", required=True)
+    p.set_defaults(func=cmd_roa)
     p = sub.add_parser("audit-diff")
     p.add_argument("--control-json", required=True)
     p.add_argument("--after-json", required=True)

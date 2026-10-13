@@ -8,10 +8,14 @@ from __future__ import annotations
 from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.tax import (
+    REIT_TTM_RATE_MISSING,
     STATUTORY_TAX_RATE,
+    annual_rate_inputs,
     filing_effective_tax_rate,
+    filing_effective_tax_rate_from,
     nopat,
     nopat_tax_rate,
+    outside_unit_interval,
 )
 from fundamental_agent.statements import Statements
 
@@ -54,12 +58,30 @@ def compute(
     tax = tax_resolution.value
     pretax = stmts.get("pretax_income", period_key)
 
-    rate, rate_reason = nopat_tax_rate(stmts, period_key)
+    # The nopat *metric* keeps the filing's own period basis; the ratios use the flow's own basis
+    # (F1): the TTM operating income on a 10-Q, taxed at a rate formed from the TTM tax and pre-tax
+    # income.
+    rate, rate_reason = nopat_tax_rate(operating, reit=stmts.reit, tax=tax, pretax=pretax)
     filing_rate = filing_effective_tax_rate(stmts, period_key)
     operating_annual = ttm.get("operating_income") if ttm is not None else operating
+    annual_tax, annual_pretax, rate_missing = annual_rate_inputs(stmts, period_key, ttm)
+    annual_rate, annual_reason = nopat_tax_rate(
+        operating_annual,
+        reit=stmts.reit,
+        tax=annual_tax,
+        pretax=annual_pretax,
+        rate_missing=rate_missing,
+    )
+    # the robustness rate is the filing's own rate on the ratios' basis (F1): TTM tax / TTM pre-tax
+    # income on a 10-Q, the period's rate on a 10-K
+    effective_annual = (
+        filing_effective_tax_rate_from(annual_tax, annual_pretax)
+        if ttm is not None
+        else filing_rate
+    )
     nopat_period = nopat(operating, rate)
-    nopat_annual = nopat(operating_annual, rate)
-    nopat_effective = nopat(operating_annual, filing_rate) if filing_rate is not None else None
+    nopat_annual = nopat(operating_annual, annual_rate)
+    nopat_effective = nopat(operating_annual, effective_annual)
 
     # MET-02: capital at the end of the prior fiscal year (D1/D2's sourcing, shared).
     cap = stmts.prior_year_capital(period_key)
@@ -79,11 +101,25 @@ def compute(
         nci=capital.nci(cap, income_filed=income_filed).value,
         invested_capital=invested.value,
         nopat_ttm=nopat_annual if ttm else None,
+        # F1's acceptance reads these: the TTM operating income the ratios tax, and the rate applied
+        operating_income_ttm=operating_annual if ttm else None,
+        nopat_ttm_tax_rate_value=annual_rate if ttm else None,
     )
     inputs.update(flag_inputs("income_tax", tax_resolution.flags))
     inputs.update(flag_inputs("total_debt", cap.debt.flags))
     inputs.update(capital.capital_flags(cap, "prior"))
+    # F4: the flags the NCI / short-term-investment / invested-capital combinations raise.
+    inputs.update(capital.combination_flags(cap, "prior", income_filed=income_filed))
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
+    inputs[f"nopat_ttm_tax_rate_{annual_reason}"] = 1.0
+    if annual_reason == REIT_TTM_RATE_MISSING:
+        inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
+    # F8 / R-3: the filing's own rate is kept as filed, never clamped; a rate outside [0, 1] is
+    # flagged on both rows that report one.
+    if outside_unit_interval(filing_rate):
+        inputs["flag_effective_tax_rate_outside_unit_interval"] = 1.0
+    if outside_unit_interval(effective_annual):
+        inputs["flag_return_on_invested_capital_effective_rate_outside_unit_interval"] = 1.0
 
     roic = None
     roic_effective = None

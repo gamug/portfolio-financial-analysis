@@ -170,13 +170,11 @@ def test_negative_equity_cells_are_na_and_the_code_empties_them() -> None:
 def test_reit_nopat_cell_is_adj_and_the_code_taxes_a_reit_at_its_own_rate() -> None:
     matrix = {(r["metric"], r["company_type"]): r["code"] for r in _matrix()}
     assert matrix[("nopat", "reit")] == "ADJ"
-    stmts = _payload()
-    stmts.reit = True
-    rate, reason = nopat_tax_rate(stmts, KEY)
+    # F1: nopat_tax_rate takes the flow it taxes plus that basis's tax and pre-tax income
+    rate, reason = nopat_tax_rate(100.0, reit=True, tax=20.0, pretax=120.0)
     assert reason == "reit_effective"
     assert rate != pytest.approx(0.21)
-    stmts.reit = False
-    rate, reason = nopat_tax_rate(stmts, KEY)
+    rate, reason = nopat_tax_rate(100.0, reit=False, tax=20.0, pretax=120.0)
     assert reason == "statutory_21"
     assert rate == pytest.approx(0.21)
 

@@ -8,6 +8,7 @@ invested capital and EV (D6/D7), MD-38 (D8), the persisted EBITDA (D9) and the F
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -209,14 +210,14 @@ def test_roic_is_empty_and_flagged_when_invested_capital_is_not_positive() -> No
 
 
 def test_nopat_tax_is_21_percent_for_a_non_reit() -> None:
-    rate, reason = nopat_tax_rate(_stmts(), FY)
+    rate, reason = nopat_tax_rate(100.0, reit=False, tax=20.0, pretax=120.0)
     assert rate == pytest.approx(0.21)
     assert reason == "statutory_21"
     assert _flat(roic_compute(_stmts(), FY))["nopat"].value == pytest.approx(79.0)
 
 
 def test_nopat_tax_is_zero_on_an_operating_loss() -> None:
-    rate, reason = nopat_tax_rate(_stmts(operating_income=-50.0), FY)
+    rate, reason = nopat_tax_rate(-50.0, reit=False, tax=20.0, pretax=120.0)
     assert rate == 0.0
     assert reason == "operating_loss"
     assert _flat(roic_compute(_stmts(operating_income=-50.0), FY))["nopat"].value == pytest.approx(
@@ -225,18 +226,14 @@ def test_nopat_tax_is_zero_on_an_operating_loss() -> None:
 
 
 def test_a_reit_is_taxed_at_its_own_rate_never_21_percent() -> None:
-    stmts = _stmts()
-    stmts.reit = True
-    rate, reason = nopat_tax_rate(stmts, FY)
+    rate, reason = nopat_tax_rate(100.0, reit=True, tax=20.0, pretax=120.0)
     assert rate == pytest.approx(20.0 / 120.0)  # the filing's own rate
     assert reason == "reit_effective"
     assert rate != pytest.approx(0.21)
 
 
 def test_a_reit_with_nonpositive_pretax_income_is_taxed_at_zero() -> None:
-    stmts = _stmts(pretax_income=-5.0)
-    stmts.reit = True
-    rate, reason = nopat_tax_rate(stmts, FY)
+    rate, reason = nopat_tax_rate(100.0, reit=True, tax=20.0, pretax=-5.0)
     assert rate == 0.0
     assert reason == "reit_no_rate"
 
@@ -319,10 +316,12 @@ def test_the_cecl_flag_is_only_for_a_lender() -> None:
     stmts = Statements.from_payload(payload)
     # a January FY end: FY2019 began 2018-01-01 (before 2019-12-16), FY2021 began 2020-01-01 (after)
     m = _flat(cagr_compute(stmts, "2021-12-31 (FY)"))
-    assert "flag_crosses_cecl" not in m["net_income_cagr"].inputs
+    assert "flag_net_income_cagr_crosses_cecl" not in m["net_income_cagr"].inputs
     stmts.sub_industry = "Regional Banks"
     m = _flat(cagr_compute(stmts, "2021-12-31 (FY)"))
-    assert m["net_income_cagr"].inputs["flag_crosses_cecl"] == 1.0
+    assert m["net_income_cagr"].inputs["flag_net_income_cagr_crosses_cecl"] == 1.0
+    # F5: the flag is the net-income CAGR's alone, never the other two series'
+    assert "flag_net_income_cagr_crosses_cecl" not in m["revenue_cagr"].inputs
 
 
 # -- D5: MET-09, non-positive denominators -----------------------------------------------------------
@@ -544,3 +543,300 @@ def test_free_cash_flow_is_not_named_free_cash_flow_to_equity() -> None:
 
 def test_safe_div_is_still_the_shared_guard() -> None:
     assert safe_div(1.0, 2.0) == 0.5
+
+
+# -- F1: the NOPAT tax is decided on the same basis as the flow it taxes ----------------------------
+
+
+def _quarter_stmts(
+    *, quarter_oi: float, quarter_tax: float = 20.0, quarter_pretax: float = 120.0
+) -> Statements:
+    """A 10-Q-shaped payload with a quarter operating income and a prior fiscal year end."""
+    return Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "OperatingIncomeLoss", "Operating income", **{Q: quarter_oi}),
+                _row(G + "NetIncomeLoss", "Net income", **{Q: 80.0}),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{Q: quarter_pretax},
+                ),
+                _row(G + "IncomeTaxExpenseBenefit", "Income tax", **{Q: quarter_tax}),
+            ],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-06-30": 1_100.0, "2023-12-31": 1_000.0}),
+                _row(
+                    G + "StockholdersEquity", "Equity", **{"2024-06-30": 450.0, "2023-12-31": 400.0}
+                ),
+                _row(G + "LongTermDebt", "Debt", **{"2024-06-30": 210.0, "2023-12-31": 200.0}),
+                _row(
+                    G + "CashAndCashEquivalentsAtCarryingValue",
+                    "Cash",
+                    **{"2024-06-30": 60.0, "2023-12-31": 50.0},
+                ),
+            ],
+            "cash_flow": [],
+        }
+    )
+
+
+def test_a_ttm_operating_loss_is_not_taxed_even_when_the_quarter_was_positive() -> None:
+    """F1: the rate is decided on the TTM flow the ratio taxes, not the quarter."""
+    stmts = _quarter_stmts(quarter_oi=19.8)
+    ttm = {"operating_income": -1_246.0, "income_tax": 20.0, "pretax_income": 120.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    # the nopat metric keeps the filing's own period (taxed at 21%)
+    assert roic["nopat"].value == pytest.approx(19.8 * 0.79)
+    # the TTM NOPAT is the TTM operating income (rate 0)
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(-1_246.0)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_operating_loss"] == 1.0
+    prof = _flat(profitability_compute(stmts, Q, None, ttm))
+    assert prof["return_on_assets"].inputs["nopat_ttm"] == pytest.approx(-1_246.0)
+    assert prof["return_on_assets"].inputs["nopat_tax_rate_operating_loss"] == 1.0
+
+
+def test_a_ttm_operating_profit_is_taxed_even_when_the_quarter_was_a_loss() -> None:
+    stmts = _quarter_stmts(quarter_oi=-5.0)
+    ttm = {"operating_income": 1_802.0, "income_tax": 20.0, "pretax_income": 120.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].value == pytest.approx(-5.0)  # the period: a loss, tax 0
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(1_802.0 * 0.79)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_statutory_21"] == 1.0
+
+
+def test_a_reit_10q_uses_its_ttm_rate_not_the_quarters() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=50.0, quarter_pretax=100.0)  # quarter 50%
+    stmts.reit = True
+    ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}  # TTM 20%
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(400.0 * 0.80)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_reit_effective"] == 1.0
+    # the metric itself is still the filing's own period rate
+    assert roic["effective_tax_rate"].value == pytest.approx(0.50)
+
+
+def test_a_reit_10q_without_a_buildable_ttm_rate_is_empty_and_flagged() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0)
+    stmts.reit = True
+    ttm = {"operating_income": 400.0, "flag_income_tax_ttm_not_built": 1.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_reit_ttm_rate_missing"] == 1.0
+    assert roic["nopat"].inputs["flag_nopat_reit_ttm_rate_missing"] == 1.0
+    assert roic["return_on_invested_capital"].value is None
+
+
+def test_the_robustness_roic_uses_the_ttm_effective_rate() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=50.0, quarter_pretax=100.0)  # quarter 50%
+    ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}  # TTM 20%
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    # NOPAT at the TTM effective rate (20%) over the prior-year invested capital (200 + 400 - 50)
+    assert roic["return_on_invested_capital_effective_rate"].value == pytest.approx(
+        400.0 * 0.80 / 550.0
+    )
+
+
+# -- F8: the raw effective rate is flagged outside [0, 1] -------------------------------------------
+
+
+def test_a_rate_outside_the_unit_interval_is_flagged_not_clamped() -> None:
+    payload = _payload(income_tax=1_222.0, pretax_income=100.0)
+    roic = _flat(roic_compute(Statements.from_payload(payload), FY))
+    assert roic["effective_tax_rate"].value == pytest.approx(12.22)  # kept as filed, not clamped
+    assert roic["effective_tax_rate"].inputs["flag_effective_tax_rate_outside_unit_interval"] == 1.0
+    assert (
+        roic["return_on_invested_capital_effective_rate"].inputs[
+            "flag_return_on_invested_capital_effective_rate_outside_unit_interval"
+        ]
+        == 1.0
+    )
+
+
+# -- F3: a redeemable NCI filed as one part is kept ------------------------------------------------
+
+
+def test_a_redeemable_nci_filed_as_one_part_is_summed_and_flagged() -> None:
+    payload = _payload()
+    payload["balance_sheet"].append(
+        _row(
+            G + "RedeemableNoncontrollingInterestEquityCommonCarryingAmount",
+            "Redeemable NCI, common",
+            **{"2023-12-31": 2_563.0},
+        )
+    )
+    cap = Statements.from_payload(payload).prior_year_capital(FY)
+    res = cap.redeemable_nci
+    assert res.value == pytest.approx(2_563.0)
+    assert "redeemable_nci_filed_parts" in res.flags
+    assert "redeemable_nci_partial" not in res.flags
+
+
+def test_a_filed_total_still_wins_over_a_part() -> None:
+    payload = _payload(redeemable_nci=99.0)
+    payload["balance_sheet"].append(
+        _row(
+            G + "RedeemableNoncontrollingInterestEquityCommonCarryingAmount",
+            "Redeemable NCI, common",
+            **{"2023-12-31": 2_563.0},
+        )
+    )
+    cap = Statements.from_payload(payload).prior_year_capital(FY)
+    assert cap.redeemable_nci.value == pytest.approx(99.0)
+    assert cap.redeemable_nci.concept == G + "RedeemableNoncontrollingInterestEquityCarryingAmount"
+
+
+# -- F4: the NCI and capital-combination flags reach the inputs -------------------------------------
+
+
+def test_an_nci_capture_failure_reaches_the_roic_inputs() -> None:
+    payload = _payload(nci_income=10.0)  # NCI income filed, no NCI balance, no CON-04 identity
+    roic = _flat(roic_compute(Statements.from_payload(payload), FY))
+    assert roic["return_on_invested_capital"].inputs["flag_prior_nci_nci_capture_failure"] == 1.0
+    assert (
+        roic["return_on_invested_capital"].inputs[
+            "flag_prior_invested_capital_invested_capital_capture_failure"
+        ]
+        == 1.0
+    )
+
+
+def test_the_short_term_investments_in_cash_flag_reaches_the_inputs() -> None:
+    payload = _payload(prior_cash=None, prior_sti=30.0)
+    payload["balance_sheet"].append(
+        _row(
+            G + "CashCashEquivalentsAndShortTermInvestments",
+            "Cash, cash equivalents and short-term investments",
+            **{"2023-12-31": 80.0},
+        )
+    )
+    roic = _flat(roic_compute(Statements.from_payload(payload), FY))
+    assert (
+        roic["return_on_invested_capital"].inputs[
+            "flag_prior_short_term_investments_short_term_investments_in_cash"
+        ]
+        == 1.0
+    )
+
+
+# -- F5: the CAGR base flag and the CECL flag's series ----------------------------------------------
+
+
+def test_a_cagr_from_a_nonpositive_base_is_flagged() -> None:
+    payload = _payload()
+    payload["income_statement"] = [
+        _row(
+            G + "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Revenue",
+            **{"2021-12-31 (FY)": 100.0, "2019-12-31 (FY)": 0.0},
+        ),
+        _row(
+            G + "NetIncomeLoss", "Net income", **{"2021-12-31 (FY)": 80.0, "2019-12-31 (FY)": -40.0}
+        ),
+    ]
+    stmts = Statements.from_payload(payload)
+    m = _flat(cagr_compute(stmts, "2021-12-31 (FY)"))
+    assert m["revenue_cagr"].value is None
+    assert m["revenue_cagr"].inputs["flag_revenue_cagr_growth_base_not_positive"] == 1.0
+    assert m["net_income_cagr"].value is None
+    assert m["net_income_cagr"].inputs["flag_net_income_cagr_growth_base_not_positive"] == 1.0
+    # a positive base is not flagged
+    assert (
+        "flag_operating_cash_flow_cagr_growth_base_not_positive"
+        not in m["operating_cash_flow_cagr"].inputs
+    )
+
+
+# -- F7: the TTM unlevered-FCF input is the TTM proxy ----------------------------------------------
+
+
+def test_the_ttm_unlevered_fcf_input_is_the_ttm_proxy() -> None:
+    payload = _payload()
+    payload["income_statement"].append(_row(G + "InterestExpense", "Interest", **{Q: 5.0}))
+    payload["cash_flow"] = [
+        _row(G + "NetCashProvidedByUsedInOperatingActivities", "OCF", **{Q: 100.0}),
+        _row(G + "PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{Q: 10.0}),
+    ]
+    stmts = Statements.from_payload(payload)
+    ttm = {
+        "operating_cash_flow": 400.0,
+        "capital_expenditure": 40.0,
+        "interest_expense": 20.0,
+    }
+    out = _flat(
+        valuation_compute(stmts, Q, ClosePrice("2024-06-30", 50.0), ttm=ttm, market_cap=_mcap())
+    )
+    inputs = out["free_cash_flow_yield"].inputs
+    # master's TTM proxy: TTM FCF + TTM interest x (1 - 21%)
+    assert inputs["free_cash_flow_to_firm_ttm"] == pytest.approx(360.0 + 20.0 * 0.79)
+    assert inputs[
+        "free_cash_flow_to_equity_ttm" if False else "free_cash_flow_ttm"
+    ] == pytest.approx(360.0)
+    # the single-period proxy is different (and is not what the _ttm input holds)
+    assert inputs["free_cash_flow_to_firm"] != pytest.approx(inputs["free_cash_flow_to_firm_ttm"])
+
+
+# -- F10: prior_wc_missing only when the prior column is absent ------------------------------------
+
+
+def _classified_10q(*, prior_quarter: bool) -> Statements:
+    """A 10-Q with a classified balance sheet at its own period end (and, optionally, at the
+    prior-year quarter's end)."""
+    balance = [
+        _row(G + "Assets", "Assets", **{"2024-06-30": 1_100.0}),
+        _row(G + "AssetsCurrent", "Current assets", **{"2024-06-30": 300.0}),
+        _row(G + "LiabilitiesCurrent", "Current liabilities", **{"2024-06-30": 150.0}),
+        _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", **{"2024-06-30": 60.0}),
+        _row(G + "LongTermDebt", "Debt", **{"2024-06-30": 210.0}),
+        _row(G + "StockholdersEquity", "Equity", **{"2024-06-30": 450.0}),
+    ]
+    if prior_quarter:
+        # a stored prior-year quarter whose balance sheet is NOT classified (a REIT/bank shape)
+        balance += [
+            _row(G + "Assets", "Assets", **{"2023-06-30": 900.0}),
+            _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", **{"2023-06-30": 40.0}),
+        ]
+    return Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "OperatingIncomeLoss", "Operating income", **{Q: 25.0}),
+                _row(G + "NetIncomeLoss", "Net income", **{Q: 20.0}),
+            ],
+            "balance_sheet": balance,
+            "cash_flow": [],
+        }
+    )
+
+
+_TTM_MD38 = {
+    "operating_income": 100.0,
+    "capital_expenditure": 30.0,
+    "depreciation_amortization": 10.0,
+}
+
+
+def test_prior_wc_missing_only_when_the_prior_column_is_absent() -> None:
+    stmts = _classified_10q(prior_quarter=False)  # no prior-year quarter capital attached
+    out = _flat(
+        valuation_compute(
+            stmts, Q, ClosePrice("2024-06-30", 50.0), ttm=_TTM_MD38, market_cap=_mcap()
+        )
+    )
+    assert out["enterprise_fcf_yield"].inputs["flag_enterprise_fcf_yield_prior_wc_missing"] == 1.0
+    assert (
+        "flag_enterprise_fcf_yield_unclassified_balance_sheet"
+        not in out["enterprise_fcf_yield"].inputs
+    )
+
+
+def test_a_stored_but_unclassified_prior_column_is_not_prior_wc_missing() -> None:
+    stmts = _classified_10q(prior_quarter=True)
+    stmts.prior_quarter_capital = replace(stmts.capital_at("2023-06-30"), source="prior_10q")
+    out = _flat(
+        valuation_compute(
+            stmts, Q, ClosePrice("2024-06-30", 50.0), ttm=_TTM_MD38, market_cap=_mcap()
+        )
+    )
+    inputs = out["enterprise_fcf_yield"].inputs
+    assert "flag_enterprise_fcf_yield_prior_wc_missing" not in inputs
+    assert inputs["flag_enterprise_fcf_yield_unclassified_balance_sheet"] == 1.0

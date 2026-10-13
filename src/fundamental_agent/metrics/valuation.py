@@ -15,7 +15,7 @@ from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
-from fundamental_agent.metrics.tax import nopat, nopat_tax_rate
+from fundamental_agent.metrics.tax import REIT_TTM_RATE_MISSING, nopat, nopat_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
@@ -83,7 +83,8 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     # cap, debt, cash or NCI is missing (MET-00). Preferred stock is not added (pending the second
     # author, Annex B).
     cap = stmts.capital_at(period_key)
-    nci_res = capital.nci(cap, income_filed=stmts.nci_income_filed(period_key))
+    income_filed = stmts.nci_income_filed(period_key)
+    nci_res = capital.nci(cap, income_filed=income_filed)
     sti_res = capital.net_short_term_investments(cap)
     enterprise_value = _enterprise_value(
         market_cap_val, cap.debt.value, cap.cash.value, nci_res.value, sti_res.value
@@ -93,6 +94,15 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     interest_rejected = any(f.endswith("_rejected") for f in interest_resolution.flags)
     fcff = _fcf_to_firm(
         stmts, period_key, fcfe, interest_resolution.value, interest_rejected=interest_rejected
+    )
+    # F7: the unlevered-FCF input on the ratios' basis -- master's TTM proxy on a 10-Q, not the
+    # filing's single period labelled TTM.
+    fcff_annual = _fcf_to_firm(
+        stmts,
+        period_key,
+        fcfe_annual,
+        annual.get("interest_expense"),
+        interest_rejected=interest_rejected,
     )
 
     inputs = present(
@@ -112,12 +122,14 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     inputs.update(flag_inputs("total_debt", cap.debt.flags))
     inputs.update(flag_inputs("cash", cap.cash.flags))
     inputs.update(capital.capital_flags(cap, "current"))
+    # F4: the flags the NCI / short-term-investment / net-debt combinations raise.
+    inputs.update(capital.combination_flags(cap, "current", income_filed=income_filed))
     capex_resolution = stmts.resolve("capital_expenditure", period_key)
     inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
     _market_cap_inputs(inputs, mc, price, period_key, share_scale_factors)
 
     # MD-38 (D8): (NOPAT - (capex - D&A + Δ non-cash working capital)) / EV.
-    fcff_annual = _md38(stmts, period_key, cap, annual, inputs)
+    fcff_md38 = _md38(stmts, period_key, cap, annual, inputs)
 
     sbc_adjusted_fcf = (
         fcfe_annual - sbc_annual if fcfe_annual is not None and sbc_annual is not None else None
@@ -127,7 +139,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
         inputs.update(
             present(
                 free_cash_flow_ttm=fcfe_annual,
-                free_cash_flow_to_firm_ttm=fcff,
+                free_cash_flow_to_firm_ttm=fcff_annual,
                 stock_based_compensation_ttm=sbc_annual,
             )
         )
@@ -142,7 +154,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
             "sbc_adjusted_fcf_yield", safe_div(sbc_adjusted_fcf, market_cap_val), "ratio", inputs
         ),
         MetricResult(
-            "enterprise_fcf_yield", safe_div(fcff_annual, enterprise_value), "ratio", inputs
+            "enterprise_fcf_yield", safe_div(fcff_md38, enterprise_value), "ratio", inputs
         ),
     ]
 
@@ -209,8 +221,23 @@ def _md38(
     NOPAT - (capex - D&A + Δ non-cash working capital), or ``None`` when a term is missing or the
     balance sheet is not classified (MET-00). The Δ is the prior fiscal year end (a 10-K) or the
     prior year's same quarter (a 10-Q, ``prior_wc_missing`` when it is not stored)."""
-    rate, rate_reason = nopat_tax_rate(stmts, period_key)
-    nopat_annual = nopat(annual.get("operating_income"), rate)
+    # F1: the rate is decided on the same basis as the flow it taxes (the TTM on a 10-Q).
+    operating_annual = annual.get("operating_income")
+    rate_missing = bool(
+        annual.is_ttm
+        and (
+            annual.get("flag_income_tax_ttm_not_built")
+            or annual.get("flag_pretax_income_ttm_not_built")
+        )
+    )
+    rate, rate_reason = nopat_tax_rate(
+        operating_annual,
+        reit=stmts.reit,
+        tax=annual.get("income_tax"),
+        pretax=annual.get("pretax_income"),
+        rate_missing=rate_missing,
+    )
+    nopat_annual = nopat(operating_annual, rate)
     capex_annual = annual.get("capital_expenditure")
     da_annual = annual.get("depreciation_amortization")
     wc_current = capital.working_capital(cap)
@@ -226,6 +253,8 @@ def _md38(
         else None
     )
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
+    if rate_reason == REIT_TTM_RATE_MISSING:
+        inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
     inputs.update(
         present(
             nopat=nopat_annual,
@@ -235,8 +264,21 @@ def _md38(
         )
     )
     inputs.update(capital.capital_flags(prior_cap, "prior"))
-    if annual.is_ttm and wc_prior.value is None:
-        inputs["flag_enterprise_fcf_yield_prior_wc_missing"] = 1.0
+    inputs.update(
+        capital.combination_flags(
+            prior_cap, "prior", income_filed=stmts.nci_income_filed(period_key)
+        )
+    )
+    # F10: distinguish a prior column that is absent (nothing stored) from one that is stored but
+    # whose balance sheet is not classified (a REIT, an insurer, a bank). The current column always
+    # exists, so its empty working capital is the unclassified case.
+    if wc_current.value is None:
+        inputs["flag_enterprise_fcf_yield_unclassified_balance_sheet"] = 1.0
+    if wc_prior.value is None:
+        if prior_cap.source is None:
+            inputs["flag_enterprise_fcf_yield_prior_wc_missing"] = 1.0
+        else:
+            inputs["flag_enterprise_fcf_yield_unclassified_balance_sheet"] = 1.0
     if nopat_annual is None or capex_annual is None or da_annual is None or delta_wc is None:
         return None
     return nopat_annual - (capex_annual - da_annual + delta_wc)

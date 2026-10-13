@@ -321,6 +321,19 @@ def test_each_group_is_stamped_with_how_it_was_annualized() -> None:
 # -- review follow-ups: provenance, version pinning, the cross-check ---------------------------
 
 
+def test_a_crude_added_item_does_not_taint_the_group_stamp_f2() -> None:
+    """F2: the profitability stamp is the earnings-yield gate (MET-05), which reads ``net_income``.
+    A crude operating-income TTM must not stamp the group ``annualized_x4``; it carries its own
+    ``flag_operating_income_annualized_x4`` instead."""
+    prof = MetricResult("return_on_assets", 1.0, "ratio", {})
+    flows = {
+        "net_income": TTMFlow(1.0, "ytd"),
+        "operating_income": TTMFlow(1.0, "x4"),
+    }
+    _flag_annualization([("profitability", prof)], flows)
+    assert prof.inputs == {"annualized_ttm": 1.0, "flag_operating_income_annualized_x4": 1.0}
+
+
 def test_valuation_is_flagged_crude_when_sbc_or_interest_was_times_four() -> None:
     for crude in ("stock_based_compensation", "interest_expense"):
         val = MetricResult("free_cash_flow_yield", 0.03, "ratio", {})

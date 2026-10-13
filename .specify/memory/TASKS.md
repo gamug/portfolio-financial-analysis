@@ -572,6 +572,19 @@ the final pilot, `T-143`.
       whose prior-year quarter is not stored; PER-13's `debt_to_assets`/`asset_turnover` flags are not
       implemented (D4 scopes it to growth/CAGR). Tests: `tests/test_metric_definitions_t151b.py` (+33),
       five replaced (`out/p1a_gates.txt`: 2,281 passed).
+      **Fix round 1 (2026-10-13): F1–F10, PR #147** (`docs/model_fixes.md` "Fix round 1"). F1: the
+      NOPAT tax follows the flow it taxes (the TTM on a 10-Q; a REIT's TTM rate; `reit_ttm_rate_missing`);
+      F2: the group `annualized_x4` stamp keeps master's items (usable `net_income_ttm` 8,914/498
+      restored) with per-item flags; F3: a redeemable NCI filed as one part is kept
+      (`redeemable_nci_filed_parts`, 109/10); F4: the NCI / invested-capital / net-debt /
+      short-term-investment flags reach the inputs; F5: the CAGR base flag and the CECL flag on the
+      net-income CAGR alone; F6: the flag counts count distinct filings; F7: the TTM unlevered-FCF
+      input is the TTM proxy; F8: the raw `effective_tax_rate` is kept and flagged outside [0, 1]
+      (396/167); F9: the cycle consumers recorded (valorization, `latest_trailing_net_income`,
+      `_LeverageRule`, `quality._net_debt`); F10: `prior_wc_missing` only when the prior column is
+      absent, `unclassified_balance_sheet` otherwise. The audit's `metrics` group is 0 on every
+      acceptance row (`out/f1_audit_diff.txt`, 14 keys); F1's acceptance: TTM loss taxed 272/64 → 0,
+      TTM profit untaxed 153/88 → 0, REIT on the quarter's rate 216/16 → 0 (`out/f1_counts.json`).
       **Status (2026-10-13): part 3 done — PR #148** (branch `feat/t151c-dictionary-provenance`,
       stacked on part 2; `docs/model_fixes.md` "T-151 part 3"). D12: `docs/metric_dictionary.md` and
       `src/fundamental_agent/data/applicability_matrix.csv` generated from Annex B (39 rows) and the
