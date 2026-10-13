@@ -6868,3 +6868,201 @@ longer need `migrate`) and four existing fixtures/tests (`test_quant_book_key`, 
 `test_quant_pipeline`, `test_metric_versions`). **Consequence for T-143 (the pilot) and T-100
 (production): create the fresh database, then run `python -m fundamental_agent migrate` once before any
 data, so the versioned unique keys exist.**
+
+## T-151 part 2 — the metric definitions: beginning capital, 21% NOPAT, the denominators and growth bases, NCI and short-term investments, MD-38, EBITDA, the FCF rename
+
+`T-151` runs as three parts (user, 2026-10-12): part 1 is line-item resolution, part 2 the metric
+definitions (this section), part 3 the dictionary, the applicability matrix, provenance, the company
+card and the fidelity gate. Part 2 keeps the engine **`metrics-v7`**: no non-scratch database is built
+between the parts, as T-148's two parts kept `metrics-v6`.
+
+**Sources.** The checklist v1.3 (frozen; read only) is the specification, applied as written: MET-00 to
+MET-04 and MET-09, APP-04c and APP-07, PER-12 to PER-14, L-05, and Annex B's rows MD-01, MD-02, MD-05,
+MD-35, MD-38. The FASB 2026 taxonomy zip
+`docs/checklist_sec/sec_xcheck/fasb_2026_dl/us-gaap-2026.zip` (SHA-256 `f4c8b8b5…`, the same file part 1
+used) supplies the two calculation arcs this part reads, quoted in the code beside
+`REDEEMABLE_NCI_CONCEPTS`: `stm/us-gaap-stm-sfp-cls-cal-2026.xml` orders 10/20/30 make
+`RedeemableNoncontrollingInterestEquityCarryingAmount` = `…CommonCarryingAmount` +
+`…PreferredCarryingAmount` + `…OtherCarryingAmount`, and order 20 makes
+`StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest` = `StockholdersEquity` +
+`MinorityInterest` (CON-04).
+
+### D1 / D2 — MET-01 and MET-02, the capital at the end of the prior fiscal year
+
+MET-01 (C7 p.13): "Return on Assets (ROA)= Operating Income t (1 - tax rate) / Book Value of Total
+Assets t - 1"; MET-02 (C7 p.7): "the capital invested is from the end of the prior year whereas the
+operating income is the current year's number". ROA is now **NOPAT / total assets at the prior fiscal
+year end** (not net income over ending assets); ROE is **parent net income / parent equity there**; ROIC
+is **NOPAT / invested capital there**. The prior-year column is the filing's own comparative balance
+sheet — a 10-K's instant one year before its period end (PER-08, `fiscal.is_year_apart`), a 10-Q's
+comparative column, which Reg S-X 10-01 makes the prior fiscal year end
+(`fiscal.payload_fiscal_year_end`) — else the **stored prior 10-K's** balance sheet
+(`db.prior_capital`, resolved from `financial_facts`), else empty and flagged
+`prior_year_assets_missing` / `prior_year_equity_missing` / `prior_year_invested_capital_missing`. The
+ending capital is never used. `db.attach_context` resolves this (and the company profile) in the
+pipeline and in the recompute; a hermetic `Statements` resolves its own comparative.
+
+### D3 — MET-03 / APP-04c, NOPAT's tax and the filing's own effective rate
+
+MET-03: NOPAT's tax is the **21% federal marginal rate** "for every company except REITs (APP-04c)",
+with tax 0 on an operating loss (so NOPAT = operating income), and "Actual taxes paid are never used".
+APP-04c: a REIT uses "its own effective rate … when pre-tax income > 0, and a tax of 0 otherwise. The
+21% rate is never applied to a REIT." The code (`metrics/tax.py`) applies exactly that: 21% for a
+non-REIT, a REIT's own rate when its pre-tax income is positive, 0 otherwise, and 0 on an operating
+loss. `effective_tax_rate` (the metric, MD-30) is the filing's own rate (income tax / pre-tax income,
+filed sign) and is **empty when pre-tax income is missing or ≤ 0** (L-05, defect N10); it is no longer
+the 21% default and no longer clamped. ROIC at that rate is stored as
+`return_on_invested_capital_effective_rate` (D3 robustness, checklist review 3.5; empty when the rate
+is empty).
+
+### D4 — MET-04 / PER-12 to PER-14, growth
+
+MET-04 (C8 p.7): growth and CAGR are left empty, and flagged, when the base is ≤ 0; "Damodaran's
+absolute-value fix (C8 p.8) is not adopted". `_yoy` and `_cagr` now return empty on a base ≤ 0 and the
+growth group flags `growth_base_not_positive`. PER-12 to PER-14: a growth whose base fiscal year began
+before the adoption of ASC 842 (fiscal years beginning after 2018-12-15) — or CECL (after 2019-12-15, a
+lender's net income only) — is kept and flagged `crosses_asc842` / `crosses_cecl`
+(`metrics/growth.py`; the lender set is T-147's `scripts/sec_xcheck/period_measures.py`
+`LENDER_SUB_INDUSTRIES`; the company type is today's GICS snapshot, L-03).
+
+### D5 — MET-09 / N9, denominators ≤ 0
+
+MET-09: a denominator = 0 leaves the ratio empty; a denominator < 0 leaves it out of the continuous
+score and flagged; `interest_coverage` is empty only when interest expense ≤ 0, and "Interest coverage
+with an operating loss and positive interest is valid". `net_debt_to_ebitda` is empty on EBITDA < 0
+(flagged `denominator_negative`) and on EBITDA = 0; a net-cash value (net debt < 0, EBITDA > 0) is a
+**valid negative**, flagged `net_cash` (N9: 177 filings / 63 companies measured). `free_cash_flow_conversion`
+is empty when net income ≤ 0 (flagged `denominator_negative`); `interest_coverage` is unchanged.
+
+### D6 / D7 / D9 — MD-02, MD-35 and MD-03: NCI, short-term investments, EBITDA
+
+MD-02: invested capital = debt (MET-07) + parent equity (ID-02a) + noncontrolling interest − cash −
+short-term investments, at the end of the prior year. NCI = the NCI in equity (`MinorityInterest`) plus
+the redeemable NCI between liabilities and equity (the FASB 2026 sfp-cls total, or its three parts when
+all three are filed — ID-02b); when no NCI balance is filed, CON-04's identity (equity incl. NCI −
+parent equity) if both are filed; else 0 **only when no NCI income is filed**; else empty, flagged
+`nci_capture_failure`. Short-term investments are netted only when filed apart from cash — never when
+the cash line already includes them (the (k)(1) cash read's `includes_short_term_investments`, B4 /
+T-148). MD-35 EV = market cap + debt + NCI − cash − short-term investments; empty when market cap, debt,
+cash or NCI is missing; preferred stock is not added (Annex B, pending the second author). MD-03 net
+debt = debt − cash − short-term investments (audit F7). MD-01 `ebitda` (operating income + D&A) is
+persisted in the leverage group (absorbs T-072); N15 / APP-07: ROIC only when invested capital > 0, ROE
+and D/E empty and flagged on negative book equity.
+
+### D8 — MD-38, enterprise_fcf_yield
+
+C10 p.49: "FCFF = EBIT (1-t) – (Cap Ex – DA + ∆ Working Capital)". `enterprise_fcf_yield` is now
+(NOPAT − (capex − D&A + Δ non-cash working capital)) / EV, replacing the code's cash-flow form (which
+had no source). Non-cash working capital = (current assets − cash − short-term investments) − (current
+liabilities − short-term debt); Δ between the prior fiscal year end (a 10-K) or the prior year's same
+quarter (a 10-Q, from the stored prior-year 10-Q; empty and flagged `prior_wc_missing` when it is not
+stored). Empty when a term is missing or the balance sheet is not classified (REITs, banks).
+
+### D10 / D11 — the rename and the flags
+
+D-05 / MD-04: the audit key `free_cash_flow_to_equity` is renamed **`free_cash_flow`** (OCF − capex, not
+FCFE) in the valuation inputs; a `grep` over `src/`, `scripts/` and `tests/` finds no other consumer
+outside `fundamental_agent` (`docs/checklist_sec/…` and the plan mention the rename only). D11: every new
+or changed flag travels as `flag_<item>_<flag>` = 1.0 in the metric rows' inputs, as T-148's do, so part
+3's provenance and the cycle can read it; no new table or column, no migration. Two metric names are new
+(`ebitda`, `return_on_invested_capital_effective_rate`) and are added the way existing metrics are. The
+views are unchanged; a new metric is exposed only through `fundamental_metrics` (the `v_*` views list
+columns, not metric names).
+
+### The measurements (control = master's code, after = this branch's, the same stored facts)
+
+`/workspaces/thesis/scratch/t151b/`: `control.db` (9,340 filings, 296,755 `metrics-v7` rows,
+`out/p2_control.log`, recomputed with master's `src`) and `after.db` (9,340 filings, 315,435
+`metrics-v7` rows, `out/p2_after.log`).
+
+- **(a) per metric** (`out/p3_changes.json`, filings/companies): `ebitda` filled **4,918 / 294**;
+  `return_on_invested_capital_effective_rate` filled **4,977 / 330**; `effective_tax_rate` emptied
+  **1,343 / 211** and changed **497 / 199**; `return_on_assets` filled 131 / 14, emptied **2,298 / 133**,
+  changed **6,609 / 375**; `return_on_equity` emptied 541 / 47, changed **8,351 / 481**;
+  `return_on_invested_capital` filled 3 / 2, emptied 224 / 37, changed **5,642 / 344**; `nopat` changed
+  **6,302 / 361**; `net_debt_to_ebitda` emptied 121 / 32, changed **905 / 75**; `enterprise_value`
+  emptied 136 / 26, changed **4,697 / 316**; `enterprise_fcf_yield` filled 1 / 1, emptied **3,408 /
+  385**, changed **3,217 / 251**; `debt_to_equity` emptied 582 / 51; `free_cash_flow_conversion` emptied
+  523 / 102; the growth metrics emptied (revenue 4 / 2, operating income 465 / 109, net income 702 / 202,
+  free cash flow 873 / 252). The 20 largest relative changes are listed in the file; each is one of the
+  decisions: META's `net_debt_to_ebitda` 0.0009 → −0.464 (its 41,480M of short-term investments now
+  netted, D9), UNH's `effective_tax_rate` 0.5 → 1222.0 (the clamp removed, D3 — see the declared
+  finding), ALB's `enterprise_fcf_yield` −0.0000057 → −0.1157 (MD-38, D8), MCHP's `return_on_assets`
+  −0.00003 → 0.0147 (NOPAT / prior assets, D1).
+- **(b) the new flags** (`out/p3_flags.json`, 96 keys changed): the prior-year capital flags
+  (`flag_prior_*`, e.g. `flag_prior_total_assets_prior_year_bs_missing` 7,594 filings / 502 companies),
+  `flag_return_on_equity_negative_equity` 2,910 / 48, `flag_return_on_invested_capital_invested_capital_not_positive`
+  440 / 14, `flag_return_on_assets_prior_year_assets_missing` 40 / 2, `flag_revenue_growth_growth_base_not_positive`
+  16 / 2, and the `flag_total_debt_*` counts rising because the new metrics also carry the current
+  capital's flags (e.g. `flag_total_debt_includes_finance_leases` 29,760 → 34,716).
+- **(c) the T-151 acceptance counts** (`out/p3_counts.json`, filings/companies): `NOPAT on the filing's
+  own rate` 7,997 / 472 → **0 / 0**; `NOPAT taxed on an operating loss` 394 / 102 → **0 / 0**; `N10
+  effective_tax_rate = 21% with pre-tax ≤ 0 or missing` 1,319 / 209 → **0 / 0** and `on a loss` 547 / 158
+  → **0 / 0**; `REITs at 21%` 197 / 17 → **0 / 0**; `N15 ROIC with invested capital ≤ 0` 89 / 11 →
+  **0 / 0**; `N9 net cash with positive EBITDA` 626 / 65 → **695 / 67** (valid values kept); `net
+  debt/EBITDA with EBITDA ≤ 0` 121 / 32 → **0 / 0** and `FCF conversion with net income ≤ 0` 523 / 102 →
+  **0 / 0**; `growth from a base ≤ 0` (net income 702 / 202, FCF 873 / 252, operating income 465 / 109,
+  revenue 4 / 2) → **0 / 0**; the CAGRs crossing ASC 842 **4 each** (revenue, net income, operating cash
+  flow; 4 companies) and CECL **33 / 33** (T-147 measured 4 and 32).
+- **(d) the audit's `metrics` group** (`out/p3_audit_control.json`, `out/p3_audit_after.json`,
+  `out/p3_audit_diff.txt`; the control run with master's code, `PYTHONPATH=…/master_src/src`): **14 keys
+  changed**, every acceptance row to 0 — `N10.tax_rate_21_on_nonpositive_pretax` 1,319 → 0,
+  `N10.tax_rate_21_on_loss` 547 → 0, `MET03.nopat_taxed_on_operating_loss` 394 → 0,
+  `MET03.nopat_on_filed_rate` 7,997 → **0**, `N9.net_cash_positive_ebitda` 373 → 414 (kept),
+  `MET09.net_debt_ebitda_on_nonpositive_ebitda` 62 → 0, `MET09.fcf_conversion_on_nonpositive_income`
+  301 → 0, `N15.roe_on_negative_equity` 586 → 0, `APP07.debt_to_equity_on_negative_equity` 582 → 0,
+  `N15.roic_on_nonpositive_capital` 91 → 0, and the four `MET04.*_base_nonpositive` 4/465/702/831 → 0.
+  Two predicates were updated for the changed definitions (see the code comments):
+  `MET03.nopat_on_filed_rate` reads the NOPAT rate from the `nopat` inputs and falls back to the metric
+  for a master-code replay; `N15.roe_on_negative_equity` reads the prior-year equity from the ROE
+  inputs. `MET03.tax_rate_clamped` is unchanged at 497 / 199 — it recomputes the raw rate from the line
+  items, so it now reports the raw rates the metric stores (see the declared finding).
+- **(e) the data-quality gates** (`out/p3_quality_control.log`, `out/p3_quality_after.log`): identical —
+  `DQ_FCF_YIELD` 33 (33 HARD), `DQ_MARGIN` 20 (20), `DQ_MARGIN_REVIEW` 58 (0), `DQ_OCF_MARGIN` 26 (26),
+  `DQ_MCAP_SCALE` 3 (3), `DQ_NEG_EQUITY` 603 (88 HARD), `DQ_REVENUE_POS` 29 (29) and the identity gates
+  (CON_01 0, CON_02 49, CON_04 7, CON_06 1, CON_08 4, CON_19 36). No rule moves: the gates read the
+  line items, which part 2 does not change.
+- **(f)** production and universe sha1 unchanged (`out/p3_sha1.txt`).
+
+### Replaced tests (old → new, why)
+
+The definition changes make five existing assertions wrong; each is replaced, none weakened:
+
+- `tests/test_metrics.py::test_profitability_matches_apple_fy2023` — ROE 1.5608 (ending equity 62,146M)
+  → 96,995 / 50,672 (MET-02: prior-year equity).
+- `tests/test_metrics_valuation.py::test_enterprise_value_and_yield_use_net_debt` — EV market cap + debt
+  − cash → + NCI − cash − short-term investments (D7; Apple files 31,590M of marketable securities
+  current).
+- `tests/test_debt_resolution.py::test_enterprise_value_is_empty_when_debt_is_missing_not_market_cap_less_cash`
+  — the expected EV gains Duke's 1,129M NCI (D7).
+- `tests/test_debt_resolution.py::test_a_negative_filed_interest_expense_leaves_the_unlevered_fcf_yield_empty`
+  and `::test_an_interest_expense_rejected_for_its_sign_is_not_a_missing_one` — MD-38 (D8) is C10's EBIT
+  form and no longer reads interest; the two tests now assert the unlevered-FCF **input**
+  (`free_cash_flow_to_firm`) is empty and that the metric itself is unchanged.
+- `tests/test_ttm.py` and `tests/test_ttm_t105.py` — the synthetic payloads gain the prior-year
+  comparative column (MET-01/MET-02) and the renamed input key (`free_cash_flow`).
+
+`tests/test_metric_definitions_t151b.py` adds **33** tests (the formula, every empty/flag case, the
+boundaries, a 10-Q case and the REIT tax case). `pytest -q` **2,281 passed** (`out/p1a_gates.txt`).
+
+### Declared limitations and findings
+
+- **The `effective_tax_rate` metric is no longer clamped (D3).** 497 filings / 199 companies store a raw
+  rate outside [0, 0.5] (`out/p3_changes.json`, e.g. UNH `0000731766-24-000155` 1222.0, a small positive
+  pre-tax income with a large tax). The plan's D3 says the metric is the filing's own rate, and L-05 only
+  empties it when pre-tax ≤ 0; the clamp was the old code's, not the checklist's. The robustness
+  `return_on_invested_capital_effective_rate` on those filings is therefore extreme. Flagged for the
+  director: keep the raw rate, or clamp/flag it (the audit key `MET03.tax_rate_clamped` names them).
+- **`return_on_assets` is empty for 2,292 filings that file no operating income** (of the 2,298 emptied;
+  `out/p3_changes.json`). MET-01 defines ROA on operating income, and MET-00 forbids imputing one; the
+  old ROA used net income. The director may want an operating-income fallback (a sourced derivation), a
+  new task, not this one.
+- **`enterprise_fcf_yield` is empty for 3,408 filings**: 1,236 a 10-Q whose prior-year same-quarter
+  balance sheet is not stored (`prior_wc_missing`, D8's recorded count), 890 no operating income (no
+  NOPAT), 1,257 the enterprise value or another term missing, 24 an unclassified balance sheet.
+- **PER-13's `debt_to_assets` and `asset_turnover` are not flagged across ASC 842 adoption.** D4 scopes
+  the adoption flags to growth and CAGR ("Every growth and CAGR metric"), and the acceptance counts only
+  the CAGRs; the two balance-sheet ratios the rule also names are left for a later task.
+- **The company type is today's GICS snapshot** (L-03): APP-02 (ROA/ROIC/EV NA for financial firms),
+  APP-04's REIT flags and the applicability matrix are `T-071`'s; this part applies only APP-04c's REIT
+  tax (from `db.is_equity_reit`) and PER-14's lender set (from the GICS sub-industry).

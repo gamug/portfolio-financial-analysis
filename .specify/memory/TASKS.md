@@ -555,6 +555,23 @@ the final pilot, `T-143`.
       items). The box stays open until part 3 merges, so this merge does not move T-151 to
       `CHANGELOG.md`.** Branch `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the
       mismatching companies are declared there as input for part 3's gate.
+      **Status (2026-10-13): part 2 done — PR #147** (branch `feat/t151b-metric-definitions`;
+      `docs/model_fixes.md` "T-151 part 2"; engine stays `metrics-v7`). D1/D2: ROA/ROE/ROIC divide by
+      the capital at the end of the prior fiscal year (the filing's own comparative, else the stored
+      prior 10-K), never the ending capital; D3: NOPAT at MET-03's 21% (a REIT's own rate, 0 on a
+      loss), `effective_tax_rate` empty when pre-tax ≤ 0 (L-05); D4: growth empty and flagged from a
+      base ≤ 0, the ASC 842 / CECL flags; D5: the non-positive denominators (MET-09 / N9); D6/D7:
+      NCI and short-term investments in invested capital and EV; D8: MD-38 in C10's EBIT form; D9:
+      `ebitda` persisted, net debt less short-term investments; D10: `free_cash_flow` rename. The
+      audit's `metrics` group on a database rebuilt with the branch (`out/p3_audit_diff.txt`, 14 keys):
+      **N10, N15, the MET-03 and MET-09 rows all 0** (NOPAT on the filing's own rate 7,997/472 → 0,
+      on an operating loss 394/102 → 0, `effective_tax_rate` = 21% with pre-tax ≤ 0 1,319/209 → 0,
+      REITs at 21% 197/17 → 0, ROIC with invested capital ≤ 0 89/11 → 0; N9 net cash kept, 373 → 414).
+      Declared findings: the metric is no longer clamped (497/199 raw rates outside [0, 0.5], UNH
+      1222%), ROA is empty for 2,292 filings with no operating income, MD-38 empty for 1,236 10-Qs
+      whose prior-year quarter is not stored; PER-13's `debt_to_assets`/`asset_turnover` flags are not
+      implemented (D4 scopes it to growth/CAGR). Tests: `tests/test_metric_definitions_t151b.py` (+33),
+      five replaced (`out/p1a_gates.txt`: 2,281 passed).
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
