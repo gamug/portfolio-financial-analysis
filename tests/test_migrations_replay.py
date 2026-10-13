@@ -31,6 +31,9 @@ from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
 # Every table a rebuilding migration touches.
+# Every version the code knows, in order: a new marker migration (T-012's m015) needs no edit here.
+ALL_VERSIONS = [version for version, _description, _fn in migrations.MIGRATIONS]
+
 REBUILT_TABLES = (
     "financial_facts",
     "fundamental_metrics",
@@ -167,7 +170,7 @@ def test_a_fresh_ensure_database_keeps_every_value_across_apply_migrations() -> 
 
     applied = migrations.apply_migrations(conn)
 
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    assert applied == ALL_VERSIONS
     assert _snapshot(conn) == before
     assert _column_sets(conn) == columns_before  # no column lost
     # the columns a later release added are the ones that used to come back NULL
@@ -225,7 +228,8 @@ def test_a_skipped_rebuild_is_still_recorded() -> None:
     conn.execute("DELETE FROM schema_version WHERE version >= 13")
     conn.commit()
 
-    assert migrations.apply_migrations(conn) == [13, 14]  # 14 skips its rebuild, still records
+    assert migrations.apply_migrations(conn) == [v for v in ALL_VERSIONS if v >= 13]
+    # 14 skips its rebuild and still records its version
     assert _snapshot(conn) == before
 
 
@@ -296,7 +300,7 @@ def test_an_old_shape_database_still_widens_its_key_and_backfills_the_version() 
 
     applied = migrations.apply_migrations(conn)
 
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    assert applied == ALL_VERSIONS
     assert migrations._has_unique_key(conn, "financial_facts")
     assert migrations._has_unique_key(conn, "fundamental_metrics")
     fact = conn.execute(
@@ -346,5 +350,5 @@ def test_replaying_the_data_carrying_migrations_changes_no_row() -> None:
     conn.execute("DELETE FROM schema_version WHERE version >= 8")
     conn.commit()
 
-    assert migrations.apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14]
+    assert migrations.apply_migrations(conn) == [v for v in ALL_VERSIONS if v >= 8]
     assert _snapshot(conn) == before
