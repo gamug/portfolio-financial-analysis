@@ -7487,6 +7487,54 @@ filings / companies): `missing_input` 8,980/503 → **8,887/503**; `capture_fail
 moves are H1 (a refused input is a capture failure) and H2/H3 (an unformed TTM or an absent prior
 column is `prior_year_missing`), each taking rows that used to fall through to `missing_input`.
 
+### Fix round 4 (K1; PR #148 review, fourth round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f4_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **K1 — `market_cap_no_cover_shares` is a data-window gap, not a failed input.** The key fires when
+  the reader cannot form the market cap at the period end because the **previous** filing's cover
+  count is absent (`kg_schema.market_cap` takes the latest count available at the as-of). That is the
+  same cause as an absent prior column, so it now maps to `prior_year_missing` (rank 4) for every
+  metric that reads the market cap: `market_capitalization`, `enterprise_value` (its `OWN_TERMS` gain
+  `market_cap`/`share_scale`), the two FCF yields and `enterprise_fcf_yield` (MD-38's denominator is
+  EV). The other market-cap keys — `market_cap_stale_shares`, `market_cap_incomplete_classes`,
+  `share_scale_suspect` — name a count that exists but cannot be used, so they stay `capture_failure`;
+  `share_scale_suspect` is now read at all (`_candidate_keys`). Step 4 keeps the formula's precedence
+  (steps 1–3 first, then the own flags), and the market-cap read keys are read in rank order, so the
+  one filing that carries both `market_cap_no_cover_shares` and `share_scale_suspect` (COP
+  `0001562762-22-000031`) takes `capture_failure` (rank 3), not `prior_year_missing` (rank 4).
+
+  **Acceptance** (`out/f4_reasons.txt` / `.json`, block `K1`; the same script on the pre-fix database
+  as the before, `out/f4_k1_before.txt` — both are the empty rows that carry a market-cap read key
+  `market_cap_*` / `share_scale_suspect`, rows / companies):
+
+  | metric | before | after |
+  |---|---|---|
+  | `market_capitalization` | `missing_input` 503/494, `capture_failure` 8/8 | `missing_input` 503/494, `prior_year_missing` 8/8 |
+  | `enterprise_value` | `missing_input` 485/364, `capture_failure` 160/146 | `prior_year_missing` 389/388, `missing_input` 183/68, `capture_failure` 73/58 |
+  | `free_cash_flow_yield` | `capture_failure` 435/423, `missing_input` 90/37, `prior_year_missing` 51/48 | `prior_year_missing` 470/466, `missing_input` 90/37, `capture_failure` 16/12 |
+  | `sbc_adjusted_fcf_yield` | `capture_failure` 357/347, `missing_input` 204/113, `prior_year_missing` 51/48 | `prior_year_missing` 395/392, `missing_input` 204/113, `capture_failure` 13/10 |
+  | `enterprise_fcf_yield` | `missing_input` 716/381, `capture_failure` 117/51, `prior_year_missing` 165/106 | `missing_input` 546/214, `prior_year_missing` 335/260, `capture_failure` 117/48 |
+
+  The per-metric totals are unchanged (511, 645, 576, 612, 998), so every transition is accounted
+  for. The rows that keep `missing_input` have an earlier failing term (e.g. `shares_outstanding` is
+  not stored as a fact, so `market_capitalization`'s 495 `no_cover_shares` rows keep it); the rows
+  that keep `capture_failure` carry `market_cap_stale_shares` / `market_cap_incomplete_classes` /
+  `share_scale_suspect`, or an own debt/NCI refusal.
+
+  **The `no_cover_shares` population**: 503 filings, **502** are the company's first filing in the
+  window (the earliest stored filing, by filing date then period end). The one exception is BALL
+  `0001558370-22-007145` (2022-03-31): its earlier filing `0001558370-22-001251` (2022-02-16) **is**
+  stored but has **0** `filing_cover_shares` rows, so there is no usable count at that period end
+  either.
+
+  **The reason distribution, old vs new** (`out/f3_provenance.txt` vs `out/f4_provenance.txt`,
+  filings / companies): `capture_failure` 2,144/475 → **1,756/163**; `prior_year_missing` 1,054/326 →
+  **1,456/492**; `missing_input` 8,888/503 → **8,887/503**; the other three unchanged. The move is the
+  503 `no_cover_shares` filings out of `capture_failure` (and their companies, 475 → 163) into
+  `prior_year_missing`, minus the rows an earlier term decides.
+
 ### Declared limitations
 
 - The provenance block's items carry the basis they were read on (G2); the prior-year column's own

@@ -627,7 +627,11 @@ the final pilot, `T-143`.
       dict), plus the combination terms its formula reads and the market-cap capture; the gross
       margin's `cogs`/`gross_profit` is an **alternative pair** (both absent → `missing_input`). The
       reviewer's sibling-flag rows (773 gross_margin, 644 EV, …) are now **0**: no `capture_failure`
-      row lacks an own cause. **The box stays open until the reviewer closes T-151 after both PRs.**
+      row lacks an own cause. **Fix round 4 (2026-10-13): K1, PR #148** (`docs/model_fixes.md` "Fix
+      round 4"). K1: `market_cap_no_cover_shares` is a data-window gap (the previous filing's cover
+      count), so it is `prior_year_missing` for the five metrics that read the market cap; the other
+      market-cap keys stay `capture_failure`. 502 of its 503 filings are the company's first in the
+      window. **The box stays open until the reviewer closes T-151 after both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current

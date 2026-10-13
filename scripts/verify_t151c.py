@@ -205,6 +205,94 @@ def _j1_block(rows: list[Any]) -> dict[str, Any]:
     return j1
 
 
+#: K1: the metrics that read the market cap -- their inputs carry a market-cap read key.
+MARKET_CAP_METRICS = (
+    "market_capitalization",
+    "enterprise_value",
+    "free_cash_flow_yield",
+    "sbc_adjusted_fcf_yield",
+    "enterprise_fcf_yield",
+)
+
+
+def _market_cap_read(inputs: dict[str, Any]) -> bool:
+    """Whether the metric's inputs carry a market-cap read key: ``market_cap_<reason>`` or the
+    share-scale suspect (valuation.py)."""
+    return any(key.startswith("market_cap_") for key in inputs) or "share_scale_suspect" in inputs
+
+
+def _k1_block(rows: list[Any], conn: Any) -> dict[str, Any]:
+    """K1: the reason distribution of the empty rows that carry a market-cap read key, per metric
+    (the reviewer's table), and the ``no_cover_shares`` population -- how many of its filings are
+    the company's first in the window, with the exception's own cause."""
+    out: dict[str, Any] = {}
+    for metric in MARKET_CAP_METRICS:
+        per_reason: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"rows": 0, "filings": set(), "companies": set()}
+        )
+        for row in rows:
+            if row["metric_name"] != metric or row["value"] is not None:
+                continue
+            inputs = json.loads(row["inputs_json"] or "{}")
+            if not _market_cap_read(inputs):
+                continue
+            reason = (inputs.get("provenance") or {}).get("empty_reason") or "(none)"
+            entry = per_reason[reason]
+            entry["rows"] += 1
+            entry["filings"].add(int(row["filing_id"]))
+            entry["companies"].add(int(row["asset_id"]))
+        out[metric] = {
+            reason: {
+                "rows": v["rows"],
+                "filings": len(v["filings"]),
+                "companies": len(v["companies"]),
+            }
+            for reason, v in sorted(per_reason.items())
+        }
+    # the no_cover_shares population: its filings, and whether each is the company's first in the
+    # window (the earliest stored filing, by filing date then period end)
+    filings = {
+        int(r["id"]): r
+        for r in conn.execute(
+            "select f.id, f.asset_id, f.filing_date, f.period_end, f.accession_number, a.ticker"
+            " from sec_filings f join assets a on a.id=f.asset_id"
+        )
+    }
+    first: dict[int, tuple[tuple[str, str, int], int]] = {}
+    for fid, r in filings.items():
+        key = (r["filing_date"], r["period_end"], fid)
+        if r["asset_id"] not in first or key < first[r["asset_id"]][0]:
+            first[r["asset_id"]] = (key, fid)
+    ncs = {
+        int(row["filing_id"])
+        for row in rows
+        if "market_cap_no_cover_shares" in (row["inputs_json"] or "")
+    }
+    exceptions = []
+    for fid in sorted(ncs):
+        earlier = first[filings[fid]["asset_id"]][1]
+        if earlier == fid:
+            continue
+        cover = conn.execute(
+            "select count(*) as n from filing_cover_shares where filing_id=?", (earlier,)
+        ).fetchone()["n"]
+        exceptions.append(
+            {
+                "ticker": filings[fid]["ticker"],
+                "accession_number": filings[fid]["accession_number"],
+                "earlier_filing": filings[earlier]["accession_number"],
+                "earlier_filing_date": filings[earlier]["filing_date"],
+                "earlier_cover_shares_rows": cover,
+            }
+        )
+    out["no_cover_shares"] = {
+        "filings": len(ncs),
+        "first_in_window": len(ncs) - len(exceptions),
+        "exceptions": exceptions,
+    }
+    return out
+
+
 def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate per population
     """The H1-H3 and H7 populations (fix round 2)."""
     conn = open_ro(args.db)
@@ -295,6 +383,19 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
             f"    capture_failure own flags: {own or '-'}; without an own flag: "
             f"{entry['capture_failure_without_an_own_flag']}"
         )
+    k1 = _k1_block(rows, conn)
+    payload["K1"] = k1
+    print("\nK1 (empty rows carrying a market-cap read key, per metric):")
+    for metric in MARKET_CAP_METRICS:
+        parts = ", ".join(
+            f"{reason} {v['rows']}/{v['companies']}" for reason, v in k1[metric].items()
+        )
+        print(f"  {metric:<30}{parts}")
+    ncs = k1["no_cover_shares"]
+    print(
+        f"  no_cover_shares: {ncs['filings']} filings, {ncs['first_in_window']} first in the"
+        f" window, exceptions {ncs['exceptions']}"
+    )
     h7 = payload.pop("H7_rows")
     print(f"\nH7_rows: {h7['total']}")
     for form, entry in h7["by_form"].items():
@@ -302,7 +403,7 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
     print(f"  tickers {h7['tickers']}")
     payload["H7_rows"] = h7
     for label, counts in payload.items():
-        if label in ("H7_rows", "J1"):
+        if label in ("H7_rows", "J1", "K1"):
             continue
         total_rows = sum(entry["rows"] for entry in counts.values())
         total_filings = len({f for entry in counts.values() for f in [entry["filings"]]})
