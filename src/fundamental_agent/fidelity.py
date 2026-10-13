@@ -196,6 +196,11 @@ def run_fidelity(  # noqa: C901, PLR0912, PLR0915 - one linear pass, like the au
                     keys.append(("ytd", str(period.key)))
             for kind, key in keys:
                 for item in REGISTRY:
+                    # H5: a balance-sheet item is an instant fact (ID-05) with no year-to-date
+                    # column -- the ytd kind applies to duration items only, so an instant item is
+                    # compared once, on the own column.
+                    if kind == "ytd" and REGISTRY[item].statements == ("balance_sheet",):
+                        continue
                     resolution = stmts.resolve(item, key)
                     if resolution.value is None:
                         continue

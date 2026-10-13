@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -164,3 +165,89 @@ def test_fidelity_compares_a_stored_item_with_the_sec_value(
     _report, mismatches = run_fidelity(memory_db, str(tmp_path))
     assert [m["item"] for m in mismatches] == ["revenue"]
     assert mismatches[0]["ticker"] == "AAPL"
+
+
+def test_h5_a_balance_sheet_item_is_compared_once_on_a_10q(
+    memory_db: Database, tmp_path: Path
+) -> None:
+    """H5: an instant item has no year-to-date column, so the ytd kind must not compare it a second
+    time."""
+    memory_db.execute(
+        "INSERT INTO assets (id, ticker, cik, company_name) VALUES (1, 'X', '0000000001', 'X')"
+    )
+    filing_id = seed_filing(
+        memory_db,
+        1,
+        period_end="2024-06-30",
+        filing_date="2024-08-01",
+        form="10-Q",
+        fiscal_period="2024Q2",
+    )
+    memory_db.execute(
+        "UPDATE sec_filings SET accession_number = '0000000001-24-000001' WHERE id = ?",
+        (filing_id,),
+    )
+    db.append_financial_facts(
+        memory_db,
+        filing_id,
+        [
+            {
+                "statement": "balance_sheet",
+                "concept": "us-gaap_Assets",
+                "period_key": "2024-06-30",
+                "value": 1_000.0,
+            },
+            {
+                "statement": "income_statement",
+                "concept": "us-gaap_Revenues",
+                "period_key": "2024-06-30 (Q2)",
+                "value": 100.0,
+            },
+            {
+                "statement": "income_statement",
+                "concept": "us-gaap_Revenues",
+                "period_key": "2024-06-30 (YTD)",
+                "value": 200.0,
+            },
+        ],
+    )
+    doc = {
+        "facts": {
+            "us-gaap": {
+                "Assets": {
+                    "units": {
+                        "USD": [
+                            {"accn": "0000000001-24-000001", "end": "2024-06-30", "val": 1_000.0}
+                        ]
+                    }
+                },
+                "Revenues": {
+                    "units": {
+                        "USD": [
+                            {
+                                "accn": "0000000001-24-000001",
+                                "start": "2024-04-01",
+                                "end": "2024-06-30",
+                                "val": 100.0,
+                            },
+                            {
+                                "accn": "0000000001-24-000001",
+                                "start": "2024-01-01",
+                                "end": "2024-06-30",
+                                "val": 200.0,
+                            },
+                        ]
+                    }
+                },
+            }
+        }
+    }
+    (tmp_path / "CIK0000000001.json").write_text(json.dumps(doc))
+    report, mismatches = run_fidelity(memory_db, str(tmp_path))
+    # the balance-sheet item is compared on the own column only
+    assert re.search(r"^total_assets\s+own\b", report, re.MULTILINE)
+    assert not re.search(r"^total_assets\s+ytd\b", report, re.MULTILINE)
+    # the duration item is compared on both
+    assert re.search(r"^revenue\s+own\b", report, re.MULTILINE)
+    assert re.search(r"^revenue\s+ytd\b", report, re.MULTILINE)
+    assert mismatches == []
