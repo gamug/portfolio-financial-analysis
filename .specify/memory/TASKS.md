@@ -534,6 +534,15 @@ the final pilot, `T-143`.
       traceability test passes; metric provenance and company card delivered; post-rebuild SEC fidelity gate enforced;
       the audit's `metrics` group re-run on a rebuilt database shows 0 for N10, N15 and the MET-03/MET-09 rows;
       regression tests per definition on real captured fixtures; a `docs/model_fixes.md` entry.
+      **Split (user, 2026-10-12).** T-151 runs as three parts, one PR each: **part 1** — line-item
+      resolution (the sourced D&A and debt sums, the net capex element, the period label; engine
+      `metrics-v7`); **part 2** — the metric definitions (MET-01/02/03/04/09, N9/N10/N15, MD-02/35/38,
+      EBITDA persisted, net debt minus short-term investments, the `free_cash_flow` rename; its
+      acceptance includes the audit's `metrics` group at 0); **part 3** — the dictionary from Annex B,
+      the applicability matrix as data, the traceability test, provenance, the company card and the
+      post-rebuild fidelity gate. **Status (2026-10-13): part 1 done — PR #143** (branch
+      `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the mismatching companies are
+      declared there as input for part 3's gate). The box stays open until part 3 merges.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,

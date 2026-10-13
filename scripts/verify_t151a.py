@@ -1117,6 +1117,41 @@ def cmd_face_cases(args: argparse.Namespace) -> int:
     return 0
 
 
+# -- 3.5 audit groups ----------------------------------------------------------------------------
+
+
+def cmd_audit_diff(args: argparse.Namespace) -> int:
+    """3.5: the audit keys that changed between the control and after JSON reports."""
+    control = {f["key"]: f for f in json.loads(Path(args.control).read_text(encoding="utf-8"))}
+    after = {f["key"]: f for f in json.loads(Path(args.after).read_text(encoding="utf-8"))}
+    lines = [
+        f"T-151 part 1, 3.5 audit groups (resolver,capex,metrics): {args.control} -> {args.after}",
+        f"keys: control {len(control)}, after {len(after)}",
+        "",
+        "keys whose count changed:",
+    ]
+    changed = 0
+    for key in sorted(set(control) | set(after)):
+        before = control.get(key, {}).get("count")
+        now = after.get(key, {}).get("count")
+        if before != now:
+            changed += 1
+            lines.append(
+                f"  {key}: {before} -> {now} (total {after.get(key, control.get(key, {})).get('total')}, "
+                f"companies {control.get(key, {}).get('companies')} -> "
+                f"{after.get(key, {}).get('companies')})"
+            )
+    lines.insert(3, f"keys whose count changed: {changed}")
+    lines += ["", "keys present in only one report:"]
+    for key in sorted(set(control) - set(after)):
+        lines.append(f"  control only: {key}")
+    for key in sorted(set(after) - set(control)):
+        lines.append(f"  after only: {key}")
+    Path(args.out_txt).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print("\n".join(lines))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1164,6 +1199,11 @@ def main(argv: list[str] | None = None) -> int:
     la.add_argument("--db", nargs="+", required=True)
     la.add_argument("--out-txt", default="/workspaces/thesis/scratch/t151a/out/p3_labels.txt")
     la.set_defaults(func=cmd_labels)
+    ad = sub.add_parser("audit-diff", help="3.5 the audit keys that changed")
+    ad.add_argument("--control", required=True)
+    ad.add_argument("--after", required=True)
+    ad.add_argument("--out-txt", default="/workspaces/thesis/scratch/t151a/out/p3_audit_diff.txt")
+    ad.set_defaults(func=cmd_audit_diff)
     args = parser.parse_args(argv)
     return int(args.func(args))
 
