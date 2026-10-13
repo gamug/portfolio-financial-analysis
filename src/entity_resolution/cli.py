@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from entity_resolution.config import Settings
+from entity_resolution.pending import pending_line
 from entity_resolution.pipeline import RunParams, run
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
@@ -35,6 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--max-tickers", type=int, default=15)
     b.add_argument("--min-articles", type=int, default=3)
     b.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+    p = sub.add_parser(
+        "pending",
+        help="read-only: is the stored edge set stale against the news? One line (T-017)",
+    )
+    p.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    p.add_argument("--news-db", help="override KG_NEWS_DB (urls.db) path")
+    p.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(p)
     return parser
 
 
@@ -48,10 +57,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         updates["news_db_path"] = Path(args.news_db)
     if args.universe_db:
         updates["universe_db_path"] = Path(args.universe_db)
-    if args.allow_dirty:
+    if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
     if updates:
         settings = settings.model_copy(update=updates)
+
+    if args.command == "pending":
+        print(pending_line(settings, resolve_analysis_date(args.analysis_date)))
+        return 0
 
     report = run(
         settings,

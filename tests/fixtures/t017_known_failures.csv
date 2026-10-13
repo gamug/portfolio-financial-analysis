@@ -1,0 +1,23 @@
+stage,message
+period,0001858681-23-000017: the payload has no quarter column of its own (periods: 2022-12-31 (FY)); the gateway returned only another period
+period,0001628280-23-016241: the payload has no quarter column of its own (periods: 2022-12-31 (FY)); the gateway returned only another period
+period,0001037540-26-000019: the payload has no quarter column of its own (periods: 2025-12-31 (FY)); the gateway returned only another period
+period,0001037540-26-000034: the payload has no quarter column of its own (periods: 2025-12-31 (FY)); the gateway returned only another period
+process,0001130310-22-000123: 10-Q 2022Q3 already holds the filing for period end 2022-03-31 (accession 0001130310-22-000063); refusing to overwrite it with the one for 2022-09-30 (accession 0001130310-22-000123)
+process,0000277948-24-000054: 10-Q 2024Q3 already holds the filing for period end 2024-06-30 (accession 0000277948-24-000047); refusing to overwrite it with the one for 2024-09-30 (accession 0000277948-24-000054)
+period,0001571996-23-000019: the payload has no quarter column of its own (periods: 2023-02-03 (FY)); the gateway returned only another period
+period,0001571996-23-000032: the payload has no quarter column of its own (periods: 2023-02-03 (FY)); the gateway returned only another period
+period,"0000895126-22-000029: the payload's 2020-12-31 (FY) ends 2020-12-31, not at the SEC's periodOfReport 2021-12-31 (ID-07): the statements do not hold this filing's own period"
+period,0000895126-22-000132: no fiscal year end to count the quarter ending 2022-06-30 from
+period,0000895126-22-000184: no fiscal year end to count the quarter ending 2022-09-30 from
+process,"0001932393-23-000025: /financials/0001932393 -> unsuccessful payload: {'success': False, 'error': ""Failed to extract financials: 'NoneType' object has no attribute 'to_dataframe'""}"
+period,0001558370-22-010253: the payload has no quarter column of its own (periods: none); the gateway returned only another period
+period,0001558370-23-011335: the payload has no quarter column of its own (periods: none); the gateway returned only another period
+period,0001558370-24-009615: the payload has no quarter column of its own (periods: none); the gateway returned only another period
+period,0001558370-25-008960: the payload has no quarter column of its own (periods: none); the gateway returned only another period
+period,0001104659-26-078236: the payload has no quarter column of its own (periods: none); the gateway returned only another period
+period,0001944048-23-000102: no fiscal year end to count the quarter ending 2023-10-01 from
+period,"0002041610-26-000011: the payload's 2024-12-31 (FY) ends 2024-12-31, not at the SEC's periodOfReport 2025-12-31 (ID-07): the statements do not hold this filing's own period"
+period,"0002041610-25-000044: the latest quarter column 2024-09-30 (Q3) ends before the balance sheet's 2025-09-30: a comparative, not the filing's own quarter (periods: 2024-09-30 (Q3), 2024-09-30 (YTD), 2025-08-06 (YTD))"
+process,"0001410578-24-000999: /financials/0002005951 -> unsuccessful payload: {'success': False, 'error': ""Failed to extract financials: 'NoneType' object has no attribute 'to_dataframe'""}"
+period,"0000096021-22-000036: the latest quarter column 2020-12-26 (Q2) ends before the balance sheet's 2021-07-03: a comparative, not the filing's own quarter (periods: 2020-12-26 (Q2), 2020-12-26 (YTD))"

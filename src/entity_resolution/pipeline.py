@@ -12,6 +12,7 @@ from entity_resolution import db as er_db
 from entity_resolution.config import Settings
 from entity_resolution.cooccurrence import MIN_WEIGHT_DEFAULT, build_edges
 from entity_resolution.denylist import MAX_TICKERS_DEFAULT, MIN_ARTICLES_DEFAULT
+from entity_resolution.news_db import news_watermark
 from kg_schema import connect, connect_ro, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import symbols_asof
@@ -33,10 +34,20 @@ class RunReport:
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
 
 
-def _open_cycle(conn: Database, params: RunParams, *, cv: str, dirty_reason: str | None) -> int:
+def _open_cycle(
+    conn: Database,
+    params: RunParams,
+    *,
+    cv: str,
+    dirty_reason: str | None,
+    watermark: dict[str, object],
+) -> int:
     now = datetime.now(tz=UTC).isoformat(timespec="seconds")
     cycle_date = params.analysis_date
-    params_json = json.dumps({**vars(params), "dirty_tree_bypassed": dirty_reason})
+    # T-017: ``news_watermark`` is what `entity_resolution pending` compares the news against.
+    params_json = json.dumps(
+        {**vars(params), "dirty_tree_bypassed": dirty_reason, "news_watermark": watermark}
+    )
     cur = conn.execute(
         """
         INSERT INTO cycle_run
@@ -73,9 +84,14 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             tickers = symbols_asof(uconn, params.analysis_date)
         finally:
             uconn.close()
-        run_id = _open_cycle(conn, params, cv=cv, dirty_reason=dirty_reason)
         news = connect_ro(settings.news_db_path)
         try:
+            # Read before the build: a row that lands in between makes the next check say
+            # pending, never "nothing new".
+            watermark = news_watermark(news, tickers, until=params.analysis_date)
+            run_id = _open_cycle(
+                conn, params, cv=cv, dirty_reason=dirty_reason, watermark=watermark
+            )
             edges = build_edges(
                 news,
                 tickers,

@@ -11,6 +11,7 @@ from kg_schema.cli import add_coverage_parser, coverage_from_args, run_migrate
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from pricing_agent.config import Settings
+from pricing_agent.pending import pending_line
 from pricing_agent.pipeline import DEFAULT_START_DATE, RunParams, run
 
 _ALLOW_DIRTY_HELP = (
@@ -74,6 +75,14 @@ def build_parser() -> argparse.ArgumentParser:
         "genuine one-day move of that size, which the guard cannot tell from a mis-adjusted split",
     )
 
+    pending_cmd = sub.add_parser(
+        "pending",
+        help="read-only: does a member lack the last session's data? One line (T-017)",
+    )
+    pending_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    pending_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(pending_cmd)
+
     migrate_cmd = sub.add_parser(
         "migrate", help="apply pending shared-schema migrations (advances schema_version)"
     )
@@ -96,7 +105,7 @@ def _settings_from_args(args: argparse.Namespace) -> Settings:
         updates["db_path"] = Path(args.db)
     if args.universe_db:
         updates["universe_db_path"] = Path(args.universe_db)
-    if args.allow_dirty:
+    if getattr(args, "allow_dirty", False):
         updates["allow_dirty"] = True
     return settings.model_copy(update=updates) if updates else settings
 
@@ -108,6 +117,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_migrate(args.db)
     if args.command == "coverage":
         return coverage_from_args(args)
+    if args.command == "pending":
+        print(pending_line(_settings_from_args(args), resolve_analysis_date(args.analysis_date)))
+        return 0
     if args.observations and not args.store_daily:
         parser.error(
             "--observations needs --store-daily: price_observation rows are per-day "

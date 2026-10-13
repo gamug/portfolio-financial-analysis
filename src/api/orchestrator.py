@@ -21,6 +21,13 @@ it records the run's own provenance (``orchestrator_run`` / ``orchestrator_step`
 T-012) with one short write per state change -- never a transaction held while a child
 runs, since the child writes the same file. It also opens read-only connections to read
 a step's own run-log row back.
+
+A pipeline run is incremental (T-017): before a step runs, its ``pending`` subcommand -- a
+read-only check, built from literals like the step -- says whether there is upstream data the
+step has not processed. A step runs when its own check says pending or when a direct upstream
+ran because it was pending; otherwise it is ``skipped`` with ``not pending: <evidence>``.
+``cycle select`` always runs. A check that fails counts as pending. The single-step kinds never
+run a check.
 """
 
 from __future__ import annotations
@@ -109,6 +116,25 @@ class StepSpec:
     with_news_db: bool = False
     run_id_regex: str | None = None
     quant_command: str | None = None
+    # T-017: the read-only check's command (a literal, run as ``python -m <package> <command>
+    # --analysis-date ...`` with the step's paths); ``None`` = the step has no check of its own.
+    pending_command: tuple[str, ...] | None = None
+    # ``cycle select`` runs on every orchestrated run, so it is never skipped, and its run is not
+    # a pending signal for the steps after it.
+    always_run: bool = False
+    note: str | None = None  # appended to the step's reason (a literal)
+
+
+# Until Work item 4 lands (the ``KG_NLP_DB`` seam) there is no semantic source to check; the run
+# says so on the step that would consume it (PLAN, "Incremental, upstream-aware run").
+_SEMANTIC_NOTE = "semantic: no semantic source configured"
+
+# A pending check that outlives this is killed and counted as a failed check (= pending). The
+# steps themselves have no timeout. 3600 s: the fundamental check's gateway listing took 1530 s for
+# 2,046 calls at 503 members on a production copy (T-017 measurement), so 1800 s left 15% headroom.
+_CHECK_TIMEOUT_SECONDS = 3600
+_MAX_EVIDENCE_CHARS = 300
+_PENDING_LINE = re.compile(r"^pending: (yes|no) (.+)$", re.MULTILINE)
 
 
 # T-013 dependency edges (direct only; blocking is transitive through them). Reasons: cycle
@@ -129,6 +155,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         depends_on=(),
         flags=("--store-daily", "--observations"),
         run_id_regex=r"^run (\d+):",
+        pending_command=("pending",),
     ),
     StepSpec(
         "fundamental",
@@ -137,6 +164,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         run_kind="analysis",
         depends_on=(),
         run_id_regex=r"^run (\d+):",
+        pending_command=("pending",),
     ),
     StepSpec(
         "entity_resolution",
@@ -146,6 +174,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         depends_on=(),
         with_news_db=True,
         run_id_regex=r"^cycle (\d+):",
+        pending_command=("pending",),
     ),
     StepSpec(
         "cycle_select",
@@ -155,6 +184,8 @@ _PIPELINE: tuple[StepSpec, ...] = (
         depends_on=("pricing", "fundamental"),
         settings=("top_n", "weight_scheme", "max_name_weight", "max_sector_weight"),
         run_id_regex=r"^select (\d+)\s",
+        always_run=True,
+        note=_SEMANTIC_NOTE,
     ),
     StepSpec(
         "quant_actions",
@@ -163,6 +194,7 @@ _PIPELINE: tuple[StepSpec, ...] = (
         run_kind="quant",
         depends_on=("pricing", "fundamental"),
         quant_command="backfill-actions",
+        pending_command=("pending",),
     ),
     StepSpec(
         "quant_returns",
@@ -257,6 +289,24 @@ def build_argv(spec: StepSpec, ctx: RunContext) -> list[str]:
     return argv
 
 
+def build_check_argv(spec: StepSpec, ctx: RunContext) -> list[str]:
+    """The argv of *spec*'s pending check: literals plus the validated context, exactly like the
+    step's own (no preference flag, no ``--allow-*``, no ``migrate``)."""
+    assert spec.pending_command is not None  # callers test it
+    argv = [sys.executable, "-m", spec.package, *spec.pending_command]
+    argv += [
+        _FLAG_ANALYSIS_DATE,
+        ctx.analysis_date,
+        _FLAG_DB,
+        str(ctx.paths.db_path),
+        _FLAG_UNIVERSE_DB,
+        str(ctx.paths.universe_db_path),
+    ]
+    if spec.with_news_db:
+        argv += [_FLAG_NEWS_DB, str(ctx.paths.news_db_path)]
+    return argv
+
+
 def _child_env(paths: RunPaths) -> dict[str, str]:
     """The child's environment: the run's three paths, spelled out (D2). Everything else
     (``LLM_*``, gateway URLs) is inherited; no secret is stored or logged."""
@@ -275,15 +325,20 @@ class CommandResult:
     output: str
 
 
-def run_command(argv: list[str], env: dict[str, str]) -> CommandResult:
+def run_command(
+    argv: list[str], env: dict[str, str], timeout: float | None = None
+) -> CommandResult:
     """The single subprocess seam -- tests replace this, never the real agents. No shell,
-    no string concatenation: *argv* is a list built by :func:`build_argv`."""
+    no string concatenation: *argv* is a list built by :func:`build_argv` or
+    :func:`build_check_argv`. A step has no *timeout*; a pending check does, and the child is
+    killed when it expires (``subprocess.TimeoutExpired``)."""
     proc = subprocess.run(  # noqa: S603 - argv is a list of literals from the step table
         argv,
         env=env,
         capture_output=True,
         text=True,
         check=False,
+        timeout=timeout,
     )
     return CommandResult(returncode=proc.returncode, output=f"{proc.stdout}{proc.stderr}")
 
@@ -643,11 +698,11 @@ def _run_one(spec: StepSpec, state: StepState, ctx: RunContext) -> None:
     if result.returncode != 0:
         _set(state, status="failed")
         if capture_reason is not None:
-            _set(state, reason=capture_reason)
+            _set(state, reason=_with_reason(state.reason, capture_reason))
         return
     _set(state, status="completed")
     if capture_reason is not None:
-        _set(state, reason=capture_reason)
+        _set(state, reason=_with_reason(state.reason, capture_reason))
 
 
 StepCallback = Callable[[StepState], None]
@@ -678,16 +733,105 @@ def _blocked_reason(spec: StepSpec, status_of: dict[str, str]) -> str:
     return "blocked by " + ", ".join(f"{name} ({status_of[name]})" for name in blocking)
 
 
+def _with_reason(reason: str | None, extra: str) -> str:
+    return f"{reason}; {extra}" if reason else extra
+
+
+def _short(text: str) -> str:
+    return text if len(text) <= _MAX_EVIDENCE_CHARS else text[: _MAX_EVIDENCE_CHARS - 3] + "..."
+
+
+def _run_check(spec: StepSpec, ctx: RunContext) -> tuple[str, str]:
+    """Run *spec*'s pending check: ``("yes"|"no", evidence)``, or ``("failed", cause)`` for a
+    non-zero exit, output that is not exactly one ``pending: yes|no <evidence>`` line, or a
+    timeout. A failed check is never an error of the run: the caller counts it as pending."""
+    try:
+        result = run_command(
+            build_check_argv(spec, ctx), _child_env(ctx.paths), timeout=_CHECK_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        return "failed", f"timeout after {_CHECK_TIMEOUT_SECONDS} s"
+    except Exception as exc:  # the check could not even start
+        return "failed", _short(f"{type(exc).__name__}: {exc}")
+    if result.returncode != 0:
+        last = next((ln for ln in reversed(result.output.splitlines()) if ln.strip()), "")
+        return "failed", _short(f"exit {result.returncode}: {last.strip()}")
+    lines = _PENDING_LINE.findall(result.output)
+    if len(lines) != 1:
+        return "failed", f"unparseable output ({len(lines)} pending lines)"
+    return lines[0][0], _short(lines[0][1].strip())
+
+
+@dataclass
+class _Progress:
+    """What the steps before this one decided, shared down the run."""
+
+    status_of: dict[str, str] = field(default_factory=dict)
+    ran_pending: set[str] = field(default_factory=set)  # completed because they were pending
+    incremental: bool = True  # False for a single-step kind: no check, no skip
+
+
+@dataclass(frozen=True)
+class _Decision:
+    """Whether a step starts, and the reason to record on it (T-017)."""
+
+    run: bool
+    reason: str | None
+    because_pending: bool = False
+    checked: bool = False  # a check ran (so a skip carries its timings)
+
+
+def _decide(spec: StepSpec, ctx: RunContext, state: StepState, progress: _Progress) -> _Decision:
+    """The pending decision of an incremental run: a step runs when a direct upstream ran because
+    it was pending, else on its own check (run just before the step, so it sees what the
+    upstream steps wrote), else -- it has none -- when it is ``always_run``; otherwise it is
+    skipped. A failed check counts as pending."""
+    if not progress.incremental:
+        return _Decision(run=True, reason=None)
+    upstream = sorted(
+        (name for name in spec.depends_on if name in progress.ran_pending),
+        key=_PIPELINE_ORDER.__getitem__,
+    )
+    if upstream:
+        decision = _Decision(True, "pending upstream: " + ", ".join(upstream), because_pending=True)
+    elif spec.pending_command is not None:
+        _set(state, started_at=_now())
+        verdict, text = _run_check(spec, ctx)
+        if verdict == "no":
+            return _Decision(False, f"not pending: {text}", checked=True)
+        reason = f"pending: {text}" if verdict == "yes" else f"pending check failed: {text}"
+        decision = _Decision(True, reason, because_pending=True, checked=True)
+    elif spec.always_run:
+        decision = _Decision(True, "always runs")
+    else:
+        ups = ", ".join(
+            f"{u} {progress.status_of[u]}" for u in spec.depends_on if u in progress.status_of
+        )
+        return _Decision(False, f"not pending: no upstream ran on a pending signal ({ups})")
+    if spec.note:
+        return _Decision(
+            True,
+            _with_reason(decision.reason, spec.note),
+            decision.because_pending,
+            decision.checked,
+        )
+    return decision
+
+
 def _execute_step(
     spec: StepSpec,
     state: StepState,
     ctx: RunContext,
-    status_of: dict[str, str],
+    progress: _Progress,
     on_step_change: StepCallback | None,
 ) -> None:
     """Decide and run one step: ``blocked``, ``skipped`` or run. Records ``state.status`` and
-    ``status_of``; a failed provenance write or a ``KeyboardInterrupt``/``SystemExit``
-    propagates to :func:`execute_run` (the run stops there)."""
+    ``progress.status_of``; a failed provenance write or a ``KeyboardInterrupt``/``SystemExit``
+    propagates to :func:`execute_run` (the run stops there).
+
+    The order: blocked by a failed/blocked direct upstream (T-013; no check runs for a step that
+    cannot start), the missing-news skip, then (pipeline runs only) :func:`_decide`."""
+    status_of = progress.status_of
     if _is_blocked(spec, status_of):
         _set(state, status="blocked", reason=_blocked_reason(spec, status_of))
         _notify(on_step_change, state)
@@ -702,7 +846,16 @@ def _execute_step(
         _notify(on_step_change, state)
         status_of[spec.name] = "skipped"
         return
-    _set(state, status="running", started_at=_now())
+    decision = _decide(spec, ctx, state, progress)
+    if not decision.run:
+        changes: dict[str, object] = {"status": "skipped", "reason": decision.reason}
+        if decision.checked:
+            changes["finished_at"] = _now()
+        _set(state, **changes)
+        _notify(on_step_change, state)
+        status_of[spec.name] = "skipped"
+        return
+    _set(state, status="running", started_at=_now(), reason=decision.reason)
     _notify(on_step_change, state)
     try:
         _run_one(spec, state, ctx)
@@ -714,6 +867,9 @@ def _execute_step(
         _set(state, status="failed", finished_at=_now(), reason=f"{type(exc).__name__}: {exc}")
     _notify(on_step_change, state)
     status_of[spec.name] = state.status
+    # ``cycle select``'s run is never a pending signal for the steps after it (T-017).
+    if decision.because_pending and not spec.always_run and state.status == "completed":
+        progress.ran_pending.add(spec.name)
 
 
 def execute_run(
@@ -731,13 +887,13 @@ def execute_run(
     exits non-zero and the caller can print the run's state. *on_step_change* is called on
     every status transition."""
     specs = steps_for(run.kind)
-    status_of: dict[str, str] = {}
+    progress = _Progress(incremental=run.kind == _PIPELINE_KIND)
     failed = False
     try:
         for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
             try:
-                _execute_step(spec, state, ctx, status_of, on_step_change)
-                if status_of[spec.name] == "failed":
+                _execute_step(spec, state, ctx, progress, on_step_change)
+                if progress.status_of[spec.name] == "failed":
                     failed = True
             except _ProvenanceWriteFailed as exc:
                 # A write failed after the run started: stop, no further child runs.

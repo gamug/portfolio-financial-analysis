@@ -18,7 +18,12 @@ from kg_schema.queries import StaleAsOf, VetoSchemaStale
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
 from kg_schema.versions import VersionError
-from quant.actions import DividendsNotReady, GatewayUnavailable, backfill_corporate_actions
+from quant.actions import (
+    DEFAULT_FROM,
+    DividendsNotReady,
+    GatewayUnavailable,
+    backfill_corporate_actions,
+)
 from quant.benchmark import (
     INTERNAL_EW,
     BenchmarkCsvError,
@@ -29,6 +34,7 @@ from quant.config import QuantSettings
 from quant.db import ActionsReport, ensure_schema
 from quant.evaluate import run_evaluate
 from quant.factors import FactorIntegrityError
+from quant.pending import pending_line
 from quant.persist import (
     DryRunPlan,
     MissingMarketCaps,
@@ -238,13 +244,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     ba = sub.add_parser("backfill-actions", help="fetch dividends/splits into corporate_action")
     _add_common(ba)
-    ba.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    ba.add_argument("--from", dest="date_from", default=DEFAULT_FROM, help=_TODAY_HELP)
     ba.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     ba.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
 
     br = sub.add_parser("build-returns", help="derive the total-return daily series")
     _add_common(br)
-    br.add_argument("--from", dest="date_from", default="2022-01-01", help=_TODAY_HELP)
+    br.add_argument("--from", dest="date_from", default=DEFAULT_FROM, help=_TODAY_HELP)
     br.add_argument("--to", dest="date_to", help=_AS_OF_HELP)
     br.add_argument(
         "--allow-no-dividends",
@@ -296,6 +302,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"{INTERNAL_EW} (rebuilt over the gated panel) or a series loaded with load-benchmark",
     )
     ev.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
+
+    pd = sub.add_parser(
+        "pending",
+        help="read-only: is the quant chain behind its inputs (returns, books, evaluate, "
+        "gateway corporate actions)? One line (T-017)",
+    )
+    _add_common(pd)
 
     vs = sub.add_parser(
         "versions", help="list the stored versions of every input quant can be constrained on"
@@ -700,7 +713,7 @@ def _prepare(
     return settings, analysis_date
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branch per subcommand
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one branch per subcommand
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -711,6 +724,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0911 - one branc
     if isinstance(prepared, int):
         return prepared
     settings, analysis_date = prepared
+
+    if args.command == "pending":
+        print(pending_line(settings, analysis_date))
+        return 0
 
     if args.command == "backfill-actions":
         return _run_backfill_actions(settings, args, _date_to(analysis_date, args))

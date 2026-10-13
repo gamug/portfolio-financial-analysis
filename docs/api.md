@@ -226,9 +226,50 @@ is **`404`**. It is a read router: it starts no run and imports no run router.
 - **`entity_resolution` skip (D6).** If the resolved news path (`KG_NEWS_DB`, else
   `entity_resolution`'s default `/workspaces/thesis/data/urls.db`) does not exist, the step is
   recorded `skipped` with reason `no news source configured (<path> not found)`, is not run, and
-  does not fail the run. The full incremental-run behaviour is `T-017`.
+  does not fail the run (see *The incremental run*, below).
 - **A step that exits 0 but prints no run id** (a changed CLI output format) is recorded with reason
   `run_id not captured`, so the drift shows up instead of a silent `null`.
+
+### The incremental run (T-017)
+
+The **pipeline** kind (`POST /run/pipeline`, `python -m api orchestrate`) runs only what has new
+upstream data; the ten single-step routes always run their step, with no check. Order and
+dependencies stay T-013's. Before a step runs, the runner executes its read-only `pending`
+subcommand (`python -m <package> pending --analysis-date D --db .. --universe-db ..`, plus
+`--news-db` for entity_resolution): one stdout line, `pending: yes|no <evidence>`, exit 0. Each
+check opens the database `mode=ro`, makes gateway GETs only, never calls the LLM, and writes nothing.
+
+- A step **runs** when its own check says pending (reason `pending: <evidence>`), or when a direct
+  upstream ran *because it was pending* and completed (reason `pending upstream: <names>`; such a
+  step runs no check of its own). A check that exits non-zero, prints anything but one line, or
+  outlives 3600 s is killed and counts as pending (reason `pending check failed: <cause>`); it
+  never fails the run.
+- Otherwise the step is `skipped` with `not pending: <evidence>`. A skipped upstream is satisfied:
+  it does not block its dependents. A step with a failed/blocked upstream is `blocked`, as in T-013.
+- **`cycle_select` always runs** (reason `always runs`, or `pending upstream: ...`), and its run
+  does not make `quant_evaluate` pending. With nothing pending, only `cycle select` runs. Its
+  reason also says `semantic: no semantic source configured` -- the semantic check has no source
+  until Work item 4, does not fail and does not count as pending.
+- **Properties of every signal:** it compares stored outputs with the inputs as of D (not "the last
+  run succeeded", so a failed run recovers); any doubt -- a missing table, an empty database, a
+  failed check -- is pending, so a fresh database makes every step pending; nothing dated after D
+  counts; it never re-does its step's work.
+
+| Step | Pending iff (as of D) |
+|---|---|
+| `pricing` | a member has no `price_daily` bar at the last session on or before D and the pricing gateway has any candle for it from the day after its latest stored bar (the step's start date if none) to that session; or a bar without its `priceobs-v2` observation; or bars from before a recorded split; or that session is not final yet. A member the gateway has no candle for in that window, and one whose split-jump re-fetch was refused, are listed and do not count. |
+| `fundamental` | an original 10-K/10-Q filed on or before D has no FUNDAMENTAL score: stored but unscored, named by an error row, or newly listed by the EDGAR gateway (the step's own call and filters, years D-1..D, or 2022..D for a CIK with no stored filing). **A filing whose latest error is a known data failure** (`fundamental_agent/failures.py`) is not pending, and neither is a service failure that a later covering run left without a newer error (an error row from a run dated after D is ignored, and a run with no `as_of` counts as in plan: an error row never makes a filing less pending; a predecessor CIK the step does not link, because its last annual report is not listed, is dropped and shown as "unlinked predecessor"): the orchestrator does not retry a data failure; a single-step `/run/fundamental-agent` run does. |
+| `entity_resolution` | the newest `ENTITY_RESOLUTION` run is not a completed build for D with the default tuning, with its edges, and with the news watermark (`discovered_urls` count/max id up to D, newest `article_entities` id) it recorded; a run from before T-017 has no watermark, so it is pending once. No news source: `skipped`. |
+| `quant_actions` (the chain's one check) | returns end before the newest member bar; a default objective has no non-live book with `as_of` in [last session, D]; a book `evaluate` would score lags behind its newest forward return; or the pricing gateway lists a dividend/split that `corporate_action` lacks. Books without positions and members the gateway cannot serve are listed and do not count. |
+
+`quant_returns` .. `quant_optimize` run exactly when `quant_actions` ran; `quant_evaluate` when
+`quant_optimize` ran. The gateway checks cost about as much as their steps' no-op runs (the quant
+actions check: one GET per member; the fundamental listing: two GETs per CIK-year).
+
+**Declared blind spot (fundamental).** The check lists only the years D-1..D for a CIK that already
+has stored filings. A filing of an older year that failed before it was stored and left no
+accession in an error row is not seen; a single-step `POST /run/fundamental-agent` lists every year
+and recovers it. The same single-step run is how a known data failure is retried.
 
 ### The data-quality gate
 
