@@ -632,7 +632,7 @@ def main() -> int:  # noqa: C901, PLR0915
             step_rows = [
                 tuple(r)
                 for r in db.execute(
-                    "SELECT orchestrator_run_id, ordinal, status, run_kind, run_id "
+                    "SELECT orchestrator_run_id, ordinal, status, run_kind, run_id, reason "
                     "FROM orchestrator_step ORDER BY orchestrator_run_id, ordinal"
                 ).fetchall()
             ]
@@ -648,8 +648,15 @@ def main() -> int:  # noqa: C901, PLR0915
                 ):
                     bad.append(f"{prefix}run {run_id}: completed with a non-completed/skipped step")
                 # T-013: a failed run may have several failed steps (independent failures).
-                if status == "failed" and not any(s[2] == "failed" for s in steps):
-                    bad.append(f"{prefix}run {run_id}: failed without a failed step")
+                # T-015: or no failed step at all, when a graceful stop prevented the step it
+                # landed on -- that step is `not_run` with reason `stopped: ...`.
+                if status == "failed" and not (
+                    any(s[2] == "failed" for s in steps)
+                    or any(str(s[5] or "").startswith("stopped:") for s in steps)
+                ):
+                    bad.append(
+                        f"{prefix}run {run_id}: failed without a failed step or a stop reason"
+                    )
                 if status in ("completed", "failed") and finished_at is None:
                     bad.append(f"{prefix}run {run_id}: finished run without finished_at")
                 for s in steps:

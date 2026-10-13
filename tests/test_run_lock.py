@@ -472,6 +472,10 @@ def test_a_stop_while_a_pending_check_runs_records_the_step_not_run(
     assert not runner.is_alive()
     assert run.status == "failed"
     assert [s.status for s in run.steps] == ["not_run"] * 9  # pricing never ran, nor any later step
+    # the step the stop prevented still says why the run failed (T-015)
+    assert run.steps[0].reason == "stopped: test (before this step started)"
+    assert all(s.reason is None for s in run.steps[1:])
+    _assert_verify_pilot_passes(tmp_path / "fin.db")
 
 
 def test_a_stop_between_two_steps_starts_no_further_step(
@@ -490,10 +494,15 @@ def test_a_stop_between_two_steps_starts_no_further_step(
     run = orch.new_run("pipeline", ctx)
     orch.execute_run(run, ctx, on_step_change=on_change)
     statuses = {s.name: s.status for s in run.steps}
+    reasons = {s.name: s.reason for s in run.steps}
     assert statuses["pricing"] == "completed"
     assert all(v == "not_run" for k, v in statuses.items() if k != "pricing")
     assert run.status == "failed"
     assert len(fake.calls) == 1  # no further step child was spawned
+    # the step the stop prevented says why the run failed; the later steps carry no reason (T-015)
+    assert reasons["fundamental"] == "stopped: test (before this step started)"
+    assert all(reasons[name] is None for name in statuses if name not in ("pricing", "fundamental"))
+    _assert_verify_pilot_passes(tmp_path / "fin.db")
 
 
 # -- the verify_pilot T-015 check ----------------------------------------------------------------
@@ -545,6 +554,11 @@ def _verify_pilot_line(db_path: Path, task: str) -> str:
     return lines[0]
 
 
+def _assert_verify_pilot_passes(db_path: Path) -> None:
+    for task in ("T-012", "T-013", "T-015"):
+        assert f"[PASS] {task}" in _verify_pilot_line(db_path, task)
+
+
 def test_verify_pilot_t015_passes_a_reconciled_run(tmp_path: Path) -> None:
     _write_orch_db(
         tmp_path / "fin.db",
@@ -589,3 +603,56 @@ def test_verify_pilot_t015_fails_an_abandoned_step_under_a_live_run(tmp_path: Pa
     line = _verify_pilot_line(tmp_path / "fin.db", "T-015")
     assert "[FAIL] T-015" in line
     assert "step pricing of run 1: abandoned but its run is not" in line
+
+
+def test_verify_pilot_t012_fails_a_failed_run_with_no_failed_step_or_stop(
+    tmp_path: Path,
+) -> None:
+    """T-012's rule after T-015: a failed run needs a failed step *or* a step reason `stopped: ...`."""
+    _write_orch_db(
+        tmp_path / "fin.db",
+        runs=[(1, "failed", "2026-10-02T00:01:00Z")],
+        steps=[(1, "pricing", "not_run")],
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-012")
+    assert "[FAIL] T-012" in line
+    assert "failed without a failed step or a stop reason" in line
+
+
+# -- correction 2 and 3 --------------------------------------------------------------------------
+
+
+def test_a_refused_begin_run_does_not_clear_the_active_stop(tmp_path: Path) -> None:
+    db = tmp_path / "fin.db"
+    orch._acquire_lock(db, {"handle": "holder"})  # another process holds the lock
+    try:
+        orch._LOCK_STATE.stop_reason = "stopped: API shutdown"
+        with pytest.raises(orch.RunLocked):
+            orch.begin_run("pipeline", _ctx(tmp_path))
+        # a refused run must leave the active run's stop alone (T-015)
+        assert orch._LOCK_STATE.stop_reason == "stopped: API shutdown"
+    finally:
+        orch._release_lock()
+
+
+def test_run_command_kills_the_child_when_the_registration_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No window between the spawn and the registration: a failure there still kills the child."""
+    marker = tmp_path / "child_finished"
+
+    def boom(proc: subprocess.Popen[str]) -> None:
+        raise RuntimeError("registration failed")
+
+    monkeypatch.setattr(orch, "_register_child", boom)
+    with pytest.raises(RuntimeError):
+        orch.run_command(
+            [
+                sys.executable,
+                "-c",
+                f"import time; time.sleep(3); open({str(marker)!r}, 'w').close()",
+            ],
+            dict(os.environ),
+        )
+    time.sleep(0.5)
+    assert not marker.exists()

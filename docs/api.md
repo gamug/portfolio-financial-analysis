@@ -216,7 +216,10 @@ are unchanged, but both can now carry the value `abandoned` (T-015, as `blocked`
   while this step ran (reconciled by run <handle>)"; its pending steps `not_run`) before it records
   its own row, so the first run after a crash cleans up the last one. A graceful stop -- `SIGTERM`
   to the CLI, or the API shutting down -- kills the current child and records the step `failed` with
-  `stopped: SIGTERM` / `stopped: API shutdown` and the later steps `not_run`; `SIGKILL` cannot be
+  `stopped: SIGTERM` / `stopped: API shutdown` and the later steps `not_run`; a stop that lands
+  before a step starts (during its pending check, or between two steps) records that step `not_run`
+  with `<stop reason> (before this step started)`, so the reason is never lost -- T-012 accepts it as
+  the failed run's cause. `SIGKILL` cannot be
   handled, so that case is the lock + reconcile above. A stopped run's `abandoned`/`failed` row is
   served by the status route as recorded -- the route itself never writes. (The `ddl.py` status
   comment still lists only `running | completed | failed`: it has been stale since T-013, which added

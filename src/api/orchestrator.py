@@ -361,6 +361,14 @@ class CommandResult:
     output: str
 
 
+def _register_child(proc: subprocess.Popen[str]) -> None:
+    """Register the running child (under ``_LOCK``), so :func:`request_stop` can kill it.
+
+    A separate step (T-015) so the spawn-and-register window is testable: a failure here must
+    still kill the child, never leave it as an orphan holding the lock."""
+    _LOCK_STATE.child = proc
+
+
 def run_command(
     argv: list[str], env: dict[str, str], timeout: float | None = None
 ) -> CommandResult:
@@ -369,41 +377,53 @@ def run_command(
     :func:`build_check_argv`. A step has no *timeout*; a pending check does, and the child is
     killed when it expires (``subprocess.TimeoutExpired``).
 
-    ``Popen`` + ``communicate`` instead of ``subprocess.run`` (T-015): the child is registered as
-    the current child under the lock *before* it can be asked to stop, so
+    ``Popen`` + ``communicate`` instead of ``subprocess.run`` (T-015): the child is spawned and
+    registered as the current child under the lock *before* it can be asked to stop, so
     :func:`request_stop` always sees it; the lock's fd is inherited through ``pass_fds``. The
     behaviour is otherwise identical: a timeout kills the child and re-raises
     ``TimeoutExpired``; any other ``BaseException`` (a ``KeyboardInterrupt``/``RunStopped``
-    raised by a stop) kills the child, exactly as ``subprocess.run``'s bare ``except`` does. A
+    raised by a stop, or a failure between the spawn and the registration) kills the child,
+    exactly as ``subprocess.run``'s bare ``except`` does -- no window leaves an orphan. A
     stop requested while the child runs makes this raise :class:`RunStopped` -- a stop, never a
     step failure or a "failed check"."""
-    with _LOCK:
-        stop = _LOCK_STATE.stop_reason
-        if stop is not None:  # a stop was requested before this child could start
-            raise RunStopped(stop)
-        proc = subprocess.Popen(  # noqa: S603 - argv is a list of literals from the step table
-            argv,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            pass_fds=(_LOCK_STATE.fd,) if _LOCK_STATE.fd is not None else (),
-        )
-        _LOCK_STATE.child = proc
+    proc: subprocess.Popen[str] | None = None
+    stdout = ""
+    stderr = ""
+
+    def _spawn() -> subprocess.Popen[str]:
+        """Check the stop and spawn-and-register the child, atomically under the lock (T-015)."""
+        with _LOCK:
+            stop = _LOCK_STATE.stop_reason
+            if stop is not None:  # a stop was requested before this child could start
+                raise RunStopped(stop)
+            child = subprocess.Popen(  # noqa: S603 - argv is a list of literals from the table
+                argv,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                pass_fds=(_LOCK_STATE.fd,) if _LOCK_STATE.fd is not None else (),
+            )
+            _register_child(child)
+            return child
+
     try:
+        proc = _spawn()
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
             raise
-        except BaseException:
-            proc.kill()  # mirror subprocess.run: kill the child, then re-raise
-            raise
+    except BaseException:
+        if proc is not None:  # never leave the child running: kill it, then re-raise
+            proc.kill()
+        raise
     finally:
-        with _LOCK:
-            if _LOCK_STATE.child is proc:
-                _LOCK_STATE.child = None
+        if proc is not None:
+            with _LOCK:
+                if _LOCK_STATE.child is proc:
+                    _LOCK_STATE.child = None
     stop = _stop_reason()
     if stop is not None:
         raise RunStopped(stop)
@@ -817,8 +837,6 @@ def begin_run(
     propagating, so one bad run cannot leave every later run refused. Returns the run and the
     ``(runs, steps)`` reconciled."""
     run_handle = handle or str(uuid.uuid4())
-    with _LOCK:
-        _LOCK_STATE.stop_reason = None  # a fresh run is not stopped by a previous run's stop
     holder: dict[str, object] = {
         "handle": run_handle,
         "pid": os.getpid(),
@@ -826,6 +844,10 @@ def begin_run(
         "surface": surface,
     }
     _acquire_lock(ctx.paths.db_path, holder)
+    # Only a run that actually took the lock clears the stop flag (T-015): a refused begin_run
+    # must not clear the active run's stop.
+    with _LOCK:
+        _LOCK_STATE.stop_reason = None
     try:
         _ensure_tables(ctx.paths.db_path)
         reconciled = reconcile_abandoned_runs(ctx.paths.db_path, handle=run_handle)
@@ -876,11 +898,12 @@ def _fail_run(  # noqa: PLR0913 - the run, the step, its reason, its index and t
 ) -> None:
     """Record the current step and every later step ``not_run`` (best effort: the write may
     itself be what failed). ``step_ran=False`` (T-015: a stop landed before the step's own child
-    started) records the current step ``not_run`` too -- it never ran."""
+    started) records the current step ``not_run`` with *reason* -- it never ran -- and the later
+    steps ``not_run`` with no reason."""
     if step_ran:
         _try_set(state, status="failed", finished_at=_now(), reason=reason)
     else:
-        _try_set(state, status="not_run")
+        _try_set(state, status="not_run", reason=reason)
     _notify(on_step_change, state)
     _mark_not_run(run, index + 1, on_step_change)
 
@@ -1160,18 +1183,29 @@ def execute_run(
     every status transition.
 
     A stop (T-015) is checked before each step: once :func:`request_stop` has been called, no
-    further step starts -- the steps from here on are ``not_run`` and the run is ``failed``. A stop
+    further step starts -- the run is ``failed`` and the step the stop prevented is ``not_run`` with
+    reason ``<stop> (before this step started)`` (the later steps ``not_run``, no reason). A stop
     that lands while a step runs is recorded on that step as ``failed`` with the stop reason; one
-    that lands while its *pending check* runs leaves the step ``not_run`` (it never ran)."""
+    that lands while its *pending check* runs leaves the step ``not_run`` (it never ran), with the
+    same reason."""
     specs = steps_for(run.kind)
     progress = _Progress(incremental=run.kind == _PIPELINE_KIND)
     failed = False
     try:
         for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
-            if _stop_reason() is not None:
-                # A stop arrived between steps: start nothing more (T-015).
+            stop = _stop_reason()
+            if stop is not None:
+                # A stop arrived between steps: start nothing more, and still record why the run
+                # failed on the step the stop prevented (T-015).
                 failed = True
-                _mark_not_run(run, index, on_step_change)
+                _fail_run(
+                    run,
+                    run.steps[index],
+                    f"{stop} (before this step started)",
+                    index,
+                    on_step_change,
+                    step_ran=False,
+                )
                 break
             try:
                 _execute_step(spec, state, ctx, progress, on_step_change)
@@ -1186,14 +1220,17 @@ def execute_run(
             except BaseException as exc:
                 # Any other BaseException (KeyboardInterrupt, SystemExit, RunStopped,
                 # GeneratorExit, ...) must not leave the run "completed" with a step still
-                # "running": stop it.
+                # "running": stop it. A stop that landed before this step's own child started
+                # (during its pending check) records the step ``not_run`` with the reason; anything
+                # else keeps master's ``failed`` (T-015).
                 failed = True
+                step_ran = not isinstance(exc, RunStopped) or state.status == "running"
                 reason = (
                     exc.reason if isinstance(exc, RunStopped) else f"{type(exc).__name__}: {exc}"
                 )
-                _fail_run(
-                    run, state, reason, index, on_step_change, step_ran=state.status == "running"
-                )
+                if isinstance(exc, RunStopped) and not step_ran:
+                    reason = f"{reason} (before this step started)"
+                _fail_run(run, state, reason, index, on_step_change, step_ran=step_ran)
                 if not isinstance(exc, Exception):
                     raise
                 break
