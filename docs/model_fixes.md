@@ -5869,6 +5869,7 @@ Rule IDs are `docs/checklist_sec/checklist_v1.3.md`'s; sources `sources_register
    portions", so adding them as long-term debt can also count the current portion that the short-term map adds. None of the 211 filings that file them (19 companies) files a total debt concept the registry could read under MET-07 / ID-02a: `LongTermDebt`, `DebtInstrumentCarryingAmount`, `DebtLongtermAndShorttermCombinedAmount` and the
    other candidates are on no stored statement (the three statements the gateway returns); the only debt-named lines besides the pair are `LineOfCredit`, `NotesPayable`, `SeniorNotes` and the like, and one company's `LongTermDebtAndFinanceLeasesNoncurrent` (9 filings), which MET-07 does not list. So long-term debt is empty, the total debt is a **capture failure** (the pair
    is a debt line on the statement, so the zero never applies) and EV and ROIC are empty: a declared limitation of part 1, with its count below; the REIT debt total needs a source (`T-151`). `LineOfCredit`, `SeniorNotes`, `NotesPayable` (non-current), `LoansPayableToBankCurrent` and the other debt-named lines stay unread (they may overlap by definition); they only block the debt = 0 rule.
+    **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 8. **The short-term map's terms.** (`LongTermDebtCurrent`, else `OtherLongTermDebtCurrent`) + (`ShortTermBorrowings`, else `CommercialPaper`, else `NotesPayableCurrent`); a "kind of" concept takes the place of its term, never joins it.
 9. **A balance sheet is the period's own** if dated that day or the same rounded month end (PER-08), the closest; never the nearest earlier date.
 10. **`net_income_to_common` follows the registry's order** (precedence is for every item): it reads the diluted line before the basic one (27 filings, <0.2% apart). **Capex does not (the review of PR #136):** MET-08 (b)(1) makes `PaymentsToAcquireProductiveAssets` "a flagged fallback, never added to PP&E", so a concept-first pass reading it before
@@ -6288,9 +6289,11 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
    - Distinct filings affected: 856 across 94 companies (direct D&A empty); 1,683 filings across 95 companies carrying `depreciation_only_not_da` when including 10-Q leverage inputs with refused TTM D&A terms.
    - Under MET-07 / D-07, `us-gaap_Depreciation` alone is refused as D&A when no amortization component is filed, leaving D&A empty (flagged `depreciation_only_not_da`).
    - Sample companies: ABBV, ABT, ADI, AON, APTV, AVGO, AVY, BRO, CHD, CIEN, COHR, COR, CPAY, CSX, CTAS, DHR, ECL, EME, EQIX, ES.
+   **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 3. **MKT-01 first filings & stale cover counts.**
    - First filings with no prior available cover count (`market_cap_no_cover_shares`): 503 distinct filings across 502 companies.
    - Stale cover counts exceeding 200-day limit (`market_cap_stale_shares`): 8 distinct filings across 6 companies (DELL, EXE, MTD, PSKY, SMCI, TRMB) where delayed reporting exceeded the 200-day threshold.
+   **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 4. **MKT-03 multi-class incomplete classes & Visa (V).**
    - 47 companies (744 distinct filings) flagged `market_cap_incomplete_classes`: ABNB, ACN, AOS, APP, ARES, BF.B, BKR, CHTR, CMCSA, CME, CRWD, CVNA, DASH, DDOG, DELL, ECHO, EL, EXPE, F, GDDY, GOOG, GOOGL, HSY, IBKR, LEN, MA, META, MKC, NKE, PLTR, PSKY, RDDT, REGN, RL, SCHW, SPG, STZ, TAP, TKO, TSN, TTD, UHS, UPS, V, VEEV, WBD, WDAY. Source: `out/mkt03_multiclass_ciks.txt`.
    - **Visa Inc. (`V`, CIK `0001403161`, 10-K `0001403161-25-000089` Note 15):** Class B-1, Class B-2, and Class C shares do not convert 1:1 into Class A common stock. Note 15 (Stockholders' Equity) table "As-converted class A common stock" discloses for September 30, 2025:
@@ -6308,8 +6311,10 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
    - Filers: CVX, PODD, GEHC, MDLZ, MMM, AMP, CINF, DVN. Cash is combined with discontinued operations or filed under issuer-specific extension concepts, refused by standard taxonomy validation.
 8. **REIT secured + unsecured debt (ID-02b / MET-07).**
    - 16 REIT companies (ARE, BXP, CPT, DLR, DOC, ESS, EXR, FRT, INVH, KIM, MAA, O, REG, UDR, VMRK, WELL) file only `SecuredDebt` and `UnsecuredDebt` without a standard long-term debt total line. Under ID-02b, debt remains empty.
+   **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 9. **Noncontrolling interest income in notes only (MA, BALL).**
    - Mastercard (MA) and Ball Corp (BALL) file `ProfitLoss` on the income statement face without parent `NetIncomeLoss`, disclosing NCI income only in footnotes. Under ID-03 face-only rules, parent net income cannot be formed by subtracting NCI.
+   **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 10. **State Street (STT) bank map identity (30/43 columns, 5/19 filings).**
     - State Street Corporation (STT) files its own explicit `Revenues` total line on its income statement face, so the bank net revenue map (`InterestIncomeExpenseNet + NoninterestIncome`) never applies to it (0 filings affected).
     - Source: `out/3.5_stt_mismatches.txt`, `out/3.5_stt_mismatches.json`. Across all 19 filings, 43 comparative columns were evaluated: 30 columns match within 0.5% tolerance. In 13 columns (across 5 own-period filings), the filed total differs:
@@ -6329,6 +6334,7 @@ Source: `/workspaces/thesis/scratch/t148b/out/causes_table.txt`, `/workspaces/th
     - Standard concept filed: `us-gaap_PaymentsForProceedsFromProductiveAssets` (captioned verbatim "Proceeds from asset dispositions", representing cash inflows, not capital spending).
     - Custom extension concept: `cop_PaymentToAcquireProductiveAssetsAndInvestments` (captioned verbatim "Capital expenditures and investments").
     - Limitation: When `PaymentsForProceedsFromProductiveAssets` is filed without a standard PP&E line, the resolver takes it under Tier 5 net productive assets, yielding negative capex (inflows), while real capex resides in COP's extension concept.
+   **Correction (T-151 part 1, 2026-10-13):** see the T-151 part 1 section.
 
 ### Tests (hermetic)
 
