@@ -591,6 +591,12 @@ the final pilot, `T-143`.
       the two fractions are identical); MET-00's neutral 50 in `valorization.compute` (never fires in the stored cycles,
       0 of 40; keep the guard); and the stored-valuation market cap reading the as-of reader's cover count.
       N2 (`earnings_yield`) moved to `T-149`.
+      *(2026-10-13, from `T-076` fix round 1: `DQ_NEG_EQUITY` tests the equity on the filing's own
+      balance sheet, while ROE's denominator is the prior year's (MET-02; APP-07's source C7 p.12 ties
+      "meaningless" to the book value divided by), so 7 filings / 5 companies (CAH, CCI, LYV, NCLH, STX;
+      `docs/model_fixes.md` T-076 fix round 1; `out/f1_neg_equity_rows.txt`) carry an ROE the gate
+      quarantines although its denominator is positive. `T-071` already owns `DQ_NEG_EQUITY` (D-04:
+      quarantine-only), so it decides the basis.)*
 - [ ] **T-072** *(**Absorbed by `T-151` 2026-10-08 — implement there, not here.**)* Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt

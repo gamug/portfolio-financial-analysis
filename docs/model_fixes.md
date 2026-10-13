@@ -7743,3 +7743,76 @@ says the two definitions are the pipeline's own.
 - **The company type is still the model's to read, only from the code's reason.** Until `T-071` the brief
   carries no company type; a specialist learns that a cell applied only from a metric's `not_applicable`
   reason, which the skills explain.
+
+### Fix round 1 (K1–K5; PR #152 review)
+
+Reviewer A re-checked the branch against the code, the matrix and the PDFs. What holds: D1 and its counts, the
+21 quotes (the 15 new ones re-verified independently of `quotecheck`), D3's per-metric basis lines, D5b, the
+declared thresholds and the R&D gap, the sizes and the hash, CI and the sha1. The defects, and what changed:
+
+- **K1 — the hand-written applicability sections contradicted the generated matrix.** Every skill restated
+  applicability by hand beside the generated block, and several restatements were wrong: `return_on_equity` is
+  **A** for Article 9 and 7 filers (MET-02 keeps ROE for banks), `asset_turnover` is **A** for every company
+  type, `net_income_growth` and `net_income_cagr` are **A**, `inventory_turnover` for a company with no
+  inventory line is an **empty** value (`missing_input`, MET-00) rather than an inapplicability, APP-09 covers
+  the current/quick/cash ratios and not the turnovers, and APP-02 does not cover liquidity. Every "what is not
+  applicable" section and every other applicability claim is deleted: the generated matrix block is the single
+  source, and a skill only defines the `not_applicable` reason code. Test added.
+- **K2 — the specialist was told to compare with history and peers it never sees** (profitability, roic,
+  cashflow, efficiency). Those sentences are deleted. Test: no skill contains "history" or "peer".
+- **K3 — six statements wrong for the code or the checklist.** The leverage skill's claim that a REIT
+  reporting only secured and unsecured debt gets empty debt ratios is false since T-151 part 1 added the
+  sourced map (now stated through ID-02b); the same skill called coverage withheld on negative equity
+  (`DQ_NEG_EQUITY` quarantines D/E and ROE); profitability said `gross_margin` needs a cost-of-revenue line
+  (MD-06 uses `GrossProfit` when filed); growth said a later restatement leaves the base alone (PER-04 takes
+  the base from **this** filing's comparative column); valuation put the stored market cap's count on the
+  analysis date (MKT-01: the stored metric's D is the **period end**, VALORIZATION's is the analysis date);
+  and cashflow's withheld bullet named a free-cash-flow margin screen that no rule states.
+- **K4 — a citation must back its sentence.** Every bullet was re-audited. The direction and quality readings
+  no source states are removed ("a higher value is the stronger reading", "the weaker quality of earnings",
+  "the comfort rests on inventory", "a capital-intensive company turns its assets slowly by nature", the
+  growth and cagr interpretations); an MD row is cited for the definition alone; the readings kept are the
+  ones a source states — C7 p.4 (a return is compared with the cost of capital), C8 p.3 (the geometric
+  average), C9 p.3 (a loss's causes), C13 p.11/p.19 and C14 p.38 and C15 p.2 (a utility's negative free cash
+  flow). `out/f1_skills_rule_map.md` is the review list — 9 skills, 84 bullets, each citation followed by the
+  cited rule's own text or the source's verbatim quote, so a reader can check the backing.
+
+  The bullets fell from 116 to 84: the deleted applicability sections and the unsupported readings.
+
+- **K5 — a withheld label hid an empty value's own reason.** `_metric_lines` put `withheld (<rule>)` ahead of
+  `empty (<reason>)`, and `withheld_metrics` returned a quarantined metric whether or not it had a value. A
+  metric is now withheld only when it **has** a value; an empty value keeps its own reason. Before → after, on
+  the 9,340 stored filings:
+
+  | rule | rows before | rows after | companies after |
+  |---|---|---|---|
+  | DQ_FCF_YIELD | 33 | 33 | 12 |
+  | DQ_MARGIN | 20 | 20 | 3 |
+  | DQ_MCAP_SCALE | 15 | 12 | 1 |
+  | DQ_NEG_EQUITY | 176 | 7 | 5 |
+  | DQ_OCF_MARGIN | 26 | 26 | 3 |
+  | DQ_REVENUE_POS | 201 | 11 | 2 |
+
+  Filings with a withheld value: 185 → **77**. Fallback scores that change: 60 → **60** (the fallback already
+  skipped an empty value, so removing its label changes no score).
+
+  **The 7 `DQ_NEG_EQUITY` rows are kept, and the plan's "expect 0" is wrong** (`out/f1_neg_equity_rows.txt`):
+  the premise that both D/E and ROE are already empty when equity ≤ 0 holds for D/E, which divides by the
+  **current** equity, but not for ROE, whose denominator is the **prior year's** (MET-02; MD-10; APP-07's
+  source C7 p.12 ties "meaningless" to the book value divided by). All 7 are `return_on_equity` values with a
+  negative current equity and a positive prior-year one: CAH (filing 1360, ROE −0.52, equity −709M, prior
+  1,791M), CCI (1495, −0.61, −133M / 6,381M), LYV (5420, +0.31, −139M / 271M), NCLH (6037, −21.09, −99.5M /
+  68.6M) and STX (7734, 7741, 7742; −1,199M / −470M / −1,004M against a prior 109M). D5 mirrors exactly what
+  `quality`'s HARD gates quarantine, which is what `cycle` reads, so they stay withheld in this PR; the basis
+  the gate tests is a `T-071` decision (recorded there, dated, from this round).
+
+- **Sizes** (`out/f1_sizes.txt`): all nine, 72,541 (master) → **38,684** (this branch; 43,875 before the
+  round, so the round removed 5,191 characters). One filing's whole prompt: 10-K 73,157 → 40,557 (45,748
+  before); 10-Q 63,932 → 41,947 (46,467 before).
+- **The prompt hash** (`out/f1_prompt_hash.txt`): `3f03aad01100a70d0f1d4e097d2f6565520e2eefe1cbae9baef8788d9e981453`
+  → `448500d74ef81153d9920ec5cd9a170a1151a8ef567f881834d90084f231f877`.
+- **Residual, for the checklist's next version:** the checklist's own Annex B row MD-13 says the quick ratio
+  is "today (current assets − inventory) / current liabilities; **T-076 proposes** (cash + short-term
+  investments + receivables) / current liabilities". D-05 keeps today's formula (the quick-ratio item waits
+  for the second author), so that sentence in the frozen checklist is now stale. `docs/metric_dictionary.md`
+  and `metric_definitions.csv` are generated from it and cannot be edited by hand.
