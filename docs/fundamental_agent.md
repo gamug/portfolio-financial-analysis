@@ -343,7 +343,7 @@ no LLM variables; `fundamental_agent/pending.py`) and `migrate` → `kg_schema.c
 
 **Exit code of `run` (T-017, `failures.py`).** Every recorded failure is classed `data` or
 `service` by an explicit allowlist (`failures.classify`): `data` = stage `period`/`identity`, or a
-message with `unsuccessful payload`, `reconciliation failed`, `refusing to overwrite` or `refusing
+message with `Failed to extract financials` (the gateway's extraction failure inside its `unsuccessful payload` message; "No '10-K'/'10-Q' filing found" is a filing that may appear later, so it stays `service`), `reconciliation failed`, `refusing to overwrite` or `refusing
 to replace` -- the filing fails the same way on every run. Everything else, including an unknown
 error, a gateway outage (`failed after N attempts`), an HTTP status error and an LLM provider
 error, is `service`. `run` exits 1 only when **nothing completed and at least one failure is

@@ -21,6 +21,10 @@ from fundamental_agent.failures import DATA_MESSAGE_MARKERS, DATA_STAGES, classi
 from fundamental_agent.pipeline import RunReport
 
 FIXTURES = Path(__file__).parent / "fixtures"
+UNSUCCESSFUL_EXTRACTION = (
+    "/financials/1 -> unsuccessful payload: {'success': False, 'error': "
+    "\"Failed to extract financials: 'NoneType' object has no attribute 'to_dataframe'\"}"
+)
 
 
 @pytest.mark.parametrize("stage", sorted(DATA_STAGES))
@@ -47,6 +51,18 @@ def test_a_data_message_is_data(marker: str) -> None:
 def test_everything_else_including_an_unknown_error_is_service(message: str) -> None:
     assert classify("process", message) == "service"
     assert classify(None, None) == "service"
+
+
+def test_a_filing_the_gateway_does_not_have_yet_is_service_not_data() -> None:
+    """271 of production's 366 unsuccessful-payload rows say "No '10-K'/'10-Q' filing found": the
+    filing may appear later, so it is retried (pending) and fails the step when nothing completed."""
+    message = (
+        "0000000001-26-000001: /financials/0000000001 -> unsuccessful payload: "
+        "{'success': False, 'error': \"No '10-Q' filing found for ticker 'X' in 2026\"}"
+    )
+    assert classify("process", message) == "service"
+    extraction = message.replace("No '10-Q' filing found", "Failed to extract financials")
+    assert classify("process", extraction) == "data"
 
 
 def test_the_label_and_succession_stages_are_not_data() -> None:
@@ -98,7 +114,7 @@ def test_a_run_through_the_pipeline_counts_each_failure_by_its_class(
         {("10-Q", 2023): [Q2_OCT, Q1_JUN]},
         {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
         raises={
-            Q1_JUN.accession_number: EdgarError("/financials/1 -> unsuccessful payload: {}"),
+            Q1_JUN.accession_number: EdgarError(UNSUCCESSFUL_EXTRACTION),
             Q2_OCT.accession_number: EdgarError("/financials/1 failed after 3 attempts"),
         },
     )
@@ -150,7 +166,7 @@ def test_a_quiet_day_with_only_known_data_failures_exits_zero(
         {},
         raises={
             Q1_JUN.accession_number: EdgarError("/financials/1 reconciliation failed: balance"),
-            Q2_OCT.accession_number: EdgarError("/financials/1 -> unsuccessful payload: {}"),
+            Q2_OCT.accession_number: EdgarError(UNSUCCESSFUL_EXTRACTION),
         },
     )
     report = _run(monkeypatch, tmp_path, edgar)

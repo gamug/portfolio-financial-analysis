@@ -26,7 +26,10 @@ DATA_STAGES: frozenset[str] = frozenset(
 
 # ``analysis_run_error.message`` substrings that are data failures (stage ``process``).
 DATA_MESSAGE_MARKERS: tuple[str, ...] = (
-    "unsuccessful payload",  # EdgarError, the gateway's own failure (edgar_client.py:205)
+    # The gateway's own extraction failure, inside EdgarError's "unsuccessful payload" message
+    # (edgar_client.py:205). Not the whole payload message: "No '10-K'/'10-Q' filing found" is
+    # also an unsuccessful payload, but a filing that may appear later, so it stays "service".
+    "Failed to extract financials",
     "reconciliation failed",  # EdgarError, statements failed the gateway's reconciliation (:193)
     "refusing to overwrite",  # FilingLabelCollision (db.py:396-397)
     "refusing to replace",  # FilingReplacementRefused (db.py:425)

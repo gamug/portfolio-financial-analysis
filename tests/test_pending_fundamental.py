@@ -16,7 +16,7 @@ from kg_schema import connect
 from kg_schema.trading_calendar import available_from
 
 D = "2026-10-02"
-KNOWN = "0000072971-23-000142"  # production's shape: three `unsuccessful payload` rows
+KNOWN = "0000072971-23-000142"  # production's shape: three `Failed to extract financials` rows
 
 
 def _sha1(path: Path) -> str:
@@ -350,7 +350,8 @@ def test_production_shape_three_unsuccessful_payloads_are_a_known_data_failure(f
             KNOWN,
             "2026",
             "process",
-            "/financials/0000072971 -> unsuccessful payload: {'success': False}",
+            "/financials/0000072971 -> unsuccessful payload: {'success': False, 'error': "
+            "\"Failed to extract financials: 'NoneType' object has no attribute 'to_dataframe'\"}",
         )
     fx.unscored("AAA", KNOWN, "2026-08-01")
     edgar = FakeEdgar()
@@ -359,6 +360,19 @@ def test_production_shape_three_unsuccessful_payloads_are_a_known_data_failure(f
         f"pending: no 2 members current, 8 listings; 1 known data failure (AAA 10-Q {KNOWN})"
     )
     assert len(edgar.calls) == 8  # the D window only: the error rows cost no call
+
+
+def test_a_filing_not_found_at_the_gateway_is_service_and_pending(fx: Fixture) -> None:
+    run = fx.new_run(as_of="2026-09-22")
+    fx.error(
+        run,
+        "AAA",
+        "0000000001-26-000061",
+        "2026",
+        "process",
+        "/financials/1 -> unsuccessful payload: {'success': False, 'error': \"No '10-Q' filing found\"}",
+    )
+    assert fx.line(NoGateway()) == "pending: yes 1 unscored filings (AAA 10-Q 0000000001-26-000061)"
 
 
 def test_a_service_row_with_no_later_covering_run_is_pending(fx: Fixture) -> None:
