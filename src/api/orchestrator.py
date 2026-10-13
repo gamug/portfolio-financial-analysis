@@ -130,8 +130,9 @@ class StepSpec:
 _SEMANTIC_NOTE = "semantic: no semantic source configured"
 
 # A pending check that outlives this is killed and counted as a failed check (= pending). The
-# steps themselves have no timeout.
-_CHECK_TIMEOUT_SECONDS = 1800
+# steps themselves have no timeout. 3600 s: the fundamental check's gateway listing took 1530 s for
+# 2,046 calls at 503 members on a production copy (T-017 measurement), so 1800 s left 15% headroom.
+_CHECK_TIMEOUT_SECONDS = 3600
 _MAX_EVIDENCE_CHARS = 300
 _PENDING_LINE = re.compile(r"^pending: (yes|no) (.+)$", re.MULTILINE)
 

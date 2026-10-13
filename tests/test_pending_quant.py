@@ -271,6 +271,10 @@ def test_the_subcommand_prints_exactly_one_line(
 ) -> None:
     fx.conn.commit()
     fx.conn.close()
+    # QuantSettings.load() calls load_dotenv() and requires KG_FINANCIAL_DB before --db overrides
+    # it: set the environment so the test needs no .env
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(fx.settings.db_path))
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(fx.settings.universe_db_path))
     monkeypatch.setattr(pending, "QuantPricingClient", lambda _url: fx.gateway)
     code = cli.main(
         [

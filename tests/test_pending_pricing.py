@@ -25,14 +25,14 @@ def _sha1(path: Path) -> str:
 
 
 class FakeGateway:
-    def __init__(self, have: dict[str, str] | None = None) -> None:
-        self.have = have or {}  # symbol -> the date it has a candle for
+    def __init__(self, have: dict[str, list[str]] | None = None) -> None:
+        self.have = have or {}  # symbol -> the dates it has candles for
         self.calls: list[tuple[str, str, str]] = []
 
     def daily_any_spelling(self, ticker: str, start: str, end: str) -> DailyPrices:
         self.calls.append((ticker, start, end))
-        date_ = self.have.get(ticker)
-        candles = [Candle(date_, 1, 1, 1, 1, 1, "x")] if date_ else []
+        dates = [d for d in self.have.get(ticker, []) if start <= d <= end]
+        candles = [Candle(d, 1, 1, 1, 1, 1, "x") for d in dates]
         return DailyPrices(ticker, start, end, "x", candles, None)
 
     def close(self) -> None:
@@ -118,11 +118,32 @@ def test_complete_is_not_pending_and_costs_no_gateway_call(fx: Fx) -> None:
 def test_a_member_lacking_the_session_that_the_gateway_has_is_pending(fx: Fx) -> None:
     fx.conn.execute("DELETE FROM price_daily WHERE asset_id = ?", (fx.ids["BBB"],))
     fx.conn.execute("DELETE FROM price_observation WHERE asset_id = ?", (fx.ids["BBB"],))
-    gateway = FakeGateway({"BBB": D})
+    gateway = FakeGateway({"BBB": [D]})
     pending_, evidence = fx.check(gateway)
     assert pending_
-    assert evidence == f"1 members lack {D} (BBB); the gateway has it for BBB"
-    assert gateway.calls == [("BBB", D, D)]  # the narrow window, not the full history
+    assert evidence == (
+        f"1 members lack {D} (BBB); the gateway has candles since 2022-01-01 for BBB"
+    )
+    # no stored bar: the step's own start date, to S, in one call
+    assert gateway.calls == [("BBB", "2022-01-01", D)]
+
+
+def test_a_member_several_sessions_behind_is_pending_when_the_gateway_has_older_candles(
+    tmp_path: Path,
+) -> None:
+    """An earlier run failed for BBB: it lacks S-1 and S. The gateway already holds S-1 but not
+    S yet. The window runs from the day after its latest stored bar, so this is pending, not dead."""
+    f = Fx(tmp_path, ["AAA", "BBB"])
+    f.bar("AAA")
+    f.bar("BBB", "2026-10-07")  # two sessions behind (Oct 8 and Oct 9 missing)
+    gateway = FakeGateway({"BBB": ["2026-10-08"]})
+    pending_, evidence = f.check(gateway)
+    assert pending_
+    assert evidence == (
+        f"1 members lack {D} (BBB); the gateway has candles since 2026-10-08 for BBB"
+    )
+    assert gateway.calls == [("BBB", "2026-10-08", D)]
+    assert f.check(FakeGateway())[0] is False  # the gateway has none of them: dead
 
 
 def test_a_dead_member_the_gateway_has_no_candle_for_is_listed_not_pending(fx: Fx) -> None:
@@ -145,7 +166,7 @@ def test_no_lookahead_a_bar_after_the_date_does_not_count(fx: Fx) -> None:
     fx.conn.execute("DELETE FROM price_daily WHERE asset_id = ?", (fx.ids["BBB"],))
     fx.conn.execute("DELETE FROM price_observation WHERE asset_id = ?", (fx.ids["BBB"],))
     fx.bar("BBB", "2026-10-12")  # after D
-    gateway = FakeGateway({"BBB": D})
+    gateway = FakeGateway({"BBB": [D]})
     assert fx.check(gateway)[0]  # still lacks D
 
 
@@ -210,6 +231,10 @@ def test_the_subcommand_prints_exactly_one_line(
     fx: Fx, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     fx.conn.close()
+    # Settings.load() calls load_dotenv() and requires KG_FINANCIAL_DB before --db overrides it:
+    # set the environment so the test needs no .env
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(fx.settings.db_path))
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(fx.settings.universe_db_path))
     monkeypatch.setattr(pending, "PricingClient", lambda _url: FakeGateway())
     monkeypatch.setattr(
         pending, "datetime", type("D", (), {"now": staticmethod(lambda tz=None: NOW)})

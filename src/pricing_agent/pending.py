@@ -4,9 +4,11 @@ Read-only (``connect_ro``), gateway GETs only, no write. One line, ``pending: ye
 
 Let S be the last NYSE session on or before the analysis date D. Pending iff any of:
 
-1. a member has no ``price_daily`` bar at S **and the gateway has a candle at S for it**
-   (``daily_any_spelling``, the step's own spelling fallback; the window is S..S). A member the
-   gateway has no candle for is *dead*: running the step would change nothing for it, so it is
+1. a member has no ``price_daily`` bar at S **and the gateway has a candle for it in the window
+   from the day after its latest stored bar (the step's own start date when it has none) to S**
+   (one ``daily_any_spelling`` call, the step's own spelling fallback). A member behind by several
+   sessions is pending as soon as the gateway holds any of them. A member the gateway has no
+   candle for in that window is *dead*: running the step would change nothing for it, so it is
    listed in the evidence and does not count (P6);
 2. a member has its bar at S but no ``price_observation`` row at ``(S, PRICE_OBSERVATION_ENGINE_VERSION)``;
 3. ``has_pre_split_rows`` -- a split quant recorded after the bars were stored (T-131). A member
@@ -21,7 +23,7 @@ Let S be the last NYSE session on or before the analysis date D. Pending iff any
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from portfolio_common.db import Database, DatabaseError
@@ -31,6 +33,7 @@ from kg_schema.queries import UniverseMember, members_asof
 from kg_schema.trading_calendar import last_session_on_or_before, session_is_open_or_pending
 from pricing_agent.config import Settings
 from pricing_agent.db import PRICE_OBSERVATION_ENGINE_VERSION, has_pre_split_rows
+from pricing_agent.pipeline import DEFAULT_START_DATE
 from pricing_agent.pricing_client import PricingClient
 
 _SHOWN = 3
@@ -53,10 +56,25 @@ def _refused(conn: Database, ticker: str) -> bool:
 
 @dataclass
 class _Scan:
-    lack: list[str] = field(default_factory=list)  # no bar at S
+    lack: dict[str, str] = field(
+        default_factory=dict
+    )  # no bar at S -> where the gateway window starts
     no_obs: list[str] = field(default_factory=list)  # a bar but no observation
     split: list[str] = field(default_factory=list)  # pre-split bars, re-fetchable
     refused: list[str] = field(default_factory=list)  # pre-split bars, re-fetch refused
+
+
+def _window_start(conn: Database, asset_id: int | None, s: str) -> str:
+    """The day after the member's latest stored bar on or before S, or the step's own start date
+    when it has none: the gateway window that decides pending versus dead."""
+    if asset_id is None:
+        return DEFAULT_START_DATE
+    row = conn.execute(
+        "SELECT MAX(date) AS d FROM price_daily WHERE asset_id = ? AND date <= ?", (asset_id, s)
+    ).fetchone()
+    if row is None or row["d"] is None:
+        return DEFAULT_START_DATE
+    return (date.fromisoformat(str(row["d"])) + timedelta(days=1)).isoformat()
 
 
 def _scan(conn: Database, members: list[UniverseMember], s: str, analysis_date: str) -> _Scan:
@@ -73,7 +91,7 @@ def _scan(conn: Database, members: list[UniverseMember], s: str, analysis_date: 
                 "SELECT 1 FROM price_daily WHERE asset_id = ? AND date = ?", (asset_id, s)
             ).fetchone()
         ):
-            scan.lack.append(m.symbol)
+            scan.lack[m.symbol] = _window_start(conn, asset_id, s)
         elif not conn.execute(
             "SELECT 1 FROM price_observation WHERE asset_id = ? AND obs_date = ? "
             "AND engine_version = ?",
@@ -110,11 +128,11 @@ def check(
             f"({_named(scan.split)})"
         )
     dead: list[str] = []
-    for symbol in scan.lack:
-        if any(c.date == s for c in client.daily_any_spelling(symbol, s, s).candles):
+    for symbol, since in scan.lack.items():
+        if client.daily_any_spelling(symbol, since, s).candles:
             return True, (
-                f"{len(scan.lack)} members lack {s} ({_named(scan.lack)}); "
-                f"the gateway has it for {symbol}"
+                f"{len(scan.lack)} members lack {s} ({_named(list(scan.lack))}); "
+                f"the gateway has candles since {since} for {symbol}"
             )
         dead.append(symbol)
     extras = []

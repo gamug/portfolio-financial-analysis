@@ -242,7 +242,7 @@ check opens the database `mode=ro`, makes gateway GETs only, never calls the LLM
 - A step **runs** when its own check says pending (reason `pending: <evidence>`), or when a direct
   upstream ran *because it was pending* and completed (reason `pending upstream: <names>`; such a
   step runs no check of its own). A check that exits non-zero, prints anything but one line, or
-  outlives 1800 s is killed and counts as pending (reason `pending check failed: <cause>`); it
+  outlives 3600 s is killed and counts as pending (reason `pending check failed: <cause>`); it
   never fails the run.
 - Otherwise the step is `skipped` with `not pending: <evidence>`. A skipped upstream is satisfied:
   it does not block its dependents. A step with a failed/blocked upstream is `blocked`, as in T-013.
@@ -257,8 +257,8 @@ check opens the database `mode=ro`, makes gateway GETs only, never calls the LLM
 
 | Step | Pending iff (as of D) |
 |---|---|
-| `pricing` | a member has no `price_daily` bar at the last session on or before D and the pricing gateway has a candle for it; or a bar without its `priceobs-v2` observation; or bars from before a recorded split; or that session is not final yet. A member the gateway has no candle for, and one whose split-jump re-fetch was refused, are listed and do not count. |
-| `fundamental` | an original 10-K/10-Q filed on or before D has no FUNDAMENTAL score: stored but unscored, named by an error row, or newly listed by the EDGAR gateway (the step's own call and filters, years D-1..D, or 2022..D for a CIK with no stored filing). **A filing whose latest error is a known data failure** (`fundamental_agent/failures.py`) is not pending, and neither is a service failure that a later covering run left without a newer error: the orchestrator does not retry a data failure; a single-step `/run/fundamental-agent` run does. |
+| `pricing` | a member has no `price_daily` bar at the last session on or before D and the pricing gateway has any candle for it from the day after its latest stored bar (the step's start date if none) to that session; or a bar without its `priceobs-v2` observation; or bars from before a recorded split; or that session is not final yet. A member the gateway has no candle for in that window, and one whose split-jump re-fetch was refused, are listed and do not count. |
+| `fundamental` | an original 10-K/10-Q filed on or before D has no FUNDAMENTAL score: stored but unscored, named by an error row, or newly listed by the EDGAR gateway (the step's own call and filters, years D-1..D, or 2022..D for a CIK with no stored filing). **A filing whose latest error is a known data failure** (`fundamental_agent/failures.py`) is not pending, and neither is a service failure that a later covering run left without a newer error (an error row from a run dated after D is ignored, and a run with no `as_of` counts as in plan: an error row never makes a filing less pending; a predecessor CIK the step does not link, because its last annual report is not listed, is dropped and shown as "unlinked predecessor"): the orchestrator does not retry a data failure; a single-step `/run/fundamental-agent` run does. |
 | `entity_resolution` | the newest `ENTITY_RESOLUTION` run is not a completed build for D with the default tuning, with its edges, and with the news watermark (`discovered_urls` count/max id up to D, newest `article_entities` id) it recorded; a run from before T-017 has no watermark, so it is pending once. No news source: `skipped`. |
 | `quant_actions` (the chain's one check) | returns end before the newest member bar; a default objective has no non-live book with `as_of` in [last session, D]; a book `evaluate` would score lags behind its newest forward return; or the pricing gateway lists a dividend/split that `corporate_action` lacks. Books without positions and members the gateway cannot serve are listed and do not count. |
 

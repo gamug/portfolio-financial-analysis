@@ -37,7 +37,7 @@ from portfolio_common.db import Database, DatabaseError
 
 from kg_schema.db import connect_ro
 from kg_schema.trading_calendar import last_session_on_or_before
-from quant.actions import DEFAULT_FROM
+from quant.actions import DEFAULT_FROM, fetch_corporate_actions_gateway
 from quant.config import QuantSettings
 from quant.db import load_assets, load_book_weights, load_forward_simple_returns
 from quant.evaluate import LIVE_BOOK_KIND, PERF_ENGINE_VERSION
@@ -142,13 +142,11 @@ def _gateway_actions(
     unavailable: list[str] = []
     for asset_id, ticker in assets:
         try:
-            raw = client.actions(ticker, DEFAULT_FROM, to)
+            rows = fetch_corporate_actions_gateway(client, asset_id, ticker, DEFAULT_FROM, to)
         except (ActionsUnavailable, ActionsNotSupported):
             unavailable.append(ticker)
             continue
-        listed = {("DIVIDEND", a.ex_date) for a in raw.dividends} | {
-            ("SPLIT", a.ex_date) for a in raw.splits
-        }
+        listed = {(r.action_type, r.ex_date) for r in rows}
         new = sorted(listed - stored.get(asset_id, set()))
         if new:
             kind, ex_date = new[0]

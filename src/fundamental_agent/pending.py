@@ -20,7 +20,11 @@ A filing whose *latest* error row is a known data failure (:mod:`fundamental_age
 is not pending: it fails the same way on every run. A filing whose latest row is a service
 failure is pending only while its unit is in this check's plan and no later completed run that
 covered the unit left it without a newer error (decided from the run's ``params_json``; a run
-missing a field does not count). No part of that needs the gateway.
+missing a field does not count). No part of that needs the gateway. An error row from a run dated
+after the analysis date is ignored, and a run with no ``as_of`` counts as in plan: an error row
+never makes a filing less pending. A predecessor CIK the step does not link (its last annual
+report is not listed, ``_verify_successions``) is dropped from the listing and named in the
+evidence as an "unlinked predecessor".
 
 Declared blind spot: a filing of an older year that failed before it was stored and left no
 accession in an error row. ``/run/fundamental-agent`` (no check) lists every year and recovers it.
@@ -76,6 +80,7 @@ class Verdict:
     data_failures: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
     unlisted: list[str] = field(default_factory=list)
+    unlinked: list[str] = field(default_factory=list)  # predecessor CIKs the step does not link
     reason: str | None = None  # a P2 reason (fresh database, missing table) -- yes without reading
     scanned: int = 0  # (cik, form, year) listings made
     partial: bool = False  # stopped at the first pending item
@@ -96,6 +101,8 @@ class Verdict:
             extras.append(f"{len(self.stale)} stale ({_named(self.stale)})")
         if self.unlisted:
             extras.append(f"{len(self.unlisted)} unlisted ({_named(self.unlisted)})")
+        if self.unlinked:
+            extras.append(f"{len(self.unlinked)} unlinked predecessor ({_named(self.unlinked)})")
         tail = f"; {'; '.join(extras)}" if extras else ""
         if self.pending:
             more = "at least " if self.partial else ""
@@ -114,11 +121,17 @@ def _years(analysis_date: str, *, full: bool) -> list[int]:
     return list(range(first, last + 1))
 
 
-def _latest_errors(conn: Database) -> dict[str, _ErrorRow]:
-    """The latest ``analysis_run_error`` row per accession (by id), filing stages only."""
+def _latest_errors(conn: Database, analysis_date: str) -> dict[str, _ErrorRow]:
+    """The latest ``analysis_run_error`` row per accession (by id), filing stages only, among the
+    rows of runs with ``as_of`` on or before *analysis_date* or with no ``as_of``. A row from a run
+    dated after the analysis date says nothing about it (no lookahead), and an error row must never
+    make a filing less pending."""
     rows = conn.execute(
-        "SELECT run_id, ticker, form, fiscal_period, stage, message FROM analysis_run_error "
-        "WHERE stage IN ('process', 'identity', 'period') ORDER BY id"
+        "SELECT e.run_id, e.ticker, e.form, e.fiscal_period, e.stage, e.message "
+        "FROM analysis_run_error e LEFT JOIN analysis_run r ON r.id = e.run_id "
+        "WHERE e.stage IN ('process', 'identity', 'period') "
+        "AND (r.as_of IS NULL OR r.as_of <= ?) ORDER BY e.id",
+        (analysis_date,),
     ).fetchall()
     out: dict[str, _ErrorRow] = {}
     for r in rows:
@@ -174,8 +187,7 @@ class _Judge:
             year = int(str(row.fiscal_period))
         except ValueError:
             return False
-        as_of = self._run_as_of(row.run_id)
-        return year in window and as_of is not None and as_of <= self._date
+        return year in window
 
     def _run_as_of(self, run_id: int) -> str | None:
         r = self._conn.execute("SELECT as_of FROM analysis_run WHERE id = ?", (run_id,)).fetchone()
@@ -255,6 +267,9 @@ class _Plan:
 
     ciks: dict[str, list[tuple[str, bool]]]  # ticker -> [(cik, full window)]
     windows: dict[str, list[int]]  # ticker -> the filing years covered
+    # (successor CIK, predecessor CIK) -> effective date, from ``identity.predecessors_of`` as the
+    # step reads it (``pipeline._verify_successions``)
+    effective: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 def _plan(
@@ -267,6 +282,9 @@ def _plan(
         chain = identity.cik_chain(conn, cik) if asset is not None else (str(cik),)
         stored = _stored_ciks(conn, int(asset["id"])) if asset is not None else set()  # type: ignore[index]
         plan.ciks[m.symbol] = [(c, c not in stored) for c in chain]
+        if asset is not None and cik is not None:
+            for pred, effective in identity.predecessors_of(conn, cik):
+                plan.effective[(cik, pred)] = effective
         plan.windows[m.symbol] = _years(
             analysis_date, full=any(full for _, full in plan.ciks[m.symbol])
         )
@@ -322,15 +340,39 @@ class _Lister:
         self._plan = plan
         self._verdict = verdict
         self._sorter = sorter
+        self._linked: dict[tuple[str, str], bool] = {}
 
     def run(self, members: list[UniverseMember]) -> None:
         for m in members:
             for cik, full in self._plan.ciks[m.symbol]:
+                if self._unlinked(m, cik):
+                    continue
                 for form, year in itertools.product(DEFAULT_FORMS, _years(self._date, full=full)):
                     self._list(m, cik, form, year)
                     if self._verdict.pending:
                         self._verdict.partial = True
                         return
+
+    def _unlinked(self, m: UniverseMember, cik: str) -> bool:
+        """``True`` for a predecessor CIK the step drops: its last annual report is not listed
+        (``pipeline._last_annual_report_missing``, APP-10b-3), so its filings are never scored and
+        must not keep the step pending. Gateway GETs only; once per succession. A listing that
+        cannot be read raises (the step would just not link, but an outage must never read as
+        "not pending") and the check fails -> pending."""
+        own = self._plan.ciks[m.symbol][0][0]
+        key = (own, cik)
+        if key not in self._plan.effective:
+            return False  # the member's own CIK
+        if key not in self._linked:
+            reason = pipeline._last_annual_report_missing(
+                self._engine, cik, self._plan.effective[key]
+            )
+            if reason is not None and "could not be read" in reason:
+                raise EdgarError(reason)
+            self._linked[key] = reason is None
+            if reason is not None:
+                self._verdict.unlinked.append(f"{m.symbol} {cik}")
+        return not self._linked[key]
 
     def _list(self, m: UniverseMember, cik: str, form: str, year: int) -> None:
         task = pipeline._YearTask(
@@ -382,7 +424,9 @@ def check(
         return verdict, len(members)
 
     plan = _plan(conn, members, assets, analysis_date)
-    errors = _latest_errors(conn) if conn.relation_exists("analysis_run_error") else {}
+    errors = (
+        _latest_errors(conn, analysis_date) if conn.relation_exists("analysis_run_error") else {}
+    )
     sorter = _Sorter(
         verdict,
         completed_accessions(conn),

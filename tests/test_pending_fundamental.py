@@ -97,13 +97,13 @@ class Fixture:
         self.conn.commit()
 
     def new_run(
-        self, *, as_of: str = D, status: str = "completed", params: dict | None = None
+        self, *, as_of: str | None = D, status: str = "completed", params: dict | None = None
     ) -> int:
         body = {
             "analysis_date": as_of,
             "forms": ["10-K", "10-Q"],
             "since_year": 2022,
-            "until_year": int(as_of[:4]),
+            "until_year": int((as_of or D)[:4]),
             "limit": None,
             "tickers": None,
             "fresh": False,
@@ -227,16 +227,40 @@ def test_a_new_member_is_listed_over_the_full_window(tmp_path: Path) -> None:
     assert {y for _, _, y in edgar.calls} == {2022, 2023, 2024, 2025, 2026}
 
 
-def test_a_newly_recorded_succession_cik_is_listed_over_its_full_window(fx: Fixture) -> None:
+PRED = "0000000999"
+PRED_LAST_10K = "0000000999-26-000001"
+
+
+def _succession(fx: Fixture, *, linked: bool = True) -> FakeEdgar:
+    """AAA succeeded PRED on 2026-01-01. *linked*: PRED's last 10-K (period 2025-12-31) is listed,
+    so the step links the predecessor (``_last_annual_report_missing`` finds it); it is stored and
+    scored, so listing it never makes the check pending."""
     fx.conn.execute(
-        "INSERT INTO cik_succession (successor_cik, predecessor_cik, effective_date, evidence_form, "
-        "evidence_accession, evidence_quote) VALUES (?, '0000000999', '2026-01-01', '8-K12B', 'x', 'x')",
-        (cik_for("AAA"),),
+        "INSERT INTO cik_succession (successor_cik, predecessor_cik, effective_date, "
+        "evidence_form, evidence_accession, evidence_quote) "
+        "VALUES (?, ?, '2026-01-01', '8-K12B', 'x', 'x')",
+        (cik_for("AAA"), PRED),
     )
     fx.conn.commit()
     edgar = FakeEdgar()
+    if linked:
+        fx.scored("AAA", PRED_LAST_10K, "2026-02-15", form="10-K")
+        edgar.listing[(PRED, "10-K", 2025)] = [
+            FilingRef("10-K", "2026-02-15", PRED_LAST_10K, cik=PRED, period_of_report="2025-12-31")
+        ]
+    return edgar
+
+
+def test_a_newly_recorded_succession_cik_is_listed_over_its_full_window(fx: Fixture) -> None:
+    edgar = _succession(fx)
     fx.line(edgar)
-    assert {y for c, _, y in edgar.calls if c == "0000000999"} == {2022, 2023, 2024, 2025, 2026}
+    assert {y for c, f, y in edgar.calls if c == PRED and f == "10-Q"} == {
+        2022,
+        2023,
+        2024,
+        2025,
+        2026,
+    }
     assert {y for c, _, y in edgar.calls if c == cik_for("AAA")} == {2025, 2026}
 
 
@@ -250,18 +274,51 @@ def test_null_cik_rows_count_for_the_assets_own_cik_so_the_window_stays_narrow(f
 
 
 def test_a_predecessor_cik_with_only_null_rows_gets_the_full_window(fx: Fixture) -> None:
+    edgar = _succession(fx)
     fx.conn.execute("UPDATE sec_filings SET cik = NULL")
-    fx.conn.execute(
-        "INSERT INTO cik_succession (successor_cik, predecessor_cik, effective_date, "
-        "evidence_form, evidence_accession, evidence_quote) "
-        "VALUES (?, '0000000999', '2026-01-01', '8-K12B', 'x', 'x')",
-        (cik_for("AAA"),),
-    )
     fx.conn.commit()
-    edgar = FakeEdgar()
     fx.line(edgar)
-    assert {y for c, _, y in edgar.calls if c == "0000000999"} == {2022, 2023, 2024, 2025, 2026}
+    assert {y for c, f, y in edgar.calls if c == PRED and f == "10-Q"} == {
+        2022,
+        2023,
+        2024,
+        2025,
+        2026,
+    }
     assert {y for c, _, y in edgar.calls if c == cik_for("AAA")} == {2025, 2026}
+
+
+def test_a_predecessor_whose_last_10k_is_not_listed_is_unlinked_not_pending(fx: Fixture) -> None:
+    """The step drops it (APP-10b-3) and never scores its filings: they must not keep the check
+    pending forever."""
+    edgar = _succession(fx, linked=False)
+    edgar.listing[(PRED, "10-Q", 2025)] = [_ref("0000000999-25-000007", "2025-08-01", PRED)]
+    line = fx.line(edgar)
+    assert line.startswith("pending: no")
+    assert f"1 unlinked predecessor (AAA {PRED})" in line
+    assert not any(c == PRED and f == "10-Q" for c, f, _ in edgar.calls)  # never listed
+
+
+def test_a_linked_predecessor_filing_not_stored_is_pending(fx: Fixture) -> None:
+    edgar = _succession(fx)
+    edgar.listing[(PRED, "10-Q", 2025)] = [_ref("0000000999-25-000007", "2025-08-01", PRED)]
+    assert "0000000999-25-000007" in fx.line(edgar)
+
+
+def test_a_predecessor_listing_that_cannot_be_read_fails_the_check_not_unlinks(
+    fx: Fixture,
+) -> None:
+    """An outage while checking the predecessor must never read as "unlinked, not pending"."""
+    edgar = _succession(fx)
+
+    def down(cik: str, form: str, year: int) -> list[FilingRef]:
+        if cik == PRED:
+            raise EdgarError("/filing_by_year failed after 3 attempts")
+        return []
+
+    edgar.filing_by_year = down  # type: ignore[method-assign]
+    with pytest.raises(EdgarError):
+        fx.line(edgar)
 
 
 def test_a_dead_member_the_gateway_has_no_match_for_is_listed_not_pending(fx: Fixture) -> None:
@@ -314,6 +371,22 @@ def test_a_service_row_with_no_later_covering_run_is_pending(fx: Fixture) -> Non
         "process",
         "/financials/1 failed after 3 attempts",
     )
+    assert fx.line(NoGateway()) == "pending: yes 1 unscored filings (AAA 10-Q 0000000001-26-000060)"
+
+
+def test_a_service_row_from_a_run_with_no_as_of_is_pending_not_stale(fx: Fixture) -> None:
+    """An error row must never make a filing less pending than no row at all."""
+    run = fx.new_run(as_of=None)
+    fx.error(run, "AAA", "0000000001-26-000060", "2026", "process", "failed after 3 attempts")
+    assert fx.line(NoGateway()) == "pending: yes 1 unscored filings (AAA 10-Q 0000000001-26-000060)"
+
+
+def test_a_row_from_a_run_dated_after_the_date_is_ignored_so_the_filing_stays_pending(
+    fx: Fixture,
+) -> None:
+    fx.unscored("AAA", "0000000001-26-000060", "2026-08-01")  # stored unscored, filed <= D
+    later = fx.new_run(as_of="2026-10-20")
+    fx.error(later, "AAA", "0000000001-26-000060", "2026", "process", "boom")
     assert fx.line(NoGateway()) == "pending: yes 1 unscored filings (AAA 10-Q 0000000001-26-000060)"
 
 
@@ -398,6 +471,8 @@ def test_the_subcommand_never_builds_the_llm_agent(
     monkeypatch.setattr(pipeline, "FundamentalAnalyst", boom)
     for var in ("LLM_API_KEY", "LLM_MODEL", "LLM_URL"):
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(fx.db))
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(fx.udb))
     monkeypatch.setattr(pending, "EdgarClient", lambda _url: FakeEdgar())
     fx.conn.close()
     code = cli.main(

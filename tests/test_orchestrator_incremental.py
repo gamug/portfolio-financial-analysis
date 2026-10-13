@@ -159,7 +159,7 @@ def test_cycle_select_never_enters_ran_pending(
         ((2, "Traceback ...\nboom\n"), "exit 2: boom"),
         ((0, "no marker here\n"), "unparseable output (0 pending lines)"),
         ((0, "pending: yes a\npending: no b\n"), "unparseable output (2 pending lines)"),
-        (subprocess.TimeoutExpired(["x"], 1800), "timeout after 1800 s"),
+        (subprocess.TimeoutExpired(["x"], 3600), "timeout after 3600 s"),
         (FileNotFoundError("no python"), "FileNotFoundError: no python"),
     ],
 )
@@ -259,7 +259,7 @@ def test_checks_get_the_timeout_and_steps_do_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, fake = _run(tmp_path, monkeypatch, _nothing_new())
-    assert {t for _, _, t in fake.check_calls} == {1800}  # FakeRunner asserts steps get none
+    assert {t for _, _, t in fake.check_calls} == {3600}  # FakeRunner asserts steps get none
 
 
 def test_run_command_kills_a_check_that_outlives_its_timeout() -> None:

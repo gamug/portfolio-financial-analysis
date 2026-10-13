@@ -233,7 +233,10 @@ def test_the_subcommand_prints_exactly_one_line(
     fx: Fx, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     fx.build()
+    # Settings.load() calls load_dotenv() and requires KG_FINANCIAL_DB: no .env needed
     monkeypatch.setenv("KG_FINANCIAL_DB", str(fx.settings.db_path))
+    monkeypatch.setenv("KG_UNIVERSE_DB", str(fx.settings.universe_db_path))
+    monkeypatch.setenv("KG_NEWS_DB", str(fx.news))
     code = cli.main(
         [
             "pending",
