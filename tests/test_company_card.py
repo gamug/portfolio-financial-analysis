@@ -120,6 +120,10 @@ def test_dq01_tolerance_infers_the_unit() -> None:
     assert dq01_tolerance(1_234_000.0) == 0.005 * 1_234_000.0
     # a small value: the rounding floor (0.5 x USD 1) wins
     assert dq01_tolerance(50.0) == 0.5
+    # G5: L-10's n_terms -- a two-part sum against the filer's total has 3 terms, so a 1M gap on a
+    # 78M sum is within the rounding term (ROK 0001024478-26-000005 is not a mismatch)
+    assert dq01_tolerance(78_000_000.0, 3) == 1_500_000.0
+    assert abs(79_000_000.0 - 78_000_000.0) <= dq01_tolerance(78_000_000.0, 3)
     # the relative term wins for a large non-round value
     assert dq01_tolerance(1_000_000_001.0) == 0.005 * 1_000_000_001.0
 

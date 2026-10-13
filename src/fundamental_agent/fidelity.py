@@ -71,13 +71,18 @@ def _kind_ok(tag: str, start: str | None, end: str) -> bool:
     return False
 
 
-def dq01_tolerance(value: float) -> float:
-    """DQ-01's threshold for one term: ``max(L-10 rounding, 0.5% x |value|)``. The unit is inferred
-    (L-10): USD 1 million when it divides the value exactly, else USD 1 thousand, else USD 1."""
-    for unit in (1_000_000.0, 1_000.0):
-        if value % unit == 0.0:
-            return max(0.5 * unit, 0.005 * abs(value))
-    return max(0.5, 0.005 * abs(value))
+def dq01_tolerance(value: float, n_terms: int = 1) -> float:
+    """DQ-01's threshold: ``max(L-10 rounding, 0.5% x |value|)``, the rounding term
+    ``0.5 x unit x n_terms`` (L-10; G5). The unit is inferred (L-10): USD 1 million when it divides
+    the value exactly, else USD 1 thousand, else USD 1. *n_terms* is the number of filed values
+    entering the comparison -- 1 for a single fact, the parts + 1 for a sourced sum against the
+    filer's own total."""
+    unit = 1.0
+    for candidate in (1_000_000.0, 1_000.0):
+        if value % candidate == 0.0:
+            unit = candidate
+            break
+    return max(0.5 * unit * n_terms, 0.005 * abs(value))
 
 
 def _iter_facts(
@@ -164,7 +169,7 @@ def run_fidelity(  # noqa: C901, PLR0912, PLR0915 - one linear pass, like the au
 ) -> tuple[str, list[dict[str, Any]]]:
     """Compare every filing's resolved line items with the SEC's companyfacts. Returns the report
     text and the mismatching (filing, item) rows."""
-    per_item: dict[str, Counter[str]] = {}
+    per_item: dict[tuple[str, str], Counter[str]] = {}
     mismatches: list[dict[str, Any]] = []
     filings_compared = 0
     for asset in conn.execute("SELECT id, ticker, cik FROM assets WHERE cik IS NOT NULL"):
@@ -183,54 +188,64 @@ def run_fidelity(  # noqa: C901, PLR0912, PLR0915 - one linear pass, like the au
                 continue
             filings_compared += 1
             accn = str(filing["accession_number"])
-            for item in REGISTRY:
-                resolution = stmts.resolve(item, own_key)
-                if resolution.value is None:
-                    continue
-                concept = resolution.concept or ""
-                if " + " in concept:
-                    # a map: compare the sum against the aggregate concept it implements, when one
-                    # exists (T-147's filled-sum-vs-total comparison); else skip
-                    aggregate = aggregate_concept(item, concept)
-                    if aggregate is None:
+            # G5 (b): a 10-Q's TTM is built from its YTD column, so every YTD duration column that
+            # ends on the filing's period end is compared too, reported per column kind.
+            keys = [("own", own_key)]
+            for period in stmts.periods:
+                if period.tag == "YTD" and period.date == str(filing["period_end"]):
+                    keys.append(("ytd", str(period.key)))
+            for kind, key in keys:
+                for item in REGISTRY:
+                    resolution = stmts.resolve(item, key)
+                    if resolution.value is None:
                         continue
-                    concept = aggregate
-                elif not concept.startswith(("us-gaap_", "dei_")):
-                    # a derived or extension value: companyfacts carries no such fact
-                    continue
-                # a balance-sheet item is an instant fact (ID-05): its own period key is the
-                # instant column, whose tag is INST
-                key = own_key
-                if REGISTRY[item].statements == ("balance_sheet",):
-                    instant = stmts._instant_for(own_key)
-                    if instant is not None:
-                        key = instant
-                parsed = parse_period_key(key)
-                if parsed is None:
-                    continue
-                candidates = _candidates(index, accn, concept, *parsed)
-                stats = per_item.setdefault(item, Counter())
-                if not candidates:
-                    stats["no_sec_fact"] += 1
-                    continue
-                stats["compared"] += 1
-                tolerance = dq01_tolerance(resolution.value)
-                if any(abs(c - resolution.value) <= tolerance for c in candidates):
-                    stats["matched"] += 1
-                else:
-                    stats["mismatched"] += 1
-                    mismatches.append(
-                        {
-                            "ticker": str(asset["ticker"]),
-                            "accession": accn,
-                            "form": str(filing["form"]),
-                            "period_key": own_key,
-                            "item": item,
-                            "stored": resolution.value,
-                            "sec": candidates[0],
-                            "concept": concept,
-                        }
-                    )
+                    concept = resolution.concept or ""
+                    n_terms = 1
+                    if " + " in concept:
+                        # a map: compare the sum against the aggregate concept it implements, when
+                        # one exists (T-147's filled-sum-vs-total comparison); else skip
+                        aggregate = aggregate_concept(item, concept)
+                        if aggregate is None:
+                            continue
+                        n_terms = len(concept.split(" + ")) + 1  # the parts + the filer's own total
+                        concept = aggregate
+                    elif not concept.startswith(("us-gaap_", "dei_")):
+                        # a derived or extension value: companyfacts carries no such fact
+                        continue
+                    # a balance-sheet item is an instant fact (ID-05): its own period key is the
+                    # instant column, whose tag is INST
+                    column = key
+                    if REGISTRY[item].statements == ("balance_sheet",):
+                        instant = stmts._instant_for(key)
+                        if instant is not None:
+                            column = instant
+                    parsed = parse_period_key(column)
+                    if parsed is None:
+                        continue
+                    candidates = _candidates(index, accn, concept, *parsed)
+                    stats = per_item.setdefault((item, kind), Counter())
+                    if not candidates:
+                        stats["no_sec_fact"] += 1
+                        continue
+                    stats["compared"] += 1
+                    tolerance = dq01_tolerance(resolution.value, n_terms)
+                    if any(abs(c - resolution.value) <= tolerance for c in candidates):
+                        stats["matched"] += 1
+                    else:
+                        stats["mismatched"] += 1
+                        mismatches.append(
+                            {
+                                "ticker": str(asset["ticker"]),
+                                "accession": accn,
+                                "form": str(filing["form"]),
+                                "column": kind,
+                                "period_key": key,
+                                "item": item,
+                                "stored": resolution.value,
+                                "sec": candidates[0],
+                                "concept": concept,
+                            }
+                        )
 
     lines = [
         "Fidelity gate (T-151 part 3, D16)",
@@ -239,20 +254,21 @@ def run_fidelity(  # noqa: C901, PLR0912, PLR0915 - one linear pass, like the au
         f"gate: minimum fidelity per item {MIN_FIDELITY:.0%} "
         f"(a constant; the measured rates are below)",
         "",
-        f"{'item':<30}{'compared':>10}{'matched':>10}{'mismatched':>12}{'no fact':>10}{'fidelity':>10}",
+        f"{'item':<30}{'kind':<6}{'compared':>10}{'matched':>10}{'mismatched':>12}"
+        f"{'no fact':>10}{'fidelity':>10}",
     ]
     below: list[str] = []
-    for item in sorted(per_item):
-        stats = per_item[item]
+    for item, kind in sorted(per_item):
+        stats = per_item[(item, kind)]
         compared = stats["compared"]
         matched = stats["matched"]
         fidelity = matched / compared if compared else 1.0
         lines.append(
-            f"{item:<30}{compared:>10}{matched:>10}{stats['mismatched']:>12}"
+            f"{item:<30}{kind:<6}{compared:>10}{matched:>10}{stats['mismatched']:>12}"
             f"{stats['no_sec_fact']:>10}{fidelity:>9.1%}"
         )
         if compared and fidelity < MIN_FIDELITY:
-            below.append(f"{item} {fidelity:.1%} ({stats['mismatched']}/{compared})")
+            below.append(f"{item}[{kind}] {fidelity:.1%} ({stats['mismatched']}/{compared})")
     lines += [
         "",
         f"items below the gate: {len(below)}" + (f" — {', '.join(below)}" if below else ""),
