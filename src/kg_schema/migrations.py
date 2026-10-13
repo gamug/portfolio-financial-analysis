@@ -53,6 +53,126 @@ def _columns(db: Database, table: str) -> set[str]:
     return set(db.table_columns(table))
 
 
+# -- T-154: the target-shape guards ------------------------------------------
+#
+# A rebuilding migration copies only the columns it itself knows. Replaying one against a table that a
+# later release widened (``preferred_sign``/``correction_rule`` on ``financial_facts`` (T-148/T-118),
+# ``available_at`` on ``fundamental_metrics``/``score_snapshot`` (T-107), ``prompt_hash`` on
+# ``score_snapshot`` (T-113), ``expires_on``/``expiry_history_json`` on ``veto`` (T-070)) would bring
+# those columns back NULL. Each rebuilding migration below therefore returns early -- changing nothing
+# -- when its own target shape is already there; :func:`apply_migrations` still records the version, so
+# the floor ends up correct. The same checks answer :func:`at_current_shape`, which ``ensure`` uses to
+# stamp a database that was born at the current shape (D2).
+#
+# The rebuilds also carry the columns the current code adds, exactly as m005/m006 already carried
+# ``forensic_flags_json`` (T-041): the column is added to the old table first (a no-op when present),
+# then copied, so a rebuild that legitimately runs on an older shape cannot drop it either.
+
+_UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
+    # m002 / m003: the append-only key each rebuild widens with its own version column.
+    "financial_facts": ("filing_id", "statement", "concept", "period_key", "filing_version"),
+    "fundamental_metrics": ("filing_id", "metric_group", "metric_name", "engine_version"),
+}
+
+
+def _has_unique_key(db: Database, table: str) -> bool:
+    """True when *table* carries a UNIQUE index over exactly :data:`_UNIQUE_KEYS`\\ [table].
+
+    Read through the ``pragma_index_list`` / ``pragma_index_info`` table-valued functions: the
+    table and index names are bound parameters, never interpolated into SQL."""
+    wanted = _UNIQUE_KEYS[table]
+    for row in db.execute('SELECT name, "unique" AS u FROM pragma_index_list(?)', (table,)):
+        if not int(row["u"]):
+            continue
+        columns = tuple(
+            str(r["name"])
+            for r in db.execute(
+                "SELECT name FROM pragma_index_info(?) ORDER BY seqno", (str(row["name"]),)
+            )
+        )
+        if columns == wanted:
+            return True
+    return False
+
+
+def _m002_at_target_shape(db: Database) -> bool:
+    """m002's target: ``financial_facts`` keyed by ``filing_version``."""
+    if not _table_exists(db, "financial_facts"):
+        return True  # nothing to rebuild
+    return _has_unique_key(db, "financial_facts")
+
+
+def _m003_at_target_shape(db: Database) -> bool:
+    """m003's target: ``fundamental_metrics`` keyed by ``engine_version``."""
+    if not _table_exists(db, "fundamental_metrics"):
+        return True
+    return _has_unique_key(db, "fundamental_metrics")
+
+
+def _m004_at_target_shape(db: Database) -> bool:
+    """m004's target: ``fundamental_snapshot`` is the compatibility VIEW, not the legacy table.
+
+    A legacy table with no rows holds nothing to migrate, so it counts as already at the target shape:
+    a database born at the current shape has that empty table (the agent's own DDL), and the compat
+    view only exists for a database that actually carried legacy snapshots."""
+    if not _table_exists(db, "fundamental_snapshot") or _is_view(db, "fundamental_snapshot"):
+        return True
+    return int(db.execute("SELECT COUNT(*) FROM fundamental_snapshot").fetchone()[0]) == 0
+
+
+def _m005_at_target_shape(db: Database) -> bool:
+    """m005's target: the ``score_snapshot.score_type`` CHECK admits ``'SECTOR'``."""
+    ddl = db.relation_ddl("score_snapshot")
+    return ddl is None or "'SECTOR'" in ddl
+
+
+def _m006_at_target_shape(db: Database) -> bool:
+    """m006's target: the CHECK admits ``'VALORIZATION'`` (and no row says ``'QUANTITATIVE'``)."""
+    ddl = db.relation_ddl("score_snapshot")
+    return ddl is None or "'VALORIZATION'" in ddl
+
+
+def _m007_at_target_shape(db: Database) -> bool:
+    """m007's target: the NULL-safe unique book key is enforced."""
+    return not _table_exists(db, "quant_portfolio") or db.relation_exists("ux_quant_portfolio_book")
+
+
+def _m009_at_target_shape(db: Database) -> bool:
+    """m009's target: ``veto`` is the stint table (it has ``raised_on``)."""
+    ddl = db.relation_ddl("veto")
+    return ddl is None or "raised_on" in ddl
+
+
+def _m014_at_target_shape(db: Database) -> bool:
+    """m014's target: every run table it owns already has AUTOINCREMENT (or does not exist)."""
+    return all(
+        not _table_exists(db, table) or "AUTOINCREMENT" in (db.relation_ddl(table) or "").upper()
+        for table in TARGET_RUN_TABLES
+    )
+
+
+#: The migrations that rebuild a table, each with its "already at the target shape" guard. D2's
+#: stamping asks every one of them before it records a database as born at the current shape.
+REBUILD_GUARDS: dict[int, Callable[[Database], bool]] = {
+    2: _m002_at_target_shape,
+    3: _m003_at_target_shape,
+    4: _m004_at_target_shape,
+    5: _m005_at_target_shape,
+    6: _m006_at_target_shape,
+    7: _m007_at_target_shape,
+    9: _m009_at_target_shape,
+    14: _m014_at_target_shape,
+}
+
+
+def at_current_shape(db: Database) -> bool:
+    """True when every table a migration would rebuild is already at that migration's target shape.
+
+    Read-only. A database that answers True has nothing a migration would change, so ``ensure`` may
+    record it as born at the current shape (D2) instead of letting ``migrate`` replay the rebuilds."""
+    return all(check(db) for check in REBUILD_GUARDS.values())
+
+
 # -- m001 --------------------------------------------------------------------
 
 
@@ -70,6 +190,12 @@ def _m002_financial_facts(db: Database) -> None:
     cols = _columns(db, "financial_facts")
     if "filing_version" not in cols or "event_time" not in cols:
         return  # additive columns not present yet; run kg_schema.ensure first
+    if _m002_at_target_shape(db):
+        return  # T-154: already keyed by filing_version -- never replay the rebuild
+    # T-154: the rebuild copies only m002's own column list, so a column a later release added
+    # (T-118's correction_rule, T-148's preferred_sign) is added to the old table first -- a no-op
+    # when it is already there -- exactly as m005/m006 do for forensic_flags_json (T-041).
+    db.ensure_columns("financial_facts", REQUIRED_COLUMNS["financial_facts"])
     db.execute("PRAGMA foreign_keys = OFF")
     db.create_schema(
         """
@@ -86,18 +212,20 @@ def _m002_financial_facts(db: Database) -> None:
             event_time       TEXT NOT NULL DEFAULT '',
             ingested_at      TEXT,
             run_id           INTEGER,
+            correction_rule  TEXT,
+            preferred_sign   REAL,
             UNIQUE (filing_id, statement, concept, period_key, filing_version)
         );
         INSERT INTO financial_facts__new
             (id, filing_id, statement, concept, standard_concept, label, period_key, value,
-             filing_version, event_time, ingested_at, run_id)
+             filing_version, event_time, ingested_at, run_id, correction_rule, preferred_sign)
         SELECT ff.id, ff.filing_id, ff.statement, ff.concept, ff.standard_concept, ff.label,
                ff.period_key, ff.value,
                COALESCE(NULLIF(ff.filing_version, ''), f.accession_number, 'pre-v1'),
                COALESCE(NULLIF(ff.event_time, ''), f.period_end, substr(ff.period_key, 1, 10),
                         f.retrieved_at),
                COALESCE(ff.ingested_at, f.retrieved_at),
-               ff.run_id
+               ff.run_id, ff.correction_rule, ff.preferred_sign
         FROM financial_facts ff
         LEFT JOIN sec_filings f ON f.id = ff.filing_id;
         DROP TABLE financial_facts;
@@ -116,6 +244,10 @@ def _m003_fundamental_metrics(db: Database) -> None:
     cols = _columns(db, "fundamental_metrics")
     if "engine_version" not in cols or "event_time" not in cols:
         return
+    if _m003_at_target_shape(db):
+        return  # T-154: already keyed by engine_version -- never replay the rebuild
+    # T-154: carry the column a later release added (T-107's available_at), as m002 does above.
+    db.ensure_columns("fundamental_metrics", REQUIRED_COLUMNS["fundamental_metrics"])
     db.execute("PRAGMA foreign_keys = OFF")
     db.create_schema(
         """
@@ -132,16 +264,17 @@ def _m003_fundamental_metrics(db: Database) -> None:
             engine_version TEXT NOT NULL DEFAULT 'pre-v1',
             event_time   TEXT NOT NULL DEFAULT '',
             run_id       INTEGER,
+            available_at TEXT,
             UNIQUE (filing_id, metric_group, metric_name, engine_version)
         );
         INSERT INTO fundamental_metrics__new
             (id, filing_id, metric_group, metric_name, value, unit, inputs_json, computed_at,
-             engine_version, event_time, run_id)
+             engine_version, event_time, run_id, available_at)
         SELECT m.id, m.filing_id, m.metric_group, m.metric_name, m.value, m.unit, m.inputs_json,
                m.computed_at,
                COALESCE(NULLIF(m.engine_version, ''), 'pre-v1'),
                COALESCE(NULLIF(m.event_time, ''), f.period_end, m.computed_at),
-               m.run_id
+               m.run_id, m.available_at
         FROM fundamental_metrics m
         LEFT JOIN sec_filings f ON f.id = m.filing_id;
         DROP TABLE fundamental_metrics;
@@ -157,8 +290,8 @@ def _m003_fundamental_metrics(db: Database) -> None:
 def _m004_score_snapshot(db: Database) -> None:
     if not _table_exists(db, "score_snapshot"):
         return  # additive DDL must have run first
-    if _is_view(db, "fundamental_snapshot") or not _table_exists(db, "fundamental_snapshot"):
-        return  # already migrated (view exists) or nothing to migrate
+    if _m004_at_target_shape(db):
+        return  # T-154: the compat view is already there (or nothing to migrate)
     db.execute("PRAGMA foreign_keys = OFF")
     db.execute(
         """
@@ -199,11 +332,8 @@ def _ensure_forensic_flags_column(db: Database) -> None:
 
 
 def _m005_score_type_sector(db: Database) -> None:
-    if not _table_exists(db, "score_snapshot"):
-        return
-    ddl = db.relation_ddl("score_snapshot")
-    if ddl is None or "'SECTOR'" in ddl:
-        return  # fresh DB already has the widened CHECK
+    if _m005_at_target_shape(db):
+        return  # T-154: the CHECK already admits 'SECTOR' (a fresh DB) -- never replay the rebuild
     _ensure_forensic_flags_column(db)
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
@@ -232,15 +362,17 @@ def _m005_score_type_sector(db: Database) -> None:
             strengths_json   TEXT,
             risks_json       TEXT,
             forensic_flags_json TEXT,
+            available_at     TEXT,
+            prompt_hash      TEXT,
             UNIQUE (asset_id, score_type, event_time)
         );
         INSERT INTO score_snapshot__new
             (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-             risks_json, forensic_flags_json)
+             risks_json, forensic_flags_json, available_at, prompt_hash)
         SELECT id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
                model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-               risks_json, forensic_flags_json
+               risks_json, forensic_flags_json, available_at, prompt_hash
         FROM score_snapshot;
         DROP TABLE score_snapshot;
         ALTER TABLE score_snapshot__new RENAME TO score_snapshot;
@@ -271,11 +403,8 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
     Rename it to 'VALORIZATION' everywhere it is persisted: the score_type CHECK,
     the stored rows, and the score-type keys inside the recorded blend JSON.
     """
-    if not _table_exists(db, "score_snapshot"):
-        return
-    ddl = db.relation_ddl("score_snapshot")
-    if ddl is None or "'VALORIZATION'" in ddl:
-        return  # fresh DB already has the renamed CHECK
+    if _m006_at_target_shape(db):
+        return  # T-154: the CHECK already says 'VALORIZATION' (a fresh DB)
     _ensure_forensic_flags_column(db)
     had_compat_view = _is_view(db, "fundamental_snapshot")
     db.execute("PRAGMA foreign_keys = OFF")
@@ -302,17 +431,19 @@ def _m006_quantitative_to_valorization(db: Database) -> None:
             strengths_json   TEXT,
             risks_json       TEXT,
             forensic_flags_json TEXT,
+            available_at     TEXT,
+            prompt_hash      TEXT,
             UNIQUE (asset_id, score_type, event_time)
         );
         INSERT INTO score_snapshot__new
             (id, asset_id, score_type, raw_value, normalized_score, event_time, computed_at,
              model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-             risks_json, forensic_flags_json)
+             risks_json, forensic_flags_json, available_at, prompt_hash)
         SELECT id, asset_id,
                CASE score_type WHEN 'QUANTITATIVE' THEN 'VALORIZATION' ELSE score_type END,
                raw_value, normalized_score, event_time, computed_at,
                model, inputs_json, run_id, run_kind, filing_id, rating, narrative, strengths_json,
-               risks_json, forensic_flags_json
+               risks_json, forensic_flags_json, available_at, prompt_hash
         FROM score_snapshot;
         DROP TABLE score_snapshot;
         ALTER TABLE score_snapshot__new RENAME TO score_snapshot;
@@ -376,8 +507,8 @@ def _m007_quant_portfolio_null_safe_key(db: Database) -> None:
     references onto it, and drops the newer copies with their positions and forward
     performance rows (both derived; ``quant evaluate`` recomputes performance). Then a unique
     index on ``IFNULL(frontier_k, -1)`` makes the database refuse a duplicate book outright."""
-    if not _table_exists(db, "quant_portfolio"):
-        return
+    if _m007_at_target_shape(db):
+        return  # T-154: the NULL-safe book key is already enforced -- nothing to merge
     groups = db.execute(
         "SELECT MIN(id) AS keep, MAX(id) AS newest, GROUP_CONCAT(id) AS ids "
         "FROM quant_portfolio GROUP BY as_of, kind, IFNULL(frontier_k, -1), engine_version "
@@ -455,11 +586,11 @@ def _m009_veto_stints(db: Database) -> None:
     stint if a hit row appears again after that. A pair's last hit, if no evaluation date
     after it shows a miss, stays open, exactly like a currently-active veto should.
     """
-    if not _table_exists(db, "veto"):
-        return
-    ddl = db.relation_ddl("veto")
-    if ddl is None or "raised_on" in ddl:
-        return  # fresh DB already has the stint shape
+    if _m009_at_target_shape(db):
+        return  # T-154: veto already has the stint shape -- never replay the rebuild
+    # T-154: carry T-070's columns (expires_on / expiry_history_json) through the rebuild; a no-op
+    # when they are already there.
+    db.ensure_columns("veto", REQUIRED_COLUMNS["veto"])
     migrated_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
     eval_dates = sorted(
         {
@@ -478,7 +609,8 @@ def _m009_veto_stints(db: Database) -> None:
     # counts as an evaluation date through cycle_checkpoint regardless, so the pair still
     # closes correctly on it.
     old_rows = db.execute(
-        "SELECT asset_id, rule_id, severity, detected_at, cycle_date, evidence_json, run_id "
+        "SELECT asset_id, rule_id, severity, detected_at, cycle_date, evidence_json, run_id, "
+        "expires_on, expiry_history_json "
         "FROM veto WHERE cleared_at IS NULL ORDER BY asset_id, rule_id, cycle_date"
     ).fetchall()
     by_pair: dict[tuple[int, str], dict[str, dict]] = {}
@@ -506,12 +638,16 @@ def _m009_veto_stints(db: Database) -> None:
                         "cleared_at": None,
                         "evidence_json": row["evidence_json"],
                         "run_id": row["run_id"],
+                        "expires_on": row["expires_on"],
+                        "expiry_history_json": row["expiry_history_json"],
                     }
                 else:
                     open_stint["last_seen_on"] = d
                     open_stint["severity"] = row["severity"]
                     open_stint["evidence_json"] = row["evidence_json"]
                     open_stint["run_id"] = row["run_id"]
+                    open_stint["expires_on"] = row["expires_on"]
+                    open_stint["expiry_history_json"] = row["expiry_history_json"]
             elif open_stint is not None and d in eval_dates:
                 open_stint["cleared_on"] = d
                 open_stint["cleared_at"] = migrated_at
@@ -535,6 +671,8 @@ def _m009_veto_stints(db: Database) -> None:
             cleared_at    TEXT,
             evidence_json TEXT,
             run_id        INTEGER,
+            expires_on    TEXT,
+            expiry_history_json TEXT,
             UNIQUE (asset_id, rule_id, raised_on)
         );
         DROP TABLE veto;
@@ -547,8 +685,9 @@ def _m009_veto_stints(db: Database) -> None:
     db.executemany(
         """
         INSERT INTO veto (asset_id, rule_id, severity, raised_on, cleared_on, last_seen_on,
-                          detected_at, cleared_at, evidence_json, run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                          detected_at, cleared_at, evidence_json, run_id, expires_on,
+                          expiry_history_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         [
             (
@@ -562,6 +701,8 @@ def _m009_veto_stints(db: Database) -> None:
                 s["cleared_at"],
                 s["evidence_json"],
                 s["run_id"],
+                s["expires_on"],
+                s["expiry_history_json"],
             )
             for s in stints
         ],
@@ -741,13 +882,17 @@ def _m014_autoincrement_run_ids(db: Database) -> None:
     with AUTOINCREMENT so deleted IDs are never reused. Seed sqlite_sequence from the maximum
     of each table's own ID and all references pointing to it.
     """
-    tables_to_rebuild = [
-        t
-        for t in ("cycle_run", "pricing_run", "quant_run", "analysis_run", "sec_filings")
-        if _table_exists(db, t) and "AUTOINCREMENT" not in (db.relation_ddl(t) or "").upper()
-    ]
-    if tables_to_rebuild:
-        _rebuild_run_tables(db, tables_to_rebuild)
+    if not _m014_at_target_shape(db):
+        tables_to_rebuild = [
+            t
+            for t in ("cycle_run", "pricing_run", "quant_run", "analysis_run", "sec_filings")
+            if _table_exists(db, t) and "AUTOINCREMENT" not in (db.relation_ddl(t) or "").upper()
+        ]
+        if tables_to_rebuild:
+            _rebuild_run_tables(db, tables_to_rebuild)
+    # T-154: the rebuild is skipped when every table already carries AUTOINCREMENT (never replay it
+    # on a database that already has the shape); the seed stays -- it changes nothing when there is
+    # nothing to seed, and it is what keeps an id from being reused after an explicit-id import.
     _seed_sqlite_sequence(db)
 
 
