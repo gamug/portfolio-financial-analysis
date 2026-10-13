@@ -438,14 +438,41 @@ def cmd_capex(args: argparse.Namespace) -> int:
             f"  {f['ticker']} filing {f['id']} {f['form']} {f['period_end']}: net element "
             f"{before_value:,.0f} caption {caption!r} -> {now}"
         )
+    # the review of PR #144: a rejected net element must not be re-taken by the caption fallback
+    retaken: list[str] = []
+    for f in filings(conn):
+        stmts = _statements_or_none(conn, int(f["id"]))
+        if stmts is None:
+            continue
+        column = _own_column(stmts, str(f["form"]), str(f["period_end"]))
+        if column is None:
+            continue
+        res = stmts.resolve("capital_expenditure", column)
+        rejected = bool(
+            {"net_element_net_proceeds", "net_element_captioned_proceeds"} & set(res.flags)
+        )
+        if not rejected:
+            continue
+        old_val, old_concept, _how = stmts._label_fallback_row(
+            REGISTRY["capital_expenditure"], column
+        )
+        if old_concept != G + "PaymentsForProceedsFromProductiveAssets":
+            continue
+        now = f"{res.value:,.0f} ({res.concept}, {res.how})" if res.value is not None else "empty"
+        retaken.append(
+            f"  {f['ticker']} filing {f['id']} {f['form']} {f['period_end']}: the caption fallback "
+            f"used to re-take {old_val:,.0f} ({old_concept}); now {now}"
+        )
     head = [
         f"T-151 part 1, 3.4 C3: every filing that read the net-element tier under the pre-C3 rule "
         f"(the branch's code on {args.after}'s facts; C3 changes only the net tier), and where it "
         "resolves now",
         f"filings that used the net-element tier before: {len(lines)}",
         "",
+        "the review of PR #144's fix -- a rejected net element the caption fallback used to re-take: "
+        f"{len(retaken)} filings",
     ]
-    out = head + lines
+    out = head + retaken + [""] + lines
     Path(args.out_txt).write_text("\n".join(out) + "\n", encoding="utf-8")
     print("\n".join(out[:60]))
     return 0

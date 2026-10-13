@@ -362,6 +362,31 @@ def test_c3_a_caption_naming_a_sale_or_disposition_is_also_skipped() -> None:
         assert res.value is None and "net_element_captioned_proceeds" in res.flags, caption
 
 
+def test_c3_a_rejected_net_element_is_not_retaken_by_the_caption_fallback() -> None:
+    """Review of PR #144: a net element captioned "Capital expenditures, net" with a filed value
+    below zero is rejected by C3's sign rule and must **not** be re-taken by the caption fallback
+    (the caption matches, and the value would be a negative capex). A filer's own extension line
+    with the same caption still resolves."""
+    stmts = _cashflow(
+        _row(
+            G + "PaymentsForProceedsFromProductiveAssets", "Capital expenditures, net", -5_000_000.0
+        )
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value is None and res.concept is None
+    assert "net_element_net_proceeds" in res.flags
+    assert "caption_fallback" not in res.flags
+
+    stmts2 = _cashflow(
+        _row(
+            G + "PaymentsForProceedsFromProductiveAssets", "Capital expenditures, net", -5_000_000.0
+        ),
+        _row("x_CapitalExpenditures", "Capital expenditures", 120_000_000.0),
+    )
+    res2 = stmts2.resolve("capital_expenditure", FY)
+    assert res2.value == 120_000_000.0 and res2.concept == "x_CapitalExpenditures"
+
+
 def test_c3_a_positive_net_payment_caption_is_still_kept() -> None:
     """A caption that names neither proceeds nor a sale/disposition keeps the sign test: a positive
     net element is a net payment (the last resort, as before)."""

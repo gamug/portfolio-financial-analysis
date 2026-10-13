@@ -1521,7 +1521,9 @@ class Statements:
             else:
                 self._flag("net_element_last_resort")
                 return val6, G + "PaymentsForProceedsFromProductiveAssets", "fallback"
-        val7, concept7, how7 = self._label_fallback_row(spec, column)
+        val7, concept7, how7 = self._label_fallback_row(
+            spec, column, exclude=(G + "PaymentsForProceedsFromProductiveAssets",)
+        )
         if val7 is not None:
             self._flag("caption_fallback")
             return val7, concept7, how7
@@ -2141,8 +2143,11 @@ class Statements:
         return self._label_fallback_row(spec, column)
 
     def _label_fallback_row(
-        self, spec: LineItem, column: str
+        self, spec: LineItem, column: str, exclude: tuple[str, ...] = ()
     ) -> tuple[float | None, str | None, str | None]:
+        """The single caption-matched row, or nothing. *exclude* names concepts the caller has
+        already decided against (capex excludes the net element C3 rejected, so a caption like
+        "Capital expenditures, net" cannot re-take it)."""
         if not spec.label_fallback:
             return None, None, None
         wanted = re.compile(spec.label_fallback, re.IGNORECASE)
@@ -2150,6 +2155,8 @@ class Statements:
         unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
         found: dict[str, float] = {}
         for row in self._rows_for(spec):
+            if str(row.get("concept")) in exclude:
+                continue
             label = str(row.get("label") or "")
             if not wanted.search(label) or unwanted.search(label):
                 continue
