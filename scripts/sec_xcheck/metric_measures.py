@@ -45,7 +45,22 @@ def tax_rate_defaulted_on_loss(r: Rec) -> bool:
 
 
 def nopat_taxed_on_loss(r: Rec) -> bool:
-    """NOPAT on an operating loss is reduced by a tax (MET-03: with operating income <= 0 the tax is 0)."""
+    """NOPAT on an operating loss is reduced by a tax (MET-03: with operating income <= 0 the tax is 0).
+
+    F1 (T-151 part 2 fix 1): on a 10-Q the ratios tax the **TTM** operating income, so the TTM
+    NOPAT is what is read (``nopat_ttm`` / ``operating_income_ttm`` in the ``nopat`` inputs; a
+    database replayed with master's code carries only the rate it used, so the TTM operating income
+    is derived from it)."""
+    if r.form.startswith("10-Q"):
+        i = inputs(r, "nopat")
+        nopat_ttm, ttm_oi = i.get("nopat_ttm"), i.get("operating_income_ttm")
+        if ttm_oi is None and nopat_ttm is not None:
+            rate = i.get("nopat_ttm_tax_rate_value", i.get("effective_tax_rate"))
+            if rate is not None and rate < 1.0:
+                ttm_oi = nopat_ttm / (1.0 - rate)
+        if ttm_oi is not None and nopat_ttm is not None:
+            return ttm_oi < 0.0 and nopat_ttm > ttm_oi
+        return False
     op, nopat = r.value("operating_income"), metric(r, "nopat")
     return op is not None and op < 0.0 and nopat is not None and nopat > op
 

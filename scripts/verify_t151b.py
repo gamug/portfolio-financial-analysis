@@ -174,7 +174,9 @@ def cmd_flags(args: argparse.Namespace) -> None:
     engine = args.engine
 
     def scan(conn: Any) -> dict[str, tuple[int, set[int]]]:
-        counts: dict[str, int] = defaultdict(int)
+        # F6: count distinct filings, not metric rows -- a flag shared by a group's inputs is one
+        # per metric row otherwise (5 valuation rows, 3 CAGR series, ...).
+        filings: dict[str, set[int]] = defaultdict(set)
         companies: dict[str, set[int]] = defaultdict(set)
         for r in conn.execute(
             "SELECT m.filing_id, m.inputs_json, f.asset_id FROM fundamental_metrics m "
@@ -183,9 +185,9 @@ def cmd_flags(args: argparse.Namespace) -> None:
         ):
             for flag in json.loads(r["inputs_json"] or "{}"):
                 if flag.startswith("flag_"):
-                    counts[flag] += 1
+                    filings[flag].add(int(r["filing_id"]))
                     companies[flag].add(int(r["asset_id"]))
-        return {flag: (counts[flag], companies[flag]) for flag in counts}
+        return {flag: (len(filings[flag]), companies[flag]) for flag in filings}
 
     c = scan(control)
     a = scan(after)
@@ -241,6 +243,7 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         int(r["id"]): int(r["asset_id"])
         for r in conn.execute("SELECT id, asset_id FROM sec_filings")
     }
+    forms = {int(r["id"]): str(r["form"]) for r in conn.execute("SELECT id, form FROM sec_filings")}
     reits = _reit_assets(conn)
 
     def metric(filing: dict[str, dict[str, Any]], name: str) -> float | None:
@@ -297,6 +300,31 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
                 add("APP04c.reit_nopat_at_21", asset)
         if operating is not None and operating < 0.0 and nopat is not None and nopat > operating:
             add("MET03.nopat_taxed_on_operating_loss", asset)
+
+        # F1: the NOPAT tax follows the flow it taxes. The TTM operating income the ratios tax is
+        # `operating_income_ttm` (this branch); master's inputs have only `nopat_ttm` and the rate
+        # it used, so it is derived from those.
+        ttm_oi = nopat_inputs.get("operating_income_ttm")
+        nopat_ttm = nopat_inputs.get("nopat_ttm")
+        rate_used = nopat_inputs.get("nopat_ttm_tax_rate_value")
+        if rate_used is None:
+            rate_used = nopat_inputs.get("effective_tax_rate")  # master's inputs
+        if ttm_oi is None and nopat_ttm is not None and rate_used is not None and rate_used < 1.0:
+            ttm_oi = nopat_ttm / (1.0 - rate_used)
+        if ttm_oi is not None and nopat_ttm is not None:
+            if ttm_oi < 0.0 and nopat_ttm > ttm_oi:
+                add("F1.ttm_operating_loss_taxed", asset)
+            if ttm_oi > 0.0 and abs(nopat_ttm - ttm_oi) <= 1e-6 * max(1.0, abs(ttm_oi)):
+                add("F1.ttm_operating_profit_untaxed", asset)
+        # a REIT 10-Q taxed at its own period rate instead of its TTM rate
+        if (
+            asset in reits
+            and forms.get(fid, "").startswith("10-Q")
+            and nopat_ttm is not None
+            and rate_used is not None
+            and rate_used == rate_metric
+        ):
+            add("F1.reit_10q_on_the_quarters_rate", asset)
 
         ic = inp(filing, "return_on_invested_capital")
         ic_value = ic.get("invested_capital")

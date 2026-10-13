@@ -101,6 +101,9 @@ def compute(
         nci=capital.nci(cap, income_filed=income_filed).value,
         invested_capital=invested.value,
         nopat_ttm=nopat_annual if ttm else None,
+        # F1's acceptance reads these: the TTM operating income the ratios tax, and the rate applied
+        operating_income_ttm=operating_annual if ttm else None,
+        nopat_ttm_tax_rate_value=annual_rate if ttm else None,
     )
     inputs.update(flag_inputs("income_tax", tax_resolution.flags))
     inputs.update(flag_inputs("total_debt", cap.debt.flags))
