@@ -28,7 +28,12 @@ from fundamental_agent.metrics import (
 from fundamental_agent.metrics import valuation as valuation_metrics
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.skills import group_applicability, group_definitions, load_skill
+from fundamental_agent.skills import (
+    GROUP_METRICS,
+    group_applicability,
+    group_definitions,
+    load_skill,
+)
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
 
@@ -60,8 +65,63 @@ _SPECIALIST_LEAD = (
     "given. Give a concise 1-2 sentence assessment for the orchestrator, applying any caveat the "
     "procedure below would raise. The brief carries no company type: an empty metric whose reason is "
     "`not_applicable` is the code's own decision that the metric does not apply to this company, so read "
-    "that reason as the company type -- never reclassify the company yourself."
+    "that reason as the company type -- never reclassify the company yourself. On a quarterly filing the "
+    "flows are the trailing twelve months, never a single quarter read as a year (PER-06)."
 )
+
+# D3 (T-076): the basis of a group's metrics on a quarterly filing, from provenance.ITEMS. `prior`
+# resolves to the prior year's same quarter on a 10-Q (H3, provenance._prior_basis).
+_BASIS_LABELS: dict[str, str] = {
+    "ttm": "trailing twelve months",
+    "period": "this filing's own quarter",
+    "prior_year": "the prior fiscal year end",
+    "prior": "the same quarter a year earlier",
+}
+
+
+def basis_paragraph(group: str, results: list[MetricResult]) -> str:
+    """One line per metric of *group*: its items, grouped by the basis they are read on (T-076, D3).
+
+    From ``provenance.ITEMS`` alone, plus the metric's own unit (a ``usd`` metric read on the filing's own
+    quarter is a USD amount for that quarter). A 10-K needs none of it: its flows are already annual.
+    """
+    units = {result.name: result.unit for result in results}
+    lines: list[str] = []
+    for name in GROUP_METRICS.get(group, ()):
+        items = provenance.ITEMS.get(name)
+        if not items:
+            continue
+        groups: dict[str, list[str]] = {}
+        for item, bases in items.items():
+            for basis in (bases,) if isinstance(bases, str) else bases:
+                groups.setdefault(basis, []).append(item.replace("_", " "))
+        parts = [
+            f"{', '.join(group_items)} ({_BASIS_LABELS.get(basis, basis)})"
+            for basis, group_items in groups.items()
+        ]
+        line = f"{name}: " + "; ".join(parts)
+        if units.get(name) == "usd" and "period" in groups:
+            line += " (a USD amount for the quarter)"
+        lines.append(line)
+    if not lines:
+        return ""
+    return (
+        "Basis of the numbers below on this quarterly filing (PER-06): the flows are the trailing twelve "
+        "months unless a line says otherwise.\n" + "\n".join(lines)
+    )
+
+
+def _metric_lines(results: list[MetricResult]) -> list[str]:
+    """``name: value``, or ``name: empty (<reason>)`` -- an empty value is never a 0 and never a neutral
+    reading (MET-00; T-076, D4)."""
+    lines: list[str] = []
+    for result in results:
+        if result.value is None:
+            reason = (result.inputs.get("provenance") or {}).get("empty_reason") or "missing_input"
+            lines.append(f"{result.name}: empty ({reason})")
+        else:
+            lines.append(f"{result.name}: {_round(result.value)}")
+    return lines
 
 
 def _generated_definitions(group: str) -> str:
@@ -371,22 +431,29 @@ class FundamentalAnalyst:
         return out
 
     def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:
-        numbers = {r.name: r.value for r in results if r.value is not None}
+        computed = [result for result in results if result.value is not None]
+        lines = _metric_lines(results)
+        paragraph = basis_paragraph(group, results) if ctx.form == "10-Q" else ""
         model = self._model
 
         @tool(name=f"{group}_specialist")
         def specialist() -> str:
             """Get a specialist reading of this metric group for the filing."""
-            if not numbers:
-                return f"No {group} metrics could be computed for this filing."
+            if not computed:
+                return f"No {group} metric has a value for this filing."
             reader = Agent(
                 model=model,
                 system_prompt=_specialist_system_prompt(group),
                 callback_handler=None,
             )
-            prompt = (
-                f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}. "
-                f"{group} metrics: {json.dumps(numbers, default=_round)}."
+            prompt = "\n\n".join(
+                part
+                for part in (
+                    f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}",
+                    paragraph,
+                    f"{group}:\n" + "\n".join(lines),
+                )
+                if part
             )
             try:
                 return str(reader(prompt)).strip()
@@ -404,14 +471,14 @@ def _group(pairs: list[tuple[str, MetricResult]]) -> dict[str, list[MetricResult
 
 
 def _brief(ctx: FilingContext, by_group: dict[str, list[MetricResult]]) -> str:
-    payload = {
-        group: {r.name: r.value for r in results if r.value is not None}
-        for group, results in by_group.items()
-    }
-    return (
-        f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}\n"
-        f"Computed metrics (nulls omitted):\n{json.dumps(payload, indent=2, default=_round)}"
-    )
+    parts = [f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}"]
+    for group, results in by_group.items():
+        if ctx.form == "10-Q":
+            paragraph = basis_paragraph(group, results)
+            if paragraph:
+                parts.append(paragraph)
+        parts.append(f"{group}:\n" + "\n".join(_metric_lines(results)))
+    return "\n\n".join(parts)
 
 
 def _round(value: Any) -> Any:
