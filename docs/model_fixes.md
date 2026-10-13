@@ -7535,6 +7535,56 @@ column is `prior_year_missing`), each taking rows that used to fall through to `
   503 `no_cover_shares` filings out of `capture_failure` (and their companies, 475 → 163) into
   `prior_year_missing`, minus the rows an earlier term decides.
 
+### Fix round 5 (L1; PR #148 review, fifth round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f5_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **L1 — `market_capitalization` declared statement items its formula never reads.**
+  `ITEMS["market_capitalization"]` declared `shares_outstanding` and `diluted_shares` at the period
+  column, but the value is the filing's cover-page count x the close from `kg_schema.market_cap`
+  (MKT-01..04, `valuation._resolve_market_cap`). Step 2 therefore found `shares_outstanding` unfiled
+  and returned `missing_input` before the market-cap keys were read: 495 of the 503 `no_cover_shares`
+  rows kept the wrong reason, and the block told the reader the value came from the statements' share
+  lines. The entry now declares **no statement item**, and its block records the market cap's own
+  source from the inputs the row already stores: `source` = `kg_schema.market_cap`, `how` = the cover
+  count x the close, plus `shares`, `share_age_days`, `split_factor`, `n_classes`, `share_price` and
+  `price_date_offset_days` when present. The empty reason then follows the market-cap keys (K1).
+
+  **The ITEMS check (the five valuation metrics, against their formula code).** No mismatch beyond
+  `market_capitalization`: `enterprise_value` declares `long_term_debt`, `short_term_debt`, `cash`,
+  `short_term_investments`, `minority_interest`, `redeemable_nci`, matching
+  `_enterprise_value(market_cap, cap.debt, cap.cash, nci, sti)`; `free_cash_flow_yield` declares
+  `operating_cash_flow` / `capital_expenditure` (ttm), matching `annual.fcf()`;
+  `sbc_adjusted_fcf_yield` adds `stock_based_compensation`, matching `fcfe_annual - sbc_annual`;
+  `enterprise_fcf_yield` declares the numerator's items (`operating_income`, `income_tax`,
+  `pretax_income`, `capital_expenditure`, `depreciation_amortization` at ttm) and the working-capital
+  items at period and prior, matching `_md38` (its denominator is the `enterprise_value` metric, whose
+  own entry declares the debt/cash/NCI/STI items). Two transitive items are read *inside* the NCI
+  resolution — `capital.nci` falls back to `equity_incl_nci - equity`, and `stmts.nci_income_filed`
+  reads the NCI income line: they are **not** declared, following ROIC's convention (it declares
+  `minority_interest`/`redeemable_nci`/`equity`, not `equity_incl_nci`), because declaring them would
+  make step 2 return `missing_input` for filings that do not need them (R-15).
+
+  **Acceptance** (`out/f5_reasons.txt` / `.json`, block `K1`; the before is round 4's
+  `out/f4_reasons.txt` / `f4_k1_before.txt`): `market_capitalization`'s 503 `no_cover_shares` rows are
+  **502 `prior_year_missing`** (502 filings / 501 companies) and **1 `capture_failure`** — the
+  exception is COP `0001562762-22-000031`, which also carries `share_scale_suspect` and keeps the
+  rank-3 reason (round 4's R-14). The metric's empty rows are `prior_year_missing` 502 and
+  `capture_failure` 9 (was `missing_input` 503, `prior_year_missing` 8): the 8 rows carrying
+  `market_cap_stale_shares` / `market_cap_incomplete_classes` / `share_scale_suspect` now take
+  `capture_failure` instead of the `missing_input` step 2 gave them. The other four metrics are
+  unchanged from round 4 (`enterprise_value` 73/183/389, `free_cash_flow_yield` 16/90/470,
+  `sbc_adjusted_fcf_yield` 13/204/395, `enterprise_fcf_yield` 117/546/335).
+
+  **The reason distribution, old vs new** (`out/f4_provenance.txt` vs `out/f5_provenance.txt`,
+  filings / companies): `missing_input` 8,887/503 → **8,849/502**; `prior_year_missing` 1,456/492 →
+  **1,466/502**; `capture_failure` 1,756/163, `denominator_not_positive` 616/108,
+  `growth_base_not_positive` 1,600/336 and `not_applicable` 648/56 unchanged. The move is
+  `market_capitalization`'s 511 empty rows: 495 `missing_input` → `prior_year_missing`, 8
+  `missing_input` → `capture_failure` (the other market-cap keys), COP `missing_input` →
+  `capture_failure`, and the 8 already-`prior_year_missing` rows unchanged.
+
 ### Declared limitations
 
 - The provenance block's items carry the basis they were read on (G2); the prior-year column's own

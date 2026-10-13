@@ -631,7 +631,11 @@ the final pilot, `T-143`.
       round 4"). K1: `market_cap_no_cover_shares` is a data-window gap (the previous filing's cover
       count), so it is `prior_year_missing` for the five metrics that read the market cap; the other
       market-cap keys stay `capture_failure`. 502 of its 503 filings are the company's first in the
-      window. **The box stays open until the reviewer closes T-151 after both PRs.**
+      window. **Fix round 5 (2026-10-13): L1, PR #148** (`docs/model_fixes.md` "Fix round 5"). L1:
+      `market_capitalization` declared `shares_outstanding`/`diluted_shares`, which its formula never
+      reads (the value is the cover count x the close), so step 2 hid the market-cap key; it now declares
+      no statement item and records the market-cap source. 503 `no_cover_shares` rows -> 502
+      `prior_year_missing` + COP. **The box stays open until the reviewer closes T-151 after both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
