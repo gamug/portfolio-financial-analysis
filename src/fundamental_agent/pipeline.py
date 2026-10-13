@@ -778,6 +778,10 @@ _TTM_ITEMS = (
     "depreciation_amortization",
     "interest_expense",
     "stock_based_compensation",
+    # F1 (T-151 part 2 fix 1): a REIT's own rate on a 10-Q is its TTM tax / TTM pre-tax income, on
+    # the same basis as the TTM operating income the ratios tax.
+    "income_tax",
+    "pretax_income",
 )
 
 

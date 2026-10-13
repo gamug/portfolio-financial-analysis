@@ -209,14 +209,14 @@ def test_roic_is_empty_and_flagged_when_invested_capital_is_not_positive() -> No
 
 
 def test_nopat_tax_is_21_percent_for_a_non_reit() -> None:
-    rate, reason = nopat_tax_rate(_stmts(), FY)
+    rate, reason = nopat_tax_rate(100.0, reit=False, tax=20.0, pretax=120.0)
     assert rate == pytest.approx(0.21)
     assert reason == "statutory_21"
     assert _flat(roic_compute(_stmts(), FY))["nopat"].value == pytest.approx(79.0)
 
 
 def test_nopat_tax_is_zero_on_an_operating_loss() -> None:
-    rate, reason = nopat_tax_rate(_stmts(operating_income=-50.0), FY)
+    rate, reason = nopat_tax_rate(-50.0, reit=False, tax=20.0, pretax=120.0)
     assert rate == 0.0
     assert reason == "operating_loss"
     assert _flat(roic_compute(_stmts(operating_income=-50.0), FY))["nopat"].value == pytest.approx(
@@ -225,18 +225,14 @@ def test_nopat_tax_is_zero_on_an_operating_loss() -> None:
 
 
 def test_a_reit_is_taxed_at_its_own_rate_never_21_percent() -> None:
-    stmts = _stmts()
-    stmts.reit = True
-    rate, reason = nopat_tax_rate(stmts, FY)
+    rate, reason = nopat_tax_rate(100.0, reit=True, tax=20.0, pretax=120.0)
     assert rate == pytest.approx(20.0 / 120.0)  # the filing's own rate
     assert reason == "reit_effective"
     assert rate != pytest.approx(0.21)
 
 
 def test_a_reit_with_nonpositive_pretax_income_is_taxed_at_zero() -> None:
-    stmts = _stmts(pretax_income=-5.0)
-    stmts.reit = True
-    rate, reason = nopat_tax_rate(stmts, FY)
+    rate, reason = nopat_tax_rate(100.0, reit=True, tax=20.0, pretax=-5.0)
     assert rate == 0.0
     assert reason == "reit_no_rate"
 
@@ -544,3 +540,111 @@ def test_free_cash_flow_is_not_named_free_cash_flow_to_equity() -> None:
 
 def test_safe_div_is_still_the_shared_guard() -> None:
     assert safe_div(1.0, 2.0) == 0.5
+
+
+# -- F1: the NOPAT tax is decided on the same basis as the flow it taxes ----------------------------
+
+
+def _quarter_stmts(
+    *, quarter_oi: float, quarter_tax: float = 20.0, quarter_pretax: float = 120.0
+) -> Statements:
+    """A 10-Q-shaped payload with a quarter operating income and a prior fiscal year end."""
+    return Statements.from_payload(
+        {
+            "income_statement": [
+                _row(G + "OperatingIncomeLoss", "Operating income", **{Q: quarter_oi}),
+                _row(G + "NetIncomeLoss", "Net income", **{Q: 80.0}),
+                _row(
+                    G
+                    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                    "Pretax",
+                    **{Q: quarter_pretax},
+                ),
+                _row(G + "IncomeTaxExpenseBenefit", "Income tax", **{Q: quarter_tax}),
+            ],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", **{"2024-06-30": 1_100.0, "2023-12-31": 1_000.0}),
+                _row(
+                    G + "StockholdersEquity", "Equity", **{"2024-06-30": 450.0, "2023-12-31": 400.0}
+                ),
+                _row(G + "LongTermDebt", "Debt", **{"2024-06-30": 210.0, "2023-12-31": 200.0}),
+                _row(
+                    G + "CashAndCashEquivalentsAtCarryingValue",
+                    "Cash",
+                    **{"2024-06-30": 60.0, "2023-12-31": 50.0},
+                ),
+            ],
+            "cash_flow": [],
+        }
+    )
+
+
+def test_a_ttm_operating_loss_is_not_taxed_even_when_the_quarter_was_positive() -> None:
+    """F1: the rate is decided on the TTM flow the ratio taxes, not the quarter."""
+    stmts = _quarter_stmts(quarter_oi=19.8)
+    ttm = {"operating_income": -1_246.0, "income_tax": 20.0, "pretax_income": 120.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    # the nopat metric keeps the filing's own period (taxed at 21%)
+    assert roic["nopat"].value == pytest.approx(19.8 * 0.79)
+    # the TTM NOPAT is the TTM operating income (rate 0)
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(-1_246.0)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_operating_loss"] == 1.0
+    prof = _flat(profitability_compute(stmts, Q, None, ttm))
+    assert prof["return_on_assets"].inputs["nopat_ttm"] == pytest.approx(-1_246.0)
+    assert prof["return_on_assets"].inputs["nopat_tax_rate_operating_loss"] == 1.0
+
+
+def test_a_ttm_operating_profit_is_taxed_even_when_the_quarter_was_a_loss() -> None:
+    stmts = _quarter_stmts(quarter_oi=-5.0)
+    ttm = {"operating_income": 1_802.0, "income_tax": 20.0, "pretax_income": 120.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].value == pytest.approx(-5.0)  # the period: a loss, tax 0
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(1_802.0 * 0.79)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_statutory_21"] == 1.0
+
+
+def test_a_reit_10q_uses_its_ttm_rate_not_the_quarters() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=50.0, quarter_pretax=100.0)  # quarter 50%
+    stmts.reit = True
+    ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}  # TTM 20%
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].inputs["nopat_ttm"] == pytest.approx(400.0 * 0.80)
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_reit_effective"] == 1.0
+    # the metric itself is still the filing's own period rate
+    assert roic["effective_tax_rate"].value == pytest.approx(0.50)
+
+
+def test_a_reit_10q_without_a_buildable_ttm_rate_is_empty_and_flagged() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0)
+    stmts.reit = True
+    ttm = {"operating_income": 400.0, "flag_income_tax_ttm_not_built": 1.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert roic["nopat"].inputs["nopat_ttm_tax_rate_reit_ttm_rate_missing"] == 1.0
+    assert roic["nopat"].inputs["flag_nopat_reit_ttm_rate_missing"] == 1.0
+    assert roic["return_on_invested_capital"].value is None
+
+
+def test_the_robustness_roic_uses_the_ttm_effective_rate() -> None:
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=50.0, quarter_pretax=100.0)  # quarter 50%
+    ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}  # TTM 20%
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    # NOPAT at the TTM effective rate (20%) over the prior-year invested capital (200 + 400 - 50)
+    assert roic["return_on_invested_capital_effective_rate"].value == pytest.approx(
+        400.0 * 0.80 / 550.0
+    )
+
+
+# -- F8: the raw effective rate is flagged outside [0, 1] -------------------------------------------
+
+
+def test_a_rate_outside_the_unit_interval_is_flagged_not_clamped() -> None:
+    payload = _payload(income_tax=1_222.0, pretax_income=100.0)
+    roic = _flat(roic_compute(Statements.from_payload(payload), FY))
+    assert roic["effective_tax_rate"].value == pytest.approx(12.22)  # kept as filed, not clamped
+    assert roic["effective_tax_rate"].inputs["flag_effective_tax_rate_outside_unit_interval"] == 1.0
+    assert (
+        roic["return_on_invested_capital_effective_rate"].inputs[
+            "flag_return_on_invested_capital_effective_rate_outside_unit_interval"
+        ]
+        == 1.0
+    )

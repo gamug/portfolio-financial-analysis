@@ -661,6 +661,10 @@ _TTM_FLOW_SOURCE: dict[str, tuple[str, str]] = {
     "depreciation_amortization": ("leverage", "net_debt_to_ebitda"),
     "interest_expense": ("leverage", "interest_coverage"),
     "stock_based_compensation": ("valuation", "free_cash_flow_yield"),
+    # F1 (T-151 part 2 fix 1): the roic group's effective_tax_rate row carries both on the filing's
+    # own period, so a REIT's TTM rate can be built the way the other TTM flows are.
+    "income_tax": ("roic", "effective_tax_rate"),
+    "pretax_income": ("roic", "effective_tax_rate"),
 }
 
 

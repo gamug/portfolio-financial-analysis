@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
-from fundamental_agent.metrics.tax import nopat, nopat_tax_rate
+from fundamental_agent.metrics.tax import (
+    REIT_TTM_RATE_MISSING,
+    annual_rate_inputs,
+    nopat,
+    nopat_tax_rate,
+)
 from fundamental_agent.statements import Statements
 
 GROUP = "profitability"
@@ -51,7 +56,15 @@ def compute(
     # MET-01 / MET-02 (D1/D2, T-151 part 2): capital at the end of the prior fiscal year -- the
     # filing's own comparative, else the stored prior 10-K. Never the ending capital.
     cap = stmts.prior_year_capital(period_key)
-    rate, rate_reason = nopat_tax_rate(stmts, period_key)
+    # F1: the rate is decided on the same basis as the flow it taxes (the TTM on a 10-Q).
+    annual_tax, annual_pretax, rate_missing = annual_rate_inputs(stmts, period_key, ttm)
+    rate, rate_reason = nopat_tax_rate(
+        operating_annual,
+        reit=stmts.reit,
+        tax=annual_tax,
+        pretax=annual_pretax,
+        rate_missing=rate_missing,
+    )
     nopat_annual = nopat(operating_annual, rate)
     prior_assets = cap.total_assets.value
     prior_equity = cap.equity.value
@@ -64,6 +77,8 @@ def compute(
     )
     inputs.update(capital.capital_flags(cap, "prior"))
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
+    if rate_reason == REIT_TTM_RATE_MISSING:
+        inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
     # D1/D2 step 3: the prior-year capital is empty -- flagged for what is missing.
     if prior_assets is None:
         inputs["flag_return_on_assets_prior_year_assets_missing"] = 1.0

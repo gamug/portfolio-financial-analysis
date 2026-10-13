@@ -15,7 +15,7 @@ from fundamental_agent.metrics import capital
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.metrics.cashflow import free_cash_flow
 from fundamental_agent.metrics.roic import effective_tax_rate
-from fundamental_agent.metrics.tax import nopat, nopat_tax_rate
+from fundamental_agent.metrics.tax import REIT_TTM_RATE_MISSING, nopat, nopat_tax_rate
 from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
@@ -209,8 +209,23 @@ def _md38(
     NOPAT - (capex - D&A + Δ non-cash working capital), or ``None`` when a term is missing or the
     balance sheet is not classified (MET-00). The Δ is the prior fiscal year end (a 10-K) or the
     prior year's same quarter (a 10-Q, ``prior_wc_missing`` when it is not stored)."""
-    rate, rate_reason = nopat_tax_rate(stmts, period_key)
-    nopat_annual = nopat(annual.get("operating_income"), rate)
+    # F1: the rate is decided on the same basis as the flow it taxes (the TTM on a 10-Q).
+    operating_annual = annual.get("operating_income")
+    rate_missing = bool(
+        annual.is_ttm
+        and (
+            annual.get("flag_income_tax_ttm_not_built")
+            or annual.get("flag_pretax_income_ttm_not_built")
+        )
+    )
+    rate, rate_reason = nopat_tax_rate(
+        operating_annual,
+        reit=stmts.reit,
+        tax=annual.get("income_tax"),
+        pretax=annual.get("pretax_income"),
+        rate_missing=rate_missing,
+    )
+    nopat_annual = nopat(operating_annual, rate)
     capex_annual = annual.get("capital_expenditure")
     da_annual = annual.get("depreciation_amortization")
     wc_current = capital.working_capital(cap)
@@ -226,6 +241,8 @@ def _md38(
         else None
     )
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
+    if rate_reason == REIT_TTM_RATE_MISSING:
+        inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
     inputs.update(
         present(
             nopat=nopat_annual,
