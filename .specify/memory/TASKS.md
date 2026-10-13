@@ -106,7 +106,14 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       Likewise, when `KG_NEWS_DB` is not configured or does not exist, `entity_resolution` reports "no news
       source configured", is not pending, and does not fail. → steps 2, 4 and 5; `PLAN.md` acceptance criteria,
       "Incremental, upstream-aware run" *(added 2026-10-06)*.
-- [ ] **T-019** Verify the run endpoints: one endpoint per step in `PLAN.md` step 1; run handle, no held
+- [x] **T-019** — **done 2026-10-13, PR #153** (approved after one review round: 13 clauses of PLAN's
+  "Run endpoints" bullet and step 1's request contract, each mapped to a test; new acceptance tests for the
+  whole-app route table, GET on a run path never starting a run (404 by the status route's shadowing, 405
+  otherwise), no read router reaching api.orchestrator (relative imports included), write connections only
+  on the run path with alias-resolved scanners and positive controls, and the CLI wrapper's contract and
+  settings forwarding; all 11 endpoints run live on a scratch database; PLAN's write-connection wording
+  corrected; no verify_pilot check, by instruction). Verify the run endpoints: one endpoint per step in
+  `PLAN.md` step 1; run handle, no held
       request; the status endpoint is a read-only `GET`; write connections only in the run routers and no read
       router imports a run router (`grep`); no `migrate`/`cycle backfill`/`cycle undo-run` endpoint; the request
       contract holds (preference flags rejected, no `--allow-*` override reachable). → `PLAN.md` acceptance

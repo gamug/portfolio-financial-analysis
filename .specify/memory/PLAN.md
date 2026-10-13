@@ -309,7 +309,8 @@ touching the endpoints.
 - **Run endpoints** (`T-019`): there is one endpoint per step listed in step 1; a run endpoint returns a run
   handle and does not hold the request open; the request contract in step 1 holds (preference flags rejected
   on the writing path, no `--allow-*` override or `migrate` reachable over HTTP); the status endpoint is a `GET` that only reads provenance; write
-  connections are opened only in the run routers, and no read router imports a run router (`grep`-checkable);
+  connections are opened only on the run path (`api/orchestrator.py`, called by the run router and the
+  CLI wrapper), and no read router imports a run router (`grep`-checkable);
   no `migrate` or `cycle backfill` endpoint exists.
 - **Incremental, upstream-aware run (user, 2026-10-06).** Before running any step, the orchestrator checks for
   new upstream information as of `--analysis-date`: new SEC filings and prices from `portfolio-data-mining`
