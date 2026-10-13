@@ -545,9 +545,12 @@ the final pilot, `T-143`.
       EBITDA persisted, net debt minus short-term investments, the `free_cash_flow` rename; its
       acceptance includes the audit's `metrics` group at 0); **part 3** — the dictionary from Annex B,
       the applicability matrix as data, the traceability test, provenance, the company card and the
-      post-rebuild fidelity gate. **Status (2026-10-13): part 1 done — PR #144** (branch
-      `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the mismatching companies are
-      declared there as input for part 3's gate). The box stays open until part 3 merges.
+      post-rebuild fidelity gate. **Status (2026-10-13): part 1 done — PR #144, reviewed and
+      approved by reviewer A ("ready to merge"; the review round's two fixes are the capex caption
+      fallback no longer re-taking a rejected net element, and the pointers under T-148's corrected
+      items). The box stays open until part 3 merges, so this merge does not move T-151 to
+      `CHANGELOG.md`.** Branch `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the
+      mismatching companies are declared there as input for part 3's gate.
 - [ ] **T-071** Valorization redesign in `src/cycle/scores/valorization.py`:
       EV-based multiples (`enterprise_fcf_yield` + new `EBITDA/EV`),
       ROIC replacing ROE in the quality factor, remove the size factor,
