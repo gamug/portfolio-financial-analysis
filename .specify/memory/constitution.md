@@ -122,7 +122,10 @@ assumes the stack actually pinned in `pyproject.toml`.
    interpretation only: how to read the group's already-computed values,
    flags and empty reasons. A skill states no formula (the metric
    definitions come from Annex B of the checklist through the generated data
-   files) and every statement cites the checklist rule that backs it — a new
+   files) and every statement cites what backs it — a checklist rule ID, or a
+   loaded source from the checklist's sources register with its PDF page and
+   verbatim quote (recorded in `skills/SOURCES.md` and checked like the
+   checklist's quotes); a statement with no backing is not written — a new
    specialist group gets the same treatment, not an inline docstring only.
 5. **Config lives where its tool expects it, not duplicated.** Ruff:
    `.code_quality/ruff.toml`. Mypy: `.code_quality/mypy.ini`. Pytest:
@@ -447,7 +450,10 @@ above should cite the section by name.
   interpretation only — how to read the group's already-computed values, flags
   and empty reasons — with no formula (the metric definitions come from Annex B
   of the checklist through the generated data files) and every statement citing
-  the checklist rule that backs it. Materially changed guidance: the five
+  what backs it — a checklist rule ID, or a loaded source from the checklist's
+  sources register with its PDF page and verbatim quote (recorded in
+  `skills/SOURCES.md` and checked like the checklist's quotes); a statement with
+  no backing is not written. Materially changed guidance: the five
   skills were written as generic manual-extraction prompt templates with no
   source, and T-076's review against checklist v1.3 found them contradicting
   the rules (NOPAT at the filing's own rate, operating leases as debt, a dual
