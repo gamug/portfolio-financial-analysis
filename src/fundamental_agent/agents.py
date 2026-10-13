@@ -165,7 +165,7 @@ class FilingContext:
 
 # The flows each group annualizes on a 10-Q (F4, T-105): its ratios' TTM numerators.
 _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
-    "profitability": ("net_income",),
+    "profitability": ("net_income", "operating_income"),
     "efficiency": ("revenue", "cogs"),
     "leverage": ("operating_income", "depreciation_amortization"),
     "roic": ("operating_income",),
@@ -174,6 +174,8 @@ _GROUP_TTM_ITEMS: dict[str, tuple[str, ...]] = {
         "capital_expenditure",
         "stock_based_compensation",
         "interest_expense",
+        "operating_income",
+        "depreciation_amortization",
     ),
 }
 

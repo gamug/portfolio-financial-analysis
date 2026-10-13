@@ -888,6 +888,11 @@ def _analyze_one(
     market_cap_obj = mc_res.caps.get(task.asset_id)
     market_cap_missing = mc_res.missing.get(task.asset_id)
 
+    # T-151 part 2: the company profile (D3/D4) and the prior-year capital the return, leverage and
+    # valuation ratios divide by (MET-01/02, MD-02/35/38). The prior-year quarter's balance sheet is
+    # another filing's, so it is read here, never inside a metric.
+    db.attach_context(engine.conn, task.asset_id, task.form, target.period.key, stmts)
+
     ttm = _ttm_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
