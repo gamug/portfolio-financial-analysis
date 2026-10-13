@@ -240,6 +240,30 @@ def test_a_newly_recorded_succession_cik_is_listed_over_its_full_window(fx: Fixt
     assert {y for c, _, y in edgar.calls if c == cik_for("AAA")} == {2025, 2026}
 
 
+def test_null_cik_rows_count_for_the_assets_own_cik_so_the_window_stays_narrow(fx: Fixture) -> None:
+    """m012 does not backfill ``sec_filings.cik``: a row from before T-149 is NULL there."""
+    fx.conn.execute("UPDATE sec_filings SET cik = NULL")
+    fx.conn.commit()
+    edgar = FakeEdgar()
+    assert fx.line(edgar) == "pending: no 2 members current, 8 listings"
+    assert {y for _, _, y in edgar.calls} == {2025, 2026}
+
+
+def test_a_predecessor_cik_with_only_null_rows_gets_the_full_window(fx: Fixture) -> None:
+    fx.conn.execute("UPDATE sec_filings SET cik = NULL")
+    fx.conn.execute(
+        "INSERT INTO cik_succession (successor_cik, predecessor_cik, effective_date, "
+        "evidence_form, evidence_accession, evidence_quote) "
+        "VALUES (?, '0000000999', '2026-01-01', '8-K12B', 'x', 'x')",
+        (cik_for("AAA"),),
+    )
+    fx.conn.commit()
+    edgar = FakeEdgar()
+    fx.line(edgar)
+    assert {y for c, _, y in edgar.calls if c == "0000000999"} == {2022, 2023, 2024, 2025, 2026}
+    assert {y for c, _, y in edgar.calls if c == cik_for("AAA")} == {2025, 2026}
+
+
 def test_a_dead_member_the_gateway_has_no_match_for_is_listed_not_pending(fx: Fixture) -> None:
     edgar = FakeEdgar()
     edgar.unknown.add(cik_for("BBB"))

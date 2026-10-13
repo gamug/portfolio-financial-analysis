@@ -236,8 +236,15 @@ def _covers(params: dict[str, object], row: _ErrorRow, year: int) -> bool:
 
 
 def _stored_ciks(conn: Database, asset_id: int) -> set[str]:
+    """The CIKs the asset has a stored filing under. ``sec_filings.cik`` is NULL on rows from
+    before T-149 and nothing backfills it (``kg_schema/ddl.py``, the additive column), so a NULL
+    row belongs to its asset's own CIK: ``COALESCE(sec_filings.cik, assets.cik)``. A predecessor
+    CIK with only NULL rows is therefore still "no stored filing" and gets the full window --
+    conservative."""
     rows = conn.execute(
-        "SELECT DISTINCT cik FROM sec_filings WHERE asset_id = ? AND cik IS NOT NULL", (asset_id,)
+        "SELECT DISTINCT COALESCE(f.cik, a.cik) AS cik FROM sec_filings f "
+        "JOIN assets a ON a.id = f.asset_id WHERE f.asset_id = ? AND COALESCE(f.cik, a.cik) IS NOT NULL",
+        (asset_id,),
     ).fetchall()
     return {str(r["cik"]) for r in rows}
 
