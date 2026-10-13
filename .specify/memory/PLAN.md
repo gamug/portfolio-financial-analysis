@@ -305,7 +305,8 @@ touching the endpoints.
   (`--analysis-date D`) — runs pricing → fundamental → entity_resolution → cycle → quant, in the correct
   dependency order, and completes on a fresh universe with no pre-existing data.
 - Killing the orchestrator mid-run and re-invoking it (over HTTP or the CLI) does not re-do a step that already
-  completed and wrote its output (delegates to each package's own idempotency, per step 2 above).
+  completed and wrote its output (delegates to each package's own idempotency, per step 2 above). *(T-015,
+  2026-10-13: the run lock, the abandoned-run reconcile and the graceful stops.)*
 - **Run endpoints** (`T-019`): there is one endpoint per step listed in step 1; a run endpoint returns a run
   handle and does not hold the request open; the request contract in step 1 holds (preference flags rejected
   on the writing path, no `--allow-*` override or `migrate` reachable over HTTP); the status endpoint is a `GET` that only reads provenance; write

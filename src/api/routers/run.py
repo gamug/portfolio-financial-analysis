@@ -28,6 +28,7 @@ from api.orchestrator import (
     ProvenanceError,
     RunContext,
     RunInProgress,
+    RunLocked,
     RunPaths,
     start_run,
 )
@@ -95,6 +96,12 @@ def _start(request: Request, kind: str, body: _AnalysisDate) -> JSONResponse:
                 "handle": exc.handle,
                 "status_url": _STATUS_URL.format(handle=exc.handle),
             },
+        )
+    except RunLocked as exc:
+        # another process, or a step it started that is still running, holds the run lock (T-015)
+        return JSONResponse(
+            status_code=409,
+            content={"detail": RunLocked.MESSAGE, "holder": exc.holder},
         )
     except ProvenanceError as exc:
         # the run's provenance row could not be written, so the run did not start (T-012)

@@ -195,21 +195,32 @@ its `run_id`.
 ### `GET /api/v1/run/{handle}` — poll
 
 Returns the run's **recorded** state (T-012): `handle`, `kind`, `analysis_date`, `settings` (only
-the values given), `status` (`running` / `completed` / `failed`), `started_at`/`finished_at`, and
+the values given), `status` (`running` / `completed` / `failed` / `abandoned`), `started_at`/`finished_at`, and
 `steps[]` — each step's `name`, `argv` (without the interpreter path), `status`
-(`pending`/`running`/`completed`/`failed`/`skipped`/`blocked`/`not_run`), timings, `exit_code`, `run_id`,
+(`pending`/`running`/`completed`/`failed`/`skipped`/`blocked`/`not_run`/`abandoned`), timings, `exit_code`, `run_id`,
 `reason` and the last 40 lines of combined output. It reads `v_orchestrator_run` /
 `v_orchestrator_step` through the read-only `get_db` dependency, so it answers from the database
 and **survives an API restart**. An unknown handle — or a database without the provenance views —
-is **`404`**. It is a read router: it starts no run and imports no run router.
+is **`404`**. It is a read router: it starts no run and imports no run router. The views' columns
+are unchanged, but both can now carry the value `abandoned` (T-015, as `blocked` for `T-013`).
 
 ### Current limits (until later Work item 2 tasks)
 
-- **Provenance is recorded; a killed process is not cleaned up (until `T-015`).** Every run and
-  step is written to `orchestrator_run` / `orchestrator_step` before the first child starts and
-  updated on every state change, so the status route reads the database and survives a restart. A
-  process killed mid-run leaves its rows `running` (and its later steps `pending`); resuming a
-  killed run is `T-015`, not this task.
+- **A killed process is reconciled by the next run (`T-015`).** A run that writes takes an exclusive
+  `fcntl.flock` on `<KG_FINANCIAL_DB>.orchestrator.lock` before it records anything, and every child
+  inherits the lock's descriptor: a step orphaned by a `kill -9` keeps holding the lock until it
+  exits, so a re-invocation is refused (CLI exit `1`; HTTP `409` with the holder identity and "a
+  previous run, or a step it started, still holds the run lock") and two runs never write the same
+  step at once. Holding the lock, a run first reconciles every run a dead process left `running` /
+  `pending` to `abandoned` (its running step `abandoned`, reason "the orchestrator process ended
+  while this step ran (reconciled by run <handle>)"; its pending steps `not_run`) before it records
+  its own row, so the first run after a crash cleans up the last one. A graceful stop -- `SIGTERM`
+  to the CLI, or the API shutting down -- kills the current child and records the step `failed` with
+  `stopped: SIGTERM` / `stopped: API shutdown` and the later steps `not_run`; `SIGKILL` cannot be
+  handled, so that case is the lock + reconcile above. A stopped run's `abandoned`/`failed` row is
+  served by the status route as recorded -- the route itself never writes. (The `ddl.py` status
+  comment still lists only `running | completed | failed`: it has been stale since T-013, which added
+  `blocked`, and a DDL text change would alter `sqlite_master.sql` on fresh databases.)
 - **A run that cannot record its provenance does not start.** If the `orchestrator_run` row cannot
   be written, the route answers **`500`** and the CLI exits `1`, and no child is started. If a
   write fails after the run started, the run stops (no further child starts), is recorded `failed`
@@ -292,7 +303,12 @@ the foreground over the same code (the same step table and argv builder), printi
 running ...` line when each step starts and its result line (name, status, `run_id`, seconds) when it
 ends — both flushed, so a multi-hour run is not silent — then a final summary and, on failure, the
 failing step's output tail. It records the same provenance as the HTTP path (`surface = 'cli'`),
-and exits `1` without starting any child if that cannot be written. It exits `0` when every step
+and exits `1` without starting any child if that cannot be written. It takes the same **run lock**
+as the HTTP path (T-015): a second CLI run, or one alongside an HTTP run, on the same database is
+refused with exit `1` and the lock-holder message, so two runs never write the same step. It reports
+how many abandoned runs and steps it reconciled. A `SIGTERM` is handled: the current child is
+killed, its step is recorded `failed` (`stopped: SIGTERM`), the later steps `not_run`, and the
+process exits `1`; `SIGINT` keeps its own behaviour. It exits `0` when every step
 completed or was skipped, `1` otherwise. The paths default to the environment variables
 the packages use (`KG_FINANCIAL_DB` / `KG_UNIVERSE_DB` / `KG_NEWS_DB`, the news path defaulting as
 above). Plain `python -m api` (no arguments) still starts the server.

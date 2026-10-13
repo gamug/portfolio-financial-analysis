@@ -28,15 +28,27 @@ step has not processed. A step runs when its own check says pending or when a di
 ran because it was pending; otherwise it is ``skipped`` with ``not pending: <evidence>``.
 ``cycle select`` always runs. A check that fails counts as pending. The single-step kinds never
 run a check.
+
+A run that writes takes a cross-process lock (T-015): an exclusive, non-blocking
+``fcntl.flock`` on ``<KG_FINANCIAL_DB>.orchestrator.lock``, before it records anything. A run
+refused by the lock starts nothing and writes no row; every child inherits the lock's
+descriptor, so a step orphaned by a ``kill -9`` still holds it until it exits. Holding the
+lock, a run first reconciles any run a dead process left ``running``/``pending`` to
+``abandoned`` (its running step ``abandoned``, its pending steps ``not_run``). A graceful stop
+-- SIGTERM to the CLI, or the API's shutdown -- kills the current child and records the step
+``failed`` with ``stopped: SIGTERM`` / ``stopped: API shutdown`` and the later steps ``not_run``.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -75,6 +87,30 @@ _SETTING_FLAG: dict[str, str] = {
 }
 
 _OUTPUT_TAIL_LINES = 40
+
+# -- the cross-process run lock (T-015) ----------------------------------------------------------
+
+_LOCK_SUFFIX = ".orchestrator.lock"
+
+
+@dataclass
+class _LockState:
+    """The current run's lock and stop state (one active run per process, T-015): the open lock
+    fd (inherited by every child through ``pass_fds``), its holder identity, the child currently
+    running (so a graceful stop can kill it), and a requested stop's reason."""
+
+    fd: int | None = None
+    holder: dict[str, object] | None = None
+    child: subprocess.Popen[str] | None = None
+    stop_reason: str | None = None
+
+
+_LOCK_STATE = _LockState()
+
+
+def lock_path(db_path: Path) -> Path:
+    """The run lock file beside the database (``<db>.orchestrator.lock``); never deleted."""
+    return db_path.with_name(db_path.name + _LOCK_SUFFIX)
 
 
 @dataclass(frozen=True)
@@ -331,16 +367,47 @@ def run_command(
     """The single subprocess seam -- tests replace this, never the real agents. No shell,
     no string concatenation: *argv* is a list built by :func:`build_argv` or
     :func:`build_check_argv`. A step has no *timeout*; a pending check does, and the child is
-    killed when it expires (``subprocess.TimeoutExpired``)."""
-    proc = subprocess.run(  # noqa: S603 - argv is a list of literals from the step table
-        argv,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
-    return CommandResult(returncode=proc.returncode, output=f"{proc.stdout}{proc.stderr}")
+    killed when it expires (``subprocess.TimeoutExpired``).
+
+    ``Popen`` + ``communicate`` instead of ``subprocess.run`` (T-015): the child is registered as
+    the current child under the lock *before* it can be asked to stop, so
+    :func:`request_stop` always sees it; the lock's fd is inherited through ``pass_fds``. The
+    behaviour is otherwise identical: a timeout kills the child and re-raises
+    ``TimeoutExpired``; any other ``BaseException`` (a ``KeyboardInterrupt``/``RunStopped``
+    raised by a stop) kills the child, exactly as ``subprocess.run``'s bare ``except`` does. A
+    stop requested while the child runs makes this raise :class:`RunStopped` -- a stop, never a
+    step failure or a "failed check"."""
+    with _LOCK:
+        stop = _LOCK_STATE.stop_reason
+        if stop is not None:  # a stop was requested before this child could start
+            raise RunStopped(stop)
+        proc = subprocess.Popen(  # noqa: S603 - argv is a list of literals from the step table
+            argv,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            pass_fds=(_LOCK_STATE.fd,) if _LOCK_STATE.fd is not None else (),
+        )
+        _LOCK_STATE.child = proc
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        except BaseException:
+            proc.kill()  # mirror subprocess.run: kill the child, then re-raise
+            raise
+    finally:
+        with _LOCK:
+            if _LOCK_STATE.child is proc:
+                _LOCK_STATE.child = None
+    stop = _stop_reason()
+    if stop is not None:
+        raise RunStopped(stop)
+    return CommandResult(returncode=proc.returncode, output=f"{stdout}{stderr}")
 
 
 # -- run state ----------------------------------------------------------------------------------
@@ -350,7 +417,7 @@ def run_command(
 class StepState:
     name: str
     argv: list[str]
-    status: str = "pending"  # pending|running|completed|failed|skipped|blocked|not_run
+    status: str = "pending"  # pending|running|completed|failed|skipped|blocked|not_run|abandoned
     started_at: str | None = None
     finished_at: str | None = None
     exit_code: int | None = None
@@ -368,7 +435,7 @@ class RunState:
     kind: str
     analysis_date: str
     settings: dict[str, object]
-    status: str = "pending"  # pending|running|completed|failed
+    status: str = "pending"  # pending|running|completed|failed|abandoned
     started_at: str | None = None
     finished_at: str | None = None
     steps: list[StepState] = field(default_factory=list)
@@ -384,6 +451,7 @@ class _Registry:
 
     runs: dict[str, RunState] = field(default_factory=dict)
     active: str | None = None
+    thread: threading.Thread | None = None
 
 
 _REGISTRY = _Registry()
@@ -396,6 +464,30 @@ class RunInProgress(RuntimeError):
     def __init__(self, handle: str) -> None:
         super().__init__(f"a run is already in progress: {handle}")
         self.handle = handle
+
+
+class RunLocked(RuntimeError):
+    """Another process -- or a step it started that is still running -- holds the run lock
+    (T-015). The HTTP path answers ``409`` with :attr:`holder`; the CLI exits ``1``."""
+
+    MESSAGE = "a previous run, or a step it started, still holds the run lock"
+
+    def __init__(self, holder: dict[str, object] | None) -> None:
+        super().__init__(self.MESSAGE)
+        self.holder = holder
+
+
+class RunStopped(BaseException):
+    """A graceful stop was requested (T-015: SIGTERM to the CLI, or the API's shutdown).
+
+    A ``BaseException`` so :func:`_execute_step`'s ``except Exception`` cannot swallow it; the
+    runner records the current step ``failed`` with :attr:`reason` (or ``not_run`` when the stop
+    landed before the step's child started), every later step ``not_run``, and the run ``failed``.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class ProvenanceError(RuntimeError):
@@ -418,10 +510,96 @@ def get_run(handle: str) -> RunState | None:
 
 
 def clear_runs() -> None:
-    """Test seam: drop every in-memory run (the D4 state is lost on restart)."""
+    """Test seam: drop every in-memory run (the D4 state is lost on restart) and release the
+    run lock (T-015)."""
     with _LOCK:
         _REGISTRY.runs.clear()
         _REGISTRY.active = None
+        _REGISTRY.thread = None
+        _LOCK_STATE.stop_reason = None
+    _release_lock()
+
+
+# -- the run lock (T-015) ------------------------------------------------------------------------
+
+
+def _read_holder(fd: int) -> dict[str, object] | None:
+    """The holder identity written into the lock file, or ``None`` if it is absent/unreadable."""
+    try:
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 64 * 1024)
+    except OSError:
+        return None
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _acquire_lock(db_path: Path, holder: dict[str, object]) -> None:
+    """Take the exclusive run lock, or raise :class:`RunLocked` with the current holder.
+
+    Non-blocking: a run refused here starts nothing. The holder identity is written into the
+    file *after* acquiring, so a reader sees the run that actually holds it."""
+    fd = os.open(lock_path(db_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        data = _read_holder(fd)
+        os.close(fd)
+        raise RunLocked(data) from exc
+    payload = json.dumps(holder).encode("utf-8")
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, payload)
+    _LOCK_STATE.fd = fd
+    _LOCK_STATE.holder = holder
+
+
+def _release_lock() -> None:
+    """Close the lock fd (releasing the ``flock``); idempotent."""
+    fd, _LOCK_STATE.fd = _LOCK_STATE.fd, None
+    _LOCK_STATE.holder = None
+    if fd is not None:
+        with contextlib.suppress(OSError):
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        with contextlib.suppress(OSError):
+            os.close(fd)
+
+
+def _stop_reason() -> str | None:
+    with _LOCK:
+        return _LOCK_STATE.stop_reason
+
+
+def request_stop(reason: str) -> None:
+    """Ask the current run to stop (T-015), atomically with the child registration.
+
+    Under the lock: set the reason -- so :func:`run_command` refuses to spawn any further child --
+    and kill the child currently registered, so a stop during a pending check or a step is a stop,
+    never a failed check or a step failure."""
+    with _LOCK:
+        _LOCK_STATE.stop_reason = reason
+        child = _LOCK_STATE.child
+        if child is not None and child.poll() is None:
+            child.kill()
+
+
+def shutdown_active_run(timeout: float = 10.0) -> None:
+    """The API lifespan's shutdown hook (T-015): stop the active run and wait (bounded) for the
+    runner to record it, so the run is ``failed``/``stopped: API shutdown`` before the process
+    exits. If the runner does not finish in time, the next run reconciles it (T-015)."""
+    with _LOCK:
+        active = _REGISTRY.active
+        thread = _REGISTRY.thread
+    if active is None:
+        return
+    request_stop("stopped: API shutdown")
+    if thread is not None:
+        thread.join(timeout)
 
 
 def _now() -> str:
@@ -585,6 +763,81 @@ def new_run(
     return run
 
 
+# -- reconcile abandoned runs, then begin (T-015) ------------------------------------------------
+
+# All static, every value bound. The ids are captured first, then the three UPDATEs are restricted
+# to exactly those ids through ``json_each`` (never a timestamp that a concurrent run could share).
+_STALE_RUNS_SQL = "SELECT id FROM orchestrator_run WHERE status IN ('running', 'pending')"
+_ABANDON_RUNS_SQL = (
+    "UPDATE orchestrator_run SET status = 'abandoned', finished_at = ? "
+    "WHERE id IN (SELECT value FROM json_each(?))"
+)
+_ABANDON_STEPS_SQL = (
+    "UPDATE orchestrator_step SET status = 'abandoned', finished_at = ?, reason = ? "
+    "WHERE status = 'running' AND orchestrator_run_id IN (SELECT value FROM json_each(?))"
+)
+_NOT_RUN_STEPS_SQL = (
+    "UPDATE orchestrator_step SET status = 'not_run' "
+    "WHERE status = 'pending' AND orchestrator_run_id IN (SELECT value FROM json_each(?))"
+)
+
+
+def reconcile_abandoned_runs(db_path: Path, *, handle: str) -> tuple[int, int]:
+    """Reconcile every run a dead process left ``running``/``pending`` (T-015), under the lock.
+
+    One transaction against the orchestrator's own tables only. Returns ``(runs, steps)``
+    reconciled: each run becomes ``abandoned`` with ``finished_at``; its running step becomes
+    ``abandoned`` with the reason; its pending steps become ``not_run``. A ``completed``/``failed``
+    run is never touched."""
+    conn = connect(db_path)
+    try:
+        ids = [int(row[0]) for row in conn.execute(_STALE_RUNS_SQL).fetchall()]
+        if not ids:
+            return (0, 0)
+        payload = json.dumps(ids)
+        now = _now()
+        reason = f"the orchestrator process ended while this step ran (reconciled by run {handle})"
+        runs = conn.execute(_ABANDON_RUNS_SQL, (now, payload)).rowcount
+        abandoned = conn.execute(_ABANDON_STEPS_SQL, (now, reason, payload)).rowcount
+        not_run = conn.execute(_NOT_RUN_STEPS_SQL, (payload,)).rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    return (runs, abandoned + not_run)
+
+
+def begin_run(
+    kind: str, ctx: RunContext, *, surface: str = "http", handle: str | None = None
+) -> tuple[RunState, tuple[int, int]]:
+    """Take the run lock, reconcile dead runs, then record the new one (T-015).
+
+    The lock is taken before any row is written, so a refused run (:class:`RunLocked` --
+    another process, or an orphaned step it started, holds it) starts nothing. A failure after
+    the lock is taken (including :class:`ProvenanceError` from :func:`new_run`) releases it before
+    propagating, so one bad run cannot leave every later run refused. Returns the run and the
+    ``(runs, steps)`` reconciled."""
+    run_handle = handle or str(uuid.uuid4())
+    with _LOCK:
+        _LOCK_STATE.stop_reason = None  # a fresh run is not stopped by a previous run's stop
+    holder: dict[str, object] = {
+        "handle": run_handle,
+        "pid": os.getpid(),
+        "started_at": _now(),
+        "surface": surface,
+    }
+    _acquire_lock(ctx.paths.db_path, holder)
+    try:
+        _ensure_tables(ctx.paths.db_path)
+        reconciled = reconcile_abandoned_runs(ctx.paths.db_path, handle=run_handle)
+        run = new_run(kind, ctx, surface=surface, handle=run_handle)
+    except BaseException:
+        _release_lock()
+        raise
+    if reconciled[0]:
+        log.info("run %s: reconciled %d abandoned run(s), %d step(s)", run_handle, *reconciled)
+    return run, reconciled
+
+
 def _set(state: StepState, **changes: object) -> None:
     """Update a step's in-memory state, then persist it (raises on a write failure)."""
     with _LOCK:
@@ -605,29 +858,48 @@ def _try_set(state: StepState, **changes: object) -> None:
         log.exception("orchestrator step %s failed", state.name)
 
 
-def _fail_run(
-    run: RunState, state: StepState, reason: str, index: int, on_step_change: StepCallback | None
-) -> None:
-    """Record a failed step and every later step ``not_run`` (best effort: the write may
-    itself be what failed)."""
-    _try_set(state, status="failed", finished_at=_now(), reason=reason)
-    _notify(on_step_change, state)
-    for later in run.steps[index + 1 :]:
+def _mark_not_run(run: RunState, index: int, on_step_change: StepCallback | None) -> None:
+    """Record every step from *index* on ``not_run`` (best effort): a stopped run starts nothing."""
+    for later in run.steps[index:]:
         _try_set(later, status="not_run")
         _notify(on_step_change, later)
 
 
+def _fail_run(  # noqa: PLR0913 - the run, the step, its reason, its index and the callback
+    run: RunState,
+    state: StepState,
+    reason: str,
+    index: int,
+    on_step_change: StepCallback | None,
+    *,
+    step_ran: bool = True,
+) -> None:
+    """Record the current step and every later step ``not_run`` (best effort: the write may
+    itself be what failed). ``step_ran=False`` (T-015: a stop landed before the step's own child
+    started) records the current step ``not_run`` too -- it never ran."""
+    if step_ran:
+        _try_set(state, status="failed", finished_at=_now(), reason=reason)
+    else:
+        _try_set(state, status="not_run")
+    _notify(on_step_change, state)
+    _mark_not_run(run, index + 1, on_step_change)
+
+
 def _finish_run(run: RunState, failed: bool) -> None:
-    """Set the run's final state, clear the active handle, and persist (best effort)."""
+    """Set the run's final state, clear the active handle and the stop flag, release the run
+    lock, and persist (best effort)."""
     with _LOCK:
         run.finished_at = _now()
         run.status = "failed" if failed else "completed"
         if run.handle == _REGISTRY.active:
             _REGISTRY.active = None
+            _REGISTRY.thread = None
+        _LOCK_STATE.stop_reason = None
     try:
         _persist_run(run)
     except _ProvenanceWriteFailed:
         log.exception("orchestrator run %s: final provenance write failed", run.handle)
+    _release_lock()
 
 
 # -- run-id capture -----------------------------------------------------------------------------
@@ -826,8 +1098,8 @@ def _execute_step(
     on_step_change: StepCallback | None,
 ) -> None:
     """Decide and run one step: ``blocked``, ``skipped`` or run. Records ``state.status`` and
-    ``progress.status_of``; a failed provenance write or a ``KeyboardInterrupt``/``SystemExit``
-    propagates to :func:`execute_run` (the run stops there).
+    ``progress.status_of``; a failed provenance write or a ``KeyboardInterrupt``/``SystemExit``/
+    ``RunStopped`` propagates to :func:`execute_run` (the run stops there).
 
     The order: blocked by a failed/blocked direct upstream (T-013; no check runs for a step that
     cannot start), the missing-news skip, then (pipeline runs only) :func:`_decide`."""
@@ -861,7 +1133,7 @@ def _execute_step(
         _run_one(spec, state, ctx)
     except _ProvenanceWriteFailed:
         raise  # a failed write stops the run, never an isolated step failure
-    except (KeyboardInterrupt, SystemExit):
+    except (KeyboardInterrupt, SystemExit, RunStopped):
         raise  # the run stops; recorded by the caller
     except Exception as exc:  # a step that raises must never look completed
         _set(state, status="failed", finished_at=_now(), reason=f"{type(exc).__name__}: {exc}")
@@ -881,16 +1153,26 @@ def execute_run(
     ``blocked``; a missing news source skips only ``entity_resolution`` (D6). A step that
     exits non-zero, or whose run raises an ``Exception``, is ``failed`` and the run continues
     with the next step (T-013). A ``_ProvenanceWriteFailed``, or any ``BaseException`` that is
-    not an ``Exception`` (``KeyboardInterrupt``/``SystemExit``/``GeneratorExit``/...), stops
+    not an ``Exception`` (``KeyboardInterrupt``/``SystemExit``/``RunStopped``/...), stops
     the run: the current step is ``failed``, every later step ``not_run``, the run ``failed``,
     and the exception is re-raised when it is not an ``Exception`` -- so the process still
     exits non-zero and the caller can print the run's state. *on_step_change* is called on
-    every status transition."""
+    every status transition.
+
+    A stop (T-015) is checked before each step: once :func:`request_stop` has been called, no
+    further step starts -- the steps from here on are ``not_run`` and the run is ``failed``. A stop
+    that lands while a step runs is recorded on that step as ``failed`` with the stop reason; one
+    that lands while its *pending check* runs leaves the step ``not_run`` (it never ran)."""
     specs = steps_for(run.kind)
     progress = _Progress(incremental=run.kind == _PIPELINE_KIND)
     failed = False
     try:
         for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
+            if _stop_reason() is not None:
+                # A stop arrived between steps: start nothing more (T-015).
+                failed = True
+                _mark_not_run(run, index, on_step_change)
+                break
             try:
                 _execute_step(spec, state, ctx, progress, on_step_change)
                 if progress.status_of[spec.name] == "failed":
@@ -902,10 +1184,16 @@ def execute_run(
                 _fail_run(run, state, str(exc), index, on_step_change)
                 break
             except BaseException as exc:
-                # Any other BaseException (KeyboardInterrupt, SystemExit, GeneratorExit, ...)
-                # must not leave the run "completed" with a step still "running": stop it.
+                # Any other BaseException (KeyboardInterrupt, SystemExit, RunStopped,
+                # GeneratorExit, ...) must not leave the run "completed" with a step still
+                # "running": stop it.
                 failed = True
-                _fail_run(run, state, f"{type(exc).__name__}: {exc}", index, on_step_change)
+                reason = (
+                    exc.reason if isinstance(exc, RunStopped) else f"{type(exc).__name__}: {exc}"
+                )
+                _fail_run(
+                    run, state, reason, index, on_step_change, step_ran=state.status == "running"
+                )
                 if not isinstance(exc, Exception):
                     raise
                 break
@@ -916,27 +1204,41 @@ def execute_run(
 def run_now(
     kind: str, ctx: RunContext, *, on_step_change: StepCallback | None = None, surface: str = "cli"
 ) -> RunState:
-    """The foreground path (the CLI wrapper): build, record and execute in this thread."""
-    run = new_run(kind, ctx, surface=surface)
-    execute_run(run, ctx, on_step_change=on_step_change)
+    """The foreground path (the CLI wrapper): take the lock, reconcile, record and execute in
+    this thread (T-015)."""
+    run, _ = begin_run(kind, ctx, surface=surface)
+    try:
+        execute_run(run, ctx, on_step_change=on_step_change)
+    finally:
+        _release_lock()
     return run
 
 
 def start_run(kind: str, ctx: RunContext, *, surface: str = "http") -> RunState:
-    """The HTTP path: record the run, reserve the one active slot and execute it in a
-    background thread (D4). The active check and the record happen under the lock, so a 409
-    never leaves a run row behind and two POSTs cannot race."""
+    """The HTTP path: take the lock, reconcile, record, reserve the one active slot and execute
+    in a background thread (D4/T-015). A second POST in this process is refused by the in-process
+    guard; a run in any other process (or an orphaned step) is refused by the lock."""
     with _LOCK:
         if _REGISTRY.active is not None:
             raise RunInProgress(_REGISTRY.active)
-        run = new_run(kind, ctx, surface=surface)
+    run, _ = begin_run(kind, ctx, surface=surface)
+    with _LOCK:
         _REGISTRY.runs[run.handle] = run
         _REGISTRY.active = run.handle
     thread = threading.Thread(
-        target=execute_run, args=(run, ctx), name=f"orchestrator-{run.handle}", daemon=True
+        target=_run_thread, args=(run, ctx), name=f"orchestrator-{run.handle}", daemon=True
     )
+    with _LOCK:
+        _REGISTRY.thread = thread
     thread.start()
     return run
+
+
+def _run_thread(run: RunState, ctx: RunContext) -> None:
+    """The HTTP path's background target: a graceful stop is recorded by :func:`execute_run` and
+    must not escape the thread as an unhandled exception (T-015)."""
+    with contextlib.suppress(RunStopped):
+        execute_run(run, ctx)
 
 
 # -- CLI wrapper --------------------------------------------------------------------------------
@@ -1026,6 +1328,18 @@ def print_run(run: RunState) -> None:
             print(f"  {line}")
 
 
+def _on_sigterm(signum: int, frame: object) -> None:
+    """The CLI's SIGTERM handler (T-015): raise in the main thread, so ``run_command`` kills the
+    current child and the runner records the stop. SIGINT keeps its own behaviour."""
+    raise RunStopped("stopped: SIGTERM")
+
+
+def _install_sigterm() -> None:
+    """Install :func:`_on_sigterm` -- main thread only (signal handlers can be set nowhere else)."""
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 def cli_main(argv: list[str]) -> int:
     parser = build_cli_parser()
     args = parser.parse_args(argv)
@@ -1044,15 +1358,26 @@ def cli_main(argv: list[str]) -> int:
         max_name_weight=args.max_name_weight,
         max_sector_weight=args.max_sector_weight,
     )
+    _install_sigterm()
     try:
-        run = new_run(_PIPELINE_KIND, ctx, surface="cli")
+        run, reconciled = begin_run(_PIPELINE_KIND, ctx, surface="cli")
+    except RunLocked as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except ProvenanceError as exc:
         print(f"cannot record the run: {exc}", file=sys.stderr)
         return 1
+    if reconciled[0]:
+        print(f"reconciled {reconciled[0]} abandoned run(s), {reconciled[1]} step(s)", flush=True)
     try:
         execute_run(run, ctx, on_step_change=print_step_change)
     except (KeyboardInterrupt, SystemExit):
         print_run(run)  # print the state, then let the interrupt exit the process
         raise
+    except RunStopped:
+        print_run(run)  # a graceful stop: print the state and exit non-zero
+        return 1
+    finally:
+        _release_lock()
     print_run(run)
     return 0 if run.status == "completed" else 1
