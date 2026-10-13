@@ -16,6 +16,7 @@ import math
 import sqlite3
 from collections.abc import Callable
 
+from api import orchestrator
 from kg_schema.db import connect_ro
 from kg_schema.queries import invalid_sec_filings_accessions, unresolved_run_references
 
@@ -606,7 +607,7 @@ def main() -> int:  # noqa: C901, PLR0915
 
     check("T-145", t145)
 
-    def t012() -> None:  # noqa: C901, PLR0912 - one branch per provenance invariant
+    def t012() -> None:  # noqa: C901 - one branch per provenance invariant
         # The orchestrator's own provenance (T-012): every recorded run's steps are consistent
         # with its status. Read-only; a database with no orchestrator runs is SKIP, not FAIL.
         paths = [("db", args.db)]
@@ -646,16 +647,9 @@ def main() -> int:  # noqa: C901, PLR0915
                     s[2] not in ("completed", "skipped") for s in steps
                 ):
                     bad.append(f"{prefix}run {run_id}: completed with a non-completed/skipped step")
-                if status == "failed":
-                    failed = [s for s in steps if s[2] == "failed"]
-                    if len(failed) != 1:
-                        bad.append(f"{prefix}run {run_id}: failed with {len(failed)} failed steps")
-                    else:
-                        after = steps[steps.index(failed[0]) + 1 :]
-                        if any(s[2] != "not_run" for s in after):
-                            bad.append(
-                                f"{prefix}run {run_id}: a step after the failure is not not_run"
-                            )
+                # T-013: a failed run may have several failed steps (independent failures).
+                if status == "failed" and not any(s[2] == "failed" for s in steps):
+                    bad.append(f"{prefix}run {run_id}: failed without a failed step")
                 if status in ("completed", "failed") and finished_at is None:
                     bad.append(f"{prefix}run {run_id}: finished run without finished_at")
                 for s in steps:
@@ -674,6 +668,72 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-012", t012)
+
+    def t013() -> None:  # noqa: C901 - one branch per isolation invariant
+        # Per-step failure isolation (T-013): a step's direct upstreams (the runner's own
+        # table, imported -- never a copy) decide whether it was blocked. Read-only; no
+        # pipeline run recorded is SKIP, not FAIL.
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        deps = {s.name: s.depends_on for s in orchestrator.steps_for("pipeline")}
+        blocking = ("failed", "blocked")
+        checked_runs = 0
+        failed_steps = 0
+        blocked_steps = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            if not db.relation_exists("orchestrator_run"):
+                continue
+            if not db.relation_exists("orchestrator_step"):
+                continue
+            run_rows = [
+                tuple(r)
+                for r in db.execute(
+                    "SELECT id, status FROM orchestrator_run WHERE kind = 'pipeline'"
+                ).fetchall()
+            ]
+            if not run_rows:
+                continue
+            by_run: dict[int, dict[str, str]] = {}
+            for run_id, step, status in db.execute(
+                "SELECT orchestrator_run_id, step, status FROM orchestrator_step"
+            ).fetchall():
+                by_run.setdefault(int(run_id), {})[str(step)] = str(status)
+            checked_runs += len(run_rows)
+            for run_id, run_status in run_rows:
+                statuses = by_run.get(int(run_id), {})
+                failed_steps += sum(1 for s in statuses.values() if s == "failed")
+                blocked_steps += sum(1 for s in statuses.values() if s == "blocked")
+                for step, status in statuses.items():
+                    upstreams = deps.get(step, ())
+                    if status in ("completed", "failed", "running") and any(
+                        statuses.get(up) in blocking for up in upstreams
+                    ):
+                        bad.append(
+                            f"{prefix}run {run_id}: {step} is {status} with a failed/blocked upstream"
+                        )
+                    if status == "blocked" and not any(
+                        statuses.get(up) in blocking for up in upstreams
+                    ):
+                        bad.append(
+                            f"{prefix}run {run_id}: {step} is blocked with no failed/blocked upstream"
+                        )
+                if run_status == "completed" and any(s == "blocked" for s in statuses.values()):
+                    bad.append(f"{prefix}run {run_id}: completed with a blocked step")
+        if checked_runs == 0:
+            report("T-013", "SKIP", "no pipeline runs recorded")
+            return
+        report(
+            "T-013",
+            "FAIL" if bad else "PASS",
+            f"per-step failure isolation: {checked_runs} runs, {failed_steps} failed steps, "
+            f"{blocked_steps} blocked steps; " + ("; ".join(bad[:10]) or "clean"),
+        )
+
+    check("T-013", t013)
 
     def t083() -> None:
         paths = [("db", args.db)]

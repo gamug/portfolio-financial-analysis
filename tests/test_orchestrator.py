@@ -4,6 +4,8 @@ replaced, no agent is ever spawned."""
 
 from __future__ import annotations
 
+import sqlite3
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -425,44 +427,210 @@ def test_quant_run_id_ignores_a_stale_row_and_before_is_zero_when_absent(
     assert run2.steps[0].run_id == 1
 
 
-# -- failure stop and the news skip -------------------------------------------------------------
+# -- failure isolation (T-013) and the news skip ------------------------------------------------
 
 
-def test_first_failure_stops_the_run_and_marks_later_steps_not_run(
+_OK_ANSWERS = {
+    ("pricing_agent", "run"): (0, "\nrun 1: ok"),
+    ("fundamental_agent", "run"): (0, "\nrun 2: ok"),
+    ("entity_resolution", "build"): (0, "cycle 3: 0 edges"),
+    ("cycle", "select"): (0, "select 4 2026-10-02: ok"),
+}
+
+
+def _statuses(run: orch.RunState) -> dict[str, str]:
+    return {s.name: s.status for s in run.steps}
+
+
+def _reasons(run: orch.RunState) -> dict[str, str | None]:
+    return {s.name: s.reason for s in run.steps if s.status == "blocked"}
+
+
+def test_dependency_table_pins_the_edges() -> None:
+    table = {s.name: s.depends_on for s in orch._PIPELINE}
+    assert table == {
+        "pricing": (),
+        "fundamental": (),
+        "entity_resolution": (),
+        "cycle_select": ("pricing", "fundamental"),
+        "quant_actions": ("pricing", "fundamental"),
+        "quant_returns": ("quant_actions",),
+        "quant_risk_model": ("quant_returns",),
+        "quant_optimize": ("quant_risk_model",),
+        "quant_evaluate": ("quant_optimize", "cycle_select"),
+    }
+    names = [s.name for s in orch._PIPELINE]
+    for step, upstreams in table.items():
+        for upstream in upstreams:
+            assert upstream in names  # every dependency names a real step
+            assert names.index(upstream) < names.index(step)  # and precedes its dependent
+    assert orch._MONITOR.depends_on == ()
+
+
+def test_entity_resolution_failure_isolates_the_other_eight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     news = _touch(tmp_path / "news.db")
-    answers = {
-        ("pricing_agent", "run"): (0, "\nrun 1: cached"),
-        ("fundamental_agent", "run"): (1, "no filings, refusing"),
+    fake = FakeRunner(
+        {**_OK_ANSWERS, ("entity_resolution", "build"): (1, "urls.db is not a database")}
+    )
+    monkeypatch.setattr(orch, "run_command", fake)
+    code = orch.cli_main(
+        [
+            "--analysis-date",
+            "2026-10-02",
+            "--db",
+            str(tmp_path / "fin.db"),
+            "--universe-db",
+            str(tmp_path / "universe.db"),
+            "--news-db",
+            str(news),
+        ]
+    )
+    assert code == 1  # the run failed, so the CLI exits 1
+    assert len(fake.calls) == 9  # every step ran: nothing depends on entity_resolution
+    rows = {
+        r["step"]: r["status"]
+        for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step")
     }
-    monkeypatch.setattr(orch, "run_command", FakeRunner(answers))
+    assert rows["entity_resolution"] == "failed"
+    assert all(v == "completed" for k, v in rows.items() if k != "entity_resolution")
+
+
+def test_pricing_failure_blocks_cycle_and_quant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner({**_OK_ANSWERS, ("pricing_agent", "run"): (1, "gateway refused")})
+    monkeypatch.setattr(orch, "run_command", fake)
     run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
-    statuses = {s.name: s.status for s in run.steps}
+    assert run.status == "failed"
+    assert _statuses(run) == {
+        "pricing": "failed",
+        "fundamental": "completed",
+        "entity_resolution": "completed",
+        "cycle_select": "blocked",
+        "quant_actions": "blocked",
+        "quant_returns": "blocked",
+        "quant_risk_model": "blocked",
+        "quant_optimize": "blocked",
+        "quant_evaluate": "blocked",
+    }
+    assert _reasons(run) == {
+        "cycle_select": "blocked by pricing (failed)",
+        "quant_actions": "blocked by pricing (failed)",
+        "quant_returns": "blocked by quant_actions (blocked)",
+        "quant_risk_model": "blocked by quant_returns (blocked)",
+        "quant_optimize": "blocked by quant_risk_model (blocked)",
+        "quant_evaluate": "blocked by cycle_select (blocked), quant_optimize (blocked)",
+    }
+    assert len(fake.calls) == 3  # no child was started for a blocked step
+    # the blocked row is persisted with NULL timings/exit/run_id
+    blocked = {
+        r["step"]: r
+        for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    }["cycle_select"]
+    assert blocked["status"] == "blocked"
+    assert blocked["reason"] == "blocked by pricing (failed)"
+    assert blocked["started_at"] is None and blocked["finished_at"] is None
+    assert blocked["exit_code"] is None and blocked["run_id"] is None
+
+
+def test_fundamental_failure_blocks_cycle_and_quant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner({**_OK_ANSWERS, ("fundamental_agent", "run"): (1, "no filings, refusing")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    statuses = _statuses(run)
+    assert run.status == "failed"
+    assert statuses["fundamental"] == "failed"
+    assert statuses["pricing"] == "completed"
+    assert statuses["entity_resolution"] == "completed"
+    assert all(
+        statuses[n] == "blocked"
+        for n in (
+            "cycle_select",
+            "quant_actions",
+            "quant_returns",
+            "quant_risk_model",
+            "quant_optimize",
+            "quant_evaluate",
+        )
+    )
+    reasons = _reasons(run)
+    assert reasons["cycle_select"] == "blocked by fundamental (failed)"
+    assert reasons["quant_actions"] == "blocked by fundamental (failed)"
+    assert (
+        reasons["quant_evaluate"] == "blocked by cycle_select (blocked), quant_optimize (blocked)"
+    )
+    assert len(fake.calls) == 3
+
+
+def test_cycle_select_failure_blocks_only_quant_evaluate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner({**_OK_ANSWERS, ("cycle", "select"): (1, "dq-v2 vs dq-v3")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    statuses = _statuses(run)
+    assert run.status == "failed"
+    assert statuses["cycle_select"] == "failed"
+    assert all(
+        statuses[n] == "completed"
+        for n in ("quant_actions", "quant_returns", "quant_risk_model", "quant_optimize")
+    )
+    assert statuses["quant_evaluate"] == "blocked"
+    assert _reasons(run) == {"quant_evaluate": "blocked by cycle_select (failed)"}
+    assert len(fake.calls) == 8  # quant_evaluate was never started
+    row = {r["step"]: r for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step")}[
+        "quant_evaluate"
+    ]
+    assert row["status"] == "blocked"
+    assert row["reason"] == "blocked by cycle_select (failed)"
+    assert row["started_at"] is None
+
+
+def test_quant_returns_failure_blocks_the_rest_of_quant(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner({**_OK_ANSWERS, ("quant", "build-returns"): (1, "no backfill")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    statuses = _statuses(run)
+    assert run.status == "failed"
+    assert statuses["cycle_select"] == "completed"
+    assert statuses["quant_actions"] == "completed"
+    assert statuses["quant_returns"] == "failed"
+    assert statuses["quant_risk_model"] == "blocked"
+    assert statuses["quant_optimize"] == "blocked"
+    assert statuses["quant_evaluate"] == "blocked"
+    assert _reasons(run) == {
+        "quant_risk_model": "blocked by quant_returns (failed)",
+        "quant_optimize": "blocked by quant_risk_model (blocked)",
+        "quant_evaluate": "blocked by quant_optimize (blocked)",
+    }
+
+
+def test_an_isolated_exception_fails_only_that_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner(_OK_ANSWERS, errors={("fundamental_agent", "run"): OSError("gateway died")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    statuses = _statuses(run)
     assert run.status == "failed"
     assert statuses["pricing"] == "completed"
     assert statuses["fundamental"] == "failed"
-    assert statuses["entity_resolution"] == "not_run"
-    assert all(v == "not_run" for k, v in statuses.items() if k not in {"pricing", "fundamental"})
-    failed = next(s for s in run.steps if s.status == "failed")
-    assert failed.exit_code == 1
-    assert failed.output_tail == ["no filings, refusing"]
-
-
-def test_a_raising_step_fails_the_run_with_its_reason(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    news = _touch(tmp_path / "news.db")
-    fake = FakeRunner(errors={("fundamental_agent", "run"): OSError("gateway died")})
-    monkeypatch.setattr(orch, "run_command", fake)
-    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
-    step = next(s for s in run.steps if s.name == "fundamental")
-    assert step.status == "failed"
-    assert step.reason == "OSError: gateway died"
-    assert step.finished_at is not None
-    assert run.status == "failed"
-    assert run.steps[0].status == "completed"  # pricing, before it
-    assert all(s.status == "not_run" for s in run.steps[2:])  # everything after it
+    assert statuses["entity_resolution"] == "completed"  # independent of fundamental
+    assert statuses["cycle_select"] == "blocked"
+    assert statuses["quant_actions"] == "blocked"
+    fundamental = next(s for s in run.steps if s.name == "fundamental")
+    assert fundamental.reason == "OSError: gateway died"
     # the same state is recorded (T-012)
     rows = {
         r["step"]: r
@@ -470,8 +638,75 @@ def test_a_raising_step_fails_the_run_with_its_reason(
     }
     assert rows["fundamental"]["status"] == "failed"
     assert rows["fundamental"]["reason"] == "OSError: gateway died"
-    assert rows["pricing"]["status"] == "completed"
-    assert all(rows[n]["status"] == "not_run" for n in ("entity_resolution", "quant_evaluate"))
+    assert rows["cycle_select"]["status"] == "blocked"
+    assert rows["cycle_select"]["reason"] == "blocked by fundamental (failed)"
+
+
+class _Boom(BaseException):
+    """A BaseException that is not an Exception (T-013: the run must still stop)."""
+
+
+def test_a_base_exception_from_a_step_stops_the_run_and_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    ctx = _ctx(tmp_path, news=news)
+    fake = FakeRunner(_OK_ANSWERS, errors={("fundamental_agent", "run"): _Boom("boom")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.new_run("pipeline", ctx)
+    with pytest.raises(_Boom):
+        orch.execute_run(run, ctx)
+    statuses = _statuses(run)
+    assert run.status == "failed"
+    assert statuses["pricing"] == "completed"
+    assert statuses["fundamental"] == "failed"
+    assert all(
+        statuses[n] == "not_run"
+        for n in (
+            "entity_resolution",
+            "cycle_select",
+            "quant_actions",
+            "quant_returns",
+            "quant_risk_model",
+            "quant_optimize",
+            "quant_evaluate",
+        )
+    )
+    fundamental = next(s for s in run.steps if s.name == "fundamental")
+    assert fundamental.reason == "_Boom: boom"
+
+
+def test_print_run_prints_every_failed_step_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner(
+        {
+            ("pricing_agent", "run"): (1, "pricing exploded"),
+            ("fundamental_agent", "run"): (1, "fundamental exploded"),
+            ("entity_resolution", "build"): (0, "cycle 3: 0 edges"),
+        }
+    )
+    monkeypatch.setattr(orch, "run_command", fake)
+    code = orch.cli_main(
+        [
+            "--analysis-date",
+            "2026-10-02",
+            "--db",
+            str(tmp_path / "fin.db"),
+            "--universe-db",
+            str(tmp_path / "universe.db"),
+            "--news-db",
+            str(news),
+        ]
+    )
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "2 failed" in out
+    assert "pricing failed (exit 1)" in out
+    assert "fundamental failed (exit 1)" in out
+    assert "pricing exploded" in out
+    assert "fundamental exploded" in out
 
 
 def test_keyboard_interrupt_records_the_state_then_propagates(
@@ -822,7 +1057,7 @@ def test_a_single_step_run_records_one_run_and_one_step(
     assert steps[0]["step"] == "pricing" and steps[0]["ordinal"] == 1
 
 
-def test_a_failed_step_records_failed_and_later_not_run(
+def test_a_failed_step_records_failed_and_its_dependents_blocked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     news = _touch(tmp_path / "news.db")
@@ -842,8 +1077,9 @@ def test_a_failed_step_records_failed_and_later_not_run(
     assert rows["pricing"]["status"] == "completed"
     assert rows["fundamental"]["status"] == "failed"
     assert rows["fundamental"]["exit_code"] == 1
-    for name in ("entity_resolution", "cycle_select", "quant_actions", "quant_evaluate"):
-        assert rows[name]["status"] == "not_run"
+    assert rows["entity_resolution"]["status"] == "completed"  # independent of fundamental
+    for name in ("cycle_select", "quant_actions", "quant_evaluate"):
+        assert rows[name]["status"] == "blocked"
     run_row = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")[0]
     assert run_row["status"] == "failed" and run_row["finished_at"] is not None
 
@@ -945,3 +1181,147 @@ def test_cli_prints_the_state_and_exits_1_on_a_provenance_write_failure(
     assert code == 1
     assert "pipeline: failed" in out
     assert "provenance write failed" in out
+
+
+# -- verify_pilot: T-013 (and T-012 on a multi-failure run) --------------------------------------
+
+_ORCH_DDL = """
+CREATE TABLE orchestrator_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT, kind TEXT, as_of TEXT, surface TEXT,
+    settings_json TEXT, status TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+    code_version TEXT);
+CREATE TABLE orchestrator_step (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, orchestrator_run_id INTEGER, ordinal INTEGER,
+    step TEXT, argv_json TEXT, status TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+    exit_code INTEGER, run_kind TEXT, run_id INTEGER, reason TEXT, output_tail TEXT);
+"""
+
+_STEP_NAMES = (
+    "pricing",
+    "fundamental",
+    "entity_resolution",
+    "cycle_select",
+    "quant_actions",
+    "quant_returns",
+    "quant_risk_model",
+    "quant_optimize",
+    "quant_evaluate",
+)
+
+
+def _write_orchestrator_db(path: Path, *, status: str, steps: dict[str, str]) -> None:
+    """A raw pipeline run + steps, for the read-only verify_pilot checks."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_ORCH_DDL)
+    conn.execute(
+        "INSERT INTO orchestrator_run (id, kind, status, started_at, finished_at) "
+        "VALUES (1, 'pipeline', ?, '2026-10-02T00:00:00Z', '2026-10-02T00:01:00Z')",
+        (status,),
+    )
+    for ordinal, name in enumerate(_STEP_NAMES, start=1):
+        conn.execute(
+            "INSERT INTO orchestrator_step (orchestrator_run_id, ordinal, step, argv_json, status) "
+            "VALUES (1, ?, ?, '[]', ?)",
+            (ordinal, name, steps.get(name, "not_run")),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _verify_pilot_line(db_path: Path, task: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/verify_pilot.py", "--db", str(db_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [line for line in result.stdout.splitlines() if task in line]
+    assert len(lines) == 1, f"expected one {task} line: {result.stdout} {result.stderr}"
+    return lines[0]
+
+
+def test_verify_pilot_t013_passes_an_isolated_run(tmp_path: Path) -> None:
+    _write_orchestrator_db(
+        tmp_path / "fin.db",
+        status="failed",
+        steps={
+            "pricing": "failed",
+            "fundamental": "completed",
+            "entity_resolution": "skipped",
+            "cycle_select": "blocked",
+            "quant_actions": "blocked",
+            "quant_returns": "blocked",
+            "quant_risk_model": "blocked",
+            "quant_optimize": "blocked",
+            "quant_evaluate": "blocked",
+        },
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-013")
+    assert "[PASS] T-013" in line
+    assert "1 runs, 1 failed steps, 6 blocked steps" in line
+
+
+def test_verify_pilot_t013_fails_a_completed_step_with_a_failed_upstream(tmp_path: Path) -> None:
+    _write_orchestrator_db(
+        tmp_path / "fin.db",
+        status="failed",
+        steps={
+            "pricing": "failed",
+            "fundamental": "completed",
+            "entity_resolution": "skipped",
+            "cycle_select": "completed",
+        },
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-013")
+    assert "[FAIL] T-013" in line
+    assert "cycle_select is completed with a failed/blocked upstream" in line
+
+
+def test_verify_pilot_t013_fails_a_blocked_step_with_completed_upstreams(tmp_path: Path) -> None:
+    _write_orchestrator_db(
+        tmp_path / "fin.db",
+        status="failed",
+        steps={
+            "pricing": "completed",
+            "fundamental": "completed",
+            "entity_resolution": "skipped",
+            "cycle_select": "blocked",
+        },
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-013")
+    assert "[FAIL] T-013" in line
+    assert "cycle_select is blocked with no failed/blocked upstream" in line
+
+
+def test_verify_pilot_t013_fails_a_completed_run_with_a_blocked_step(tmp_path: Path) -> None:
+    _write_orchestrator_db(
+        tmp_path / "fin.db",
+        status="completed",
+        steps={
+            "pricing": "failed",
+            "fundamental": "completed",
+            "entity_resolution": "skipped",
+            "cycle_select": "blocked",
+        },
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-013")
+    assert "[FAIL] T-013" in line
+    assert "completed with a blocked step" in line
+
+
+def test_verify_pilot_t012_passes_a_failed_run_with_two_failed_steps(tmp_path: Path) -> None:
+    _write_orchestrator_db(
+        tmp_path / "fin.db",
+        status="failed",
+        steps={
+            "pricing": "failed",
+            "fundamental": "failed",
+            "cycle_select": "blocked",
+            "quant_actions": "blocked",
+            "quant_returns": "blocked",
+            "quant_risk_model": "blocked",
+            "quant_optimize": "blocked",
+            "quant_evaluate": "blocked",
+        },
+    )
+    assert "[PASS] T-012" in _verify_pilot_line(tmp_path / "fin.db", "T-012")
