@@ -197,7 +197,7 @@ its `run_id`.
 Returns the run's **recorded** state (T-012): `handle`, `kind`, `analysis_date`, `settings` (only
 the values given), `status` (`running` / `completed` / `failed`), `started_at`/`finished_at`, and
 `steps[]` — each step's `name`, `argv` (without the interpreter path), `status`
-(`pending`/`running`/`completed`/`failed`/`skipped`/`not_run`), timings, `exit_code`, `run_id`,
+(`pending`/`running`/`completed`/`failed`/`skipped`/`blocked`/`not_run`), timings, `exit_code`, `run_id`,
 `reason` and the last 40 lines of combined output. It reads `v_orchestrator_run` /
 `v_orchestrator_step` through the read-only `get_db` dependency, so it answers from the database
 and **survives an API restart**. An unknown handle — or a database without the provenance views —
@@ -214,8 +214,15 @@ is **`404`**. It is a read router: it starts no run and imports no run router.
   be written, the route answers **`500`** and the CLI exits `1`, and no child is started. If a
   write fails after the run started, the run stops (no further child starts), is recorded `failed`
   with reason `provenance write failed: <Type>: <message>`, and the active handle is cleared.
-- **First failure stops the run (until `T-013`).** The first step that exits non-zero ends the run;
-  later steps are recorded `not_run`. `T-013` isolates an independent step's failure.
+- **Per-step failure isolation (T-013).** Steps still run one at a time, in pipeline order, but a
+  step that exits non-zero (or whose run raises) is `failed` and the run continues with the next
+  step. A step is `blocked` — no child starts, timings/`exit_code`/`run_id` stay NULL — when a
+  direct upstream ended `failed` or `blocked`: `cycle_select` and `quant_actions` ← `pricing` +
+  `fundamental`; `quant_returns` ← `quant_actions`; `quant_risk_model` ← `quant_returns`;
+  `quant_optimize` ← `quant_risk_model`; `quant_evaluate` ← `quant_optimize` + `cycle_select`;
+  `entity_resolution` ← nothing. So `blocked` = an upstream failed; `not_run` = the run itself
+  stopped (a failed provenance write, or `KeyboardInterrupt`/`SystemExit`). The run is `failed` if
+  any step failed, else `completed`.
 - **`entity_resolution` skip (D6).** If the resolved news path (`KG_NEWS_DB`, else
   `entity_resolution`'s default `/workspaces/thesis/data/urls.db`) does not exist, the step is
   recorded `skipped` with reason `no news source configured (<path> not found)`, is not run, and
@@ -228,9 +235,10 @@ is **`404`**. It is a read router: it starts no run and imports no run router.
 `cycle select` refuses a database whose `data_quality_issue` rows exist only under an older gate
 version than the current one (`dq-v3`), so a cycle would read every quarantine and HARD `DQ_*` veto
 as clean. The `quality` backfill is not an orchestrator step, so an orchestrated run against a
-database last gated under `dq-v1`/`dq-v2` stops at `cycle_select`: the step is recorded `failed`
-with the refusal (naming both versions) in its output tail, and the run stops. This is expected; the
-orchestrator never passes `--allow-stale-dq-gate`. Fix a **scratch** database on the CLI —
+database last gated under `dq-v1`/`dq-v2` fails at `cycle_select`: the step is recorded `failed`
+with the refusal (naming both versions) in its output tail, the quant steps that do not depend on it
+(`quant_actions`..`quant_optimize`) still run, `quant_evaluate` is `blocked`, and the run ends
+`failed`. This is expected; the orchestrator never passes `--allow-stale-dq-gate`. Fix a **scratch** database on the CLI —
 `uv run python -m fundamental_agent quality --db <scratch db> --metrics-version <its engine version>`
 — never production (re-gating production is the user's action). A run from an empty database is
 unaffected: `fundamental_agent run` gates inline under `dq-v3`.

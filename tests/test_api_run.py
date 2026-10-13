@@ -142,12 +142,67 @@ def test_a_raising_step_fails_the_run_and_frees_the_slot(
         handle = r.json()["handle"]
         done = _wait(client, f"/api/v1/run/{handle}", {"failed", "completed"})
         assert done["status"] == "failed"
-        assert done["steps"][0]["status"] == "failed"
+        statuses = {s["name"]: s["status"] for s in done["steps"]}
+        assert statuses["pricing"] == "failed"
         assert done["steps"][0]["reason"] == "OSError: gateway died"
-        assert all(s["status"] == "not_run" for s in done["steps"][1:])
+        assert statuses["fundamental"] == "completed"  # independent of pricing
+        assert statuses["entity_resolution"] == "completed"
+        assert statuses["cycle_select"] == "blocked"
+        assert statuses["quant_evaluate"] == "blocked"
         # The active slot was cleared: a new run is accepted, not a stale 409.
         again = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
         assert again.status_code == 202
+        _wait(client, f"/api/v1/run/{again.json()['handle']}", {"failed", "completed"})
+
+
+def test_a_provenance_write_failure_inside_a_step_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeRunner(_IDS)
+    monkeypatch.setattr(orch, "run_command", fake)
+    # A write inside fundamental's own _run_one fails once: the step's run must not swallow it
+    # as an isolated failure (T-013).
+    monkeypatch.setattr(orch, "_persist_step", _flaky_persist_in_run_one("fundamental"))
+    with _client(tmp_path) as client:
+        handle = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"}).json()[
+            "handle"
+        ]
+        done = _wait(client, f"/api/v1/run/{handle}", {"failed", "completed"})
+    assert done["status"] == "failed"
+    statuses = {s["name"]: s["status"] for s in done["steps"]}
+    assert statuses["pricing"] == "completed"
+    assert statuses["fundamental"] == "failed"
+    fundamental = next(s for s in done["steps"] if s["name"] == "fundamental")
+    assert fundamental["reason"] == "provenance write failed: OSError: disk full"
+    assert all(v == "not_run" for k, v in statuses.items() if k not in ("pricing", "fundamental"))
+    assert len(fake.calls) == 2  # no further child started
+    assert orch._REGISTRY.active is None  # the active handle was cleared
+
+
+def test_blocked_rows_are_persisted_and_served_by_the_status_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeRunner(_IDS, errors={("pricing_agent", "run"): OSError("gateway died")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    with _client(tmp_path) as client:
+        handle = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"}).json()[
+            "handle"
+        ]
+        done = _wait(client, f"/api/v1/run/{handle}", {"failed", "completed"})
+    blocked = {s["name"]: s for s in done["steps"] if s["status"] == "blocked"}
+    assert set(blocked) == {
+        "cycle_select",
+        "quant_actions",
+        "quant_returns",
+        "quant_risk_model",
+        "quant_optimize",
+        "quant_evaluate",
+    }
+    assert blocked["cycle_select"]["reason"] == "blocked by pricing (failed)"
+    assert blocked["cycle_select"]["started_at"] is None
+    assert blocked["cycle_select"]["finished_at"] is None
+    assert blocked["cycle_select"]["exit_code"] is None
+    assert blocked["cycle_select"]["run_id"] is None
 
 
 @pytest.mark.parametrize(
@@ -321,6 +376,21 @@ def _flaky_persist(fail_on: int) -> object:
     return flaky
 
 
+def _flaky_persist_in_run_one(step_name: str) -> object:
+    """A ``_persist_step`` that fails once, on *step_name*'s first write inside ``_run_one``
+    (``exit_code`` is set in memory before the write), then succeeds."""
+    real = orch._persist_step
+    state = {"failed": False}
+
+    def flaky(step: orch.StepState) -> None:
+        if not state["failed"] and step.name == step_name and step.exit_code is not None:
+            state["failed"] = True
+            raise orch._ProvenanceWriteFailed(OSError("disk full"))
+        real(step)
+
+    return flaky
+
+
 def test_the_202_handle_is_readable_at_once_and_rows_are_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -405,6 +475,7 @@ def test_a_provenance_write_failure_stops_the_run_and_frees_the_slot(
         assert all(s["status"] == "not_run" for s in done["steps"][1:])
         again = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
         assert again.status_code == 202  # the slot was freed
+        _wait(client, f"/api/v1/run/{again.json()['handle']}", {"failed", "completed"})
 
 
 def test_get_runs_lists_orchestrator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
