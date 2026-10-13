@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
+from fundamental_agent import quality
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import (
     CORE_GROUPS,
@@ -52,9 +54,11 @@ MASTER_PROMPT = """You are the metrics master for a fundamental equity analysis.
 You are given the deterministically computed financial ratios for one SEC filing.
 Call the specialist tool for every metric group that carries signal for this company
 -- always consult profitability, liquidity, leverage and cash flow; add efficiency,
-growth, roic and cagr when their numbers are meaningful (skip inventory-style metrics
-for financial firms, skip growth/cagr when there is no multi-period comparison); add
-valuation whenever free-cash-flow-yield numbers are present.
+growth, roic and cagr when their numbers are meaningful; add valuation whenever
+free-cash-flow-yield numbers are present.
+The company type is not yours to decide: an empty metric whose reason is `not_applicable`
+is the code's own decision that the metric does not apply to this company (APP-00), so
+read that reason rather than reclassifying the company or skipping a group by hand.
 After gathering the readings, give a short synthesis in plain language."""
 
 # The fixed lead of every specialist's system prompt (T-076, D2): no recompute, and the company type comes
@@ -111,17 +115,41 @@ def basis_paragraph(group: str, results: list[MetricResult]) -> str:
     )
 
 
-def _metric_lines(results: list[MetricResult]) -> list[str]:
-    """``name: value``, or ``name: empty (<reason>)`` -- an empty value is never a 0 and never a neutral
-    reading (MET-00; T-076, D4)."""
+def _metric_lines(
+    group: str, results: list[MetricResult], withheld: Mapping[tuple[str, str], str] | None = None
+) -> list[str]:
+    """``name: value``, ``name: withheld (<rule>)`` or ``name: empty (<reason>)``.
+
+    An empty value is never a 0 and never a neutral reading (MET-00; T-076, D4). A value a HARD data-quality
+    rule quarantines is withheld from the model rather than read (T-076, D5)."""
     lines: list[str] = []
     for result in results:
-        if result.value is None:
+        rule = (withheld or {}).get((group, result.name))
+        if rule is not None:
+            lines.append(f"{result.name}: withheld ({rule})")
+        elif result.value is None:
             reason = (result.inputs.get("provenance") or {}).get("empty_reason") or "missing_input"
             lines.append(f"{result.name}: empty ({reason})")
         else:
             lines.append(f"{result.name}: {_round(result.value)}")
     return lines
+
+
+def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str, str], str]:
+    """``{(group, metric): rule_id}`` for the values a HARD DQ rule quarantines (T-076, D5).
+
+    The gates are ``quality``'s own, run on the in-memory results with its own functions and constants
+    (Annex A-01 to A-05, the identity gates), so the prompt withholds exactly what ``cycle`` would read as
+    NULL -- never a second, hand-copied threshold."""
+    filing: quality.FilingMetrics = {
+        (group, result.name): quality.StoredMetric(result.value, result.inputs)
+        for group, result in results
+    }
+    return {
+        issue.metric: issue.rule_id
+        for issue in quality.evaluate(filing)
+        if issue.severity == "HARD"
+    }
 
 
 def _generated_definitions(group: str) -> str:
@@ -379,18 +407,19 @@ class FundamentalAnalyst:
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
         computed = self._compute_all(ctx)
         by_group = _group(computed)
+        withheld = withheld_metrics(computed)
         orchestrator = Agent(
             model=self._model,
             system_prompt=MASTER_PROMPT,
             callback_handler=None,
             tools=[
-                self._make_specialist(name, by_group.get(name, []), ctx)
+                self._make_specialist(name, by_group.get(name, []), ctx, withheld)
                 for name in _SPECIALIST_GROUPS
             ],
         )
-        orchestrator(_brief(ctx, by_group))
+        orchestrator(_brief(ctx, by_group, withheld))
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
-        synthesis = _synthesize(orchestrator, flat)
+        synthesis = _synthesize(orchestrator, flat, withheld)
         return AnalysisResult(
             assessment=synthesis.assessment,
             metrics=computed,
@@ -430,9 +459,15 @@ class FundamentalAnalyst:
         provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
         return out
 
-    def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:
+    def _make_specialist(
+        self,
+        group: str,
+        results: list[MetricResult],
+        ctx: FilingContext,
+        withheld: Mapping[tuple[str, str], str],
+    ) -> Any:
         computed = [result for result in results if result.value is not None]
-        lines = _metric_lines(results)
+        lines = _metric_lines(group, results, withheld)
         paragraph = basis_paragraph(group, results) if ctx.form == "10-Q" else ""
         model = self._model
 
@@ -470,14 +505,18 @@ def _group(pairs: list[tuple[str, MetricResult]]) -> dict[str, list[MetricResult
     return out
 
 
-def _brief(ctx: FilingContext, by_group: dict[str, list[MetricResult]]) -> str:
+def _brief(
+    ctx: FilingContext,
+    by_group: dict[str, list[MetricResult]],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> str:
     parts = [f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}"]
     for group, results in by_group.items():
         if ctx.form == "10-Q":
             paragraph = basis_paragraph(group, results)
             if paragraph:
                 parts.append(paragraph)
-        parts.append(f"{group}:\n" + "\n".join(_metric_lines(results)))
+        parts.append(f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)))
     return "\n\n".join(parts)
 
 
@@ -496,7 +535,11 @@ class _Synthesis:
 FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
 
 
-def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _Synthesis:
+def _synthesize(
+    orchestrator: Agent,
+    flat_metrics: dict[str, float | None],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> _Synthesis:
     """Ask the orchestrator for a JSON verdict; fall back to a rule-based score.
 
     DeepSeek does not currently accept OpenAI ``response_format`` json-schema, so we
@@ -510,7 +553,7 @@ def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _
         parsed = _coerce(reply)
         if parsed is not None:
             return _Synthesis(parsed, used_fallback=False)
-    return _Synthesis(_fallback_assessment(flat_metrics), used_fallback=True)
+    return _Synthesis(_fallback_assessment(flat_metrics, withheld), used_fallback=True)
 
 
 def _coerce(text: str) -> FundamentalAssessment | None:
@@ -531,15 +574,21 @@ def _coerce(text: str) -> FundamentalAssessment | None:
     )
 
 
-def _fallback_assessment(flat: dict[str, float | None]) -> FundamentalAssessment:
+def _fallback_assessment(
+    flat: dict[str, float | None], withheld: Mapping[tuple[str, str], str] | None = None
+) -> FundamentalAssessment:
     score = 50.0
     strengths: list[str] = []
     risks: list[str] = []
+    # A value a HARD DQ rule quarantines never scores, in the fallback as in the prompt (T-076, D5).
+    blocked = set(withheld or {})
     for key, low, high, points in _SCORE_RULES:
+        group, short = key.split(".", 1)
+        if (group, short) in blocked:
+            continue
         value = flat.get(key)
         if value is None:
             continue
-        short = key.split(".", 1)[1]
         if value >= high:
             score += points
             strengths.append(f"{short} {value:.2f}")
@@ -547,7 +596,9 @@ def _fallback_assessment(flat: dict[str, float | None]) -> FundamentalAssessment
             score -= points
             risks.append(f"{short} {value:.2f}")
 
-    leverage = flat.get("leverage.debt_to_equity")
+    leverage = (
+        None if ("leverage", "debt_to_equity") in blocked else flat.get("leverage.debt_to_equity")
+    )
     if leverage is not None and leverage > _HIGH_LEVERAGE:
         score -= _HIGH_LEVERAGE_PENALTY
         risks.append(f"debt_to_equity {leverage:.2f}")

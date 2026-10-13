@@ -107,7 +107,28 @@ def test_an_empty_metric_reaches_the_brief_with_its_reason() -> None:
     empty = MetricResult(
         "quick_ratio", None, "ratio", {"provenance": {"empty_reason": "not_applicable"}}
     )
-    assert agents._metric_lines([empty]) == ["quick_ratio: empty (not_applicable)"]
-    assert agents._metric_lines([MetricResult("cash_ratio", 1.5, "ratio", {})]) == [
+    assert agents._metric_lines("liquidity", [empty]) == ["quick_ratio: empty (not_applicable)"]
+    assert agents._metric_lines("liquidity", [MetricResult("cash_ratio", 1.5, "ratio", {})]) == [
         "cash_ratio: 1.5"
     ]
+
+
+# -- T-076, D5: a HARD DQ screen withholds a value -----------------------------------------------------------
+
+
+def test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback() -> None:
+    # |net_margin| > 5 trips DQ_MARGIN (Annex A-01): the value is withheld, not read.
+    result = MetricResult("net_margin", 6.0, "ratio", {})
+    withheld = agents.withheld_metrics([("profitability", result)])
+    assert withheld == {("profitability", "net_margin"): "DQ_MARGIN"}
+    assert agents._metric_lines("profitability", [result], withheld) == [
+        "net_margin: withheld (DQ_MARGIN)"
+    ]
+    # The fallback's net-margin rule scores 12 points above 50; withheld, it scores none.
+    assert agents._fallback_assessment({"profitability.net_margin": 6.0}).score == 62.0
+    assert agents._fallback_assessment({"profitability.net_margin": 6.0}, withheld).score == 50.0
+
+
+def test_a_clean_metric_is_not_withheld() -> None:
+    result = MetricResult("net_margin", 0.1, "ratio", {})
+    assert agents.withheld_metrics([("profitability", result)]) == {}
