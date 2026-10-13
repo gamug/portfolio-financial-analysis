@@ -14,6 +14,7 @@ from sec_xcheck.records import Rec, count
 
 CMD = "uv run python scripts/audit_sec_checklist.py measure --only metrics"
 DEFAULT_TAX_RATE = 0.21
+_RATE_EPSILON = 1e-9
 
 
 def metric(r: Rec, name: str) -> float | None:
@@ -50,14 +51,24 @@ def nopat_taxed_on_loss(r: Rec) -> bool:
 
 
 def nopat_on_filed_rate(r: Rec) -> bool:
-    """NOPAT uses the filing's own effective rate where MET-03 says the 21% federal rate."""
-    pretax, tax = r.value("pretax_income"), r.value("income_tax")
-    return (
-        pretax is not None
-        and pretax > 0.0
-        and tax is not None
-        and metric(r, "effective_tax_rate") != DEFAULT_TAX_RATE
-    )
+    """NOPAT uses the filing's own effective rate where MET-03 says the 21% federal rate.
+
+    T-151 part 2 (D3): NOPAT now carries its own rate in the inputs (``nopat_tax_rate``; a REIT's
+    own rate is flagged ``nopat_tax_rate_reit_effective``, APP-04c). A database replayed with
+    master's code has no such key -- then the metric's own rate was the rate NOPAT used."""
+    i = inputs(r, "nopat")
+    rate = i.get("nopat_tax_rate")
+    if rate is None:  # master's code: NOPAT used the metric's effective rate
+        pretax, tax = r.value("pretax_income"), r.value("income_tax")
+        return (
+            pretax is not None
+            and pretax > 0.0
+            and tax is not None
+            and metric(r, "effective_tax_rate") != DEFAULT_TAX_RATE
+        )
+    if i.get("nopat_tax_rate_reit_effective"):
+        return False  # APP-04c: a REIT is supposed to use its own rate
+    return abs(rate - DEFAULT_TAX_RATE) > _RATE_EPSILON
 
 
 def tax_rate_clamped(r: Rec) -> bool:
@@ -112,7 +123,10 @@ def fcf_conversion_on_nonpositive_income(r: Rec) -> bool:
 
 # ---- APP-07 / N15: negative equity and invested capital
 def roe_on_negative_equity(r: Rec) -> bool:
-    eq = r.value("equity")
+    """ROE computed on negative book equity (APP-07). T-151 part 2 (D2) divides by the *prior-year*
+    equity, so the denominator is read from the metric's own inputs when it is there."""
+    i = inputs(r, "return_on_equity")
+    eq = i.get("prior_equity", r.value("equity"))
     return eq is not None and eq < 0.0 and has(r, "return_on_equity")
 
 
