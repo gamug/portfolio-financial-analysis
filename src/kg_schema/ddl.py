@@ -563,6 +563,41 @@ CREATE TABLE IF NOT EXISTS quant_benchmark_performance (
     computed_at       TEXT NOT NULL,
     UNIQUE (portfolio_id, date, engine_version)
 );
+
+-- T-012: the orchestrator's own provenance (api/orchestrator.py). One row per orchestrated
+-- run, one per step, so GET /run/{handle} reads recorded state that survives a restart and a
+-- report can trace "was everything as of D rebuilt, and when". Not one of T-145's five run
+-- tables (orchestrator_run has AUTOINCREMENT from creation), so it is a RUN_ID_EXCLUSIONS
+-- target, not a TARGET_RUN_TABLES one.
+CREATE TABLE IF NOT EXISTS orchestrator_run (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    handle        TEXT NOT NULL UNIQUE,        -- the uuid4 the run endpoints return
+    kind          TEXT NOT NULL,               -- pipeline | pricing-agent | ... (T-011)
+    as_of         TEXT NOT NULL,               -- the analysis date
+    surface       TEXT NOT NULL,               -- 'http' | 'cli'
+    settings_json TEXT,                        -- JSON object of the given settings, or NULL
+    status        TEXT NOT NULL,               -- running | completed | failed
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    code_version  TEXT                         -- kg_schema.provenance.code_version(), as is
+);
+
+CREATE TABLE IF NOT EXISTS orchestrator_step (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    orchestrator_run_id INTEGER NOT NULL REFERENCES orchestrator_run(id),
+    ordinal             INTEGER NOT NULL,      -- 1-based, the step's position in the run
+    step                TEXT NOT NULL,         -- the T-011 step name
+    argv_json           TEXT NOT NULL,         -- JSON array (no interpreter path)
+    status              TEXT NOT NULL,         -- pending|running|completed|failed|skipped|not_run
+    started_at          TEXT,
+    finished_at         TEXT,
+    exit_code           INTEGER,
+    run_kind            TEXT,                  -- pricing|analysis|cycle|quant (NULL if none)
+    run_id              INTEGER,               -- the step's own run-log id (T-011 captures it)
+    reason              TEXT,
+    output_tail         TEXT,                  -- JSON array of the last 40 lines
+    UNIQUE (orchestrator_run_id, ordinal)
+);
 """
 
 
@@ -724,6 +759,11 @@ RUN_REFERENCE_MAP: dict[tuple[str, str, str | None], str] = {
     ("universe_membership", "run_id", "pricing"): "pricing_run",
     ("universe_membership", "run_id", "cycle"): "cycle_run",
     ("veto", "run_id", None): "cycle_run",
+    # T-012: an orchestrator step's own run-log id, by the run_kind it recorded
+    ("orchestrator_step", "run_id", "analysis"): "analysis_run",
+    ("orchestrator_step", "run_id", "cycle"): "cycle_run",
+    ("orchestrator_step", "run_id", "pricing"): "pricing_run",
+    ("orchestrator_step", "run_id", "quant"): "quant_run",
 }
 
 # The set of cycle_type values allowed for each column pointing to cycle_run, derived from
@@ -742,11 +782,18 @@ ALLOWED_CYCLE_TYPES: dict[tuple[str, str, str | None], tuple[str, ...]] = {
     ("score_snapshot", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
     ("price_observation", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
     ("universe_membership", "run_id", "cycle"): ("SELECTION", "MONITORING", "REPLAY"),
+    # T-012: a cycle-kind orchestrator step is cycle select (SELECTION), cycle monitor
+    # (MONITORING) or entity_resolution (ENTITY_RESOLUTION).
+    ("orchestrator_step", "run_id", "cycle"): ("SELECTION", "MONITORING", "ENTITY_RESOLUTION"),
 }
 
 # Matching columns in schema that do NOT hold an ID of one of the five target tables.
 RUN_ID_EXCLUSIONS: dict[tuple[str, str], str] = {
     ("universe_coverage", "run_id"): "nullable, no writer today (Work item 2 decision)",
+    ("orchestrator_step", "orchestrator_run_id"): (
+        "references orchestrator_run (AUTOINCREMENT since creation, FK declared), not one of "
+        "the five T-145 tables"
+    ),
 }
 
 # Static literal SQL queries (Constitution Code & Git #10)
@@ -898,6 +945,19 @@ MAX_REFERENCE_QUERIES: dict[tuple[str, str, str | None], str] = {
         "SELECT COALESCE(MAX(run_id), 0) FROM universe_membership WHERE run_kind = 'cycle'"
     ),
     ("veto", "run_id", None): "SELECT COALESCE(MAX(run_id), 0) FROM veto",
+    # T-012: the orchestrator's step rows
+    ("orchestrator_step", "run_id", "analysis"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM orchestrator_step WHERE run_kind = 'analysis'"
+    ),
+    ("orchestrator_step", "run_id", "cycle"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM orchestrator_step WHERE run_kind = 'cycle'"
+    ),
+    ("orchestrator_step", "run_id", "pricing"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM orchestrator_step WHERE run_kind = 'pricing'"
+    ),
+    ("orchestrator_step", "run_id", "quant"): (
+        "SELECT COALESCE(MAX(run_id), 0) FROM orchestrator_step WHERE run_kind = 'quant'"
+    ),
 }
 
 SQLITE_SEQUENCE_QUERIES: dict[str, str] = {
@@ -1062,6 +1122,22 @@ UNRESOLVED_REFERENCE_QUERIES: dict[tuple[str, str, str | None], str] = {
     ("veto", "run_id", None): (
         "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM veto r "
         "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("orchestrator_step", "run_id", "analysis"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM orchestrator_step r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id)"
+    ),
+    ("orchestrator_step", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM orchestrator_step r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id)"
+    ),
+    ("orchestrator_step", "run_id", "pricing"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM orchestrator_step r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id)"
+    ),
+    ("orchestrator_step", "run_id", "quant"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM orchestrator_step r "
+        "WHERE r.run_kind = 'quant' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.run_id)"
     ),
 }
 
@@ -1261,6 +1337,26 @@ UNRESOLVED_REFERENCE_SAMPLE_QUERIES: dict[tuple[str, str, str | None], str] = {
         "WHERE r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
         "ORDER BY r.run_id LIMIT 5"
     ),
+    ("orchestrator_step", "run_id", "analysis"): (
+        "SELECT DISTINCT r.run_id FROM orchestrator_step r "
+        "WHERE r.run_kind = 'analysis' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM analysis_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("orchestrator_step", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id FROM orchestrator_step r "
+        "WHERE r.run_kind = 'cycle' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cycle_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("orchestrator_step", "run_id", "pricing"): (
+        "SELECT DISTINCT r.run_id FROM orchestrator_step r "
+        "WHERE r.run_kind = 'pricing' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM pricing_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
+    ("orchestrator_step", "run_id", "quant"): (
+        "SELECT DISTINCT r.run_id FROM orchestrator_step r "
+        "WHERE r.run_kind = 'quant' AND r.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM quant_run t WHERE t.id = r.run_id) "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
 }
 
 WRONG_CYCLE_TYPE_QUERIES: dict[tuple[str, str, str | None], str] = {
@@ -1328,6 +1424,11 @@ WRONG_CYCLE_TYPE_QUERIES: dict[tuple[str, str, str | None], str] = {
         "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM veto r "
         "JOIN cycle_run t ON t.id = r.run_id "
         "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY')"
+    ),
+    ("orchestrator_step", "run_id", "cycle"): (
+        "SELECT COUNT(*), COALESCE(MAX(r.run_id), 0) FROM orchestrator_step r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'ENTITY_RESOLUTION')"
     ),
 }
 
@@ -1410,6 +1511,12 @@ WRONG_CYCLE_TYPE_SAMPLE_QUERIES: dict[tuple[str, str, str | None], str] = {
         "WHERE t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'REPLAY') "
         "ORDER BY r.run_id LIMIT 5"
     ),
+    ("orchestrator_step", "run_id", "cycle"): (
+        "SELECT DISTINCT r.run_id, t.cycle_type FROM orchestrator_step r "
+        "JOIN cycle_run t ON t.id = r.run_id "
+        "WHERE r.run_kind = 'cycle' AND t.cycle_type NOT IN ('SELECTION', 'MONITORING', 'ENTITY_RESOLUTION') "
+        "ORDER BY r.run_id LIMIT 5"
+    ),
 }
 
 UNMAPPED_RUN_KIND_QUERIES: dict[str, str] = {
@@ -1424,6 +1531,12 @@ UNMAPPED_RUN_KIND_QUERIES: dict[str, str] = {
     "universe_membership": (
         "SELECT COUNT(*), COALESCE(MAX(run_id), 0) FROM universe_membership "
         "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing'))"
+    ),
+    # T-012: an orchestrator step's run_kind is a literal from the step table, so a stored row
+    # with a run_id and a NULL/unexpected kind is invisible to every other check.
+    "orchestrator_step": (
+        "SELECT COUNT(*), COALESCE(MAX(run_id), 0) FROM orchestrator_step "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('pricing', 'analysis', 'cycle', 'quant'))"
     ),
 }
 
@@ -1441,6 +1554,11 @@ UNMAPPED_RUN_KIND_SAMPLE_QUERIES: dict[str, str] = {
     "universe_membership": (
         "SELECT DISTINCT run_id, COALESCE(run_kind, 'NULL') FROM universe_membership "
         "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('analysis', 'cycle', 'pricing')) "
+        "ORDER BY run_id LIMIT 5"
+    ),
+    "orchestrator_step": (
+        "SELECT DISTINCT run_id, COALESCE(run_kind, 'NULL') FROM orchestrator_step "
+        "WHERE run_id IS NOT NULL AND (run_kind IS NULL OR run_kind NOT IN ('pricing', 'analysis', 'cycle', 'quant')) "
         "ORDER BY run_id LIMIT 5"
     ),
 }

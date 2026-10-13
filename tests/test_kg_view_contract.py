@@ -480,6 +480,33 @@ NEW_VIEWS: dict[str, tuple[str, ...]] = {
         "configured_weight",
         "effective_weight",
     ),
+    "v_orchestrator_run": (
+        "run_id",
+        "kind",
+        "as_of",
+        "code_version",
+        "status",
+        "started_at",
+        "finished_at",
+        "settings_json",
+        "handle",
+        "surface",
+    ),
+    "v_orchestrator_step": (
+        "orchestrator_run_id",
+        "handle",
+        "ordinal",
+        "step",
+        "status",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "run_kind",
+        "run_id",
+        "reason",
+        "argv_json",
+        "output_tail",
+    ),
 }
 
 
@@ -539,7 +566,9 @@ def test_the_marker_migration_changes_no_table(conn: Database) -> None:
         12,
         13,
         14,
-    ]  # m011 and m013 add only columns that exist; m012 only triggers; m014 autoincrement
+        15,
+    ]  # m011 and m013 add only columns that exist; m012 only triggers; m014 autoincrement;
+    # m015 is a marker (T-012)
     after = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     assert after == before
 
@@ -553,7 +582,7 @@ def test_ensure_views_leaves_a_database_that_is_ahead_of_the_code(conn: Database
     conn.execute("DROP VIEW v_cycle_ranking_component")
     conn.execute("DROP VIEW v_cycle_ranking")
     conn.execute("CREATE VIEW v_cycle_ranking AS SELECT 1 AS from_a_later_contract")
-    queries.record(conn, 15, "a later contract")
+    queries.record(conn, 16, "a later contract")
     ensure_views(conn)
     assert _columns(conn, "v_cycle_ranking") == ("from_a_later_contract",)
     assert not conn.relation_exists("v_cycle_ranking_component")

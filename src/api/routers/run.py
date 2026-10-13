@@ -2,9 +2,10 @@
 
 Every route returns ``202`` with a run handle immediately; the run continues in a
 background thread and is polled at ``GET /api/v1/run/<handle>`` (``run_status.py``).
-This is a *run* router: it may start a run. Unlike the read routers it does not open a
-database itself -- each step is a subprocess (see ``api.orchestrator``), so the child's
-own guards and its own write connection stay exactly as on the CLI.
+This is a *run* router: it may start a run. It opens no database itself -- the
+orchestrator records the run's own provenance (T-012) and each step is a subprocess (see
+``api.orchestrator``), so the child's own guards and its own write connection stay exactly
+as on the CLI.
 
 The request contract (FR-014, T-011): ``analysis_date`` on all; ``top_n`` /
 ``weight_scheme`` / ``max_name_weight`` / ``max_sector_weight`` only where the step
@@ -24,6 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.orchestrator import (
     WEIGHT_SCHEMES,
+    ProvenanceError,
     RunContext,
     RunInProgress,
     RunPaths,
@@ -94,6 +96,9 @@ def _start(request: Request, kind: str, body: _AnalysisDate) -> JSONResponse:
                 "status_url": _STATUS_URL.format(handle=exc.handle),
             },
         )
+    except ProvenanceError as exc:
+        # the run's provenance row could not be written, so the run did not start (T-012)
+        return JSONResponse(status_code=500, content={"detail": str(exc)})
     return JSONResponse(
         status_code=202,
         content={"handle": run.handle, "status_url": _STATUS_URL.format(handle=run.handle)},

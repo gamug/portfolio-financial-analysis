@@ -30,6 +30,7 @@ from kg_schema.ddl import (
 )
 from kg_schema.migrations import _m014_autoincrement_run_ids, apply_migrations
 from kg_schema.queries import (
+    current_version,
     invalid_sec_filings_accessions,
     unresolved_run_references,
 )
@@ -867,3 +868,69 @@ def test_verify_pilot_t145_raw_connection_does_not_crash(tmp_path: Path) -> None
     assert len(t145_lines) == 1, f"Expected 1 T-145 line in stdout: {result.stdout} {result.stderr}"
     assert "[FAIL] T-145" in t145_lines[0]
     assert "veto.run_id=1 (missing)" in t145_lines[0]
+
+
+# -- T-012: the orchestrator provenance tables ----------------------------------------------
+
+
+def test_m015_is_a_marker_that_replays_over_orchestrator_rows() -> None:
+    """m015 (T-012) rebuilds no table: a fresh ``ensure()`` database with orchestrator rows
+    keeps them (and its DDL) when migrated, and the floor reaches 15."""
+    db = kg_schema.connect(":memory:", create_parents=False)
+    kg_schema.ensure(db)  # additive only: orchestrator_run / orchestrator_step + their views
+    assert db.relation_exists("orchestrator_run") and db.relation_exists("orchestrator_step")
+    db.execute(
+        "INSERT INTO orchestrator_run "
+        "(handle, kind, as_of, surface, status, started_at) "
+        "VALUES ('h', 'pipeline', '2026-10-02', 'cli', 'completed', 'now')"
+    )
+    run_id = db.execute("SELECT id FROM orchestrator_run WHERE handle = 'h'").fetchone()[0]
+    db.execute(
+        "INSERT INTO orchestrator_step "
+        "(orchestrator_run_id, ordinal, step, argv_json, status) "
+        "VALUES (?, 1, 'pricing', '[]', 'completed')",
+        (run_id,),
+    )
+    db.commit()
+    before_ddl = {t: db.relation_ddl(t) for t in ("orchestrator_run", "orchestrator_step")}
+
+    applied = apply_migrations(db)
+
+    assert 15 in applied
+    assert db.execute("SELECT COUNT(*) FROM orchestrator_run").fetchone()[0] == 1
+    assert db.execute("SELECT COUNT(*) FROM orchestrator_step").fetchone()[0] == 1
+    after_ddl = {t: db.relation_ddl(t) for t in ("orchestrator_run", "orchestrator_step")}
+    assert after_ddl == before_ddl
+    assert current_version(db) == 15
+
+
+def test_unresolved_run_references_flags_orchestrator_steps() -> None:
+    """An orchestrator step's run_id is checked like any other: a missing target, a wrong
+    cycle_type, and a NULL/unexpected run_kind are all flagged (T-012)."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE cycle_run (id INTEGER PRIMARY KEY AUTOINCREMENT, cycle_type TEXT);
+        CREATE TABLE pricing_run (id INTEGER PRIMARY KEY);
+        CREATE TABLE orchestrator_run (id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT);
+        CREATE TABLE orchestrator_step (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            orchestrator_run_id INTEGER REFERENCES orchestrator_run(id),
+            run_kind TEXT, run_id INTEGER);
+        INSERT INTO orchestrator_run VALUES (1, 'h');
+        INSERT INTO orchestrator_step VALUES (1, 1, 'pricing', 999);
+        INSERT INTO cycle_run VALUES (7, 'REPLAY');
+        INSERT INTO orchestrator_step VALUES (2, 1, 'cycle', 7);
+        INSERT INTO orchestrator_step VALUES (3, 1, 'bogus', 5);
+        INSERT INTO orchestrator_step VALUES (4, 1, NULL, 6);
+        """
+    )
+    conn.commit()
+
+    violations = unresolved_run_references(Database(conn))
+    by_reason = {v["reason"] for v in violations if v["table"] == "orchestrator_step"}
+    assert by_reason == {"missing", "wrong_cycle_type", "unmapped_run_kind"}
+    missing = next(v for v in violations if v["reason"] == "missing")
+    assert missing["column"] == "run_id" and missing["sample_ids"] == [999]
+    wrong = next(v for v in violations if v["reason"] == "wrong_cycle_type")
+    assert wrong["cycle_type"] == "REPLAY" and wrong["sample_ids"] == [7]

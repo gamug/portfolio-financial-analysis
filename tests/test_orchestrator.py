@@ -463,6 +463,15 @@ def test_a_raising_step_fails_the_run_with_its_reason(
     assert run.status == "failed"
     assert run.steps[0].status == "completed"  # pricing, before it
     assert all(s.status == "not_run" for s in run.steps[2:])  # everything after it
+    # the same state is recorded (T-012)
+    rows = {
+        r["step"]: r
+        for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    }
+    assert rows["fundamental"]["status"] == "failed"
+    assert rows["fundamental"]["reason"] == "OSError: gateway died"
+    assert rows["pricing"]["status"] == "completed"
+    assert all(rows[n]["status"] == "not_run" for n in ("entity_resolution", "quant_evaluate"))
 
 
 def test_keyboard_interrupt_records_the_state_then_propagates(
@@ -711,3 +720,228 @@ def test_weight_schemes_match_cycles() -> None:
 
 def test_news_default_matches_entity_resolutions() -> None:
     assert DEFAULT_NEWS_DB == ER_DEFAULT
+
+
+# -- provenance (T-012) -------------------------------------------------------------------------
+
+
+def _fetch(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> list:
+    conn = kg_schema.connect_ro(db_path)
+    try:
+        return list(conn.execute(sql, params).fetchall())
+    finally:
+        conn.close()
+
+
+def _flaky_persist(fail_on: int) -> object:
+    """A ``_persist_step`` that raises on its *fail_on*-th call (a mid-run UPDATE failure)."""
+    real = orch._persist_step
+    state = {"n": 0}
+
+    def flaky(step: orch.StepState) -> None:
+        state["n"] += 1
+        if state["n"] == fail_on:
+            raise orch._ProvenanceWriteFailed(OSError("disk full"))
+        real(step)
+
+    return flaky
+
+
+def test_new_run_records_the_run_and_the_step_rows(tmp_path: Path) -> None:
+    run = orch.new_run("pipeline", _ctx(tmp_path))
+    runs = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")
+    assert len(runs) == 1
+    assert runs[0]["handle"] == run.handle
+    assert runs[0]["kind"] == "pipeline"
+    assert runs[0]["as_of"] == "2026-10-02"
+    assert runs[0]["surface"] == "http"
+    assert runs[0]["status"] == "running"
+    assert runs[0]["code_version"]
+    steps = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    assert [s["ordinal"] for s in steps] == list(range(1, 10))
+    assert [s["step"] for s in steps] == [s.name for s in run.steps]
+    assert all(s["status"] == "pending" for s in steps)
+    assert [s["run_kind"] for s in steps] == [
+        "pricing",
+        "analysis",
+        "cycle",
+        "cycle",
+        "quant",
+        "quant",
+        "quant",
+        "quant",
+        "quant",
+    ]
+    assert all(s["argv_json"] for s in steps)
+
+
+def test_a_pipeline_run_records_each_steps_status_and_run_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    answers = {
+        ("pricing_agent", "run"): (0, "\nrun 1: ok"),
+        ("fundamental_agent", "run"): (0, "\nrun 2: ok"),
+        ("entity_resolution", "build"): (0, "cycle 3: 0 edges"),
+        ("cycle", "select"): (0, "select 4 2026-10-02: ok"),
+    }
+    monkeypatch.setattr(orch, "run_command", FakeRunner(answers))
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    assert run.status == "completed"
+    rows = {
+        r["step"]: r
+        for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    }
+    for name, kind, run_id in (
+        ("pricing", "pricing", 1),
+        ("fundamental", "analysis", 2),
+        ("entity_resolution", "cycle", 3),
+        ("cycle_select", "cycle", 4),
+    ):
+        assert rows[name]["run_kind"] == kind
+        assert rows[name]["run_id"] == run_id
+        assert rows[name]["status"] == "completed"
+        assert rows[name]["finished_at"]
+    assert all(rows[n]["run_kind"] == "quant" for n in ("quant_actions", "quant_evaluate"))
+    run_row = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")[0]
+    assert run_row["status"] == "completed"
+    assert run_row["finished_at"] is not None
+
+
+def test_a_single_step_run_records_one_run_and_one_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        orch, "run_command", FakeRunner({("pricing_agent", "run"): (0, "\nrun 1: ok")})
+    )
+    orch.run_now("pricing-agent", _ctx(tmp_path))
+    runs = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")
+    steps = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step")
+    assert len(runs) == 1 and len(steps) == 1
+    assert runs[0]["kind"] == "pricing-agent"
+    assert steps[0]["step"] == "pricing" and steps[0]["ordinal"] == 1
+
+
+def test_a_failed_step_records_failed_and_later_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner(
+        {
+            ("pricing_agent", "run"): (0, "\nrun 1: ok"),
+            ("fundamental_agent", "run"): (1, "boom"),
+        }
+    )
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    assert run.status == "failed"
+    rows = {
+        r["step"]: r
+        for r in _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    }
+    assert rows["pricing"]["status"] == "completed"
+    assert rows["fundamental"]["status"] == "failed"
+    assert rows["fundamental"]["exit_code"] == 1
+    for name in ("entity_resolution", "cycle_select", "quant_actions", "quant_evaluate"):
+        assert rows[name]["status"] == "not_run"
+    run_row = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")[0]
+    assert run_row["status"] == "failed" and run_row["finished_at"] is not None
+
+
+def test_a_provenance_write_failure_stops_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    fake = FakeRunner({("pricing_agent", "run"): (0, "\nrun 1: ok")})
+    monkeypatch.setattr(orch, "run_command", fake)
+    monkeypatch.setattr(orch, "_persist_step", _flaky_persist(3))
+    run = orch.run_now("pipeline", _ctx(tmp_path, news=news))
+    assert run.status == "failed"
+    failed = next(s for s in run.steps if s.status == "failed")
+    assert failed.name == "pricing"
+    assert failed.reason == "provenance write failed: OSError: disk full"
+    assert all(s.status == "not_run" for s in run.steps[1:])
+    assert len(fake.calls) == 1  # no further child started
+
+
+def test_no_transaction_is_open_while_run_command_executes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writes = {"n": 0}
+
+    def fake(argv: list[str], env: dict[str, str]) -> orch.CommandResult:
+        # If the orchestrator held a transaction, this second writer would block/fail.
+        writes["n"] += 1
+        conn = kg_schema.connect(tmp_path / "fin.db")
+        try:
+            conn.execute(
+                "INSERT INTO universe_coverage "
+                "(as_of, universe, symbol, in_assets, has_fundamental, has_metrics, has_pricing, "
+                "has_observations, has_returns, covered, checked_at) "
+                "VALUES ('2026-10-02', 'SP500', ?, 1, 0, 0, 0, 0, 0, 0, 'now')",
+                (f"ZZ{writes['n']}",),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return orch.CommandResult(returncode=0, output="\nrun 1: ok")
+
+    monkeypatch.setattr(orch, "run_command", fake)
+    run = orch.run_now("pipeline", _ctx(tmp_path))
+    assert run.status == "completed"
+    # every child's own write landed: no transaction was held across a step
+    assert (
+        _fetch(tmp_path / "fin.db", "SELECT COUNT(*) AS n FROM universe_coverage")[0]["n"]
+        == (writes["n"])
+    )
+    assert writes["n"] > 0
+
+
+def test_cli_exits_1_when_the_run_row_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake = FakeRunner()
+    monkeypatch.setattr(orch, "run_command", fake)
+    not_a_db = tmp_path / "not_a_db"
+    not_a_db.mkdir()
+    code = orch.cli_main(
+        [
+            "--analysis-date",
+            "2026-10-02",
+            "--db",
+            str(not_a_db),
+            "--universe-db",
+            str(tmp_path / "universe.db"),
+            "--news-db",
+            str(tmp_path / "news.db"),
+        ]
+    )
+    assert code == 1
+    assert fake.calls == []  # no child started
+    assert "cannot record the run" in capsys.readouterr().err
+
+
+def test_cli_prints_the_state_and_exits_1_on_a_provenance_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    news = _touch(tmp_path / "news.db")
+    monkeypatch.setattr(
+        orch, "run_command", FakeRunner({("pricing_agent", "run"): (0, "\nrun 1: ok")})
+    )
+    monkeypatch.setattr(orch, "_persist_step", _flaky_persist(3))
+    code = orch.cli_main(
+        [
+            "--analysis-date",
+            "2026-10-02",
+            "--db",
+            str(tmp_path / "fin.db"),
+            "--universe-db",
+            str(tmp_path / "universe.db"),
+            "--news-db",
+            str(news),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "pipeline: failed" in out
+    assert "provenance write failed" in out

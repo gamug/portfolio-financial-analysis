@@ -606,6 +606,75 @@ def main() -> int:  # noqa: C901, PLR0915
 
     check("T-145", t145)
 
+    def t012() -> None:  # noqa: C901, PLR0912 - one branch per provenance invariant
+        # The orchestrator's own provenance (T-012): every recorded run's steps are consistent
+        # with its status. Read-only; a database with no orchestrator runs is SKIP, not FAIL.
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        checked_runs = 0
+        checked_steps = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            db = connect_ro(path)
+            if not db.relation_exists("orchestrator_run"):
+                continue
+            run_rows = [
+                tuple(r)
+                for r in db.execute(
+                    "SELECT id, status, finished_at FROM orchestrator_run"
+                ).fetchall()
+            ]
+            if not run_rows:
+                continue
+            step_rows = [
+                tuple(r)
+                for r in db.execute(
+                    "SELECT orchestrator_run_id, ordinal, status, run_kind, run_id "
+                    "FROM orchestrator_step ORDER BY orchestrator_run_id, ordinal"
+                ).fetchall()
+            ]
+            by_run: dict[int, list[tuple]] = {}
+            for s in step_rows:
+                by_run.setdefault(int(s[0]), []).append(s)
+            checked_runs += len(run_rows)
+            checked_steps += len(step_rows)
+            for run_id, status, finished_at in run_rows:
+                steps = by_run.get(int(run_id), [])
+                if status == "completed" and any(
+                    s[2] not in ("completed", "skipped") for s in steps
+                ):
+                    bad.append(f"{prefix}run {run_id}: completed with a non-completed/skipped step")
+                if status == "failed":
+                    failed = [s for s in steps if s[2] == "failed"]
+                    if len(failed) != 1:
+                        bad.append(f"{prefix}run {run_id}: failed with {len(failed)} failed steps")
+                    else:
+                        after = steps[steps.index(failed[0]) + 1 :]
+                        if any(s[2] != "not_run" for s in after):
+                            bad.append(
+                                f"{prefix}run {run_id}: a step after the failure is not not_run"
+                            )
+                if status in ("completed", "failed") and finished_at is None:
+                    bad.append(f"{prefix}run {run_id}: finished run without finished_at")
+                for s in steps:
+                    if s[2] == "completed" and s[3] is not None and s[4] is None:
+                        bad.append(
+                            f"{prefix}run {run_id} step {s[1]}: completed but run_id is NULL"
+                        )
+        if checked_runs == 0:
+            report("T-012", "SKIP", "no orchestrator runs recorded")
+            return
+        report(
+            "T-012",
+            "FAIL" if bad else "PASS",
+            f"orchestrator provenance: {checked_runs} runs, {checked_steps} steps; "
+            + ("; ".join(bad[:10]) or "clean"),
+        )
+
+    check("T-012", t012)
+
     def t083() -> None:
         paths = [("db", args.db)]
         if args.replay_db:

@@ -7,7 +7,8 @@ recreated on every :func:`kg_schema.ensure` call -- they are cheap and always cu
 
 View groups (TOC -- see "Projection semantics" below for the per-view detail)
 -------------------------------------------------------------------------------
-Run log / provenance     v_analysis_run, v_pricing_run, v_quant_run, v_cycle_run
+Run log / provenance     v_analysis_run, v_pricing_run, v_quant_run, v_cycle_run,
+                         v_orchestrator_run, v_orchestrator_step
 Universe & coverage      v_universe_membership, v_universe_coverage, v_sector, v_industry
 Scores & signals         v_score_snapshot, v_fundamental_metric, v_sector_aggregate_snapshot
 Pricing & returns        v_price_observation, v_corporate_action, v_quant_return_daily,
@@ -62,6 +63,15 @@ Projection semantics
                           Because ``planned_units`` and the other three use different
                           units, completed_units + skipped_units + failed_units need
                           not equal planned_units.
+``v_orchestrator_run`` / ``v_orchestrator_step``
+                          the orchestrator's own provenance (T-012), written by
+                          ``api/orchestrator.py``: one row per orchestrated run
+                          (``run_id``, ``kind``, ``as_of``, ``code_version``, ``status``,
+                          ``started_at``, ``finished_at``, ``settings_json``, ``handle``,
+                          ``surface``) and one per step (``orchestrator_run_id``, ``handle``,
+                          ``ordinal``, ``step``, ``status``, timings, ``exit_code``,
+                          ``run_kind``, ``run_id`` -- the step's own run-log id, ``reason``,
+                          ``argv_json``, ``output_tail``). ``GET /run/{handle}`` reads these.
 ``v_sector``              one row per GICS sector with its member-asset and sub-industry
                           counts (the reference lane's rollup anchor).
 ``v_industry``            one row per GICS sub-industry -> sector (the scrape has no
@@ -267,6 +277,19 @@ VIEWS: dict[str, str] = {
         SELECT id AS run_id, cycle_type, cycle_date AS as_of, code_version, status,
                started_at, finished_at, params_json
         FROM cycle_run
+    """,
+    "v_orchestrator_run": """
+        CREATE VIEW v_orchestrator_run AS
+        SELECT id AS run_id, kind, as_of, code_version, status, started_at, finished_at,
+               settings_json, handle, surface
+        FROM orchestrator_run
+    """,
+    "v_orchestrator_step": """
+        CREATE VIEW v_orchestrator_step AS
+        SELECT s.orchestrator_run_id, r.handle, s.ordinal, s.step, s.status,
+               s.started_at, s.finished_at, s.exit_code, s.run_kind, s.run_id, s.reason,
+               s.argv_json, s.output_tail
+        FROM orchestrator_step s JOIN orchestrator_run r ON r.id = s.orchestrator_run_id
     """,
     "v_universe_coverage": """
         CREATE VIEW v_universe_coverage AS

@@ -730,7 +730,7 @@ def unresolved_run_references(db: Database) -> list[dict[str, Any]]:
         )
 
     # 3. Unmapped run_kind rows
-    for table in ("score_snapshot", "price_observation", "universe_membership"):
+    for table in UNMAPPED_RUN_KIND_QUERIES:
         if not db.relation_exists(table):
             continue
         cnt_row = db.execute(UNMAPPED_RUN_KIND_QUERIES[table]).fetchone()
