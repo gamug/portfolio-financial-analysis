@@ -90,7 +90,13 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       block steps with no real dependency on it; a dependent step (`cycle` on
       `fundamental_agent`/`pricing_agent`, `quant` on `pricing_agent` and `fundamental_agent`, the latter for
       the cover-page share count behind market cap) does hard-block. → step 4.
-- [ ] **T-017** Implement the incremental, upstream-aware run: define each step's pending signal (including
+- [x] **T-017** — **done 2026-10-13, PR #150** (approved after one review round: a read-only
+      `pending` subcommand in pricing_agent, fundamental_agent, entity_resolution and quant; a step runs on
+      its own check or as a dependent of a step that ran pending, cycle_select always runs, a failed check
+      counts as pending; fundamental's data/service failure classifier and exit rule, folded in from
+      stream A; the ER news watermark; real-data runs R1-R3 on a 5-ticker scratch database and the check on
+      a migrated production copy; verify_pilot's T-017 check; SPEC 1.13.0). Implement the incremental,
+      upstream-aware run: define each step's pending signal (including
       `entity_resolution`'s news and `quant`'s corporate actions), run the pending steps plus their downstream
       dependents, append only (NR-007); when nothing is pending, run only `cycle select` (the orchestrator's
       cycle step is always `select`). The semantic check degrades to "no source configured" until Work item

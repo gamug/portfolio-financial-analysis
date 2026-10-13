@@ -30,6 +30,7 @@ from fundamental_agent.edgar_client import (
     EdgarNotFoundError,
     FilingRef,
 )
+from fundamental_agent.failures import classify
 from fundamental_agent.filing_text import fetch_primary_document
 from fundamental_agent.fiscal import (
     QUARTER_DAYS,
@@ -85,8 +86,14 @@ class RunReport:
     completed: int = 0
     skipped: int = 0
     failed: int = 0
+    service_failed: int = 0  # T-017: failures that may clear on a retry (``failures.classify``)
     errors: list[str] = field(default_factory=list)
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
+
+    @property
+    def data_failed(self) -> int:
+        """Failures that are about the filing itself and fail the same way on every run."""
+        return self.failed - self.service_failed
 
 
 @dataclass(frozen=True)
@@ -385,19 +392,17 @@ def _record_failure(
 ) -> None:
     report = engine.report
     where = f" [{ref.accession_number}]" if ref else ""
+    message = f"{ref.accession_number}: {exc}" if ref else str(exc)
+    failure_class = classify(stage, message)
     report.failed += 1
-    report.errors.append(f"{task.ticker} {task.form} {task.year}{where}: {exc}")
+    if failure_class == "service":
+        report.service_failed += 1
+    report.errors.append(f"{task.ticker} {task.form} {task.year}{where} [{failure_class}]: {exc}")
     db.bump_run_counter(engine.conn, report.run_id, "failed_units")
     db.record_error(
         engine.conn,
         report.run_id,
-        RunError(
-            task.ticker,
-            task.form,
-            str(task.year),
-            stage,
-            f"{ref.accession_number}: {exc}" if ref else str(exc),
-        ),
+        RunError(task.ticker, task.form, str(task.year), stage, message),
     )
 
 

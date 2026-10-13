@@ -1,5 +1,5 @@
 """Command-line entry point: ``python -m fundamental_agent
-run|quality|repair-accessions|migrate|coverage``."""
+run|pending|quality|repair-accessions|migrate|coverage``."""
 
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ from fundamental_agent.card import build_card, render
 from fundamental_agent.config import DEFAULT_EDGAR_BASE_URL, Settings
 from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.fidelity import run_fidelity
+from fundamental_agent.pending import run_pending
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args, resolve_db_path, run_migrate
+from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
@@ -75,6 +77,14 @@ def build_parser() -> argparse.ArgumentParser:
         "HEAD alone can't reproduce; for a deliberate run from a work-in-progress checkout, "
         "not routine use",
     )
+
+    pending_cmd = sub.add_parser(
+        "pending",
+        help="read-only: is there a filing this step has not scored? One line, no LLM (T-017)",
+    )
+    pending_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    pending_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    add_analysis_date_argument(pending_cmd)
 
     quality_cmd = sub.add_parser(
         "quality",
@@ -254,6 +264,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
         return run_migrate(args.db)
     if args.command == "coverage":
         return coverage_from_args(args)
+    if args.command == "pending":
+        return run_pending(
+            resolve_db_path(args.db),
+            Path(universe_database_path(args.universe_db)).expanduser(),
+            resolve_analysis_date(args.analysis_date),
+        )
     if args.command == "quality":
         return _run_quality(args)
     if args.command == "repair-accessions":
@@ -293,7 +309,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
     )
     for line in report.errors[:20]:
         print(f"  ! {line}", file=sys.stderr)
-    return 1 if report.failed and not report.completed else 0
+    # T-017: the step fails only when nothing completed and a failure may clear on a retry
+    # (``failures.classify``). A run whose only failures are known data failures is a quiet run.
+    return 1 if report.service_failed and not report.completed else 0
 
 
 if __name__ == "__main__":

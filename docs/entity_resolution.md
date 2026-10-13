@@ -31,12 +31,13 @@ date, and drops any news whose `discovered_urls.pub_date` is after it **or NULL*
 
 ### `news_db.py` — the read-only accessor
 
-**Hard rule: only two query shapes, both index-backed.**
+**Hard rule: only two query shapes, both index-backed** (plus, since T-017, the change watermark below).
 
 | Function | Query | Index |
 |---|---|---|
 | `connect_ro(path)` | `file:…?mode=ro` (never touches the WAL) | — |
 | `article_ids_for_ticker(news, ticker, *, until=None)` | `SELECT id FROM discovered_urls WHERE ticker = ?` (+ `AND pub_date IS NOT NULL AND pub_date <= ?` when `until` set) | `idx_ticker` |
+| `news_watermark(news, tickers, *, until)` (T-017) | per ticker `SELECT COUNT(*), MAX(id) FROM discovered_urls WHERE ticker = ? AND pub_date IS NOT NULL AND pub_date <= ?`, then `SELECT MAX(id) FROM article_entities`; guarded by `PRAGMA table_info` -- `MAX(id)` is read only when `id` is the table's `INTEGER PRIMARY KEY` (a rowid alias), else the watermark is `{"unavailable": ...}` and `pending` answers yes | `idx_ticker`; the rowid |
 | `per_entities_for_articles(news, ids)` | chunked (`≤ 900`) `SELECT article_id, text, score FROM article_entities WHERE entity_type='PER' AND article_id IN (…)` | `idx_article_entities_article_id` |
 
 The module **never names `articles` or `body_text`** (a 4.5 GB unindexed table); a
@@ -73,10 +74,10 @@ re-tuned run under a new `method` is a parallel dataset.
 
 ### `pipeline.py` — `run(settings, params) -> RunReport`
 
-Opens an `ENTITY_RESOLUTION` `cycle_run` for provenance, loads the `assets` tickers,
+Opens an `ENTITY_RESOLUTION` `cycle_run` for provenance (its `params_json` carries `news_watermark`, T-017), loads the `assets` tickers,
 `connect_ro(urls.db)`, `build_edges`, `replace_edges`, marks the cycle completed.
 
-### `cli.py` — `build` subcommand
+### `cli.py` — `build` and `pending` subcommands
 
 ## Scale & gotchas
 
@@ -89,3 +90,12 @@ Opens an `ENTITY_RESOLUTION` `cycle_run` for provenance, loads the `assets` tick
   written by the news pipeline concurrently.
 - News co-occurrence ≠ an actual shared directorship. The denylist + thresholds
   are the whole game; they are CLI flags for tuning.
+
+## `pending` (T-017)
+
+`python -m entity_resolution pending --analysis-date D` is the orchestrator's read-only check: one
+line `pending: yes|no <evidence>`. Edges carry no date (`replace_edges` deletes the whole method
+first), so it asks of the newest `ENTITY_RESOLUTION` `cycle_run` R: completed? built for D? default
+tuning? the edges' `run_id` = R? and does `news_watermark` now equal the one R recorded in
+`params_json`? A run from before T-017 has no watermark, so it is pending once. With no `urls.db`
+the answer is `no` (`no news source configured`) and the orchestrator skips the step first.

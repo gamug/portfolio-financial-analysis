@@ -151,3 +151,12 @@ expected window labels are present **and** neither `--store-daily` nor
 - Warm-up rows carry NULLs for the rolling fields — confined to early 2022 since
   the collector always fetches from `2022-01-01`.
 - Finnhub free tier has no history, so `source` is almost always `yfinance`.
+
+## `pending` (T-017)
+
+`python -m pricing_agent pending --analysis-date D` is the orchestrator's read-only check (one line,
+`pending: yes|no <evidence>`; gateway GETs only). With S the last NYSE session on or before D it
+says yes when a member has no `price_daily` bar at S and the gateway has any candle for it from the day after its latest stored bar (the start date if none) to S, when a
+bar lacks its `priceobs-v2` observation, when `has_pre_split_rows` holds, or when S is not final
+(the run would refuse it). A member the gateway has no candle for, and one whose latest
+`pricing_run_error` is a `split_jump` refusal, are listed in the evidence and do not count.
