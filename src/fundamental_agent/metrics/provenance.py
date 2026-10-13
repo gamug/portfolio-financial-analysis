@@ -6,9 +6,11 @@ Each stored metric's inputs carry one ``provenance`` block:
 * for each line item the metric reads, its XBRL concept, how it was read (``concept`` / ``map`` /
   ``fallback`` / ..., T-148's :class:`~fundamental_agent.statements.Resolution`) and **the basis it
   was read on** (G2): ``period`` (the filing's own period column), ``ttm`` (the trailing twelve
-  months of a 10-Q, with the method and the columns it used), ``prior_year`` or ``prior_quarter``
-  (the capital at the prior fiscal year end or the prior year's same quarter, with the ``Capital``'s
-  source). A metric that reads an item on two bases lists both;
+  months of a 10-Q, with the method, the TTM's own ``value``, the ``terms`` and ``columns`` it
+  combined -- ``(label, period_key, accession)`` -- and ``four_quarter_check``, the four-quarter
+  cross-check which is never the value, H4), ``prior_year`` or ``prior_quarter`` (the capital at the
+  prior fiscal year end or the prior year's same quarter, with the ``Capital``'s source). A metric
+  that reads an item on two bases lists both;
 * the rule IDs applied (the checklist rules and Annex B's ``MD-`` rows);
 * the resolution flags;
 * and, when the value is empty, a reason from a fixed list of codes (G4's precedence).
@@ -403,12 +405,17 @@ def _resolve(
 
 
 def _flow_columns(flow: TTMFlow | None) -> dict[str, Any]:
+    """H4: the TTM's own value, the columns and terms it combined, and the four-quarter cross-check
+    (``four_quarter_check``, ``TTMFlow.alt`` -- never the value)."""
     if flow is None:
         return {}
     return {
         "method": flow.method,
+        "value": flow.value,
         "ytd": flow.ytd,
-        "alt": flow.alt,
+        "four_quarter_check": flow.alt,
+        "columns": [list(column) for column in flow.columns],
+        "terms": [list(term) for term in flow.terms],
         "flow_flags": list(flow.flags),
     }
 

@@ -39,6 +39,10 @@ class TTMFlow:
     # (not part of the flow's identity: it compares equal with or without it)
     ytd: float | None = field(default=None, compare=False)
     flags: tuple[str, ...] = ()
+    # H4 (T-151 part 3 fix 2): the columns and terms a TTM combined, for the provenance block --
+    # ``(label, period_key, accession)`` and ``(label, value)``. Never part of the flow's identity.
+    columns: tuple[tuple[str, str | None, str | None], ...] = field(default=(), compare=False)
+    terms: tuple[tuple[str, float], ...] = field(default=(), compare=False)
 
 
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:

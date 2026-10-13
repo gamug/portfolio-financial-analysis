@@ -480,3 +480,37 @@ def test_h3_md38_on_a_10q_without_the_prior_quarter_is_prior_year_missing() -> N
     prior = block["items"]["current_assets"][1]
     assert prior["source"] is None
     assert block["empty_reason"] == provenance.PRIOR_YEAR_MISSING
+
+
+# -- H4: the TTM entry records its value and the columns it combined -------------------------------
+
+
+def test_h4_a_ytd_ttm_entry_gives_the_value_from_its_columns() -> None:
+
+    stmts = _payload()
+    q = "2024-06-30 (Q2)"
+    flow = TTMFlow(
+        120.0,
+        "ytd",
+        alt=118.0,
+        ytd=40.0,
+        terms=(("prior_fiscal_year", 100.0), ("prior_ytd", 20.0), ("ytd", 40.0)),
+        columns=(
+            ("prior_fiscal_year", "2023-12-31", "0000000000-24-000001"),
+            ("prior_ytd", "2023-06-30 (YTD)", "0000000000-24-000002"),
+            ("ytd", "2024-06-30 (YTD)", "0000000000-24-000002"),
+        ),
+    )
+    pairs = [
+        ("cashflow", r) for r in cashflow_compute(stmts, q, None, {"operating_cash_flow": 120.0})
+    ]
+    provenance.attach(pairs, stmts, q, {"operating_cash_flow": flow})
+    result = next(r for _g, r in pairs if r.name == "free_cash_flow_margin")
+    entry = result.inputs["provenance"]["items"]["operating_cash_flow"][0]
+    assert entry["value"] == 120.0
+    assert entry["four_quarter_check"] == 118.0
+    terms = dict(entry["terms"])
+    assert terms["prior_fiscal_year"] - terms["prior_ytd"] + terms["ytd"] == entry["value"]
+    columns = {label: (key, accession) for label, key, accession in entry["columns"]}
+    assert columns["prior_fiscal_year"] == ("2023-12-31", "0000000000-24-000001")
+    assert columns["ytd"] == ("2024-06-30 (YTD)", "0000000000-24-000002")

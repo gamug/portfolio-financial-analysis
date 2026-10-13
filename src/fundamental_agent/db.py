@@ -809,6 +809,40 @@ def _nine_month_ytd(
     return _recorded_ytd(conn, third[0], item, engine_version)
 
 
+def _quarter_columns(
+    conn: Database, asset_id: int, period_end: str
+) -> tuple[tuple[str, str | None, str | None], ...]:
+    """H4: the four quarters a ``quarters`` TTM summed, each ``(label, period_end, accession)`` --
+    the filing near each quarter end (a fiscal Q4 comes from the 10-K less the third quarter's nine
+    months, PER-05)."""
+    out: list[tuple[str, str | None, str | None]] = []
+    for k in (0, 1, 2, 3):
+        end = period_end if k == 0 else _months_before(period_end, _QUARTER_MONTHS * k).isoformat()
+        filing = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(end))
+        if filing is None:
+            filing = _filing_near(conn, asset_id, "10-K", date.fromisoformat(end))
+        out.append(
+            (
+                f"quarter_{k}",
+                filing[1] if filing else None,
+                _filing_accession(conn, filing[0]) if filing else None,
+            )
+        )
+    return tuple(out)
+
+
+def _filing_period_end(conn: Database, filing_id: int) -> str | None:
+    row = conn.execute("SELECT period_end FROM sec_filings WHERE id = ?", (filing_id,)).fetchone()
+    return str(row["period_end"]) if row and row["period_end"] else None
+
+
+def _filing_accession(conn: Database, filing_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT accession_number FROM sec_filings WHERE id = ?", (filing_id,)
+    ).fetchone()
+    return str(row["accession_number"]) if row and row["accession_number"] else None
+
+
 def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str) -> int | None:
     """The asset's 10-K whose fiscal year ends strictly between *after* and *before* -- the
     year a prior-year year-to-date column belongs to -- or ``None``."""
@@ -828,6 +862,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     current: dict[str, float],
     ytd: dict[str, YTDPair] | None = None,
     engine_version: str = METRICS_ENGINE_VERSION,
+    accession: str | None = None,
 ) -> dict[str, TTMFlow]:
     """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
 
@@ -863,8 +898,27 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 else None
             )
             if fy is not None:
+                # H4: the terms and the columns the identity combined, with the accession of the
+                # filing that supplied each (the prior 10-K, then this filing's own two columns).
                 out[item] = TTMFlow(
-                    fy - pair.prior + pair.current, "ytd", alt=summed, ytd=pair.current
+                    fy - pair.prior + pair.current,
+                    "ytd",
+                    alt=summed,
+                    ytd=pair.current,
+                    terms=(
+                        ("prior_fiscal_year", fy),
+                        ("prior_ytd", pair.prior),
+                        ("ytd", pair.current),
+                    ),
+                    columns=(
+                        (
+                            "prior_fiscal_year",
+                            _filing_period_end(conn, fy_filing) if fy_filing else None,
+                            _filing_accession(conn, fy_filing) if fy_filing else None,
+                        ),
+                        ("prior_ytd", f"{pair.prior_end} (YTD)", accession),
+                        ("ytd", f"{period_end} (YTD)", accession),
+                    ),
                 )
                 continue
             if item == "depreciation_amortization" and fy_filing is not None:
@@ -878,12 +932,19 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 if p_flag == 1.0:
                     flow_flags = ("depreciation_only_not_da",)
         ytd_now = pair.current if pair else None
+        quarters = _quarter_columns(conn, asset_id, period_end)
         if summed is not None:
-            out[item] = TTMFlow(summed, "quarters", ytd=ytd_now, flags=flow_flags)
+            out[item] = TTMFlow(
+                summed, "quarters", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
         elif item in current:
-            out[item] = TTMFlow(current[item] * 4.0, "x4", ytd=ytd_now, flags=flow_flags)
+            out[item] = TTMFlow(
+                current[item] * 4.0, "x4", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
         elif flow_flags:
-            out[item] = TTMFlow(0.0, "refused", ytd=ytd_now, flags=flow_flags)
+            out[item] = TTMFlow(
+                0.0, "refused", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
+            )
     return out
 
 

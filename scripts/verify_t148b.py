@@ -973,7 +973,7 @@ def _recompute_single_filing(
     market_cap_obj = mc_res.caps.get(aid)
     market_cap_missing = mc_res.missing.get(aid)
 
-    ttm = _ttm_flows(engine, task, stmts, target)
+    ttm = _ttm_flows(engine, task, stmts, target, accession=f["accession_number"])
 
     ctx_kwargs: dict[str, Any] = {
         "ticker": task.ticker,
