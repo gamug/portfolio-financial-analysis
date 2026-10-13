@@ -111,16 +111,16 @@ def cmd_changes(args: argparse.Namespace) -> None:  # noqa: C901 - a report: one
         elif cv is not None and av is not None and cv != av:
             per_metric[name]["changed"].append(key)
 
+    def _assets(pairs: list[tuple[int, str]]) -> int:
+        return len({(a.get(key) or c.get(key, {})).get("asset_id") for key in pairs})
+
     report: dict[str, Any] = {}
     for name in sorted(per_metric):
         bucket = per_metric[name]
         entry: dict[str, Any] = {}
         for kind in ("filled", "emptied", "changed"):
             pairs = bucket[kind]
-            entry[kind] = {
-                "filings": len(pairs),
-                "companies": len({key[0] for key in pairs}),
-            }
+            entry[kind] = {"filings": len(pairs), "companies": _assets(pairs)}
         report[name] = entry
 
     # the largest relative changes, with ticker / accession / old and new / the after inputs
@@ -150,14 +150,14 @@ def cmd_changes(args: argparse.Namespace) -> None:  # noqa: C901 - a report: one
     payload = {"per_metric": report, "largest_changes": top}
     Path(args.out).write_text(json.dumps(payload, indent=2))
 
-    print(f"{'metric':<42}{'filled':>10}{'emptied':>10}{'changed':>10}  (filings/companies)")
+    print(f"{'metric':<42}{'filled f/c':>14}{'emptied f/c':>14}{'changed f/c':>14}")
+
+    def cell(entry: dict[str, Any], kind: str) -> str:
+        return f"{entry[kind]['filings']}/{entry[kind]['companies']}"
+
     for name in sorted(report):
         e = report[name]
-        print(
-            f"{name:<42}{e['filled']['filings']:>4}/{e['filled']['companies']:<4}"
-            f"{e['emptied']['filings']:>4}/{e['emptied']['companies']:<4}"
-            f"{e['changed']['filings']:>4}/{e['changed']['companies']:<4}"
-        )
+        print(f"{name:<42}{cell(e, 'filled'):>14}{cell(e, 'emptied'):>14}{cell(e, 'changed'):>14}")
     print(f"\nTop {len(top)} relative changes:")
     for row in top:
         print(
@@ -272,7 +272,15 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         # NOPAT's own rate: master stores `effective_tax_rate` (the rate used); this branch stores
         # `nopat_tax_rate` and the `nopat_tax_rate_reit_effective` flag.
         if "nopat_tax_rate" in nopat_inputs:
-            if nopat_inputs.get("nopat_tax_rate_statutory_21") != 1.0:
+            # the four legitimate reasons: 21%, a REIT's own rate (APP-04c), 0 on a REIT with no
+            # pre-tax income, and 0 on an operating loss (MET-03)
+            reasons = (
+                "nopat_tax_rate_statutory_21",
+                "nopat_tax_rate_reit_effective",
+                "nopat_tax_rate_reit_no_rate",
+                "nopat_tax_rate_operating_loss",
+            )
+            if not any(nopat_inputs.get(reason) == 1.0 for reason in reasons):
                 add("MET03.nopat_on_filed_rate", asset)
             if asset in reits and nopat_inputs.get("nopat_tax_rate_statutory_21") == 1.0:
                 add("APP04c.reit_nopat_at_21", asset)
@@ -291,10 +299,14 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
             add("MET03.nopat_taxed_on_operating_loss", asset)
 
         ic = inp(filing, "return_on_invested_capital")
-        eq, debt, cash = ic.get("equity"), ic.get("total_debt"), ic.get("cash")
+        ic_value = ic.get("invested_capital")
+        if ic_value is None:  # master's inputs: invested capital = equity + debt - cash
+            eq, debt, cash = ic.get("equity"), ic.get("total_debt"), ic.get("cash")
+            if eq is not None or debt is not None:
+                ic_value = (eq or 0.0) + (debt or 0.0) - (cash or 0.0)
         if (
-            (eq is not None or debt is not None)
-            and ((eq or 0.0) + (debt or 0.0) - (cash or 0.0) <= 0.0)
+            ic_value is not None
+            and ic_value <= 0.0
             and metric(filing, "return_on_invested_capital") is not None
         ):
             add("N15.roic_on_nonpositive_capital", asset)
@@ -307,14 +319,18 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
             add("N15.roe_on_negative_equity", asset)
 
         nd_inputs = inp(filing, "net_debt_to_ebitda")
-        op, da = nd_inputs.get("operating_income"), nd_inputs.get("depreciation_amortization")
-        ebitda = None if op is None or da is None else op + da
+        ebitda = nd_inputs.get("ebitda", nd_inputs.get("ebitda_ttm"))
+        if ebitda is None:  # master's inputs carry the two terms only
+            op, da = nd_inputs.get("operating_income"), nd_inputs.get("depreciation_amortization")
+            ebitda = None if op is None or da is None else op + da
         nd = metric(filing, "net_debt_to_ebitda")
         if ebitda is not None and ebitda > 0.0 and nd is not None and nd < 0.0:
             add("N9.net_cash_positive_ebitda", asset)
         if ebitda is not None and ebitda <= 0.0 and nd is not None:
             add("MET09.net_debt_ebitda_on_nonpositive_ebitda", asset)
-        ni = inp(filing, "free_cash_flow_conversion").get("net_income")
+        fcf_inputs = inp(filing, "free_cash_flow_conversion")
+        # the denominator is the annual (TTM on a 10-Q) net income the metric actually used
+        ni = fcf_inputs.get("net_income_ttm", fcf_inputs.get("net_income"))
         if ni is not None and ni <= 0.0 and metric(filing, "free_cash_flow_conversion") is not None:
             add("MET09.fcf_conversion_on_nonpositive_income", asset)
 
@@ -328,9 +344,10 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
             if base is not None and base <= 0.0 and metric(filing, name) is not None:
                 add(f"MET04.{name}_base_nonpositive", asset)
 
+        # PER-13: T-147 counted the revenue CAGRs; the other two are reported beside them.
         for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
             if inp(filing, name).get("flag_crosses_asc842") == 1.0:
-                add("PER13.cagr_crosses_asc842", asset)
+                add(f"PER13.{name}_crosses_asc842", asset)
         if inp(filing, "net_income_cagr").get("flag_crosses_cecl") == 1.0:
             add("PER14.net_income_cagr_crosses_cecl", asset)
 
@@ -357,24 +374,18 @@ def cmd_counts(args: argparse.Namespace) -> None:
 
 def cmd_audit_diff(args: argparse.Namespace) -> None:
     """(d) the keys of ``audit_sec_checklist measure --only metrics`` that changed, control vs after."""
-    control = json.loads(Path(args.control_json).read_text())
-    after = json.loads(Path(args.after_json).read_text())
 
-    def flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
-        out: dict[str, Any] = {}
-        if isinstance(obj, dict):
-            for k, v in obj.items():
-                out.update(flatten(v, f"{prefix}.{k}" if prefix else str(k)))
-        else:
-            out[prefix] = obj
-        return out
+    def by_key(path: str) -> dict[str, dict[str, Any]]:
+        return {str(f["key"]): f for f in json.loads(Path(path).read_text())}
 
-    c = flatten(control)
-    a = flatten(after)
+    c = by_key(args.control_json)
+    a = by_key(args.after_json)
     lines: list[str] = []
     for key in sorted(set(c) | set(a)):
-        if c.get(key) != a.get(key):
-            lines.append(f"{key}: {c.get(key)!r} -> {a.get(key)!r}")
+        cf, cc = c.get(key, {}).get("count"), c.get(key, {}).get("companies")
+        af, ac = a.get(key, {}).get("count"), a.get(key, {}).get("companies")
+        if (cf, cc) != (af, ac):
+            lines.append(f"{key}: {cf}/{cc} -> {af}/{ac}")
     text = "\n".join(lines) + "\n"
     Path(args.out).write_text(text)
     print(text)

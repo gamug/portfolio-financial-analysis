@@ -66,8 +66,13 @@ def nopat_on_filed_rate(r: Rec) -> bool:
             and tax is not None
             and metric(r, "effective_tax_rate") != DEFAULT_TAX_RATE
         )
-    if i.get("nopat_tax_rate_reit_effective"):
-        return False  # APP-04c: a REIT is supposed to use its own rate
+    legitimate = (
+        "nopat_tax_rate_reit_effective",  # APP-04c: a REIT is supposed to use its own rate
+        "nopat_tax_rate_reit_no_rate",  # ... and 0 when its pre-tax income is not positive
+        "nopat_tax_rate_operating_loss",  # MET-03: 0 on an operating loss
+    )
+    if any(i.get(reason) == 1.0 for reason in legitimate):
+        return False
     return abs(rate - DEFAULT_TAX_RATE) > _RATE_EPSILON
 
 
@@ -137,10 +142,14 @@ def de_on_negative_equity(r: Rec) -> bool:
 
 def roic_on_nonpositive_capital(r: Rec) -> bool:
     i = inputs(r, "return_on_invested_capital")
-    eq, debt, cash = i.get("equity"), i.get("total_debt"), i.get("cash")
-    if eq is None and debt is None:
-        return False
-    capital = (eq or 0.0) + (debt or 0.0) - (cash or 0.0)
+    capital = i.get(
+        "invested_capital"
+    )  # T-151 part 2 (D6): the metric's own IC, NCI and STI netted
+    if capital is None:  # master's inputs: invested capital = equity + debt - cash
+        eq, debt, cash = i.get("equity"), i.get("total_debt"), i.get("cash")
+        if eq is None and debt is None:
+            return False
+        capital = (eq or 0.0) + (debt or 0.0) - (cash or 0.0)
     return capital <= 0.0 and has(r, "return_on_invested_capital")
 
 
