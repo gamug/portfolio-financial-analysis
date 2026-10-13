@@ -61,7 +61,12 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       acceptance check is re-scoped to the read routers. Constitution 2.0.0 (MAJOR). Must land before `T-011`
       (a plan that conflicts with the constitution amends it first). → `PLAN.md` Work item 2, step 1
       *(added 2026-10-06; done 2026-10-06, PR #124, constitution 2.0.0, SPEC 1.2.0)*.
-- [ ] **T-011** Implement the sequencing runner: pricing_agent → fundamental_agent → entity_resolution →
+- [x] **T-011** — **done 2026-10-12, PR #143** (approved after one review round: a step that raises now
+  fails the run instead of reporting it completed, and the CLI wrapper prints each step live; real-data
+  run on a 5-ticker scratch database through both the CLI wrapper and HTTP, all nine steps, 95 filings
+  scored by the LLM with the user's approval; the code lives in api/, one subprocess per step, run state
+  in memory until T-012). Implement the sequencing runner: pricing_agent → fundamental_agent →
+  entity_resolution →
       cycle → quant, one `--analysis-date`, exposed as the orchestrator endpoint, the per-step endpoints listed
       in `PLAN.md` step 1 (run handle + a read-only status endpoint), and a CLI wrapper over the same code.
       Relies on each package's existing idempotency rather than re-implementing skip logic. Implements step 1's
