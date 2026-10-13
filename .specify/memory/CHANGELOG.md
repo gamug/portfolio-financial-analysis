@@ -420,6 +420,161 @@ stays open: it is this repo's consumer-side verification and is now
       all clean (no source changed by this task). → `PLAN.md` Work item 7
       acceptance criteria.
 
+## Work item 8 — `T-151` (closed task) — Metric dictionary and definitions (engine `metrics-v7`) — DONE 2026-10-13
+
+Moved verbatim from `TASKS.md` when the task closed (PR #148); the rest of Work item 8
+(`T-141`, `T-077`, `T-070`, `T-147`, `T-149`, `T-148`, `T-150`, `T-076`, `T-073`, `T-074`, `T-071`)
+stays there, with `T-076` next. Ordered by work item number.
+
+- [x] **T-151** Metric dictionary and definitions (engine `metrics-v7`; `fundamental_agent/metrics`). New from `T-147`;
+      **absorbs `T-072`'s EBITDA** (persist EBITDA = operating income + D&A; net debt subtracts short-term
+      investments, audit F7) **and `T-076`'s growth item** (YoY growth empty when the base is ≤ 0, audit F8; `T-076`
+      keeps its skills redesign). → `PLAN.md` Work item 8, step 14. Delivers `docs/metric_dictionary.md`: generated
+      directly from Annex B of `checklist_v1.3.md` (formula, one source, inference flag, 17 formulas "source pending" per D-05
+      until the second author is loaded); renames the audit key `free_cash_flow_to_equity` to `free_cash_flow` (OCF − capex, not FCFE).
+      Definitions and the measured scope:
+      - **MD-02 and MD-35:** invested capital and EV include noncontrolling interest (as MD-02 defines it: redeemable NCI
+        included between liabilities and equity; CON-04's identity when no balance is filed; 0 only with no NCI income;
+        otherwise a capture failure) and net short-term investments (when filed apart from cash); **MD-38:** (NOPAT (MD-05,
+        MET-03's 21%) − (capex (MET-08) − D&A (MD-01) + Δ non-cash working capital)) / EV (MD-35), with non-cash working capital
+        = (current assets − cash − short-term investments) − (current liabilities − short-term debt), its change between the ends
+        of the prior and the current year; empty when a term is missing or the balance sheet is not classified (REITs, banks).
+      - **The applicability matrix as data:** v1.3's matrix (35 metrics × 6 company types → applies, adjusted, or not applicable,
+        with the reason) becomes a data file the code reads, instead of conditions scattered through the code.
+      - **Traceability test:** fails when a metric in the dictionary has no implementation, when an implementation, map entry or
+        veto has no rule ID, or when the code and the matrix disagree.
+      - **Provenance on every metric:** its filing (accession), the XBRL concept of each line item, the rule IDs applied, the
+        flags, and the reason when it is left empty.
+      - **Company card:** for a CIK and a date it prints the profile, the filing used, each line item's concept and value, the
+        rules applied and the result. Used for the thesis and for debugging.
+      - **Gate after every rebuild:** T-147's comparison with the SEC's own data (same CIK and filing) and the golden set
+        (`golden_set.csv`), with a minimum fidelity. A value that doesn't match its own company's SEC data can't reach the scores.
+      - **MET-01 / MET-02:** ROA = operating income × (1 − t) / total assets at the **start** of the year, not
+        applicable to financial firms; ROIC and ROE divide by capital at the end of the prior year, never the ending
+        capital (ROE for banks stays, C2). A 10-Q's "end of the prior year" is the prior 10-K's balance.
+      - **MET-03 / APP-04c:** NOPAT's tax is the 21% federal marginal rate for everyone except REITs (their own
+        effective rate when pre-tax income is positive, else 0), tax 0 on an operating loss. Measured:
+        NOPAT uses the filing's own rate in 4,320 filings (471 companies); it is reduced by a tax on an operating
+        loss in 198 of 203 loss filings; **N10:** `effective_tax_rate` shows 21% when pre-tax income is
+        missing or ≤ 0 in 743 filings (172 companies; L-05 says empty); the 21% default hits
+        125 of 314 REIT filings (15 companies). MET-03 also reports ROIC at the effective rate as robustness.
+      - **MET-09 / N9:** a negative denominator is left out of the continuous score and flagged, not discarded with the
+        sign: **N9** — 177 filings (63 companies) have net cash and positive EBITDA, which T-116 treats as unresolved;
+        net debt/EBITDA with EBITDA ≤ 0 in 41 filings and FCF conversion with net income ≤ 0 in 160.
+      - **MET-04 / PER-12 to PER-14:** growth from a base ≤ 0 is empty and flagged (net income 394 filings,
+        free cash flow 328, operating income 242); a growth or CAGR across the adoption of
+        a standard without restated comparatives is flagged: 4 CAGRs cross ASC 842 and 32 lenders'
+        net-income CAGRs cross CECL.
+      - **The cash line and the REIT debt total (T-148 part 2 limitation, see `docs/model_fixes.md` causes table):** the
+        REIT debt total (`SecuredDebt` + `UnsecuredDebt`: no loaded source states the identity) needs a source; today debt
+        and EV are empty for those REITs (16 REIT companies). Segment-only cash where filers report cash only within segmented
+        balance sheets (PCAR, NVR, TXT) and company-specific or discontinued-operations cash elements (CVX, PODD, GEHC, MDLZ,
+        MMM, AMP, CINF, DVN) remain unread, with EV and ROIC empty. (Part 2 resolved the restricted-cash-inclusive line under
+        (k)(1) and `Cash` alone with classified balance sheets under (k)(3), flagged).
+      - **N15 / APP-07:** ROIC only when invested capital > 0 (74 filings today); ROE and D/E are not
+        meaningful on negative equity (316 filings, 51 companies). The metric's value is empty; the cycle's
+        ranking decision (D/E = +∞) is `T-071`'s.
+      **Acceptance:** `docs/metric_dictionary.md` generated from Annex B; applicability matrix data file loaded;
+      traceability test passes; metric provenance and company card delivered; post-rebuild SEC fidelity gate enforced;
+      the audit's `metrics` group re-run on a rebuilt database shows 0 for N10, N15 and the MET-03/MET-09 rows;
+      regression tests per definition on real captured fixtures; a `docs/model_fixes.md` entry.
+      **Split (user, 2026-10-12).** T-151 runs as three parts, one PR each: **part 1** — line-item
+      resolution (the sourced D&A and debt sums, the net capex element, the period label; engine
+      `metrics-v7`); **part 2** — the metric definitions (MET-01/02/03/04/09, N9/N10/N15, MD-02/35/38,
+      EBITDA persisted, net debt minus short-term investments, the `free_cash_flow` rename; its
+      acceptance includes the audit's `metrics` group at 0); **part 3** — the dictionary from Annex B,
+      the applicability matrix as data, the traceability test, provenance, the company card and the
+      post-rebuild fidelity gate. **Status (2026-10-13): part 1 done — PR #144, reviewed and
+      approved by reviewer A ("ready to merge"; the review round's two fixes are the capex caption
+      fallback no longer re-taking a rejected net element, and the pointers under T-148's corrected
+      items). The box stays open until part 3 merges, so this merge does not move T-151 to
+      `CHANGELOG.md`.** Branch `fix/t151a-sourced-sums`; `docs/model_fixes.md` "T-151 part 1"; the
+      mismatching companies are declared there as input for part 3's gate.
+      **Status (2026-10-13): part 2 done — PR #147** (branch `feat/t151b-metric-definitions`;
+      `docs/model_fixes.md` "T-151 part 2"; engine stays `metrics-v7`). D1/D2: ROA/ROE/ROIC divide by
+      the capital at the end of the prior fiscal year (the filing's own comparative, else the stored
+      prior 10-K), never the ending capital; D3: NOPAT at MET-03's 21% (a REIT's own rate, 0 on a
+      loss), `effective_tax_rate` empty when pre-tax ≤ 0 (L-05); D4: growth empty and flagged from a
+      base ≤ 0, the ASC 842 / CECL flags; D5: the non-positive denominators (MET-09 / N9); D6/D7:
+      NCI and short-term investments in invested capital and EV; D8: MD-38 in C10's EBIT form; D9:
+      `ebitda` persisted, net debt less short-term investments; D10: `free_cash_flow` rename. The
+      audit's `metrics` group on a database rebuilt with the branch (`out/p3_audit_diff.txt`, 14 keys):
+      **N10, N15, the MET-03 and MET-09 rows all 0** (NOPAT on the filing's own rate 7,997/472 → 0,
+      on an operating loss 394/102 → 0, `effective_tax_rate` = 21% with pre-tax ≤ 0 1,319/209 → 0,
+      REITs at 21% 197/17 → 0, ROIC with invested capital ≤ 0 89/11 → 0; N9 net cash kept, 373 → 414).
+      Declared findings: the metric is no longer clamped (497/199 raw rates outside [0, 0.5], UNH
+      1222%), ROA is empty for 2,292 filings with no operating income, MD-38 empty for 1,236 10-Qs
+      whose prior-year quarter is not stored; PER-13's `debt_to_assets`/`asset_turnover` flags are not
+      implemented (D4 scopes it to growth/CAGR). Tests: `tests/test_metric_definitions_t151b.py` (+33),
+      five replaced (`out/p1a_gates.txt`: 2,281 passed).
+      **Fix round 1 (2026-10-13): F1–F10, PR #147** (`docs/model_fixes.md` "Fix round 1"). F1: the
+      NOPAT tax follows the flow it taxes (the TTM on a 10-Q; a REIT's TTM rate; `reit_ttm_rate_missing`);
+      F2: the group `annualized_x4` stamp keeps master's items (usable `net_income_ttm` 8,914/498
+      restored) with per-item flags; F3: a redeemable NCI filed as one part is kept
+      (`redeemable_nci_filed_parts`, 109/10); F4: the NCI / invested-capital / net-debt /
+      short-term-investment flags reach the inputs; F5: the CAGR base flag and the CECL flag on the
+      net-income CAGR alone; F6: the flag counts count distinct filings; F7: the TTM unlevered-FCF
+      input is the TTM proxy; F8: the raw `effective_tax_rate` is kept and flagged outside [0, 1]
+      (396/167); F9: the cycle consumers recorded (valorization, `latest_trailing_net_income`,
+      `_LeverageRule`, `quality._net_debt`); F10: `prior_wc_missing` only when the prior column is
+      absent, `unclassified_balance_sheet` otherwise. The audit's `metrics` group is 0 on every
+      acceptance row (`out/f1_audit_diff.txt`, 14 keys); F1's acceptance: TTM loss taxed 272/64 → 0,
+      TTM profit untaxed 153/88 → 0, REIT on the quarter's rate 216/16 → 0 (`out/f1_counts.json`).
+      **Status (2026-10-13): part 3 done — PR #148** (branch `feat/t151c-dictionary-provenance`,
+      stacked on part 2; `docs/model_fixes.md` "T-151 part 3"). D12: `docs/metric_dictionary.md` and
+      `src/fundamental_agent/data/applicability_matrix.csv` generated from Annex B (39 rows) and the
+      matrix (35 × 6 = 210 cells) by `scripts/build_metric_dictionary.py`. D13: the traceability test
+      (a dictionary metric without an implementation, a computed metric without a row — one allowlist
+      entry —, a resolver map without a rule ID, and the matrix-vs-code cells the code can know
+      today). D14: a `provenance` block on every metric (accession, rule IDs, each item's concept and
+      how it was read, the flags, the empty reason). D15: the read-only company card. D16: the
+      post-rebuild fidelity gate — 9,340 filings compared, `depreciation_amortization` 99.9% (3
+      mismatches) and `long_term_debt` 99.8% (13), every other item 100%, no item below the 98% gate;
+      16 mismatching pairs (ESS 7, WELL 6, SYK 2, ROK 1), and no `golden_set.csv` exists (RECORDED).
+      Tests: `tests/test_traceability.py` (10), `tests/test_metric_provenance.py` (9),
+      `tests/test_company_card.py` (5). **Fix round 1 (2026-10-13): G1–G6, PR #148**
+      (`docs/model_fixes.md` "Fix round 1"). G1: the database was recomputed with part 3's code —
+      **all 315,435 rows carry a provenance block**, no empty row without a reason. G2: each item
+      carries its **basis** (period / ttm / prior_year / prior_quarter), a TTM flow its method and
+      columns, a capital item the `Capital`'s source; MD-38 lists both bases. G3: the card reads the
+      stored rows (the per-group version filter), never recomputes; `--metrics-version`; a row without
+      a block says "provenance: not stored (recompute needed)". G4: the empty reason follows the
+      formula's order (O's ROIC → `missing_input`, not `prior_year_missing`). G5: DQ-01's L-10
+      `n_terms` (ROK resolved) and the YTD columns, reported per item × kind — 23 mismatching pairs
+      (ESS 10, SYK 5, WELL 8), no item below 98%; VLTO does not appear (its YTD sum equals the filer's
+      YTD total). G6: the wiring recorded, not implemented.
+      **Fix round 2 (2026-10-13): H1–H7, PR #148** (`docs/model_fixes.md` "Fix round 2"). H1: an
+      optional term (short-term debt/investments, NCI, gross_profit/cogs) is never a
+      `missing_input` (1,737 rows: capture_failure 1,418, missing_input 312 for a genuinely missing
+      numerator); H2: an unformed TTM (x4/refused) is `prior_year_missing`/`capture_failure`
+      (3,212 rows / 439 filings); H3: `prior` follows the metric's rule (prior_quarter on a 10-Q) —
+      the 1,517 `prior_wc_missing` rows: prior_year_missing 820, missing_input 638, capture_failure
+      59; H4: the TTM entry records its value, terms and columns (`four_quarter_check`); H5: the
+      `ytd` kind is duration-only — **18 pairs** (ESS 7, SYK 5, WELL 6; 15 own + 3 ytd); H6: the
+      VLTO correction; H7: the negative-REIT-rate flag on ROA/ROIC/MD-38, **11 rows / 3 companies**
+      (4 computed). **Fix round 3 (2026-10-13): J1, PR #148** (`docs/model_fixes.md` "Fix round 3").
+      J1: the empty reason reads only the metric's **own** capture flags (the group shares one inputs
+      dict), plus the combination terms its formula reads and the market-cap capture; the gross
+      margin's `cogs`/`gross_profit` is an **alternative pair** (both absent → `missing_input`). The
+      reviewer's sibling-flag rows (773 gross_margin, 644 EV, …) are now **0**: no `capture_failure`
+      row lacks an own cause. **Fix round 4 (2026-10-13): K1, PR #148** (`docs/model_fixes.md` "Fix
+      round 4"). K1: `market_cap_no_cover_shares` is a data-window gap (the previous filing's cover
+      count), so it is `prior_year_missing` for the five metrics that read the market cap; the other
+      market-cap keys stay `capture_failure`. 502 of its 503 filings are the company's first in the
+      window. **Fix round 5 (2026-10-13): L1, PR #148** (`docs/model_fixes.md` "Fix round 5"). L1:
+      `market_capitalization` declared `shares_outstanding`/`diluted_shares`, which its formula never
+      reads (the value is the cover count x the close), so step 2 hid the market-cap key; it now declares
+      no statement item and records the market-cap source. 503 `no_cover_shares` rows -> 502
+      `prior_year_missing` + COP. **The box stays open until the reviewer closes T-151 after both PRs.**
+
+**Closed 2026-10-13 — part 1 PR #144, part 2 PR #147, part 3 PR #148** (all reviewed and
+approved; PR #148 carries fix rounds 1–5). Declared limitations that stay open: **the fidelity
+gate is not wired into the cycle** (G6 records what wiring it would need — a mismatching value is
+reported, not excluded); **the financial-firm applicability waits for `T-071`** (APP-00's
+company-type profile; the code-vs-matrix check for financial firms); and **R-15's undeclared NCI
+items** (`equity_incl_nci` / `equity` and the NCI income line, read inside `capital.nci`, are not
+declared in `ITEMS`).
+
 ## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to
