@@ -314,7 +314,18 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         if ttm_oi is not None and nopat_ttm is not None:
             if ttm_oi < 0.0 and nopat_ttm > ttm_oi:
                 add("F1.ttm_operating_loss_taxed", asset)
-            if ttm_oi > 0.0 and abs(nopat_ttm - ttm_oi) <= 1e-6 * max(1.0, abs(ttm_oi)):
+            # a rate of 0 is legitimate for a REIT (APP-04c taxes it at its own rate, which may be
+            # 0) and for a REIT with pre-tax income <= 0 -- neither is "untaxed by mistake"
+            legitimate_zero = (
+                asset in reits
+                or nopat_inputs.get("nopat_ttm_tax_rate_reit_no_rate") == 1.0
+                or nopat_inputs.get("nopat_ttm_tax_rate_operating_loss") == 1.0
+            )
+            if (
+                ttm_oi > 0.0
+                and not legitimate_zero
+                and abs(nopat_ttm - ttm_oi) <= 1e-6 * max(1.0, abs(ttm_oi))
+            ):
                 add("F1.ttm_operating_profit_untaxed", asset)
         # a REIT 10-Q taxed at its own period rate instead of its TTM rate
         if (
@@ -376,8 +387,30 @@ def _counts(  # noqa: C901, PLR0912, PLR0915 - one predicate per rule, a linear 
         for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
             if inp(filing, name).get("flag_crosses_asc842") == 1.0:
                 add(f"PER13.{name}_crosses_asc842", asset)
-        if inp(filing, "net_income_cagr").get("flag_crosses_cecl") == 1.0:
+        if inp(filing, "net_income_cagr").get("flag_net_income_cagr_crosses_cecl") == 1.0:
             add("PER14.net_income_cagr_crosses_cecl", asset)
+        # F5: a CAGR from a base <= 0 is flagged (all three series)
+        for name in ("revenue_cagr", "net_income_cagr", "operating_cash_flow_cagr"):
+            if inp(filing, name).get(f"flag_{name}_growth_base_not_positive") == 1.0:
+                add(f"F5.{name}_growth_base_not_positive", asset)
+        # F2: the earnings-yield gate -- a usable trailing net income on the return_on_assets row
+        if inp(filing, "return_on_assets").get("net_income_ttm") is not None:
+            add("F2.usable_net_income_ttm", asset)
+        # F3: a redeemable NCI filed as one part is kept (no more partial drop)
+        if (
+            inp(filing, "return_on_invested_capital").get(
+                "flag_prior_redeemable_nci_redeemable_nci_partial"
+            )
+            == 1.0
+        ):
+            add("F3.redeemable_nci_partial", asset)
+        if (
+            inp(filing, "return_on_invested_capital").get(
+                "flag_prior_redeemable_nci_redeemable_nci_filed_parts"
+            )
+            == 1.0
+        ):
+            add("F3.redeemable_nci_filed_parts", asset)
 
     return {key: (counts[key], len(asset_sets[key])) for key in counts}
 
