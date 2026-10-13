@@ -6749,6 +6749,12 @@ debt through the leverage group, capex through the cash-flow and valuation group
 
 ### The mismatching companies (input for part 3's fidelity gate)
 
+**Correction (T-151 part 3 fix round 2, 2026-10-13; the history below is not rewritten).** Part 1's
+validation compared VLTO's 9-month sum with the **quarter** fact: `0001967680-25-000136` 58M against
+17M and `-25-000125` 41M against 20M. The filer's **9-month** `DepreciationDepletionAndAmortization`
+facts equal the sums (58M and 41M; R-11's query, `out/f1_fidelity_report.txt`). VLTO's two pairs are
+therefore not mismatches, and the material mismatches of the filled sums are **23**, not 25.
+
 3.2' is a measurement and a **declared limitation**: T-151 part 3's post-rebuild fidelity gate is the
 mechanism that keeps a value a filer contradicts out of the scores. The **25 material mismatches** of
 the filled sums, by company (filings): **SYK 10 (da)**, **ESS 7 (dbo)**, **WELL 6 (dbo)**, **VLTO 2
@@ -7363,9 +7369,11 @@ and recomputed with this branch (`out/f1_p3_after.log`).
   table without approval**. (b) **Which metrics it would quarantine:** `quality.py`'s item → metrics
   map (`_MCAP_DERIVED` is the model: one source item blocks every metric derived from it). A
   mismatching `long_term_debt` blocks `debt_to_equity`, `debt_to_assets`, `net_debt_to_ebitda`,
-  `interest_coverage`, `enterprise_value`, `enterprise_fcf_yield` and `return_on_invested_capital`; a
-  mismatching `depreciation_amortization` blocks `ebitda`, `net_debt_to_ebitda` and
-  `enterprise_fcf_yield`. (c) **The cycle's refusal:** `cycle` reads a quarantined metric as NULL (the
+  `enterprise_value`, `enterprise_fcf_yield` and `return_on_invested_capital` — **not
+  `interest_coverage`**, which reads operating income and interest expense, never debt. ROIC reads
+  the **prior-year** debt (MET-02), so a mismatch in the current filing does not reach *that filing's*
+  ROIC; it reaches the next year's. A mismatching `depreciation_amortization` blocks `ebitda`,
+  `net_debt_to_ebitda` and `enterprise_fcf_yield`. (c) **The cycle's refusal:** `cycle` reads a quarantined metric as NULL (the
   existing `data_quality_issue` contract), and a HARD issue also raises the company-level DATA_QUALITY
   veto; the gate's per-item rate suggests a **SOFT** review row first, promoted to HARD once the
   reviewer sets the threshold.
