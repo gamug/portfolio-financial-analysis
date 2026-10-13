@@ -130,7 +130,13 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
   verify_pilot's T-015 check and T-012's stop rule; SPEC 1.15.0). Verify: killing the orchestrator mid-run
   and re-invoking it (over HTTP and the CLI) does not
       redo an already-completed step. → second acceptance criterion.
-- [ ] **T-016** Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
+- [x] **T-016** — **done 2026-10-13, PR #155** (approved after one review round: SPEC §1's pipeline sketch
+  and overview (`portfolio-app` triggers runs, `portfolio-reports` reads), §4's diagram label and its reading
+  note (this entry's "§3" was a section-number error), §11 step 3, §12's downstream bullet, §13 item 3 marked
+  resolved, and §14's operational-tooling bullet and disposition row; the README "HTTP API" section with the
+  complete route list, the CLI wrapper and `KG_NEWS_DB`; the `api/` row in `docs/README.md`; `docs/api.md`'s
+  configuration, endpoints-table row and "Run behaviour" heading; the architecture artifacts are left to the
+  user; SPEC 1.15.1). Update `SPEC.md` §13 item 3 to the resolved state and reconcile every statement that is true
       only before the orchestrator ships, in the same change as the code: `SPEC.md` §3 diagram label
       (`read-only FastAPI`) and §11 step 3 (`no scheduler or orchestrator is wired in today… read-only
       service`); `README.md` "Read-only HTTP API" section and `docs/README.md`'s `api/` row; `docs/api.md`.
