@@ -283,7 +283,9 @@ def _prompt_version_hash(model_name: str) -> str:
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
-    def __init__(self, model: OpenAIModel, model_name: str) -> None:
+    def __init__(self, model: OpenAIModel | None, model_name: str) -> None:
+        # ``model`` is None for the deterministic path (``_compute_all`` and the recompute script,
+        # which never call the LLM); ``analyze`` needs a real model.
         self.prompt_hash = _prompt_version_hash(model_name)
         self._model = model
         self.model_name = model_name

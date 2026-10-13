@@ -16,6 +16,7 @@ existing ``inputs_json``.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from fundamental_agent.metrics.base import MetricResult
@@ -186,11 +187,38 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _empty_reason(inputs: dict[str, Any]) -> str:
-    """The reason a metric is empty, from the flags it raised (D14's fixed codes)."""
-    for flag, reason in _FLAG_REASONS:
-        if any(flag in key for key in inputs):
-            return reason
+def _relevant_flags(result: MetricResult, items: tuple[str, ...]) -> list[str]:
+    """The ``flag_*`` keys of the metric's inputs that name the metric or one of its items -- the
+    group shares one inputs dict, so its unrelated flags are left out."""
+    out: list[str] = []
+    for key in result.inputs:
+        if not key.startswith("flag_"):
+            continue
+        rest = key[len("flag_") :]
+        if result.name in rest or any(
+            rest.startswith(item)
+            or f"_{item}_" in rest
+            or rest.startswith(f"prior_{item}")
+            or rest.startswith(f"current_{item}")
+            for item in items
+        ):
+            out.append(key)
+    return sorted(out)
+
+
+def _empty_reason(stmts: Statements, period_key: str, result: MetricResult) -> str:
+    """The reason a metric is empty (D14's fixed codes): a flag naming the metric, else an input's
+    own resolution flag, else ``missing_input``."""
+    for key in result.inputs:
+        if key.startswith("flag_") and result.name in key:
+            for flag, reason in _FLAG_REASONS:
+                if flag in key:
+                    return reason
+    for item in ITEMS.get(result.name, ()):
+        resolution: Resolution = stmts.resolve(item, period_key)
+        for flag, reason in _FLAG_REASONS:
+            if any(flag in raised for raised in resolution.flags):
+                return reason
     return MISSING_INPUT
 
 
@@ -211,13 +239,21 @@ def build(stmts: Statements, period_key: str, result: MetricResult) -> dict[str,
         "period": period_key,
         "rule_ids": list(RULE_IDS.get(result.name, ())),
         "items": {item: _item_provenance(stmts, period_key, item) for item in items},
-        "flags": sorted(key for key in result.inputs if key.startswith("flag_")),
-        "empty_reason": None if result.value is not None else _empty_reason(result.inputs),
+        "flags": _relevant_flags(result, items),
+        "empty_reason": None
+        if result.value is not None
+        else _empty_reason(stmts, period_key, result),
     }
 
 
 def attach(results: list[tuple[str, MetricResult]], stmts: Statements, period_key: str) -> None:
     """Add the ``provenance`` block to every result's inputs (D14). Called once per filing, after
-    the metric groups have run and before the rows are written."""
-    for _group, result in results:
-        result.inputs["provenance"] = build(stmts, period_key, result)
+    the metric groups have run and before the rows are written.
+
+    Each result gets its own copy of the inputs dict: a metric group shares one dict across its
+    metrics, so writing the block in place would leave every row of the group carrying the last
+    metric's provenance. ``MetricResult`` is frozen, so the list entry is replaced."""
+    for index, (group, result) in enumerate(results):
+        inputs = dict(result.inputs)
+        inputs["provenance"] = build(stmts, period_key, result)
+        results[index] = (group, replace(result, inputs=inputs))
