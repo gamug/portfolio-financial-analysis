@@ -7087,8 +7087,8 @@ tests and its measurement under `out/f1_*`. The control database is unchanged (m
   net-debt resolutions under `flag_prior_*` / `flag_current_*`. **Acceptance** (`out/f1_flags.txt`,
   filings/companies): `flag_prior_nci_nci_capture_failure` 957/284,
   `flag_prior_invested_capital_invested_capital_capture_failure` 3,166/502,
-  `flag_current_net_debt_net_debt_capture_failure` 1,323/94,
-  `flag_prior_short_term_investments_short_term_investments_in_cash` 8/1.
+  `flag_current_net_debt_capture_failure` 1,323/94,
+  `flag_prior_short_term_investments_short_term_investments_in_cash` 11/1.
 - **F5 — D4 gaps in the CAGR group.** A CAGR from a base ≤ 0 is flagged
   `flag_<series>_cagr_growth_base_not_positive` (`out/f1_flags.txt`: net income 222/128, operating cash
   flow 98/56, revenue 0), and the CECL flag is the net-income CAGR's alone
@@ -7300,12 +7300,80 @@ mismatching value out of the scores) is the next step, decided after review. Run
   not exist. Wiring the prose golden set in (its `agree = no` rows) is left for the task that turns
   it into a CSV.
 
+### Fix round 1 (G1–G6; PR #148 review)
+
+Reviewer A re-checked part 3 and found six defects. `t151c/after.db` is part 2's fixed database copied
+and recomputed with this branch (`out/f1_p3_after.log`).
+
+- **G1 — no stored metric carried the provenance block (D14 not delivered on data).** The database was
+  part 2's copy and had never been recomputed with part 3's code. Recomputed with this branch
+  (`out/f1_p3_after.log`, 9,340 filings, 315,435 rows). **Acceptance**
+  (`scripts/verify_t151c.py provenance`, `out/f1_provenance.json` / `.txt`): rows **315,435**, with a
+  `provenance` block **315,435**, without **0**; empty rows without a reason **0**, with an unknown
+  reason **0**. Reasons (filings/companies, one example each): `missing_input` 8,980/503 (A
+  `0001090872-22-000007`, `return_on_assets`), `growth_base_not_positive` 1,600/336 (ABNB
+  `0001559720-22-000006`, `operating_income_growth`), `capture_failure` 1,572/278 (A
+  `0001090872-22-000007`, `free_cash_flow_yield`), `not_applicable` 648/56 (ABBV
+  `0001551152-25-000040`, `debt_to_equity`), `denominator_not_positive` 616/108 (ABNB
+  `0001559720-22-000006`, `free_cash_flow_conversion`), `prior_year_missing` 1/1 (KVUE
+  `0001944048-24-000057`, `return_on_assets`).
+- **G2 — the provenance items were read at the wrong column for TTM flows and prior-year capital.**
+  Each item entry now carries a **basis** (`period`, `ttm`, `prior_year`, `prior_quarter`); a TTM flow
+  its **method** and columns (`ytd`, `alt`, its flow flags), a capital item the `Capital`'s **source**;
+  an item read on two bases lists both (MD-38's working capital: `period` and `prior_year`).
+  `attach` takes the filing's `ttm_flows`. Tests: the TTM method and columns, the prior-year source,
+  MD-38's two bases (`tests/test_metric_provenance.py`).
+- **G3 — the card recomputed instead of reading what is stored.** `card.build_card` reads the
+  `fundamental_metrics` rows the cycle reads (value, inputs, provenance) for the engine versions a
+  consumer resolves (`kg_schema.versions`' per-group filter, the same `VERSION_FILTER_SQL` every reader
+  applies), with `--metrics-version` to pin one; the line items come from the stored provenance, and a
+  row without a block prints `provenance: not stored (recompute needed)`. It never recomputes (the
+  10-Q TTM is no longer built at read time). Test: the card prints the stored value (9.99) where the
+  code would compute another. Re-run on the recomputed database → `out/f1_card_<ticker>.txt`.
+- **G4 — the empty reason picked the wrong cause.** `_empty_reason` follows G4's precedence, the first
+  failing term in the formula's order: `not_applicable` and the denominators from a flag naming the
+  metric, then a current-period input that is not filed (`missing_input`), then an input filed but
+  refused or an unclassified balance sheet (`capture_failure`), then an absent prior column
+  (`prior_year_missing`). O's ROIC now says `missing_input` (no operating income) rather than
+  `prior_year_missing`. No new code was needed (`not_classified` was not added). Tests: the two G4
+  cases.
+- **G5 — the fidelity tolerance ignored L-10's `n_terms`, and the YTD columns the TTM reads were
+  skipped.** `dq01_tolerance(value, n_terms)` uses L-10's `0.5 × unit × n_terms` (a sourced sum against
+  the filer's own total: the parts + 1), so **ROK `0001024478-26-000005`'s 1M gap on a 78M two-part sum
+  is within tolerance and is no longer a mismatch**. The gate compares every **YTD duration column that
+  ends on the filing's period end** as well as the own period column, reported **per item and per column
+  kind** (`own`, `ytd`) — see the table below. **VLTO does not appear**: its YTD sum (58M) equals the
+  filer's own YTD `DepreciationDepletionAndAmortization` (58M); part 1's 17M was the quarter fact, a
+  different basis (R-11). `MIN_FIDELITY` stays 0.98. **Acceptance**
+  (`out/f1_fidelity_report.txt` / `.csv`): the per-item × kind table (a sample — every other item is
+  100.0%):
+
+  | item | kind | compared | matched | mismatched | no fact | fidelity |
+  |---|---|---|---|---|---|---|
+  | `depreciation_amortization` | own | 3,520 | 3,518 | 2 | 185 | 99.9% |
+  | `depreciation_amortization` | ytd | 3,110 | 3,107 | 3 | 227 | 99.9% |
+  | `long_term_debt` | own | 7,545 | 7,532 | 13 | 96 | 99.8% |
+  | `long_term_debt` | ytd | 3,602 | 3,597 | 5 | 68 | 99.9% |
+
+  **No item is below the 98% gate**; the mismatching pairs are **23** (ESS 10, SYK 5, WELL 8; 15 on
+  the `own` column and 8 on `ytd`). **VLTO does not appear** and **ROK is resolved** (both above).
+- **G6 — what wiring the gate would need (RECORD; not implemented).** (a) **Where a mismatch would be
+  stored:** the existing `data_quality_issue` table, one row per `(filing, item)` with a new rule id
+  `DQ_FIDELITY`, the item's stored value and the SEC's as `evidence`, and `quarantined = 1` — **no new
+  table without approval**. (b) **Which metrics it would quarantine:** `quality.py`'s item → metrics
+  map (`_MCAP_DERIVED` is the model: one source item blocks every metric derived from it). A
+  mismatching `long_term_debt` blocks `debt_to_equity`, `debt_to_assets`, `net_debt_to_ebitda`,
+  `interest_coverage`, `enterprise_value`, `enterprise_fcf_yield` and `return_on_invested_capital`; a
+  mismatching `depreciation_amortization` blocks `ebitda`, `net_debt_to_ebitda` and
+  `enterprise_fcf_yield`. (c) **The cycle's refusal:** `cycle` reads a quarantined metric as NULL (the
+  existing `data_quality_issue` contract), and a HARD issue also raises the company-level DATA_QUALITY
+  veto; the gate's per-item rate suggests a **SOFT** review row first, promoted to HARD once the
+  reviewer sets the threshold.
+
 ### Declared limitations
 
-- The provenance block records each item at the **filing's own period column**; for a metric whose
-  denominator is the prior-year capital (ROA/ROE/ROIC, MD-38) the prior-year column's own
-  resolutions appear as the `flag_prior_*` inputs, not as the block's items.
-- The fidelity gate reads the filing's **own period column** only; part 1's YTD-column cases (VLTO)
-  are outside it.
+- The provenance block's items carry the basis they were read on (G2); the prior-year column's own
+  resolution flags still also appear as the `flag_prior_*` inputs.
 - The code-vs-matrix check for financial firms waits for **T-071** (APP-00's company-type profile).
-- The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded.
+- The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded
+  (G6 records what wiring it would need).

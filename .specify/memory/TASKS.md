@@ -597,8 +597,18 @@ the final pilot, `T-143`.
       mismatches) and `long_term_debt` 99.8% (13), every other item 100%, no item below the 98% gate;
       16 mismatching pairs (ESS 7, WELL 6, SYK 2, ROK 1), and no `golden_set.csv` exists (RECORDED).
       Tests: `tests/test_traceability.py` (10), `tests/test_metric_provenance.py` (9),
-      `tests/test_company_card.py` (5). **The box stays open until the reviewer closes T-151 after
-      both PRs.**
+      `tests/test_company_card.py` (5). **Fix round 1 (2026-10-13): G1–G6, PR #148**
+      (`docs/model_fixes.md` "Fix round 1"). G1: the database was recomputed with part 3's code —
+      **all 315,435 rows carry a provenance block**, no empty row without a reason. G2: each item
+      carries its **basis** (period / ttm / prior_year / prior_quarter), a TTM flow its method and
+      columns, a capital item the `Capital`'s source; MD-38 lists both bases. G3: the card reads the
+      stored rows (the per-group version filter), never recomputes; `--metrics-version`; a row without
+      a block says "provenance: not stored (recompute needed)". G4: the empty reason follows the
+      formula's order (O's ROIC → `missing_input`, not `prior_year_missing`). G5: DQ-01's L-10
+      `n_terms` (ROK resolved) and the YTD columns, reported per item × kind — 23 mismatching pairs
+      (ESS 10, SYK 5, WELL 8), no item below 98%; VLTO does not appear (its YTD sum equals the filer's
+      YTD total). G6: the wiring recorded, not implemented. **The box stays open until the reviewer
+      closes T-151 after both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current
