@@ -7384,8 +7384,10 @@ and recomputed with this branch (`out/f1_p3_after.log`).
 315,435 rows) and then again after H7's predicate (`out/f2_p3_after2.log`).
 
 - **H1 — an optional term counted as a "missing input".** `provenance.OPTIONAL` now marks the items
-  whose formula substitutes 0 when they are not filed — `gross_profit`/`cogs` in the gross margin
-  (`gross = revenue - cogs`), short-term investments (`capital.net_short_term_investments`),
+  whose formula substitutes 0 when they are not filed — `cogs`/`gross_profit` in the gross margin
+  (`gross = revenue - cogs` when `gross_profit` is absent; J1 corrects this to an **alternative
+  pair**: each alone is optional, but both absent is a missing input), short-term investments
+  (`capital.net_short_term_investments`),
   short-term debt (`statements._total_debt`: `lt + (st or 0)`, and `capital.working_capital`),
   `minority_interest`/`redeemable_nci` (`capital.nci`'s 0 when no NCI income) — each with the code
   line that substitutes the 0. An optional item is never a `missing_input`; its own refusal flag still
@@ -7437,6 +7439,46 @@ and recomputed with this branch (`out/f1_p3_after.log`).
   −0.307, KIM 5, WY 3) and 10-K 2 (KIM `0001437749-23-004541`, WY `0001193125-26-051422`); of these
   **4 rows / 1 company (WY) have a stored ROIC value**, the other 7 rows are empty. The plan's "9 rows
   / 3 companies" counted the 10-Qs only (the reviewer's omission). Before: no flag on any row.
+
+### Fix round 3 (J1; PR #148 review, third round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f3_p3_after.log`, 9,340 filings,
+315,435 rows).
+
+- **J1 — `capture_failure` read from another metric's flags.** `_empty_reason` step 4 returned
+  `capture_failure` for **any** `flag_*` capture key in the metric's inputs, and a group shares one
+  inputs dict, so a metric picked up its siblings' flags — O's `gross_margin` said `capture_failure`
+  because of the profitability group's prior-debt flag, while it files neither COGS nor gross profit.
+  Step 4 now reads only the metric's **own** flags: those naming the metric or one of its items, plus
+  the combination terms its formula reads (`provenance.OWN_TERMS`, one entry per metric naming the
+  code line: `total_debt` for D/E, D/A and EV; `net_debt` for ND/EBITDA and EV; `nci` for EV; prior
+  `invested_capital` for ROIC; the market-cap capture for the valuation yields). The market-cap
+  capture key (`market_cap_<reason>`, no `flag_` prefix) is read too. J1 also declares the gross
+  margin's **alternative pair**: `cogs` or `gross_profit` (each alone is optional; both absent is a
+  `missing_input`) — the only such pair in the codebase (the quick ratio needs both of its terms).
+
+  **Acceptance** (`out/f3_reasons.txt` / `.json`, block `J1`; the reviewer's `v3.py` table as the
+  before): the rows whose `capture_failure` came only from a sibling flag — `gross_margin` 773/54,
+  `enterprise_value` 644/171, `free_cash_flow_yield` 286/204, `sbc_adjusted_fcf_yield` 242/169,
+  `effective_tax_rate` 123/41, `return_on_equity` 15/2, `interest_coverage` 11/4, `ebitda` 6/6,
+  `market_capitalization` 4/4, `operating_margin`/`net_margin` 2/2 — are now **0**: a database-wide
+  query finds no `capture_failure` row without an own flag key or an own item's refusal (the script
+  reports `without an own flag: 0` for every metric). The rows that stay `capture_failure` carry
+  their own cause: `enterprise_value` 1,042 rows (`flag_current_nci_nci_capture_failure` 117,
+  `flag_prior_nci…` 40, `flag_current_net_debt_net_debt_capture_failure` 389, `flag_prior_net_debt…`
+  54, `flag_total_debt_capture_failure` 12, `flag_total_debt_debt_sum_refused_other_lines` 430); the
+  valuation yields 435 / 357 rows (`market_cap_no_cover_shares` 420 / 344, `…incomplete_classes`
+  8 / 6, `…stale_shares` 7 / 7); `ebitda` 155 (`flag_depreciation_amortization_da_sum_refused_other_lines`);
+  `market_capitalization` 8 (`market_cap_no_cover_shares`). `gross_margin`'s 3,864 empty rows are
+  all `missing_input` now.
+
+  **The reason distribution, old vs new** (`out/f2_provenance.txt` vs `out/f3_provenance.txt`,
+  filings / companies): `capture_failure` 2,366/276 → **2,144/475**; `missing_input` 8,887/503 →
+8,888/503; the other four unchanged. The company count rises because J1 also **names** the
+  market-cap capture on the valuation yields: those keys (`market_cap_<reason>`) are not `flag_` keys,
+  so before J1 they fell through to `missing_input` — ~772 rows move the other way
+  (`missing_input` → `capture_failure`) across many companies, while ~994 sibling-flag rows move
+  out.
 
 **The reason distribution, old vs new** (`out/f1_provenance.txt` vs `out/f2_provenance.txt`,
 filings / companies): `missing_input` 8,980/503 → **8,887/503**; `capture_failure` 1,572/278 →

@@ -617,7 +617,12 @@ the final pilot, `T-143`.
       59; H4: the TTM entry records its value, terms and columns (`four_quarter_check`); H5: the
       `ytd` kind is duration-only — **18 pairs** (ESS 7, SYK 5, WELL 6; 15 own + 3 ytd); H6: the
       VLTO correction; H7: the negative-REIT-rate flag on ROA/ROIC/MD-38, **11 rows / 3 companies**
-      (4 computed). **The box stays open until the reviewer closes T-151 after both PRs.**
+      (4 computed). **Fix round 3 (2026-10-13): J1, PR #148** (`docs/model_fixes.md` "Fix round 3").
+      J1: the empty reason reads only the metric's **own** capture flags (the group shares one inputs
+      dict), plus the combination terms its formula reads and the market-cap capture; the gross
+      margin's `cogs`/`gross_profit` is an **alternative pair** (both absent → `missing_input`). The
+      reviewer's sibling-flag rows (773 gross_margin, 644 EV, …) are now **0**: no `capture_failure`
+      row lacks an own cause. **The box stays open until the reviewer closes T-151 after both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current

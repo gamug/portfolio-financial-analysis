@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sec_xcheck.common import open_ro
 
 from fundamental_agent.metrics import provenance
+from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.metrics.provenance import OPTIONAL
 
 
@@ -122,6 +123,88 @@ def _reason_counts(rows: list[Any], predicate: Any) -> dict[str, dict[str, int]]
     }
 
 
+def _j1_block(rows: list[Any]) -> dict[str, Any]:
+    """J1: for the metrics whose `capture_failure` came from a sibling flag, the reason
+    distribution now and the own flag that explains each remaining `capture_failure`."""
+    # J1: the metrics whose `capture_failure` came from a sibling's flag (the reviewer's v3 table).
+    # For each, the reason distribution now, and for the `capture_failure` rows the own flag that
+    # explains them (expected: nothing left from the sibling flags).
+    j1_metrics = (
+        "gross_margin",
+        "enterprise_value",
+        "free_cash_flow_yield",
+        "sbc_adjusted_fcf_yield",
+        "effective_tax_rate",
+        "return_on_equity",
+        "interest_coverage",
+        "ebitda",
+        "market_capitalization",
+        "operating_margin",
+        "net_margin",
+    )
+    j1: dict[str, Any] = {}
+    for metric in j1_metrics:
+        per_reason: dict[str, dict[str, Any]] = defaultdict(
+            lambda: {"rows": 0, "filings": set(), "assets": set(), "example": None}
+        )
+        own_flags: dict[str, int] = defaultdict(int)
+        sibling_only = 0
+        for row in rows:
+            if row["metric_name"] != metric or row["value"] is not None:
+                continue
+            inputs = json.loads(row["inputs_json"] or "{}")
+            block = inputs.get("provenance")
+            if block is None:
+                continue
+            reason = block.get("empty_reason") or "(none)"
+            entry = per_reason[reason]
+            entry["rows"] += 1
+            entry["filings"].add(int(row["filing_id"]))
+            entry["assets"].add(int(row["asset_id"]))
+            if entry["example"] is None:
+                entry["example"] = f"{row['ticker']} {row['accession_number']}"
+            if reason == "capture_failure":
+                items = tuple(block.get("items") or {})
+                result = MetricResult(metric, None, "ratio", inputs)
+                own = [
+                    key
+                    for key in provenance._candidate_keys(result)
+                    if provenance._is_own_flag(key, result, items)
+                    and provenance._flag_reason([key]) == provenance.CAPTURE_FAILURE
+                ]
+                # an own *item* explains it too: a refused/x4 TTM (H2) or a refusal flag on one of
+                # the metric's own item resolutions
+                own_item = any(
+                    (entry.get("basis") == "ttm" and entry.get("method") in ("x4", "refused"))
+                    or any(
+                        provenance._flag_reason([flag]) == provenance.CAPTURE_FAILURE
+                        for flag in entry.get("flags") or []
+                    )
+                    for entries in (block.get("items") or {}).values()
+                    for entry in entries
+                )
+                if own:
+                    own_flags[own[0]] += 1
+                elif own_item:
+                    own_flags["(an own item's resolution)"] += 1
+                else:
+                    sibling_only += 1
+        j1[metric] = {
+            "reasons": {
+                reason: {
+                    "rows": v["rows"],
+                    "filings": len(v["filings"]),
+                    "companies": len(v["assets"]),
+                    "example": v["example"],
+                }
+                for reason, v in sorted(per_reason.items())
+            },
+            "capture_failure_own_flags": dict(sorted(own_flags.items())),
+            "capture_failure_without_an_own_flag": sibling_only,
+        }
+    return j1
+
+
 def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate per population
     """The H1-H3 and H7 populations (fix round 2)."""
     conn = open_ro(args.db)
@@ -183,6 +266,8 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
         "tickers": sorted({r["ticker"] for r in h7_rows}),
     }
 
+    j1 = _j1_block(rows)
+
     for label, predicate, metrics in (
         (
             "H1_debt_refused",
@@ -197,7 +282,19 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
         selected = [r for r in rows if metrics is None or r["metric_name"] in metrics]
         payload[label] = _reason_counts(selected, predicate)
 
-    Path(args.out).write_text(json.dumps(payload, indent=2))
+    payload["J1"] = j1
+    print("\nJ1 (empty rows per metric, after):")
+    for metric, entry in j1.items():
+        parts = ", ".join(
+            f"{reason} {v['rows']}/{v['companies']} ({v['example']})"
+            for reason, v in entry["reasons"].items()
+        )
+        own = ", ".join(f"{k} {v}" for k, v in entry["capture_failure_own_flags"].items())
+        print(f"  {metric:<32}{parts}")
+        print(
+            f"    capture_failure own flags: {own or '-'}; without an own flag: "
+            f"{entry['capture_failure_without_an_own_flag']}"
+        )
     h7 = payload.pop("H7_rows")
     print(f"\nH7_rows: {h7['total']}")
     for form, entry in h7["by_form"].items():
@@ -205,7 +302,7 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
     print(f"  tickers {h7['tickers']}")
     payload["H7_rows"] = h7
     for label, counts in payload.items():
-        if label == "H7_rows":
+        if label in ("H7_rows", "J1"):
             continue
         total_rows = sum(entry["rows"] for entry in counts.values())
         total_filings = len({f for entry in counts.values() for f in [entry["filings"]]})
@@ -216,6 +313,7 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
                 f"{entry['companies']:>6} companies"
             )
         print(f"  total {total_filings} filings (distinct per reason)")
+    Path(args.out).write_text(json.dumps(payload, indent=2))
     print(f"\nWrote {args.out}")
 
 
