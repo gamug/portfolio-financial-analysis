@@ -260,9 +260,9 @@ def _md38(
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
     if rate_reason == REIT_TTM_RATE_MISSING:
         inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
-    # H7 (APP-04c): a REIT's own rate can be negative; the rate inflates NOPAT, so MD-38 carries the
-    # flag.
-    if outside_unit_interval(rate):
+    # H7 (APP-04c, director's predicate): the flag fires only when NOPAT is formed -- operating
+    # income present on the ratio's basis -- and the rate applied to it is outside [0, 1].
+    if operating_annual is not None and outside_unit_interval(rate):
         inputs["flag_nopat_tax_rate_outside_unit_interval"] = 1.0
     inputs.update(
         present(

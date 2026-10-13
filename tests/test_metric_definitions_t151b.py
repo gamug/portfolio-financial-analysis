@@ -873,3 +873,18 @@ def test_h7_a_positive_rate_is_not_flagged() -> None:
     ttm = {"operating_income": 400.0, "income_tax": 40.0, "pretax_income": 200.0}
     roic = _flat(roic_compute(stmts, Q, None, ttm))
     assert "flag_nopat_tax_rate_outside_unit_interval" not in roic["nopat"].inputs
+
+
+def test_h7_a_reit_with_no_operating_income_gets_no_flag() -> None:
+    """The director's predicate: NOPAT must be formed (operating income present on the ratio's
+    basis) for the rate to be applied, so a row without it gets no flag."""
+    stmts = _quarter_stmts(quarter_oi=100.0, quarter_tax=10.0, quarter_pretax=100.0)
+    stmts.reit = True
+    # no TTM operating income: the ratio applies no rate
+    ttm = {"income_tax": -40.0, "pretax_income": 130.0}
+    roic = _flat(roic_compute(stmts, Q, None, ttm))
+    assert (
+        "flag_nopat_tax_rate_outside_unit_interval" not in roic["return_on_invested_capital"].inputs
+    )
+    prof = _flat(profitability_compute(stmts, Q, None, ttm))
+    assert "flag_nopat_tax_rate_outside_unit_interval" not in prof["return_on_assets"].inputs

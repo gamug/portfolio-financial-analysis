@@ -116,9 +116,10 @@ def compute(
         inputs["flag_nopat_reit_ttm_rate_missing"] = 1.0
     # F8 / R-3: the filing's own rate is kept as filed, never clamped; a rate outside [0, 1] is
     # flagged on both rows that report one.
-    # H7 (APP-04c): a REIT's own rate can be negative; the rate inflates NOPAT, so the main ratios
-    # carry the flag too (the robustness row's flag is below).
-    if outside_unit_interval(annual_rate):
+    # H7 (APP-04c, director's predicate): the flag fires only when NOPAT is formed -- operating
+    # income present on the ratio's basis -- and the rate applied to it is outside [0, 1]. A row
+    # without operating income applies no rate and gets no flag.
+    if operating_annual is not None and outside_unit_interval(annual_rate):
         inputs["flag_nopat_tax_rate_outside_unit_interval"] = 1.0
     if outside_unit_interval(filing_rate):
         inputs["flag_effective_tax_rate_outside_unit_interval"] = 1.0
