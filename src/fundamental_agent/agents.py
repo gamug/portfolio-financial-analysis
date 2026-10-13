@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
+from fundamental_agent import quality
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import (
     CORE_GROUPS,
@@ -28,7 +30,12 @@ from fundamental_agent.metrics import (
 from fundamental_agent.metrics import valuation as valuation_metrics
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import ClosePrice
-from fundamental_agent.skills import load_skill
+from fundamental_agent.skills import (
+    GROUP_METRICS,
+    group_applicability,
+    group_definitions,
+    load_skill,
+)
 from fundamental_agent.statements import Statements
 from kg_schema.market_cap import MarketCap
 
@@ -47,48 +54,138 @@ MASTER_PROMPT = """You are the metrics master for a fundamental equity analysis.
 You are given the deterministically computed financial ratios for one SEC filing.
 Call the specialist tool for every metric group that carries signal for this company
 -- always consult profitability, liquidity, leverage and cash flow; add efficiency,
-growth, roic and cagr when their numbers are meaningful (skip inventory-style metrics
-for financial firms, skip growth/cagr when there is no multi-period comparison); add
-valuation whenever free-cash-flow-yield numbers are present.
+growth, roic and cagr when their numbers are meaningful; add valuation whenever
+free-cash-flow-yield numbers are present.
+The company type is not yours to decide: an empty metric whose reason is `not_applicable`
+is the code's own decision that the metric does not apply to this company (APP-00), so
+read that reason rather than reclassifying the company or skipping a group by hand.
 After gathering the readings, give a short synthesis in plain language."""
 
-# Short fallback briefs, used when a group has no skills/<name>/SKILL.md SOP mapped.
-_INLINE_SPECIALIST_PROMPTS = {
-    "profitability": "You read profitability ratios (margins, ROA, ROE). "
-    "State whether profitability is strong, adequate or weak and why.",
-    "liquidity": "You read liquidity ratios (current, quick, cash). "
-    "State whether short-term solvency looks comfortable or tight.",
-    "leverage": "You read leverage ratios (debt/equity, debt/assets, interest coverage, "
-    "net debt/EBITDA). State whether the balance sheet is conservative or stretched.",
-    "cashflow": "You read cash-flow quality (operating cash flow margin, free cash flow "
-    "margin and conversion, capex intensity). State whether cash generation backs earnings.",
-    "efficiency": "You read efficiency ratios (asset, inventory, receivables turnover). "
-    "State whether the asset base is used efficiently.",
-    "growth": "You read year-over-year growth (revenue, operating income, net income, free "
-    "cash flow). State whether the trajectory is improving or deteriorating.",
-    "roic": "You read return on invested capital and the effective tax rate. "
-    "State whether the company earns above its cost of capital.",
-    "cagr": "You read multi-year compound annual growth rates (revenue, net income, "
-    "operating cash flow). State whether long-run growth is strong, flat or declining.",
-    "valuation": "You read free-cash-flow yield (equity and enterprise), its "
-    "SBC-adjusted variant and market capitalisation. State whether the price paid for "
-    "the company's cash generation looks cheap, fair or rich, and flag SBC dilution.",
+# The fixed lead of every specialist's system prompt (T-076, D2): no recompute, and the company type comes
+# from the code's own `not_applicable` reason, never from the model (APP-00, T-071).
+_SPECIALIST_LEAD = (
+    "You are the {group} specialist in a fundamental-analysis pipeline. The numbers are already "
+    "computed for you -- do not recompute them and do not ask for filing text. Use only the numbers "
+    "given. Give a concise 1-2 sentence assessment for the orchestrator, applying any caveat the "
+    "procedure below would raise. The brief carries no company type: an empty metric whose reason is "
+    "`not_applicable` is the code's own decision that the metric does not apply to this company, so read "
+    "that reason as the company type -- never reclassify the company yourself. On a quarterly filing the "
+    "flows are the trailing twelve months, never a single quarter read as a year (PER-06)."
+)
+
+# D3 (T-076): the basis of a group's metrics on a quarterly filing, from provenance.ITEMS. `prior`
+# resolves to the prior year's same quarter on a 10-Q (H3, provenance._prior_basis).
+_BASIS_LABELS: dict[str, str] = {
+    "ttm": "trailing twelve months",
+    "period": "this filing's own quarter",
+    "prior_year": "the prior fiscal year end",
+    "prior": "the same quarter a year earlier",
 }
 
 
-def _specialist_system_prompt(group: str) -> str:
-    """Build a specialist's system prompt from its SKILL.md SOP when one exists."""
-    lead = (
-        f"You are the {group} specialist in a fundamental-analysis pipeline. The ratios "
-        "are already computed for you -- do not recompute them and do not ask for filing "
-        "text. Give a concise 1-2 sentence assessment for the orchestrator, applying any "
-        "caveat the procedure below would raise (negative base, interest netting, "
-        "unclassified balance sheet, lease/SBC distortions)."
+def basis_paragraph(group: str, results: list[MetricResult]) -> str:
+    """One line per metric of *group*: its items, grouped by the basis they are read on (T-076, D3).
+
+    From ``provenance.ITEMS`` alone, plus the metric's own unit (a ``usd`` metric read on the filing's own
+    quarter is a USD amount for that quarter). A 10-K needs none of it: its flows are already annual.
+    """
+    units = {result.name: result.unit for result in results}
+    lines: list[str] = []
+    for name in GROUP_METRICS.get(group, ()):
+        items = provenance.ITEMS.get(name)
+        if not items:
+            continue
+        groups: dict[str, list[str]] = {}
+        for item, bases in items.items():
+            for basis in (bases,) if isinstance(bases, str) else bases:
+                groups.setdefault(basis, []).append(item.replace("_", " "))
+        parts = [
+            f"{', '.join(group_items)} ({_BASIS_LABELS.get(basis, basis)})"
+            for basis, group_items in groups.items()
+        ]
+        line = f"{name}: " + "; ".join(parts)
+        if units.get(name) == "usd" and "period" in groups:
+            line += " (a USD amount for the quarter)"
+        lines.append(line)
+    if not lines:
+        return ""
+    return (
+        "Basis of the numbers below on this quarterly filing (PER-06): the flows are the trailing twelve "
+        "months unless a line says otherwise.\n" + "\n".join(lines)
     )
+
+
+def _metric_lines(
+    group: str, results: list[MetricResult], withheld: Mapping[tuple[str, str], str] | None = None
+) -> list[str]:
+    """``name: value``, ``name: withheld (<rule>)`` or ``name: empty (<reason>)``.
+
+    An empty value is never a 0 and never a neutral reading (MET-00; T-076, D4). A value a HARD data-quality
+    rule quarantines is withheld from the model rather than read (T-076, D5)."""
+    lines: list[str] = []
+    for result in results:
+        rule = (withheld or {}).get((group, result.name))
+        if rule is not None:
+            lines.append(f"{result.name}: withheld ({rule})")
+        elif result.value is None:
+            reason = (result.inputs.get("provenance") or {}).get("empty_reason") or "missing_input"
+            lines.append(f"{result.name}: empty ({reason})")
+        else:
+            lines.append(f"{result.name}: {_round(result.value)}")
+    return lines
+
+
+def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str, str], str]:
+    """``{(group, metric): rule_id}`` for the values a HARD DQ rule quarantines (T-076, D5).
+
+    The gates are ``quality``'s own, run on the in-memory results with its own functions and constants
+    (Annex A-01 to A-05, the identity gates), so the prompt withholds exactly what ``cycle`` would read as
+    NULL -- never a second, hand-copied threshold. Only a metric that **has** a value is withheld: an empty
+    value keeps its own reason (``empty (<reason>)``), which is the metric's own cause, not a data-quality
+    one (fix round 1, K5)."""
+    filing: quality.FilingMetrics = {
+        (group, result.name): quality.StoredMetric(result.value, result.inputs)
+        for group, result in results
+    }
+    return {
+        issue.metric: issue.rule_id
+        for issue in quality.evaluate(filing)
+        if issue.severity == "HARD" and issue.value is not None
+    }
+
+
+def _generated_definitions(group: str) -> str:
+    """The group's metric definitions, from the generated checklist data (T-076, D1/D2)."""
+    lines = [f"--- GENERATED: the {group} metrics' definitions (checklist Annex B) ---"]
+    lines += [
+        f"{row['metric']} [{row['md_id']}, {row['basis']}]: {row['formula']}"
+        for row in group_definitions(group)
+    ]
+    return "\n".join(lines)
+
+
+def _generated_applicability(group: str) -> str:
+    """The group's applicability rows, from the generated checklist matrix (T-076, D1/D2)."""
+    lines = [f"--- GENERATED: the {group} metrics' applicability (checklist matrix) ---"]
+    lines += [
+        f"{row['metric']}: {row['company_type']} {row['code']}"
+        + (f" ({row['rule']})" if row["rule"] else "")
+        for row in group_applicability(group)
+    ]
+    return "\n".join(lines)
+
+
+def _specialist_system_prompt(group: str) -> str:
+    """A specialist's system prompt: a fixed lead, the checklist's generated data, then its skill."""
+    parts = [
+        _SPECIALIST_LEAD.format(group=group),
+        _generated_definitions(group),
+        _generated_applicability(group),
+    ]
     sop = load_skill(group)
-    if sop is None:
-        return f"{lead}\n\n{_INLINE_SPECIALIST_PROMPTS[group]}"
-    return f"{lead}\n\n--- STANDARD OPERATING PROCEDURE: {group} ---\n{sop}"
+    if sop is not None:
+        parts.append(f"--- SKILL: {group} ---\n{sop}")
+    return "\n\n".join(parts)
 
 
 _SYNTHESIS_PROMPT = """Produce the final fundamental assessment for this filing.
@@ -312,18 +409,19 @@ class FundamentalAnalyst:
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
         computed = self._compute_all(ctx)
         by_group = _group(computed)
+        withheld = withheld_metrics(computed)
         orchestrator = Agent(
             model=self._model,
             system_prompt=MASTER_PROMPT,
             callback_handler=None,
             tools=[
-                self._make_specialist(name, by_group.get(name, []), ctx)
+                self._make_specialist(name, by_group.get(name, []), ctx, withheld)
                 for name in _SPECIALIST_GROUPS
             ],
         )
-        orchestrator(_brief(ctx, by_group))
+        orchestrator(_brief(ctx, by_group, withheld))
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
-        synthesis = _synthesize(orchestrator, flat)
+        synthesis = _synthesize(orchestrator, flat, withheld)
         return AnalysisResult(
             assessment=synthesis.assessment,
             metrics=computed,
@@ -363,23 +461,36 @@ class FundamentalAnalyst:
         provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
         return out
 
-    def _make_specialist(self, group: str, results: list[MetricResult], ctx: FilingContext) -> Any:
-        numbers = {r.name: r.value for r in results if r.value is not None}
+    def _make_specialist(
+        self,
+        group: str,
+        results: list[MetricResult],
+        ctx: FilingContext,
+        withheld: Mapping[tuple[str, str], str],
+    ) -> Any:
+        computed = [result for result in results if result.value is not None]
+        lines = _metric_lines(group, results, withheld)
+        paragraph = basis_paragraph(group, results) if ctx.form == "10-Q" else ""
         model = self._model
 
         @tool(name=f"{group}_specialist")
         def specialist() -> str:
             """Get a specialist reading of this metric group for the filing."""
-            if not numbers:
-                return f"No {group} metrics could be computed for this filing."
+            if not computed:
+                return f"No {group} metric has a value for this filing."
             reader = Agent(
                 model=model,
                 system_prompt=_specialist_system_prompt(group),
                 callback_handler=None,
             )
-            prompt = (
-                f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}. "
-                f"{group} metrics: {json.dumps(numbers, default=_round)}."
+            prompt = "\n\n".join(
+                part
+                for part in (
+                    f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}",
+                    paragraph,
+                    f"{group}:\n" + "\n".join(lines),
+                )
+                if part
             )
             try:
                 return str(reader(prompt)).strip()
@@ -396,15 +507,19 @@ def _group(pairs: list[tuple[str, MetricResult]]) -> dict[str, list[MetricResult
     return out
 
 
-def _brief(ctx: FilingContext, by_group: dict[str, list[MetricResult]]) -> str:
-    payload = {
-        group: {r.name: r.value for r in results if r.value is not None}
-        for group, results in by_group.items()
-    }
-    return (
-        f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}\n"
-        f"Computed metrics (nulls omitted):\n{json.dumps(payload, indent=2, default=_round)}"
-    )
+def _brief(
+    ctx: FilingContext,
+    by_group: dict[str, list[MetricResult]],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> str:
+    parts = [f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}"]
+    for group, results in by_group.items():
+        if ctx.form == "10-Q":
+            paragraph = basis_paragraph(group, results)
+            if paragraph:
+                parts.append(paragraph)
+        parts.append(f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)))
+    return "\n\n".join(parts)
 
 
 def _round(value: Any) -> Any:
@@ -422,7 +537,11 @@ class _Synthesis:
 FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
 
 
-def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _Synthesis:
+def _synthesize(
+    orchestrator: Agent,
+    flat_metrics: dict[str, float | None],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> _Synthesis:
     """Ask the orchestrator for a JSON verdict; fall back to a rule-based score.
 
     DeepSeek does not currently accept OpenAI ``response_format`` json-schema, so we
@@ -436,7 +555,7 @@ def _synthesize(orchestrator: Agent, flat_metrics: dict[str, float | None]) -> _
         parsed = _coerce(reply)
         if parsed is not None:
             return _Synthesis(parsed, used_fallback=False)
-    return _Synthesis(_fallback_assessment(flat_metrics), used_fallback=True)
+    return _Synthesis(_fallback_assessment(flat_metrics, withheld), used_fallback=True)
 
 
 def _coerce(text: str) -> FundamentalAssessment | None:
@@ -457,15 +576,21 @@ def _coerce(text: str) -> FundamentalAssessment | None:
     )
 
 
-def _fallback_assessment(flat: dict[str, float | None]) -> FundamentalAssessment:
+def _fallback_assessment(
+    flat: dict[str, float | None], withheld: Mapping[tuple[str, str], str] | None = None
+) -> FundamentalAssessment:
     score = 50.0
     strengths: list[str] = []
     risks: list[str] = []
+    # A value a HARD DQ rule quarantines never scores, in the fallback as in the prompt (T-076, D5).
+    blocked = set(withheld or {})
     for key, low, high, points in _SCORE_RULES:
+        group, short = key.split(".", 1)
+        if (group, short) in blocked:
+            continue
         value = flat.get(key)
         if value is None:
             continue
-        short = key.split(".", 1)[1]
         if value >= high:
             score += points
             strengths.append(f"{short} {value:.2f}")
@@ -473,7 +598,9 @@ def _fallback_assessment(flat: dict[str, float | None]) -> FundamentalAssessment
             score -= points
             risks.append(f"{short} {value:.2f}")
 
-    leverage = flat.get("leverage.debt_to_equity")
+    leverage = (
+        None if ("leverage", "debt_to_equity") in blocked else flat.get("leverage.debt_to_equity")
+    )
     if leverage is not None and leverage > _HIGH_LEVERAGE:
         score -= _HIGH_LEVERAGE_PENALTY
         risks.append(f"debt_to_equity {leverage:.2f}")

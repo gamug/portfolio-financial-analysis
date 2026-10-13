@@ -1,0 +1,40 @@
+metric,md_id,formula,basis
+ebitda,MD-01,"operating income + D&A (D&A never Depreciation alone, ID-02b)",Inference
+invested capital,MD-02,"debt (MET-07) + parent equity (ID-02a) + noncontrolling interest − cash − short-term investments (when filed apart from cash), at the end of the prior year (MET-02)",Inference
+net debt,MD-03,debt − cash − short-term investments (when filed apart from cash; ID-02a),Inference
+free cash flow,MD-04,operating cash flow (CON-08) − capex (MET-08),Source pending
+nopat,MD-05,operating income × (1 − 21%); tax 0 on an operating loss; REITs: APP-04c,Sourced
+gross_margin,MD-06,"(GrossProfit when filed, else revenue − cost of revenue) / revenue",Inference
+operating_margin,MD-07,operating income / revenue,Inference
+net_margin,MD-08,parent net income (ID-03) / revenue,Inference
+return_on_assets,MD-09,NOPAT (MD-05) / total assets at the end of the prior year,Sourced
+return_on_equity,MD-10,parent net income / parent equity at the end of the prior year,Sourced
+return_on_invested_capital,MD-11,NOPAT (MD-05) / invested capital (MD-02) at the end of the prior year,Sourced
+current_ratio,MD-12,current assets / current liabilities,Source pending
+quick_ratio,MD-13,today (current assets − inventory) / current liabilities; T-076 proposes (cash + short-term investments + receivables) / current liabilities,Source pending
+cash_ratio,MD-14,(cash + short-term investments) / current liabilities,Source pending
+debt_to_equity,MD-15,debt (MET-07) / parent equity,Source pending
+debt_to_assets,MD-16,debt (MET-07) / total assets,Source pending
+interest_coverage,MD-17,"operating income / interest expense, filed sign",Source pending
+net_debt_to_ebitda,MD-18,net debt (MD-03) / EBITDA (MD-01),Source pending
+asset_turnover,MD-19,revenue / total assets,Source pending
+inventory_turnover,MD-20,cost of revenue / inventory,Source pending
+receivables_turnover,MD-21,revenue / receivables,Source pending
+revenue_growth,MD-22,"(x_t − x_t−1) / x_t−1, both from one filing (PER-04); empty when x_t−1 ≤ 0 (MET-04)",Inference
+operating_income_growth,MD-23,as MD-22,Inference
+net_income_growth,MD-24,"as MD-22, on parent net income",Sourced
+free_cash_flow_growth,MD-25,"as MD-22, on free cash flow (MD-04)",Inference
+operating_cash_flow_margin,MD-26,operating cash flow / revenue,Source pending
+free_cash_flow_margin,MD-27,free cash flow (MD-04) / revenue,Source pending
+free_cash_flow_conversion,MD-28,free cash flow (MD-04) / parent net income,Source pending
+capex_intensity,MD-29,capex (MET-08) / revenue,Source pending
+effective_tax_rate,MD-30,income tax (filed sign; ID-02b map) / pre-tax income; empty when pre-tax income ≤ 0,Source pending
+revenue_cagr,MD-31,"(x_end / x_start)^(1/2) − 1, both ends from one 10-K (PER-04); empty when an end ≤ 0 (MET-04)",Inference
+net_income_cagr,MD-32,"as MD-31, on parent net income",Sourced
+operating_cash_flow_cagr,MD-33,"as MD-31, on operating cash flow",Inference
+market_capitalization,MD-34,"close on D × the share count public on D, every class (MKT-01 to MKT-04)",Sourced
+enterprise_value,MD-35,"market capitalization + debt + noncontrolling interest − cash − short-term investments; empty when market capitalization, debt or cash is missing (MET-00); NCI as defined in MD-02",Inference
+free_cash_flow_yield,MD-36,free cash flow (MD-04) / market capitalization,Inference
+sbc_adjusted_fcf_yield,MD-37,(free cash flow − stock-based compensation) / market capitalization,Source pending
+enterprise_fcf_yield,MD-38,"(NOPAT (MD-05) − (capex (MET-08) − D&A (MD-01) + Δ non-cash working capital)) / enterprise value (MD-35). Non-cash working capital = (current assets − cash − short-term investments) − (current liabilities − short-term debt), its change between the ends of the prior and the current year",Inference
+earnings_yield,MD-39,"trailing-year parent net income / market capitalization, positive part, with the negative-earnings dummy (MET-05)",Sourced

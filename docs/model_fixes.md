@@ -7595,3 +7595,225 @@ column is `prior_year_missing`), each taking rows that used to fall through to `
 - The code-vs-matrix check for financial firms waits for **T-071** (APP-00's company-type profile).
 - The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded
   (G6 records what wiring it would need).
+
+## T-076 — the specialist skills rebuilt on the checklist (stream A, Work item 8 step 5)
+
+The five `skills/*/SKILL.md` were 140–212-line generic "forensic analyst" manuals with no source, handed
+whole to the model on every filing (`agents._specialist_system_prompt`). Read against checklist v1.3 they
+contradicted the rules in many places (reviewer A's tables; `out/contradictions.md` lists each one and the
+rule it broke). They cannot be corrected line by line: they are rebuilt on the checklist, one per specialist
+group. No stored metric value changes and no model is called by this task (`T-100` is the run).
+
+**Step 0, the constitution (PR #151).** Project structure #4 no longer defines a skill as "one deterministic
+ratio calculation"; a `skills/<group>/SKILL.md` is one skill per specialist group, interpretation only, with
+no formula and every statement citing what backs it — a checklist rule ID, or a loaded source from the
+checklist's sources register with its PDF page and verbatim quote. Version 2.0.0 → 2.1.0.
+
+**D1 — the checklist's data is generated, one source.** `scripts/build_metric_dictionary.py` (T-151 part 3)
+also writes two tracked files from the same checklist v1.3:
+
+- `src/fundamental_agent/data/metric_definitions.csv` (metric, md_id, formula, basis): one row per Annex B
+  row (39), the basis `Sourced` / `Inference` / `Source pending`;
+- `src/fundamental_agent/data/checklist_rules.csv` (id, layer, rule): every rule ID of the checklist — the
+  seven layers (ID 22, PER 13, CON 13, DQ 2, MET 10, MKT 4, APP 14 = 78 rules), section L's 11 declared
+  limitations, Annex A's 5 calibrated screens and Annex B's 39 metric rows (133 rows).
+
+  The `rule` column is the row's own descriptive cell **whole** — the "Verifiable rule" of a layer, the
+  Limitation, the Screen, the metric name — collapsed to one CSV line, markdown emphasis and code spans
+  stripped, the checklist's `\|` unescaped. The column is named `rule`, not `title` (the checklist has no
+  title column) and a `layer` column carries ID/PER/CON/DQ/MET/MKT/APP/L/A/MD; the choice was put to the
+  director, who chose the whole cell over a first-sentence extraction. Neither the tests nor the runtime read
+  `docs/checklist_sec/`. `tests/test_checklist_data.py` checks that the definitions agree with the generated
+  dictionary row by row, that the rule file has the checklist's counts with each ID's layer matching its
+  prefix and non-empty text, and that every ID is unique. The dictionary and the applicability matrix
+  regenerate byte-identically.
+
+**D2 — one skill per specialist group.** The nine groups of `kg_schema.versions.METRIC_GROUPS`:
+`profitability`, `liquidity`, `leverage`, `efficiency`, `growth`, `cashflow`, `roic`, `cagr`, `valuation`.
+`fcf_margin` → `cashflow`, `free_cash_flow_yield` → `valuation`, `interest_coverage_ratio` → `leverage`;
+`roic` and `cagr` keep their names. A skill says how to read the group's already-computed numbers, what each
+flag and empty reason means, and what is not applicable to which company type; it states no formula, no
+extraction procedure, no output template and no threshold no rule states. Every source citation's verbatim
+quote is in `skills/SOURCES.md` (21 quotes; the checklist's own wording where it already quotes the source)
+and all 21 are verified against the local PDFs with `scripts/sec_xcheck/quotecheck.py` — 19 through its CLI
+on a rendered row set and 2 through its `find`, because the register's C13 stem contains spaces and shares a
+prefix with a PNG (`out/quotecheck_skills.txt`: 21 quotes, 0 problems).
+
+  At runtime the specialist's system prompt is a fixed lead (no recompute; the company type is the code's own
+  `not_applicable` reason, APP-00, never the model's), the group's **generated** blocks — its metrics'
+  definitions from `metric_definitions.csv` with the basis status, plus the building-block rows their
+  formulas name, and the group's applicability rows from `applicability_matrix.csv` — and then the
+  hand-written skill. `agents._INLINE_SPECIALIST_PROMPTS` goes away: a missing skill yields the lead and the
+  generated blocks alone. `skills.py` holds `SPECIALIST_SKILL` (group → `skills/<group>/SKILL.md`),
+  `GROUP_METRICS` (each group's metrics, pinned to the code by a test that runs every group on a filing
+  fixture) and the two generated-data readers.
+
+  `tests/test_skills.py` is rewritten (37 tests): every group has a skill; no skill contains `$`, `=`,
+  "extract", "step", "template", "persona", or a digit outside a citation; every bullet cites a rule ID of
+  `checklist_rules.csv` or a source citation of `skills/SOURCES.md`; every metric of the group is named; the
+  generated blocks carry the group's rows. `out/skills_rule_map.md` is the review list (9 skills, 116
+  bullets, each with its citations) and `out/contradictions.md` every removed contradiction.
+
+**D3 — the 10-Q basis, generated.** On a quarterly filing the brief and every specialist carry one paragraph
+built from `provenance.ITEMS` alone: one line per metric of the group, its items grouped by the basis they
+are read on, deduplicated in ITEMS order, labelled `ttm` "trailing twelve months", `period` "this filing's
+own quarter", `prior_year` "the prior fiscal year end" and `prior` "the same quarter a year earlier" (on a
+10-Q `prior` resolves to the prior year's same quarter, H3). A metric whose unit is `usd` and that reads the
+filing's own quarter appends "(a USD amount for the quarter)" — from the metric's own unit, never a hand
+list. A 10-K gets no paragraph, and the lead cites PER-06 so a quarter is never read as a year.
+
+  **Change from the plan's D3 wording.** The plan named three buckets ("TTM; the quarter's own; the quarter's
+  USD amounts"), but `ITEMS` gives a basis per line item, not per metric, and has four (`period` 51 items,
+  `ttm` 35, `prior_year` 16, `prior` 5). Put to the director, who chose the per-metric, per-basis lines
+  above (a change from the plan's wording, not from its intent). The test asserts each metric's line names
+  exactly the set of its `ITEMS` bases, with `prior` mapped as above, and that a 10-K gets no paragraph.
+
+**D4 — an empty metric reaches the model with its reason.** `name: empty (<empty_reason>)` from the
+provenance block, in the brief and in the specialist's own list (MET-00: an empty value is never a 0 and
+never a neutral reading). `_brief` renders `name: value` / `name: empty (<reason>)` lines instead of a JSON
+payload that dropped nulls.
+
+**D5 — the existing DQ screens withhold values before the model.** `quality`'s own HARD gates run on the
+in-memory results with its own functions and constants (Annex A-01 to A-05 and the identity gates, no second
+hand-copied threshold) and every value they quarantine is withheld from the brief, the specialists and the
+fallback score, listed as `name: withheld (<rule id>)`. The gates need no database: they read the metric
+rows' own audit inputs, which the results already carry. No `DATA_ERROR_SUSPECTED` label is introduced.
+
+**D5b — the master prompt and the fallback.** `MASTER_PROMPT` no longer tells the model to "skip
+inventory-style metrics for financial firms": under APP-00 the company type comes from the company's own
+statement (`T-071`), so the prompt now says that an empty metric whose reason is `not_applicable` is the
+code's decision and the model must not reclassify the company.
+
+**D6 — no DuPont.** ROE is parent net income over the prior year's parent equity, ROA is NOPAT over the
+prior year's assets and asset turnover is the trailing revenue over the period's assets: margin × turnover ×
+leverage does not reproduce our ROE, so no skill decomposes it. Recorded as a decision.
+
+**D7 — the quick and cash ratios are unchanged.** MD-13 and MD-14 are **Source pending** and D-05 keeps
+today's formula until the second author is loaded (the director's call); a cash ratio "tolerant of a missing
+cash line" would put a 0 in place of an unfiled line (MET-00). Both are declared, and the liquidity skill
+says the two definitions are the pipeline's own.
+
+**D8 — no LLM call, no data change.** The prompt-version hash changes, as FR-002 requires:
+`1741a9713bbd5c62bb1a5d21695194c8d4be1cfa8accd4938a9ecaa9410a18a6` (master) →
+`3f03aad01100a70d0f1d4e097d2f6565520e2eefe1cbae9baef8788d9e981453` (branch), for `deepseek-chat`
+(`out/prompt_hash.txt`). `T-100` is the LLM run.
+
+### The measurements (`scripts/verify_t076.py`, the scratch database read-only, no model)
+
+- **Prompt sizes** (`out/sizes.txt`). Each specialist's system prompt, master (`dcd498f`, the old lead plus
+  the old SOP files) → branch: profitability 485 → 5,300; liquidity 477 → 3,782; leverage 16,377 → 5,030;
+  efficiency 485 → 3,874; growth 510 → 4,576; cashflow 13,723 → 5,048; roic 15,836 → 5,169; cagr 9,225 →
+  4,043; valuation 15,423 → 7,053. All nine: 72,541 → 43,875 characters. One filing's whole prompt: a 10-K
+  73,157 → 45,748, a 10-Q 63,932 → 46,467 (its brief is 5,868 characters against the 10-K's 1,106, from the
+  D3 paragraph). No tokenizer is installed offline, so token counts are omitted.
+- **The withheld values** (`out/withheld.json`). Over the 9,340 stored filings: 185 filings carry a value a
+  HARD rule quarantines and 60 filings' fallback score changes. Per rule (metric rows / companies):
+  DQ_FCF_YIELD 33 / 12; DQ_MARGIN 20 / 3; DQ_MCAP_SCALE 15 / 1; DQ_NEG_EQUITY 176 / 12; DQ_OCF_MARGIN
+  26 / 3; DQ_REVENUE_POS 201 / 9. Some scores **rise** (MRNA 6.0 → 18.0): a withheld negative value no
+  longer penalises the score, which is the point of withholding it.
+- **The rendered prompts** (`out/briefs/`): ABBV, O, KKR, COP, JPM and AES (a filing with a withheld
+  value), each with the master prompt, the brief and every specialist's system and per-call prompt.
+- **The prompt hash** (`out/prompt_hash.txt`): master → branch, changed.
+- **The quotes** (`out/quotecheck_skills.txt`): 21 quotes, 0 problems.
+
+### Replaced tests (old → new, why)
+
+- `tests/test_skills.py` (4 tests: the five mapped groups have a SOP, unmapped groups return `None`,
+  `valuation` maps to `free_cash_flow_yield`, a missing skills dir is tolerated) → 37 tests: the nine groups,
+  the no-formula/no-procedure rules, the citation rule, the metric coverage and the generated blocks. The old
+  expectations are replaced by their new ones, not weakened; the missing-directory case is kept in spirit by
+  the lead-and-blocks fallback.
+- `tests/test_agents.py::test_changing_one_specialist_prompt_changes_the_hash` (T-113) patched
+  `agents._INLINE_SPECIALIST_PROMPTS`, which D2 removes. It now rewrites one group's *skill* through
+  `agents.load_skill` and asserts the version hash changes — the same assertion, the new mechanism.
+
+### Declared limitations
+
+- **Research and development is not capitalized**, and the checklist has no declared limitation for it (L-01
+  covers leases only). The roic skill cites C7 p.19 and says the adjustment is not made; this is an input for
+  the checklist's next version.
+- **The fallback score's thresholds have no source.** `_SCORE_RULES` (net margin 0.05 / 0.15, ROE 0.10 /
+  0.20, free-cash-flow margin 0 / 0.10, revenue growth 0 / 0.10, current ratio 1.0 / 1.5, free-cash-flow
+  yield 0 / 0.05) and the `debt_to_equity > 3` penalty are unchanged by this task and are **calibrated
+  project thresholds**, in the manner of Annex A: they are declared here and are an input for the
+  checklist's next version. This task only stops a withheld value from scoring.
+- **`quotecheck.py` cannot resolve the register's C13 token**: `C13_rating methodology_regulated electric and
+  gas utilities` contains spaces, and `C13_` also matches `C13_p7_scorecard_financial_strength.png`; the two
+  C13 quotes are verified by resolving the PDF by its own stem and calling the script's `find`.
+- **The company type is still the model's to read, only from the code's reason.** Until `T-071` the brief
+  carries no company type; a specialist learns that a cell applied only from a metric's `not_applicable`
+  reason, which the skills explain.
+
+### Fix round 1 (K1–K5; PR #152 review)
+
+Reviewer A re-checked the branch against the code, the matrix and the PDFs. What holds: D1 and its counts, the
+21 quotes (the 15 new ones re-verified independently of `quotecheck`), D3's per-metric basis lines, D5b, the
+declared thresholds and the R&D gap, the sizes and the hash, CI and the sha1. The defects, and what changed:
+
+- **K1 — the hand-written applicability sections contradicted the generated matrix.** Every skill restated
+  applicability by hand beside the generated block, and several restatements were wrong: `return_on_equity` is
+  **A** for Article 9 and 7 filers (MET-02 keeps ROE for banks), `asset_turnover` is **A** for every company
+  type, `net_income_growth` and `net_income_cagr` are **A**, `inventory_turnover` for a company with no
+  inventory line is an **empty** value (`missing_input`, MET-00) rather than an inapplicability, APP-09 covers
+  the current/quick/cash ratios and not the turnovers, and APP-02 does not cover liquidity. Every "what is not
+  applicable" section and every other applicability claim is deleted: the generated matrix block is the single
+  source, and a skill only defines the `not_applicable` reason code. Test added.
+- **K2 — the specialist was told to compare with history and peers it never sees** (profitability, roic,
+  cashflow, efficiency). Those sentences are deleted. Test: no skill contains "history" or "peer".
+- **K3 — six statements wrong for the code or the checklist.** The leverage skill's claim that a REIT
+  reporting only secured and unsecured debt gets empty debt ratios is false since T-151 part 1 added the
+  sourced map (now stated through ID-02b); the same skill called coverage withheld on negative equity
+  (`DQ_NEG_EQUITY` quarantines D/E and ROE); profitability said `gross_margin` needs a cost-of-revenue line
+  (MD-06 uses `GrossProfit` when filed); growth said a later restatement leaves the base alone (PER-04 takes
+  the base from **this** filing's comparative column); valuation put the stored market cap's count on the
+  analysis date (MKT-01: the stored metric's D is the **period end**, VALORIZATION's is the analysis date);
+  and cashflow's withheld bullet named a free-cash-flow margin screen that no rule states.
+- **K4 — a citation must back its sentence.** Every bullet was re-audited. The direction and quality readings
+  no source states are removed ("a higher value is the stronger reading", "the weaker quality of earnings",
+  "the comfort rests on inventory", "a capital-intensive company turns its assets slowly by nature", the
+  growth and cagr interpretations); an MD row is cited for the definition alone; the readings kept are the
+  ones a source states — C7 p.4 (a return is compared with the cost of capital), C8 p.3 (the geometric
+  average), C9 p.3 (a loss's causes), C13 p.11/p.19 and C14 p.38 and C15 p.2 (a utility's negative free cash
+  flow). `out/f1_skills_rule_map.md` is the review list — 9 skills, 84 bullets, each citation followed by the
+  cited rule's own text or the source's verbatim quote, so a reader can check the backing.
+
+  The bullets fell from 116 to 84: the deleted applicability sections and the unsupported readings.
+
+- **K5 — a withheld label hid an empty value's own reason.** `_metric_lines` put `withheld (<rule>)` ahead of
+  `empty (<reason>)`, and `withheld_metrics` returned a quarantined metric whether or not it had a value. A
+  metric is now withheld only when it **has** a value; an empty value keeps its own reason. Before → after, on
+  the 9,340 stored filings:
+
+  | rule | rows before | rows after | companies after |
+  |---|---|---|---|
+  | DQ_FCF_YIELD | 33 | 33 | 12 |
+  | DQ_MARGIN | 20 | 20 | 3 |
+  | DQ_MCAP_SCALE | 15 | 12 | 1 |
+  | DQ_NEG_EQUITY | 176 | 7 | 5 |
+  | DQ_OCF_MARGIN | 26 | 26 | 3 |
+  | DQ_REVENUE_POS | 201 | 11 | 2 |
+
+  Filings with a withheld value: 185 → **77**. Fallback scores that change: 60 → **60** (the fallback already
+  skipped an empty value, so removing its label changes no score).
+
+  **The 7 `DQ_NEG_EQUITY` rows are kept, and the plan's "expect 0" is wrong** (`out/f1_neg_equity_rows.txt`):
+  the premise that both D/E and ROE are already empty when equity ≤ 0 holds for D/E, which divides by the
+  **current** equity, but not for ROE, whose denominator is the **prior year's** (MET-02; MD-10; APP-07's
+  source C7 p.12 ties "meaningless" to the book value divided by). All 7 are `return_on_equity` values with a
+  negative current equity and a positive prior-year one: CAH (filing 1360, ROE −0.52, equity −709M, prior
+  1,791M), CCI (1495, −0.61, −133M / 6,381M), LYV (5420, +0.31, −139M / 271M), NCLH (6037, −21.09, −99.5M /
+  68.6M) and STX (7734, 7741, 7742; −1,199M / −470M / −1,004M against a prior 109M). D5 mirrors exactly what
+  `quality`'s HARD gates quarantine, which is what `cycle` reads, so they stay withheld in this PR; the basis
+  the gate tests is a `T-071` decision (recorded there, dated, from this round).
+
+- **Sizes** (`out/f1_sizes.txt`): all nine, 72,541 (master) → **38,684** (this branch; 43,875 before the
+  round, so the round removed 5,191 characters). One filing's whole prompt: 10-K 73,157 → 40,557 (45,748
+  before); 10-Q 63,932 → 41,947 (46,467 before).
+- **The prompt hash** (`out/f1_prompt_hash.txt`): `3f03aad01100a70d0f1d4e097d2f6565520e2eefe1cbae9baef8788d9e981453`
+  → `448500d74ef81153d9920ec5cd9a170a1151a8ef567f881834d90084f231f877`.
+- **Input for the checklist's next version (recorded): MD-13's stale "T-076 proposes" sentence.** The
+  checklist's own Annex B row MD-13 says the quick ratio is "today (current assets − inventory) / current
+  liabilities; **T-076 proposes** (cash + short-term investments + receivables) / current liabilities". D-05
+  keeps today's formula (the quick-ratio item waits for the second author), so "T-076 proposes" no longer
+  describes anything T-076 does or will do: the next checklist version should drop it. `docs/metric_dictionary.md`
+  and `metric_definitions.csv` are generated from that row and cannot be edited by hand.

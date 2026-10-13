@@ -32,14 +32,14 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071`) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -822,8 +822,7 @@ as task `T-077`.
 
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
-`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → **`T-076`** (step 5, next, without its
-growth item; its quick-ratio item follows `T-151`'s dictionary) → `T-073` (step 3) → `T-074`
+`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → **`T-073`** (step 3, next) → `T-074`
 (step 4) → `T-071` (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
@@ -902,22 +901,48 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    scan, no LLM calls) rather than waiting on step 3+4's full re-run.~~
    **Superseded 2026-10-05 (`T-075`)**: it was a stop-gap for production's old narratives, and
    production stays frozen until `T-100`, which re-scores everything with the final prompts.
-5. **Skills redesign** (`skills/*/SKILL.md`, `agents.py`): add a 10-Q
-   frequency preamble (no skill currently mentions 10-Q vs. 10-K despite
-   `form` reaching the prompt — this is the LLM-side companion to fix F4:
-   "if this filing is a 10-Q, flow ratios are quarterly, don't score them
-   against annual thresholds without annualizing"); tighten the valuation
-   skill's magnitude gate (currently only `market_cap > 0`, which MCD's
-   $209k and WAT's $37.2T both trivially pass — require
-   `\|FCF yield\| > 50%` or a balance-sheet-scale mismatch to force
-   `DATA_ERROR_SUSPECTED`); add a dedicated `profitability` skill (DuPont
-   decomposition, annualization rule, ROE→ROIC fallback under
-   `equity <= 0`) — currently profitability relies on 2 inline prompt
-   lines while 5 other groups (cashflow, leverage, roic, cagr, valuation)
-   already have a dedicated `skills/<name>/SKILL.md`; streamline
-   each `SKILL.md`'s manual-extraction boilerplate (unused once ratios
-   arrive precomputed in the automated pipeline) to cut per-filing token
-   cost.
+5. **Skills rebuilt on the checklist** (`skills/<group>/SKILL.md`, `agents.py`; `T-076`).
+   The original scope (a 10-Q frequency preamble, a tightened valuation
+   magnitude gate that would force `DATA_ERROR_SUSPECTED`, a new
+   `profitability` skill with a DuPont decomposition and an ROE→ROIC
+   fallback, and a trim of the manual-extraction boilerplate) was
+   **redesigned 2026-10-13** after reviewer A read the five skills against
+   checklist v1.3 and found them contradicting the rules (NOPAT at the
+   filing's own rate with a 21%/45% gate, operating leases as debt,
+   "average or ending" invested capital, a dual invested-capital approach,
+   an unsourced WACC and "excess cash" band, "zombie" labels and rating
+   tiers, "FCFE" naming, balance-sheet shares for the market cap, an EV
+   without NCI; each with the rule it broke in `out/contradictions.md`):
+   - **the skills are rebuilt, one per specialist group**, on the
+     checklist: `profitability`, `liquidity`, `leverage`, `efficiency`,
+     `growth`, `cashflow`, `roic`, `cagr`, `valuation`. Each is
+     interpretation only, states no formula and carries a citation for
+     every statement — a checklist rule ID, or a loaded source with its
+     PDF page and verbatim quote in `skills/SOURCES.md`. The checklist's
+     definitions and rules are generated (`metric_definitions.csv`,
+     `checklist_rules.csv`), and the group's generated blocks join the
+     prompt. The 10-Q basis is generated from `provenance.ITEMS` rather
+     than hand-written (D3's wording, which named three buckets, is
+     recorded as changed in `docs/model_fixes.md`: `ITEMS` gives a basis
+     per line item and has four).
+   - **the DQ screens withhold, instead of an LLM-side gate**: Annex A-03
+     and A-05 already withhold a market cap or a free-cash-flow yield
+     outside its band, deterministically, and an LLM gate would break AI
+     behavior #1 (the LLM computes no number). Withheld values join the
+     brief *and* the fallback score's inputs as `withheld (<rule id>)`.
+   - **DuPont is dropped**: our definitions do not decompose (margin ×
+     turnover × leverage does not reproduce our ROE, which is parent net
+     income over the prior year's parent equity). The ROE→ROIC reading on
+     negative equity is kept and sourced (APP-07, C7 p.12).
+   - **the quick and cash ratios are unchanged** until the second author
+     is loaded (D-05, "source pending"): a cash ratio "tolerant of a
+     missing cash line" would put a 0 in place of an unfiled line
+     (MET-00). Both are declared.
+   No stored metric value changes and no LLM call is made (`T-100` runs
+   the LLM). Acceptance: the nine skills exist and pass their tests, the
+   generated data agrees with the checklist row by row, the withheld
+   values match `quality`'s HARD gates, and the measurements are in
+   `docs/model_fixes.md` T-076.
 6. **`quant` μ estimator — Carhart 4-factor, supersedes Work item 3's
    single-factor plan**: `mu_i = rf + Σ_k β_i,k^shrunk · λ̄_k` over
    `{MKT, SMB, HML, MOM}`, with Vasicek shrinkage on each asset's OLS betas
@@ -2343,7 +2368,7 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → **`T-076`** (next) → `T-073` → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 

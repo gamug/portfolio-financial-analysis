@@ -45,6 +45,9 @@ dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
 ]
+sources = [
+    "pypdf>=6.20.1",
+]
 
 # Not published anywhere -- but installed (editable) into the uv env so every
 # `src/<pkg>` imports and runs as `python -m <pkg>` from any directory.

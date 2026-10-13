@@ -1,12 +1,17 @@
-"""Generate the tracked metric dictionary and applicability matrix from checklist v1.3 (T-151 part 3, D12).
+"""Generate the tracked metric dictionary, applicability matrix and T-076 data files from checklist v1.3.
 
 Reads ``docs/checklist_sec/checklist_v1.3.md`` -- the frozen specification, git-excluded and local --
-and writes two **tracked** files the code and the tests read:
+and writes four **tracked** files the code and the tests read:
 
 * ``docs/metric_dictionary.md`` -- every Annex B row (ID, metric, formula, basis, source, quote, note),
   with a header naming this script, the checklist version and the checklist file's sha256;
 * ``src/fundamental_agent/data/applicability_matrix.csv`` -- the applicability matrix (metric, company
-  type, code, rule ID), one row per cell.
+  type, code, rule ID), one row per cell;
+* ``src/fundamental_agent/data/metric_definitions.csv`` -- one row per Annex B row (metric, MD id,
+  formula, basis); a specialist group's system prompt reads its own metrics' rows (T-076, D1);
+* ``src/fundamental_agent/data/checklist_rules.csv`` -- every rule ID of the checklist (the seven
+  layers, section L's limitations, Annex A's screens, Annex B's metrics) with its layer and the row's
+  own descriptive text on one line (T-076, D1).
 
 Annex B is never hand-written (the checklist says ``docs/metric_dictionary.md`` "is generated from it,
 never written separately"). Run it with no arguments from the repo root.
@@ -23,6 +28,8 @@ REPO = Path(__file__).resolve().parents[1]
 CHECKLIST = REPO / "docs" / "checklist_sec" / "checklist_v1.3.md"
 DICTIONARY = REPO / "docs" / "metric_dictionary.md"
 MATRIX = REPO / "src" / "fundamental_agent" / "data" / "applicability_matrix.csv"
+DEFINITIONS = REPO / "src" / "fundamental_agent" / "data" / "metric_definitions.csv"
+RULES = REPO / "src" / "fundamental_agent" / "data" / "checklist_rules.csv"
 
 # The six company-type columns of the matrix, in the checklist's order.
 COMPANY_TYPES = (
@@ -42,12 +49,39 @@ COMPANY_TYPE_HEADERS = (
     "Multi-class",
 )
 ANNEX_COLUMNS = 7  # ID, Metric, Source, Quote, Formula, Basis, Note
+MIN_RULE_CELLS = (
+    2  # an ID and the row's own text (the "Verifiable rule" / Limitation / Screen / metric)
+)
 _MARKER_RE = re.compile(r"\s*\*\((?P<kind>[^)]*)\)\*")
 _CELL_RE = re.compile(r"^(?P<code>A|ADJ|NA)\b\s*(?:\((?P<rule>.*)\))?")
+_CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")
+_MARKDOWN = ("**", "`")
+
+# The header row of each checklist table whose rows go into ``checklist_rules.csv``; the row's own
+# descriptive text is its second cell (the "Verifiable rule" of a layer, the Limitation, the Screen,
+# the metric).
+_RULE_HEADER = ("ID", "Verifiable rule")
+_LIMITATION_HEADER = ("ID", "Limitation")
+_SCREEN_HEADER = ("ID", "Screen")
+_ANNEX_HEADER = ("ID", "Metric", "Source (PDF page)")
+_RULE_ID_RE = re.compile(r"^(?:ID|PER|CON|DQ|MET|MKT|APP)-\d+[a-z0-9-]*$")
+_LIMITATION_ID_RE = re.compile(r"^L-\d+$")
+_SCREEN_ID_RE = re.compile(r"^A-\d+$")
+_METRIC_ID_RE = re.compile(r"^MD-\d+$")
 
 
 def _cells(line: str) -> list[str]:
-    return [c.strip() for c in line.strip().strip("|").split("|")]
+    """The cells of one markdown table row, unescaping the checklist's ``\\|`` inside a cell."""
+    return [c.strip().replace("\\|", "|") for c in _CELL_SPLIT_RE.split(line.strip().strip("|"))]
+
+
+def _plain(text: str) -> str:
+    """A checklist cell as one plain line: markdown emphasis and code spans removed, whitespace
+    collapsed. Underscores and single asterisks are kept -- they are part of metric names
+    (``net_margin``), not emphasis."""
+    for mark in _MARKDOWN:
+        text = text.replace(mark, "")
+    return " ".join(text.split())
 
 
 def _split_kind(metric: str) -> tuple[str, str]:
@@ -109,6 +143,50 @@ def parse_matrix(text: str) -> list[dict[str, str]]:
     return rows
 
 
+def _table_rows(lines: list[str], header: tuple[str, ...]) -> list[list[str]]:
+    """The rows of the table whose header row starts with *header*, in order."""
+    rows: list[list[str]] = []
+    inside = False
+    for line in lines:
+        if not line.startswith("|"):
+            inside = False
+            continue
+        cells = _cells(line)
+        if tuple(cells[: len(header)]) == header:
+            inside = True
+            continue
+        if inside:
+            rows.append(cells)
+    return rows
+
+
+def parse_rules(text: str) -> list[dict[str, str]]:
+    """Every rule ID of the checklist, with its layer and the row's own text on one line (T-076, D1).
+
+    The seven rule layers (ID, PER, CON, DQ, MET, MKT, APP), section L's declared limitations, Annex
+    A's calibrated screens and Annex B's metric rows. ``rule`` is the row's own descriptive cell
+    whole -- the "Verifiable rule" of a layer, the Limitation, the Screen, the metric name.
+    """
+    lines = text.splitlines()
+    rows: list[dict[str, str]] = []
+    for cells in _table_rows(lines, _RULE_HEADER):
+        if len(cells) >= MIN_RULE_CELLS and _RULE_ID_RE.match(cells[0]):
+            rows.append(
+                {"id": cells[0], "layer": cells[0].split("-", 1)[0], "rule": _plain(cells[1])}
+            )
+    for cells in _table_rows(lines, _LIMITATION_HEADER):
+        if len(cells) >= MIN_RULE_CELLS and _LIMITATION_ID_RE.match(cells[0]):
+            rows.append({"id": cells[0], "layer": "L", "rule": _plain(cells[1])})
+    for cells in _table_rows(lines, _SCREEN_HEADER):
+        if len(cells) >= MIN_RULE_CELLS and _SCREEN_ID_RE.match(cells[0]):
+            rows.append({"id": cells[0], "layer": "A", "rule": _plain(cells[1])})
+    for cells in _table_rows(lines, _ANNEX_HEADER):
+        if len(cells) >= MIN_RULE_CELLS and _METRIC_ID_RE.match(cells[0]):
+            metric, _kind = _split_kind(cells[1])
+            rows.append({"id": cells[0], "layer": "MD", "rule": _plain(metric)})
+    return rows
+
+
 def write_dictionary(annex: list[dict[str, str]], checklist_sha: str, version: str) -> None:
     lines = [
         "# Metric dictionary",
@@ -160,6 +238,32 @@ def write_matrix(matrix: list[dict[str, str]]) -> None:
         writer.writerows(matrix)
 
 
+def write_definitions(annex: list[dict[str, str]]) -> None:
+    """``metric_definitions.csv`` -- one row per Annex B row (T-076, D1)."""
+    with DEFINITIONS.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["metric", "md_id", "formula", "basis"], lineterminator="\n"
+        )
+        writer.writeheader()
+        for row in annex:
+            writer.writerow(
+                {
+                    "metric": _plain(row["metric"]),
+                    "md_id": row["id"],
+                    "formula": _plain(row["formula"]),
+                    "basis": _plain(row["basis"]),
+                }
+            )
+
+
+def write_rules(rules: list[dict[str, str]]) -> None:
+    """``checklist_rules.csv`` -- every rule ID with its layer and its own one-line text (T-076, D1)."""
+    with RULES.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["id", "layer", "rule"], lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rules)
+
+
 def main() -> None:
     text = CHECKLIST.read_text()
     annex = parse_annex_b(text)
@@ -172,12 +276,19 @@ def main() -> None:
             break
     write_dictionary(annex, sha, version)
     write_matrix(matrix)
+    write_definitions(annex)
+    rules = parse_rules(text)
+    write_rules(rules)
     bases: dict[str, int] = {}
     for row in annex:
         bases[row["basis"]] = bases.get(row["basis"], 0) + 1
+    layers: dict[str, int] = {}
+    for row in rules:
+        layers[row["layer"]] = layers.get(row["layer"], 0) + 1
     print(f"Annex B: {len(annex)} rows {bases}")
     print(f"matrix: {len(matrix)} rows, {len({r['metric'] for r in matrix})} metrics")
-    print(f"wrote {DICTIONARY} and {MATRIX} (checklist sha256 {sha[:16]}…)")
+    print(f"rules: {len(rules)} rows {layers}")
+    print(f"wrote {DICTIONARY}, {MATRIX}, {DEFINITIONS} and {RULES} (checklist sha256 {sha[:16]}…)")
 
 
 if __name__ == "__main__":

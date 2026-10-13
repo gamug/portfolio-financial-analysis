@@ -575,6 +575,23 @@ company-type profile; the code-vs-matrix check for financial firms); and **R-15'
 items** (`equity_incl_nci` / `equity` and the NCI income line, read inside `capital.nci`, are not
 declared in `ITEMS`).
 
+## Work item 8 — `T-076` (closed task) — the specialist skills rebuilt on the checklist (stream A, step 5) — DONE 2026-10-13
+
+Moved verbatim from `TASKS.md` when the task closed (PR #152); the rest of Work item 8 stays there, with
+`T-073` next. Ordered by work item number.
+
+- [x] **T-076** *(Its YoY-growth item, audit F8, is absorbed by `T-151` 2026-10-08; the rest stays and runs after `T-151` (PR #127 review, 2026-10-09), its quick-ratio item following `T-151`'s dictionary: D-05, "source pending".)* **Redesigned 2026-10-13** (T-076's own plan, after reviewer A read the five skills against checklist v1.3 and found them contradicting the rules — NOPAT at the filing's own rate with a 21%/45% gate (MET-03), operating leases as debt (MET-07/L-01), "average or ending" invested capital (MET-02), a dual invested-capital approach (MD-02), an unsourced WACC and "excess cash" band, "zombie" labels and rating tiers (MET-09), "FCFE" naming (MD-04), balance-sheet shares for the market cap (MKT-01/MKT-04), an EV without NCI (MD-35); `out/contradictions.md` lists each with the rule it broke): **the specialist skills rebuilt on the checklist**, one per specialist group (`skills/<group>/SKILL.md`, step 5). Each skill is interpretation only — how to read the group's already-computed numbers, what each flag and empty reason means, what is not applicable to which company type — and states no formula, no extraction step and no threshold no rule states; every statement cites its checklist rule, or a loaded source with its PDF page and verbatim quote in `skills/SOURCES.md`. The checklist's definitions and rules are **generated** (`metric_definitions.csv`, `checklist_rules.csv`). The 10-Q basis paragraph and every empty reason reach the brief and the specialists. **The existing DQ screens withhold a value before the model** (Annex A-01 to A-05), instead of an LLM-side valuation magnitude gate: Annex A-03 / A-05 already withhold a market cap or a free-cash-flow yield outside its band, deterministically, and an LLM gate would break AI behavior #1. **DuPont is dropped**: our definitions do not decompose (margin × turnover × leverage does not reproduce our ROE). **The quick and cash ratios stay as they are** until the second author is loaded (D-05): a cash ratio "tolerant of a missing cash line" would put a 0 in place of an unfiled line (MET-00). The fallback score's thresholds are declared as calibrated project thresholds. No stored metric value changes and no LLM call is made (`T-100` runs it). → step 5. **Implemented on `feat/t076-skills-redesign` (2026-10-13, PR #152); the box stays open until the reviewer closes T-076.** Record: `docs/model_fixes.md` T-076; `SPEC.md` FR-001/FR-002, §3 and §8.
+
+**Closed 2026-10-13 — step 0 the constitution PR #151, the task PR #152** (reviewed and approved; PR #152
+carries fix rounds 1 and 2). Declared items that stay open: **the quick and cash ratios are left to D-05**
+(MD-13 and MD-14 are source pending, so the code keeps its own formula until the second author is loaded);
+**the fallback `_SCORE_RULES` thresholds are declared as calibrated project thresholds** (unchanged by this
+task, an input for the checklist's next version); **the R&D gap** (the roic skill cites C7 p.19 in place of
+a declared limitation) and **MD-13's stale "T-076 proposes" sentence** are inputs for the checklist's next
+version; and **the `DQ_NEG_EQUITY` basis question is handed to `T-071`** (the gate tests the current equity
+while ROE's denominator is the prior year's, so 7 filings carry an ROE it quarantines; `T-071` owns the gate
+under D-04).
+
 ## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to
