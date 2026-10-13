@@ -196,22 +196,29 @@ stamp, reads the universe from `universe.db` as of that date, and drops news who
 `discovered_urls.pub_date` is after it or NULL. It reads the news repo's `urls.db` strictly
 read-only (via `KG_NEWS_DB`, default `/workspaces/thesis/data/urls.db`).
 
-## Read-only HTTP API (`api/`)
+## HTTP API (`api/`)
 
-A thin FastAPI surface over the `v_*` read-contract views and `universe.db` — a stable
-network boundary for `portfolio-reports` / `portfolio-app` instead of opening the SQLite
-files. It **only reads** (`mode=ro`); the agents stay CLI-driven and own every write.
+A FastAPI surface: the **read routes** serve the `v_*` read-contract views and `universe.db` to
+`portfolio-reports` / `portfolio-app` — a stable network boundary instead of opening the SQLite
+files — and only ever open a database `mode=ro`. The **run endpoints** start each agent CLI as a
+subprocess, so `api/` is also the repo's single entry point for orchestrated runs; the API process
+writes only the orchestrator's own provenance (`orchestrator_run` / `orchestrator_step`). All routes
+are under `/api/v1`.
 
 ```bash
 uv run python -m api                                   # serve on API_HOST:API_PORT (default 0.0.0.0:8010)
+uv run python -m api orchestrate --analysis-date D      # run the pipeline in the foreground
 uv run uvicorn --factory api.app:create_app --reload   # dev; docs at /docs
 ```
 
-Endpoints under `/api/v1`: `GET /health` · `GET /health/db` · `GET /runs` (run log,
-`?kind=`) · `GET /universe?as_of=D` · `GET /universe/coverage?as_of=D` · `GET /scores`
-(`?ticker=`/`?score_type=`/`?as_of=`) · `GET /portfolio/positions` · `GET /portfolio/ranking`.
-Config: `KG_FINANCIAL_DB` (required), `KG_UNIVERSE_DB` / `API_HOST` / `API_PORT` /
-`API_ROOT_PATH` (optional). See [docs/api.md](docs/api.md).
+Read routes: `GET /health` · `GET /health/db` · `GET /runs` (`?kind=`, `?status=`) ·
+`GET /universe?as_of=D` · `GET /universe/coverage?as_of=D` · `GET /scores` (`?ticker=`,
+`?score_type=`, `?as_of=`) · `GET /portfolio/positions` (`?as_of=`, `?open_only=`) ·
+`GET /portfolio/ranking` (`?cycle_type=`) · `GET /portfolio/quant-vs-live` (`?as_of=`, `?kind=`,
+`?current_only=`) · `GET /contract` · `GET /contract/database`. Run endpoints: `POST /run/pipeline`,
+the ten `POST /run/<step>` routes (`/run/pricing-agent` … `/run/quant/evaluate`), and
+`GET /run/{handle}` to poll. Config: `KG_FINANCIAL_DB` (required), `KG_UNIVERSE_DB` / `KG_NEWS_DB` /
+`API_HOST` / `API_PORT` / `API_ROOT_PATH` (optional). See [docs/api.md](docs/api.md).
 
 ## Development
 
