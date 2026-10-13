@@ -607,8 +607,17 @@ the final pilot, `T-143`.
       formula's order (O's ROIC → `missing_input`, not `prior_year_missing`). G5: DQ-01's L-10
       `n_terms` (ROK resolved) and the YTD columns, reported per item × kind — 23 mismatching pairs
       (ESS 10, SYK 5, WELL 8), no item below 98%; VLTO does not appear (its YTD sum equals the filer's
-      YTD total). G6: the wiring recorded, not implemented. **The box stays open until the reviewer
-      closes T-151 after both PRs.**
+      YTD total). G6: the wiring recorded, not implemented.
+      **Fix round 2 (2026-10-13): H1–H7, PR #148** (`docs/model_fixes.md` "Fix round 2"). H1: an
+      optional term (short-term debt/investments, NCI, gross_profit/cogs) is never a
+      `missing_input` (1,737 rows: capture_failure 1,418, missing_input 312 for a genuinely missing
+      numerator); H2: an unformed TTM (x4/refused) is `prior_year_missing`/`capture_failure`
+      (3,212 rows / 439 filings); H3: `prior` follows the metric's rule (prior_quarter on a 10-Q) —
+      the 1,517 `prior_wc_missing` rows: prior_year_missing 820, missing_input 638, capture_failure
+      59; H4: the TTM entry records its value, terms and columns (`four_quarter_check`); H5: the
+      `ytd` kind is duration-only — **18 pairs** (ESS 7, SYK 5, WELL 6; 15 own + 3 ytd); H6: the
+      VLTO correction; H7: the negative-REIT-rate flag on ROA/ROIC/MD-38, **11 rows / 3 companies**
+      (4 computed). **The box stays open until the reviewer closes T-151 after both PRs.**
 - [ ] **T-154** `migrate` must never replay a rebuild on a database that already has the current
       shape (code fix and hermetic tests only; no pipeline rerun). A database created by
       `kg_schema.ensure()` alone — the path every agent's `ensure_schema` takes — has the current

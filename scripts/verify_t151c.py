@@ -28,7 +28,7 @@ def _rows(conn: Any, engine: str) -> list[Any]:
     return list(
         conn.execute(
             "SELECT m.filing_id, m.metric_name, m.value, m.inputs_json, f.asset_id, a.ticker, "
-            "f.accession_number FROM fundamental_metrics m "
+            "f.accession_number, f.form FROM fundamental_metrics m "
             "JOIN sec_filings f ON f.id = m.filing_id JOIN assets a ON a.id = f.asset_id "
             "WHERE m.engine_version = ?",
             (engine,),
@@ -155,6 +155,34 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
     def h7(row: Any, inputs: dict[str, Any], block: dict[str, Any]) -> bool:
         return bool(inputs.get("flag_nopat_tax_rate_outside_unit_interval"))
 
+    # H7 is a flag count, not an empty-reason population: every row that carries it, whether the
+    # metric is computed or empty, by form.
+    h7_rows = [
+        row
+        for row in rows
+        if row["metric_name"] == "return_on_invested_capital"
+        and json.loads(row["inputs_json"] or "{}").get("flag_nopat_tax_rate_outside_unit_interval")
+    ]
+    h7_forms = {
+        form: {
+            "rows": sum(1 for r in h7_rows if r["form"] == form),
+            "computed": sum(1 for r in h7_rows if r["form"] == form and r["value"] is not None),
+            "filings": len({int(r["filing_id"]) for r in h7_rows if r["form"] == form}),
+            "companies": len({int(r["asset_id"]) for r in h7_rows if r["form"] == form}),
+        }
+        for form in sorted({r["form"] for r in h7_rows})
+    }
+    payload["H7_rows"] = {
+        "total": {
+            "rows": len(h7_rows),
+            "computed": sum(1 for r in h7_rows if r["value"] is not None),
+            "filings": len({int(r["filing_id"]) for r in h7_rows}),
+            "companies": len({int(r["asset_id"]) for r in h7_rows}),
+        },
+        "by_form": h7_forms,
+        "tickers": sorted({r["ticker"] for r in h7_rows}),
+    }
+
     for label, predicate, metrics in (
         (
             "H1_debt_refused",
@@ -170,7 +198,15 @@ def cmd_reasons(args: argparse.Namespace) -> None:  # noqa: C901 - one predicate
         payload[label] = _reason_counts(selected, predicate)
 
     Path(args.out).write_text(json.dumps(payload, indent=2))
+    h7 = payload.pop("H7_rows")
+    print(f"\nH7_rows: {h7['total']}")
+    for form, entry in h7["by_form"].items():
+        print(f"  {form:<6}{entry}")
+    print(f"  tickers {h7['tickers']}")
+    payload["H7_rows"] = h7
     for label, counts in payload.items():
+        if label == "H7_rows":
+            continue
         total_rows = sum(entry["rows"] for entry in counts.values())
         total_filings = len({f for entry in counts.values() for f in [entry["filings"]]})
         print(f"\n{label}: {total_rows} rows")

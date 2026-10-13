@@ -7378,10 +7378,80 @@ and recomputed with this branch (`out/f1_p3_after.log`).
   veto; the gate's per-item rate suggests a **SOFT** review row first, promoted to HARD once the
   reviewer sets the threshold.
 
+### Fix round 2 (H1–H7; PR #148 review, second round)
+
+`t151c/after.db` was recomputed in place with this branch (`out/f2_p3_after.log`, 9,340 filings,
+315,435 rows) and then again after H7's predicate (`out/f2_p3_after2.log`).
+
+- **H1 — an optional term counted as a "missing input".** `provenance.OPTIONAL` now marks the items
+  whose formula substitutes 0 when they are not filed — `gross_profit`/`cogs` in the gross margin
+  (`gross = revenue - cogs`), short-term investments (`capital.net_short_term_investments`),
+  short-term debt (`statements._total_debt`: `lt + (st or 0)`, and `capital.working_capital`),
+  `minority_interest`/`redeemable_nci` (`capital.nci`'s 0 when no NCI income) — each with the code
+  line that substitutes the 0. An optional item is never a `missing_input`; its own refusal flag still
+  counts (step 3). **Acceptance** (`out/f2_reasons.txt`, the four debt metrics with a debt-refusal
+  flag): **1,737 rows**; after the fix `capture_failure` **1,418 rows / 430 filings / 33 companies**,
+  `prior_year_missing` 7 / 7 / 5, and `missing_input` **312 rows** — those have a **non-optional**
+  term missing first (the numerator: Realty Income's shape has no operating income; ACGL/ARE), which
+  G4's precedence puts ahead of the capture failure. Before, the plan measured **1,721** such rows
+  naming an optional item (D/E 399, D/A 399, EV 333, ND/EBITDA 590). Realty Income
+  `0000726728-24-000130`'s D/E, D/A and EV now say `capture_failure` (its long-term sum refuses).
+- **H2 — a TTM that could not be formed counted as "missing input".** A `ttm` item counts as present
+  only when its trailing twelve months were formed (method `ytd` or `quarters`); `x4` →
+  `prior_year_missing`, a refusal → `capture_failure`. **Acceptance** (every item filed, a TTM not
+  formed): **3,212 rows / 439 filings** (the plan measured 2,680 / 449) — `prior_year_missing`
+  **3,062 rows / 439 filings**, `capture_failure` 115/62, `not_applicable` 30/30, `denominator` 5/5;
+  before, all of them fell through to `missing_input` (A `0001090872-22-000007`, `return_on_assets`,
+  method `x4`).
+- **H3 — the `prior` basis described a column the metric never read.** `_prior_basis` follows the
+  metric's own rule: `prior_quarter` on a 10-Q (MD-38's `prior_quarter_capital_at`), `prior_year` on
+  a 10-K; when the prior-year quarter is not stored the entry has `source: null` and step 3 returns
+  `prior_year_missing`. **Acceptance** (the 1,517 MD-38 rows flagged `prior_wc_missing`: 1,516 10-Q +
+  1 10-K, `out/f2_reasons.txt`): `prior_year_missing` **820**, `missing_input` **638** (an earlier
+  term failed — ABNB's D&A is not filed at the YTD column), `capture_failure` **59** (a refused debt
+  or an unclassified balance sheet). Before: `missing_input` 1,378, `capture_failure` 139, and
+  `prior_year_missing` **1** in the whole database; now 820 + the rest.
+- **H4 — the TTM entry did not record the value or the columns it used.** `TTMFlow` gains two
+  non-identity fields (`compare=False`): `columns`, the `(label, period_key, accession)` of each
+  column the TTM combined (the `ytd` method: the prior fiscal year, the prior year-to-date and this
+  year's year-to-date, with the accession that supplied each; `quarters`: the four quarters), and
+  `terms`, the `(label, value)` of each term. The provenance entry records the TTM's own `value`, its
+  `terms` and `columns`, and renames `alt` to **`four_quarter_check`** (the four-quarter cross-check,
+  never the value). Test: a `ytd` TTM whose entry gives `value = prior FY + ytd − prior ytd` from the
+  recorded columns.
+- **H5 — the fidelity gate compared balance-sheet items twice.** The `ytd` kind applies to duration
+  items only (an instant item has no year-to-date column, ID-05). **Acceptance**
+  (`out/f2_fidelity_report.txt` / `.csv`): `depreciation_amortization` own 3,520/3,518/2 (99.9%),
+  ytd 3,110/3,107/3 (99.9%); `long_term_debt` own 7,545/7,532/13 (99.8%) and **no ytd row** (a
+  balance-sheet item); the mismatching pairs are **18** (ESS 7, SYK 5, WELL 6; **15 own + 3 ytd**, all
+  3 ytd being SYK's D&A) and **no item is below the 98% gate**. Before: 23 pairs (ESS 10, SYK 5,
+  WELL 8; 15 own + 8 ytd), the duplicates being the instant items compared twice.
+- **H6 — the documents.** Part 1's "mismatching companies" section gains the dated VLTO correction
+  above; G6's paragraph drops `interest_coverage` from the `long_term_debt` list and says ROIC reads
+  the prior-year debt.
+- **H7 — a REIT's negative rate on the main ratios carried no flag (APP-04c).** The director's
+  predicate: NOPAT is formed (operating income present on the ratio's basis — TTM on a 10-Q, the
+  period on a 10-K) and the rate applied to it is outside [0, 1]; a row without operating income
+  applies no rate and gets no flag. **Acceptance** (`out/f2_reasons.json`, on
+  `return_on_invested_capital`): **11 rows / 3 companies** — 10-Q 9 (HST `0000950170-22-008085`
+  −0.307, KIM 5, WY 3) and 10-K 2 (KIM `0001437749-23-004541`, WY `0001193125-26-051422`); of these
+  **4 rows / 1 company (WY) have a stored ROIC value**, the other 7 rows are empty. The plan's "9 rows
+  / 3 companies" counted the 10-Qs only (the reviewer's omission). Before: no flag on any row.
+
+**The reason distribution, old vs new** (`out/f1_provenance.txt` vs `out/f2_provenance.txt`,
+filings / companies): `missing_input` 8,980/503 → **8,887/503**; `capture_failure` 1,572/278 →
+**2,366/276**; `prior_year_missing` 1/1 → **1,054/326**; `growth_base_not_positive` 1,600/336 →
+1,600/336; `not_applicable` 648/56 → 648/56; `denominator_not_positive` 616/108 → 616/108. The two
+moves are H1 (a refused input is a capture failure) and H2/H3 (an unformed TTM or an absent prior
+column is `prior_year_missing`), each taking rows that used to fall through to `missing_input`.
+
 ### Declared limitations
 
 - The provenance block's items carry the basis they were read on (G2); the prior-year column's own
   resolution flags still also appear as the `flag_prior_*` inputs.
+- A group shares one inputs dict, so `flag_nopat_tax_rate_outside_unit_interval` (H7) is present on
+  every row of `profitability`, `roic` and `valuation`, as every other group flag is; the predicate
+  (NOPAT formed and the rate outside [0, 1]) decides whether it is set at all.
 - The code-vs-matrix check for financial firms waits for **T-071** (APP-00's company-type profile).
 - The fidelity gate is **not wired into the cycle**: a mismatching value is reported, not excluded
   (G6 records what wiring it would need).
