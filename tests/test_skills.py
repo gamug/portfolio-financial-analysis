@@ -146,3 +146,17 @@ def test_no_skill_tells_the_model_to_compare_with_history_or_peers(group: str) -
     text = (load_skill(group) or "").lower()
     for word in ("history", "peer"):
         assert word not in text, (group, word)
+
+
+def test_sources_rows_and_skill_citations_agree() -> None:
+    """Fix round 2: every SOURCES.md row backs a bullet that exists, and every source citation in a skill
+    has a row (the source and its page, not a rule ID)."""
+    rows = _source_keys()
+    cited: set[str] = set()
+    for group in GROUP_METRICS:
+        for bullet in _bullets(load_skill(group) or ""):
+            for citation in _CITATION_RE.findall(bullet):
+                key = " ".join(citation[1:-1].split())
+                if key not in _rules():
+                    cited.add(key)
+    assert rows == cited, (sorted(rows - cited), sorted(cited - rows))

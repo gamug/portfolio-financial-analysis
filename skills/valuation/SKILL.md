@@ -22,13 +22,13 @@ and do not ask for filing text.
 - `sbc_adjusted_fcf_yield` is the project's own measure of what share-based compensation does to the yield:
   a project measure, not a standard's [MD-37].
 - An earnings yield with negative earnings is not a continuous value: the company carries a negative-earnings
-  flag and only the positive part is used [MET-05].
+  flag and only the positive part is used [MET-05], [C4 p.13], [C4 p.18].
 - A REIT's operating and earnings measures are flagged, because real-estate depreciation depresses them
   [APP-04]; the sector's own earnings measure works from GAAP net income without the real-estate depreciation
   [C1_Nareit_FFO_White_Paper_2018 p.2], [C6 p.10].
 - For a financial firm, debt is more akin to raw material than to a source of capital, and the notion of cost
-  of capital and enterprise value may be meaningless as a consequence [C2 p.5]; its cash flows cannot be
-  separated from its operations either [C2 p.14].
+  of capital and enterprise value may be meaningless as a consequence [C2 p.5]; estimating its cash flows
+  before debt payments is hard when its debt and debt payments cannot be easily identified [C2 p.14].
 
 ## What an empty value means
 

@@ -12,9 +12,8 @@ and `free_cash_flow_growth`. Read them; do not recompute them and do not ask for
   is the comparative column this filing carries, whatever that filing restated [PER-04].
 - The rate is empty when the base period is not positive, and flagged [MET-04].
 - A base fiscal year before an accounting standard's adoption makes the figure non-comparable across two
-  regimes, and it is flagged rather than dropped [PER-12]; the lease standard is the rule's own case for the
-  leverage and asset metrics [PER-13], and the credit-loss standard the case for a lender's earnings growth
-  [PER-14].
+  regimes, and it is flagged rather than dropped [PER-12]; the credit-loss standard is the rule's own case
+  for a lender's earnings growth [PER-14].
 - A loss, or a fall in earnings, can be temporary, long-term, or a stage in the company's life; the numbers
   alone do not say which [C9 p.3].
 

@@ -15,6 +15,11 @@ The profitability metrics are already computed: `gross_margin`, `operating_margi
 - NOPAT is taxed at the hypothetical rate the checklist declares, not at the rate a filing reports, so a
   filing's own tax lines do not reach the return [MET-03].
 - A filed negative is a value, not a missing one; a wrong sign is rejected, never repaired [ID-11].
+- A large cash balance depresses the return on equity: the cash earns a low, riskless return [C7 p.12].
+- Negative book equity leaves `return_on_equity` without a reading; the return on invested capital is then
+  the reading of the business [APP-07], [C7 p.12].
+- A return on equity is read against the cost of equity; the pipeline computes no cost of equity, so none is
+  assumed [C7 p.4].
 
 ## What an empty value means
 

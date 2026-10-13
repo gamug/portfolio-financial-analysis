@@ -11,9 +11,8 @@ do not recompute them and do not ask for filing text.
 - The rate is a geometric average, which a source calls the more accurate measure of true growth in past
   earnings, especially where year-to-year growth has been erratic [C8 p.3].
 - The rate is empty when either end is not positive, and flagged [MET-04].
-- A series that spans the adoption of an accounting standard is flagged as non-comparable [PER-12]; the lease
-  standard is the rule's own case for the leverage and asset metrics [PER-13], and the credit-loss standard
-  the case for a lender's earnings series [PER-14].
+- A series that spans the adoption of an accounting standard is flagged as non-comparable [PER-12]; the
+  credit-loss standard is the rule's own case for a lender's earnings series [PER-14].
 
 ## What an empty value means
 

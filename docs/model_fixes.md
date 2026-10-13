@@ -7811,8 +7811,9 @@ declared thresholds and the R&D gap, the sizes and the hash, CI and the sha1. Th
   before); 10-Q 63,932 → 41,947 (46,467 before).
 - **The prompt hash** (`out/f1_prompt_hash.txt`): `3f03aad01100a70d0f1d4e097d2f6565520e2eefe1cbae9baef8788d9e981453`
   → `448500d74ef81153d9920ec5cd9a170a1151a8ef567f881834d90084f231f877`.
-- **Residual, for the checklist's next version:** the checklist's own Annex B row MD-13 says the quick ratio
-  is "today (current assets − inventory) / current liabilities; **T-076 proposes** (cash + short-term
-  investments + receivables) / current liabilities". D-05 keeps today's formula (the quick-ratio item waits
-  for the second author), so that sentence in the frozen checklist is now stale. `docs/metric_dictionary.md`
-  and `metric_definitions.csv` are generated from it and cannot be edited by hand.
+- **Input for the checklist's next version (recorded): MD-13's stale "T-076 proposes" sentence.** The
+  checklist's own Annex B row MD-13 says the quick ratio is "today (current assets − inventory) / current
+  liabilities; **T-076 proposes** (cash + short-term investments + receivables) / current liabilities". D-05
+  keeps today's formula (the quick-ratio item waits for the second author), so "T-076 proposes" no longer
+  describes anything T-076 does or will do: the next checklist version should drop it. `docs/metric_dictionary.md`
+  and `metric_definitions.csv` are generated from that row and cannot be edited by hand.

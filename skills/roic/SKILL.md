@@ -17,10 +17,9 @@ for filing text.
   without the rate choice [MET-03].
 - A return is read against the cost of the capital that funds it: what the measure is for is comparing the
   return on invested capital with the cost of capital [C7 p.4].
-- Two distortions are not adjusted for. Expensed research is capital that the balance sheet does not show, so
-  the measured capital and the return built on it are understated [C7 p.19]. A lease is treated by the source
-  as an obligation of the same kind as debt, and operating leases are excluded from this code's debt [C7
-  p.30], [L-01].
+- Two distortions are not adjusted for. Expensed research is capital that the balance sheet does not show
+  [C7 p.19]. A lease is treated by the source as an obligation of the same kind as debt, and operating leases
+  are excluded from this code's debt [C7 p.30], [L-01].
 - The return is read only when invested capital is positive [APP-07].
 - `effective_tax_rate` is the filing's own rate — income tax over pre-tax income, in the filed sign [MD-30] —
   and the checklist declares that it is empty when pre-tax income is not positive [L-05].
