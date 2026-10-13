@@ -11,6 +11,8 @@ Each stored metric's inputs carry one ``provenance`` block:
   cross-check which is never the value, H4), ``prior_year`` or ``prior_quarter`` (the capital at the
   prior fiscal year end or the prior year's same quarter, with the ``Capital``'s source). A metric
   that reads an item on two bases lists both;
+* for ``market_capitalization``, which reads no statement item, the market cap's own source
+  (``kg_schema.market_cap``: the cover-page count x the close on the as-of date, L1);
 * the rule IDs applied (the checklist rules and Annex B's ``MD-`` rows);
 * the resolution flags;
 * and, when the value is empty, a reason from a fixed list of codes (G4's precedence).
@@ -135,7 +137,9 @@ ITEMS: dict[str, dict[str, str | tuple[str, ...]]] = {
     "revenue_cagr": {"revenue": "period"},
     "net_income_cagr": {"net_income": "period"},
     "operating_cash_flow_cagr": {"operating_cash_flow": "period"},
-    "market_capitalization": {"shares_outstanding": "period", "diluted_shares": "period"},
+    # L1: the market cap reads no statement item -- its value is the cover count x the close
+    # (`kg_schema.market_cap`, MKT-01..04); `build` records that source instead.
+    "market_capitalization": {},
     "enterprise_value": {
         "long_term_debt": "period",
         "short_term_debt": "period",
@@ -542,6 +546,29 @@ def _item_provenance(
     return entry
 
 
+# L1: the market cap's own source -- the filing's cover-page count (`dei:EntityCommonStockSharesOutstanding`,
+# stored in `filing_cover_shares`) times the close on or before the as-of date (`kg_schema.market_cap`,
+# MKT-01..04). `market_capitalization` declares no statement item; these are the inputs the row stores.
+MARKET_CAP_SOURCE = "kg_schema.market_cap"
+MARKET_CAP_INPUT_KEYS: tuple[str, ...] = (
+    "shares",
+    "share_age_days",
+    "split_factor",
+    "n_classes",
+    "share_price",
+    "price_date_offset_days",
+)
+
+
+def _market_cap_provenance(result: MetricResult) -> dict[str, Any]:
+    """L1: what ``market_capitalization``'s value came from, from the inputs the row already stores."""
+    return {
+        "source": MARKET_CAP_SOURCE,
+        "how": "cover_count_x_close",
+        **{key: result.inputs[key] for key in MARKET_CAP_INPUT_KEYS if key in result.inputs},
+    }
+
+
 def build(
     stmts: Statements,
     period_key: str,
@@ -550,7 +577,7 @@ def build(
 ) -> dict[str, Any]:
     """The ``provenance`` block of one metric result (D14; G2's bases)."""
     items = ITEMS.get(result.name, {})
-    return {
+    block: dict[str, Any] = {
         "accession": stmts.accession,
         "period": period_key,
         "rule_ids": list(RULE_IDS.get(result.name, ())),
@@ -566,6 +593,9 @@ def build(
         if result.value is not None
         else _empty_reason(stmts, period_key, result, ttm_flows),
     }
+    if result.name == "market_capitalization":
+        block["market_cap"] = _market_cap_provenance(result)
+    return block
 
 
 def attach(

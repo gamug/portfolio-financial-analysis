@@ -689,3 +689,45 @@ def test_k1_a_no_cover_shares_row_with_a_scale_suspect_is_capture_failure() -> N
     assert yield_.inputs["market_cap_no_cover_shares"] == 1.0
     assert yield_.inputs["share_scale_suspect"] == 1.0
     assert yield_.inputs["provenance"]["empty_reason"] == provenance.CAPTURE_FAILURE
+
+
+# -- L1: the market cap declares no statement item -----------------------------------------------
+
+
+def test_l1_a_market_cap_with_no_cover_shares_is_prior_year_missing() -> None:
+    """L1: `market_capitalization` declares no statement item, so an unfiled
+    `CommonStockSharesOutstanding` line no longer pre-empts the market-cap key (A
+    `0001090872-22-000007` is one of the 495 rows this fixes)."""
+    stmts = _j1_payload()
+    pairs = [
+        ("valuation", r)
+        for r in valuation_compute(
+            stmts, KEY, market_cap_missing="no_cover_shares", cik="0000000001"
+        )
+    ]
+    provenance.attach(pairs, stmts, KEY)
+    cap = next(r for _g, r in pairs if r.name == "market_capitalization")
+    assert cap.value is None
+    assert cap.inputs["provenance"]["items"] == {}
+    assert cap.inputs["provenance"]["empty_reason"] == provenance.PRIOR_YEAR_MISSING
+
+
+def test_l1_the_market_cap_block_names_the_cover_count_and_the_price() -> None:
+    """L1: the block records `kg_schema.market_cap` (the cover count x the close), not the
+    statements' share lines."""
+    stmts = _j1_payload()
+    pairs = [("valuation", r) for r in valuation_compute(stmts, KEY, market_cap=_mcap())]
+    provenance.attach(pairs, stmts, KEY)
+    cap = next(r for _g, r in pairs if r.name == "market_capitalization")
+    block = cap.inputs["provenance"]
+    assert cap.value == pytest.approx(5_000.0)
+    assert block["items"] == {}
+    assert "shares_outstanding" not in block["items"]
+    assert "diluted_shares" not in block["items"]
+    source = block["market_cap"]
+    assert source["source"] == provenance.MARKET_CAP_SOURCE
+    assert source["shares"] == pytest.approx(100.0)
+    assert source["share_price"] == pytest.approx(50.0)
+    assert source["share_age_days"] == pytest.approx(0.0)
+    assert source["split_factor"] == pytest.approx(1.0)
+    assert source["n_classes"] == pytest.approx(0.0)
