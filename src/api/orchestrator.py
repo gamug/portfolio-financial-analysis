@@ -13,15 +13,21 @@ items, never concatenated into a command. The preference flags (``--pin``,
 ``migrate``/``backfill``/``undo-run`` commands have no slot in the table or in
 :func:`build_argv` -- they cannot be produced, not merely rejected at the request.
 
-The API process never imports a package's run code and never opens a write-capable
-connection: a step's guards (the clean-tree guard, the stale-price guard, the DQ gate
-version) stay exactly as on the CLI, and the only database this module opens is a
-read-only one to read a step's own run-log row back.
+The API process never imports a package's run code: every step is a subprocess, so a
+step's guards (the clean-tree guard, the stale-price guard, the DQ gate version) stay
+exactly as on the CLI. This module is the one part of ``api/`` allowed to open a
+write-capable connection to ``KG_FINANCIAL_DB`` (constitution Tech stack #3, FR-014):
+it records the run's own provenance (``orchestrator_run`` / ``orchestrator_step``,
+T-012) with one short write per state change -- never a transaction held while a child
+runs, since the child writes the same file. It also opens read-only connections to read
+a step's own run-log row back.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import os
 import re
 import subprocess
@@ -36,9 +42,11 @@ from pathlib import Path
 from portfolio_common.db import DatabaseError
 
 from api.config import news_database_path
-from kg_schema import connect_ro
+from kg_schema import code_version, connect, connect_ro, ensure
 from kg_schema.env import DB_ENV_VAR, database_path, universe_database_path
 from kg_schema.rundate import parse_analysis_date
+
+log = logging.getLogger(__name__)
 
 # A copy of ``cycle.construction.SCHEMES``, not an import: importing that package runs
 # its ``__init__``, which pulls ``cycle.orchestrator`` (run code) onto ``api/``'s import
@@ -86,11 +94,13 @@ class RunContext:
 @dataclass(frozen=True)
 class StepSpec:
     """One subprocess step. ``command``/``flags``/``settings`` are the only pieces; there
-    is deliberately no field for a preference or override flag (D2)."""
+    is deliberately no field for a preference or override flag (D2). ``run_kind`` is the
+    run-log table this step's own id belongs to (T-012), a literal per step."""
 
     name: str
     package: str
     command: tuple[str, ...]
+    run_kind: str
     flags: tuple[str, ...] = ()
     settings: tuple[str, ...] = ()
     with_news_db: bool = False
@@ -103,14 +113,22 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "pricing",
         "pricing_agent",
         ("run",),
+        run_kind="pricing",
         flags=("--store-daily", "--observations"),
         run_id_regex=r"^run (\d+):",
     ),
-    StepSpec("fundamental", "fundamental_agent", ("run",), run_id_regex=r"^run (\d+):"),
+    StepSpec(
+        "fundamental",
+        "fundamental_agent",
+        ("run",),
+        run_kind="analysis",
+        run_id_regex=r"^run (\d+):",
+    ),
     StepSpec(
         "entity_resolution",
         "entity_resolution",
         ("build",),
+        run_kind="cycle",
         with_news_db=True,
         run_id_regex=r"^cycle (\d+):",
     ),
@@ -118,15 +136,29 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "cycle_select",
         "cycle",
         ("select",),
+        run_kind="cycle",
         settings=("top_n", "weight_scheme", "max_name_weight", "max_sector_weight"),
         run_id_regex=r"^select (\d+)\s",
     ),
-    StepSpec("quant_actions", "quant", ("backfill-actions",), quant_command="backfill-actions"),
-    StepSpec("quant_returns", "quant", ("build-returns",), quant_command="build-returns"),
+    StepSpec(
+        "quant_actions",
+        "quant",
+        ("backfill-actions",),
+        run_kind="quant",
+        quant_command="backfill-actions",
+    ),
+    StepSpec(
+        "quant_returns",
+        "quant",
+        ("build-returns",),
+        run_kind="quant",
+        quant_command="build-returns",
+    ),
     StepSpec(
         "quant_risk_model",
         "quant",
         ("build-risk-model",),
+        run_kind="quant",
         settings=("top_n", "max_name_weight", "max_sector_weight"),
         quant_command="build-risk-model",
     ),
@@ -134,13 +166,22 @@ _PIPELINE: tuple[StepSpec, ...] = (
         "quant_optimize",
         "quant",
         ("optimize",),
+        run_kind="quant",
         settings=("top_n", "max_name_weight", "max_sector_weight"),
         quant_command="optimize",
     ),
-    StepSpec("quant_evaluate", "quant", ("evaluate",), quant_command="evaluate"),
+    StepSpec(
+        "quant_evaluate",
+        "quant",
+        ("evaluate",),
+        run_kind="quant",
+        quant_command="evaluate",
+    ),
 )
 
-_MONITOR = StepSpec("cycle_monitor", "cycle", ("monitor",), run_id_regex=r"^monitor (\d+)\s")
+_MONITOR = StepSpec(
+    "cycle_monitor", "cycle", ("monitor",), run_kind="cycle", run_id_regex=r"^monitor (\d+)\s"
+)
 
 # Endpoint kind -> the ordered steps it runs.
 _PIPELINE_KIND = "pipeline"
@@ -240,6 +281,9 @@ class StepState:
     run_id: int | None = None
     reason: str | None = None
     output_tail: list[str] = field(default_factory=list)
+    # provenance (T-012): this step's orchestrator_step row id and the DB it lives in
+    pk: int | None = None
+    db_path: Path | None = None
 
 
 @dataclass
@@ -252,6 +296,10 @@ class RunState:
     started_at: str | None = None
     finished_at: str | None = None
     steps: list[StepState] = field(default_factory=list)
+    # provenance (T-012): the run's orchestrator_run row id, its surface and its DB
+    surface: str = "http"  # http|cli
+    pk: int | None = None
+    db_path: Path | None = None
 
 
 @dataclass
@@ -272,6 +320,20 @@ class RunInProgress(RuntimeError):
     def __init__(self, handle: str) -> None:
         super().__init__(f"a run is already in progress: {handle}")
         self.handle = handle
+
+
+class ProvenanceError(RuntimeError):
+    """The run's provenance row could not be written, so the run does not start (T-012).
+    The HTTP path answers ``500``; the CLI exits ``1``."""
+
+
+class _ProvenanceWriteFailed(RuntimeError):
+    """A provenance write failed after the run started (T-012): stop the run -- no further
+    child starts -- and never leave the thread dead with the row still ``running``."""
+
+    def __init__(self, original: BaseException) -> None:
+        super().__init__(f"provenance write failed: {type(original).__name__}: {original}")
+        self.original = original
 
 
 def get_run(handle: str) -> RunState | None:
@@ -304,22 +366,192 @@ def _provided_settings(ctx: RunContext) -> dict[str, object]:
     return {key: value for key, value in pairs.items() if value is not None}
 
 
-def new_run(kind: str, ctx: RunContext) -> RunState:
-    """Build a run's initial state, with every step's argv precomputed and recorded."""
+# -- provenance (T-012): one short write per state change ----------------------------------------
+
+# Static literal SQL (Code & Git #10): no identifier is ever built at runtime; every value is a
+# bound ? parameter. Each write opens, commits and closes its own connection, so no transaction
+# is held while a child runs (the child writes the same file).
+_RUN_INSERT_SQL = (
+    "INSERT INTO orchestrator_run "
+    "(handle, kind, as_of, surface, settings_json, status, started_at, code_version) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+)
+_STEP_INSERT_SQL = (
+    "INSERT INTO orchestrator_step "
+    "(orchestrator_run_id, ordinal, step, argv_json, status, run_kind) "
+    "VALUES (?, ?, ?, ?, 'pending', ?)"
+)
+_RUN_UPDATE_SQL = (
+    "UPDATE orchestrator_run SET status = ?, started_at = ?, finished_at = ? WHERE id = ?"
+)
+_STEP_UPDATE_SQL = (
+    "UPDATE orchestrator_step SET status = ?, started_at = ?, finished_at = ?, exit_code = ?, "
+    "run_id = ?, reason = ?, output_tail = ? WHERE id = ?"
+)
+
+
+def _ensure_tables(db_path: Path) -> None:
+    """Additive ``ensure`` (never ``run_migrations``) so a fresh database gets the provenance
+    tables and their views before the first write."""
+    try:
+        conn = connect(db_path)
+        try:
+            ensure(conn, run_migrations=False)
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise ProvenanceError(f"cannot prepare {db_path}: {type(exc).__name__}: {exc}") from exc
+
+
+def _insert_run(run: RunState, specs: tuple[StepSpec, ...]) -> None:
+    """Insert the run row and every step row (status ``pending``) in one short transaction,
+    then close -- so a GET right after the 202 finds them."""
+    assert run.db_path is not None  # set by new_run before this is called
+    try:
+        conn = connect(run.db_path)
+        try:
+            cur = conn.execute(
+                _RUN_INSERT_SQL,
+                (
+                    run.handle,
+                    run.kind,
+                    run.analysis_date,
+                    run.surface,
+                    json.dumps(run.settings) if run.settings else None,
+                    run.status,
+                    run.started_at,
+                    code_version(),
+                ),
+            )
+            run_pk = cur.lastrowid
+            assert run_pk is not None  # set after an INSERT
+            run.pk = int(run_pk)
+            for ordinal, (spec, state) in enumerate(zip(specs, run.steps, strict=True), start=1):
+                cur = conn.execute(
+                    _STEP_INSERT_SQL,
+                    (run.pk, ordinal, state.name, json.dumps(state.argv), spec.run_kind),
+                )
+                step_pk = cur.lastrowid
+                assert step_pk is not None  # set after an INSERT
+                state.pk = int(step_pk)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise ProvenanceError(f"cannot record the run: {type(exc).__name__}: {exc}") from exc
+
+
+def _persist_run(run: RunState) -> None:
+    if run.db_path is None or run.pk is None:
+        return
+    try:
+        conn = connect(run.db_path)
+        try:
+            conn.execute(_RUN_UPDATE_SQL, (run.status, run.started_at, run.finished_at, run.pk))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise _ProvenanceWriteFailed(exc) from exc
+
+
+def _persist_step(state: StepState) -> None:
+    if state.db_path is None or state.pk is None:
+        return
+    try:
+        conn = connect(state.db_path)
+        try:
+            conn.execute(
+                _STEP_UPDATE_SQL,
+                (
+                    state.status,
+                    state.started_at,
+                    state.finished_at,
+                    state.exit_code,
+                    state.run_id,
+                    state.reason,
+                    json.dumps(state.output_tail),
+                    state.pk,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise _ProvenanceWriteFailed(exc) from exc
+
+
+def new_run(
+    kind: str, ctx: RunContext, *, surface: str = "http", handle: str | None = None
+) -> RunState:
+    """Build a run's initial state (argv precomputed) and record it.
+
+    The ``orchestrator_run`` row and every step row (status ``pending``) are written before
+    this returns, so a GET right after the 202 finds them. If the run row cannot be written
+    the run does not start: :class:`ProvenanceError` propagates (HTTP ``500`` / CLI exit ``1``).
+    """
     specs = steps_for(kind)
-    return RunState(
-        handle=str(uuid.uuid4()),
+    run = RunState(
+        handle=handle or str(uuid.uuid4()),
         kind=kind,
         analysis_date=ctx.analysis_date,
         settings=_provided_settings(ctx),
+        status="running",
+        started_at=_now(),
         steps=[StepState(name=spec.name, argv=build_argv(spec, ctx)[1:]) for spec in specs],
+        surface=surface,
+        db_path=ctx.paths.db_path,
     )
+    for state in run.steps:
+        state.db_path = ctx.paths.db_path
+    _ensure_tables(ctx.paths.db_path)
+    _insert_run(run, specs)
+    return run
 
 
 def _set(state: StepState, **changes: object) -> None:
+    """Update a step's in-memory state, then persist it (raises on a write failure)."""
     with _LOCK:
         for key, value in changes.items():
             setattr(state, key, value)
+    _persist_step(state)
+
+
+def _try_set(state: StepState, **changes: object) -> None:
+    """Best-effort update for the failure paths: records the in-memory state, logs a write
+    failure instead of raising (the run is already being stopped)."""
+    with _LOCK:
+        for key, value in changes.items():
+            setattr(state, key, value)
+    try:
+        _persist_step(state)
+    except _ProvenanceWriteFailed:
+        log.exception("orchestrator step %s failed", state.name)
+
+
+def _fail_run(
+    run: RunState, state: StepState, reason: str, index: int, on_step_change: StepCallback | None
+) -> None:
+    """Record a failed step and every later step ``not_run`` (best effort: the write may
+    itself be what failed)."""
+    _try_set(state, status="failed", finished_at=_now(), reason=reason)
+    _notify(on_step_change, state)
+    for later in run.steps[index + 1 :]:
+        _try_set(later, status="not_run")
+        _notify(on_step_change, later)
+
+
+def _finish_run(run: RunState, failed: bool) -> None:
+    """Set the run's final state, clear the active handle, and persist (best effort)."""
+    with _LOCK:
+        run.finished_at = _now()
+        run.status = "failed" if failed else "completed"
+        if run.handle == _REGISTRY.active:
+            _REGISTRY.active = None
+    try:
+        _persist_run(run)
+    except _ProvenanceWriteFailed:
+        log.exception("orchestrator run %s: final provenance write failed", run.handle)
 
 
 # -- run-id capture -----------------------------------------------------------------------------
@@ -409,75 +641,71 @@ def execute_run(
     run: RunState, ctx: RunContext, *, on_step_change: StepCallback | None = None
 ) -> None:
     """Run *run*'s steps in order, mutating its state. The first step that fails -- a
-    non-zero exit (D5) or an exception -- ends the run; later steps are ``not_run``. A
+    non-zero exit (D5), an exception, or a provenance write that fails (T-012) -- ends the
+    run; later steps are ``not_run``. A
     missing news source skips only ``entity_resolution`` (D6).
 
     *on_step_change* is called on every status transition (a step starts, then ends), so
     the CLI wrapper can print a line per step live; the HTTP path passes none. A
     ``KeyboardInterrupt``/``SystemExit`` records the state first, then propagates, so the
-    process still exits non-zero and the caller can still print the run's state."""
+    process still exits non-zero and the caller can still print the run's state. A provenance
+    write that fails after the run started stops the run (no further child starts), records
+    the in-memory state as failed and clears the active handle."""
     specs = steps_for(run.kind)
-    with _LOCK:
-        run.status = "running"
-        run.started_at = _now()
     failed = False
     try:
         for index, (spec, state) in enumerate(zip(specs, run.steps, strict=True)):
-            if failed:
-                _set(state, status="not_run")
-                _notify(on_step_change, state)
-                continue
-            if spec.name == "entity_resolution" and not _news_available(ctx.paths.news_db_path):
-                _set(
-                    state,
-                    status="skipped",
-                    reason=(f"no news source configured ({ctx.paths.news_db_path} not found)"),
-                )
-                _notify(on_step_change, state)
-                continue
-            _set(state, status="running", started_at=_now())
-            _notify(on_step_change, state)
             try:
-                _run_one(spec, state, ctx)
-            except BaseException as exc:  # a step that raises must never look completed
-                _set(
-                    state,
-                    status="failed",
-                    finished_at=_now(),
-                    reason=f"{type(exc).__name__}: {exc}",
-                )
-                failed = True
+                if failed:
+                    _set(state, status="not_run")
+                    _notify(on_step_change, state)
+                    continue
+                if spec.name == "entity_resolution" and not _news_available(ctx.paths.news_db_path):
+                    _set(
+                        state,
+                        status="skipped",
+                        reason=(f"no news source configured ({ctx.paths.news_db_path} not found)"),
+                    )
+                    _notify(on_step_change, state)
+                    continue
+                _set(state, status="running", started_at=_now())
                 _notify(on_step_change, state)
-                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                    for later in run.steps[index + 1 :]:  # record the rest, then propagate
-                        _set(later, status="not_run")
-                        _notify(on_step_change, later)
-                    raise
-                continue
-            _notify(on_step_change, state)
-            if state.status == "failed":
+                _run_one(spec, state, ctx)
+                _notify(on_step_change, state)
+                if state.status == "failed":
+                    failed = True
+            except _ProvenanceWriteFailed as exc:
+                # A write failed after the run started: stop, no further child runs.
                 failed = True
+                log.exception("orchestrator run %s failed", run.handle)
+                _fail_run(run, state, str(exc), index, on_step_change)
+                break
+            except BaseException as exc:  # a step that raises must never look completed
+                failed = True
+                _fail_run(run, state, f"{type(exc).__name__}: {exc}", index, on_step_change)
+                if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                    raise
     finally:
-        with _LOCK:
-            run.finished_at = _now()
-            run.status = "failed" if failed else "completed"
-            if run.handle == _REGISTRY.active:
-                _REGISTRY.active = None
+        _finish_run(run, failed)
 
 
-def run_now(kind: str, ctx: RunContext, *, on_step_change: StepCallback | None = None) -> RunState:
-    """The foreground path (the CLI wrapper): build and execute in this thread."""
-    run = new_run(kind, ctx)
+def run_now(
+    kind: str, ctx: RunContext, *, on_step_change: StepCallback | None = None, surface: str = "cli"
+) -> RunState:
+    """The foreground path (the CLI wrapper): build, record and execute in this thread."""
+    run = new_run(kind, ctx, surface=surface)
     execute_run(run, ctx, on_step_change=on_step_change)
     return run
 
 
-def start_run(kind: str, ctx: RunContext) -> RunState:
-    """The HTTP path: register the run and execute it in a background thread (D4)."""
-    run = new_run(kind, ctx)
+def start_run(kind: str, ctx: RunContext, *, surface: str = "http") -> RunState:
+    """The HTTP path: record the run, reserve the one active slot and execute it in a
+    background thread (D4). The active check and the record happen under the lock, so a 409
+    never leaves a run row behind and two POSTs cannot race."""
     with _LOCK:
         if _REGISTRY.active is not None:
             raise RunInProgress(_REGISTRY.active)
+        run = new_run(kind, ctx, surface=surface)
         _REGISTRY.runs[run.handle] = run
         _REGISTRY.active = run.handle
     thread = threading.Thread(
@@ -587,7 +815,11 @@ def cli_main(argv: list[str]) -> int:
         max_name_weight=args.max_name_weight,
         max_sector_weight=args.max_sector_weight,
     )
-    run = new_run(_PIPELINE_KIND, ctx)
+    try:
+        run = new_run(_PIPELINE_KIND, ctx, surface="cli")
+    except ProvenanceError as exc:
+        print(f"cannot record the run: {exc}", file=sys.stderr)
+        return 1
     try:
         execute_run(run, ctx, on_step_change=print_step_change)
     except (KeyboardInterrupt, SystemExit):

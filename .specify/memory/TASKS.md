@@ -74,7 +74,11 @@ Placed by the user 2026-10-05: after Work item 19, before the final pilot `T-143
       the same on the CLI wrapper; preference flags rejected on the writing path; no `--allow-*` override or
       `migrate` over HTTP). **Also decides where the orchestration code lives** (a new top-level package vs.
       inside `api/`, against Project structure #1's bar). → steps 1 and 2.
-- [ ] **T-012** Record orchestrator-level provenance (step, run_id, start/end, status) reusing the existing
+- [x] **T-012** — **done 2026-10-13, PR #145** (approved with no review round: orchestrator_run /
+  orchestrator_step with v_orchestrator_run / v_orchestrator_step, marker m015 / contract 15; the status
+  endpoint reads the database and survives a restart; a failed provenance write stops the run; GET /runs
+  lists kind=orchestrator from static SQL; verify_pilot's T-012 check). Record orchestrator-level
+  provenance (step, run_id, start/end, status) reusing the existing
       run-log `v_*` pattern; every run endpoint, single-step included, writes a row; the status endpoint reads
       it. → step 3.
 - [ ] **T-013** Per-step failure isolation: an independent step's failure (e.g. `entity_resolution`) does not

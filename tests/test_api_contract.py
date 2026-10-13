@@ -128,7 +128,7 @@ def test_contract_version_is_the_highest_migration_and_code_version_is_the_codes
     client: TestClient,
 ) -> None:
     body = client.get("/api/v1/contract").json()
-    assert body["contract_version"] == max(v for v, _, _ in MIGRATIONS) == 14
+    assert body["contract_version"] == max(v for v, _, _ in MIGRATIONS) == 15
     assert body["code_version"] == code_version()
 
 
@@ -157,7 +157,7 @@ def test_the_declared_quant_run_table_matches_quants_own() -> None:
 def test_database_contract_of_a_complete_database(client: TestClient) -> None:
     body = client.get("/api/v1/contract/database").json()
     assert body == {
-        "schema_version": 14,
+        "schema_version": 15,
         "views_present": list(VIEWS),
         "views_missing": [],
     }
@@ -176,7 +176,7 @@ def test_database_contract_of_a_partial_database_names_the_missing_views(tmp_pat
         r = c.get("/api/v1/contract/database")
     assert r.status_code == 200
     body = r.json()
-    assert body["schema_version"] == 14
+    assert body["schema_version"] == 15
     assert body["views_present"] == present
     assert body["views_missing"] == [n for n in VIEWS if n not in present]
     assert "v_quant_run" in body["views_missing"]
@@ -187,12 +187,12 @@ def test_database_contract_reports_the_recorded_version_not_the_codes(
 ) -> None:
     """A database that lags its code (migrate not run): the version is its own."""
     raw = sqlite3.connect(migrated_path)
-    raw.execute("DELETE FROM schema_version WHERE version = 14")
+    raw.execute("DELETE FROM schema_version WHERE version = 15")
     raw.commit()
     raw.close()
     with _app(migrated_path, tmp_path) as c:
-        assert c.get("/api/v1/contract/database").json()["schema_version"] == 13
-        assert c.get("/api/v1/contract").json()["contract_version"] == 14
+        assert c.get("/api/v1/contract/database").json()["schema_version"] == 14
+        assert c.get("/api/v1/contract").json()["contract_version"] == 15
 
 
 def test_database_without_a_schema_version_table_reports_0_and_stays_empty(
@@ -247,8 +247,11 @@ def test_every_connect_in_contract_is_memory_and_no_other_api_module_calls_conne
         first = call.args[0]
         assert isinstance(first, ast.Constant) and first.value == ":memory:"
 
+    # contract.py's connect() is :memory:; api/orchestrator.py is the run path, the one place
+    # in api/ allowed to open a write-capable connection (T-012, constitution Tech stack #3).
+    # Every other api/ module -- all the read routers -- stays connect-free.
     for path in sorted((_SRC / "api").rglob("*.py")):
-        if path.name == "contract.py":
+        if path.name in ("contract.py", "orchestrator.py"):
             continue
         assert "connect" not in _calls(path), f"{path} calls connect()"
 

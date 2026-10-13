@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import kg_schema
 from api import orchestrator as orch
 from api.app import create_app
 from api.config import ApiSettings
@@ -33,6 +34,7 @@ def _client(tmp_path: Path, *, news_exists: bool = True) -> TestClient:
     news = tmp_path / "news.db"
     if news_exists:
         news.write_text("")
+    (tmp_path / "fin.db").touch()  # the read routes need the DB file to exist
     settings = ApiSettings(
         db_path=tmp_path / "fin.db",
         universe_db_path=tmp_path / "universe.db",
@@ -295,6 +297,131 @@ def test_no_route_for_migrate_backfill_or_undo_run(tmp_path: Path) -> None:
             assert forbidden not in run_paths
 
 
+# -- provenance (T-012) -------------------------------------------------------------------------
+
+
+def _fetch(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> list:
+    conn = kg_schema.connect_ro(db_path)
+    try:
+        return list(conn.execute(sql, params).fetchall())
+    finally:
+        conn.close()
+
+
+def _flaky_persist(fail_on: int) -> object:
+    real = orch._persist_step
+    state = {"n": 0}
+
+    def flaky(step: orch.StepState) -> None:
+        state["n"] += 1
+        if state["n"] == fail_on:
+            raise orch._ProvenanceWriteFailed(OSError("disk full"))
+        real(step)
+
+    return flaky
+
+
+def test_the_202_handle_is_readable_at_once_and_rows_are_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeRunner(_IDS)
+    fake.gate = threading.Event()
+    monkeypatch.setattr(orch, "run_command", fake)
+    with _client(tmp_path) as client:
+        r = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
+        handle = r.json()["handle"]
+        assert fake.started.wait(timeout=10)
+        # the run row exists before the first child returns: a GET finds it at once
+        got = client.get(f"/api/v1/run/{handle}")
+        assert got.status_code == 200 and got.json()["handle"] == handle
+        assert got.json()["steps"][0]["status"] == "running"
+        fake.gate.set()
+        _wait(client, f"/api/v1/run/{handle}", {"completed", "failed"})
+    runs = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")
+    steps = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step ORDER BY ordinal")
+    assert len(runs) == 1 and runs[0]["handle"] == handle
+    assert [s["ordinal"] for s in steps] == list(range(1, 10))
+
+
+def test_a_single_step_writes_one_run_and_one_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(orch, "run_command", FakeRunner(_IDS))
+    with _client(tmp_path) as client:
+        handle = client.post(
+            "/api/v1/run/pricing-agent", json={"analysis_date": "2026-10-02"}
+        ).json()["handle"]
+        _wait(client, f"/api/v1/run/{handle}", {"completed", "failed"})
+    assert len(_fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_run")) == 1
+    steps = _fetch(tmp_path / "fin.db", "SELECT * FROM v_orchestrator_step")
+    assert len(steps) == 1 and steps[0]["step"] == "pricing"
+
+
+def test_status_survives_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(orch, "run_command", FakeRunner(_IDS))
+    with _client(tmp_path) as client:
+        handle = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"}).json()[
+            "handle"
+        ]
+        done = _wait(client, f"/api/v1/run/{handle}", {"completed", "failed"})
+    orch.clear_runs()  # the in-memory registry is gone (a restart)
+    with _client(tmp_path) as client:  # a new app instance
+        again = client.get(f"/api/v1/run/{handle}").json()
+    assert again == done
+
+
+def test_a_run_row_that_cannot_be_written_is_500_and_starts_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake = FakeRunner(_IDS)
+    monkeypatch.setattr(orch, "run_command", fake)
+    not_a_db = tmp_path / "not_a_db"
+    not_a_db.mkdir()
+    settings = ApiSettings(
+        db_path=not_a_db,
+        universe_db_path=tmp_path / "universe.db",
+        news_db_path=tmp_path / "news.db",
+    )
+    with TestClient(create_app(settings)) as client:
+        r = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
+    assert r.status_code == 500
+    assert "detail" in r.json()
+    assert fake.calls == []  # no child started
+
+
+def test_a_provenance_write_failure_stops_the_run_and_frees_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(orch, "run_command", FakeRunner(_IDS))
+    monkeypatch.setattr(orch, "_persist_step", _flaky_persist(3))
+    with _client(tmp_path) as client:
+        handle = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"}).json()[
+            "handle"
+        ]
+        done = _wait(client, f"/api/v1/run/{handle}", {"failed", "completed"})
+        assert done["status"] == "failed"
+        failed = next(s for s in done["steps"] if s["status"] == "failed")
+        assert failed["reason"] == "provenance write failed: OSError: disk full"
+        assert all(s["status"] == "not_run" for s in done["steps"][1:])
+        again = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"})
+        assert again.status_code == 202  # the slot was freed
+
+
+def test_get_runs_lists_orchestrator(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(orch, "run_command", FakeRunner(_IDS))
+    with _client(tmp_path) as client:
+        handle = client.post("/api/v1/run/pipeline", json={"analysis_date": "2026-10-02"}).json()[
+            "handle"
+        ]
+        _wait(client, f"/api/v1/run/{handle}", {"completed", "failed"})
+        only = client.get("/api/v1/runs?kind=orchestrator").json()
+        everything = client.get("/api/v1/runs").json()
+    assert [r["kind"] for r in only] == ["orchestrator"]
+    assert only[0]["as_of"] == "2026-10-02"
+    assert only[0]["status"] in ("completed", "failed")
+    assert only == everything  # this database has only the one orchestrator run
+
+
 # -- the read/run router split ------------------------------------------------------------------
 
 
@@ -313,8 +440,22 @@ def test_no_read_router_imports_the_run_router() -> None:
         if path.name == "run.py":
             continue
         assert "api.routers.run" not in _imported_modules(path), path
-    # run_status reads the orchestrator state and nothing that starts a run.
-    assert "api.orchestrator" in _imported_modules(_ROUTERS / "run_status.py")
+    # run_status reads the recorded provenance (T-012) and nothing that starts a run: it no
+    # longer imports api.orchestrator.
+    assert "api.orchestrator" not in _imported_modules(_ROUTERS / "run_status.py")
+
+
+def test_runs_router_has_no_f_string_sql() -> None:
+    """Code & Git #10: runs.py routes the view name through a static literal-SQL dict, never
+    an f-string (the T-012 fix)."""
+    for node in ast.walk(ast.parse((_ROUTERS / "runs.py").read_text())):
+        if isinstance(node, ast.JoinedStr):
+            text = "".join(
+                v.value
+                for v in node.values
+                if isinstance(v, ast.Constant) and isinstance(v.value, str)
+            )
+            assert "SELECT" not in text.upper(), "runs.py builds SQL with an f-string"
 
 
 def test_no_read_router_opens_a_write_capable_connection() -> None:

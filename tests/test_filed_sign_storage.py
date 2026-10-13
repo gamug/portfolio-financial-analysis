@@ -72,8 +72,8 @@ def test_m013_adds_the_column_and_leaves_every_existing_row_null(memory_db: Data
     memory_db.commit()
     assert "preferred_sign" not in memory_db.table_columns("financial_facts")
 
-    assert migrations.apply_migrations(memory_db) == [13, 14]
-    assert queries.current_version(memory_db) == 14
+    assert migrations.apply_migrations(memory_db) == [13, 14, 15]
+    assert queries.current_version(memory_db) == 15
     assert "preferred_sign" in memory_db.table_columns("financial_facts")
     assert memory_db.execute("SELECT preferred_sign FROM financial_facts").fetchone()[0] is None
     assert migrations.apply_migrations(memory_db) == []  # idempotent
