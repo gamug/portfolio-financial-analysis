@@ -26,7 +26,7 @@ from fundamental_agent.statements import RESOLVER_MAPS, RESOLVER_RULE_IDS, State
 
 REPO = Path(__file__).resolve().parents[1]
 DICTIONARY = REPO / "docs" / "metric_dictionary.md"
-MATRIX = REPO / "src" / "fundamental_agent" / "data" / "applicability_matrix.csv"
+MATRIX = REPO / "src" / "kg_schema" / "data" / "applicability_matrix.csv"
 G = "us-gaap_"
 KEY = "2024-12-31 (FY)"
 PRIOR = "2023-12-31 (FY)"

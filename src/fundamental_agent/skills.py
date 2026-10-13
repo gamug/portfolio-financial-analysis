@@ -3,8 +3,9 @@
 Each skill is the interpretation a specialist reads beside its group's already-computed numbers: how to read
 them, what a flag or an empty value means, and what is not applicable to which company type. The numbers
 themselves are computed by :mod:`fundamental_agent.metrics`; a skill states no formula (T-076, D2). The two
-generated data files beside this module -- ``metric_definitions.csv`` and ``applicability_matrix.csv`` --
-carry the checklist's own definitions and applicability codes into the prompt.
+generated data files beside this module -- ``metric_definitions.csv`` --
+carries the checklist's own definitions into the prompt, and :mod:`kg_schema.applicability` carries the
+applicability matrix (T-071 part 1 moved it there so every package reads one copy).
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ import os
 import re
 from functools import cache
 from pathlib import Path
+
+from kg_schema import applicability
 
 # The nine specialist groups, and the metrics each group's ``compute`` returns (T-076, D2). The metric names
 # are pinned to the code by ``tests/test_skills.py``, which runs every group on a filing fixture.
@@ -98,12 +101,18 @@ def _definitions() -> dict[str, dict[str, str]]:
 
 @cache
 def _applicability() -> dict[str, list[dict[str, str]]]:
-    """``{metric: [row]}`` from the generated ``applicability_matrix.csv``, in file order."""
+    """``{metric: [row]}`` from the checklist's matrix (:mod:`kg_schema.applicability`), in column order."""
     rows: dict[str, list[dict[str, str]]] = {}
-    with (_DATA / "applicability_matrix.csv").open() as handle:
-        for row in csv.DictReader(handle):
-            rows.setdefault(row["metric"], []).append(row)
+    for name in _matrix_metrics():
+        rows[name] = [
+            {"metric": name, "company_type": column, "code": code, "rule": rule}
+            for column, (code, rule) in applicability.cells(name).items()
+        ]
     return rows
+
+
+def _matrix_metrics() -> tuple[str, ...]:
+    return applicability.metrics()
 
 
 def group_definitions(group: str) -> list[dict[str, str]]:
