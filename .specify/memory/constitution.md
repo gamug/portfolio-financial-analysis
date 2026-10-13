@@ -118,10 +118,15 @@ assumes the stack actually pinned in `pyproject.toml`.
    A
    new cross-cutting doc goes in `docs/`; a spec-kit artifact (this
    constitution, `SPEC.md`, `PLAN.md`, `TASKS.md`) goes under `.specify/`.
-   `skills/<ratio-name>/SKILL.md` documents one deterministic ratio
-   calculation each (`roic`, `cagr`, `fcf_margin`, `free_cash_flow_yield`,
-   `interest_coverage_ratio`) — a new ratio worth a specialist skill gets the
-   same treatment, not an inline docstring only.
+   `skills/<group>/SKILL.md` documents one **specialist group**'s metrics —
+   interpretation only: how to read the group's already-computed values,
+   flags and empty reasons. A skill states no formula (the metric
+   definitions come from Annex B of the checklist through the generated data
+   files) and every statement cites what backs it — a checklist rule ID, or a
+   loaded source from the checklist's sources register with its PDF page and
+   verbatim quote (recorded in `skills/SOURCES.md` and checked like the
+   checklist's quotes); a statement with no backing is not written — a new
+   specialist group gets the same treatment, not an inline docstring only.
 5. **Config lives where its tool expects it, not duplicated.** Ruff:
    `.code_quality/ruff.toml`. Mypy: `.code_quality/mypy.ini`. Pytest:
    `[tool.pytest.ini_options]` in `pyproject.toml`. Don't fork a second
@@ -437,9 +442,24 @@ Compliance is expected to be checked the same way lint/type/test gates
 are — a reviewer (human or agent) rejecting a PR that violates a principle
 above should cite the section by name.
 
-**Version**: 2.0.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-06
+**Version**: 2.1.0 | **Ratified**: 2026-09-12 | **Last Amended**: 2026-10-13
 
 **Amendment log**:
+- 2.1.0 (2026-10-13) — MINOR: Project structure #4 redefines what a
+  `skills/<group>/SKILL.md` is. It is now one skill per **specialist group**,
+  interpretation only — how to read the group's already-computed values, flags
+  and empty reasons — with no formula (the metric definitions come from Annex B
+  of the checklist through the generated data files) and every statement citing
+  what backs it — a checklist rule ID, or a loaded source from the checklist's
+  sources register with its PDF page and verbatim quote (recorded in
+  `skills/SOURCES.md` and checked like the checklist's quotes); a statement with
+  no backing is not written. Materially changed guidance: the five
+  skills were written as generic manual-extraction prompt templates with no
+  source, and T-076's review against checklist v1.3 found them contradicting
+  the rules (NOPAT at the filing's own rate, operating leases as debt, a dual
+  invested-capital approach, unsourced WACC/excess-cash thresholds); they are
+  rebuilt on the checklist, one per specialist group. MINOR because the
+  guidance is materially redefined, not a wording fix.
 - 2.0.0 (2026-10-06) — MAJOR: Tech stack #3 no longer defines `api/` as
   read-only. It splits `api/` into read endpoints (the read-only, `mode=ro`,
   never-starts-a-run guarantee is kept for each of them) and run endpoints
