@@ -6785,3 +6785,86 @@ to 3.4% of the total.
 - **Correction (T-151 part 1, 2026-10-13):** under part 2's causes items 3 and 9, the first-filing
   count is **our data window**, not a filer fact (no prior cover count exists inside it), and MA/BALL's
   empty parent net income follows the face-only rule (ID-03), a declared choice, not a missing source.
+
+## T-154 — `migrate` never replays a rebuild on a database that already has the current shape
+
+**The bug.** A database created by `kg_schema.ensure()` without `run_migrations` — the path every
+agent's `ensure_schema` takes — has the current *columns* but 0 rows in `schema_version`, so
+`python -m fundamental_agent migrate` replayed m001…m014 on it. Each rebuilding migration copies only
+the columns it itself knows, so every column a later release added came back NULL. Reproduced with
+master's code and with this branch's (`scripts/verify_t154.py repro`, `out/p3_repro_before.txt` and
+`out/p3_repro_after.txt`; the script prints the `kg_schema.migrations` path it loaded): a fact stored
+with `preferred_sign = -1`, `correction_rule = 'T-042'`:
+
+| code | `apply_migrations` | the fact after |
+|---|---|---|
+| master | `[1, 2, 3, …, 15]` | `(None, None)` |
+| this branch | `[1, 2, 3, …, 15]` | `(-1.0, 'T-042')` |
+
+The T-148b scratch database `/workspaces/thesis/scratch/t148b/after_full.db` is in exactly that state:
+1,990,694 facts, **1,988,623** with `preferred_sign` and **109** with `correction_rule`, keyed
+`financial_facts UNIQUE (filing_id, statement, concept, period_key)` (the pre-m002 key) with no
+`ux_quant_portfolio_book` and `cycle_run` without AUTOINCREMENT (`out/p2_check.txt`).
+
+**D1 — every rebuilding migration checks its target shape first** (`kg_schema/migrations.py`). m002 and
+m003 (the versioned `UNIQUE` key), m004 (the compatibility view), m005 and m006 (the widened `CHECK`),
+m007 (the NULL-safe book index), m009 (the stint columns) and m014 (AUTOINCREMENT) each return early
+when their target shape is already there, so a rebuild is never replayed on a table that already has
+it. The key and the index are read through the `pragma_index_list` / `pragma_index_info` table-valued
+functions with the names bound — no identifier is interpolated into SQL. `apply_migrations` still
+records a skipped migration's version, so the floor ends up correct.
+
+**The rebuilds carry the columns the current code adds.** A rebuild that legitimately runs — on a
+database whose key is still the pre-migration one, like `after_full.db` — would otherwise still drop
+them, so each rebuild now adds the column to the old table first (a no-op when it is already there) and
+copies it, exactly as m005/m006 already carried `forensic_flags_json` (T-041): `preferred_sign` and
+`correction_rule` (m002), `available_at` (m003), `available_at` and `prompt_hash` (m005/m006),
+`expires_on` and `expiry_history_json` (m009).
+
+**D2 — a database already at the current shape records its floor** (`kg_schema.ensure`). When
+`schema_version` is empty and every rebuilding migration's guard reports its target shape
+(`migrations.at_current_shape`), every version is recorded with the description
+`"stamped: created at the current shape"`, so `migrate` applies nothing there
+(`scripts/verify_t154.py stamp`, `out/p3_stamp.txt`):
+
+| database | guards | `at_current_shape` | floor after `ensure` | `apply_migrations` |
+|---|---|---|---|---|
+| created by `ensure()` alone | m002, m003, m007 False | False | 0 | `[1..15]` |
+| at the current shape, floor emptied | all True | True | 15, each `"stamped: created at the current shape"` | `[]` |
+
+A database with an empty floor but an older shape is left alone: `migrate` runs the real rebuilds,
+which no longer drop a column.
+
+**The data check (3.2)** — `scripts/verify_t154.py replay`, `out/p2_check.txt`: a copy of
+`after_full.db` in the T-154 scratch root, migrated, with both columns counted before and after.
+
+| | facts | `preferred_sign` | `correction_rule` |
+|---|---|---|---|
+| before | 1,990,694 | 1,988,623 | 109 |
+| after | 1,990,694 | 1,988,623 | 109 |
+
+`apply_migrations` returned `[1, 2, 3, …, 15]`; the keys widened from
+`financial_facts UNIQUE (filing_id, statement, concept, period_key)` /
+`fundamental_metrics UNIQUE (filing_id, metric_group, metric_name)` to the versioned ones. The copy
+took 24.0s and was deleted. No count dropped.
+
+**Tests** (`tests/test_migrations_replay.py`, +7; `pytest -q` 2,248 passed): (a) a fresh `ensure()`
+database with one row in every rebuilt table, every column filled (`preferred_sign`,
+`correction_rule`, `forensic_flags_json`, `available_at`, `prompt_hash`, `expires_on` and the run
+tables' own), then `apply_migrations` — every value unchanged and no column lost; (b) the floor records
+1..14 and a second run applies nothing, a current-shape database is stamped by D2, and a rebuild
+skipped by its guard still records its version; (c) an old-shape database (the pre-kg_schema DDL the
+existing migration tests build) still widens its key and backfills `filing_version` from the accession,
+with the later columns surviving; (d) reviewer A's reproduction; and the data-carrying migrations
+(m001, m008, m010–m013, m015) changing no row on replay.
+
+**Declared limitation (decided by reviewer A, 2026-10-13, PR #146).** A database created by `ensure()`
+alone is **not** at the migrations' target shape — its `financial_facts`/`fundamental_metrics` keys are
+the pre-m002/m003 ones and `ux_quant_portfolio_book` is absent (measured: `out/p3_stamp.txt`) — so D2
+does not stamp it, and `migrate` still replays m002/m003/m007/m014 there, now without losing a value
+(which is what 3.2 measures). Aligning the agents' declared DDL with the migrations' target shapes is
+**not** part of T-154: it would change `ensure()`'s documented contract (the versioned key would no
+longer need `migrate`) and four existing fixtures/tests (`test_quant_book_key`, `test_quant_ddl`,
+`test_quant_pipeline`, `test_metric_versions`). **Consequence for T-143 (the pilot) and T-100
+(production): create the fresh database, then run `python -m fundamental_agent migrate` once before any
+data, so the versioned unique keys exist.**
