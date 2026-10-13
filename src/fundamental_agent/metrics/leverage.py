@@ -102,6 +102,10 @@ def compute(
     inputs.update(flag_inputs("interest_expense", interest_resolution.flags))
     inputs.update(flag_inputs("depreciation_amortization", da_flags))
     inputs.update(capital.capital_flags(cap, "current"))
+    # F4: the flags the NCI / short-term-investment / net-debt combinations raise.
+    inputs.update(
+        capital.combination_flags(cap, "current", income_filed=stmts.nci_income_filed(period_key))
+    )
     # MET-09: interest coverage is empty when interest expense is not positive. Zero is not
     # defined; a negative filed value (a net interest income, a wrong sign the resolver did not
     # reject) is flagged, never turned positive with abs() (ID-11).

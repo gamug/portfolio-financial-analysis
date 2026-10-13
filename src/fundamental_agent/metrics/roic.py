@@ -105,6 +105,8 @@ def compute(
     inputs.update(flag_inputs("income_tax", tax_resolution.flags))
     inputs.update(flag_inputs("total_debt", cap.debt.flags))
     inputs.update(capital.capital_flags(cap, "prior"))
+    # F4: the flags the NCI / short-term-investment / invested-capital combinations raise.
+    inputs.update(capital.combination_flags(cap, "prior", income_filed=income_filed))
     inputs[f"nopat_tax_rate_{rate_reason}"] = 1.0
     inputs[f"nopat_ttm_tax_rate_{annual_reason}"] = 1.0
     if annual_reason == REIT_TTM_RATE_MISSING:

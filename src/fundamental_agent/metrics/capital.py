@@ -118,6 +118,30 @@ def working_capital(cap: Capital) -> Resolution:
     return Resolution(value, "noncash_working_capital", "map", flags)
 
 
+def resolution_flags(res: Resolution, prefix: str) -> dict[str, float]:
+    """One resolution's flags as metric inputs (F4), keyed ``flag_<prefix>_<flag>``."""
+    return {f"flag_{prefix}_{flag}": 1.0 for flag in res.flags}
+
+
+def combination_flags(cap: Capital, prefix: str, *, income_filed: bool) -> dict[str, float]:
+    """The flags of the NCI, short-term-investment, invested-capital and net-debt resolutions (F4,
+    D11): ``capital_flags`` writes only the ``Capital`` items' own flags, so the flags these
+    combinations raise (``nci_capture_failure``, ``invested_capital_capture_failure``,
+    ``net_debt_capture_failure``, ``short_term_investments_in_cash``, ...) would be lost."""
+    out: dict[str, float] = {}
+    out.update(
+        resolution_flags(net_short_term_investments(cap), f"{prefix}_short_term_investments")
+    )
+    out.update(resolution_flags(nci(cap, income_filed=income_filed), f"{prefix}_nci"))
+    out.update(
+        resolution_flags(
+            invested_capital(cap, income_filed=income_filed), f"{prefix}_invested_capital"
+        )
+    )
+    out.update(resolution_flags(net_debt(cap), f"{prefix}_net_debt"))
+    return out
+
+
 def capital_flags(cap: Capital, prefix: str) -> dict[str, float]:
     """Every resolution flag of *cap* as metric inputs (D11), keyed ``flag_<prefix>_<flag>``."""
     out: dict[str, float] = {}

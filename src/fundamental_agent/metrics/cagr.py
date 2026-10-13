@@ -59,8 +59,6 @@ def compute(
     )
     if asc842:
         inputs["flag_crosses_asc842"] = 1.0
-    if cecl:
-        inputs["flag_crosses_cecl"] = 1.0
 
     results: list[MetricResult] = []
     for item, name in _SERIES:
@@ -68,5 +66,12 @@ def compute(
         end = stmts.get(item, target.key)
         item_inputs = dict(inputs)
         item_inputs.update(present(begin=begin, end=end))
+        # F5 / D4: a CAGR from a base <= 0 is empty and flagged, like the growth group's metrics.
+        if begin is not None and begin <= 0.0:
+            item_inputs[f"flag_{name}_growth_base_not_positive"] = 1.0
+        # F5: CECL changes the provision, which is in net income -- the flag belongs to the
+        # net-income CAGR alone, never to the shared inputs of all three series.
+        if name == "net_income_cagr" and cecl:
+            item_inputs["flag_net_income_cagr_crosses_cecl"] = 1.0
         results.append(MetricResult(name, _cagr(begin, end, years), "ratio", item_inputs))
     return results
