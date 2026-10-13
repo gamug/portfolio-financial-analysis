@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -493,3 +494,98 @@ def test_a_stop_between_two_steps_starts_no_further_step(
     assert all(v == "not_run" for k, v in statuses.items() if k != "pricing")
     assert run.status == "failed"
     assert len(fake.calls) == 1  # no further step child was spawned
+
+
+# -- the verify_pilot T-015 check ----------------------------------------------------------------
+
+_ORCH_DDL = """
+CREATE TABLE orchestrator_run (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, handle TEXT, kind TEXT, as_of TEXT, surface TEXT,
+    settings_json TEXT, status TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+    code_version TEXT);
+CREATE TABLE orchestrator_step (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, orchestrator_run_id INTEGER, ordinal INTEGER,
+    step TEXT, argv_json TEXT, status TEXT NOT NULL, started_at TEXT, finished_at TEXT,
+    exit_code INTEGER, run_kind TEXT, run_id INTEGER, reason TEXT, output_tail TEXT);
+"""
+
+
+def _write_orch_db(
+    path: Path,
+    runs: list[tuple[int, str, str | None]],
+    steps: list[tuple[int, str, str]],
+) -> None:
+    conn = sqlite3.connect(path)
+    conn.executescript(_ORCH_DDL)
+    for run_id, status, finished_at in runs:
+        conn.execute(
+            "INSERT INTO orchestrator_run (id, kind, status, started_at, finished_at) "
+            "VALUES (?, 'pipeline', ?, '2026-10-02T00:00:00Z', ?)",
+            (run_id, status, finished_at),
+        )
+    for ordinal, (run_id, step, status) in enumerate(steps, start=1):
+        conn.execute(
+            "INSERT INTO orchestrator_step (orchestrator_run_id, ordinal, step, argv_json, status) "
+            "VALUES (?, ?, ?, '[]', ?)",
+            (run_id, ordinal, step, status),
+        )
+    conn.commit()
+    conn.close()
+
+
+def _verify_pilot_line(db_path: Path, task: str) -> str:
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "scripts/verify_pilot.py", "--db", str(db_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    lines = [line for line in result.stdout.splitlines() if task in line]
+    assert len(lines) == 1, f"expected one {task} line: {result.stdout} {result.stderr}"
+    return lines[0]
+
+
+def test_verify_pilot_t015_passes_a_reconciled_run(tmp_path: Path) -> None:
+    _write_orch_db(
+        tmp_path / "fin.db",
+        runs=[(1, "abandoned", "2026-10-02T00:01:00Z"), (2, "running", None)],
+        steps=[
+            (1, "pricing", "abandoned"),
+            (1, "fundamental", "not_run"),
+            (2, "pricing", "running"),
+        ],
+    )
+    assert "[PASS] T-015" in _verify_pilot_line(tmp_path / "fin.db", "T-015")
+
+
+def test_verify_pilot_t015_fails_two_running_runs(tmp_path: Path) -> None:
+    _write_orch_db(
+        tmp_path / "fin.db",
+        runs=[(1, "running", None), (2, "running", None)],
+        steps=[(1, "pricing", "running"), (2, "pricing", "running")],
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-015")
+    assert "[FAIL] T-015" in line
+    assert "2 runs are running at once" in line
+
+
+def test_verify_pilot_t015_fails_an_abandoned_run_with_a_live_step(tmp_path: Path) -> None:
+    _write_orch_db(
+        tmp_path / "fin.db",
+        runs=[(1, "abandoned", "2026-10-02T00:01:00Z")],
+        steps=[(1, "pricing", "running")],
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-015")
+    assert "[FAIL] T-015" in line
+    assert "run 1: abandoned but step pricing is running" in line
+
+
+def test_verify_pilot_t015_fails_an_abandoned_step_under_a_live_run(tmp_path: Path) -> None:
+    _write_orch_db(
+        tmp_path / "fin.db",
+        runs=[(1, "completed", "2026-10-02T00:01:00Z")],
+        steps=[(1, "pricing", "abandoned")],
+    )
+    line = _verify_pilot_line(tmp_path / "fin.db", "T-015")
+    assert "[FAIL] T-015" in line
+    assert "step pricing of run 1: abandoned but its run is not" in line
