@@ -751,6 +751,17 @@ def _m014_autoincrement_run_ids(db: Database) -> None:
     _seed_sqlite_sequence(db)
 
 
+# -- m015: marker for the orchestrator provenance (T-012) ---------------------
+
+
+def _m015_orchestrator_provenance(db: Database) -> None:
+    """No structural change: T-012's tables (``orchestrator_run`` / ``orchestrator_step``) and
+    their ``v_*`` views live in ``kg_schema.ddl`` / ``kg_schema.views`` and are created by every
+    ``ensure``, so a fresh database has them without migrating. This only raises the floor to 15,
+    as m010 did for T-144's views. A marker: replaying it on a database that already has the
+    tables changes nothing, so it is safe to run on one that does."""
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -811,6 +822,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "non-reusable ids: AUTOINCREMENT on run tables and sec_filings, sqlite_sequence "
         "seeded from references (T-145)",
         _m014_autoincrement_run_ids,
+    ),
+    (
+        15,
+        "marker: orchestrator provenance -- orchestrator_run / orchestrator_step and their "
+        "v_* views (T-012)",
+        _m015_orchestrator_provenance,
     ),
 ]
 

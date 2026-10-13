@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-RunKind = Literal["analysis", "pricing", "quant", "cycle"]
+RunKind = Literal["analysis", "pricing", "quant", "cycle", "orchestrator"]
 
 
 class Health(BaseModel):

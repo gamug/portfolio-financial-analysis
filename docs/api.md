@@ -8,9 +8,10 @@ a stable network boundary instead of opening the SQLite files directly.
 
 The agents stay CLI-driven and own every write. The read endpoints — and the run
 **status** route — only ever open a database `mode=ro`; a run endpoint starts each
-step as a subprocess, so the API process itself opens no write-capable connection.
-Access control for the run endpoints is deferred (SPEC FR-015): they are for the
-dev container / pilot only.
+step as a subprocess. The API process's one write path is the orchestrator recording
+each run's own provenance (`orchestrator_run` / `orchestrator_step`, T-012); it never
+imports a package's run code and never writes a package's tables. Access control for
+the run endpoints is deferred (SPEC FR-015): they are for the dev container / pilot only.
 
 ```bash
 uv run python -m api                                  # serve on API_HOST:API_PORT (default 0.0.0.0:8010)
@@ -31,7 +32,7 @@ gateway owns `:8000`–`:8005`), `API_ROOT_PATH` (when mounted behind a proxy).
 |---|---|
 | `GET /health` | liveness (`status`, `version`) |
 | `GET /health/db` | a read probe of both DBs — `ok`, `schema_version`, `universe_db_ok` |
-| `GET /runs` | the per-agent run log — `run_id`, `kind`, `as_of`, `code_version`, `status`, timings. `?kind=analysis\|pricing\|quant\|cycle`, `?status=`, `?limit`/`?offset`. Reads `v_analysis_run` / `v_pricing_run` / `v_quant_run` / `v_cycle_run` |
+| `GET /runs` | the per-agent run log — `run_id`, `kind`, `as_of`, `code_version`, `status`, timings. `?kind=analysis\|pricing\|quant\|cycle\|orchestrator`, `?status=`, `?limit`/`?offset`. Reads `v_analysis_run` / `v_pricing_run` / `v_quant_run` / `v_cycle_run` / `v_orchestrator_run` (T-012) |
 | `GET /universe?as_of=YYYY-MM-DD` | the S&P 500 roster as of that date, from `universe.db` (`?universe=SP500`) |
 | `GET /universe/coverage?as_of=YYYY-MM-DD` | per-member core-data coverage — the persisted `v_universe_coverage` rows if the `coverage` command has been run for that date, else computed live (never written). `source` is `persisted` or `computed` |
 | `GET /scores` | `v_score_snapshot` rows. `?ticker=`, `?score_type=`, `?as_of=` (rows already available on D: `available_at <= D`, else `event_time <= D` for cycle scores), paged |
@@ -55,9 +56,9 @@ src/api/
   dependencies.py   get_settings / get_db / get_universe_db / page_params
   models.py         response models (views passed through verbatim return dicts)
   contract.py       build_contract(): the v_* view contract, built once per process (T-152)
-  orchestrator.py   the step table, the runner, run-id capture, the CLI wrapper (T-011)
+  orchestrator.py   the step table, the runner, run-id capture, provenance, the CLI wrapper (T-011/T-012)
   routers/          health · runs · universe · scores · portfolio · contract ·
-                    run (the POST run endpoints) · run_status (GET state)
+                    run (the POST run endpoints) · run_status (GET recorded state)
 ```
 
 ## The view contract (`/contract`, T-152)
@@ -151,8 +152,9 @@ The repo's single entry point for orchestrated and remote runs (constitution Tec
 FR-014). Each step is started as the same `python -m <package>` subprocess the CLI uses — not an
 import — so every child keeps its own guards (the clean tree T-114, the price spine T-110, the
 data-quality gate version, the construction/resume checks) and its own write connection. The API
-process opens no write-capable connection: it only reads a step's own run-log row back (`mode=ro`)
-to report its `run_id`.
+process writes only the run's own provenance (`orchestrator_run` / `orchestrator_step`, T-012),
+one short write per state change, and reads a step's own run-log row back (`mode=ro`) to report
+its `run_id`.
 
 ### `POST /api/v1/run/{pipeline,<step>}`
 
@@ -192,18 +194,26 @@ to report its `run_id`.
 
 ### `GET /api/v1/run/{handle}` — poll
 
-Returns the run state: `handle`, `kind`, `analysis_date`, `settings` (only the values given),
-`status` (`pending` / `running` / `completed` / `failed`), `started_at`/`finished_at`, and `steps[]`
-— each step's `name`, `argv` (without the interpreter path), `status`
+Returns the run's **recorded** state (T-012): `handle`, `kind`, `analysis_date`, `settings` (only
+the values given), `status` (`running` / `completed` / `failed`), `started_at`/`finished_at`, and
+`steps[]` — each step's `name`, `argv` (without the interpreter path), `status`
 (`pending`/`running`/`completed`/`failed`/`skipped`/`not_run`), timings, `exit_code`, `run_id`,
-`reason` and the last 40 lines of combined output. An unknown handle is **`404`**. It is a read
-router: it starts no run and imports no run router.
+`reason` and the last 40 lines of combined output. It reads `v_orchestrator_run` /
+`v_orchestrator_step` through the read-only `get_db` dependency, so it answers from the database
+and **survives an API restart**. An unknown handle — or a database without the provenance views —
+is **`404`**. It is a read router: it starts no run and imports no run router.
 
 ### Current limits (until later Work item 2 tasks)
 
-- **In-memory state (until `T-012`).** The run state lives in the API process and is lost on
-  restart; `T-012` records the orchestrator-level provenance in the shared DB and makes this route
-  read it.
+- **Provenance is recorded; a killed process is not cleaned up (until `T-015`).** Every run and
+  step is written to `orchestrator_run` / `orchestrator_step` before the first child starts and
+  updated on every state change, so the status route reads the database and survives a restart. A
+  process killed mid-run leaves its rows `running` (and its later steps `pending`); resuming a
+  killed run is `T-015`, not this task.
+- **A run that cannot record its provenance does not start.** If the `orchestrator_run` row cannot
+  be written, the route answers **`500`** and the CLI exits `1`, and no child is started. If a
+  write fails after the run started, the run stops (no further child starts), is recorded `failed`
+  with reason `provenance write failed: <Type>: <message>`, and the active handle is cleared.
 - **First failure stops the run (until `T-013`).** The first step that exits non-zero ends the run;
   later steps are recorded `not_run`. `T-013` isolates an independent step's failure.
 - **`entity_resolution` skip (D6).** If the resolved news path (`KG_NEWS_DB`, else
@@ -232,7 +242,9 @@ unaffected: `fundamental_agent run` gates inline under `dq-v3`.
 the foreground over the same code (the same step table and argv builder), printing a `<step>
 running ...` line when each step starts and its result line (name, status, `run_id`, seconds) when it
 ends — both flushed, so a multi-hour run is not silent — then a final summary and, on failure, the
-failing step's output tail. It exits `0` when every step completed or was skipped, `1` otherwise. The paths default to the environment variables
+failing step's output tail. It records the same provenance as the HTTP path (`surface = 'cli'`),
+and exits `1` without starting any child if that cannot be written. It exits `0` when every step
+completed or was skipped, `1` otherwise. The paths default to the environment variables
 the packages use (`KG_FINANCIAL_DB` / `KG_UNIVERSE_DB` / `KG_NEWS_DB`, the news path defaulting as
 above). Plain `python -m api` (no arguments) still starts the server.
 
