@@ -44,17 +44,24 @@ and the gateway's sources (Finnhub's free tier, then yfinance) return nothing fo
 ## What we need
 
 For each line, the **daily OHLCV series over its whole membership**, in the gateway's existing `/pricing`
-response shape:
+response shape. Serve each line **under its last ticker**, the way the gateway already serves META's history
+from before the rename. This repo keeps a renamed company as one asset and asks the gateway for that asset's
+current ticker only (`src/kg_schema/data/ticker_history.csv`; `pricing_agent` fetches by the line's canonical
+ticker). So a series served only under an old ticker would not be read.
 
-- **CIK 0001437107:** WBD from 2022-04-11 to 2026-10-05, and Discovery's DISCA and DISCK lines from
-  2022-01-03 to 2022-04-08.
-- **CIK 0001725057:** CDAY from 2022-01-03 to 2024-01-31, and DAY from 2024-02-01 to 2026-02-08.
+| Ask for | CIK | Dates | Covers |
+|---|---|---|---|
+| `/pricing/WBD` | 0001437107 | 2022-01-03 .. 2026-10-05 | Discovery Series A (DISCA) to 2022-04-08, then WBD |
+| `/pricing/DISCK` | 0001437107 | 2022-01-03 .. 2022-04-08 | Discovery Series C, its own line |
+| `/pricing/DAY` | 0001725057 | 2022-01-03 .. 2026-02-08 | CDAY to 2024-01-31, then DAY |
 
-Either way works for us:
-- serve the series under the line's last ticker (WBD, DAY), as the gateway already does for META and WTW; or
-- serve each ticker for its own dates.
+Discovery's two classes are **two separate assets** here, not one:
+- Series A continues as WBD. The S&P DJI notice of 2022-04-07 and the company's own FAQ of 2022-04-10 put
+  every class into one WBD line, and the FAQ names that line Series A.
+- Series C (DISCK) is its own line, ending 2022-04-10.
 
-This repo resolves both through its ticker history (`src/kg_schema/data/ticker_history.csv`).
+So the WBD series must be Series A's prices before 2022-04-11, never Series C's. The DISCK series is asked
+for separately.
 
 If the series cannot be obtained, tell us. This repo then declares both companies unpriced in the replay,
 as a recorded data gap.

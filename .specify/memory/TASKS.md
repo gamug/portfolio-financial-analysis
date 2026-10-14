@@ -801,11 +801,13 @@ the final pilot, `T-143`.
         DISCK before) or **DAY** (CIK 0001725057, a member 2024-02-01..2026-02-08; CDAY before) over any window,
         under the old tickers either (measured 2026-10-14). Drafted in
         `docs/upstream_requests/data_mining_wbd_day_prices.md`; the user sends it. Until it lands, both are
-        unpriced in the replay (no TECHNICAL score, no quant return).
+        unpriced in the replay (no TECHNICAL score, no quant return). Asked under the line's last ticker
+        (WBD, DAY; DISCK separately), the one this repo fetches.
       - **Remaining:** part 3, the 86 leavers' data (filings by CIK, `company_types.csv`, the GICS source --
-        to be decided) and the replay re-run (waits for `T-071`). Moved to stream A's CIK-successions task
-        (reviewer A, 2026-10-14): the file's SKYD interval before 2025-08-07 belongs to Paramount Global (CIK
-        0000813828), a CIK succession, not a rename.
+        to be decided) and the replay re-run (waits for `T-071`). Also open here until stream A's
+        CIK-successions task is in this file (reviewer A, 2026-10-14: that task takes it): the file's SKYD
+        interval before 2025-08-07 belongs to Paramount Global (CIK 0000813828), a CIK succession, not a
+        rename -- `cik_successions.csv` has no row for it yet.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
