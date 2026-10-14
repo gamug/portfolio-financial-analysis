@@ -224,6 +224,26 @@ def _matrix_checks(stored: Stored, matrix: dict[str, Any]) -> tuple[list[dict[st
     return mismatches, reached
 
 
+def _na_reason_violations(stored: Stored, matrix: dict[str, Any]) -> Counter[str]:
+    """Rows whose matrix NA flag did **not** produce ``empty_reason: not_applicable``.
+
+    T-071 part 1 fix 2 (G4's precedence: ``not_applicable`` first): a row the matrix makes NA must
+    read that reason, never a denominator or a growth base of its own formula (IVZ's
+    ``free_cash_flow_conversion`` carried both). The count must be **0**.
+    """
+    bad: Counter[str] = Counter()
+    for filing_id in stored.rows:
+        for metric in sorted(matrix):
+            observed, _rule = stored.observed(filing_id, metric)
+            if observed != "NA":
+                continue
+            row = stored.rows[filing_id][metric]
+            reason = (row[1].get("provenance") or {}).get("empty_reason")
+            if reason != NOT_APPLICABLE_FLAG:
+                bad[metric] += 1
+    return bad
+
+
 def _per_metric_column(
     stored: Stored, matrix: dict[str, Any], buckets: Any, rules: Any, activating: Any
 ) -> dict[str, Any]:
@@ -253,6 +273,7 @@ def cmd_changes(args: argparse.Namespace) -> None:
     matrix = {metric: applicability.cells(metric) for metric in applicability.metrics()}
     buckets, rules, activating = _bucketed(stored, matrix)
     mismatches, reached = _matrix_checks(stored, matrix)
+    na_bad = _na_reason_violations(stored, matrix)
     per_metric_column = _per_metric_column(stored, matrix, buckets, rules, activating)
 
     cells_non_a = {
@@ -290,6 +311,8 @@ def cmd_changes(args: argparse.Namespace) -> None:
                 cell for cell in not_reached if cell.split("|")[0] not in non_fundamental
             ),
             "app_rules_never_observed": sorted(app_rules - set(observed_rules)),
+            "na_rows_with_another_empty_reason": sum(na_bad.values()),
+            "na_rows_with_another_empty_reason_by_metric": dict(sorted(na_bad.items())),
         },
     }
     Path(args.out).write_text(json.dumps(summary, indent=2) + "\n")
@@ -302,6 +325,11 @@ def cmd_changes(args: argparse.Namespace) -> None:
         f"; unexplained: {summary['checks']['cells_never_reached_unexplained']}"
     )
     print(f"  APP rules never observed: {summary['checks']['app_rules_never_observed']}")
+    print(
+        f"  NA rows whose empty_reason is not `not_applicable`:"
+        f" {summary['checks']['na_rows_with_another_empty_reason']}"
+        f" {summary['checks']['na_rows_with_another_empty_reason_by_metric']}"
+    )
 
 
 # -- unknown.txt -----------------------------------------------------------------------------------
@@ -542,10 +570,21 @@ def _pillar_counts(
     return pillar_metrics, per_pillar, before, after, before_only, after_only
 
 
-def _universe_coverage(
-    stored: Stored, pillar_metrics: dict[str, set[str]]
-) -> tuple[dict[int, int], list[dict[str, Any]]]:
-    """Each asset's latest filing available by CYCLE_DATE and the members with no usable pillar."""
+# The building blocks that are **not ratios**: `ebitda`, `nopat`, `effective_tax_rate` and the
+# robustness ROIC variant are inputs/derivations beside the ratios, not a reading of the business, so
+# the strict rule is reported with the current pillar lists **and** without them (fix 1, reviewer A).
+NON_RATIO_METRICS = frozenset(
+    {
+        "ebitda",
+        "nopat",
+        "effective_tax_rate",
+        "return_on_invested_capital_effective_rate",
+    }
+)
+
+
+def _latest_filings(stored: Stored) -> dict[int, int]:
+    """Each asset's latest filing available by :data:`CYCLE_DATE` (PER-01: ``available_at`` <= it)."""
     latest: dict[int, int] = {}
     for filing_id, filing in stored.filings.items():
         available = filing["available_at"]
@@ -558,29 +597,108 @@ def _universe_coverage(
             filing_id,
         ):
             latest[asset_id] = filing_id
-    no_score: list[dict[str, Any]] = []
+    return latest
+
+
+def _metric_reason(stored: Stored, filing_id: int, metric: str) -> str:
+    """Why *metric* has no value on this filing, as the stored provenance records it."""
+    row = stored.rows.get(filing_id, {}).get(metric)
+    if row is None:
+        return "not recorded"
+    value, inputs = row
+    if value is not None:
+        return "has a value"
+    reason = (inputs.get("provenance") or {}).get("empty_reason")
+    return str(reason or "not recorded")
+
+
+def _empty_pillars(
+    stored: Stored, filing_id: int, pillar_metrics: dict[str, set[str]]
+) -> dict[str, dict[str, str]]:
+    """This filing's **applicable** pillars with no value, and every metric's own empty reason.
+
+    The strict rule (MET-00): an empty metric is never a neutral reading, so a filing with **any**
+    applicable pillar empty has no fundamental score. A metric the matrix makes NA reads
+    ``not_applicable``; a metric with no row at all reads ``not recorded``.
+    """
+    out: dict[str, dict[str, str]] = {}
+    for pillar, metrics in pillar_metrics.items():
+        if _applicable_pillar(stored, filing_id, metrics) and _empty_pillar(
+            stored, filing_id, metrics
+        ):
+            out[pillar] = {
+                metric: _metric_reason(stored, filing_id, metric) for metric in sorted(metrics)
+            }
+    return out
+
+
+def _unscored_members(
+    stored: Stored, pillar_metrics: dict[str, set[str]], latest: dict[int, int]
+) -> tuple[list[dict[str, Any]], Counter[str]]:
+    """The members with no fundamental score under the strict rule, and the count per empty pillar."""
+    members: list[dict[str, Any]] = []
+    by_pillar: Counter[str] = Counter()
     for asset_id, asset in sorted(stored.assets.items(), key=lambda item: item[1]["ticker"]):
-        found = latest.get(asset_id)
-        if found is None:
-            no_score.append(
-                {"ticker": asset["ticker"], "reason": "no filing available by the date"}
-            )
+        filing_id = latest.get(asset_id)
+        if filing_id is None:
+            members.append({"ticker": asset["ticker"], "reason": "no filing available by the date"})
             continue
-        usable = any(
-            _applicable_pillar(stored, found, metrics) and not _empty_pillar(stored, found, metrics)
-            for metrics in pillar_metrics.values()
+        empty = _empty_pillars(stored, filing_id, pillar_metrics)
+        if not empty:
+            continue
+        by_pillar.update(empty.keys())
+        profile = stored.profile_of.get(filing_id)
+        members.append(
+            {
+                "ticker": asset["ticker"],
+                "company_name": asset["company_name"],
+                "filing_id": filing_id,
+                "form": stored.filings[filing_id]["form"],
+                "period_end": stored.filings[filing_id]["period_end"],
+                "profile": profile.type if profile else None,
+                "empty_pillars": empty,
+            }
         )
-        if not usable:
-            profile = stored.profile_of.get(found)
-            no_score.append(
-                {
-                    "ticker": asset["ticker"],
-                    "reason": "every applicable pillar has no value",
-                    "filing_id": found,
-                    "profile": profile.type if profile else None,
-                }
-            )
-    return latest, no_score
+    return members, by_pillar
+
+
+def _universe_coverage(stored: Stored, pillar_metrics: dict[str, set[str]]) -> dict[str, Any]:
+    """The strict coverage rule at :data:`CYCLE_DATE`, with the current pillars and without the
+    building blocks that are not ratios, against ``cycle``'s ``unscored_max_share``."""
+    latest = _latest_filings(stored)
+    without_non_ratios = {
+        pillar: {metric for metric in metrics if metric not in NON_RATIO_METRICS}
+        for pillar, metrics in pillar_metrics.items()
+    }
+    max_share = float(CycleSettings.model_fields["unscored_max_share"].default)
+    report: dict[str, Any] = {}
+    for key, metrics in (
+        ("with_the_current_pillars", pillar_metrics),
+        ("without_the_non_ratio_building_blocks", without_non_ratios),
+    ):
+        members, by_pillar = _unscored_members(stored, metrics, latest)
+        share = len(members) / len(stored.assets) if stored.assets else 0.0
+        report[key] = {
+            "members_without_a_score": len(members),
+            "share": share,
+            "cycle_unscored_max_share": max_share,
+            "exceeds_cycle_limit": share > max_share,
+            "by_empty_pillar": dict(sorted(by_pillar.items())),
+            "members": members,
+        }
+        if key == "without_the_non_ratio_building_blocks":
+            report[key]["excluded_metrics"] = sorted(NON_RATIO_METRICS)
+    return {
+        "cycle_date": CYCLE_DATE,
+        "members": len(stored.assets),
+        "members_with_a_filing": len(latest),
+        "strict_rule": (
+            "no fundamental score when ANY applicable pillar has no value (MET-00: an empty metric is "
+            "never a neutral reading); the members and each empty pillar's metrics' empty reasons below"
+        ),
+        "cycle_unscored_max_share": max_share,
+        **report,
+    }
 
 
 def _control_transition(
@@ -661,10 +779,8 @@ def cmd_pillars(args: argparse.Namespace) -> None:
     """T-073's input: the filings with an empty applicable pillar, and the universe coverage."""
     stored = Stored(args.db)
     pillar_metrics, per_pillar, before, after, before_only, after_only = _pillar_counts(stored)
-    latest, no_score = _universe_coverage(stored, pillar_metrics)
+    coverage = _universe_coverage(stored, pillar_metrics)
     control = _control_transition(stored, args.control, pillar_metrics)
-    max_share = float(CycleSettings.model_fields["unscored_max_share"].default)
-    share = len(no_score) / len(stored.assets) if stored.assets else 0.0
     summary = {
         "db": args.db,
         "engine": stored.engine,
@@ -676,16 +792,7 @@ def cmd_pillars(args: argparse.Namespace) -> None:
         "control": control,
         "filings_only_before": before_only,
         "filings_only_after": after_only,
-        "universe": {
-            "cycle_date": CYCLE_DATE,
-            "members": len(stored.assets),
-            "members_with_a_filing": len(latest),
-            "no_fundamental_score_under_a_strict_rule": len(no_score),
-            "share": share,
-            "cycle_unscored_max_share": max_share,
-            "within_cycle_limit": share <= max_share,
-            "members_without_a_score": no_score,
-        },
+        "universe": coverage,
     }
     Path(args.out).write_text(json.dumps(summary, indent=2) + "\n")
     print(f"wrote {args.out}")
@@ -693,10 +800,14 @@ def cmd_pillars(args: argparse.Namespace) -> None:
         f"  empty pillar: before {before}, after {after}"
         f" (before-only {before_only}, after-only {after_only})"
     )
-    print(
-        f"  universe at {CYCLE_DATE}: {len(no_score)} of {len(stored.assets)} with no score "
-        f"({share:.2%}; cycle limit {max_share:.0%})"
-    )
+    for key in ("with_the_current_pillars", "without_the_non_ratio_building_blocks"):
+        entry = coverage[key]
+        print(
+            f"  universe at {CYCLE_DATE}, {key}: {entry['members_without_a_score']} of "
+            f"{coverage['members']} with no score ({entry['share']:.1%}; cycle limit "
+            f"{entry['cycle_unscored_max_share']:.0%}; over: {entry['exceeds_cycle_limit']}); "
+            f"by empty pillar {entry['by_empty_pillar']}"
+        )
     if control:
         for pillar in PILLARS:
             print(

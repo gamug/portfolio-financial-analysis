@@ -7925,10 +7925,10 @@ recomputed with this branch (`scripts/verify_t148b.py recompute`).
 The scratch database is `/workspaces/thesis/scratch/t151c/after.db` copied to `t071a/after.db` and
 recomputed with this branch (`scripts/verify_t148b.py recompute`): 9,341 filings, **315,435** rows —
 the same count as T-151's, so nothing was dropped (1 filing, CEG's FY2021 10-K, has no own period
-column, as before). The recompute took **759.5s** (12.3 filings/s) against T-148's own log
+column, as before). The recompute took **701.0s** (13.3 filings/s) against T-148's own log
 (`t148b/out/recompute_before.log`: 277.1s, 33.7 filings/s). A diagnostic (`out/recompute_time.txt`)
 times `_compute_all` alone with and without the layer: the layer costs at most **0.55 ms** per filing
-on a `_compute_all` of 2.4–3.0 ms, while the recompute spends ~81 ms per filing (759.5s / 9,341), so
+on a `_compute_all` of 2.4–3.0 ms, while the recompute spends ~75 ms per filing (701.0s / 9,341), so
 the layer is under 1% of the filing's cost and the difference is the write side, not the layer.
 
 **`out/changes.json` — the matrix applied, per metric x company-type column.** 9,340 filings, 503
@@ -7937,9 +7937,11 @@ companies, 315,435 metric rows. Rows **emptied as NA 21,201**, **flagged ADJ 16,
 `multi_class` 1,496 filings, `negative_equity` 648, `reit` 530, `art_9_filer` 456, `art_7_insurer`
 323, `other_financial` 176. **Every one of the 315,435 rows matches the cell the matrix resolves**
 (`rows_not_matching` **0**), all **11 APP rules** the matrix carries are observed, and no rule is
-observed that the matrix does not put there (`app_rules_never_observed` empty). The only non-A cells
-no filing reaches are `earnings_yield`'s two (`reit`, `multi_class`): that row is **VALORIZATION** —
-`cycle` computes it (Annex B) — so its cells are part 2's; **unexplained reaches: none**.
+observed that the matrix does not put there (`app_rules_never_observed` empty). **Every row the
+matrix makes NA reads `empty_reason: not_applicable`** (`na_rows_with_another_empty_reason` **0**;
+**136** before fix round 1's precedence fix, below). The only non-A cells no filing reaches are
+`earnings_yield`'s two (`reit`, `multi_class`): that row is **VALORIZATION** — `cycle` computes it
+(Annex B) — so its cells are part 2's; **unexplained reaches: none**.
 
 **`out/unknown.txt` — the CIKs with no profile.** **0** CIKs, **0** filings (0.000% of the 9,341; the
 handoff's stop threshold is 2%). The profile's 500 rows are exactly the pilot universe's 500 CIKs.
@@ -7976,12 +7978,62 @@ row), which is why the pillar still counts as *applicable* (a declared item belo
 applicable count is unchanged (256 both sides): the 955 filings whose whole cash-flow pillar is NA are
 financial firms, and the filter removes them.
 
-**Universe coverage at 2026-09-22.** Each member's latest filing available by that date (PER-01):
-**0 of 503** would have no fundamental score under a strict rule (every applicable pillar empty) —
-**0.00%**, inside `cycle`'s `unscored_max_share` = 5%.
+**Universe coverage at 2026-09-22 — the strict rule (MET-00).** Each member's latest filing available
+by that date (PER-01). The strict rule is the plan's: a member has no fundamental score when **any
+applicable** pillar has no value (an empty metric is never a neutral reading), *not* only when no
+pillar is usable — the first version of this script asked the wrong question. Reported twice, with
+the members listed and each empty pillar's metrics' own empty reasons in `out/pillars.json`:
+
+| | members without a score | share | `cycle`'s limit |
+|---|---|---|---|
+| (a) with the current pillar lists | **69 of 503** (`financial_strength` 64, `cash_flow` 5) | **13.7%** | over 5% |
+| (b) without the non-ratio building blocks¹ | **32 of 503** (`financial_strength` 27, `cash_flow` 5) | **6.4%** | over 5% |
+
+¹ `ebitda`, `nopat`, `effective_tax_rate` and `return_on_invested_capital_effective_rate` — inputs and
+derivations beside the ratios, not a reading of the business. In `financial_strength`, (a) 64 → (b) 27:
+the **41** Article 9 / Article 7 filers whose pillar is applicable only through the uncovered `ebitda`
+(its seven other metrics are NA for them) stop counting, and **4** members (`BEN`, `BLK`, `IVZ`, `EXR`)
+whose only pillar value was `ebitda` start.
+
+**Both figures exceed `cycle`'s `unscored_max_share` = 0.05, so `cycle` as it stands would refuse the
+cycle at this date: `T-073` must decide its coverage rule** (what a filing scores when an applicable
+pillar has no value — the pillar dropped, the score left empty so the member is unscored, or a
+declared minimum). The members and their empty pillars are T-073's input.
 
 **`out/sha1.txt`.** `financial.db` `5c5c0642…` and `universe.db` `04adf644…` are unchanged from the
 task start; the scratch copy's own sha1 is recorded there.
+
+### Fix round 1 (reviewer A) — the universe rule and the NA cell's reason
+
+Reviewer A found two defects in P6, and one of them was a bug in this task's own code.
+
+1. **The universe figure answered the wrong question.** `_universe_coverage` counted a member as
+   unscored only when **no** pillar was usable, while the plan's strict rule is MET-00's: a member has
+   no fundamental score when **any applicable** pillar has no value. Fixed, and reported twice (with
+   the current pillar lists, and without the building blocks that are not ratios), each variant
+   listing every unscored member with its empty pillar(s) and every metric's own empty reason
+   (`out/pillars.json`). The figures are above: **(a) 69 of 503 (13.7%)**, **(b) 32 of 503 (6.4%)** —
+   both over `cycle`'s `unscored_max_share` = 0.05, so **T-073 must decide its coverage rule**.
+2. **A matrix NA cell could lose its reason — a real bug.** `provenance._empty_reason`'s step 1 took
+   the **first flag naming the metric in the inputs' insertion order**, so a row the matrix makes NA
+   read a denominator or a growth base of its own formula instead of `not_applicable`. IVZ's
+   `free_cash_flow_conversion` (a financial firm's, APP-02b) carried
+   `flag_free_cash_flow_conversion_denominator_negative` **and**
+   `flag_free_cash_flow_conversion_not_applicable` and read `denominator_not_positive`. G4's
+   precedence is by **rank**, not by the order a group wrote its flags: the reason is now read from
+   the ranks (`not_applicable` first) — measured on `t071a/after.db` **before** the recompute:
+   **136 rows** carried the NA flag with another reason (`free_cash_flow_growth` 73 and
+   `operating_cash_flow_cagr` 28 `growth_base_not_positive`; `free_cash_flow_conversion` 27,
+   `net_debt_to_ebitda` 7 and `return_on_invested_capital` 1 `denominator_not_positive`;
+   `out/changes_before.json`), and **0** after (`out/changes.json`). `changes` now checks exactly
+   that (`na_rows_with_another_empty_reason`, by metric). Two tests:
+   `test_a_matrix_na_cell_wins_over_a_negative_denominator` (which fails on the old code with
+   `denominator_not_positive`) and `test_an_applicable_row_still_reads_its_denominator` (the fix
+   changes no non-NA row's reason).
+
+   The leak is why the reviewer's cash-flow count read 6: a pillar reads as *not applicable* only
+   when **every** one of its metrics is NA, and IVZ's mis-read reason made its cash-flow pillar look
+   applicable although all four of its cells are NA (APP-02b).
 
 ### Declared items
 

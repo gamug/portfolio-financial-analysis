@@ -405,8 +405,9 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
 ) -> str:
     """G4's precedence, the first failing term in the formula's order:
 
-    1. ``not_applicable`` (APP-07's negative equity) and the denominators/growth bases, from a flag
-       naming the metric;
+    1. ``not_applicable`` (APP-07's negative equity; a matrix NA cell, APP-01 to APP-09) and the
+       denominators/growth bases, from a flag naming the metric -- **not_applicable first**, whatever
+       else the formula would say, so the rank decides and never the order the group wrote its flags;
     2. ``missing_input``: a current-period numerator or denominator input that is not filed and that
        the formula does not replace with 0 (H1: an optional item is never a ``missing_input``); a
        TTM item counts as present only when its trailing twelve months were formed (H2);
@@ -416,12 +417,20 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
     5. ``missing_input`` as the default."""
     items = ITEMS.get(result.name, {})
     optional = OPTIONAL.get(result.name, frozenset())
-    # 1. a flag naming the metric (negative equity, a denominator, a growth base)
-    for key in result.inputs:
-        if key.startswith("flag_") and result.name in key:
-            reason = _flag_reason([key])
-            if reason in (NOT_APPLICABLE, DENOMINATOR_NOT_POSITIVE, GROWTH_BASE_NOT_POSITIVE):
-                return reason
+    # 1. a flag naming the metric (negative equity, a matrix NA cell, a denominator, a growth base).
+    # T-071 part 1 fix 2: the matrix's NA cell wins its rank even when a denominator or a growth base
+    # of the same row also fails (IVZ's free_cash_flow_conversion carried both), so the reason is read
+    # from the ranks below and never from the flags' own insertion order.
+    own = [
+        _flag_reason([key])
+        for key in result.inputs
+        if key.startswith("flag_") and result.name in key
+    ]
+    if NOT_APPLICABLE in own:
+        return NOT_APPLICABLE
+    for reason in own:
+        if reason in (DENOMINATOR_NOT_POSITIVE, GROWTH_BASE_NOT_POSITIVE):
+            return reason
     # 2. a current-period numerator/denominator input that is not filed
     unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
     for item, entry in items.items():
