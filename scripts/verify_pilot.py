@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from api import orchestrator
+from kg_schema.company_profile import profile_as_of
 from kg_schema.db import connect_ro
 from kg_schema.env import universe_database_path
 from kg_schema.queries import (
@@ -325,6 +326,55 @@ def _early_rows(fin: Any) -> list[str]:
             f"{early_filings['n']} filings before {FILINGS_SINCE} (first {early_filings['d']})"
         )
     return problems
+
+
+def leaver_profile_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
+    """The leavers' company profiles and sectors (T-153d).
+
+    (a) every leaver line that has a stored filing has an APP-00 profile that **covers each of that
+    filing's period ends** -- the leaver's own interval (``T-153`` part 3b), so a period end before
+    2022 (a 10-K filed in 2022) and one up to its exit are both inside it;
+    (b) no ``sectors`` row has an empty name (``sync_universe`` must not create one for a leaver the
+    delivered universe file leaves unclassified), and every leaver asset with a stored filing has a
+    sector -- a leaver with neither (MBC, FTRE, PHIN) is allowed to have none.
+    Returns ``(leaver_lines, filings, problems)``; both connections are read-only."""
+    with (
+        contextlib.closing(connect_ro(fin_db_path)) as fin,
+        contextlib.closing(connect_ro(universe_path)) as universe,
+    ):
+        problems: list[str] = []
+        empty = int(fin.execute("SELECT COUNT(*) FROM sectors WHERE name = ''").fetchone()[0])
+        if empty:
+            problems.append(f"{empty} sectors rows have an empty name")
+        end = date.today().isoformat()
+        lines = filings = 0
+        for w in members_over_range(universe, fin, WINDOW_START, end):
+            if w.window_to is None:
+                continue
+            lines += 1
+            row = fin.execute(
+                "SELECT id, cik, sector_id FROM assets WHERE UPPER(ticker) = ?",
+                (w.member.symbol.upper(),),
+            ).fetchone()
+            if row is None:
+                continue  # the line has no asset yet: nothing was ingested for it
+            stored = fin.execute(
+                "SELECT period_end FROM sec_filings WHERE asset_id = ?", (int(row["id"]),)
+            ).fetchall()
+            # The delivered file classifies this line, so the asset must carry its sector -- the
+            # one path from the file to the SECTOR score (T-153 part 3b, D5). A file that carries
+            # no label for the line (a scratch universe) asks nothing of it.
+            if stored and w.member.gics_sector and row["sector_id"] is None:
+                problems.append(
+                    f"{w.member.symbol}: the universe file gives it a sector but the asset has none"
+                )
+            for filing in stored:
+                filings += 1
+                period_end = str(filing["period_end"])
+                profile = profile_as_of(row["cik"], period_end)
+                if profile is None or not profile.covers(period_end):
+                    problems.append(f"{w.member.symbol}: no profile covering {period_end}")
+        return lines, filings, problems
 
 
 def scope_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
@@ -1258,6 +1308,32 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153c", t153c)
+
+    def t153d() -> None:
+        universe_path = universe_database_path()
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        lines = filings = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_lines, n_filings, problems = leaver_profile_problems(path, universe_path)
+            lines = max(lines, n_lines)
+            filings = max(filings, n_filings)
+            bad += [f"{prefix}{m}" for m in problems]
+        report(
+            "T-153d",
+            "FAIL" if bad else "PASS",
+            f"leaver profiles vs {universe_path}: {lines} leaver lines, {filings} filings; "
+            + (
+                "; ".join(bad[:6])
+                if bad
+                else "every filing is covered by its profile, no empty-named sector"
+            ),
+        )
+
+    check("T-153d", t153d)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

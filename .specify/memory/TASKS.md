@@ -756,8 +756,10 @@ the final pilot, `T-143`.
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
 - [ ] **T-153** The historical universe (after `T-071`, the last task of Work item 8, and before Work item 19; a prerequisite of `T-100`; needed for PER-10 and PER-11;
       review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
-      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
-        Never overwrite the pilot's `universe.db`.
+      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history_gics.db` (data-mining
+        PR #51: `universe_history.db` with the leaver stints' GICS filled; sha1
+        `db5b16290b03a191b55215e8b98fc893a93f0e5b`), built by data-mining PR #49. Never overwrite
+        the pilot's `universe.db`.
       - **Done 2026-10-14, PR #158 (part 1).** `valid_to` is the last day of membership (the day before the
         removal takes effect, inclusive; confirmed against data-mining's builder, `universe_history.py:245`, and
         its own `>=` reader): `kg_schema/queries.py:138` `members_asof` reads `valid_to >= ?` (it read `valid_to > ?`,
