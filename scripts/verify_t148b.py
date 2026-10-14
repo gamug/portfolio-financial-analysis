@@ -1063,10 +1063,10 @@ def cmd_recompute(args: argparse.Namespace) -> None:
     conn.execute("DELETE FROM data_quality_issue WHERE metric_engine_version = ?", (engine,))
     conn.commit()
 
-    # 2. Pre-load assets, their CIK, and their REIT status (M4 predicate)
+    # 2. Pre-load assets, their CIK, and their REIT status -- from the company profile (T-071 part 1:
+    # the GICS predicate this used to read in SQL is now the profile's own `reit` column).
     asset_rows = conn.execute("""
-        SELECT a.id, a.ticker, a.cik, a.company_name,
-               CASE WHEN s.name = 'Real Estate' AND a.sub_industry LIKE '%REITs' THEN 1 ELSE 0 END AS is_reit
+        SELECT a.id, a.ticker, a.cik, a.company_name
         FROM assets a
         LEFT JOIN sectors s ON s.id = a.sector_id
     """).fetchall()
@@ -1075,7 +1075,7 @@ def cmd_recompute(args: argparse.Namespace) -> None:
             "ticker": r["ticker"],
             "cik": r["cik"],
             "company_name": r["company_name"] or r["ticker"],
-            "is_reit": bool(r["is_reit"]),
+            "is_reit": db.is_equity_reit(conn, int(r["id"])),
         }
         for r in asset_rows
     }

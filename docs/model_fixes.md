@@ -7306,6 +7306,14 @@ mismatching value out of the scores) is the next step, decided after review. Run
   not exist. Wiring the prose golden set in (its `agree = no` rows) is left for the task that turns
   it into a CSV.
 
+  > **Correction (2026-10-13, `T-071` part 1):** that record is wrong -- the CSV does exist.
+  > `docs/checklist_sec/golden_set.csv` is tracked (since `001acdd`, the same commit as
+  > `company_types.csv`): 23 tickers, with `type` and `overlays` columns. The prose above is not
+  > rewritten; the correction is recorded here, as this file's rule requires. `T-071` part 1 compares
+  > its `type` / `overlays` columns against the company profile (23/23 agree; `out/golden.txt`), which
+  > is all the golden set supports -- it holds line choices, not values, so it is still not a fidelity
+  > input.
+
 ### Fix round 1 (G1–G6; PR #148 review)
 
 Reviewer A re-checked part 3 and found six defects. `t151c/after.db` is part 2's fixed database copied
@@ -7817,3 +7825,231 @@ declared thresholds and the R&D gap, the sizes and the hash, CI and the sha1. Th
   keeps today's formula (the quick-ratio item waits for the second author), so "T-076 proposes" no longer
   describes anything T-076 does or will do: the next checklist version should drop it. `docs/metric_dictionary.md`
   and `metric_definitions.csv` are generated from that row and cannot be edited by hand.
+
+## T-071 part 1 — the company profile (APP-00) and the applicability matrix applied in the metrics (stream A, Work item 8 step 2)
+
+Branch `feat/t071a-company-profile`, PR #156; handoff `/workspaces/thesis/handoff/T071a_plan.md`;
+every number below comes from `scripts/verify_t071a.py` with its output in
+`/workspaces/thesis/scratch/t071a/out/`. This closes **part 1** of `T-071` only: part 2 keeps the
+valorization redesign, the financials' sector-specific factors, D-13 (the regulated-utility exemption
+from `NEGATIVE_FCF`), D-14, D-04's `DQ_NEG_EQUITY` basis question, DQ-02's winsorizing and the market
+cap read at the cycle date (`TASKS.md`).
+
+### P1 — the profile as tracked data
+
+`scripts/build_company_profile.py` writes `src/kg_schema/data/company_profile.csv` from the checklist's
+own `docs/checklist_sec/company_types.csv` (500 CIKs). Every source column is kept, and the generator
+adds:
+
+* **`regulated_utility`** — D-13's GICS proxy (Electric Utilities 15, Gas Utilities 1, Multi-Utilities
+  12, Water Utilities 1): **29** companies;
+* **`valid_from` / `valid_to`** — one interval covering the code's whole window: `valid_from`
+  2020-01-01 (ID-20's data window, 2020–2026) and `valid_to` empty, i.e. still current (L-03: the
+  current classification applied backwards, declared).
+
+Three comment lines above the CSV header name the generator, the source file and its **sha256**
+(`24d20309…`); `--check` regenerates and compares locally (`out/p0_*`). Neither the tests nor the
+runtime read `docs/checklist_sec/` (AGENTS.md) — the tracked copy is what they read.
+
+### P2 — one reader, in `kg_schema`
+
+`kg_schema.company_profile.profile_as_of(cik, as_of)` is keyed by the **CIK** (APP-10a), normalized to
+the SEC's 10-digit string, and returns the base type, `financial_firm` (APP-00's own label for Article
+9 filers, Article 7 filers and other financial firms), the REIT / multi-class / regulated-utility /
+multi-sector overlays, the GICS sector and sub-industry, and the evidence accession — or `None`. The
+**negative-equity overlay is not a field**: the metrics evaluate it from the filing (APP-07), as they
+already did. An unknown CIK is `None`, never a guessed type. `tests/test_company_profile.py` guards the
+generated file's counts (`500` rows: `operating` 448, `article_9` 24, `article_7` 17,
+`other_financial` 10, `multi_sector_holding` 1; REIT 28, multi-class 76) and the reader's behaviour.
+
+### P3 — the matrix, readable by every package
+
+The generated `applicability_matrix.csv` moves from `fundamental_agent/data/` to
+**`src/kg_schema/data/`** (the generator's and the traceability test's paths updated;
+`fundamental_agent.skills` now reads it through `kg_schema.applicability`), so `cycle` reads it in
+part 2 without importing `fundamental_agent`.
+`kg_schema.applicability.applicability(metric, profile, *, negative_equity)` answers a cell as
+`(code, rule)` with the Scope's precedence **NA > ADJ > A** over the columns the profile activates (its
+base type, the REIT, negative-equity and multi-class overlays, in the checklist's column order); the
+rule is the winning cells' rules. A **multi-sector holding is ADJ for every metric** (APP-00). A
+metric the matrix does **not** cover — `ebitda` (a building block) and the robustness
+`return_on_invested_capital_effective_rate` — has no claim on it and stays **A**; that is a declared
+item below, not a second map.
+
+### P4 — the metrics apply it, in one place
+
+`fundamental_agent.applicability.apply_applicability` runs in `agents._compute_all`, after the groups
+and **before** `provenance.attach`, so the provenance block's empty reason can read it:
+
+* an **NA** cell empties the value and stamps `flag_<metric>_not_applicable`; the rule that decided the
+  cell travels beside it in `applicability_rule`, and the provenance block's `empty_reason` becomes
+  `not_applicable` (and it carries the rule);
+* an **ADJ** cell keeps the value and stamps `flag_<metric>_adj`;
+* a CIK with **no profile** computes the metric and stamps `flag_<metric>_company_type_unknown` — never
+  a guessed type. A filing with no CIK at all (a hermetic fixture) is skipped, not flagged.
+
+The negative-equity overlay stays the metrics' own APP-07 evaluation: ROE's denominator is the prior
+year's equity, D/E's the filing's own, and ROIC gets APP-07's ADJ — so no published value changes
+basis and D-04's `DQ_NEG_EQUITY` basis question stays in part 2, where the checklist puts it.
+
+Every existing type rule now reads the profile:
+
+* `db.is_equity_reit` reads the profile's `reit` overlay. **0 disagreements** with the GICS predicate
+  it replaces (sector `Real Estate` + a sub-industry ending in `REITs`) on all 503 pilot assets —
+  28 each way, `out/reit_diff.txt` — so no company changes REIT status (the handoff's stop condition);
+* `db.attach_context` takes the sector and sub-industry from the profile, so the **CECL lender set**
+  (growth/cagr, PER-14) reads its sub-industry there: **0 differences** against the assets table on the
+  503 assets (0 of 500 CIKs differ, sector and sub-industry both);
+* the recompute script's own SQL copy of the REIT predicate is gone (it calls `db.is_equity_reit`);
+* the **card** prints the profile: the base type, its overlays and the evidence accession.
+
+**Engine version:** unchanged (`metrics-v7`), T-151 part 2's precedent — no bump while it is not in
+production. Declared.
+
+### P5 — the traceability test covers every cell
+
+`tests/test_traceability.py` now asserts, for **each of the six company-type columns plus an operating
+company**, that the applying code empties (NA), flags (ADJ) or keeps (A) each metric exactly as its
+matrix cell says, and that the lookup answers all 35 metrics on each column. It **replaces the "cells
+the code can know today" subset**: `test_negative_equity_cells_are_na_and_the_code_empties_them` and
+`test_enterprise_fcf_yield_is_na_for_a_reit_in_the_matrix` (kept as the MD-38 unclassified-balance-sheet
+behaviour test), and `test_reit_nopat_cell_is_adj_and_the_code_taxes_a_reit_at_its_own_rate` (kept as
+the tax-formula test). Two more tests cover the unknown profile and the metrics the matrix does not
+cover, and one drives `_compute_all` end to end for an Article 9 filer and an operating company.
+
+### The measurements (`scripts/verify_t071a.py`, the scratch copy read-only)
+
+The scratch database is `/workspaces/thesis/scratch/t151c/after.db` copied to `t071a/after.db` and
+recomputed with this branch (`scripts/verify_t148b.py recompute`).
+
+The scratch database is `/workspaces/thesis/scratch/t151c/after.db` copied to `t071a/after.db` and
+recomputed with this branch (`scripts/verify_t148b.py recompute`): 9,341 filings, **315,435** rows —
+the same count as T-151's, so nothing was dropped (1 filing, CEG's FY2021 10-K, has no own period
+column, as before). The recompute took **701.0s** (13.3 filings/s) against T-148's own log
+(`t148b/out/recompute_before.log`: 277.1s, 33.7 filings/s). A diagnostic (`out/recompute_time.txt`)
+times `_compute_all` alone with and without the layer: the layer costs at most **0.55 ms** per filing
+on a `_compute_all` of 2.4–3.0 ms, while the recompute spends ~75 ms per filing (701.0s / 9,341), so
+the layer is under 1% of the filing's cost and the difference is the write side, not the layer.
+
+**`out/changes.json` — the matrix applied, per metric x company-type column.** 9,340 filings, 503
+companies, 315,435 metric rows. Rows **emptied as NA 21,201**, **flagged ADJ 16,952**, **unchanged
+44,337** (a row is counted under the column whose cell it resolves to). The columns activated:
+`multi_class` 1,496 filings, `negative_equity` 648, `reit` 530, `art_9_filer` 456, `art_7_insurer`
+323, `other_financial` 176. **Every one of the 315,435 rows matches the cell the matrix resolves**
+(`rows_not_matching` **0**), all **11 APP rules** the matrix carries are observed, and no rule is
+observed that the matrix does not put there (`app_rules_never_observed` empty). **Every row the
+matrix makes NA reads `empty_reason: not_applicable`** (`na_rows_with_another_empty_reason` **0**;
+**136** before fix round 1's precedence fix, below). The only non-A cells no filing reaches are
+`earnings_yield`'s two (`reit`, `multi_class`): that row is **VALORIZATION** — `cycle` computes it
+(Annex B) — so its cells are part 2's; **unexplained reaches: none**.
+
+**`out/unknown.txt` — the CIKs with no profile.** **0** CIKs, **0** filings (0.000% of the 9,341; the
+handoff's stop threshold is 2%). The profile's 500 rows are exactly the pilot universe's 500 CIKs.
+
+**`out/reit_diff.txt` — the old REIT predicate against the profile.** 28 each way, **0
+disagreements** on the 503 pilot assets, so routing `db.is_equity_reit` through the profile changes no
+company's REIT status (the handoff's stop condition).
+
+**`out/golden.txt` — the profile against `golden_set.csv`.** **23/23 agree** on `type` and the
+comparable overlays. Two overlays are not compared, each with its reason: the golden set's
+`negative equity` is evaluated from the filing (APP-07) and is never a profile field, and
+`multi-sector` is the profile's own base type (`multi_sector_holding`), which the golden set carries
+in its `type` column. The correction to T-151 part 3's "no `golden_set.csv`" record is above.
+
+**`out/pillars.json` — T-073's input.** A pillar has **no reading** for a filing when none of its
+metrics has a value, and it is **applicable** when not every one of its metrics is NA for that
+company type.
+
+| filings | |
+|---|---|
+| every empty pillar, the **control** (T-151's code, `t151c/after.db` before the recompute) | **894** |
+| only an applicable empty pillar, the control | 887 |
+| every empty pillar, this branch | 1,513 |
+| **only an applicable empty pillar, this branch** | **1,452** |
+
+Per pillar (this branch, applicable only): `financial_strength` **1,198**, `cash_flow` **256**,
+`growth` **21**, `profitability` **1** (a filing can carry several). The control's 894 reproduces the
+handoff's number. The rise is the matrix itself: **565** filings — every one a **financial firm**
+(332 Article 9, 193 Article 7, 40 other financial) — lose the pillar's only values because
+APP-01/APP-02/APP-03 make its debt-based and liquidity metrics NA. The example `pillars.json` carries
+is **AIG** (`article_7`, 10-K FY2021): `debt_to_assets` 0.0506 and `debt_to_equity` 0.4573 in the
+control, **empty** here, cells NA(APP-02) — and its `ebitda` cell is **A** (the matrix has no `ebitda`
+row), which is why the pillar still counts as *applicable* (a declared item below). `cash_flow`'s
+applicable count is unchanged (256 both sides): the 955 filings whose whole cash-flow pillar is NA are
+financial firms, and the filter removes them.
+
+**Universe coverage at 2026-09-22 — the strict rule (MET-00).** Each member's latest filing available
+by that date (PER-01). The strict rule is the plan's: a member has no fundamental score when **any
+applicable** pillar has no value (an empty metric is never a neutral reading), *not* only when no
+pillar is usable — the first version of this script asked the wrong question. Reported twice, with
+the members listed and each empty pillar's metrics' own empty reasons in `out/pillars.json`:
+
+| | members without a score | share | `cycle`'s limit |
+|---|---|---|---|
+| (a) with the current pillar lists | **69 of 503** (`financial_strength` 64, `cash_flow` 5) | **13.7%** | over 5% |
+| (b) without the non-ratio building blocks¹ | **32 of 503** (`financial_strength` 27, `cash_flow` 5) | **6.4%** | over 5% |
+
+¹ `ebitda`, `nopat`, `effective_tax_rate` and `return_on_invested_capital_effective_rate` — inputs and
+derivations beside the ratios, not a reading of the business. In `financial_strength`, (a) 64 → (b) 27:
+the **41** Article 9 / Article 7 filers whose pillar is applicable only through the uncovered `ebitda`
+(its seven other metrics are NA for them) stop counting, and **4** members (`BEN`, `BLK`, `IVZ`, `EXR`)
+whose only pillar value was `ebitda` start.
+
+**Both figures exceed `cycle`'s `unscored_max_share` = 0.05, so `cycle` as it stands would refuse the
+cycle at this date: `T-073` must decide its coverage rule** (what a filing scores when an applicable
+pillar has no value — the pillar dropped, the score left empty so the member is unscored, or a
+declared minimum). The members and their empty pillars are T-073's input.
+
+**`out/sha1.txt`.** `financial.db` `5c5c0642…` and `universe.db` `04adf644…` are unchanged from the
+task start; the scratch copy's own sha1 is recorded there.
+
+### Fix round 1 (reviewer A) — the universe rule and the NA cell's reason
+
+Reviewer A found two defects in P6, and one of them was a bug in this task's own code.
+
+1. **The universe figure answered the wrong question.** `_universe_coverage` counted a member as
+   unscored only when **no** pillar was usable, while the plan's strict rule is MET-00's: a member has
+   no fundamental score when **any applicable** pillar has no value. Fixed, and reported twice (with
+   the current pillar lists, and without the building blocks that are not ratios), each variant
+   listing every unscored member with its empty pillar(s) and every metric's own empty reason
+   (`out/pillars.json`). The figures are above: **(a) 69 of 503 (13.7%)**, **(b) 32 of 503 (6.4%)** —
+   both over `cycle`'s `unscored_max_share` = 0.05, so **T-073 must decide its coverage rule**.
+2. **A matrix NA cell could lose its reason — a real bug.** `provenance._empty_reason`'s step 1 took
+   the **first flag naming the metric in the inputs' insertion order**, so a row the matrix makes NA
+   read a denominator or a growth base of its own formula instead of `not_applicable`. IVZ's
+   `free_cash_flow_conversion` (a financial firm's, APP-02b) carried
+   `flag_free_cash_flow_conversion_denominator_negative` **and**
+   `flag_free_cash_flow_conversion_not_applicable` and read `denominator_not_positive`. G4's
+   precedence is by **rank**, not by the order a group wrote its flags: the reason is now read from
+   the ranks (`not_applicable` first) — measured on `t071a/after.db` **before** the recompute:
+   **136 rows** carried the NA flag with another reason (`free_cash_flow_growth` 73 and
+   `operating_cash_flow_cagr` 28 `growth_base_not_positive`; `free_cash_flow_conversion` 27,
+   `net_debt_to_ebitda` 7 and `return_on_invested_capital` 1 `denominator_not_positive`;
+   `out/changes_before.json`), and **0** after (`out/changes.json`). `changes` now checks exactly
+   that (`na_rows_with_another_empty_reason`, by metric). Two tests:
+   `test_a_matrix_na_cell_wins_over_a_negative_denominator` (which fails on the old code with
+   `denominator_not_positive`) and `test_an_applicable_row_still_reads_its_denominator` (the fix
+   changes no non-NA row's reason).
+
+   The leak is why the reviewer's cash-flow count read 6: a pillar reads as *not applicable* only
+   when **every** one of its metrics is NA, and IVZ's mis-read reason made its cash-flow pillar look
+   applicable although all four of its cells are NA (APP-02b).
+
+### Declared items
+
+* **The snapshot's validity.** `company_types.csv` is one snapshot with no history; the profile is
+  applied backwards over the whole window (`valid_from` 2020-01-01, `valid_to` empty), which is what
+  **L-03 already declares**. `T-153` adds the leavers and the changes, each with its own interval.
+* **The unknown-profile rule.** A CIK with no profile is computed and flagged
+  `company_type_unknown`, never guessed. Measured: **0** unknown CIKs, **0** filings, 0.000% (the
+  handoff's stop threshold is 2%) — the profile's 500 rows are exactly the pilot universe's 500 CIKs.
+* **The lender proxy.** The CECL lender set is still the GICS sub-industry list it always was
+  (`metrics/growth.py` `LENDER_SUB_INDUSTRIES`), now read from the profile; it is a **GICS proxy** for
+  the Article type APP-00 identifies from the 10-K, and it is listed as such.
+* **The metrics the matrix does not cover.** `ebitda` (a building block, MD-01) and
+  `return_on_invested_capital_effective_rate` (Annex B's robustness variant of MD-11) have no row in
+  the matrix, so the layer makes no claim on them (A). The measured cost is in `out/changes.json`:
+  `return_on_invested_capital_effective_rate` keeps a value for financial firms where
+  `return_on_invested_capital` is NA (APP-02), and no part of the score reads it.
+* **No engine bump.** `metrics-v7` is unchanged (T-151 part 2's precedent).
+* **DQ_NEG_EQUITY's basis** is untouched: part 1 does not decide it (D-04 owns it, part 2).

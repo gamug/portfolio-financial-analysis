@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from fundamental_agent.applicability import apply_applicability
 from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.cashflow import compute as cashflow_compute
@@ -16,6 +17,7 @@ from fundamental_agent.metrics.profitability import compute as profitability_com
 from fundamental_agent.metrics.roic import compute as roic_compute
 from fundamental_agent.metrics.valuation import compute as valuation_compute
 from fundamental_agent.statements import Statements
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.market_cap import MarketCap
 
 G = "us-gaap_"
@@ -731,3 +733,88 @@ def test_l1_the_market_cap_block_names_the_cover_count_and_the_price() -> None:
     assert source["share_age_days"] == pytest.approx(0.0)
     assert source["split_factor"] == pytest.approx(1.0)
     assert source["n_classes"] == pytest.approx(0.0)
+
+
+# -- T-071 part 1 fix 2: the matrix's NA cell wins its rank ----------------------------------------
+
+_OPERATING = CompanyProfile(
+    cik="0000000000",
+    ticker="TEST",
+    company_name="Test Co",
+    type="operating",
+    financial_firm=False,
+    reit=False,
+    multi_class=False,
+    regulated_utility=False,
+    sector="Industrials",
+    sub_industry="Industrial Machinery",
+    evidence_accession="",
+    valid_from="2020-01-01",
+    valid_to="",
+)
+
+_ARTICLE_9 = CompanyProfile(
+    cik="0000000000",
+    ticker="TEST",
+    company_name="Test Bank",
+    type="article_9",
+    financial_firm=True,
+    reit=False,
+    multi_class=False,
+    regulated_utility=False,
+    sector="Financials",
+    sub_industry="Diversified Banks",
+    evidence_accession="0000000000-26-000001",
+    valid_from="2020-01-01",
+    valid_to="",
+)
+
+
+def test_a_matrix_na_cell_wins_over_a_negative_denominator() -> None:
+    """G4's precedence is by rank, not by the order a group wrote its flags: a matrix NA cell makes
+    the reason ``not_applicable`` even when the same row's denominator also fails (IVZ's
+    ``free_cash_flow_conversion`` carried `denominator_negative` **and** the matrix's
+    `not_applicable`, and the reason read the former)."""
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [_row(G + "NetIncomeLoss", "Net income", **{KEY: -80.0})],
+            "balance_sheet": [],
+            "cash_flow": [
+                _row(G + "NetCashProvidedByUsedInOperatingActivities", "OCF", **{KEY: 120.0}),
+                _row(G + "PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{KEY: 40.0}),
+            ],
+        }
+    )
+    stmts.accession = "0000000000-24-000001"
+    pairs = [("cashflow", r) for r in cashflow_compute(stmts, KEY)]
+    apply_applicability(pairs, _ARTICLE_9)
+    provenance.attach(pairs, stmts, KEY)
+    conversion = next(r for _g, r in pairs if r.name == "free_cash_flow_conversion")
+    assert conversion.value is None
+    assert conversion.inputs["flag_free_cash_flow_conversion_denominator_negative"] == 1.0
+    assert conversion.inputs["flag_free_cash_flow_conversion_not_applicable"] == 1.0
+    assert conversion.inputs["provenance"]["empty_reason"] == provenance.NOT_APPLICABLE
+    assert conversion.inputs["provenance"]["applicability_rule"] == "APP-02b"
+
+
+def test_an_applicable_row_still_reads_its_denominator() -> None:
+    """The rank only reorders the flags that name the metric: an operating company's conversion
+    keeps its own denominator reason (the fix changes no non-NA cell's reason)."""
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [_row(G + "NetIncomeLoss", "Net income", **{KEY: -80.0})],
+            "balance_sheet": [],
+            "cash_flow": [
+                _row(G + "NetCashProvidedByUsedInOperatingActivities", "OCF", **{KEY: 120.0}),
+                _row(G + "PaymentsToAcquirePropertyPlantAndEquipment", "Capex", **{KEY: 40.0}),
+            ],
+        }
+    )
+    stmts.accession = "0000000000-24-000001"
+    pairs = [("cashflow", r) for r in cashflow_compute(stmts, KEY)]
+    apply_applicability(pairs, _OPERATING)
+    provenance.attach(pairs, stmts, KEY)
+    conversion = next(r for _g, r in pairs if r.name == "free_cash_flow_conversion")
+    assert conversion.inputs["flag_free_cash_flow_conversion_denominator_negative"] == 1.0
+    assert "flag_free_cash_flow_conversion_not_applicable" not in conversion.inputs
+    assert conversion.inputs["provenance"]["empty_reason"] == provenance.DENOMINATOR_NOT_POSITIVE

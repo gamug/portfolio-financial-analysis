@@ -636,6 +636,9 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
 
     Returns ``(opened, closed)`` counts. *as_of* is the effective date for both
     ``valid_from`` on new rows and ``valid_to`` on closed ones (ISO date string).
+    The frozen local table keeps the old exclusive ``valid_to`` (the effective date
+    of the removal); ``members_asof`` reads ``universe.db``, never this table. If
+    this writer is ever revived it must write the day before the removal.
     """
     open_rows = db.execute(
         "SELECT asset_id FROM universe_membership WHERE universe = ? AND valid_to IS NULL",

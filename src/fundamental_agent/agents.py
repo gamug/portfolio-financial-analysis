@@ -19,6 +19,7 @@ from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
 from fundamental_agent import quality
+from fundamental_agent.applicability import apply_applicability
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import (
     CORE_GROUPS,
@@ -37,6 +38,7 @@ from fundamental_agent.skills import (
     load_skill,
 )
 from fundamental_agent.statements import Statements
+from kg_schema.company_profile import profile_as_of
 from kg_schema.market_cap import MarketCap
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -456,6 +458,11 @@ class FundamentalAnalyst:
                 out.append((valuation_metrics.GROUP, result))
 
         _flag_annualization(out, ctx.ttm_flows)
+        # T-071 part 1 (P4): the applicability matrix, in this one place -- after the groups and
+        # before `provenance.attach`, so the empty reason reads the NA cell. A filing with no CIK at
+        # all (a hermetic fixture) carries no profile: the layer is skipped, never guessed.
+        if ctx.cik:
+            apply_applicability(out, profile_as_of(ctx.cik, ctx.period_key[:10]))
         # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
         # method and columns come from the filing's own flows).
         provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
