@@ -787,12 +787,25 @@ the final pilot, `T-143`.
           nothing `T-149` builds can fix it: a data-source gap for this task to declare under PER-11 / L-11 and
           measure (dates, the weight they would have had in the index), and to say whether the quant benchmark,
           which reads only prices, can still hold them.
-      - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
-        WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
-        assets are keyed by ticker.
-      - **Remaining:** part 2, renames as one asset (HARD; the Renames bullet above); part 3, the 86 leavers'
-        data (filings by CIK, `company_types.csv`, the GICS source -- to be decided) and the replay re-run
-        (waits for `T-071`).
+      - **Done 2026-10-14, PR #161 (part 2).** A renamed company is one asset: identity is the CIK's line
+        (APP-10a), read from the tracked, cited `src/kg_schema/data/ticker_history.csv` (L-11; the table and
+        `v_ticker_history`, marker `m016`, contract 16), whose rows are FB→META, WLTW→WTW, RE→EG, FLT→CPAY,
+        CDAY→DAY, SATS→ECHO, DISCA→WBD (DISCK ends 2022-04-10) and PSKY→SKYD (2026-10-06). The share classes
+        GOOGL/GOOG, FOXA/FOX and NWSA/NWS stay separate assets. `sync_universe` adopts a recorded rename in
+        place and refuses an undeclared one; `resolve_asset_ids`, the pending checks and `--tickers` resolve
+        by the member's CIK as of the date. On `universe_history.db` each rename CIK is one asset over
+        2022–2026; a fresh-database pricing run spans FB→META with no break and no `split_jump`.
+        verify_pilot's T-153b check; SPEC 1.19.1.
+      - **Upstream request (blocks `T-100`, reviewer A 2026-10-14):** `portfolio-data-mining`'s pricing
+        gateway serves no daily prices for **WBD** (CIK 0001437107, a member 2022-04-11..2026-10-05; DISCA and
+        DISCK before) or **DAY** (CIK 0001725057, a member 2024-02-01..2026-02-08; CDAY before) over any window,
+        under the old tickers either (measured 2026-10-14). Drafted in
+        `docs/upstream_requests/data_mining_wbd_day_prices.md`; the user sends it. Until it lands, both are
+        unpriced in the replay (no TECHNICAL score, no quant return).
+      - **Remaining:** part 3, the 86 leavers' data (filings by CIK, `company_types.csv`, the GICS source --
+        to be decided) and the replay re-run (waits for `T-071`). Moved to stream A's CIK-successions task
+        (reviewer A, 2026-10-14): the file's SKYD interval before 2025-08-07 belongs to Paramount Global (CIK
+        0000813828), a CIK succession, not a rename.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
