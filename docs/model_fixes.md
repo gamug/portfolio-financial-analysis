@@ -8307,3 +8307,159 @@ the real model can produce -- in `tests/test_pillars.py`: a correct reply
 * **A metric with no stored row counts as empty** (the pillar is `empty` when every remaining metric
   is); this is what makes a 10-Q's absent `cagr` group behave as an absent reading rather than an
   inapplicability, and it matches T-071 part 1's measurement.
+
+## T-155 — the current members' CIK successions (stream A, before `T-071` part 2 and the pilot)
+
+**Branch `fix/t155-cik-successions`** from `master` `b07a7c8`; handoff
+`/workspaces/thesis/handoff/T155_plan.md`. **No LLM call and no SEC fetch beyond the read-only ones**
+(APP-10b). Every number below comes from `scripts/verify_t155.py`, with its output file under
+`/workspaces/thesis/scratch/t155/out/`; the production databases were never written (`financial.db`
+`5c5c0642…`, `universe.db` `04adf644…`, both unchanged). The measurement's scratch copy
+`t155/after.db` is a copy of T-071 part 1's own (`t071a/after.db`, sha1 `ace07b73…`).
+
+A company that reorganizes into a new legal entity (a new holding company, a redomicile) gets a **new
+CIK**, and its earlier filings stay under the predecessor's CIK, so the pipeline's by-CIK fetch never
+sees them. `T-147`'s register (`docs/checklist_sec/succession_8ks.csv`, 19 succession 8-Ks from 18
+current members) lists every one; only XOM was ever turned into a link (T-149). This task reads each
+8-K, decides the class, and adds a row only where the member actually loses filings it reads (APP-10b-2,
+`T-149`'s rule).
+
+**Fix round 1 (reviewer A, 2026-10-14):** F1 — SKYD's FY2025 10-K splits its year (the cause is the
+filing's predecessor/successor presentation, not the gateway, and not `T-140`); F2 — the unscored count
+is taken on the members of the analysis date, not the copy's asset set; F3 — the register test removed
+and its check moved into `verify_t155.py classify`; F4 — the status lines say "in review", not "done".
+
+### P1 — the classification (`out/classify.csv`, `out/p1_classify.txt`)
+
+Read each 8-K's own text; record the predecessor it names (its CIK from the SEC submissions file) and
+the verbatim sentence that establishes the succession. Classes: **`new_cik` 7** (APO, BG, BLK, FERG,
+PSKY ×2, XOM); **`same_cik` 12** (APTV, DOC, FRT, J, KIM, KKR, LH, LIN, OKE, PSA, TEL, WELL);
+**`unclear` 0**. The 12 `same_cik` filings kept the member's own CIK (the successor filed under the
+predecessor's number; WELL's 8-K says so in words: *"New Welltower expects to make filings with the SEC
+under Old Welltower's prior CIK (0000766704)"*), so no row is needed. For a `new_cik` filing the
+predecessor's 10-K/10-Q filings in the window (filed 2022 onward, the pipeline's `DEFAULT_SINCE_YEAR`)
+that the successor's CIK does not list: **BLK 11, BG 8, FERG 8, PSKY 15** (the four the plan expects),
+plus **APO 26** and **XOM 18** (already linked).
+
+### The "used" test (`out/used.csv`, `out/p2_used.txt`)
+
+A row is written only when a member date actually reads a lost predecessor filing — the latest filing a
+run scores there, or, on a 10-Q, the prior 10-K its TTM and prior-year capital read (PER-06, MET-02).
+The first member date in the window comes from `universe_history.db` (L-11's source):
+
+| member | first member date | effective | own CIK first..last | pred first..last | used |
+|---|---|---|---|---|---|
+| BG | 2023-03-15 | 2023-10-31 | 2024-02-22..2026-07-29 | 2022-02-24..2023-10-26 | **yes** at 2023-03-15 (Bunge Ltd's FY2022 10-K) |
+| BLK | 2022-01-01 | 2024-10-01 | 2024-11-06..2026-08-06 | 2022-02-25..2024-08-06 | **yes** at 2022-02-25 (Old BlackRock's FY2021 10-K) |
+| PSKY | 2022-01-01 | 2025-08-07 | 2025-05-14..2026-08-04 | 2022-02-15..2025-07-31 | **yes** at 2022-02-15 (Paramount's FY2021 10-K) |
+| FERG | 2026-08-05 | 2024-08-01 | 2024-09-25..2026-08-10 | 2022-09-27..2024-06-05 | **no** |
+| APO | 2024-12-23 | 2022-01-01 | 2022-05-10..2026-08-10 | 2022-02-25..2026-08-10 | no |
+
+### P2 — the rows (`src/kg_schema/data/cik_successions.csv`)
+
+Three rows added, XOM's exact format, each citing the successor's own succession 8-K and its verbatim
+sentence (entities decoded, curly quotes normalized to ASCII, the XOM precedent):
+
+| successor | predecessor | effective | form | accession |
+|---|---|---|---|---|
+| BLK `0002012383` | `0001364742` (Old BlackRock, now "BlackRock Finance, Inc.") | 2024-10-01 | 8-K12B | `0001193125-24-229601` |
+| BG `0001996862` | `0001144519` (Bunge Limited) | 2023-10-31 | 8-K12G3 | `0001104659-23-113123` |
+| PSKY `0002041610` | `0000813828` (Paramount Global) | 2025-08-07 | 8-K12B | `0001193125-25-175046` |
+
+All four rows (with XOM) **pass the pipeline's own APP-10b-3 test**
+(`pipeline._last_annual_report_missing`, `scripts/verify_t155.py check`, through the gateway;
+`out/p2_check.txt`). No code change was needed; `cik_chain` stays one level deep.
+
+### P3 — the measurement (`out/p3_measure.json`, `out/p3_run.txt`, `out/f1_split.json`)
+
+`scripts/verify_t155.py run` (verify_t149's `_FactsOnlyAnalyst`: every metric computed, the score the
+rule-based fallback, **no model**) on `t155/after.db` for the affected members at 2026-09-22: 30 tasks,
+32 filings, 0 failed (`out/p3_run.txt`). Then `scripts/verify_t148b.py recompute` (12m40s,
+`out/p3_recompute.txt`), then T-073's own measurement.
+
+| member | filings before → after | earliest period before → after | multi-year metrics with a value on the added filings |
+|---|---|---|---|
+| BLK | 8 → 19 | 2024-09-30 → 2021-12-31 | net_income_growth(11), operating_income_growth(11), revenue_growth(11), net_income_cagr(3), revenue_cagr(3) |
+| BG | 11 → 19 | 2023-12-31 → 2021-12-31 | capex_intensity(8), free_cash_flow_conversion(8), free_cash_flow_margin(8), operating_cash_flow_margin(8), net_income_growth(8), revenue_growth(8), net_income_cagr(1), revenue_cagr(2) |
+| SKYD | 4 → 17 | 2025-03-31 → 2021-12-31 | capex_intensity(13), free_cash_flow_margin(13), operating_cash_flow_margin(13), revenue_growth(13), net_income_growth(10), operating_income_growth(10), free_cash_flow_conversion(5), free_cash_flow_growth(5), operating_cash_flow_cagr(4), revenue_cagr(4), net_income_cagr(2) |
+
+**T-073's unscored members at 2026-09-22: 23 → 23**, on the **members of that date** (F2). The copy's
+asset set is not the member set: it holds three leavers (TTD, BLDR, TAP, gone 2026-09-20) and, before the
+run, misses three additions (BE, ILMN, P, added 2026-09-21). `scripts/verify_t155.py measure` now counts
+from `members_asof(2026-09-22)` (`out/p3_measure.json` `unscored_on_members`): **503 members; 500 with a
+filing in each copy; the 3 without one — BE, ILMN, P (joined 2026-09-21); 23 unscored among the 500,
+4.6%, before and after**, the same 23 (T-073's list, with PSKY shown under the member's symbol SKYD).
+None of TTD, BLDR or TAP is in it, so T-073's own list does not change on the member basis; its "23 of
+503" was counted on the asset set, where 503 was the copy's assets, not the members.
+
+**SKYD's FY2025 10-K (F1) — the cause is the filing, not the gateway.** Its latest 10-Q (2026-06-30)
+still has `cash_flow` empty with `prior_year_missing`: the TTM needs the prior 10-K. SKYD's first 10-K
+after the succession (`0002041610-26-000011`, filed 2026-02-25) presents FY2025 as **two parts** —
+2025-01-01..2025-08-06 (218 days) and 2025-08-08..2025-12-31 (146 days), SEC's own `companyfacts`
+(`https://data.sec.gov/api/xbrl/companyfacts/CIK0002041610.json`; `out/f1_split.json`) — the business
+combination's predecessor/successor presentation; the only full-year columns in it are 2023 and 2024. So
+the gateway's year is the only full year the filing holds, and ID-07 refuses it **correctly**: no rule
+joins the two parts (each fails PER-08's year length, they are not contiguous — 08-07 is missing — they
+are on different accounting bases, and PER-06 builds a TTM only from contiguous periods). SKYD's TTM and
+cash-flow pillar stay empty until its first full successor year, the FY2026 10-K. Declared, and **not**
+`T-140`'s residual. The other three successors do not split: BLK's first 10-K after 2024-10-01
+(`0000950170-25-026584`) holds a full-year 2024 (366 days), BG's after 2023-10-31
+(`0001996862-24-000007`) a full-year 2023 (365 days), and XOM's is not filed yet (its succession was
+2026-07-01).
+
+**Unlinked filings: none.** No `stage='succession'` row in `analysis_run_error`.
+
+**PSKY/SKYD before the close (2024-12-31).** The universe resolves the member to CIK `0002041610`
+(`out/p3_measure.json` `preclose`: symbol SKYD), the chain is `(0002041610, 0000813828)`, and the filing
+a run on that date would score is **Paramount Global's Q3 2024 10-Q** (`0000813828-24-000079`, period
+2024-09-30), with **Paramount's FY2023 10-K** (`0000813828-24-000007`, period 2023-12-31) as its prior
+10-K — both under the predecessor's CIK, reached through the new row.
+
+### The declared findings (reviewer A, 2026-10-14)
+
+* **APO — no row.** Its 8-K12B (`0001193125-22-000274`) says *"establishes AGM as the successor issuer
+  to AAM and AHL"* — AAM = Apollo Asset Management, Inc. `0001411494` (f/k/a "Apollo Global
+  Management, Inc."), AHL = Athene Holding Ltd `0001527469`. But APO is a member only from 2024-12-23,
+  and its own CIK `0001858681` holds 10-Qs from Q1 2022 (filed 2022-05-10) and 10-Ks from FY2022, so on
+  every member date the inputs the metrics read (the latest filing, the prior 10-K for the TTM, the
+  prior-year capital, PER-04's growth and CAGR from one filing) are under its own CIK. `T-149`'s rule is
+  a row only where a company loses filings it *uses*; APO loses none. AHL is an acquired company, not
+  APO's predecessor; AAM's post-2022 filings are a subsidiary's own reports for the same periods (hence
+  `db.FilingReplacementRefused`), not predecessor filings. Neither is linked. The 26 predecessor filings
+  the mechanical count lists are measured in `out/used.csv` (`used = no`).
+* **FERG — no row.** Its 8-K12B (`0001193125-24-190512`) names Ferguson plc `0001832433`. But
+  `universe_history.db` has one FERG stint, CIK `0002011641`, from **2026-08-05** (`date_added`
+  2026-08-05, `live_snapshot`); Ferguson plc's CIK has no stint. By that date FERG's own CIK already
+  holds FY2024/FY2025 10-Ks, so the latest filing and the prior 10-K are its own — no predecessor filing
+  is read at any member date (`out/used.csv`, `used = no`). The plan never assumed an earlier membership:
+  it listed FERG's short filing count, and the "used" test answers it.
+
+### Replaced tests
+
+* `tests/test_cik_succession.py::test_the_table_holds_the_one_succession_with_its_evidence` → split into
+  `test_the_table_holds_the_xom_succession_with_its_evidence` (XOM's row selected by CIK, its assertions
+  unchanged) and `test_the_table_holds_the_t155_successions_with_their_evidence` (the three new rows:
+  predecessor, effective date, form, accession, a quote naming the predecessor, `rules`).
+* `tests/test_cik_succession.py::test_the_database_is_seeded_once_and_the_chain_lists_the_predecessor` →
+  the seeded set is now the four pairs, and `cik_chain` is checked for each new successor as well.
+  Both changed only because the table now holds four rows instead of one; no assertion was loosened.
+
+### Declared limitations
+
+* **The unscored count is on the members of the date, not the copy's assets** (F2, fix 1): the copy holds
+  three leavers (TTD, BLDR, TAP) and, before the run, misses three additions (BE, ILMN, P).
+  `measure` counts from `members_asof(2026-09-22)`, so the denominator is the 500 members with a filing,
+  not the asset count (503 before / 506 after).
+* **SKYD stays unscored** (F1, fix 1): the FY2025 10-K presents the year as a business combination's
+  predecessor and successor parts, with no full-year column, so ID-07 refuses it correctly and the TTM
+  has no prior 10-K. Declared as a structural case, not a gateway defect and not `T-140`.
+* **The `used` test's "prior 10-K" stands in for the prior-year capital**: a 10-K's own prior column
+  carries the prior-year balance sheet (MET-02), so only the latest filing and, on a 10-Q, the prior
+  10-K need checking.
+* **The classification's quotes are normalized** (curly quotes → ASCII, tag-stripped whitespace
+  collapsed), matching XOM's own row.
+* **`tests/test_verify_t155.py::test_the_reading_covers_every_register_line` was removed** (F3, fix 1):
+  it read `docs/checklist_sec/succession_8ks.csv`, which is git-excluded (`.git/info/exclude`) and which
+  AGENTS.md keeps out of tests (it always skipped in CI and checked nothing). The check — the register has
+  19 lines and every line is read — now lives in `verify_t155.py classify`, which asserts it and writes it
+  to `out/p1_classify.txt`.

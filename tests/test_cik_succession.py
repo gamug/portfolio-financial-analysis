@@ -127,14 +127,34 @@ def _run(
 # -- the table ------------------------------------------------------------------------------
 
 
-def test_the_table_holds_the_one_succession_with_its_evidence() -> None:
-    (row,) = identity.read_successions()
+# T-155: the current members' CIK successions (docs/model_fixes.md "T-155").
+T155 = {
+    "0001996862": ("0001144519", "2023-10-31", "8-K12G3", "0001104659-23-113123", "Bunge Bermuda"),
+    "0002012383": ("0001364742", "2024-10-01", "8-K12B", "0001193125-24-229601", "Old BlackRock"),
+    "0002041610": ("0000813828", "2025-08-07", "8-K12B", "0001193125-25-175046", "Paramount"),
+}
+
+
+def test_the_table_holds_the_xom_succession_with_its_evidence() -> None:
+    row = next(r for r in identity.read_successions() if r["successor_cik"] == SUCCESSOR)
     assert (row["successor_cik"], row["predecessor_cik"]) == (SUCCESSOR, PREDECESSOR)
     assert row["effective_date"] == "2026-07-01"
     assert (row["evidence_form"], row["evidence_accession"]) == ("8-K12B", "0001193125-26-291990")
     assert "successor registrant" in row["evidence_quote"]
     assert "Rule 12g-3(a)" in row["evidence_quote"]
     assert row["rules"] == "APP-10b-2;APP-10b-3"
+
+
+def test_the_table_holds_the_t155_successions_with_their_evidence() -> None:
+    rows = {r["successor_cik"]: r for r in identity.read_successions()}
+    assert set(rows) == {SUCCESSOR, *T155}
+    for successor, (pred, effective, form, accession, named) in T155.items():
+        row = rows[successor]
+        assert row["predecessor_cik"] == pred
+        assert row["effective_date"] == effective
+        assert (row["evidence_form"], row["evidence_accession"]) == (form, accession)
+        assert named in row["evidence_quote"] and "Rule 12g-3" in row["evidence_quote"]
+        assert row["rules"] == "APP-10b-2;APP-10b-3"
 
 
 def test_a_row_without_its_evidence_is_refused(tmp_path: Path) -> None:
@@ -152,10 +172,13 @@ def test_the_database_is_seeded_once_and_the_chain_lists_the_predecessor(
 ) -> None:
     assert identity.seed_successions(memory_db) == 0  # ensure already seeded it
     rows = memory_db.execute("SELECT * FROM cik_succession").fetchall()
-    assert [(r["successor_cik"], r["predecessor_cik"]) for r in rows] == [(SUCCESSOR, PREDECESSOR)]
+    seeded = {(r["successor_cik"], r["predecessor_cik"]) for r in rows}
+    assert seeded == {(SUCCESSOR, PREDECESSOR)} | {(s, p[0]) for s, p in T155.items()}
     assert identity.cik_chain(memory_db, 2115436) == (SUCCESSOR, PREDECESSOR)
     assert identity.cik_chain(memory_db, "0000320193") == ("0000320193",)  # no succession
     assert identity.cik_chain(memory_db, "") == ()
+    for successor, (pred, *_rest) in T155.items():
+        assert identity.cik_chain(memory_db, successor) == (successor, pred)
 
 
 # -- the pipeline fetches under every CIK of the chain ---------------------------------------
