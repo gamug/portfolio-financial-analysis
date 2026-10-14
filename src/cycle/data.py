@@ -238,9 +238,11 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
     ``event_time`` is its period end -- what the score is *about* -- not when it became known;
     that is its ``available_at``, the first trading day after its filing's date (T-107).
 
-    T-073 (D1): a row whose applicable pillar has no value carries no ``raw_value`` -- the filing
-    is recorded (so the run resumes) but it is **not** a score, so it is invisible here and the
-    member reads as unscored (T-119)."""
+    T-073 (D1): the newest *usable* filing decides. A filing whose applicable pillar has no value
+    carries no ``raw_value`` -- it is recorded (so the run resumes) but it is not a score, so the
+    member reads as unscored (T-119) and an older *scored* filing is **not** carried forward in its
+    place: that would read a stale value as the current one, which MET-00 rules out. The ranking
+    therefore comes first and the row is dropped afterwards."""
     return conn.execute(
         """
         WITH known AS (
@@ -250,10 +252,11 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
                    ) AS rn
             FROM score_snapshot s
             WHERE s.score_type = 'FUNDAMENTAL'
-              AND s.raw_value IS NOT NULL
               AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
-        SELECT id, asset_id, event_time, raw_value, normalized_score FROM known WHERE rn = 1
+        SELECT id, asset_id, event_time, raw_value, normalized_score
+        FROM known
+        WHERE rn = 1 AND raw_value IS NOT NULL
         ORDER BY asset_id
         """,
         (cycle_date,),
@@ -261,12 +264,14 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
 
 
 def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*.
+    """asset_id -> the period end of its newest **scored** FUNDAMENTAL filing usable on
+    *cycle_date*.
 
-    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset with
-    none at all is simply absent, never present with a ``None`` value (T-119): a consumer that
-    wants "no score at all" must diff its own universe against this dict's keys, not iterate its
-    values -- see ``unscored_assets``."""
+    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset whose
+    newest usable filing is unscored (T-073, D1: no ``raw_value``) and one with no filing at all
+    are both simply absent, never present with a ``None`` value (T-119): a consumer that wants "no
+    score at all" must diff its own universe against this dict's keys, not iterate its values --
+    see ``unscored_assets``."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
 
 
