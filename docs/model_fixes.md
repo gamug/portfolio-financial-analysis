@@ -8053,3 +8053,257 @@ Reviewer A found two defects in P6, and one of them was a bug in this task's own
   `return_on_invested_capital` is NA (APP-02), and no part of the score reads it.
 * **No engine bump.** `metrics-v7` is unchanged (T-151 part 2's precedent).
 * **DQ_NEG_EQUITY's basis** is untouched: part 1 does not decide it (D-04 owns it, part 2).
+
+## T-073 — the FUNDAMENTAL score built from four pillars (stream A, Work item 8 step 3)
+
+**Branch `feat/t073-pillar-score`** from `master` `2a17bf5`; handoff
+`/workspaces/thesis/handoff/T073_plan.md`. **No LLM call in this task** (D6). Every number below
+comes from `scripts/verify_t073.py`, read-only on T-071 part 1's scratch copy
+(`/workspaces/thesis/scratch/t071a/after.db`, sha1 `ace07b73…`, the one T-071's `out/sha1.txt`
+records); the production databases were never written (`financial.db` `5c5c0642…`, `universe.db`
+`04adf644…`, both unchanged).
+
+The redesign (the user's decisions of 2026-10-13, `TASKS.md`'s T-073 entry): **the model rates each
+pillar; the code decides which pillars exist, weighs them and totals them** (constitution, AI
+behavior #1 -- the deterministic part never sits with the model). Four pillars from computed ratios
+only; "moat" is dropped (no computed input supports it); valuation stays in the narrative and out of
+the score (it is already VALORIZATION's own stored component, so scoring it here would count one
+signal twice); the weights are equal, a declared calibration; and **no neutral 50 for missing data**
+(MET-00).
+
+### D1 — the four pillars and the statuses the code computes
+
+`src/fundamental_agent/pillars.py` holds the membership: `profitability` = the profitability, roic
+and efficiency groups (9 metrics), `financial_strength` = leverage + liquidity (7),
+`cash_flow` (4), `growth` = growth + cagr (7). The building blocks (`ebitda`, `nopat`,
+`effective_tax_rate`, `return_on_invested_capital_effective_rate`) are inputs and derivations beside
+the ratios -- the model still sees them as context, but no pillar reads them -- and the valuation
+group is not a member. Each filing gets one of four statuses per pillar, from the matrix through
+T-071 part 1's profile and the metrics' own audit inputs:
+
+| Status | When |
+|---|---|
+| `not_applicable` | every member metric is NA for the company type; the pillar drops out by company type, which MET-00 allows ("A structural absence is declared by company type (APP) or left empty") |
+| `absent_by_form` | APP-09's three liquidity ratios drop out of `financial_strength` and the pillar still has a value on the leverage ratios |
+| `empty` | an applicable pillar with no value: every remaining metric is empty for another reason (the pillar records the distinct reasons) |
+| `present` | at least one applicable metric has a value |
+
+**`absent_by_form` is APP-09's own wording, and the form signal is the filing itself.**
+`src/kg_schema/data/applicability_matrix.csv` gives the three liquidity ratios their cells, and
+APP-09 says: *"Current, quick and cash ratios apply when `AssetsCurrent` and `LiabilitiesCurrent`
+are filed (Article 5 presents them 'when appropriate'); otherwise they are empty (MET-00)."* The
+code therefore reads the form signal from the liquidity group's own audit inputs -- **neither
+`AssetsCurrent` nor `LiabilitiesCurrent` is filed** -- never from MD-38's
+`flag_enterprise_fcf_yield_unclassified_balance_sheet`.
+
+The plan's D1 named that MD-38 flag as a second signal and said to stop and ask when the two
+disagree. They disagree on **304 of the 9,340 filings** (all of them "classified by the filing,
+flagged by MD-38"; none the other way), because the flag is a **consequence** signal: it fires
+whenever the non-cash working capital cannot be formed, which includes a term that is refused or
+only partially mapped. *ALLE's filing 454* (10-Q 2026-03-31) files
+`current_assets = 1,423,000,000` and `current_liabilities = 745,800,000` -- a classified balance
+sheet -- yet carries the flag, because the current `short_term_debt` resolution failed
+(`flag_current_net_debt_net_debt_capture_failure`; the row's `empty_reason` is `capture_failure`).
+The director decided (2026-10-14): **signal A is the definition; the two are not combined.**
+Measured consequence of using the flag instead: it drops liquidity ratios that *have* values on
+302 of its 304 filings, and would wrongly leave **CPRT** (`current_ratio` 7.61, `quick_ratio` 7.54)
+and **ERIE** (`current_ratio` 1.25) unscored -- 25 members instead of 23. Signal A never drops a
+ratio that has a value (0 of its 1,505 filings). The 9 `other_financial` members whose
+`financial_strength` was empty under T-071's strict rule (their four leverage ratios are NA, APP-02)
+become `not_applicable`, which is what removes them from the unscored list.
+
+**Input for T-071 part 2 (not fixed here):** MD-38's
+`flag_enterprise_fcf_yield_unclassified_balance_sheet` is **misnamed** on those 304 classified
+filings -- the cause there is a working-capital term that is refused or partially mapped, not an
+unclassified balance sheet.
+
+**D1's coverage rule (MET-00, the checklist's literal reading; the default).** The score is formed
+only when every applicable pillar is `present`. An applicable `empty` pillar leaves the score
+**empty**: `analyze` does not ask the model (nothing it returned would be scored), the row is written
+with no `raw_value` and no `rating`, its narrative and its pillar block name the empty pillar and its
+reason, and the model column carries `agents.UNSCORED_MODEL_LABEL` so the row is never read as a
+model's verdict on a filing the model was not asked about. A `not_applicable` pillar and an
+`absent_by_form` one do not block the score.
+
+**The member is unscored (T-119), and the newest usable filing decides.** `cycle`'s
+`latest_fundamental_rows` ranks each asset's usable filings by period end and *then* drops the
+newest when it carries no value: a filing whose applicable pillar is empty is recorded (so the run
+resumes) but is not a score, and an older *scored* filing is never carried forward in its place --
+that would read a stale value as the current one, which MET-00 rules out. `last_fundamental_dates`
+follows from the same rows. **The 23-of-503 figure below assumes exactly this rule**; a run that
+filtered the rows before ranking would read the older score and report a different, wrong number
+(and would be reading a value the rules do not make). Fixed in `fix(cycle): the newest usable filing
+decides, scored or not` after the director's review of the D1+D2 commit.
+
+### D2 — the model's answer, and the code's total
+
+`agents.synthesis_prompt(scored)` names exactly the pillars the code decided the company has, and
+the model returns one JSON object: `pillars` (an integer `rating` 0-100 and a one-sentence `reason`
+each) plus `narrative`, `strengths` and `risks`. **The model never returns the score**: the code
+computes `total = sum(weight * rating)` over the pillars that enter the score, rounded to one
+decimal, and the existing cutoffs (60 / 40) give the rating.
+
+**The weights are normalized over the pillars the company has.** A `not_applicable` pillar drops out
+by company type, and scoring it as a zero contribution would both break the scale D2 declares
+("50 = the pillar of an average S&P 500 company": an asset manager with two absent pillars would be
+permanently bearish, its best possible total 50) and impute the structurally absent factor as 0,
+which MET-00 forbids. That is *not* the renormalization MET-00 rejects: there, an **empty** pillar
+(missing data) would be imputed with the others' average, and D1 leaves the score empty instead.
+
+Parsing keeps `_coerce`'s free-text JSON extraction and the repair prompt. A rating for a pillar the
+company does not have is **discarded and logged** -- scoring it would impute an `empty` pillar -- and
+what is left must be exactly the code's set; a missing pillar counts as unparseable and the fallback
+runs.
+
+### D3 — the rule-based fallback on the same pillars
+
+`agents._fallback_synthesis` rates the same present pillars from the same metrics: each of T-076's
+declared calibrated nudges (`_SCORE_RULES`) goes to its metric's pillar, so a present pillar's rating
+is 50 plus and minus its own metrics' points; the high-leverage penalty (12 points above
+`debt_to_equity > 3`) hits `financial_strength`; a low metric takes its points off its own pillar.
+The valuation nudge (`free_cash_flow_yield`) has no pillar and **leaves the score**. A pillar the
+company does not have gets nothing, an `empty` one leaves the score empty exactly as in D1, and the
+total uses the same weights and rounding as the model's answer -- so a fallback row and a model row
+are read alike (`model = FALLBACK_MODEL_LABEL`, as before).
+
+`agents.facts_only_synthesis` is the one seam the measurement scripts use (D1's coverage rule, then
+D3's fallback, without a model); `scripts/verify_t076.py`, `verify_t148b.py` and `verify_t149.py`
+move onto it, and `verify_t149.py`'s facts-only analyst now applies the coverage rule too -- which is
+what D1 requires of every path.
+
+### D4 — the weights cost nothing to change
+
+The stored block lives inside `score_snapshot.inputs_json` (no schema change) beside the flat
+metrics: `pillars` (each pillar's status, the metrics that decided it, and the model's rating and
+reason -- or the empty reason), `pillar_weights`, `pillar_weights_version`, and `coverage` (which
+pillars entered the score and why the others did not). `raw_value` is the total under the weights in
+force.
+
+`kg_schema.pillar_score` (new) carries the shared contract -- the four names, the equal default
+weights, the version tag, the block's keys, `total_from_block` and `weights_differ` -- in `kg_schema`
+for the reason the applicability matrix moved there (T-071 part 1): so **`cycle` reads a stored block
+without importing `fundamental_agent`**. `CycleSettings.fundamental_pillar_weights` (default equal)
+rides into the run's `params_json` with the rest of the settings, and `_normalize` normalizes the
+FUNDAMENTAL lane on `data.fundamental_value_under(row, weights)`: the row's own `raw_value` when the
+weights match (or when the row has no block -- one written before T-073, or an unscored one), else
+the total recomputed from the ratings the row stored. **No LLM call, and the stored row is never
+rewritten.**
+
+### D5 — the measurements (`scripts/verify_t073.py`, the scratch copy read-only, no model)
+
+The script rebuilds each filing's `MetricResult`s from the stored rows and runs the real `pillars`
+module, so every number is the implementation's own. Outputs under the task's `out/`:
+
+* **`pillar_status.json`** -- per pillar x company type, the four statuses. Over all **9,340**
+  filings with `metrics-v7` rows: `present` 34,617, `empty` 592, `not_applicable` 1,891,
+  `absent_by_form` 260. Per pillar: `profitability` 9,336 / 4 / 0 / 0; `financial_strength`
+  7,833 / 311 / 260 / 936; `cash_flow` 8,129 / 256 / 0 / 955; `growth` 9,319 / 21 / 0 / 0. Over each
+  member's latest filing by 2026-09-22 (**503** filings): `financial_strength` 423 / **18** / 12 / 50;
+  `cash_flow` 447 / **5** / 0 / 51; `growth` and `profitability` 503 / 0 / 0 / 0.
+* **`unscored.json`** -- **23 of 503 members (4.6%)** have no score, under `cycle`'s
+  `unscored_max_share` = 0.05: `financial_strength` 18 (the REITs ARE, BXP, DOC, EXR, INVH, O, REG,
+  VTR, WELL, VMRK; the homebuilders DHI, LEN, NVR, PHM; DE, PCAR, TXT, BRK.B) and `cash_flow` 5
+  (DPZ, PEP, HONA, LHX, PSKY) -- **the plan's own 18 + 5, member for member**. By sector (the
+  checklist's Scope asks for it, because a cluster biases the sample): **Real Estate 10**, Consumer
+  Discretionary 5, Industrials 5, Communication Services 1, Consumer Staples 1, Financials 1.
+  Each member's record names its empty pillar(s) and every metric's own empty reason.
+* **`fallback_distribution.json`** -- the fallback score, master vs branch, over every filing: the
+  master's own `_fallback_assessment`, **loaded from its commit and executed by the same script**
+  (AGENTS.md: never explain a change from what the code is supposed to do -- run the old code through
+  the same method), against this branch's `_fallback_synthesis`. Master: 9,340 filings, **51**
+  distinct values, 3.9% at the most common. Branch: 8,775 filings, **55** distinct values, 4.4% at
+  the most common -- the branch's distribution excludes the **565** filings (6.0% of 9,340) D1's
+  coverage rule does not score at all (the master scored every filing unconditionally).
+* **`weights_sensitivity.json`** -- over this branch's fallback pillar ratings for each scored member
+  (480 of 503: D1's unscored members have no rating to weigh): the ranking under the equal weights
+  against the original 0.30 / 0.25 / 0.25 / 0.20, mapped profitability / financial_strength /
+  cash_flow / growth. **Spearman 0.9954; 70 members' decile moves (14.6%)** (deciles by rank, no tie
+  handling -- the totals are near-distinct).
+* **`prompt_sizes.txt` / `prompt_sizes.json` / `prompt_hash.txt`** -- the synthesis prompt: master
+  **555** chars, branch **851**; the prompt-version hash master `3a1ff7d2aa35…` -> branch
+  `07178964db44…` (only the synthesis prompt changed, so the hash moves with it). The rendered prompt
+  (the master prompt + the brief + the synthesis prompt) is **6,329** chars on average, i.e.
+  **1,582 tokens per filing** (chars / 4; min 659, max 1,962) -- the specialist calls add their own
+  system prompt (the skill) and a group-sized user prompt on top.
+* **`briefs/`** -- the rendered prompt (no model) for ABBV, O, KKR, COP, JPM and PEP. The brief is
+  rebuilt from the stored rows alone: T-076's `_brief` reads the filing's header, the metric lines
+  and (on a 10-Q) the basis paragraph, all of which the rows carry. JPM and KKR render with
+  `financial_strength` and `cash_flow` `not_applicable`; O (`financial_strength` `empty`) and PEP
+  (`cash_flow` `empty`) render with D1's coverage narrative instead of a synthesis prompt.
+
+### D6 — no paid call, and the parsing paths
+
+The first paid check of the new answer format is the pilot's first staggered stage (T-143): T-074
+changes the synthesis answer again (the forensic flags), so a paid test here would test a prompt
+that is not final, and the pilot starts from a fresh database. The hermetic tests cover every path
+the real model can produce -- in `tests/test_pillars.py`: a correct reply
+(`test_a_correct_reply_is_totalled_by_the_code`), prose around the JSON
+(`test_prose_around_the_json_is_still_parsed`), a missing pillar
+(`test_a_missing_pillar_falls_back`), an extra pillar for a `not_applicable` one
+(`test_an_extra_pillar_is_discarded_and_the_reply_is_still_used`), a non-integer rating
+(`test_a_non_integer_rating_falls_back`), a rating out of range
+(`test_a_rating_out_of_range_falls_back`), an unparseable reply
+(`test_an_unparseable_reply_reaches_the_fallback`), and a dead model
+(`test_a_dead_model_reaches_the_fallback`). The token estimate per filing is above.
+
+### The declared calibrations
+
+* **the weights**: equal (0.25 each), a calibration with no loaded source, kept in one setting
+  (`kg_schema.pillar_score.DEFAULT_PILLAR_WEIGHTS`, tag `pillar-weights-equal-v1`);
+* **the fallback's nudges**: T-076's `_SCORE_RULES` (net margin 12, ROE 10, FCF margin 12,
+  revenue growth 8, current ratio 6, and the 12-point high-leverage penalty), unchanged in size and
+  now applied to their metric's pillar;
+* **the rating cutoffs**: 60 / 40 (`agents._BULLISH_CUTOFF` / `_NEUTRAL_CUTOFF`), unchanged from the
+  pre-T-073 code and now applied to the pillar total.
+
+### The coverage rule and its alternatives
+
+* **dropping the empty pillar with renormalized weights -- rejected.** It is an implicit imputation:
+  renormalizing pretends the company's other pillars stand for the one whose data is missing, which
+  MET-00 forbids ("A missing metric or factor is never imputed, neither as 0 nor as a neutral
+  score"). D1 leaves the score empty instead, and the member is unscored (T-119).
+* **a minimum-coverage floor (score from any k of 4 pillars) -- not adopted.** It has no source and
+  it would silently score a company on a subset of the pillars the code decided it has.
+* **renormalizing over a `not_applicable` pillar's weight -- adopted**, because there the pillar is
+  not missing data: the company type has no such pillar, MET-00 declares the absence, and the
+  alternative (a 0 contribution) both breaks D2's scale and imputes 0.
+
+### Replaced tests
+
+* `tests/test_agents.py::test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback` --
+  the fallback's total is now the weighted pillar ratings, so a withheld `net_margin` leaves the
+  total at 50.0 and an unwithheld one lifts it to 53.0; the property the test exists for (a withheld
+  value scores nothing) is unchanged.
+* `tests/test_verify_t149.py::test_a_run_with_it_stores_scores_labelled_as_fallbacks_and_calls_no_model`
+  -- replaced per the director's decision. Both STZ fixtures have an applicable `empty` pillar under
+  D1 (Q1: every pillar, its payload being cut down to Q1's columns; Q2: `cash_flow`, whose
+  trailing-twelve-month identity needs the prior fiscal year's recorded flow), so the setup now
+  **seeds the prior 10-K's recorded flows** -- the filing a real run already holds -- which keeps Q2
+  scorable. It asserts Q2's row is `FALLBACK_MODEL_LABEL` with `fallback_units == 1`, Q1's row is
+  `UNSCORED_MODEL_LABEL` with its four empty pillars in the stored coverage, and no model is
+  reachable for either. Without the seeded 10-K the fixture would be unscored and the
+  fallback-labelled path would lose its only end-to-end coverage.
+
+### Declared limitations
+
+* **A `not_applicable` pillar's weight is redistributed** (above): the alternative is a scale that
+  cannot reach 50 for an asset manager, and MET-00 forbids the 0 imputation. Recorded here because
+  it is a choice, not a source.
+* **`cycle` records the pillar weights in `params_json` but does not refuse a resume under
+  different ones.** The plan asks for the record only; `score_weights` has its own refusal (T-141)
+  and this setting does not, so a resumed run could mix two weight sets. Declared, not fixed.
+* **The `unscored.json` share is the member-level figure `cycle` reads** (23 of 503, 4.6%). Over
+  *every* filing, 565 of 9,340 (6.0%) have no score -- 484 10-Qs and 81 10-Ks, by empty pillar
+  `financial_strength` 311, `cash_flow` 256, `growth` 21, `profitability` 4 (`out/d1_filings.txt`).
+  `cycle` reads each member's latest filing, so the filing-level figure is not what the 0.05 limit
+  measures.
+* **The token estimate is `chars / 4`** and covers the orchestrator's prompt (the master prompt plus
+  the brief) and the synthesis prompt -- not the specialist calls' own system prompts (the skills)
+  and group prompts, which are T-076's and unchanged.
+* **`absent_by_form` is recorded for the pillar, not for the three metrics**: the metrics keep their
+  own `missing_input` empty reason (APP-09 says they are empty; the pillar-level status says why).
+  Changing the metrics' reasons would have moved 4,515 rows' recorded reasons and is T-071's
+  territory, not this task's.
+* **A metric with no stored row counts as empty** (the pillar is `empty` when every remaining metric
+  is); this is what makes a 10-Q's absent `cagr` group behave as an absent reading rather than an
+  inapplicability, and it matches T-071 part 1's measurement.
