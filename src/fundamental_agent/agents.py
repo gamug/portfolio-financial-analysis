@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -18,7 +19,7 @@ from pydantic import BaseModel, Field, ValidationError
 from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
-from fundamental_agent import quality
+from fundamental_agent import pillars, quality
 from fundamental_agent.applicability import apply_applicability
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import (
@@ -46,6 +47,8 @@ _BULLISH_CUTOFF = 60.0
 _NEUTRAL_CUTOFF = 40.0
 _HIGH_LEVERAGE = 3.0
 _HIGH_LEVERAGE_PENALTY = 12.0
+
+log = logging.getLogger(__name__)
 
 _ALL_GROUPS = (*CORE_GROUPS, *OPTIONAL_GROUPS)
 # valuation needs a market price, so it is computed outside the uniform group loop;
@@ -191,10 +194,13 @@ def _specialist_system_prompt(group: str) -> str:
 
 
 _SYNTHESIS_PROMPT = """Produce the final fundamental assessment for this filing.
+The code has already decided which pillars this company has: {pillars}. Rate exactly those, and no
+other -- a pillar the company does not have is the code's own decision (APP-00), never yours to add.
 Reply with ONLY a raw JSON object -- no prose, no markdown fences -- with these keys:
-  "score": number 0-100 (50 = an average S&P 500 company, higher = fundamentally stronger)
-  "rating": one of "bullish" (score >= 60), "neutral" (40-59), "bearish" (< 40)
-  "narrative": string, 3-5 sentences citing the specific ratios that drove the score
+  "pillars": an object whose keys are exactly {pillars}; each value is an object with
+    "rating": integer 0-100 (50 = that pillar of an average S&P 500 company, higher = stronger)
+    "reason": one sentence naming the metrics of that pillar that drove the rating
+  "narrative": string, 3-5 sentences citing the specific ratios that drove the ratings
   "strengths": array of 2-4 short phrases
   "risks": array of 2-4 short phrases
 Base everything only on the metrics and specialist readings gathered above."""
@@ -202,6 +208,16 @@ Base everything only on the metrics and specialist readings gathered above."""
 _REPAIR_PROMPT = (
     "That was not valid JSON. Reply again with ONLY the JSON object described above, nothing else."
 )
+
+
+def synthesis_prompt(pillars_to_rate: Sequence[str]) -> str:
+    """D2's synthesis prompt, naming the pillars this filing's code decided it has.
+
+    Only the *prompt* is per filing: ``_prompt_version_hash`` hashes the template above, so the
+    version a row records stays constant across every filing of a run (T-113)."""
+    named = ", ".join(f'"{pillar}"' for pillar in pillars_to_rate)
+    return _SYNTHESIS_PROMPT.format(pillars=named or "none")
+
 
 # (flat metric key, low bound, high bound, points) -- score nudges for the offline
 # fallback used only when the LLM cannot return usable JSON.
@@ -215,11 +231,34 @@ _SCORE_RULES: tuple[tuple[str, float, float, float], ...] = (
 )
 
 
-class FundamentalAssessment(BaseModel):
-    """The LLM's verdict on one filing -- persisted as an immutable snapshot."""
+class PillarRating(BaseModel):
+    """One pillar's rating as the model returns it (D2): an integer 0-100 and one sentence."""
 
-    score: float = Field(ge=0.0, le=100.0)
-    rating: Literal["bullish", "neutral", "bearish"]
+    rating: int = Field(ge=0, le=100)
+    reason: str
+
+
+class SynthesisReply(BaseModel):
+    """The model's JSON answer (D2): the pillar ratings, and the narrative around them.
+
+    The score and the rating are **not** the model's -- the code computes both from these ratings
+    (constitution, AI behavior #1: the deterministic part never sits with the model)."""
+
+    pillars: dict[str, PillarRating]
+    narrative: str
+    strengths: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
+class FundamentalAssessment(BaseModel):
+    """The code's verdict on one filing -- persisted as an immutable snapshot.
+
+    T-073: the model rates each pillar, the code weighs and totals them, so ``score`` and ``rating``
+    are the code's. Both are ``None`` when an applicable pillar has no value (D1's coverage rule,
+    MET-00): the row records why and the member is unscored (T-119)."""
+
+    score: float | None = Field(default=None, ge=0.0, le=100.0)
+    rating: Literal["bullish", "neutral", "bearish"] | None = None
     narrative: str
     strengths: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
@@ -352,6 +391,8 @@ class AnalysisResult:
     # when a prompt, skill SOP, or model config actually changes (PR #91 review). See
     # `_prompt_version_hash`.
     prompt_hash: str
+    # T-073 (D4): the pillar block stored with the row, inside `score_snapshot.inputs_json`.
+    pillars: dict[str, Any] = field(default_factory=dict)
 
 
 # T-113 (PR #91 review): temperature=0/seed=0 reduce run-to-run variance -- no LLM provider
@@ -410,6 +451,20 @@ class FundamentalAnalyst:
 
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
         computed = self._compute_all(ctx)
+        statuses = pillars.pillar_statuses(computed)
+        flat = {f"{g}.{r.name}": r.value for g, r in computed}
+        if pillars.empty_pillars(statuses):
+            # D1's coverage rule (MET-00): an applicable pillar with no value leaves the score
+            # empty, so there is nothing to rate and the model is not asked (nothing it returned
+            # would be scored). The block records the statuses and every empty reason.
+            return AnalysisResult(
+                assessment=FundamentalAssessment(narrative=unscored_narrative(statuses)),
+                metrics=computed,
+                flat_metrics=flat,
+                used_fallback=False,
+                prompt_hash=self.prompt_hash,
+                pillars=pillars.score_block(statuses),
+            )
         by_group = _group(computed)
         withheld = withheld_metrics(computed)
         orchestrator = Agent(
@@ -422,14 +477,14 @@ class FundamentalAnalyst:
             ],
         )
         orchestrator(_brief(ctx, by_group, withheld))
-        flat = {f"{g}.{r.name}": r.value for g, r in computed}
-        synthesis = _synthesize(orchestrator, flat, withheld)
+        synthesis = _synthesize(orchestrator, flat, statuses, withheld)
         return AnalysisResult(
             assessment=synthesis.assessment,
             metrics=computed,
             flat_metrics=flat,
             used_fallback=synthesis.used_fallback,
             prompt_hash=self.prompt_hash,
+            pillars=synthesis.pillars,
         )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
@@ -534,49 +589,104 @@ def _round(value: Any) -> Any:
 
 
 @dataclass(frozen=True)
+class _Parsed:
+    """A usable model reply: the pillar ratings and the narrative (D2)."""
+
+    ratings: dict[str, int]
+    reasons: dict[str, str]
+    narrative: str
+    strengths: list[str]
+    risks: list[str]
+
+
+@dataclass(frozen=True)
 class _Synthesis:
     assessment: FundamentalAssessment
+    # D4: the block stored with the row, inside `score_snapshot.inputs_json`.
+    pillars: dict[str, Any]
     used_fallback: bool
 
 
 # T-113: distinct from any real LLM's own model_id, so a fallback row is never mistaken for
 # that model's output in score_snapshot.model.
 FALLBACK_MODEL_LABEL = "rule-based-fallback-v1"
+# T-073 (D1): a filing whose applicable pillar has no value is not scored at all -- the row records
+# why and the member is unscored (T-119). Distinct again, so the row is never read as a model's
+# own verdict on a filing the model was not asked about.
+UNSCORED_MODEL_LABEL = "unscored-pillar-coverage-v1"
+
+
+def unscored_narrative(statuses: Mapping[str, pillars.PillarStatus]) -> str:
+    """D1's coverage rule: why this filing has no score, naming the applicable empty pillar(s)."""
+    empty = pillars.empty_pillars(statuses)
+    named = ", ".join(f"{pillar} ({statuses[pillar].empty_reason})" for pillar in empty)
+    return (
+        "No fundamental score: an applicable pillar has no value (D1's coverage rule, MET-00 -- "
+        f"an empty metric is never a neutral reading): {named}. The member is unscored (T-119)."
+    )
 
 
 def _synthesize(
     orchestrator: Agent,
     flat_metrics: dict[str, float | None],
+    statuses: Mapping[str, pillars.PillarStatus],
     withheld: Mapping[tuple[str, str], str] | None = None,
 ) -> _Synthesis:
-    """Ask the orchestrator for a JSON verdict; fall back to a rule-based score.
+    """Ask the orchestrator to rate the pillars; fall back to a rule-based score.
 
     DeepSeek does not currently accept OpenAI ``response_format`` json-schema, so we
     parse free text rather than using ``Agent.structured_output``.
     """
-    for prompt in (_SYNTHESIS_PROMPT, _REPAIR_PROMPT):
+    scored = pillars.scored_pillars(statuses)
+    for prompt in (synthesis_prompt(scored), _REPAIR_PROMPT):
         try:
             reply = str(orchestrator(prompt))
         except Exception:  # network/model error -- use the deterministic fallback
             break
-        parsed = _coerce(reply)
+        parsed = _coerce(reply, scored)
         if parsed is not None:
-            return _Synthesis(parsed, used_fallback=False)
-    return _Synthesis(_fallback_assessment(flat_metrics, withheld), used_fallback=True)
+            total = pillars.total_from_ratings(parsed.ratings, statuses)
+            return _Synthesis(
+                FundamentalAssessment(
+                    score=total,
+                    rating=_rating_for(total),
+                    narrative=parsed.narrative,
+                    strengths=parsed.strengths,
+                    risks=parsed.risks,
+                ),
+                pillars.score_block(statuses, parsed.ratings, parsed.reasons),
+                used_fallback=False,
+            )
+    return _Synthesis(
+        _fallback_assessment(flat_metrics, withheld),
+        pillars.score_block(statuses),
+        used_fallback=True,
+    )
 
 
-def _coerce(text: str) -> FundamentalAssessment | None:
+def _coerce(text: str, scored: Sequence[str]) -> _Parsed | None:
+    """The model's reply, or ``None`` when it is unusable (D2).
+
+    A rating for a pillar the company does not have is **discarded and logged** -- it is never
+    scored, which would impute an `empty` pillar (MET-00). What is left must be exactly the pillars
+    the code decided this company has; a missing one counts as unparseable and the fallback runs.
+    """
     match = _JSON_OBJECT_RE.search(text)
     if match is None:
         return None
     try:
-        parsed = FundamentalAssessment.model_validate_json(match.group(0))
+        parsed = SynthesisReply.model_validate_json(match.group(0))
     except ValidationError:
         return None
-    # keep rating consistent with the score band the prompt defines.
-    return FundamentalAssessment(
-        score=parsed.score,
-        rating=_rating_for(parsed.score),
+    wanted = set(scored)
+    for extra in sorted(set(parsed.pillars) - wanted):
+        log.warning("discarding a rating for a pillar this company does not have: %s", extra)
+    rated = {name: value for name, value in parsed.pillars.items() if name in wanted}
+    if set(rated) != wanted:
+        return None
+    return _Parsed(
+        ratings={name: value.rating for name, value in rated.items()},
+        reasons={name: value.reason for name, value in rated.items()},
         narrative=parsed.narrative,
         strengths=parsed.strengths,
         risks=parsed.risks,

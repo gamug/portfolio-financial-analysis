@@ -233,10 +233,14 @@ def latest_price_observation(
 
 
 def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
-    """Each asset's newest FUNDAMENTAL snapshot usable on *cycle_date*
+    """Each asset's newest **scored** FUNDAMENTAL snapshot usable on *cycle_date*
     (``id, asset_id, event_time, raw_value, normalized_score``). A FUNDAMENTAL row's
     ``event_time`` is its period end -- what the score is *about* -- not when it became known;
-    that is its ``available_at``, the first trading day after its filing's date (T-107)."""
+    that is its ``available_at``, the first trading day after its filing's date (T-107).
+
+    T-073 (D1): a row whose applicable pillar has no value carries no ``raw_value`` -- the filing
+    is recorded (so the run resumes) but it is **not** a score, so it is invisible here and the
+    member reads as unscored (T-119)."""
     return conn.execute(
         """
         WITH known AS (
@@ -246,6 +250,7 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
                    ) AS rn
             FROM score_snapshot s
             WHERE s.score_type = 'FUNDAMENTAL'
+              AND s.raw_value IS NOT NULL
               AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
         SELECT id, asset_id, event_time, raw_value, normalized_score FROM known WHERE rn = 1
@@ -266,12 +271,13 @@ def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | N
 
 
 def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
-    """Universe members with no FUNDAMENTAL score row at all, not merely a stale one (T-119).
+    """Universe members with no FUNDAMENTAL **score** at all, not merely a stale one (T-119).
 
     *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
-    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
-    key-membership diff against the full universe, not a value check, since an asset with zero
-    rows is never a key at all. Includes *every* asset when none is scored -- PR #78's decision
+    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a key-membership
+    diff against the full universe, not a value check, since an asset with no score value is never
+    a key at all (T-073: a filing whose applicable pillar has no value is recorded but not scored,
+    so it is unscored here too). Includes *every* asset when none is scored -- PR #78's decision
     ("more than 5% unscored stops the cycle") applies at 100% too (PR #99 review): a cycle with
     no FUNDAMENTAL coverage at all must refuse, not silently build a portfolio on TECHNICAL/
     VALORIZATION alone."""
