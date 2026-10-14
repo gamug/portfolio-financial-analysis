@@ -9,7 +9,7 @@ cik,symbols,company_name,exit_date,last_10k_accession,last_10k_filed,article_9,e
 0000018926,LUMN,Lumen Technologies,2023-03-19,0000018926-23-000013,2023-02-23,false,,no Article 9 statement found in the 10-K
 0000023217,CAG,Conagra Brands,2026-06-29,0001558370-25-009180,2025-07-10,false,,no Article 9 statement found in the 10-K
 0000024545,TAP,Molson Coors,2026-09-20,0000024545-26-000006,2026-02-18,false,,no Article 9 statement found in the 10-K
-0000028412,CMA,Comerica,2024-06-23,0000028412-24-000185,2024-02-28,true,Requirements for Approval of Activities and Acquisitions The Gramm-Leach-Bliley Act expanded the activities in which a bank holding company registered as a financial holding company can engage.,
+0000028412,CMA,Comerica,2024-06-23,0000028412-24-000185,2024-02-28,true,"Comerica Incorporated (the Corporation) is a financial holding company headquartered in Dallas, Texas.",verified by hand: the method's sentence is a generic Gramm-Leach-Bliley one
 0000037785,FMC,FMC Corporation,2025-03-23,0000037785-25-000030,2025-02-28,false,,no Article 9 statement found in the 10-K
 0000039911,GPS,Gap,2022-02-02,0000039911-21-000021,2021-03-16,false,,no Article 9 statement found in the 10-K
 0000051644,IPG,Interpublic Group,2025-11-27,0000051644-25-000024,2025-02-20,false,,no Article 9 statement found in the 10-K
@@ -20,7 +20,7 @@ cik,symbols,company_name,exit_date,last_10k_accession,last_10k_filed,article_9,e
 0000101778,MRO,Marathon Oil,2024-11-25,0000101778-24-000023,2024-02-22,false,,no Article 9 statement found in the 10-K
 0000103379,VFC,VF Corporation,2024-04-02,0000103379-23-000006,2023-05-25,false,,no Article 9 statement found in the 10-K
 0000106640,WHR,Whirlpool Corporation,2024-03-17,0000106640-24-000020,2024-02-14,false,,no Article 9 statement found in the 10-K
-0000109380,ZION,Zions Bancorporation,2024-03-17,0000109380-24-000061,2024-02-23,false,,no Article 9 statement found in the 10-K
+0000109380,ZION,Zions Bancorporation,2024-03-17,0000109380-24-000061,2024-02-23,true,"Zions Bancorporation, National Association (“Zions Bancorporation, N.A.,” “the Bank,” “we,” “our,” “us”) is a bank headquartered in Salt Lake City, Utah with annual net revenue (net interest income and noninterest income) of $3.1 billion in 2023, and total assets of approximately $87 billion at December 31, 2023.","verified by hand: a national bank since 2018, so HOLDING_PHRASE cannot match (false negative; the method's gap is part 3b's)"
 0000315213,RHI,Robert Half,2024-06-23,0000315213-24-000011,2024-02-20,false,,no Article 9 statement found in the 10-K
 0000701985,BBWI,"Bath & Body Works, Inc.",2024-09-30,0000701985-24-000010,2024-03-22,false,,no Article 9 statement found in the 10-K
 0000712515,EA,Electronic Arts,2026-08-04,0001628280-26-033617,2026-05-11,false,,no Article 9 statement found in the 10-K
@@ -28,7 +28,7 @@ cik,symbols,company_name,exit_date,last_10k_accession,last_10k_filed,article_9,e
 0000719739,SIVB,SVB Financial Group,2023-03-14,0000719739-23-000021,2023-02-24,true,"BUSINESS General SVB Financial Group ( "" SVB Financial "" ) is a diversified financial services company, as well as a bank holding company and a financial holding company.",
 0000743988,XLNX,Xilinx,2022-02-14,0000743988-21-000016,2021-05-14,false,,no Article 9 statement found in the 10-K
 0000766421,ALK,Alaska Air Group,2023-12-17,0000766421-23-000009,2023-02-13,false,,no Article 9 statement found in the 10-K
-0000783280,DRE,Duke Realty,2022-10-02,0000783280-22-000010,2022-02-18,true,"Dee serves as a member of the Board of Directors of First Internet Bancorp, a bank holding company in Fishers, Indiana and the Center for Performing Arts in Carmel, Indiana.",
+0000783280,DRE,Duke Realty,2022-10-02,0000783280-22-000010,2022-02-18,false,,verified by hand: the method's sentence is a director's seat on another bank; Duke Realty is a REIT
 0000804753,CERN,Cerner,2022-06-07,0000804753-22-000009,2022-02-22,false,,no Article 9 statement found in the 10-K
 0000814453,NWL,Newell Brands,2023-09-17,0000814453-23-000026,2023-02-15,false,,no Article 9 statement found in the 10-K
 0000815094,ABMD,Abiomed,2022-12-21,0000950170-22-010402,2022-05-20,false,,no Article 9 statement found in the 10-K
@@ -62,8 +62,8 @@ cik,symbols,company_name,exit_date,last_10k_accession,last_10k_filed,article_9,e
 0001336917,UA/UAA,Under Armour(Class A),2022-06-20,0001336917-22-000010,2022-02-23,false,,no Article 9 statement found in the 10-K
 0001352010,EPAM,EPAM Systems,2026-06-01,0001352010-26-000015,2026-02-26,false,,no Article 9 statement found in the 10-K
 0001370637,ETSY,Etsy,2024-09-22,0001370637-24-000013,2024-02-22,false,,no Article 9 statement found in the 10-K
-0001378946,PBCT,People's United Financial,2022-04-03,0001628280-22-004389,2022-03-01,true,"(&#8220;People's United&#8221; or the &#8220;Company&#8221;) is a bank holding company and a financial holding company registered under the Bank Holding Company Act of 1956 (the &#8220;BHC Act&#8221;), as amended, and is incorporated under the state laws of Delaware.",
-0001393612,DFS,Discover Financial,2025-05-18,0001393612-25-000009,2025-02-20,true,"We are a bank holding company under the Bank Holding Company Act of 1956 as well as a financial holding company under the Gramm-Leach-Bliley Act (&#8220;GLBA&#8221;) and therefore are subject to oversight, regulation and examination by the Board of Governors of the Federal Reserve System (the &#8220;FRB&#8221; or &#8220;Federal Reserve&#8221;).",
+0001378946,PBCT,People's United Financial,2022-04-03,0001628280-22-004389,2022-03-01,true,"(“People's United” or the “Company”) is a bank holding company and a financial holding company registered under the Bank Holding Company Act of 1956 (the “BHC Act”), as amended, and is incorporated under the state laws of Delaware.",
+0001393612,DFS,Discover Financial,2025-05-18,0001393612-25-000009,2025-02-20,true,"We are a bank holding company under the Bank Holding Company Act of 1956 as well as a financial holding company under the Gramm-Leach-Bliley Act (“GLBA”) and therefore are subject to oversight, regulation and examination by the Board of Governors of the Federal Reserve System (the “FRB” or “Federal Reserve”).",
 0001418091,TWTR,Twitter,2022-10-31,0001418091-22-000029,2022-02-16,false,,no Article 9 statement found in the 10-K
 0001419612,SEDG,SolarEdge,2023-12-17,0001178913-23-000707,2023-02-22,false,,no Article 9 statement found in the 10-K
 0001437107,DISCA/DISCK/WBD,Warner Bros. Discovery,2026-10-05,0001437107-26-000020,2026-02-27,false,,no Article 9 statement found in the 10-K

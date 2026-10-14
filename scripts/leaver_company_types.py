@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import csv
+import html
 import io
 import os
 import sys
@@ -37,7 +38,7 @@ from sec_xcheck.submissions import all_filings  # noqa: E402
 
 from kg_schema.queries import WINDOW_START, connect_ro  # noqa: E402
 
-DEFAULT_OUT = REPO / "docs" / "checklist_sec" / "company_types_leavers.csv"
+DEFAULT_OUT = REPO / "docs" / "leaver_company_types.csv"
 FIELDS = [
     "cik",
     "symbols",
@@ -101,6 +102,46 @@ def evidence(client: Any, cik: str, filing: dict[str, Any]) -> str | None:
     return article_9_statement(strip_html(primary)) if primary else None
 
 
+#: Sentences the method cannot pick correctly, verified by hand (T-153 part 3a review,
+#: 2026-10-14). Keyed by CIK: the company's own verbatim self-statement, or ``None`` when the
+#: method's sentence is not one. Each carries why (``VERIFIED_NOTES``).
+#:
+#: * **CMA** -- the method took a generic Gramm-Leach-Bliley sentence ("... a bank holding
+#:   company registered as a financial holding company can engage"). Comerica's own statement is
+#:   in the same 10-K's MD&A overview.
+#: * **ZION** -- a **false negative**: since 2018 Zions Bancorporation, N.A. is itself a national
+#:   bank, not a holding company, so ``HOLDING_PHRASE`` cannot match; APP-00's Article 9 includes
+#:   banks. The method's gap (its regexes assume a holding-company form) is part 3b's.
+#: * **DRE** -- the method matched a director's seat on another bank ("Dee serves as a member of
+#:   the Board of Directors of First Internet Bancorp, a bank holding company ..."). Duke Realty
+#:   is a REIT: ``article_9`` is false.
+VERIFIED: dict[str, str | None] = {
+    "0000028412": (
+        "Comerica Incorporated (the Corporation) is a financial holding company headquartered "
+        "in Dallas, Texas."
+    ),
+    "0000109380": (
+        "Zions Bancorporation, National Association (\u201cZions Bancorporation, N.A.,\u201d "
+        "\u201cthe Bank,\u201d \u201cwe,\u201d \u201cour,\u201d \u201cus\u201d) is a bank "
+        "headquartered in Salt Lake City, Utah with annual net revenue (net interest income and "
+        "noninterest income) of $3.1 billion in 2023, and total assets of approximately $87 "
+        "billion at December 31, 2023."
+    ),
+    "0000783280": None,
+}
+VERIFIED_NOTES: dict[str, str] = {
+    "0000028412": "verified by hand: the method's sentence is a generic Gramm-Leach-Bliley one",
+    "0000109380": (
+        "verified by hand: a national bank since 2018, so HOLDING_PHRASE cannot match "
+        "(false negative; the method's gap is part 3b's)"
+    ),
+    "0000783280": (
+        "verified by hand: the method's sentence is a director's seat on another bank; "
+        "Duke Realty is a REIT"
+    ),
+}
+
+
 def build(
     universe_path: str, client: Any, window_start: str = WINDOW_START
 ) -> list[dict[str, str]]:
@@ -117,11 +158,16 @@ def build(
             accession = filing["accessionNumber"]
             filed = filing["filingDate"]
             try:
-                quote = evidence(client, cik10(entry["cik"]), filing) or ""
+                found = evidence(client, cik10(entry["cik"]), filing)
             except FileNotFoundError as exc:  # not cached and not fetching
                 note = str(exc)
             else:
-                note = "" if quote else "no Article 9 statement found in the 10-K"
+                if entry["cik"] in VERIFIED:
+                    quote = VERIFIED[entry["cik"]] or ""
+                    note = VERIFIED_NOTES[entry["cik"]]
+                else:
+                    quote = html.unescape(found) if found else ""
+                    note = "" if quote else "no Article 9 statement found in the 10-K"
         rows.append(
             {
                 **entry,

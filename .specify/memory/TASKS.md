@@ -993,6 +993,13 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
+      **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
+      ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
+      statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the
+      share of each cycle date's `members_asof(that date)` members that has no usable score, and takes the
+      first cycle date whose share is at or under `cycle`'s `unscored_max_share` (0.05) as the replay's
+      first date. `T-153` part 3a's R6 (i) curve (members with no filing public yet) is what to expect
+      before it; a share measured on a 2026 date is not, because it depends on the date.
 
 ## Status
 

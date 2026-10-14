@@ -12,9 +12,7 @@ from pathlib import Path
 
 from kg_schema import company_profile
 
-STAGED = (
-    Path(__file__).resolve().parent.parent / "docs" / "checklist_sec" / "company_types_leavers.csv"
-)
+STAGED = Path(__file__).resolve().parent.parent / "docs" / "leaver_company_types.csv"
 
 
 def _rows() -> list[dict[str, str]]:
@@ -39,6 +37,25 @@ def test_a_found_statement_carries_its_quote_and_accession() -> None:
             assert row["last_10k_accession"]
         else:
             assert not row["evidence_quote"].strip()
+
+
+def test_a_quote_is_plain_verbatim_text() -> None:
+    """The review's fix: no HTML entities survive into a quote."""
+    for row in _rows():
+        assert "&#" not in row["evidence_quote"]
+        assert "&amp;" not in row["evidence_quote"]
+
+
+def test_the_hand_verified_rows_carry_their_own_statement() -> None:
+    """CMA and ZION were verified by hand (the method's sentence was generic / could not match);
+    DRE's was a director's other seat, so it is not an Article 9 statement at all."""
+    by_cik = {r["cik"]: r for r in _rows()}
+    assert by_cik["0000028412"]["article_9"] == "true"  # Comerica
+    assert "financial holding company" in by_cik["0000028412"]["evidence_quote"]
+    assert by_cik["0000109380"]["article_9"] == "true"  # Zions
+    assert "is a bank headquartered" in by_cik["0000109380"]["evidence_quote"]
+    assert by_cik["0000783280"]["article_9"] == "false"  # Duke Realty
+    assert by_cik["0000783280"]["evidence_quote"] == ""
 
 
 #: CIKs that left the index **after** the profile was generated: the production-derived

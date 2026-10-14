@@ -8481,65 +8481,58 @@ stored history. `GPS -> GAP` and `FBHS -> FBIN` join `ticker_history.csv` (D4), 
 unchanged — each cycle date still scores `members_asof(that date)` only (D9, verified by
 `verify_pilot`'s T-153c).
 
-**The declared start effect (D3, correction A).** Two parts, measured apart:
+**The declared start effect (D3, correction A).** The fix round (2026-10-14) dropped the
+"(i) + T-073's share" sum: T-073's 0.046 is a *2026* figure and depends on the date, so it is not a
+valid estimate for a 2022 date (R3's own 2022-06-01 cohort is 16% unscored). What stays is **(i) no
+filing public yet** -- read-only from the SEC submissions (586 CIKs, 643 requests, plus the
+succession predecessors): for each trading day and each ``members_asof(day)`` member, has a 10-K or
+10-Q been filed in ``[2022-01-01, day]``, under its CIK or its succession chain? Before the merge it
+read 0.638 (2022-02-15) -> 0.050 (2022-03-14) -> 0.030 (2022-03-18) -> 0.010 (2022-03-31) -> 0.006
+(3/503: BG, BLK, SKYD). **After `T-155`'s successions** (BG <- 0001144519, BLK <- 0001364742,
+SKYD/PSKY <- 0000813828) the floor is **0.000** from 2023-05-04, and 0.004 (2/503) on 2022-03-31;
+(i) alone is at or under 0.05 from **2022-03-10** (0.050; 0.046 on 2022-03-11). **The replay's first
+date is measured in `T-100`'s own run, from the stored pillar statuses (code, no LLM) before the
+replay, and is a step in `T-100`'s `TASKS.md` entry** -- not declared here.
 
-* **(i) no filing public yet** — read-only from the SEC submissions (586 CIKs, 643 requests):
-  for each trading day and each `members_asof(day)` member, has a 10-K or 10-Q been filed in
-  `[2022-01-01, day]`, under its CIK or its succession chain? The share falls 0.638
-  (2022-02-15) → 0.050 (2022-03-14) → 0.030 (2022-03-18) → 0.010 (2022-03-31) → **0.006**
-  (3/503: BG, BLK, SKYD) from 2023-05-04.
-* **(ii) unscored by rule (T-073)** — **not measurable on production**: production is the pilot
-  database and only its 20 names carry a `FUNDAMENTAL` score (377 rows over 20 assets), so the
-  rule reads 483/503 = 0.96 there. T-073's own measured share is 23/503 = **0.046**.
-* **The sum never reaches `unscored_max_share` 0.05** — its floor is 0.006 + 0.046 = **0.052**.
-  Per the brief, this is reported (not worked around): **no replay start date satisfies the
-  rule**, so the replay's first date is the reviewer's call. (i) alone reaches 0.05 on
-  **2022-03-14**.
+**The suspicious-data finding, resolved by `T-155`.** The three members that kept (i) above zero
+were CIK successions among current members (BG `0001996862`, BLK `0002012383`, SKYD `0002041610`),
+with no `cik_successions.csv` row. Stream A's `T-155` (PR #165) added them; after the merge the
+floor is 0. The one member with no filing today is `VYLR` (a member from 2026-10-01, 0 filings).
 
-**A suspicious-data finding, reported before any cause was assigned.** The three members that
-keep (i) above zero are **CIK successions among current members**, not leavers: the universe
-file backfills a *successor* registrant's CIK over the historical interval — BG is CIK
-`0001996862` (Bunge Global SA, first filing 2024-02-22), BLK is CIK `0002012383` (BlackRock,
-Inc., first filing 2024-11-06), SKYD is CIK `0002041610` (Skydance Corp, first filing
-2025-05-14) — and `cik_successions.csv` has no row for any of them. Under D-10 they have no
-filing before their successor CIK's first filing. `XOM` is fine (its chain is in the CSV); the
-one member with no filing today is `VYLR` (a member from 2026-10-01, 0 filings). This is
-`T-153`'s SKYD/Paramount class, now with two more instances; part 3a does not add succession
-rows (that is stream A's CIK-successions task).
+**The leavers' filings and the never-latest count (D5, D7, R1).**
+`scripts/ingestion_budget.py` (read-only; output `docs/ingestion_budget.json`) measures the D2
+scope from the SEC submissions and the **never-latest** filings over each company's **own
+membership sessions** (its stints in the universe file, intersected with the window and D) -- the
+review's fix: the first pass used `[2022-01-03, D]` for every current member, so a filing counted as
+used on dates the company was not in the index (APO joined 2024-12-23; a member that joined after
+2022-01-03 is not a member before it joined). Measured:
 
-**The leavers' price coverage (D8, R5).** `scripts/leaver_price_coverage.py`, run in full
-against the local gateway 2026-10-14, on `kg_schema.trading_calendar` (not a vendor calendar):
-**90 stints, 88 lines of 86 companies — 53 full, 0 partial, 37 zero**; the 37 zero stints are
-35 price lines of 34 companies. GPS is measured under GAP (22/22 days) and FBHS under FBIN
-(242/242) — both full. The repo calendar has **1,200 sessions** in 2022-01-03..2026-10-14,
-the reviewer's AAPL-candle count, so correction C finds **no difference**. Output:
-`docs/leaver_price_coverage.json`.
+* current members: **500 CIKs, 9,351 filings, 978,500 trading days, 623 never-latest**;
+* leavers: **86 CIKs, 865 filings, 122,005 trading days, 23 never-latest**;
+* total: **586 CIKs, 10,216 filings, 1,100,505 trading days, 646 never-latest** -- 7,429,000 input +
+  969,000 output tokens at T-073's 11,500 + 1,500 per filing.
 
-**The leavers' filings (D5, R1).** The D2 scope is **589 companies and 5,891 filings**
-(current 503 / 5,026; leavers 86 / 865) and **1,106,376 expected trading days**; over master's
-5,076-filing store that is **+815 filings, +86 companies**. Six leavers have no filing in the
-window: `GPS` (left 2022-02-02, its last 10-K is 2021), `SBNY`/`FRC` (no 10-K or 10-Q on EDGAR
-at all — the declared gap), and the three one-to-four-day spin-off members `MBC`, `FTRE`,
-`PHIN`. `SBNY` and `FRC` stay declared, no substitute source.
+The wider set adds the 86 leaver companies and their 865 filings (~8.5% of the scope) over the
+members today; production's own store (5,076 filings over 503 assets) is incomplete against the rule
+(AAPL 9 of 19, TAP 10 of 19), so the comparison uses the SEC submissions, not the store. Six leavers
+have no filing in the window: `GPS` (left 2022-02-02, its last 10-K is 2021), `SBNY`/`FRC` (no 10-K
+or 10-Q on EDGAR at all -- the declared gap), and the three one-to-four-day spin-off members `MBC`,
+`FTRE`, `PHIN`. `completed_accessions`/`completed_units` keep a re-run from paying twice.
 
-**The LLM budget (D7).** The 865 leaver filings at ~11,500 input + 1,500 output tokens per
-filing (`MASTER_PROMPT` 767 chars + the brief + the synthesis prompt + the specialists' system
-prompts, 38,922 chars = 9,730 tokens over the 9 groups; `agents._MAX_TOKENS` 1,500) is
-**11,245,000 tokens** (9,947,500 in, 1,297,500 out). The never-latest filings — the cost the
-symmetric rule adds — are **3 (leavers) + 31 (current members) = 34 filings, 442,000 tokens**.
-`completed_accessions`/`completed_units` keep a re-run from paying twice.
-
-**The company-type evidence (D6).** `scripts/leaver_company_types.py` staged the 86 leaver
-CIKs' last 10-Ks (`docs/checklist_sec/company_types_leavers.csv`): 5 carry an Article 9
-statement (CMA, SIVB, DRE, PBCT, DFS). **Two of the five are the method's own false positives**
-— CMA's quote is a generic Gramm-Leach-Bliley sentence and DRE's is about a director's seat on
-another bank ("Dee serves as a member of the Board of Directors of First Internet Bancorp"),
-both matched by `SELF_STATEMENT`'s `is a`/`serves as` without `NOT_THE_FILER` catching them.
-Recorded as evidence, not merged: part 3b assigns the type with GICS and can tighten the method.
-The rows are **not** in `company_profile.csv` yet.
+**The company-type evidence (D6).** `scripts/leaver_company_types.py` stages the 86 leaver CIKs'
+last 10-Ks in `docs/leaver_company_types.csv` (moved out of `docs/checklist_sec/`, which AGENTS.md
+keeps out of tests -- the same finding as `T-155`'s F3). Quotes are unescaped HTML text. Five rows
+carry an Article 9 statement: **SIVB, PBCT and DFS read as genuine self-statements by eye**; **CMA**
+and **ZION** were verified by hand (the method's sentence was a generic Gramm-Leach-Bliley one for
+CMA; ZION is a **false negative** -- since 2018 Zions Bancorporation, N.A. is itself a national bank,
+not a holding company, so `HOLDING_PHRASE` cannot match, and APP-00's Article 9 includes banks, so
+the method's gap is part 3b's). **DRE is not** an Article 9 statement: the method matched a
+director's seat on another bank, so its row is `article_9 = false`. The rows are not merged into
+`company_types.csv`/`company_profile.csv` yet -- part 3b assigns the type with GICS.
 
 **Files.** `src/kg_schema/queries.py` (`WINDOW_START`, `WindowMember`, `members_over_range`),
 `src/kg_schema/data/ticker_history.csv`, `src/fundamental_agent/{pipeline,pending}.py`,
 `src/pricing_agent/{pipeline,pending}.py`, `scripts/leaver_price_coverage.py`,
-`scripts/leaver_company_types.py`, `scripts/verify_pilot.py` (T-153c), SPEC 1.20.0
-(FR-001/FR-004/FR-012). No migration: no table or column changes (contract stays 16).
+`scripts/leaver_company_types.py`, `scripts/ingestion_budget.py`, `scripts/verify_pilot.py` (T-153c),
+`docs/leaver_price_coverage.json`, `docs/ingestion_budget.json`, `docs/leaver_company_types.csv`,
+SPEC 1.20.0 (FR-001/FR-004/FR-012). No migration: no table or column changes (contract stays 16).
