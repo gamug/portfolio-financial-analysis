@@ -72,29 +72,33 @@ def members_asof_mismatches(fin_db_path: str, universe_path: str) -> tuple[int, 
     The dates checked are every ``cycle_run.cycle_date``, every ``valid_to`` in the file, and each
     ``valid_to + 1`` day: a leave date and the day after are exactly what a ``>`` predicate gets wrong.
     Returns ``(dates_checked, mismatches)``; both connections are read-only."""
-    fin = connect_ro(fin_db_path)
-    universe = connect_ro(universe_path)
-    dates = {str(r["cycle_date"]) for r in fin.execute("SELECT DISTINCT cycle_date FROM cycle_run")}
-    for r in universe.execute(
-        "SELECT DISTINCT valid_to FROM universe_membership WHERE valid_to IS NOT NULL"
+    with (
+        contextlib.closing(connect_ro(fin_db_path)) as fin,
+        contextlib.closing(connect_ro(universe_path)) as universe,
     ):
-        leave = date.fromisoformat(str(r["valid_to"]))
-        dates.add(leave.isoformat())
-        dates.add((leave + timedelta(days=1)).isoformat())
-    mismatches: list[str] = []
-    for as_of in sorted(dates):
-        closed = {
-            str(r["symbol"])
-            for r in universe.execute(
-                "SELECT symbol FROM universe_membership WHERE valid_from <= ? "
-                "AND (valid_to IS NULL OR valid_to >= ?)",
-                (as_of, as_of),
-            )
+        dates = {
+            str(r["cycle_date"]) for r in fin.execute("SELECT DISTINCT cycle_date FROM cycle_run")
         }
-        got = {m.symbol for m in members_asof(universe, as_of)}
-        if got != closed:
-            mismatches.append(f"{as_of}: members_asof={len(got)} closed={len(closed)}")
-    return len(dates), mismatches
+        for r in universe.execute(
+            "SELECT DISTINCT valid_to FROM universe_membership WHERE valid_to IS NOT NULL"
+        ):
+            leave = date.fromisoformat(str(r["valid_to"]))
+            dates.add(leave.isoformat())
+            dates.add((leave + timedelta(days=1)).isoformat())
+        mismatches: list[str] = []
+        for as_of in sorted(dates):
+            closed = {
+                str(r["symbol"])
+                for r in universe.execute(
+                    "SELECT symbol FROM universe_membership WHERE valid_from <= ? "
+                    "AND (valid_to IS NULL OR valid_to >= ?)",
+                    (as_of, as_of),
+                )
+            }
+            got = {m.symbol for m in members_asof(universe, as_of)}
+            if got != closed:
+                mismatches.append(f"{as_of}: members_asof={len(got)} closed={len(closed)}")
+        return len(dates), mismatches
 
 
 def main() -> int:  # noqa: C901, PLR0915
