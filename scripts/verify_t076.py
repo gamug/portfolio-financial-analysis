@@ -266,9 +266,9 @@ def cmd_withheld(args: argparse.Namespace) -> None:
         if not withheld:
             continue
         filings_with_a_withheld_value += 1
-        flat = {f"{group}.{result.name}": result.value for group, result in pairs}
-        before = agents._fallback_assessment(flat).score
-        after = agents._fallback_assessment(flat, withheld).score
+        # T-073: the fallback now rates the pillars; `pairs` carries the statuses it needs.
+        before = agents.facts_only_synthesis(pairs).assessment.score
+        after = agents.facts_only_synthesis(pairs, withheld).assessment.score
         for (_group, name), rule in withheld.items():
             entry = per_rule.setdefault(rule, {"filings": 0, "companies": set(), "metrics": set()})
             entry["filings"] += 1

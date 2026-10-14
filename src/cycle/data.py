@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
+from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
 
@@ -233,14 +235,23 @@ def latest_price_observation(
 
 
 def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
-    """Each asset's newest FUNDAMENTAL snapshot usable on *cycle_date*
-    (``id, asset_id, event_time, raw_value, normalized_score``). A FUNDAMENTAL row's
+    """Each asset's newest **scored** FUNDAMENTAL snapshot usable on *cycle_date*
+    (``id, asset_id, event_time, raw_value, normalized_score, inputs_json``). A FUNDAMENTAL row's
     ``event_time`` is its period end -- what the score is *about* -- not when it became known;
-    that is its ``available_at``, the first trading day after its filing's date (T-107)."""
+    that is its ``available_at``, the first trading day after its filing's date (T-107).
+
+    T-073 (D1): the newest *usable* filing decides. A filing whose applicable pillar has no value
+    carries no ``raw_value`` -- it is recorded (so the run resumes) but it is not a score, so the
+    member reads as unscored (T-119) and an older *scored* filing is **not** carried forward in its
+    place: that would read a stale value as the current one, which MET-00 rules out. The ranking
+    therefore comes first and the row is dropped afterwards.
+
+    ``inputs_json`` rides along for D4: it holds the row's pillar block, so a cycle under other
+    weights recomputes the total from the ratings the row stored."""
     return conn.execute(
         """
         WITH known AS (
-            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score,
+            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score, s.inputs_json,
                    ROW_NUMBER() OVER (
                        PARTITION BY s.asset_id ORDER BY s.event_time DESC, s.id DESC
                    ) AS rn
@@ -248,30 +259,59 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
             WHERE s.score_type = 'FUNDAMENTAL'
               AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
-        SELECT id, asset_id, event_time, raw_value, normalized_score FROM known WHERE rn = 1
+        SELECT id, asset_id, event_time, raw_value, normalized_score, inputs_json
+        FROM known
+        WHERE rn = 1 AND raw_value IS NOT NULL
         ORDER BY asset_id
         """,
         (cycle_date,),
     ).fetchall()
 
 
-def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
-    """asset_id -> the period end of its newest FUNDAMENTAL score usable on *cycle_date*.
+def fundamental_value_under(row: Row, weights: Mapping[str, float]) -> float:
+    """A FUNDAMENTAL row's total under *weights* (T-073, D4).
 
-    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset with
-    none at all is simply absent, never present with a ``None`` value (T-119): a consumer that
-    wants "no score at all" must diff its own universe against this dict's keys, not iterate its
-    values -- see ``unscored_assets``."""
+    The row's ``raw_value`` is its total under the weights it was scored with. When the cycle's
+    weights differ from the weights stored with that row, the total is recomputed from the pillar
+    ratings the row stored -- no LLM call and no rewrite of the stored row. A row with no pillar
+    block (written before T-073, or one the code left unscored) keeps its own ``raw_value``.
+    """
+    stored = _inputs_json(row["inputs_json"])
+    if not stored or not weights_differ(stored, weights):
+        return float(row["raw_value"])
+    recomputed = total_from_block(stored, weights)
+    return float(row["raw_value"]) if recomputed is None else recomputed
+
+
+def _inputs_json(raw: str | None) -> dict[str, Any]:
+    """The row's stored audit block; ``{}`` when it carries none or it is not an object."""
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
+    """asset_id -> the period end of its newest **scored** FUNDAMENTAL filing usable on
+    *cycle_date*.
+
+    Only ever has an asset as a key when it *has* a usable FUNDAMENTAL score -- an asset whose
+    newest usable filing is unscored (T-073, D1: no ``raw_value``) and one with no filing at all
+    are both simply absent, never present with a ``None`` value (T-119): a consumer that wants "no
+    score at all" must diff its own universe against this dict's keys, not iterate its values --
+    see ``unscored_assets``."""
     return {int(r["asset_id"]): r["event_time"] for r in latest_fundamental_rows(conn, cycle_date)}
 
 
 def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
-    """Universe members with no FUNDAMENTAL score row at all, not merely a stale one (T-119).
+    """Universe members with no FUNDAMENTAL **score** at all, not merely a stale one (T-119).
 
     *scored* is keyed by every asset that has one (``last_fundamental_dates`` or
-    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a
-    key-membership diff against the full universe, not a value check, since an asset with zero
-    rows is never a key at all. Includes *every* asset when none is scored -- PR #78's decision
+    ``latest_fundamental_rows``'s normalized-score map both qualify) -- this is a key-membership
+    diff against the full universe, not a value check, since an asset with no score value is never
+    a key at all (T-073: a filing whose applicable pillar has no value is recorded but not scored,
+    so it is unscored here too). Includes *every* asset when none is scored -- PR #78's decision
     ("more than 5% unscored stops the cycle") applies at 100% too (PR #99 review): a cycle with
     no FUNDAMENTAL coverage at all must refuse, not silently build a portfolio on TECHNICAL/
     VALORIZATION alone."""

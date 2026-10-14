@@ -31,7 +31,7 @@ from sec_xcheck.dqc_lists import dqc14, dqc15
 
 import fundamental_agent
 from fundamental_agent import db, quality
-from fundamental_agent.agents import FilingContext, FundamentalAnalyst, _fallback_assessment
+from fundamental_agent.agents import FilingContext, FundamentalAnalyst, facts_only_synthesis
 from fundamental_agent.db import SnapshotRow
 from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import _Target, _ttm_flows, _YearTask
@@ -997,7 +997,8 @@ def _recompute_single_filing(
 
     computed = analyst._compute_all(ctx)
     flat = {f"{g}.{r.name}": r.value for g, r in computed}
-    assessment = _fallback_assessment(flat)
+    # T-073: the facts-only verdict -- D1's coverage rule, then D3's pillar fallback.
+    assessment = facts_only_synthesis(computed).assessment
 
     db.stamp_ytd(computed, ttm)
     db.record_metrics(conn, fid, computed, event_time=f["period_end"], run_id=None)
