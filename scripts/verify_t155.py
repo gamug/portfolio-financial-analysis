@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import importlib.util
+import json
 import os
 import re
 import sqlite3
@@ -40,8 +42,10 @@ from sec_xcheck.common import SecClient
 from sec_xcheck.submissions import all_filings
 
 from fundamental_agent import pipeline
+from fundamental_agent.config import Settings
 from fundamental_agent.edgar_client import EdgarClient
 from kg_schema import identity
+from kg_schema.db import connect_ro
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTER = REPO / "docs" / "checklist_sec" / "succession_8ks.csv"
@@ -438,9 +442,228 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _facts_only_analyst() -> Any:
+    """The facts-only analyst from ``scripts/verify_t149.py`` (T-149): every metric computed, the score
+    the rule-based fallback, no model and no network beyond the gateway."""
+    path = REPO / "scripts" / "verify_t149.py"
+    spec = importlib.util.spec_from_file_location("verify_t149", path)
+    if spec is None or spec.loader is None:  # pragma: no cover - a local file always loads
+        raise RuntimeError("cannot load scripts/verify_t149.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["verify_t149"] = module
+    spec.loader.exec_module(module)
+    return module._FactsOnlyAnalyst
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run the fundamental pipeline for the named members on the scratch copy, facts-only (no LLM)."""
+    pipeline.FundamentalAnalyst = _facts_only_analyst()  # type: ignore[misc]
+    pipeline.build_model = lambda _s: None  # type: ignore[assignment]
+    settings = Settings(
+        db_path=Path(args.db),
+        universe_db_path=Path(args.universe),
+        llm_api_key="unused-facts-only",
+        llm_model="facts-only-no-llm",
+        llm_url="http://unused.invalid",
+        edgar_base_url=os.environ["EDGAR_BASE_URL"],
+    )
+    report = pipeline.run(
+        settings,
+        pipeline.RunParams(
+            forms=("10-K", "10-Q"),
+            since_year=2022,
+            tickers=tuple(args.tickers.split(",")),
+            analysis_date=args.analysis_date,
+        ),
+    )
+    print(
+        f"run {report.run_id}: planned {report.planned}, completed {report.completed}, "
+        f"skipped {report.skipped}, failed {report.failed}"
+    )
+    for line in report.errors:
+        print("  ERR", line[:300])
+    return 0
+
+
+def _ro(path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _filings_of(conn: sqlite3.Connection, cik: str) -> list[dict[str, Any]]:
+    return [
+        dict(r)
+        for r in conn.execute(
+            "SELECT f.form, f.fiscal_period, f.period_end, f.filing_date, f.accession_number, "
+            "f.cik FROM sec_filings f JOIN assets a ON a.id = f.asset_id WHERE a.cik = ? "
+            "ORDER BY f.period_end, f.id",
+            (cik,),
+        )
+    ]
+
+
+def _metric_names(conn: sqlite3.Connection, cik: str) -> dict[str, str]:
+    """``metric_name -> group`` for every metric row of the member's filings that has a value."""
+    return {
+        str(r["metric_name"]): str(r["metric_group"])
+        for r in conn.execute(
+            "SELECT DISTINCT m.metric_name, m.metric_group FROM fundamental_metrics m "
+            "JOIN sec_filings f ON f.id = m.filing_id JOIN assets a ON a.id = f.asset_id "
+            "WHERE a.cik = ? AND m.engine_version = 'metrics-v7' AND m.value IS NOT NULL",
+            (cik,),
+        )
+    }
+
+
+def cmd_measure(args: argparse.Namespace) -> int:
+    """T-155 P3: the affected members before (``--before``) vs after (``--db``), plus the unscored
+    counts, the succession-stage errors and the pre-close PSKY/SKYD resolution."""
+    before = _ro(args.before)
+    after = _ro(args.db)
+    members = [("BLK", "0002012383"), ("BG", "0001996862"), ("SKYD", "0002041610")]
+    report: dict[str, Any] = {"before_db": args.before, "after_db": args.db, "members": []}
+    for ticker, cik in members:
+        fb, fa = _filings_of(before, cik), _filings_of(after, cik)
+        before_acc = {f["accession_number"] for f in fb}
+        added = [f for f in fa if f["accession_number"] not in before_acc]
+        mb, ma = _metric_names(before, cik), _metric_names(after, cik)
+        gained = sorted(set(ma) - set(mb))
+        added_acc = {f["accession_number"] for f in added}
+        on_added: dict[str, dict[str, Any]] = {}
+        for r in after.execute(
+            "SELECT m.metric_name, m.metric_group, f.accession_number FROM fundamental_metrics m "
+            "JOIN sec_filings f ON f.id = m.filing_id JOIN assets a ON a.id = f.asset_id "
+            "WHERE a.cik = ? AND m.engine_version = 'metrics-v7' AND m.value IS NOT NULL",
+            (cik,),
+        ):
+            if r["accession_number"] not in added_acc:
+                continue
+            entry = on_added.setdefault(
+                str(r["metric_name"]), {"group": str(r["metric_group"]), "n": 0}
+            )
+            entry["n"] += 1
+        report["members"].append(
+            {
+                "ticker": ticker,
+                "cik": cik,
+                "filings_before": len(fb),
+                "filings_after": len(fa),
+                "earliest_period_before": fb[0]["period_end"] if fb else None,
+                "earliest_period_after": fa[0]["period_end"] if fa else None,
+                "added_filings": added,
+                "metric_names_gained": [
+                    {
+                        "metric": name,
+                        "group": ma[name],
+                        "multi_year": _is_multi_year(name, ma[name]),
+                    }
+                    for name in gained
+                ],
+                "metrics_on_added_filings": [
+                    {
+                        "metric": name,
+                        "group": entry["group"],
+                        "multi_year": _is_multi_year(name, entry["group"]),
+                        "filings": entry["n"],
+                    }
+                    for name, entry in sorted(on_added.items())
+                ],
+            }
+        )
+    report["succession_errors"] = [
+        dict(r)
+        for r in after.execute(
+            "SELECT ticker, message FROM analysis_run_error WHERE stage = 'succession'"
+        )
+    ]
+    for label, conn in (("before", before), ("after", after)):
+        report[f"members_{label}"] = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    report["preclose"] = _preclose(args.universe, args.db, args.preclose_date)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(report, indent=2) + "\n")
+
+    print(f"wrote {args.out}")
+    for m in report["members"]:
+        print(
+            f"  {m['ticker']:5} filings {m['filings_before']:>2} -> {m['filings_after']:>2}; "
+            f"earliest {m['earliest_period_before']} -> {m['earliest_period_after']}; "
+            f"added {len(m['added_filings'])}"
+        )
+        for g in m["metric_names_gained"]:
+            mark = " (multi-year)" if g["multi_year"] else ""
+            print(f"      gained {g['metric']} [{g['group']}]{mark}")
+        my = [x for x in m["metrics_on_added_filings"] if x["multi_year"]]
+        print(
+            "      on the added filings, multi-year metrics with a value: "
+            + ", ".join(f"{x['metric']}({x['filings']})" for x in my)
+        )
+    print(f"  succession-stage errors: {len(report['succession_errors'])}")
+    print(f"  pre-close {args.preclose_date}: {json.dumps(report['preclose'])}")
+    return 0
+
+
+def _is_multi_year(name: str, group: str) -> bool:
+    """A metric whose value spans more than one period: growth and CAGR by definition, and the
+    cash-flow group's ratios, whose flows are trailing-twelve-month (PER-06)."""
+    return bool(re.search(r"_growth$|_cagr$", name)) or group == "cashflow"
+
+
+def _preclose(universe: str, db: str, day: str) -> dict[str, Any]:
+    """The member CIK the universe resolves on *day*, its chain in the after DB, and the filing a run
+    on *day* would score there (the latest available then) with its prior 10-K."""
+    uconn = _ro(universe)
+    member = uconn.execute(
+        "SELECT symbol, cik FROM universe_membership WHERE valid_from <= ? "
+        "AND (valid_to IS NULL OR valid_to >= ?) AND cik = '0002041610'",
+        (day, day),
+    ).fetchone()
+    conn = connect_ro(db)
+    cik = "0002041610"
+    chain = list(identity.cik_chain(conn, cik))
+    available = [
+        f
+        for f in _filings_of(conn, cik)
+        if f["form"] in ("10-K", "10-Q") and (f["filing_date"] or "") <= day
+    ]
+    latest, prior = inputs_at(
+        [
+            {
+                **f,
+                "_cik": f["cik"],
+                "filingDate": f["filing_date"],
+                "reportDate": f["period_end"],
+                "accessionNumber": f["accession_number"],
+            }
+            for f in available
+        ],
+        day,
+    )
+    return {
+        "date": day,
+        "universe_member": dict(member) if member else None,
+        "chain": chain,
+        "latest": {
+            "accession": latest["accession_number"],
+            "cik": latest["_cik"],
+            "form": latest["form"],
+            "period_end": latest["reportDate"],
+        }
+        if latest
+        else None,
+        "prior_10k": {
+            "accession": prior["accession_number"],
+            "cik": prior["_cik"],
+            "period_end": prior["reportDate"],
+        }
+        if prior
+        else None,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["classify", "used", "check"])
+    parser.add_argument("command", choices=["classify", "used", "check", "run", "measure"])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--cache", default=str(REPO / ".cache" / "sec_xcheck"))
     parser.add_argument("--fetch", action="store_true", help="download what is not cached")
@@ -449,12 +672,21 @@ def main(argv: list[str] | None = None) -> int:
         default="/workspaces/thesis/data/universe_history.db",
         help="the universe file",
     )
+    parser.add_argument("--db", help="the scratch copy to run on / measure (run, measure)")
+    parser.add_argument("--before", default="/workspaces/thesis/scratch/t071a/after.db")
+    parser.add_argument("--preclose-date", default="2024-12-31")
+    parser.add_argument("--tickers", help="comma-separated members (run)")
+    parser.add_argument("--analysis-date", default="2026-09-22")
     args = parser.parse_args(argv)
     if args.command == "classify":
         return cmd_classify(args)
     if args.command == "used":
         return cmd_used(args)
-    return cmd_check(args)
+    if args.command == "check":
+        return cmd_check(args)
+    if args.command == "run":
+        return cmd_run(args)
+    return cmd_measure(args)
 
 
 if __name__ == "__main__":

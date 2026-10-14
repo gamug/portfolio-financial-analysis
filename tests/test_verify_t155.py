@@ -90,3 +90,10 @@ def test_first_member_date_reads_the_universe_file(tmp_path: Path) -> None:
     assert verify.first_member_date(path, "0000000001") == verify.WINDOW_START
     assert verify.first_member_date(path, "0000000002") == "2023-05-01"
     assert verify.first_member_date(path, "0000000009") is None
+
+
+def test_is_multi_year_marks_growth_cagr_and_the_cash_flow_group() -> None:
+    assert verify._is_multi_year("revenue_growth", "growth")
+    assert verify._is_multi_year("net_income_cagr", "cagr")
+    assert verify._is_multi_year("free_cash_flow_margin", "cashflow")  # trailing twelve months
+    assert not verify._is_multi_year("net_margin", "profitability")
