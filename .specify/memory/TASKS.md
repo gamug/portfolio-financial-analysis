@@ -827,14 +827,28 @@ the final pilot, `T-143`.
         - **Part 3a (now).** Main design question, the ingestion scope: every ingestion step reads
           `members_asof(analysis_date)` only (`fundamental_agent/pipeline.py:219`, `pricing_agent/pipeline.py:196`),
           and `T-100` is one run on one date, so as built it never fetches a leaver. Conditions (reviewer A):
-          - per company, fetch only what its stints can use: the filings public during a stint plus the one in
-            force at its start; prices over the stint plus the longest lookback read before its start (`quant`'s
-            756-day `lookback_days`, beyond the 200-day average, the 252-day momentum and the 60-day bases);
-            nothing after the exit;
+          - one rule for every company, current member or leaver, and nothing after the exit (reviewer A,
+            2026-10-14):
+            - **prices from 2019-01-02 for all.** That date is `quant`'s 756-day `lookback_days` before
+              2022-01-03. Prices are not SEC data, so D-10's windows do not bind them. `pricing_agent`'s
+              `DEFAULT_START_DATE` moves for everyone. First list every reader of `price_window`/`price_daily`
+              that summarizes the whole stored history (the `full` label), and show its values before and after
+              on a copy. Stop and ask if any stored score or rule changes beyond the added lookback;
+            - **filings: D-10 stays, frozen.** That is every filing filed from 2022-01-01 to the last day of the
+              company's last stint, the rule current members already follow (APO, a member from 2024-12-23,
+              has every filing from 2022). The list of reads of earlier filings (TTM, growth, CAGR, D-13's
+              three-year average; file:line) is evidence, not a stop;
+          - the early-2022 short history (2022 10-Qs without a stored prior-year quarter; D-13's previous-10-K
+            debt) is a start effect equal for all companies. Declare it with counts and do not widen the window.
+            Propose as the replay's first date the first cycle date on which the unscored share of members is
+            at or under `cycle`'s `unscored_max_share` (0.05). A member with no filing public yet counts as
+            unscored. That date is declared;
           - ranking stays point-in-time: each cycle date scores `members_asof(that date)` only, so the wider
             set changes what is ingested, never who is ranked;
-          - every LLM call on a leaver's filing is paid: give the extra filing count and a token estimate for
-            `T-100`'s budget (about 11-12k input tokens per filing with the specialists, per `T-073`);
+          - every LLM call on a leaver's filing is paid. For `T-100`'s budget, give the extra filing count and a
+            token estimate (about 11-12k input tokens per filing with the specialists, per `T-073`). Give also
+            the filings, leavers and current members separately, that are never the latest usable filing on any
+            date their company is a member: the LLM cost of the symmetric rule;
           - say per step (fundamental, pricing, entity resolution, quant) whether it needs the wider set;
           - no `migrate` on production; measure on a copy.
 
