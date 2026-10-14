@@ -755,7 +755,7 @@ the final pilot, `T-143`.
         their leavers (96 stints) and no other day changes; FB is a member on 2022-06-08, PHIN (a one-day member)
         on 2023-07-05. verify_pilot's T-153a check; SPEC 1.17.0.
       - For the 86 companies that left the index in the window: their filings by CIK, their type in
-        `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+        `company_types.csv`, and their GICS classification (the source is decided below).
       - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
         again on the historical universe before they go into the thesis.
       - Filings of a company that left the index come by CIK; if one of them succeeded a predecessor registrant whose CIK
@@ -803,8 +803,30 @@ the final pilot, `T-143`.
         `docs/upstream_requests/data_mining_wbd_day_prices.md`; the user sends it. Until it lands, both are
         unpriced in the replay (no TECHNICAL score, no quant return). Asked under the line's last ticker
         (WBD, DAY; DISCK separately), the one this repo fetches.
-      - **Remaining:** part 3, the 86 leavers' data (filings by CIK, `company_types.csv`, the GICS source --
-        to be decided) and the replay re-run (waits for `T-071`). Also open here until stream A's
+      - **The leavers' GICS source (decided by reviewer A, 2026-10-14):** Wikipedia's "List of S&P 500
+        companies" as of each stint's exit. Per stint, take the last revision that still lists the company,
+        dated on or before its `valid_to`. Find the row by CIK, copy the sector and sub-industry names as
+        written, and cite the revision id and timestamp (like L-11's rows). `universe_history.db`'s two GICS
+        columns are empty on all 90 stints of the 86 leavers (measured 2026-10-14), so `portfolio-data-mining`
+        fills them. Drafted in `docs/upstream_requests/data_mining_leaver_gics.md`; the user sends it, together
+        with the WBD/DAY request if that one has not gone out. Conditions:
+        - A label outside C5's current structure (22 stints of 20 CIKs end before the 2023-03-17 GICS change,
+          for example "Thrifts & Mortgage Finance" and "Data Processing & Outsourced Services") is resolved per
+          company from its own 10-K, as APP-00 does for Article 9/7. There is no general crosswalk table.
+        - The SEC SIC code is a check only, never a source. Report every disagreement between the label and SIC
+          on the types that matter (REIT 6798, utilities 49xx, insurers 63xx, banks 602x), and open each one.
+        - The checklist is frozen. The declaration goes in `docs/model_fixes.md`'s T-153 entry and, as an
+          input for the checklist's next version, not in `checklist_v1.3.md`: "leavers: the classification in
+          force on their last membership day; current members: today's snapshot; a reclassification after exit
+          is not applied" (L-03 / L-11).
+      - **Remaining:** part 3, split by that request (reviewer A, 2026-10-14). The GICS request blocks `T-100`,
+        not the pilot.
+        - **Part 3a (now):** the leavers' filings by CIK; their successions (a `cik_successions.csv` row only
+          where a leaver loses filings without one); the Article 9/7 statements from their 10-Ks for
+          `company_types.csv`; the SBNY/FRC data-source gap declared and measured (above).
+        - **Part 3b (waits for the GICS delivery):** the GICS-keyed steps (insurer, other financial firm, REIT,
+          regulated utility, the SECTOR score), the pre-2023 labels, the SIC check, the declaration, and the
+          replay re-run (which also waits for `T-071`). Also open here until stream A's
         CIK-successions task is in this file (reviewer A, 2026-10-14: that task takes it): the file's SKYD
         interval before 2025-08-07 belongs to Paramount Global (CIK 0000813828), a CIK succession, not a
         rename -- `cik_successions.csv` has no row for it yet.
