@@ -153,14 +153,12 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> ticker_h
     count = 0
     for m, plan in zip(members, plans, strict=True):
         if plan.action == "adopt" and plan.asset_id is not None and plan.adopt_from is not None:
-            # C4: retitle the one existing asset of the line; its id, cik and every other column
-            # stay unchanged.
+            # C4: retitle the one existing asset of the line -- its id and cik stay unchanged. The
+            # ordinary upsert below then refreshes the member's name/sector like any other member.
             conn.execute("UPDATE assets SET ticker = ? WHERE id = ?", (plan.ticker, plan.asset_id))
             adoptions.append(
                 ticker_history.Adoption(plan.adopt_from, plan.ticker, plan.asset_id, str(plan.cik))
             )
-            count += 1
-            continue
         sector_id = _upsert_sector(conn, m.gics_sector or "")
         conn.execute(
             """

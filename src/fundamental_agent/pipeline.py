@@ -151,10 +151,20 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         _report_adoptions(sync)
         # T-153 part 2: a renamed company is one asset -- load it under its line's canonical
         # symbol, so a run dated before the rename (FB) still finds the asset that carries the
-        # current ticker (META).
+        # current ticker (META). --tickers takes the symbol of the run's date too (F3).
         symbols = [
             ticker_history.canonical_for_member(conn, symbol=m.symbol, cik=m.cik) for m in members
         ]
+        if params.tickers:
+            params = replace(
+                params,
+                tickers=ticker_history.canonical_tickers(
+                    conn,
+                    params.tickers,
+                    member_ciks={m.symbol.upper(): m.cik for m in members},
+                    as_of=params.analysis_date,
+                ),
+            )
         assets = db.load_universe(conn, tickers=params.tickers, symbols=symbols, limit=params.limit)
         if not assets:
             raise RuntimeError(

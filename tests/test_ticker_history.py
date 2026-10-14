@@ -9,6 +9,7 @@ an undeclared split before anything is written.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 from portfolio_common.db import Database
@@ -60,12 +61,33 @@ def test_the_file_cites_every_row_and_names_the_canonical_line() -> None:
         assert row.evidence_date
 
 
-def test_seed_is_idempotent() -> None:
+def test_seed_makes_the_table_equal_the_file(tmp_path: Path) -> None:
+    """The file is the source of truth (F5): a changed row is updated, a removed row is deleted."""
     conn = _bare_db()
-    conn.execute("DELETE FROM ticker_history")
-    conn.commit()
     assert ticker_history.seed(conn) == 17
-    assert ticker_history.seed(conn) == 0  # a re-run on unchanged input writes nothing
+    rows = ticker_history.read_history()
+    lines = ["cik,symbol,valid_from,valid_to,canonical_symbol,evidence_url,evidence_date,rules"]
+    for r in rows:
+        if r.symbol == "WBD":  # a row removed from the file
+            continue
+        canonical = "META2" if r.symbol == "FB" else r.canonical_symbol  # the next rename lands
+        valid_to = "2022-06-07" if r.symbol == "FB" else (r.valid_to or "")
+        lines.append(
+            f"{r.cik},{r.symbol},{r.valid_from},{valid_to},{canonical},"
+            f"{r.evidence_url},{r.evidence_date},{r.rules}"
+        )
+    path = tmp_path / "ticker_history.csv"
+    path.write_text("\n".join(lines) + "\n")
+
+    assert ticker_history.seed(conn, path) == 16
+    stored = {
+        str(r["symbol"]): (str(r["canonical_symbol"]), r["valid_to"])
+        for r in conn.execute("SELECT symbol, canonical_symbol, valid_to FROM ticker_history")
+    }
+    assert len(stored) == 16
+    assert stored["FB"] == ("META2", "2022-06-07")  # the changed row took the file's value
+    assert "WBD" not in stored  # the deleted row is gone
+    assert ticker_history.seed(conn, path) == 16  # a re-run on the same file changes nothing
 
 
 def test_the_line_is_resolved_by_cik_and_dated_by_the_symbol() -> None:
@@ -114,6 +136,34 @@ def test_plan_refuses_an_undeclared_split() -> None:
     assert "SKYQ" in message and "0002041610" in message and "PSKY" in message
 
 
+def test_plan_refuses_when_the_canonical_and_an_old_symbol_both_exist() -> None:
+    """F4: a database with both FB and META is refused, naming both, not silently refreshed."""
+    conn = _bare_db()
+    _asset(conn, 1, "FB", "0001326801")
+    _asset(conn, 2, "META", "0001326801")
+    with pytest.raises(ticker_history.TickerConflict) as info:
+        ticker_history.plan_members(conn, [("META", "0001326801")])
+    message = str(info.value)
+    assert "asset 2 (META)" in message and "1 (FB)" in message
+
+
+def test_plan_refuses_a_third_symbol_of_a_multi_class_cik() -> None:
+    """F6: GOOGL + GOOX with a stale GOOG is not a share class -- GOOX is refused, not inserted."""
+    conn = _bare_db()
+    _asset(conn, 1, "GOOGL", "0001652044")
+    _asset(conn, 2, "GOOG", "0001652044")
+    with pytest.raises(ticker_history.TickerConflict):
+        ticker_history.plan_members(conn, [("GOOGL", "0001652044"), ("GOOX", "0001652044")])
+
+
+def test_plan_still_inserts_a_genuine_share_class() -> None:
+    """The narrowing keeps the real case: GOOG arrives beside its own line's GOOGL asset."""
+    conn = _bare_db()
+    _asset(conn, 1, "GOOGL", "0001652044")
+    plans = ticker_history.plan_members(conn, [("GOOG", "0001652044"), ("GOOGL", "0001652044")])
+    assert [p.action for p in plans] == ["insert", "refresh"]
+
+
 # -- sync_universe ------------------------------------------------------------------------
 
 
@@ -127,12 +177,16 @@ def test_sync_is_one_asset_across_a_rename(memory_db: Database, sync: object) ->
 
 @pytest.mark.parametrize("sync", [fundamental_db.sync_universe, pricing_db.sync_universe])
 def test_sync_adopts_and_reports_a_recorded_rename(memory_db: Database, sync: object) -> None:
-    memory_db.execute("INSERT INTO assets (ticker, cik) VALUES ('FB', '0001326801')")
+    memory_db.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('FB', 'Facebook', '0001326801')"
+    )
     memory_db.commit()
     asset_id = int(memory_db.execute("SELECT id FROM assets").fetchone()["id"])
     result = sync(memory_db, [_member("META", "0001326801")])  # type: ignore[operator]
-    row = memory_db.execute("SELECT id, ticker, cik FROM assets").fetchone()
+    row = memory_db.execute("SELECT id, ticker, company_name, cik FROM assets").fetchone()
     assert (row["id"], row["ticker"], row["cik"]) == (asset_id, "META", "0001326801")
+    # F7: the ordinary upsert runs after the retitle, so the member's name/sector refresh too
+    assert row["company_name"] == "META Inc."
     assert result.adoptions == [ticker_history.Adoption("FB", "META", asset_id, "0001326801")]
 
 

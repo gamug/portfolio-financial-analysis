@@ -150,17 +150,21 @@ FOXA/FOX, NWSA/NWS) and stay separate assets.
 
 - `HISTORY_CSV` (`data/ticker_history.csv`) is the **source of truth**: one row per symbol with
   `canonical_symbol` (the line's newest symbol) and the notice that dates it (L-11).
-  `read_history()` parses and validates it; `seed(db)` inserts what is missing (called from
-  `ensure`); `ensure_seeded(db)` is the no-op-on-a-partial-schema wrapper.
+  `read_history()` parses and validates it; `seed(db)` makes the table **equal** the file on every
+  `ensure` (one transaction: rows the file dropped are removed, a changed `canonical_symbol` takes
+  the file's value, new rows are inserted); `ensure_seeded(db)` is the no-op-on-a-partial-schema
+  wrapper.
 - `canonical_symbol(db, cik, symbol)` (by CIK, so a reused ticker is a different line),
   `symbol_line(db, symbol, as_of)` (dated), `line_symbols(db, cik, canonical)` and
   `canonical_for_member(db, *, symbol, cik, as_of=None)` are the reads.
 - `plan_members(db, members)` classifies each member of one dated universe: a member whose CIK
-  already has an asset under another symbol is a **share class** (another same-CIK member is in
-  the batch) → insert; a **recorded rename** → adopt (`MemberAsset.action == "adopt"`, the one
-  existing asset of the line retitled in place); otherwise → `TickerConflict`, **before anything
-  is written**. `Adoption` / `SyncResult` are what `sync_universe` returns so the run can report
-  each adoption.
+  already has an asset under another symbol is a **share class** only when another same-CIK member
+  is in the batch **and every** existing asset of that CIK is one of those members' lines →
+  insert; a **recorded rename** → adopt (`MemberAsset.action == "adopt"`, the one existing asset of
+  the line retitled in place, then the member's ordinary refresh); otherwise → `TickerConflict`,
+  **before anything is written** — including a canonical asset sitting beside an old-symbol asset
+  of the same line. `Adoption` / `SyncResult` are what `sync_universe` returns so the run can
+  report each adoption.
 
 ### `market_cap.py` — market capitalisation as of a date (T-132)
 

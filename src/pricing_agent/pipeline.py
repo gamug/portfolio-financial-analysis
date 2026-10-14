@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from portfolio_common.db import Database
@@ -126,6 +126,17 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         symbols = [
             ticker_history.canonical_for_member(conn, symbol=m.symbol, cik=m.cik) for m in members
         ]
+        if params.tickers:
+            # F3: --tickers takes the symbol of the run's date (FB on a 2022 date -> META).
+            params = replace(
+                params,
+                tickers=ticker_history.canonical_tickers(
+                    conn,
+                    params.tickers,
+                    member_ciks={m.symbol.upper(): m.cik for m in members},
+                    as_of=params.analysis_date,
+                ),
+            )
         with PricingClient(settings.pricing_base_url) as client:
             assets = db.load_universe(
                 conn, tickers=params.tickers, symbols=symbols, limit=params.limit

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import csv
 from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -101,13 +102,19 @@ def read_history(path: Path = HISTORY_CSV) -> list[HistoryRow]:
 
 
 def seed(db: Database, path: Path = HISTORY_CSV) -> int:
-    """Insert the rows the database does not hold yet; returns how many were new."""
+    """Make the table equal the file, in one transaction (the file is the source of truth).
+
+    The table has no surrogate key, so its content is rewritten: rows the file no longer holds are
+    removed, a changed row (a line's ``canonical_symbol`` moves when the next rename lands) takes
+    the file's value, and new rows are inserted. Returns the number of rows written; 0 when the
+    database has no table yet."""
     if not db.relation_exists("ticker_history"):
         return 0
-    new = 0
-    for r in read_history(path):
-        new += db.execute(
-            "INSERT OR IGNORE INTO ticker_history (cik, symbol, valid_from, valid_to, "
+    rows = read_history(path)
+    db.execute("DELETE FROM ticker_history")
+    for r in rows:
+        db.execute(
+            "INSERT INTO ticker_history (cik, symbol, valid_from, valid_to, "
             "canonical_symbol, evidence_url, evidence_date, rules) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 r.cik,
@@ -119,9 +126,9 @@ def seed(db: Database, path: Path = HISTORY_CSV) -> int:
                 r.evidence_date,
                 r.rules,
             ),
-        ).rowcount
+        )
     db.commit()
-    return new
+    return len(rows)
 
 
 def ensure_seeded(db: Database, path: Path = HISTORY_CSV) -> int:
@@ -176,6 +183,22 @@ def canonical_for_member(
         if line is not None:
             return line[1]
     return symbol
+
+
+def canonical_tickers(
+    db: Database, tickers: Iterable[str], *, member_ciks: Mapping[str, str | None], as_of: str
+) -> list[str]:
+    """Each of *tickers* under the line it names on *as_of* (T-153 part 2).
+
+    A ticker that is a universe member that day resolves by the member's CIK (*member_ciks*,
+    keyed by upper-cased symbol); otherwise by the line the file records for that symbol on that
+    date; otherwise it stays as typed. So an operator replaying a 2022 date can ask ``--tickers
+    FB`` and reach the asset that now trades as META, while ``FB`` on a 2026 date (ProShares)
+    reaches nothing."""
+    return [
+        canonical_for_member(db, symbol=t, cik=member_ciks.get(t.upper()), as_of=as_of)
+        for t in tickers
+    ]
 
 
 def line_symbols(db: Database, cik: object, canonical: str) -> set[str]:
@@ -247,6 +270,32 @@ def _line_asset(by_cik: dict[str, list[tuple[int, str]]], own: str, canonical: s
     )
 
 
+def _line_of(db: Database, cik: str, ticker: str) -> str:
+    """The line a stored ticker belongs to (its canonical), or the ticker itself."""
+    return canonical_symbol(db, cik, ticker) or ticker
+
+
+def _stale_line_assets(
+    db: Database, own: str, canonical: str, mine: list[tuple[int, str]]
+) -> list[tuple[int, str]]:
+    """Assets of *own* carrying a **non-canonical** symbol of *canonical*'s line (F4).
+
+    A rename split in two: the canonical asset and an old-symbol asset of the same line both
+    exist, which ``sync_universe`` refuses rather than silently leaving two assets."""
+    symbols = line_symbols(db, own, canonical)
+    return [(aid, t) for aid, t in mine if t.upper() in symbols and t.upper() != canonical.upper()]
+
+
+def _is_share_class(
+    db: Database, own: str, mine: list[tuple[int, str]], lines_in_batch: dict[str, set[str]]
+) -> bool:
+    """Whether a new symbol is a **share class** of *own* (F6): another member of the same CIK is
+    in this batch **and every** existing asset of that CIK is the line of one of those members.
+    Anything else -- a stale second line, an undeclared rename -- is not a share class."""
+    lines = lines_in_batch.get(own, set())
+    return bool(lines) and all(_line_of(db, own, ticker) in lines for _, ticker in mine)
+
+
 def _adopt_or_insert(
     db: Database, symbol: str, own: str, canonical: str, mine: list
 ) -> MemberAsset:
@@ -266,25 +315,40 @@ def _adopt_or_insert(
     )
 
 
-def _plan_one(
-    db: Database, symbol: str, cik: object, assets: _Assets, batch: Counter
-) -> MemberAsset:
+@dataclass(frozen=True)
+class _Context:
+    """What one batch's planning needs: the stored assets, the same-CIK member count and, per
+    CIK, the lines its members belong to (F6)."""
+
+    assets: _Assets
+    batch: Counter
+    lines_in_batch: dict[str, set[str]]
+
+
+def _plan_one(db: Database, symbol: str, cik: object, ctx: _Context) -> MemberAsset:
     own = normalize_cik(cik)
     if own is None:  # no CIK: today's behaviour, a bare ticker upsert
-        asset_id = assets.by_ticker.get(symbol.upper())
+        asset_id = ctx.assets.by_ticker.get(symbol.upper())
         return MemberAsset(symbol, None, symbol, "refresh" if asset_id else "insert", asset_id)
     canonical = canonical_symbol(db, own, symbol) or symbol
-    line_asset = _line_asset(assets.by_cik, own, canonical)
+    mine = ctx.assets.by_cik.get(own, [])
+    line_asset = _line_asset(ctx.assets.by_cik, own, canonical)
     if line_asset is not None:
+        stale = _stale_line_assets(db, own, canonical, mine)
+        if stale:  # F4: the canonical asset and an old symbol of the line both exist
+            raise TickerConflict(
+                f"{symbol} (CIK {own}) has both asset {line_asset} ({canonical}) and "
+                f"{', '.join(f'{aid} ({t})' for aid, t in stale)} of the same line: "
+                "a rename never leaves two assets (T-153 part 2)"
+            )
         return MemberAsset(symbol, own, canonical, "refresh", line_asset)
-    taken = assets.by_ticker.get(canonical.upper())
-    if taken is not None and assets.cik_by_id.get(taken) not in (None, own):
+    taken = ctx.assets.by_ticker.get(canonical.upper())
+    if taken is not None and ctx.assets.cik_by_id.get(taken) not in (None, own):
         raise TickerConflict(
             f"{symbol} (CIK {own}) resolves to {canonical}, already asset {taken} of CIK "
-            f"{assets.cik_by_id.get(taken)}: a reused ticker is never merged (T-153 part 2)"
+            f"{ctx.assets.cik_by_id.get(taken)}: a reused ticker is never merged (T-153 part 2)"
         )
-    mine = assets.by_cik.get(own, [])
-    if batch.get(own, 0) > 1:  # a share class is a member alongside it on the same date
+    if ctx.batch.get(own, 0) > 1 and _is_share_class(db, own, mine, ctx.lines_in_batch):
         return MemberAsset(symbol, own, canonical, "insert")
     if canonical_symbol(db, own, symbol) is not None:  # a recorded line: adopt or first sighting
         return _adopt_or_insert(db, symbol, own, canonical, mine)
@@ -302,9 +366,14 @@ def plan_members(db: Database, members: list[tuple[str, object]]) -> list[Member
 
     *members* are ``(symbol, cik)`` pairs of one dated universe. A member whose CIK already has
     an asset under a *different* symbol is: a **share class** (another member of the same CIK is
-    in this batch) -> insert, as today; a **recorded rename** (the file names the symbol) ->
-    adopt; otherwise -> :class:`TickerConflict`. Nothing is written here, so a conflict leaves
-    the database untouched."""
-    assets = _load_assets(db)
+    in this batch and every existing asset of that CIK is one of those members' lines) -> insert,
+    as today; a **recorded rename** (the file names the symbol) -> adopt; otherwise ->
+    :class:`TickerConflict`. Nothing is written here, so a conflict leaves the database untouched."""
     batch = Counter(own for _, cik in members if (own := normalize_cik(cik)) is not None)
-    return [_plan_one(db, symbol, cik, assets, batch) for symbol, cik in members]
+    lines_in_batch: dict[str, set[str]] = {}
+    for symbol, cik in members:
+        own = normalize_cik(cik)
+        if own is not None:
+            lines_in_batch.setdefault(own, set()).add(canonical_symbol(db, own, symbol) or symbol)
+    ctx = _Context(_load_assets(db), batch, lines_in_batch)
+    return [_plan_one(db, symbol, cik, ctx) for symbol, cik in members]

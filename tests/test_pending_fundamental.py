@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -158,6 +159,65 @@ def fx(tmp_path: Path) -> Fixture:
     f.scored("AAA", "0000000001-26-000001", "2026-05-01")
     f.scored("BBB", "0000000002-26-000001", "2026-05-02")
     return f
+
+
+# -- a rename: the member's symbol is not the asset's (T-153 part 2, F1) ----------------------
+
+_RENAME_DAY = "2022-06-08"  # a Wednesday; FB is the member that day
+
+
+def _fb_meta(tmp_path: Path) -> tuple[Path, Path, int]:
+    """A member FB (CIK 0001326801) whose one asset is META."""
+    udb = write_universe_db(tmp_path / "universe.db", [("FB", "2022-01-03", None)])
+    raw = sqlite3.connect(udb)
+    raw.execute("UPDATE universe_membership SET cik = '0001326801'")
+    raw.commit()
+    raw.close()
+    db_path = tmp_path / "fin.db"
+    conn = connect(db_path)
+    ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('META', 'Meta Platforms', "
+        "'0001326801')"
+    )
+    asset_id = int(conn.execute("SELECT id FROM assets").fetchone()["id"])
+    conn.commit()
+    conn.close()
+    return db_path, udb, asset_id
+
+
+def test_a_check_before_a_rename_sees_the_canonical_asset(tmp_path: Path) -> None:
+    """F1: FB on 2022-06-08 is META's line; META's stored, scored filing is current."""
+    db_path, udb, asset_id = _fb_meta(tmp_path)
+    conn = connect(db_path)
+    seed_fundamental_score(conn, asset_id, 50.0, event_time="2022-03-31", filing_date="2022-05-01")
+    conn.execute(
+        "UPDATE sec_filings SET accession_number = '0001326801-22-000001', form = '10-Q', "
+        "cik = '0001326801' WHERE id = (SELECT MAX(id) FROM sec_filings)"
+    )
+    conn.commit()
+    conn.close()
+    assert pending.pending_line(db_path, udb, _RENAME_DAY, edgar=FakeEdgar()).startswith(  # type: ignore[arg-type]
+        "pending: no"
+    )
+
+
+def test_a_check_before_a_rename_finds_a_stored_unscored_filing(tmp_path: Path) -> None:
+    """F1: the same member with META's filing stored but unscored must read as pending. Before
+    the fix the plan was keyed on FB, so clause 1 skipped META's row and the check said no."""
+    db_path, udb, asset_id = _fb_meta(tmp_path)
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date, "
+        "accession_number, period_end, retrieved_at, cik, available_at) "
+        "VALUES (?, '10-Q', 2022, '2022Q1', '2022-05-01', '0001326801-22-000001', '2022-03-31', "
+        "'now', '0001326801', '2022-05-02')",
+        (asset_id,),
+    )
+    conn.commit()
+    conn.close()
+    line = pending.pending_line(db_path, udb, _RENAME_DAY, edgar=FakeEdgar())  # type: ignore[arg-type]
+    assert line.startswith("pending: yes") and "0001326801-22-000001" in line
 
 
 # -- the plain cases ---------------------------------------------------------------------------
