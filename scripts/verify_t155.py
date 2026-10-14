@@ -27,6 +27,7 @@ import argparse
 import csv
 import html
 import re
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -82,6 +83,23 @@ FIELDS = (
     "lost_filings",
     "lost_accessions",
     "evidence_quote",
+)
+
+USED_FIELDS = (
+    "ticker",
+    "successor_cik",
+    "effective_date",
+    "first_member_date",
+    "own_first",
+    "own_last",
+    "pred_first",
+    "pred_last",
+    "used",
+    "used_at",
+    "latest_accession",
+    "latest_cik",
+    "prior_10k_accession",
+    "prior_10k_cik",
 )
 
 
@@ -239,16 +257,172 @@ def cmd_classify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _universe_rows(universe: Path, cik: str) -> list[tuple[str, str | None]]:
+    conn = sqlite3.connect(f"file:{universe}?mode=ro", uri=True)
+    try:
+        return [
+            (str(vf), None if vt is None else str(vt))
+            for vf, vt in conn.execute(
+                "SELECT valid_from, valid_to FROM universe_membership WHERE cik = ? ORDER BY valid_from",
+                (cik,),
+            )
+        ]
+    finally:
+        conn.close()
+
+
+def first_member_date(universe: Path, cik: str) -> str | None:
+    """The first day on or after :data:`WINDOW_START` the CIK is a member, from the universe file."""
+    for valid_from, valid_to in _universe_rows(universe, cik):
+        if valid_to is None or valid_to >= WINDOW_START:
+            return max(valid_from, WINDOW_START)
+    return None
+
+
+def _window_filings(client: SecClient, cik: str) -> list[dict[str, Any]]:
+    """The CIK's 10-K/10-Q filings in the window, each tagged with the CIK it was listed under."""
+    return [
+        {**r, "_cik": cik}
+        for r in all_filings(client, cik, since="2021-12-01") or []
+        if r["form"] in ("10-K", "10-Q") and r["filingDate"] >= WINDOW_START
+    ]
+
+
+def inputs_at(
+    available: list[dict[str, Any]], day: str
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """The filing a run at *day* scores (the latest by period end available then) and, when it is a
+    10-Q, the prior 10-K its TTM and prior-year capital read (PER-06)."""
+    current = [r for r in available if r["filingDate"] <= day]
+    if not current:
+        return None, None
+    latest = max(
+        current, key=lambda r: (r["reportDate"] or "", r["filingDate"], r["accessionNumber"])
+    )
+    prior = None
+    if latest["form"] == "10-Q":
+        tens = [
+            r
+            for r in current
+            if r["form"] == "10-K" and (r["reportDate"] or "") < (latest["reportDate"] or "")
+        ]
+        if tens:
+            prior = max(tens, key=lambda r: (r["reportDate"] or "", r["filingDate"]))
+    return latest, prior
+
+
+def used_row(
+    client: SecClient, universe: Path, member_spec: tuple[str, str, str, tuple[str, ...]]
+) -> dict[str, str]:
+    """One ``used.csv`` row: does a member date actually read a lost predecessor filing?"""
+    ticker, successor, effective, preds = member_spec
+    own = _window_filings(client, successor)
+    pred_rows = [r for p in preds for r in _window_filings(client, p)]
+    pred_set = set(preds)
+    member = first_member_date(universe, successor)
+    days = {member, "2026-09-22"} | {r["filingDate"] for r in own + pred_rows}
+    available = own + pred_rows
+
+    used_at: str | None = None
+    latest = prior = None
+    for day in sorted(d for d in days if d and member and d >= member):
+        latest, prior = inputs_at(available, day)
+        if latest is None:
+            continue
+        reads_pred = latest["_cik"] in pred_set or (prior is not None and prior["_cik"] in pred_set)
+        if reads_pred:
+            used_at = day
+            break
+    if used_at is None:  # report the first member date's inputs when nothing is used
+        latest, prior = inputs_at(available, member or "")
+    return {
+        "ticker": ticker,
+        "successor_cik": successor,
+        "effective_date": effective,
+        "first_member_date": member or "",
+        "own_first": min((r["filingDate"] for r in own), default=""),
+        "own_last": max((r["filingDate"] for r in own), default=""),
+        "pred_first": min((r["filingDate"] for r in pred_rows), default=""),
+        "pred_last": max((r["filingDate"] for r in pred_rows), default=""),
+        "used": "yes" if used_at else "no",
+        "used_at": used_at or "",
+        "latest_accession": (latest or {}).get("accessionNumber", ""),
+        "latest_cik": (latest or {}).get("_cik", ""),
+        "prior_10k_accession": (prior or {}).get("accessionNumber", ""),
+        "prior_10k_cik": (prior or {}).get("_cik", ""),
+    }
+
+
+def _report_date(client: SecClient, cik: str, accession: str) -> str:
+    """The 8-K's own "Date of earliest event reported" (the succession's effective date)."""
+    for r in all_filings(client, cik, since="2021-12-01") or []:
+        if r["accessionNumber"] == accession:
+            return str(r["reportDate"] or "")
+    return ""
+
+
+def cmd_used(args: argparse.Namespace) -> int:
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    client = SecClient(Path(args.cache), offline=not args.fetch)
+    universe = Path(args.universe)
+    with REGISTER.open(newline="", encoding="utf-8") as fh:
+        register = list(csv.DictReader(fh))
+
+    seen: set[str] = set()
+    rows: list[dict[str, str]] = []
+    for row in register:
+        ticker, accession = row["ticker"], row["accession_number"]
+        reading = READING[(ticker, accession)]
+        if all(p == row["cik"] for _label, p in reading) or ticker in seen:
+            continue  # same_cik: no row; one row per member
+        seen.add(ticker)
+        rows.append(
+            used_row(
+                client,
+                universe,
+                (
+                    ticker,
+                    row["cik"],
+                    _report_date(client, row["cik"], accession),
+                    tuple(p for _label, p in reading),
+                ),
+            )
+        )
+
+    path = out_dir / "used.csv"
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=USED_FIELDS, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"{len(rows)} new_cik members; wrote {path}")
+    for r in rows:
+        print(
+            f"  {r['ticker']:5} member_from={r['first_member_date'] or '-':10} "
+            f"effective={r['effective_date']} own={r['own_first'] or '-'}..{r['own_last'] or '-'} "
+            f"pred={r['pred_first'] or '-'}..{r['pred_last'] or '-'} USED={r['used']}"
+            + (f" at {r['used_at']}" if r["used_at"] else "")
+        )
+    print(f"requests made: {client.requests}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["classify"])
+    parser.add_argument("command", choices=["classify", "used"])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--cache", default=str(REPO / ".cache" / "sec_xcheck"))
     parser.add_argument("--fetch", action="store_true", help="download what is not cached")
+    parser.add_argument(
+        "--universe",
+        default="/workspaces/thesis/data/universe_history.db",
+        help="the universe file",
+    )
     args = parser.parse_args(argv)
     if args.command == "classify":
         return cmd_classify(args)
-    raise SystemExit(f"unknown command {args.command}")
+    return cmd_used(args)
 
 
 if __name__ == "__main__":
