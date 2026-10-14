@@ -41,6 +41,20 @@ from typing import Any
 
 from fundamental_agent.metrics.base import MetricResult
 
+# T-073 (D4): the stored contract -- the four pillar names, the default weights, the block's keys
+# and the reader `cycle` uses -- lives in `kg_schema` (the shared package, like the applicability
+# matrix), so `cycle` recomputes a total without importing `fundamental_agent`. Re-exported here so
+# this module stays the one place `fundamental_agent` names them.
+from kg_schema.pillar_score import (
+    COVERAGE_KEY,
+    DEFAULT_PILLAR_WEIGHTS,
+    PILLAR_NAMES,
+    PILLAR_WEIGHTS_KEY,
+    PILLAR_WEIGHTS_VERSION,
+    PILLAR_WEIGHTS_VERSION_KEY,
+    PILLARS_KEY,
+)
+
 # D1: the four pillars, from computed ratios only (TASKS.md's T-073 redesign). The building blocks
 # (`ebitda`, `nopat`, `effective_tax_rate`, `return_on_invested_capital_effective_rate`) are inputs
 # and derivations beside the ratios -- the model still sees them as context, but no pillar reads
@@ -104,20 +118,6 @@ EMPTY = "empty"
 PRESENT = "present"
 
 STATUSES: tuple[str, ...] = (PRESENT, EMPTY, ABSENT_BY_FORM, NOT_APPLICABLE)
-
-# D2/D4: equal weights over the four pillars -- a declared calibration with no loaded source (the
-# user's decision of 2026-10-13, TASKS.md's T-073 entry). One setting, and changing it costs no LLM
-# call: `cycle` recomputes a row's total from the pillar ratings it stored (D4).
-DEFAULT_PILLAR_WEIGHTS: dict[str, float] = {pillar: 0.25 for pillar in PILLARS}
-# The version tag stored beside the weights, so a row says which calibration produced it.
-PILLAR_WEIGHTS_VERSION = "pillar-weights-equal-v1"
-
-# D4: the block's keys inside `score_snapshot.inputs_json` (no schema change). The row's flat
-# metrics keep their own `group.metric` keys beside it.
-PILLARS_KEY = "pillars"
-PILLAR_WEIGHTS_KEY = "pillar_weights"
-PILLAR_WEIGHTS_VERSION_KEY = "pillar_weights_version"
-COVERAGE_KEY = "coverage"
 
 # The default empty reason when a metric records none (G4's step 5).
 _DEFAULT_EMPTY_REASON = "missing_input"
@@ -215,12 +215,12 @@ def pillar_statuses(results: Iterable[tuple[str, MetricResult]]) -> dict[str, Pi
 
 def scored_pillars(statuses: Mapping[str, PillarStatus]) -> tuple[str, ...]:
     """The pillars that enter the score, in the declared order: those with a reading."""
-    return tuple(pillar for pillar in PILLARS if statuses[pillar].has_a_reading)
+    return tuple(pillar for pillar in PILLAR_NAMES if statuses[pillar].has_a_reading)
 
 
 def empty_pillars(statuses: Mapping[str, PillarStatus]) -> tuple[str, ...]:
     """The applicable pillars with no value -- what leaves the score empty (D1's coverage rule)."""
-    return tuple(pillar for pillar in PILLARS if statuses[pillar].status == EMPTY)
+    return tuple(pillar for pillar in PILLAR_NAMES if statuses[pillar].status == EMPTY)
 
 
 def coverage(statuses: Mapping[str, PillarStatus]) -> dict[str, Any]:
@@ -230,10 +230,10 @@ def coverage(statuses: Mapping[str, PillarStatus]) -> dict[str, Any]:
         "scored": list(scored_pillars(statuses)),
         "empty": list(empty_pillars(statuses)),
         "absent_by_form": [
-            pillar for pillar in PILLARS if statuses[pillar].status == ABSENT_BY_FORM
+            pillar for pillar in PILLAR_NAMES if statuses[pillar].status == ABSENT_BY_FORM
         ],
         "not_applicable": [
-            pillar for pillar in PILLARS if statuses[pillar].status == NOT_APPLICABLE
+            pillar for pillar in PILLAR_NAMES if statuses[pillar].status == NOT_APPLICABLE
         ],
     }
 
@@ -277,7 +277,7 @@ def score_block(
     """
     applied = normalized_weights(statuses, weights or DEFAULT_PILLAR_WEIGHTS)
     block: dict[str, Any] = {}
-    for pillar in PILLARS:
+    for pillar in PILLAR_NAMES:
         entry = statuses[pillar].as_dict()
         if pillar in applied and ratings is not None:
             entry["rating"] = ratings[pillar]
@@ -290,43 +290,4 @@ def score_block(
         PILLAR_WEIGHTS_KEY: dict(weights or DEFAULT_PILLAR_WEIGHTS),
         PILLAR_WEIGHTS_VERSION_KEY: PILLAR_WEIGHTS_VERSION,
         COVERAGE_KEY: coverage(statuses),
-    }
-
-
-def total_from_block(block: Mapping[str, Any], weights: Mapping[str, float]) -> float | None:
-    """A stored block's total under *weights*, or ``None`` when the row carries no pillar block.
-
-    D4: `cycle` recomputes a row's total from the ratings the row stored when its own weights differ
-    from the weights stored with that row. The normalization is the one the row was scored under
-    (`normalized_weights` over the pillars it scored), so only the relative weights change.
-    """
-    stored = block.get(PILLARS_KEY)
-    if not isinstance(stored, Mapping):
-        return None
-    rated = {
-        pillar: entry["rating"]
-        for pillar, entry in stored.items()
-        if isinstance(entry, Mapping) and isinstance(entry.get("rating"), (int, float))
-    }
-    if not rated:
-        return None
-    stored_weights = block.get(PILLAR_WEIGHTS_KEY)
-    applied = stored_weights if isinstance(stored_weights, Mapping) else DEFAULT_PILLAR_WEIGHTS
-    total = sum(float(applied.get(pillar, 0.0)) for pillar in rated)
-    if total <= 0:
-        return None
-    return round(
-        sum(float(applied.get(pillar, 0.0)) * float(rating) for pillar, rating in rated.items())
-        / total,
-        1,
-    )
-
-
-def weights_differ(stored: Mapping[str, Any], weights: Mapping[str, float]) -> bool:
-    """Whether a row's stored ``pillar_weights`` differ from *weights* (D4's recompute trigger)."""
-    recorded = stored.get(PILLAR_WEIGHTS_KEY)
-    if not isinstance(recorded, Mapping):
-        return False
-    return {str(k): float(v) for k, v in recorded.items()} != {
-        str(k): float(v) for k, v in weights.items()
     }

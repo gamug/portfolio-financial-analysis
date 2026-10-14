@@ -82,6 +82,12 @@ def test_the_four_pillars_are_the_four_planned_groups() -> None:
     )
 
 
+def test_the_pillar_names_are_the_shared_contracts_order() -> None:
+    """D4: `kg_schema.pillar_score` carries the four names (and the default weights) so `cycle`
+    reads a stored block without importing this package -- the two lists must stay one."""
+    assert tuple(pillars.PILLARS) == pillars.PILLAR_NAMES
+
+
 def test_the_liquidity_metrics_are_app_09s_three() -> None:
     """APP-09 names exactly current, quick and cash: the only metrics an `absent_by_form` pillar
     may drop. Pinned to the metrics that cite APP-09, so a new APP-09 metric cannot silently join

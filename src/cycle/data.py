@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
+from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
 
@@ -234,7 +236,7 @@ def latest_price_observation(
 
 def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
     """Each asset's newest **scored** FUNDAMENTAL snapshot usable on *cycle_date*
-    (``id, asset_id, event_time, raw_value, normalized_score``). A FUNDAMENTAL row's
+    (``id, asset_id, event_time, raw_value, normalized_score, inputs_json``). A FUNDAMENTAL row's
     ``event_time`` is its period end -- what the score is *about* -- not when it became known;
     that is its ``available_at``, the first trading day after its filing's date (T-107).
 
@@ -242,11 +244,14 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
     carries no ``raw_value`` -- it is recorded (so the run resumes) but it is not a score, so the
     member reads as unscored (T-119) and an older *scored* filing is **not** carried forward in its
     place: that would read a stale value as the current one, which MET-00 rules out. The ranking
-    therefore comes first and the row is dropped afterwards."""
+    therefore comes first and the row is dropped afterwards.
+
+    ``inputs_json`` rides along for D4: it holds the row's pillar block, so a cycle under other
+    weights recomputes the total from the ratings the row stored."""
     return conn.execute(
         """
         WITH known AS (
-            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score,
+            SELECT s.id, s.asset_id, s.event_time, s.raw_value, s.normalized_score, s.inputs_json,
                    ROW_NUMBER() OVER (
                        PARTITION BY s.asset_id ORDER BY s.event_time DESC, s.id DESC
                    ) AS rn
@@ -254,13 +259,37 @@ def latest_fundamental_rows(conn: Database, cycle_date: str) -> list[Row]:
             WHERE s.score_type = 'FUNDAMENTAL'
               AND s.available_at IS NOT NULL AND s.available_at <= ?
         )
-        SELECT id, asset_id, event_time, raw_value, normalized_score
+        SELECT id, asset_id, event_time, raw_value, normalized_score, inputs_json
         FROM known
         WHERE rn = 1 AND raw_value IS NOT NULL
         ORDER BY asset_id
         """,
         (cycle_date,),
     ).fetchall()
+
+
+def fundamental_value_under(row: Row, weights: Mapping[str, float]) -> float:
+    """A FUNDAMENTAL row's total under *weights* (T-073, D4).
+
+    The row's ``raw_value`` is its total under the weights it was scored with. When the cycle's
+    weights differ from the weights stored with that row, the total is recomputed from the pillar
+    ratings the row stored -- no LLM call and no rewrite of the stored row. A row with no pillar
+    block (written before T-073, or one the code left unscored) keeps its own ``raw_value``.
+    """
+    stored = _inputs_json(row["inputs_json"])
+    if not stored or not weights_differ(stored, weights):
+        return float(row["raw_value"])
+    recomputed = total_from_block(stored, weights)
+    return float(row["raw_value"]) if recomputed is None else recomputed
+
+
+def _inputs_json(raw: str | None) -> dict[str, Any]:
+    """The row's stored audit block; ``{}`` when it carries none or it is not an object."""
+    try:
+        value = json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def last_fundamental_dates(conn: Database, cycle_date: str) -> dict[int, str | None]:
