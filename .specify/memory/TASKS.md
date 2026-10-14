@@ -796,20 +796,23 @@ the final pilot, `T-143`.
         by the member's CIK as of the date. On `universe_history.db` each rename CIK is one asset over
         2022–2026; a fresh-database pricing run spans FB→META with no break and no `split_jump`.
         verify_pilot's T-153b check; SPEC 1.19.1.
-      - **Upstream request (blocks `T-100`, reviewer A 2026-10-14):** `portfolio-data-mining`'s pricing
-        gateway serves no daily prices for **WBD** (CIK 0001437107, a member 2022-04-11..2026-10-05; DISCA and
-        DISCK before) or **DAY** (CIK 0001725057, a member 2024-02-01..2026-02-08; CDAY before) over any window,
-        under the old tickers either (measured 2026-10-14). Drafted in
-        `docs/upstream_requests/data_mining_wbd_day_prices.md`; the user sends it. Until it lands, both are
-        unpriced in the replay (no TECHNICAL score, no quant return). Asked under the line's last ticker
-        (WBD, DAY; DISCK separately), the one this repo fetches.
+      - **Upstream request, leaver prices (blocks `T-100`; reviewer A 2026-10-14):** the pricing gateway
+        serves **no candles** for 37 of the 90 leaver stints over their whole membership (35 lines of 34
+        companies, all of them tickers that no longer trade: acquired, merged or failed, WBD and DAY included);
+        the other 53 are priced on every membership day (measured 2026-10-14, the AAPL calendar). Drafted in
+        `docs/upstream_requests/data_mining_leaver_prices.md`, which replaces the unsent WBD/DAY request. Each
+        line is asked under its last ticker in the index (WBD for DISCA then WBD, DAY for CDAY then DAY, DISCK
+        separately), from 2019-01-02: `quant`'s 756-day `lookback_days` before 2022-01-03. The user sends it
+        with the GICS request. Fallback if a line cannot be obtained: declared under PER-11 with the unpriced
+        names' measured index weight and the direction of the bias, naming each one an acquisition target or a
+        failure (SIVB, SBNY, FRC).
       - **The leavers' GICS source (decided by reviewer A, 2026-10-14):** Wikipedia's "List of S&P 500
         companies" as of each stint's exit. Per stint, take the last revision that still lists the company,
         dated on or before its `valid_to`. Find the row by CIK, copy the sector and sub-industry names as
         written, and cite the revision id and timestamp (like L-11's rows). `universe_history.db`'s two GICS
         columns are empty on all 90 stints of the 86 leavers (measured 2026-10-14), so `portfolio-data-mining`
-        fills them. Drafted in `docs/upstream_requests/data_mining_leaver_gics.md`; the user sends it, together
-        with the WBD/DAY request if that one has not gone out. Conditions:
+        fills them. Drafted in `docs/upstream_requests/data_mining_leaver_gics.md`; the user sends it together
+        with the prices request. Conditions:
         - A label outside C5's current structure (22 stints of 20 CIKs end before the 2023-03-17 GICS change,
           for example "Thrifts & Mortgage Finance" and "Data Processing & Outsourced Services") is resolved per
           company from its own 10-K, as APP-00 does for Article 9/7. There is no general crosswalk table.
@@ -819,17 +822,36 @@ the final pilot, `T-143`.
           input for the checklist's next version, not in `checklist_v1.3.md`: "leavers: the classification in
           force on their last membership day; current members: today's snapshot; a reclassification after exit
           is not applied" (L-03 / L-11).
-      - **Remaining:** part 3, split by that request (reviewer A, 2026-10-14). The GICS request blocks `T-100`,
-        not the pilot.
-        - **Part 3a (now):** the leavers' filings by CIK; their successions (a `cik_successions.csv` row only
-          where a leaver loses filings without one); the Article 9/7 statements from their 10-Ks for
-          `company_types.csv`; the SBNY/FRC data-source gap declared and measured (above).
+      - **Remaining:** part 3, split by the two requests (reviewer A, 2026-10-14). They block `T-100`, not the
+        pilot.
+        - **Part 3a (now).** Main design question, the ingestion scope: every ingestion step reads
+          `members_asof(analysis_date)` only (`fundamental_agent/pipeline.py:219`, `pricing_agent/pipeline.py:196`),
+          and `T-100` is one run on one date, so as built it never fetches a leaver. Conditions (reviewer A):
+          - per company, fetch only what its stints can use: the filings public during a stint plus the one in
+            force at its start; prices over the stint plus the longest lookback read before its start (`quant`'s
+            756-day `lookback_days`, beyond the 200-day average, the 252-day momentum and the 60-day bases);
+            nothing after the exit;
+          - ranking stays point-in-time: each cycle date scores `members_asof(that date)` only, so the wider
+            set changes what is ingested, never who is ranked;
+          - every LLM call on a leaver's filing is paid: give the extra filing count and a token estimate for
+            `T-100`'s budget (about 11-12k input tokens per filing with the specialists, per `T-073`);
+          - say per step (fundamental, pricing, entity resolution, quant) whether it needs the wider set;
+          - no `migrate` on production; measure on a copy.
+
+          Also in 3a: the leavers' filings by CIK; their successions (a `cik_successions.csv` row only where a
+          leaver loses filings without one); the Article 9/7 statements from their 10-Ks for `company_types.csv`;
+          the SBNY/FRC gap declared and measured (above); the post-exit renames GPS→GAP and FBHS→FBIN as
+          `ticker_history.csv` rows (identity is the CIK, APP-10a; each cited to the company's own notice, L-11;
+          the gateway's GAP/FBIN series checked for no break and no `split_jump` over the GPS/FBHS dates; the row
+          never makes GAP or FBIN an index member); and the price-coverage measurement committed (script and
+          output, each stint over its whole membership inside the window).
         - **Part 3b (waits for the GICS delivery):** the GICS-keyed steps (insurer, other financial firm, REIT,
           regulated utility, the SECTOR score), the pre-2023 labels, the SIC check, the declaration, and the
-          replay re-run (which also waits for `T-071`). Also open here until stream A's
-        CIK-successions task is in this file (reviewer A, 2026-10-14: that task takes it): the file's SKYD
-        interval before 2025-08-07 belongs to Paramount Global (CIK 0000813828), a CIK succession, not a
-        rename -- `cik_successions.csv` has no row for it yet.
+          replay re-run (which also waits for `T-071`). The price fallback's declaration is made once the prices
+          request is answered.
+        - Also open here until stream A's CIK-successions task is in this file (reviewer A, 2026-10-14: that
+          task takes it): the file's SKYD interval before 2025-08-07 belongs to Paramount Global (CIK
+          0000813828), a CIK succession, not a rename -- `cik_successions.csv` has no row for it yet.
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
