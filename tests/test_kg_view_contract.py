@@ -507,6 +507,18 @@ NEW_VIEWS: dict[str, tuple[str, ...]] = {
         "argv_json",
         "output_tail",
     ),
+    # T-153 part 2: the as-of ticker history (contract 16).
+    "v_ticker_history": (
+        "cik",
+        "symbol",
+        "valid_from",
+        "valid_to",
+        "canonical_symbol",
+        "asset_id",
+        "evidence_url",
+        "evidence_date",
+        "rules",
+    ),
 }
 
 
@@ -567,8 +579,9 @@ def test_the_marker_migration_changes_no_table(conn: Database) -> None:
         13,
         14,
         15,
+        16,
     ]  # m011 and m013 add only columns that exist; m012 only triggers; m014 autoincrement;
-    # m015 is a marker (T-012)
+    # m015 (T-012) and m016 (T-153 part 2) are markers
     after = {r[0]: r[1] for r in conn.execute("SELECT name, sql FROM sqlite_master")}
     assert after == before
 
@@ -582,7 +595,7 @@ def test_ensure_views_leaves_a_database_that_is_ahead_of_the_code(conn: Database
     conn.execute("DROP VIEW v_cycle_ranking_component")
     conn.execute("DROP VIEW v_cycle_ranking")
     conn.execute("CREATE VIEW v_cycle_ranking AS SELECT 1 AS from_a_later_contract")
-    queries.record(conn, 16, "a later contract")
+    queries.record(conn, 17, "a later contract")
     ensure_views(conn)
     assert _columns(conn, "v_cycle_ranking") == ("from_a_later_contract",)
     assert not conn.relation_exists("v_cycle_ranking_component")

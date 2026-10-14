@@ -36,7 +36,9 @@ class Fx:
             ),
         )
         seed = sqlite3.connect(self.settings.db_path)
-        seed.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE)")
+        seed.execute(
+            "CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL UNIQUE, cik TEXT)"
+        )
         seed.commit()
         seed.close()
 

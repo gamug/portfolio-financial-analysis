@@ -9,7 +9,7 @@ View groups (TOC -- see "Projection semantics" below for the per-view detail)
 -------------------------------------------------------------------------------
 Run log / provenance     v_analysis_run, v_pricing_run, v_quant_run, v_cycle_run,
                          v_orchestrator_run, v_orchestrator_step
-Universe & coverage      v_universe_membership, v_universe_coverage, v_sector, v_industry
+Universe & coverage      v_universe_membership, v_ticker_history, v_universe_coverage, v_sector, v_industry
 Scores & signals         v_score_snapshot, v_fundamental_metric, v_sector_aggregate_snapshot
 Pricing & returns        v_price_observation, v_corporate_action, v_quant_return_daily,
                          v_risk_free_rate, v_benchmark_series
@@ -44,6 +44,13 @@ Projection semantics
                           FROZEN: the agents no longer write ``universe_membership``
                           (the universe is read point-in-time from ``universe.db``).
                           Kept for back-compat; new readers should use ``universe.db``.
+``v_ticker_history``      one row per symbol of a company's line (T-153 part 2): the symbol, its
+                          ``valid_from`` / ``valid_to`` (``valid_to`` = the symbol's last day),
+                          the line's ``canonical_symbol`` and the ``asset_id`` of the one asset
+                          the line resolves to. Keyed by CIK -- the same symbol reused by another
+                          CIK later is a different line. ``assets.ticker`` is the line's
+                          canonical (current) symbol, so every other view shows the current
+                          ticker even on a historical row; join this view for the as-of ticker.
 ``v_universe_coverage``   per (as_of, universe, symbol): whether that member had an
                           identity row / FUNDAMENTAL score / metrics / prices /
                           observations / returns as of the date. ``covered`` = every
@@ -251,6 +258,13 @@ VIEWS: dict[str, str] = {
         SELECT m.id, a.ticker, m.asset_id, m.universe, m.valid_from, m.valid_to,
                m.detected_at, m.source, m.run_id, m.run_kind
         FROM universe_membership m JOIN assets a ON a.id = m.asset_id
+    """,
+    "v_ticker_history": """
+        CREATE VIEW v_ticker_history AS
+        SELECT t.cik, t.symbol, t.valid_from, t.valid_to, t.canonical_symbol,
+               a.id AS asset_id, t.evidence_url, t.evidence_date, t.rules
+        FROM ticker_history t
+        LEFT JOIN assets a ON a.cik = t.cik AND a.ticker = t.canonical_symbol
     """,
     "v_analysis_run": """
         CREATE VIEW v_analysis_run AS

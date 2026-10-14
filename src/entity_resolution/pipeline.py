@@ -15,7 +15,7 @@ from entity_resolution.denylist import MAX_TICKERS_DEFAULT, MIN_ARTICLES_DEFAULT
 from entity_resolution.news_db import news_watermark
 from kg_schema import connect, connect_ro, rundate
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
-from kg_schema.queries import symbols_asof
+from kg_schema.queries import members_asof, resolve_asset_ids
 
 
 @dataclass
@@ -81,9 +81,15 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             )
         uconn = connect_ro(settings.universe_db_path)
         try:
-            tickers = symbols_asof(uconn, params.analysis_date)
+            members = members_asof(uconn, params.analysis_date)
         finally:
             uconn.close()
+        tickers = [m.symbol for m in members]
+        # T-153 part 2: an article discovered under a company's *old* ticker (FB) reaches the one
+        # asset the line shares (META), by the member's CIK -- the news DB keeps the old ticker.
+        asset_ids, _missing = resolve_asset_ids(
+            conn, [(m.symbol, m.cik) for m in members], as_of=params.analysis_date
+        )
         news = connect_ro(settings.news_db_path)
         try:
             # Read before the build: a row that lands in between makes the next check say
@@ -102,7 +108,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             )
         finally:
             news.close()
-        written = er_db.replace_edges(conn, edges, run_id=run_id)
+        written = er_db.replace_edges(conn, edges, ids=asset_ids, run_id=run_id)
         conn.execute(
             "UPDATE cycle_run SET status = 'completed', finished_at = ? WHERE id = ?",
             (datetime.now(tz=UTC).isoformat(timespec="seconds"), run_id),

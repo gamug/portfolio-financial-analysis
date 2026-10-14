@@ -16,6 +16,7 @@ import math
 import sqlite3
 from collections.abc import Callable
 from datetime import date, timedelta
+from typing import Any
 
 from api import orchestrator
 from kg_schema.db import connect_ro
@@ -25,6 +26,7 @@ from kg_schema.queries import (
     members_asof,
     unresolved_run_references,
 )
+from kg_schema.ticker_history import read_history
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
@@ -99,6 +101,109 @@ def members_asof_mismatches(fin_db_path: str, universe_path: str) -> tuple[int, 
             if got != closed:
                 mismatches.append(f"{as_of}: members_asof={len(got)} closed={len(closed)}")
         return len(dates), mismatches
+
+
+#: A CSV row the universe file does not show: CIK 0002041610 traded as PSKY from 2025-08-07 (the
+#: Skydance/Paramount close) and as SKYD from 2026-10-06; ``universe_history.db`` records only the
+#: current ticker, backfilled to 1994 (SA-2, T-153 part 2).
+_T153B_EXCEPTIONS = frozenset({("0002041610", "PSKY")})
+
+
+def _file_rows(universe: Any) -> list[Any]:
+    return list(
+        universe.execute(
+            "SELECT cik, symbol, valid_from, valid_to FROM universe_membership "
+            "WHERE cik IS NOT NULL"
+        )
+    )
+
+
+def _adjacent_pairs(file_rows: list[Any], by_key: set[tuple[str, str]]) -> tuple[int, list[str]]:
+    """Direction 1: every same-CIK adjacent pair since 2022 has both symbols in the file."""
+    pairs, problems = 0, []
+    for a in file_rows:
+        if not a["valid_to"]:
+            continue
+        nxt = (date.fromisoformat(str(a["valid_to"])) + timedelta(days=1)).isoformat()
+        if nxt < "2022-01-01":
+            continue
+        for b in file_rows:
+            if b["cik"] == a["cik"] and b["valid_from"] == nxt and b["symbol"] != a["symbol"]:
+                pairs += 1
+                for cik, symbol in (
+                    (str(a["cik"]), str(a["symbol"])),
+                    (str(b["cik"]), str(b["symbol"])),
+                ):
+                    if (cik, symbol) not in by_key:
+                        problems.append(
+                            f"pair {cik} {a['symbol']}->{b['symbol']}: no row for {symbol}"
+                        )
+    return pairs, problems
+
+
+def _tracked_row_problems(
+    tracked: list[Any], stints: dict[tuple[str, str], list[tuple[str, str | None]]]
+) -> list[str]:
+    """Direction 2: every tracked row (bar the declared exception) is inside the file's stint."""
+    problems = []
+    for row in tracked:
+        if (row.cik, row.symbol) in _T153B_EXCEPTIONS:
+            continue
+        if not _inside(row.valid_from, row.valid_to, stints.get((row.cik, row.symbol), [])):
+            problems.append(
+                f"row {row.cik} {row.symbol} {row.valid_from}..{row.valid_to} is not in the file"
+            )
+    return problems
+
+
+def _asset_problems(fin: Any, tracked: list[Any]) -> list[str]:
+    """Direction 3: no asset carries a non-canonical symbol of its own line."""
+    non_canonical = {(r.cik, r.symbol) for r in tracked if r.symbol != r.canonical_symbol}
+    return [
+        f"asset {r['ticker']} (CIK {r['cik']}) carries an old symbol of its line"
+        for r in fin.execute("SELECT cik, ticker FROM assets WHERE cik IS NOT NULL")
+        if (str(r["cik"]), str(r["ticker"])) in non_canonical
+    ]
+
+
+def ticker_history_gaps(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
+    """The tracked ticker history against ``universe_history.db`` and the assets (T-153b).
+
+    Direction 1: every same-CIK, adjacent stint pair in the file since 2022 (``valid_from ==
+    valid_to + 1``) has both its symbols in ``ticker_history.csv``.
+    Direction 2: every tracked row (bar the declared exception) sits inside the file's stint for
+    its ``(CIK, symbol)``.
+    Direction 3: no asset carries a non-canonical symbol of its own line -- a rename split into
+    two assets. Returns ``(pairs, rows, problems)``; both connections are read-only."""
+    tracked = read_history()
+    by_key = {(r.cik, r.symbol) for r in tracked}
+    stints: dict[tuple[str, str], list[tuple[str, str | None]]] = {}
+    with (
+        contextlib.closing(connect_ro(universe_path)) as universe,
+        contextlib.closing(connect_ro(fin_db_path)) as fin,
+    ):
+        file_rows = _file_rows(universe)
+        for r in file_rows:
+            stints.setdefault((str(r["cik"]), str(r["symbol"])), []).append(
+                (str(r["valid_from"]), str(r["valid_to"]) if r["valid_to"] else None)
+            )
+        pairs, problems = _adjacent_pairs(file_rows, by_key)
+        problems += _tracked_row_problems(tracked, stints)
+        problems += _asset_problems(fin, tracked)
+    return pairs, len(tracked), problems
+
+
+def _inside(valid_from: str, valid_to: str | None, spans: list[tuple[str, str | None]]) -> bool:
+    """Whether ``[valid_from, valid_to]`` sits inside one of the file's *spans*."""
+    for start, end in spans:
+        if start > valid_from:
+            continue
+        if valid_to is None:
+            if end is None:
+                return True
+        elif end is None or end >= valid_to:
+            return True
+    return False
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -964,6 +1069,28 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153a", t153a)
+
+    def t153b() -> None:
+        universe_path = universe_database_path()
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        pairs = rows_checked = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_pairs, n_rows, problems = ticker_history_gaps(path, universe_path)
+            pairs = max(pairs, n_pairs)
+            rows_checked = max(rows_checked, n_rows)
+            bad += [f"{prefix}{m}" for m in problems]
+        report(
+            "T-153b",
+            "FAIL" if bad else "PASS",
+            f"ticker history vs {universe_path}: {pairs} rename pairs, {rows_checked} rows; "
+            + ("; ".join(bad[:6]) if bad else "no split asset, the file agrees on every row"),
+        )
+
+    check("T-153b", t153b)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

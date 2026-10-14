@@ -37,7 +37,7 @@ import json
 import os
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -51,7 +51,7 @@ from fundamental_agent.db import completed_accessions
 from fundamental_agent.edgar_client import EdgarClient, EdgarError, EdgarNotFoundError
 from fundamental_agent.failures import classify
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR
-from kg_schema import identity
+from kg_schema import identity, ticker_history
 from kg_schema.db import connect_ro
 from kg_schema.queries import UniverseMember, members_asof
 
@@ -195,7 +195,13 @@ class _Judge:
 
     def _members(self, as_of: str) -> set[str]:
         if as_of not in self._members_by_date:
-            self._members_by_date[as_of] = {m.symbol for m in members_asof(self._universe, as_of)}
+            # T-153 part 2: canonical tickers, as the step records its errors under (F1).
+            self._members_by_date[as_of] = {
+                ticker_history.canonical_for_member(
+                    self._conn, symbol=m.symbol, cik=m.cik, as_of=as_of
+                )
+                for m in members_asof(self._universe, as_of)
+            }
         return self._members_by_date[as_of]
 
     def _later_runs(self) -> list[tuple[int, str | None, dict[str, object]]]:
@@ -422,6 +428,7 @@ def check(
         verdict.reason = f"universe has no members as of {analysis_date}"
         return verdict, 0
     assets = {str(r["ticker"]): r for r in conn.execute("SELECT id, ticker, cik FROM assets")}
+    members = _canonical_members(conn, members, analysis_date)  # T-153 part 2: by CIK, as of D
     keyless = [m.symbol for m in members if identity.normalize_cik(_cik_of(m, assets)) is None]
     if keyless:
         verdict.reason = f"{len(keyless)} members lack a CIK ({_named(keyless)})"
@@ -447,6 +454,22 @@ def _cik_of(member: UniverseMember, assets: dict[str, object]) -> object:
     if asset is not None:
         return asset["cik"]  # type: ignore[index]
     return member.cik
+
+
+def _canonical_members(
+    conn: Database, members: list[UniverseMember], analysis_date: str
+) -> list[UniverseMember]:
+    """Each member under its line's canonical ticker, as the step stores it (T-153 part 2).
+
+    The step records errors and filings under the canonical ticker, so the check keys its plan on
+    it: FB on a 2022 date is META's asset, not a member with nothing stored."""
+    out = []
+    for m in members:
+        canonical = ticker_history.canonical_for_member(
+            conn, symbol=m.symbol, cik=m.cik, as_of=analysis_date
+        )
+        out.append(replace(m, symbol=canonical) if canonical != m.symbol else m)
+    return out
 
 
 def pending_line(

@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 from portfolio_common.db import Database
 from tqdm import tqdm
 
-from kg_schema import connect, rundate
+from kg_schema import connect, rundate, ticker_history
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
 from kg_schema.trading_calendar import last_final_session, session_is_open_or_pending
@@ -119,8 +119,24 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
             )
         members = _load_members(settings, params.analysis_date)
-        db.sync_universe(conn, members)
-        symbols = [m.symbol for m in members]
+        sync = db.sync_universe(conn, members)
+        _report_adoptions(sync)
+        # T-153 part 2: fetch under the line's canonical (current) ticker -- the gateway serves
+        # the whole history, the pre-rename days included, under it; the old symbol returns nothing.
+        symbols = [
+            ticker_history.canonical_for_member(conn, symbol=m.symbol, cik=m.cik) for m in members
+        ]
+        if params.tickers:
+            # F3: --tickers takes the symbol of the run's date (FB on a 2022 date -> META).
+            params = replace(
+                params,
+                tickers=ticker_history.canonical_tickers(
+                    conn,
+                    params.tickers,
+                    member_ciks={m.symbol.upper(): m.cik for m in members},
+                    as_of=params.analysis_date,
+                ),
+            )
         with PricingClient(settings.pricing_base_url) as client:
             assets = db.load_universe(
                 conn, tickers=params.tickers, symbols=symbols, limit=params.limit
@@ -186,6 +202,15 @@ def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember
         )
     tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
     return members
+
+
+def _report_adoptions(sync: ticker_history.SyncResult) -> None:
+    """Print every recorded rename adopted in place (T-153 part 2, C4)."""
+    for adoption in sync.adoptions:
+        tqdm.write(
+            f"universe: adopted {adoption.old_ticker} -> {adoption.new_ticker} "
+            f"(asset {adoption.asset_id}, CIK {adoption.cik})"
+        )
 
 
 def _expected_labels(params: RunParams) -> set[str]:

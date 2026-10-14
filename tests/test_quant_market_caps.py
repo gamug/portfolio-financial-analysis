@@ -9,6 +9,8 @@ with no caps at all fell back to equal weights. Now the build refuses, or -- wit
 from __future__ import annotations
 
 import json
+import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -285,6 +287,14 @@ def test_a_dual_listed_issuer_is_counted_once_and_recorded(seeded: Database) -> 
     seeded.execute("DROP TRIGGER trg_assets_cik_keep")
     seeded.execute("UPDATE assets SET cik = '0001652044' WHERE id IN (5, 6)")
     seeded.commit()
+    # and the universe rows must agree: identity is the CIK, so a member whose CIK differs from
+    # its asset's is missing, never merged (T-153 part 2)
+    universe = sqlite3.connect(os.environ["KG_UNIVERSE_DB"])
+    universe.execute(
+        "UPDATE universe_membership SET cik = '0001652044' WHERE symbol IN ('AS05', 'AS06')"
+    )
+    universe.commit()
+    universe.close()
     dual = run_build_risk_model(_config(risk_model_version="rm-dual"), as_of=as_of, conn=seeded)
     assert dual.market_cap_coverage["dual_listed"] == {"0001652044": [5, 6]}
     assert _run_params(seeded)["market_caps"] == dual.market_cap_coverage

@@ -30,6 +30,7 @@ from portfolio_common.db import Database, DatabaseError
 
 from kg_schema.db import connect_ro
 from kg_schema.queries import UniverseMember, members_asof
+from kg_schema.ticker_history import canonical_for_member
 from kg_schema.trading_calendar import last_session_on_or_before, session_is_open_or_pending
 from pricing_agent.config import Settings
 from pricing_agent.db import PRICE_OBSERVATION_ENGINE_VERSION, has_pre_split_rows
@@ -84,22 +85,25 @@ def _scan(conn: Database, members: list[UniverseMember], s: str, analysis_date: 
     }
     scan = _Scan()
     for m in members:
-        asset_id = ids.get(m.symbol.upper())
+        # T-153 part 2: resolve the member by CIK to its line's canonical ticker, exactly as the
+        # step does -- the bars, the split refusal and the run's errors are all under it (F1).
+        ticker = canonical_for_member(conn, symbol=m.symbol, cik=m.cik, as_of=analysis_date)
+        asset_id = ids.get(ticker.upper())
         if (
             asset_id is None
             or not conn.execute(
                 "SELECT 1 FROM price_daily WHERE asset_id = ? AND date = ?", (asset_id, s)
             ).fetchone()
         ):
-            scan.lack[m.symbol] = _window_start(conn, asset_id, s)
+            scan.lack[ticker] = _window_start(conn, asset_id, s)
         elif not conn.execute(
             "SELECT 1 FROM price_observation WHERE asset_id = ? AND obs_date = ? "
             "AND engine_version = ?",
             (asset_id, s, PRICE_OBSERVATION_ENGINE_VERSION),
         ).fetchone():
-            scan.no_obs.append(m.symbol)
+            scan.no_obs.append(ticker)
         if asset_id is not None and has_pre_split_rows(conn, asset_id, end=analysis_date):
-            (scan.refused if _refused(conn, m.symbol) else scan.split).append(m.symbol)
+            (scan.refused if _refused(conn, ticker) else scan.split).append(ticker)
     return scan
 
 

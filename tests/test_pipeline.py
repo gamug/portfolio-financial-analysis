@@ -282,6 +282,63 @@ def _settings(tmp_path: Path) -> Settings:
     )
 
 
+def test_tickers_take_the_symbol_of_the_run_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: ``--tickers FB`` on 2022-05-02 selects the META asset; FB on 2026-10-01 selects nothing."""
+    monkeypatch.setattr(pipeline, "EdgarClient", _FakeEdgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", _StubAnalyst)
+    udb = write_universe_db(
+        tmp_path / "universe.db",
+        [("FB", "2022-01-03", "2022-06-08"), ("META", "2022-06-09", None)],
+    )
+    conn = sqlite3.connect(udb)
+    conn.execute("UPDATE universe_membership SET cik = '0001326801'")  # FB is META's line
+    conn.commit()
+    conn.close()
+    settings = Settings(
+        db_path=tmp_path / "kg.db",
+        universe_db_path=udb,
+        llm_api_key="k",
+        llm_model="deepseek-chat",
+        llm_url="http://llm.test",
+        edgar_base_url="http://edgar.test",
+    )
+
+    report = pipeline.run(
+        settings,
+        RunParams(
+            forms=["10-K"],
+            since_year=2022,
+            until_year=2022,
+            tickers=["FB"],
+            analysis_date="2022-05-02",
+        ),
+    )
+    assert report.planned == 1  # the member is FB; the asset it belongs to is META
+    conn = sqlite3.connect(settings.db_path)
+    assert [r[0] for r in conn.execute("SELECT ticker FROM assets")] == ["META"]
+    params = json.loads(
+        conn.execute("SELECT params_json FROM analysis_run ORDER BY id DESC LIMIT 1").fetchone()[0]
+    )
+    assert params["tickers"] == ["META"]  # recorded under the ticker it processed
+    conn.close()
+
+    # FB on a 2026 date is ProShares Trust, not this line: it selects nothing
+    with pytest.raises(RuntimeError, match="resolved to an asset row"):
+        pipeline.run(
+            settings,
+            RunParams(
+                forms=["10-K"],
+                since_year=2026,
+                until_year=2026,
+                tickers=["FB"],
+                analysis_date="2026-10-01",
+            ),
+        )
+
+
 @pytest.mark.usefixtures("_stubbed")
 def test_run_writes_snapshots_then_resumes(tmp_path: Path) -> None:
     settings = _settings(tmp_path)

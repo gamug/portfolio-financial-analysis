@@ -23,7 +23,7 @@ from kg_schema.env import universe_database_path
 # T-125: hard_vetoed_as_of moved to kg_schema.queries (the one shared point-in-time veto
 # predicate `cycle` and `quant` both read) -- re-exported here (see __all__ below) since
 # quant.universe imports it from this module.
-from kg_schema.queries import connect_ro, hard_vetoed_as_of, resolve_asset_ids, symbols_asof
+from kg_schema.queries import connect_ro, hard_vetoed_as_of, members_asof, resolve_asset_ids
 
 # hard_vetoed_as_of is otherwise unused in this module -- it is imported only to be
 # re-exported, since quant.universe imports it from quant.db (T-125).
@@ -154,15 +154,15 @@ def load_universe_asset_ids(
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
     uconn = connect_ro(upath)
     try:
-        syms = symbols_asof(uconn, as_of, universe=universe)
+        members = members_asof(uconn, as_of, universe=universe)
     finally:
         uconn.close()
-    if not syms:
+    if not members:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {as_of}")
-    mapping, _missing = resolve_asset_ids(conn, syms)
+    mapping, _missing = resolve_asset_ids(conn, [(m.symbol, m.cik) for m in members], as_of=as_of)
     if not mapping:
         raise RuntimeError(
-            f"none of the {len(syms)} {universe} members as of {as_of} exist in assets yet "
+            f"none of the {len(members)} {universe} members as of {as_of} exist in assets yet "
             f"-- run fundamental_agent / pricing_agent for this date first"
         )
     return sorted(mapping.values())
