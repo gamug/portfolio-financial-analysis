@@ -26,16 +26,22 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import os
 import re
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sec_xcheck.common import SecClient
 from sec_xcheck.submissions import all_filings
+
+from fundamental_agent import pipeline
+from fundamental_agent.edgar_client import EdgarClient
+from kg_schema import identity
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTER = REPO / "docs" / "checklist_sec" / "succession_8ks.csv"
@@ -110,6 +116,10 @@ def to_text(markup: str) -> str:
     text = re.sub(r"(?is)</(p|div|tr|li|h[1-6])>", "\n", text)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
     text = html.unescape(text)
+    text = re.sub(r"\u201c\s+", "\u201c", text)  # a tag between an opening quote and its text
+    text = re.sub(r"\s+\u201d", "\u201d", text)
+    for curly, straight in (("\u2018", "'"), ("\u2019", "'"), ("\u201c", '"'), ("\u201d", '"')):
+        text = text.replace(curly, straight)
     text = re.sub(r"[ \t\xa0]+", " ", text)
     text = re.sub(r" *\n *", "\n", text)
     return re.sub(r"\n\s*\n+", "\n", text).strip()
@@ -408,9 +418,29 @@ def cmd_used(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_check(args: argparse.Namespace) -> int:
+    """Run the pipeline's own APP-10b-3 test (``pipeline._last_annual_report_missing``) on every row of
+    ``src/kg_schema/data/cik_successions.csv``, through the EDGAR gateway (read-only listing calls)."""
+    rows = identity.read_successions()
+    print(f"{len(rows)} rows in {identity.SUCCESSIONS_CSV}")
+    failed = 0
+    with EdgarClient(os.environ["EDGAR_BASE_URL"]) as edgar:
+        engine = SimpleNamespace(edgar=edgar)
+        for row in rows:
+            verdict = pipeline._last_annual_report_missing(
+                engine, row["predecessor_cik"], row["effective_date"], row["successor_cik"]
+            )
+            failed += verdict is not None
+            state = "PASS" if verdict is None else f"FAIL: {verdict}"
+            print(
+                f"  {row['successor_cik']} <- {row['predecessor_cik']} eff {row['effective_date']}: {state}"
+            )
+    return 1 if failed else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["classify", "used"])
+    parser.add_argument("command", choices=["classify", "used", "check"])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--cache", default=str(REPO / ".cache" / "sec_xcheck"))
     parser.add_argument("--fetch", action="store_true", help="download what is not cached")
@@ -422,7 +452,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.command == "classify":
         return cmd_classify(args)
-    return cmd_used(args)
+    if args.command == "used":
+        return cmd_used(args)
+    return cmd_check(args)
 
 
 if __name__ == "__main__":
