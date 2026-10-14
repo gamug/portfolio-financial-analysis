@@ -32,14 +32,14 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -823,8 +823,8 @@ as task `T-077`.
 
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
-`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → `T-071` part 1 (step 2, done 2026-10-13, PR #156) → `T-073` (step 3, done 2026-10-14, PR #160) → **`T-074`**
-(step 4) → `T-071` part 2 (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
+`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → `T-071` part 1 (step 2, done 2026-10-13, PR #156) → `T-073` (step 3, done 2026-10-14, PR #160) → `T-074` (step 4, superseded 2026-10-14) →
+**`T-155`** (step 3a, the current members' CIK successions, next) → `T-071` part 2 (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
 `T-100`: it runs the LLM on every filing from a fresh database, with the final prompts.
@@ -901,7 +901,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    LLM call); **no neutral 50 anywhere** (MET-00); the input is `T-071` part 1's count of filings with
    an empty *applicable* pillar (`scripts/verify_t071a.py` → `out/pillars.json`); and a **staggered
    paid smoke test** (a few filings, then more), each stage approved by the user.
-4. **Structured `forensic_flags` end-to-end** — needs Work item 5 (A2)
+4. ~~**Structured `forensic_flags` end-to-end** — needs Work item 5 (A2)
    first: extend `FundamentalAssessment`/the synthesis JSON schema with the
    4-boolean `forensic_flags` object (`data_error_suspected`,
    `negative_equity_buyback`, `value_destroyer_sub_wacc`,
@@ -912,7 +912,15 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    data-quality veto — this is what closes the "LLM caught it, `cycle`/
    `quant` ignored it" architecture-bypass finding (verified: 7 filings —
    BKNG, META, KHC, CPT, MCD, PHM, LHX — where the saved narrative already
-   says "data error"/"accounting artifact"/"nonsensical" in prose today).
+   says "data error"/"accounting artifact"/"nonsensical" in prose today).~~
+   **Superseded 2026-10-14 (`T-074`, at the user's direction — do not implement)**: consuming an LLM flag
+   as a `cycle` veto breaks constitution AI behavior #3 ("no LLM call sits on that path"), and its
+   motivation (seven old narratives saying "data error") predates T-148–T-151's fixes and T-076's D5,
+   whose deterministic screens withhold suspect values before the model; `negative_equity_buyback` is
+   APP-07 / D-04, a deterministic `cycle` policy in `T-071` part 2; `value_destroyer_sub_wacc` needs a
+   WACC, which is not computed (a possible feature after `T-100`); `severe_sbc_dilution` has no sourced
+   threshold (MD-37 is a project measure). `score_snapshot.forensic_flags_json` stays `NULL`
+   ("not evaluated").
    ~~**Zero-cost immediate bridge**: before the full LLM re-run, regex-mine
    the existing 4,844 narratives for those same keywords and raise the
    data-quality veto from that match immediately (Ring 2 — $0, a SQL/regex
@@ -2386,7 +2394,7 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2 → `T-153` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2 → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 

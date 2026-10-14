@@ -20,7 +20,7 @@ defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05; Work item 19 (local follow-ups, `T-144`, `T-152`, `T-142`, `T-145`, `T-083`) is closed 2026-10-12.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
-finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2) → **`T-153`** (historical universe) →
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2) → **`T-153`** (historical universe) →
 **Work item 19** (done 2026-10-12) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
@@ -30,7 +30,7 @@ prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement).
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -182,7 +182,7 @@ knowledge graph.
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
 **Order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit and `phase3_decisions.md`):** `T-141` → `T-077` →
-`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2.
+`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2.
 - **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
   technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
   (`T-147`'s input). The audit (`T-147`) then sorts the defects into four tasks, in the order of their dependencies:
@@ -641,7 +641,17 @@ the final pilot, `T-143`.
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt
       subtracts short-term investments (audit F7).)*
 - [x] **T-073** The FUNDAMENTAL score built from four pillars — **done 2026-10-14, PR #160** (stream A, step 3). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-073` (closed task)"). → `PLAN.md` Work item 8, step 3.
-- [ ] **T-074** `forensic_flags` end-to-end: extend
+- [ ] **T-074** *(**SUPERSEDED 2026-10-14, at the user's direction — do not implement.** Kept
+      unchecked as the historical record, per this file's "mark cancelled in place" rule. Reasons, one
+      per flag: (1) **the veto** — consuming an LLM flag as a `cycle` veto breaks constitution AI
+      behavior #3 ("no LLM call sits on that path"); its motivation (seven old narratives saying
+      "data error") predates T-148–T-151's fixes and T-076's D5, whose deterministic screens withhold
+      suspect values before the model. (2) **`negative_equity_buyback`** is APP-07 / D-04: the
+      negative-equity distress test is a deterministic `cycle` policy in `T-071` part 2.
+      (3) **`value_destroyer_sub_wacc`** needs a WACC, which is not computed; a possible feature after
+      `T-100`, with loaded sources for the cost of equity and of debt. (4) **`severe_sbc_dilution`** has
+      no sourced threshold (MD-37 is a project measure). `score_snapshot.forensic_flags_json` stays
+      `NULL`, which means "not evaluated".)* `forensic_flags` end-to-end: extend
       `FundamentalAssessment`/synthesis JSON schema with the 4 booleans,
       write to `score_snapshot.forensic_flags_json`, consume
       `data_error_suspected` as a `cycle` data-quality veto. `forensic_flags_json` is NULL when the flags
@@ -804,10 +814,26 @@ the final pilot, `T-143`.
         unpriced in the replay (no TECHNICAL score, no quant return). Asked under the line's last ticker
         (WBD, DAY; DISCK separately), the one this repo fetches.
       - **Remaining:** part 3, the 86 leavers' data (filings by CIK, `company_types.csv`, the GICS source --
-        to be decided) and the replay re-run (waits for `T-071`). Also open here until stream A's
-        CIK-successions task is in this file (reviewer A, 2026-10-14: that task takes it): the file's SKYD
+        to be decided) and the replay re-run (waits for `T-071`). Also open in `T-155` (stream A's
+        CIK-successions task; reviewer A, 2026-10-14: that task takes it): the file's SKYD
         interval before 2025-08-07 belongs to Paramount Global (CIK 0000813828), a CIK succession, not a
         rename -- `cik_successions.csv` has no row for it yet.
+
+- [ ] **T-155** The current members' CIK successions (stream A, before `T-071` part 2 and the pilot;
+      takes over the SKYD/Paramount item from `T-153`). `T-147`'s register
+      (`docs/checklist_sec/succession_8ks.csv`: 19 succession 8-Ks from 18 current members) lists every
+      such filing; only XOM was ever turned into a link (`src/kg_schema/data/cik_successions.csv`,
+      `T-149`). A company that reorganizes into a new legal entity (a new holding company, a redomicile)
+      gets a **new CIK**, and its earlier filings stay under the predecessor's CIK, so the by-CIK fetch
+      never sees them: production stores only a few filings for **BLK** (5), **FERG** (5), **BG** (6) and
+      **PSKY** (1), whose TTM, prior-year capital, growth and CAGR are therefore empty or thin (PSKY is
+      one of `T-073`'s unscored members). **In scope:** the current members. **Out:** the leavers
+      (`T-153` part 3) and the ticker-lookup code fixes (`T-153` part 2). APP-10b-2: a row is added only
+      when the successor's own succession 8-K names the predecessor (its accession and a verbatim quote
+      are the evidence); `T-149`'s rule: only for a company that loses filings without it; and each row
+      must pass APP-10b-3 (`pipeline._last_annual_report_missing`). The classification of the 19 filings,
+      the measurements and the declared items are in `docs/model_fixes.md` "T-155".
+      → `PLAN.md` Work item 8, step 3a (before `T-071` part 2).
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
@@ -928,7 +954,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
-2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → **`T-074`** (next) → `T-071` part 2) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → **`T-155`** (next) → `T-071` part 2) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
 `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
