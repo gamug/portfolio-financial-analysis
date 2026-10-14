@@ -8463,3 +8463,76 @@ a run on that date would score is **Paramount Global's Q3 2024 10-Q** (`00008138
   AGENTS.md keeps out of tests (it always skipped in CI and checked nothing). The check — the register has
   19 lines and every line is read — now lives in `verify_t155.py classify`, which asserts it and writes it
   to `out/p1_classify.txt`.
+## T-153 part 3a — the historical universe's ingestion: one rule for every company, leavers included
+
+**Stream B, Work item 8. `T-153` parts 1 (`valid_to`, PR #158) and 2 (a renamed company is one
+asset, PR #161) are done; part 3a is the ingestion scope.** The reviewer's rulings of 2026-10-14
+(D1–D9, corrections A–D) are the brief.
+
+**The change.** As built, every ingestion step read `members_asof(analysis_date)` only
+(`fundamental_agent/pipeline.py`, `pricing_agent/pipeline.py`), so `T-100`'s one run on one date
+never fetched a company that left the index before it. Now
+`kg_schema.queries.members_over_range(universe_db, fin_db, WINDOW_START, D)` returns **one entry
+per CIK line** that was a member at any time in `[2022-01-03, D]`, with the line's own membership
+span; `fundamental_agent` and `pricing_agent` (and their `pending` checks) ingest to each line's
+**last membership day** and nothing after it. Prices start **2019-01-02** for everyone (D2): the
+backtest window's first session minus `quant`'s 756-day `lookback_days`, the longest read of the
+stored history. `GPS -> GAP` and `FBHS -> FBIN` join `ticker_history.csv` (D4), and the ranking is
+unchanged — each cycle date still scores `members_asof(that date)` only (D9, verified by
+`verify_pilot`'s T-153c).
+
+**The declared start effect (D3, correction A).** The fix round (2026-10-14) dropped the
+"(i) + T-073's share" sum: T-073's 0.046 is a *2026* figure and depends on the date, so it is not a
+valid estimate for a 2022 date (R3's own 2022-06-01 cohort is 16% unscored). What stays is **(i) no
+filing public yet** -- read-only from the SEC submissions (586 CIKs, 643 requests, plus the
+succession predecessors): for each trading day and each ``members_asof(day)`` member, has a 10-K or
+10-Q been filed in ``[2022-01-01, day]``, under its CIK or its succession chain? Before the merge it
+read 0.638 (2022-02-15) -> 0.050 (2022-03-14) -> 0.030 (2022-03-18) -> 0.010 (2022-03-31) -> 0.006
+(3/503: BG, BLK, SKYD). **After `T-155`'s successions** (BG <- 0001144519, BLK <- 0001364742,
+SKYD/PSKY <- 0000813828) the floor is **0.000** from 2023-05-04, and 0.004 (2/503) on 2022-03-31;
+(i) alone is at or under 0.05 from **2022-03-10** (0.050; 0.046 on 2022-03-11). **The replay's first
+date is measured in `T-100`'s own run, from the stored pillar statuses (code, no LLM) before the
+replay, and is a step in `T-100`'s `TASKS.md` entry** -- not declared here.
+
+**The suspicious-data finding, resolved by `T-155`.** The three members that kept (i) above zero
+were CIK successions among current members (BG `0001996862`, BLK `0002012383`, SKYD `0002041610`),
+with no `cik_successions.csv` row. Stream A's `T-155` (PR #165) added them; after the merge the
+floor is 0. The one member with no filing today is `VYLR` (a member from 2026-10-01, 0 filings).
+
+**The leavers' filings and the never-latest count (D5, D7, R1).**
+`scripts/ingestion_budget.py` (read-only; output `docs/ingestion_budget.json`) measures the D2
+scope from the SEC submissions and the **never-latest** filings over each company's **own
+membership sessions** (its stints in the universe file, intersected with the window and D) -- the
+review's fix: the first pass used `[2022-01-03, D]` for every current member, so a filing counted as
+used on dates the company was not in the index (APO joined 2024-12-23; a member that joined after
+2022-01-03 is not a member before it joined). Measured:
+
+* current members: **500 CIKs, 9,351 filings, 978,500 trading days, 623 never-latest**;
+* leavers: **86 CIKs, 865 filings, 122,005 trading days, 23 never-latest**;
+* total: **586 CIKs, 10,216 filings, 1,100,505 trading days, 646 never-latest** -- 7,429,000 input +
+  969,000 output tokens at T-073's 11,500 + 1,500 per filing.
+
+The wider set adds the 86 leaver companies and their 865 filings (~8.5% of the scope) over the
+members today; production's own store (5,076 filings over 503 assets) is incomplete against the rule
+(AAPL 9 of 19, TAP 10 of 19), so the comparison uses the SEC submissions, not the store. Six leavers
+have no filing in the window: `GPS` (left 2022-02-02, its last 10-K is 2021), `SBNY`/`FRC` (no 10-K
+or 10-Q on EDGAR at all -- the declared gap), and the three one-to-four-day spin-off members `MBC`,
+`FTRE`, `PHIN`. `completed_accessions`/`completed_units` keep a re-run from paying twice.
+
+**The company-type evidence (D6).** `scripts/leaver_company_types.py` stages the 86 leaver CIKs'
+last 10-Ks in `docs/leaver_company_types.csv` (moved out of `docs/checklist_sec/`, which AGENTS.md
+keeps out of tests -- the same finding as `T-155`'s F3). Quotes are unescaped HTML text. Five rows
+carry an Article 9 statement: **SIVB, PBCT and DFS read as genuine self-statements by eye**; **CMA**
+and **ZION** were verified by hand (the method's sentence was a generic Gramm-Leach-Bliley one for
+CMA; ZION is a **false negative** -- since 2018 Zions Bancorporation, N.A. is itself a national bank,
+not a holding company, so `HOLDING_PHRASE` cannot match, and APP-00's Article 9 includes banks, so
+the method's gap is part 3b's). **DRE is not** an Article 9 statement: the method matched a
+director's seat on another bank, so its row is `article_9 = false`. The rows are not merged into
+`company_types.csv`/`company_profile.csv` yet -- part 3b assigns the type with GICS.
+
+**Files.** `src/kg_schema/queries.py` (`WINDOW_START`, `WindowMember`, `members_over_range`),
+`src/kg_schema/data/ticker_history.csv`, `src/fundamental_agent/{pipeline,pending}.py`,
+`src/pricing_agent/{pipeline,pending}.py`, `scripts/leaver_price_coverage.py`,
+`scripts/leaver_company_types.py`, `scripts/ingestion_budget.py`, `scripts/verify_pilot.py` (T-153c),
+`docs/leaver_price_coverage.json`, `docs/ingestion_budget.json`, `docs/leaver_company_types.csv`,
+SPEC 1.20.0 (FR-001/FR-004/FR-012). No migration: no table or column changes (contract stays 16).

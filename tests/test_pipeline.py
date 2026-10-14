@@ -59,6 +59,19 @@ def test_plan_is_asset_x_form_x_year() -> None:
     assert {t.ticker for t in tasks} == {"AAPL", "MSFT"}
 
 
+def test_plan_bounds_a_leaver_by_its_exit_year() -> None:
+    """T-153 part 3a: a company that left is listed only through its exit year, and its task
+    carries the exit day so ``_process_filing`` drops anything filed after it."""
+    params = RunParams(forms=["10-K"], since_year=2022, until_year=2026)
+    tasks = _plan(cast("Any", _fake_rows()), params, until={"AAPL": "2024-06-15"})
+    aapl = [t for t in tasks if t.ticker == "AAPL"]
+    assert sorted(t.year for t in aapl) == [2022, 2023, 2024]
+    assert {t.until for t in aapl} == {"2024-06-15"}
+    msft = [t for t in tasks if t.ticker == "MSFT"]
+    assert sorted(t.year for t in msft) == [2022, 2023, 2024, 2025, 2026]
+    assert {t.until for t in msft} == {None}
+
+
 def test_targets_10k_picks_latest_fiscal_year() -> None:
     stmts = Statements.from_payload(_payload("financials_AAPL_10-K_2023.json"))
     targets = _targets(stmts, _task("AAPL", "10-K", 2023))
@@ -337,6 +350,49 @@ def test_tickers_take_the_symbol_of_the_run_date(
                 analysis_date="2026-10-01",
             ),
         )
+
+
+def _leaver_settings(tmp_path: Path, valid_to: str) -> Settings:
+    udb = write_universe_db(tmp_path / "universe.db", [("AAPL", "2020-01-01", valid_to)])
+    return Settings(
+        db_path=tmp_path / "kg.db",
+        universe_db_path=udb,
+        llm_api_key="k",
+        llm_model="deepseek-chat",
+        llm_url="http://llm.test",
+        edgar_base_url="http://edgar.test",
+    )
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_the_window_ingests_a_leaver_to_its_exit(tmp_path: Path) -> None:
+    """T-153 part 3a: the run creates the leaver's asset and stores the filing filed before its
+    exit (the fake gateway dates every filing ``{year}-02-01``)."""
+    settings = _leaver_settings(tmp_path, "2022-06-15")
+    report = pipeline.run(
+        settings,
+        RunParams(forms=["10-K"], since_year=2022, until_year=2022, analysis_date="2026-10-14"),
+    )
+    assert report.completed == 1
+    conn = sqlite3.connect(settings.db_path)
+    assert [r[0] for r in conn.execute("SELECT ticker FROM assets")] == ["AAPL"]
+    rows = list(conn.execute("SELECT accession_number FROM sec_filings"))
+    assert len(rows) == 1 and rows[0][0].endswith("-2022")
+    conn.close()
+
+
+@pytest.mark.usefixtures("_stubbed")
+def test_a_filing_after_the_exit_is_not_stored(tmp_path: Path) -> None:
+    """T-153 part 3a: a filing filed after the company's last membership day is skipped."""
+    settings = _leaver_settings(tmp_path, "2022-01-15")  # before the fake 2022-02-01 filing
+    report = pipeline.run(
+        settings,
+        RunParams(forms=["10-K"], since_year=2022, until_year=2022, analysis_date="2026-10-14"),
+    )
+    assert report.completed == 0
+    conn = sqlite3.connect(settings.db_path)
+    assert list(conn.execute("SELECT COUNT(*) FROM sec_filings")) == [(0,)]
+    conn.close()
 
 
 @pytest.mark.usefixtures("_stubbed")

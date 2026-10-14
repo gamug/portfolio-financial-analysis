@@ -7,7 +7,7 @@ per-day `price_observation` analytics).
 
 ```bash
 uv run python -m pricing_agent run [--analysis-date 2021-06-30] [--tickers AAPL,NVDA] \
-    [--start 2022-01-01] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
+    [--start 2019-01-02] [--end DATE] [--by-year] [--store-daily] [--observations] [--fresh] \
     [--allow-dirty] [--allow-split-jumps]
 uv run python -m pricing_agent migrate
 ```
@@ -18,6 +18,14 @@ it, and any candle dated after it is dropped in `_store` before summarising. It 
 stamped on `pricing_run.as_of` with `pricing_run.code_version`; `price_window` /
 `price_daily` / `price_observation` rows carry the `run_id`. `--refresh-universe`
 is a deprecated no-op.
+
+**The fetch window (T-153 part 3a, D2).** `DEFAULT_START_DATE` is **2019-01-02** — the
+backtest window's first session (2022-01-03) minus `quant`'s 756-day `lookback_days`, the
+longest read of the stored history, one rule for every company. Each asset is fetched from that
+start to `min(resolved_end(), the line's last membership day)`: a company that left the index
+gets nothing dated after its exit, and its `full` window row ends there. The run's universe is
+`kg_schema.queries.members_over_range` — every CIK line that was a member at any time in
+`[2022-01-03, D]`, not only the members on D (see "universe source").
 
 `--observations` requires `--store-daily` (refused at the CLI and again in
 `pipeline.run` itself, T-110): a `price_observation` row is a per-day analytic over a

@@ -7,12 +7,15 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from conftest import write_universe_db
 from portfolio_common.db import Database
 
 import kg_schema
 from kg_schema.queries import (
+    WINDOW_START,
     connect_ro,
     members_asof,
+    members_over_range,
     resolve_asset_ids,
     symbols_asof,
 )
@@ -91,6 +94,122 @@ def test_members_asof_rejects_non_sp500(universe_db: _UDB) -> None:
     c = connect_ro(path)
     with pytest.raises(ValueError, match="single-universe"):
         members_asof(c, "2021-01-01", universe="RUSSELL")
+
+
+# -- members_over_range: the window's ingestion set (T-153 part 3a) -------------------------
+
+
+def _window_db(
+    tmp_path: Path, rows: list[tuple[str, str, str | None]], ciks: dict[str, str]
+) -> Path:
+    """A universe file whose named symbols carry the CIKs the tracked ticker history knows."""
+    path = write_universe_db(tmp_path / "u.db", rows)
+    raw = sqlite3.connect(path)
+    for symbol, cik in ciks.items():
+        raw.execute("UPDATE universe_membership SET cik = ? WHERE symbol = ?", (cik, symbol))
+    raw.commit()
+    raw.close()
+    return path
+
+
+def test_members_over_range_collapses_a_line_and_keeps_share_classes(tmp_path: Path) -> None:
+    """One entry per CIK line: DISCA and WBD are one line, DISCK another (T-153 part 3a)."""
+    path = _window_db(
+        tmp_path,
+        [
+            ("DISCA", "1976-07-01", "2022-04-10"),
+            ("DISCK", "2014-08-06", "2022-04-10"),
+            ("WBD", "2022-04-11", "2026-10-05"),
+        ],
+        {"DISCA": "0001437107", "DISCK": "0001437107", "WBD": "0001437107"},
+    )
+    conn = connect_ro(path)
+    try:
+        out = members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14")
+    finally:
+        conn.close()
+    by_symbol = {w.member.symbol: w for w in out}
+    assert set(by_symbol) == {"WBD", "DISCK"}
+    assert (by_symbol["WBD"].window_from, by_symbol["WBD"].window_to, by_symbol["WBD"].stints) == (
+        "2022-01-03",
+        "2026-10-05",
+        2,
+    )
+    assert (by_symbol["DISCK"].window_to, by_symbol["DISCK"].stints) == ("2022-04-10", 1)
+
+
+def test_members_over_range_clamps_and_keeps_an_open_stint(tmp_path: Path) -> None:
+    """A rename's line: FB and META collapse to META, clamped to the window and still open."""
+    path = _window_db(
+        tmp_path,
+        [("FB", "2013-12-23", "2022-06-08"), ("META", "2022-06-09", None)],
+        {"FB": "0001326801", "META": "0001326801"},
+    )
+    conn = connect_ro(path)
+    try:
+        (w,) = members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14")
+    finally:
+        conn.close()
+    assert (w.member.symbol, w.window_from, w.window_to, w.stints) == (
+        "META",
+        "2022-01-03",
+        None,
+        2,
+    )
+
+
+def test_members_over_range_collapses_cday_to_day(tmp_path: Path) -> None:
+    """CDAY -> DAY is one line, so one entry with two stints (T-153 part 3a)."""
+    path = _window_db(
+        tmp_path,
+        [("CDAY", "2021-09-20", "2024-01-31"), ("DAY", "2024-02-01", "2026-02-08")],
+        {"CDAY": "0001725057", "DAY": "0001725057"},
+    )
+    conn = connect_ro(path)
+    try:
+        (w,) = members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14")
+    finally:
+        conn.close()
+    assert (w.member.symbol, w.window_from, w.window_to, w.stints) == (
+        "DAY",
+        "2022-01-03",
+        "2026-02-08",
+        2,
+    )
+
+
+def test_members_over_range_excludes_a_pre_window_leaver(tmp_path: Path) -> None:
+    """A stint that ended before the window's first session is not in the set."""
+    path = _window_db(tmp_path, [("OLD", "2010-01-01", "2021-12-31")], {})
+    conn = connect_ro(path)
+    try:
+        assert members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14") == []
+    finally:
+        conn.close()
+
+
+def test_members_over_range_keeps_a_one_day_leaver(tmp_path: Path) -> None:
+    path = _window_db(tmp_path, [("PHIN", "2023-07-05", "2023-07-05")], {})
+    conn = connect_ro(path)
+    try:
+        (w,) = members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14")
+    finally:
+        conn.close()
+    assert (w.member.symbol, w.window_from, w.window_to) == ("PHIN", "2023-07-05", "2023-07-05")
+
+
+def test_members_over_range_keeps_a_cikless_member_its_own_line(tmp_path: Path) -> None:
+    path = _window_db(tmp_path, [("AAA", "2020-01-01", None)], {})
+    raw = sqlite3.connect(path)
+    raw.execute("UPDATE universe_membership SET cik = NULL")
+    raw.commit()
+    raw.close()
+    conn = connect_ro(path)
+    try:
+        (w,) = members_over_range(conn, _identity_db([]), WINDOW_START, "2026-10-14")
+    finally:
+        conn.close()
+    assert (w.member.symbol, w.member.cik, w.window_to) == ("AAA", None, None)
 
 
 def _identity_db(assets: list[tuple[int, str, str | None]]) -> Database:

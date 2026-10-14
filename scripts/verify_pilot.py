@@ -22,8 +22,11 @@ from api import orchestrator
 from kg_schema.db import connect_ro
 from kg_schema.env import universe_database_path
 from kg_schema.queries import (
+    WINDOW_START,
     invalid_sec_filings_accessions,
     members_asof,
+    members_over_range,
+    resolve_asset_ids,
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
@@ -142,18 +145,40 @@ def _adjacent_pairs(file_rows: list[Any], by_key: set[tuple[str, str]]) -> tuple
 
 
 def _tracked_row_problems(
-    tracked: list[Any], stints: dict[tuple[str, str], list[tuple[str, str | None]]]
+    tracked: list[Any],
+    stints: dict[tuple[str, str], list[tuple[str, str | None]]],
+    open_ciks: frozenset[str],
+    last_start: dict[str, str],
 ) -> list[str]:
-    """Direction 2: every tracked row (bar the declared exception) is inside the file's stint."""
+    """Direction 2: every tracked row is inside the file's stint, or a post-exit row (D4).
+
+    A rename that happens **after** a company left the index (GPS -> GAP on 2024-08-22, FBHS ->
+    FBIN on 2022-12-15, T-153 part 3a) continues the line past its last membership day, so the
+    row is not inside the file's stint for its ``(CIK, symbol)`` -- and for the new symbol the
+    file has no stint at all. Such a row is allowed when its CIK has **no open stint** in the
+    file and the row starts on or after that CIK's last stint begins. A row on a CIK that is
+    still a member is *not* covered by this rule: PSKY (CIK 0002041610, an open SKYD stint) keeps
+    its explicit exception, which flags the Paramount CIK succession and must not be absorbed."""
     problems = []
     for row in tracked:
         if (row.cik, row.symbol) in _T153B_EXCEPTIONS:
             continue
-        if not _inside(row.valid_from, row.valid_to, stints.get((row.cik, row.symbol), [])):
-            problems.append(
-                f"row {row.cik} {row.symbol} {row.valid_from}..{row.valid_to} is not in the file"
-            )
+        if _inside(row.valid_from, row.valid_to, stints.get((row.cik, row.symbol), [])):
+            continue
+        if _post_exit_row(row, open_ciks, last_start):
+            continue
+        problems.append(
+            f"row {row.cik} {row.symbol} {row.valid_from}..{row.valid_to} is not in the file"
+        )
     return problems
+
+
+def _post_exit_row(row: Any, open_ciks: frozenset[str], last_start: dict[str, str]) -> bool:
+    """Whether *row* is a post-exit rename of a company the file shows as a leaver (D4)."""
+    if row.cik in open_ciks:
+        return False
+    start = last_start.get(row.cik)
+    return start is not None and row.valid_from >= start
 
 
 def _asset_problems(fin: Any, tracked: list[Any]) -> list[str]:
@@ -172,7 +197,7 @@ def ticker_history_gaps(fin_db_path: str, universe_path: str) -> tuple[int, int,
     Direction 1: every same-CIK, adjacent stint pair in the file since 2022 (``valid_from ==
     valid_to + 1``) has both its symbols in ``ticker_history.csv``.
     Direction 2: every tracked row (bar the declared exception) sits inside the file's stint for
-    its ``(CIK, symbol)``.
+    its ``(CIK, symbol)`` -- or is a post-exit rename of a leaver (D4).
     Direction 3: no asset carries a non-canonical symbol of its own line -- a rename split into
     two assets. Returns ``(pairs, rows, problems)``; both connections are read-only."""
     tracked = read_history()
@@ -187,8 +212,14 @@ def ticker_history_gaps(fin_db_path: str, universe_path: str) -> tuple[int, int,
             stints.setdefault((str(r["cik"]), str(r["symbol"])), []).append(
                 (str(r["valid_from"]), str(r["valid_to"]) if r["valid_to"] else None)
             )
+        open_ciks = frozenset(str(r["cik"]) for r in file_rows if not r["valid_to"])
+        last_start: dict[str, str] = {}
+        for r in file_rows:
+            cik, start = str(r["cik"]), str(r["valid_from"])
+            if cik not in last_start or start > last_start[cik]:
+                last_start[cik] = start
         pairs, problems = _adjacent_pairs(file_rows, by_key)
-        problems += _tracked_row_problems(tracked, stints)
+        problems += _tracked_row_problems(tracked, stints, open_ciks, last_start)
         problems += _asset_problems(fin, tracked)
     return pairs, len(tracked), problems
 
@@ -204,6 +235,116 @@ def _inside(valid_from: str, valid_to: str | None, spans: list[tuple[str, str | 
         elif end is None or end >= valid_to:
             return True
     return False
+
+
+#: D2's lower bounds (T-153 part 3a): prices from 2019-01-02, filings filed from 2022-01-01.
+PRICES_SINCE = "2019-01-02"
+FILINGS_SINCE = "2022-01-01"
+
+
+def _ranking_out_of_universe(fin: Any, universe: Any) -> tuple[list[str], list[str]]:
+    """(cycle_dates, problems): every ranked asset was a member on its run's ``cycle_date``."""
+    problems: list[str] = []
+    dates = [
+        str(r["cycle_date"])
+        for r in fin.execute(
+            "SELECT DISTINCT cycle_date FROM cycle_run WHERE cycle_date IS NOT NULL "
+            "ORDER BY cycle_date"
+        )
+    ]
+    for cycle_date in dates:
+        members = members_asof(universe, cycle_date)
+        ids, _missing = resolve_asset_ids(
+            fin, [(m.symbol, m.cik) for m in members], as_of=cycle_date
+        )
+        member_ids = set(ids.values())
+        ranked = fin.execute(
+            "SELECT DISTINCT r.asset_id FROM cycle_ranking r "
+            "JOIN cycle_run c ON c.id = r.cycle_run_id WHERE c.cycle_date = ?",
+            (cycle_date,),
+        ).fetchall()
+        for row in ranked:
+            if int(row["asset_id"]) not in member_ids:
+                problems.append(
+                    f"{cycle_date}: asset {row['asset_id']} ranked but not a member that day"
+                )
+    return dates, problems
+
+
+def _outside_scope(fin: Any, universe: Any, end: str) -> tuple[int, list[str]]:
+    """(leaver_lines, problems): no leaver line has a price or filing after its exit (D2)."""
+    problems: list[str] = []
+    leavers = 0
+    for w in members_over_range(universe, fin, WINDOW_START, end):
+        if w.window_to is None:
+            continue
+        leavers += 1
+        row = fin.execute(
+            "SELECT id FROM assets WHERE UPPER(ticker) = ?", (w.member.symbol.upper(),)
+        ).fetchone()
+        if row is None:
+            continue  # the line has no asset yet: nothing was ingested for it
+        aid = int(row["id"])
+        late = fin.execute(
+            "SELECT COUNT(*) AS n, MAX(date) AS d FROM price_daily WHERE asset_id = ? AND date > ?",
+            (aid, w.window_to),
+        ).fetchone()
+        if late["n"]:
+            problems.append(
+                f"{w.member.symbol}: {late['n']} price bars after its exit "
+                f"{w.window_to} (last {late['d']})"
+            )
+        late_filings = fin.execute(
+            "SELECT COUNT(*) AS n, MAX(filing_date) AS d FROM sec_filings "
+            "WHERE asset_id = ? AND filing_date > ?",
+            (aid, w.window_to),
+        ).fetchone()
+        if late_filings["n"]:
+            problems.append(
+                f"{w.member.symbol}: {late_filings['n']} filings after its exit "
+                f"{w.window_to} (last {late_filings['d']})"
+            )
+    return leavers, problems
+
+
+def _early_rows(fin: Any) -> list[str]:
+    """Problems for a price before PRICES_SINCE or a filing before FILINGS_SINCE (D2's bounds)."""
+    problems: list[str] = []
+    early = fin.execute(
+        "SELECT COUNT(*) AS n, MIN(date) AS d FROM price_daily WHERE date < ?", (PRICES_SINCE,)
+    ).fetchone()
+    if early["n"]:
+        problems.append(f"{early['n']} price bars before {PRICES_SINCE} (first {early['d']})")
+    early_filings = fin.execute(
+        "SELECT COUNT(*) AS n, MIN(filing_date) AS d FROM sec_filings "
+        "WHERE filing_date IS NOT NULL AND filing_date < ?",
+        (FILINGS_SINCE,),
+    ).fetchone()
+    if early_filings["n"]:
+        problems.append(
+            f"{early_filings['n']} filings before {FILINGS_SINCE} (first {early_filings['d']})"
+        )
+    return problems
+
+
+def scope_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
+    """The ingestion scope and the point-in-time ranking (T-153c).
+
+    (a) every ``cycle_ranking`` row belongs to an asset that was a member on its run's
+    ``cycle_date`` -- a leaver is never ranked outside its membership, and nothing puts a
+    company in a ranking before it entered or after it left.
+    (b) no line that left the index has a ``price_daily`` bar dated after its last membership
+    day or a ``sec_filings`` row filed after it, and no asset has a price before
+    :data:`PRICES_SINCE` or a filing filed before :data:`FILINGS_SINCE` (D2's bounds).
+    Returns ``(cycle_dates, leaver_lines, problems)``; both connections are read-only."""
+    with (
+        contextlib.closing(connect_ro(fin_db_path)) as fin,
+        contextlib.closing(connect_ro(universe_path)) as universe,
+    ):
+        dates, problems = _ranking_out_of_universe(fin, universe)
+        end = max([*dates, date.today().isoformat()])
+        leavers, scope = _outside_scope(fin, universe, end)
+        return len(dates), leavers, [*problems, *scope, *_early_rows(fin)]
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -1091,6 +1232,32 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153b", t153b)
+
+    def t153c() -> None:
+        universe_path = universe_database_path()
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        dates = leavers = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_dates, n_leavers, problems = scope_problems(path, universe_path)
+            dates = max(dates, n_dates)
+            leavers = max(leavers, n_leavers)
+            bad += [f"{prefix}{m}" for m in problems]
+        report(
+            "T-153c",
+            "FAIL" if bad else "PASS",
+            f"scope vs {universe_path}: {dates} cycle dates, {leavers} leaver lines; "
+            + (
+                "; ".join(bad[:6])
+                if bad
+                else "no leaver ranked outside its membership, nothing outside D2"
+            ),
+        )
+
+    check("T-153c", t153c)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

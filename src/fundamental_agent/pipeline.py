@@ -49,7 +49,12 @@ from fundamental_agent.statements import Period, Statements, iter_facts
 from kg_schema import connect, identity, rundate, ticker_history
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
-from kg_schema.queries import UniverseMember, connect_ro, members_asof
+from kg_schema.queries import (
+    WINDOW_START,
+    WindowMember,
+    connect_ro,
+    members_over_range,
+)
 
 DEFAULT_FORMS = ("10-K", "10-Q")
 DEFAULT_SINCE_YEAR = 2022
@@ -108,6 +113,9 @@ class _YearTask:
     # the asset's recorded predecessors (APP-10b, ``cik_succession``): their filings are the asset's too
     predecessors: tuple[str, ...] = ()
     reit: bool = False
+    # T-153 part 3a: the last membership day of the company's line (None = still a member). No
+    # filing filed after it is fetched -- "nothing after a company's exit", the symmetric rule.
+    until: str | None = None
 
     @property
     def ciks(self) -> tuple[str, ...]:
@@ -147,7 +155,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         db.ensure_schema(conn)
         _refuse_shared_accessions(conn)
         _refuse_identity_violations(conn)
-        members = _load_members(settings, params.analysis_date)
+        window = _load_window(settings, conn, params.analysis_date)
+        members = [w.member for w in window]
         sync = db.sync_universe(conn, members)
         _report_adoptions(sync)
         # T-153 part 2: a renamed company is one asset -- load it under its line's canonical
@@ -173,7 +182,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             )
         chains = {str(a["ticker"]): identity.cik_chain(conn, a["cik"]) for a in assets}
         reits = {int(a["id"]): db.is_equity_reit(conn, int(a["id"])) for a in assets}
-        tasks = _plan(assets, params, chains, reits=reits)
+        tasks = _plan(assets, params, chains, reits=reits, until=_exit_by_ticker(window))
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
         accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
 
@@ -212,19 +221,30 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         conn.close()
 
 
-def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
-    """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
+def _load_window(settings: Settings, conn: Database, analysis_date: str) -> list[WindowMember]:
+    """Every company that was a member at any time in ``[WINDOW_START, analysis_date]``.
+
+    One entry per CIK line (T-153 part 3a): a run on ``analysis_date`` ingests what every
+    company that was a member at any point in the backtest window needs, leavers included,
+    and nothing more -- the line's ``window_to`` bounds its filings. ``universe.db`` is read
+    strictly as membership; the CIK line comes from the tracked ticker history."""
     uconn = connect_ro(settings.universe_db_path)
     try:
-        members = members_asof(uconn, analysis_date)
+        window = members_over_range(uconn, conn, WINDOW_START, analysis_date)
     finally:
         uconn.close()
-    if not members:
+    if not window:
         raise RuntimeError(
-            f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"
+            f"universe.db ({settings.universe_db_path}) has no members in "
+            f"[{WINDOW_START}, {analysis_date}]"
         )
-    tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
-    return members
+    tqdm.write(f"universe: {len(window)} S&P 500 lines in [{WINDOW_START}, {analysis_date}]")
+    return window
+
+
+def _exit_by_ticker(window: Sequence[WindowMember]) -> dict[str, str | None]:
+    """The line's last membership day per canonical ticker (``None`` = still a member)."""
+    return {w.member.symbol.upper(): w.window_to for w in window}
 
 
 def _report_adoptions(sync: ticker_history.SyncResult) -> None:
@@ -245,6 +265,7 @@ def _plan(
     params: RunParams,
     chains: Mapping[str, tuple[str, ...]] | None = None,
     reits: Mapping[int, bool] | None = None,
+    until: Mapping[str, str | None] | None = None,
 ) -> list[_YearTask]:
     keyless = [str(a["ticker"]) for a in assets if identity.normalize_cik(a["cik"]) is None]
     if keyless:
@@ -252,22 +273,32 @@ def _plan(
             f"{len(keyless)} assets have no CIK ({', '.join(keyless)}): filings are fetched by CIK, "
             "never by ticker (APP-10a, T-149)"
         )
-    years = range(params.since_year, params.resolved_until() + 1)
-    return [
-        _YearTask(
-            asset_id=int(asset["id"]),
-            ticker=str(asset["ticker"]),
-            company_name=str(asset["company_name"] or asset["ticker"]),
-            form=form,
-            year=year,
-            cik=str(identity.normalize_cik(asset["cik"])),
-            predecessors=(chains or {}).get(str(asset["ticker"]), ())[1:],
-            reit=bool((reits or {}).get(int(asset["id"]), False)),
-        )
-        for asset in assets
-        for form in params.forms
-        for year in years
-    ]
+    exits = until or {}
+    tasks: list[_YearTask] = []
+    for asset in assets:
+        ticker = str(asset["ticker"])
+        # T-153 part 3a: a company that left the index is listed only through its exit year --
+        # and ``_process_filing`` drops any filing filed after the exit day itself.
+        exit_date = exits.get(ticker.upper())
+        last_year = params.resolved_until()
+        if exit_date is not None:
+            last_year = min(last_year, int(exit_date[:4]))
+        for form in params.forms:
+            for year in range(params.since_year, last_year + 1):
+                tasks.append(
+                    _YearTask(
+                        asset_id=int(asset["id"]),
+                        ticker=ticker,
+                        company_name=str(asset["company_name"] or ticker),
+                        form=form,
+                        year=year,
+                        cik=str(identity.normalize_cik(asset["cik"])),
+                        predecessors=(chains or {}).get(ticker, ())[1:],
+                        reit=bool((reits or {}).get(int(asset["id"]), False)),
+                        until=exit_date,
+                    )
+                )
+    return tasks
 
 
 # A fiscal year is at most 53 weeks, so the last one to end before a succession ended within this many days.
@@ -533,8 +564,11 @@ def _check_filer(task: _YearTask, ref: FilingRef) -> None:
 def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[int, int]:
     _check_filer(task, ref)
     as_of = engine.params.analysis_date
-    if ref.filing_date and ref.filing_date > as_of:
-        return 0, 1  # no lookahead: this filing was filed after the analysis date
+    # No lookahead: never a filing dated after the analysis date, and never one filed after the
+    # company's exit (T-153 part 3a) -- the same rule for a member and a leaver.
+    limit = min(as_of, task.until) if task.until else as_of
+    if ref.filing_date and ref.filing_date > limit:
+        return 0, 1  # no lookahead: this filing was filed after the analysis date (or the exit)
     if not ref.filing_date:
         return 0, 1  # T-107: an undated filing is never usable -- no metrics, no score
     if not engine.params.fresh and ref.accession_number in engine.completed_accessions:

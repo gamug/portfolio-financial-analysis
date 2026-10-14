@@ -121,6 +121,29 @@ def test_tickers_take_the_symbol_of_the_run_date(tmp_path: Path) -> None:
 
 
 @pytest.mark.usefixtures("_stubbed")
+def test_a_leaver_is_fetched_to_its_exit_and_no_further(tmp_path: Path) -> None:
+    """T-153 part 3a (D2): a line that left is fetched from 2019-01-02 to its last membership
+    day -- nothing after its exit reaches price_daily, the ``full`` row or the observations."""
+    udb = write_universe_db(tmp_path / "universe.db", [("AAPL", "2020-01-01", "2022-01-04")])
+    settings = Settings(
+        db_path=tmp_path / "kg.db", universe_db_path=udb, pricing_base_url="http://pricing.test"
+    )
+    report = pipeline.run(
+        settings,
+        RunParams(analysis_date="2026-10-13", store_daily=True, observations=True),
+    )
+    assert report.completed == 1
+    conn = sqlite3.connect(settings.db_path)
+    bars = [r[0] for r in conn.execute("SELECT date FROM price_daily ORDER BY date")]
+    assert bars == ["2022-01-03", "2022-01-04"]  # the fake series, cut at the exit
+    windows = list(conn.execute("SELECT label, start_date, end_date FROM price_window"))
+    assert windows == [("full", "2019-01-02", "2022-01-04")]
+    obs = [r[0] for r in conn.execute("SELECT obs_date FROM price_observation ORDER BY obs_date")]
+    assert obs == ["2022-01-03", "2022-01-04"]
+    conn.close()
+
+
+@pytest.mark.usefixtures("_stubbed")
 def test_run_writes_full_and_by_year_windows_then_resumes(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     params = RunParams(start_date="2022-01-01", end_date="2023-12-31", by_year=True)

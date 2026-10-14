@@ -32,3 +32,19 @@ cik,symbol,valid_from,valid_to,canonical_symbol,evidence_url,evidence_date,rules
 # rename -- out of part 2 (reported in the PR; the reviewer opens it as its own task).
 0002041610,PSKY,2025-08-07,2026-10-05,SKYD,https://www.sec.gov/Archives/edgar/data/2041610/000119312525175046/d841914dex991.htm ; https://www.sec.gov/Archives/edgar/data/2041610/000110465926113913/tm2626659d7_ex99-1.htm,2025-08-07 ; 2026-10-06,L-11;APP-10a
 0002041610,SKYD,2026-10-06,,SKYD,https://www.sec.gov/Archives/edgar/data/2041610/000110465926113913/tm2626659d7_ex99-1.htm,2026-10-06,L-11;APP-10a
+# Post-exit renames (T-153 part 3a, D4): the company left the index and renamed years later, so the
+# line continues past its last membership day. Identity is still the CIK (APP-10a), and the file is
+# never membership: `universe_history.db` keeps Gap (GPS, to 2022-02-02) and Fortune Brands (FBHS,
+# to 2022-12-18) as leavers, and GAP/FBIN are not index members at all.
+#
+# Gap Inc. (CIK 0000039911) left the S&P 500 on 2022-02-02 and changed its NYSE symbol from GPS to
+# GAP on 2024-08-22 (the company's own notice of 2024-08-08; SA-4). The GPS symbol's row therefore
+# runs to 2024-08-21, years past its index exit -- the ruling's point that a post-exit row is not
+# "the day after the last stint".
+0000039911,GPS,1976-07-01,2024-08-21,GAP,https://www.gapinc.com/en-us/articles/2024/08/gap-inc-to-change-ticker-symbol-to-gap%E2%80%9D-on-august-,2024-08-08,L-11;APP-10a
+0000039911,GAP,2024-08-22,,GAP,https://www.gapinc.com/en-us/articles/2024/08/gap-inc-to-change-ticker-symbol-to-gap%E2%80%9D-on-august-,2024-08-08,L-11;APP-10a
+# Fortune Brands Home & Security, Inc. (CIK 0001519751) left the S&P 500 on 2022-12-18; its name and
+# symbol change to Fortune Brands Innovations, Inc. (FBIN) became effective 2022-12-15 (its own
+# Exhibit 99.1, "Fortune Brands Completes Separation of MasterBrand", SA-5). FBHS ends 2022-12-14.
+0001519751,FBHS,2016-06-22,2022-12-14,FBIN,https://www.sec.gov/Archives/edgar/data/1519751/000119312522306146/d420098dex991.htm,2022-12-15,L-11;APP-10a
+0001519751,FBIN,2022-12-15,,FBIN,https://www.sec.gov/Archives/edgar/data/1519751/000119312522306146/d420098dex991.htm,2022-12-15,L-11;APP-10a

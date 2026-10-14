@@ -832,47 +832,44 @@ the final pilot, `T-143`.
           input for the checklist's next version, not in `checklist_v1.3.md`: "leavers: the classification in
           force on their last membership day; current members: today's snapshot; a reclassification after exit
           is not applied" (L-03 / L-11).
+        - **Delivered 2026-10-14, data-mining PR #51:**
+          `/workspaces/thesis/data/universe_history_gics.db`, sha1 `db5b16290b03a191b55215e8b98fc893a93f0e5b`;
+          87 of 90 stints filled, each cited by revision id; MBC, FTRE and PHIN unfilled (one-to-four-day
+          spin-off members the page never listed).
       - **Remaining:** part 3, split by the two requests (reviewer A, 2026-10-14). They block `T-100`, not the
         pilot.
-        - **Part 3a (now).** Main design question, the ingestion scope: every ingestion step reads
-          `members_asof(analysis_date)` only (`fundamental_agent/pipeline.py:219`, `pricing_agent/pipeline.py:196`),
-          and `T-100` is one run on one date, so as built it never fetches a leaver. Conditions (reviewer A):
-          - one rule for every company, current member or leaver, and nothing after the exit (reviewer A,
-            2026-10-14):
-            - **prices from 2019-01-02 for all.** That date is `quant`'s 756-day `lookback_days` before
-              2022-01-03. Prices are not SEC data, so D-10's windows do not bind them. `pricing_agent`'s
-              `DEFAULT_START_DATE` moves for everyone. First list every reader of `price_window`/`price_daily`
-              that summarizes the whole stored history (the `full` label), and show its values before and after
-              on a copy. Stop and ask if any stored score or rule changes beyond the added lookback;
-            - **filings: D-10 stays, frozen.** That is every filing filed from 2022-01-01 to the last day of the
-              company's last stint, the rule current members already follow (APO, a member from 2024-12-23,
-              has every filing from 2022). The list of reads of earlier filings (TTM, growth, CAGR, D-13's
-              three-year average; file:line) is evidence, not a stop;
-          - the early-2022 short history (2022 10-Qs without a stored prior-year quarter; D-13's previous-10-K
-            debt) is a start effect equal for all companies. Declare it with counts and do not widen the window.
-            Propose as the replay's first date the first cycle date on which the unscored share of members is
-            at or under `cycle`'s `unscored_max_share` (0.05). A member with no filing public yet counts as
-            unscored. That date is declared;
-          - ranking stays point-in-time: each cycle date scores `members_asof(that date)` only, so the wider
-            set changes what is ingested, never who is ranked;
-          - every LLM call on a leaver's filing is paid. For `T-100`'s budget, give the extra filing count and a
-            token estimate (about 11-12k input tokens per filing with the specialists, per `T-073`). Give also
-            the filings, leavers and current members separately, that are never the latest usable filing on any
-            date their company is a member: the LLM cost of the symmetric rule;
-          - say per step (fundamental, pricing, entity resolution, quant) whether it needs the wider set;
-          - no `migrate` on production; measure on a copy.
-
-          Also in 3a: the leavers' filings by CIK; their successions (a `cik_successions.csv` row only where a
-          leaver loses filings without one); the Article 9/7 statements from their 10-Ks for `company_types.csv`;
-          the SBNY/FRC gap declared and measured (above); the post-exit renames GPS→GAP and FBHS→FBIN as
-          `ticker_history.csv` rows (identity is the CIK, APP-10a; each cited to the company's own notice, L-11;
-          the gateway's GAP/FBIN series checked for no break and no `split_jump` over the GPS/FBHS dates; the row
-          never makes GAP or FBIN an index member); and the price-coverage measurement committed (script and
-          output, each stint over its whole membership inside the window).
-        - **Part 3b (waits for the GICS delivery):** the GICS-keyed steps (insurer, other financial firm, REIT,
-          regulated utility, the SECTOR score), the pre-2023 labels, the SIC check, the declaration, and the
-          replay re-run (which also waits for `T-071`). The price fallback's declaration is made once the prices
-          request is answered.
+        - **Done 2026-10-14, PR #166 (part 3a).** One ingestion rule for every company:
+          `kg_schema.queries.members_over_range` reads every **CIK line** that was a member at any time in
+          `[2022-01-03, D]`, one entry per line with its own membership span; `fundamental_agent` and
+          `pricing_agent` (and their `pending` checks) ingest to each line's last membership day and nothing
+          after it, `entity_resolution` and `quant` take no wider set, and `cycle` still scores
+          `members_asof(that date)` only. Prices start **2019-01-02** for every company (`quant`'s 756-day
+          `lookback_days` before the window's first session); filings stay in D-10's window (from
+          2022-01-01), each line to its exit. **GPS→GAP and FBHS→FBIN** join `ticker_history.csv` (each
+          cited to the company's own notice; the gateway's GAP/FBIN series cover the GPS/FBHS dates with no
+          break and no `split_jump`; neither becomes an index member). **D8:** 90 stints, 88 lines of 86
+          companies — **53 full, 0 partial, 37 zero** (the zero stints are 35 lines of 34 companies; GPS
+          under GAP 22/22, FBHS under FBIN 242/242), on `kg_schema.trading_calendar`
+          (`scripts/leaver_price_coverage.py`, output `docs/leaver_price_coverage.json`). **D6:** the
+          leavers' last-10-K Article 9 evidence is staged in `docs/leaver_company_types.csv` (86 rows;
+          Article 9: SIVB, PBCT, DFS, CMA, ZION), not merged — the Article 7 / other-financial types and
+          the profile interval need the GICS (part 3b). **The budget:** `scripts/ingestion_budget.py` →
+          `docs/ingestion_budget.json`: **10,216 filings** (current 9,351 / leavers 865) and **646
+          never-latest** filings over each company's own membership sessions (623 current + 23 leavers;
+          8,398,000 tokens at `T-073`'s 11,500 + 1,500). **R6 (i)** (members with no filing public yet) is
+          at or under 0.05 from **2022-03-10** and **0 from 2023-05-04** (`T-155`'s successions removed the
+          0.006 floor); the replay's first date is measured in `T-100`'s own run from the stored pillar
+          statuses, per its entry. verify_pilot's T-153c check; SPEC 1.20.0. Still open from 3a: **SBNY and
+          FRC** enter with no fundamentals — their index weight is measured with part 3b's price fallback,
+          and no substitute source is invented.
+        - **Part 3b (the GICS is delivered; its GICS-keyed steps can start):** the insurer, other financial
+          firm, REIT and regulated-utility steps and the SECTOR score, the pre-2023 labels, the SIC check,
+          the declaration, and the merge of 3a's staged `docs/leaver_company_types.csv` rows into
+          `company_types.csv` / `company_profile.csv` (with each leaver's profile interval). The replay
+          re-run still waits for `T-071`, and the price fallback's declaration for the prices request. The
+          **D6 method gap**: `HOLDING_PHRASE` cannot match a bank that is itself the registrant (ZION, a
+          national bank since 2018, so no holding-company sentence exists), so part 3b checks the bank
+          leavers by hand or tightens the method.
         - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
           before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
 
@@ -976,6 +973,12 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       all 56 others extract fine on today's gateway. Expect GEHC FY2022 as a recorded failure, and count that error
       across the universe. (PSKY FY2025 is refused by ID-07 as recorded: its payload holds only the predecessor's 2024
       and 2023 full years, which fits a company formed by a 2025 merger -- not a gateway fault.)
+      **APO's FY2023 10-Q** (accession `0001858681-23-000017`, filed 2023-08-04) also fails at
+      `stage='period'` on **every** run: the gateway's payload has no quarter column of its own (it returns
+      only the FY2022-12-31 column). `T-017`'s classifier calls it **data**, not service, and it recurs —
+      measured on `T-153` part 3a's R2 copy, 2026-10-14, where the re-run cleared SBAC's and WBD's service
+      failures but not this one. The unit is recorded in `analysis_run_error` and counted as skipped, never
+      scored: expect it as a recorded, recurring data failure (not a gateway fault).
       **Must run on a fresh `financial.db` (PR #104 review, 2026-09-30):** `financial_facts`
       is append-only, `INSERT OR IGNORE` on `(filing_id, statement, concept, period_key,
       filing_version = accession_number)` — a re-run against a database already carrying a
@@ -993,6 +996,13 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
+      **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
+      ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
+      statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the
+      share of each cycle date's `members_asof(that date)` members that has no usable score, and takes the
+      first cycle date whose share is at or under `cycle`'s `unscored_max_share` (0.05) as the replay's
+      first date. `T-153` part 3a's R6 (i) curve (members with no filing public yet) is what to expect
+      before it; a share measured on a 2026 date is not, because it depends on the date.
 
 ## Status
 
