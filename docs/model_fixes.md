@@ -8307,3 +8307,84 @@ the real model can produce -- in `tests/test_pillars.py`: a correct reply
 * **A metric with no stored row counts as empty** (the pillar is `empty` when every remaining metric
   is); this is what makes a 10-Q's absent `cagr` group behave as an absent reading rather than an
   inapplicability, and it matches T-071 part 1's measurement.
+
+## T-153 part 3a — the historical universe's ingestion: one rule for every company, leavers included
+
+**Stream B, Work item 8. `T-153` parts 1 (`valid_to`, PR #158) and 2 (a renamed company is one
+asset, PR #161) are done; part 3a is the ingestion scope.** The reviewer's rulings of 2026-10-14
+(D1–D9, corrections A–D) are the brief.
+
+**The change.** As built, every ingestion step read `members_asof(analysis_date)` only
+(`fundamental_agent/pipeline.py`, `pricing_agent/pipeline.py`), so `T-100`'s one run on one date
+never fetched a company that left the index before it. Now
+`kg_schema.queries.members_over_range(universe_db, fin_db, WINDOW_START, D)` returns **one entry
+per CIK line** that was a member at any time in `[2022-01-03, D]`, with the line's own membership
+span; `fundamental_agent` and `pricing_agent` (and their `pending` checks) ingest to each line's
+**last membership day** and nothing after it. Prices start **2019-01-02** for everyone (D2): the
+backtest window's first session minus `quant`'s 756-day `lookback_days`, the longest read of the
+stored history. `GPS -> GAP` and `FBHS -> FBIN` join `ticker_history.csv` (D4), and the ranking is
+unchanged — each cycle date still scores `members_asof(that date)` only (D9, verified by
+`verify_pilot`'s T-153c).
+
+**The declared start effect (D3, correction A).** Two parts, measured apart:
+
+* **(i) no filing public yet** — read-only from the SEC submissions (586 CIKs, 643 requests):
+  for each trading day and each `members_asof(day)` member, has a 10-K or 10-Q been filed in
+  `[2022-01-01, day]`, under its CIK or its succession chain? The share falls 0.638
+  (2022-02-15) → 0.050 (2022-03-14) → 0.030 (2022-03-18) → 0.010 (2022-03-31) → **0.006**
+  (3/503: BG, BLK, SKYD) from 2023-05-04.
+* **(ii) unscored by rule (T-073)** — **not measurable on production**: production is the pilot
+  database and only its 20 names carry a `FUNDAMENTAL` score (377 rows over 20 assets), so the
+  rule reads 483/503 = 0.96 there. T-073's own measured share is 23/503 = **0.046**.
+* **The sum never reaches `unscored_max_share` 0.05** — its floor is 0.006 + 0.046 = **0.052**.
+  Per the brief, this is reported (not worked around): **no replay start date satisfies the
+  rule**, so the replay's first date is the reviewer's call. (i) alone reaches 0.05 on
+  **2022-03-14**.
+
+**A suspicious-data finding, reported before any cause was assigned.** The three members that
+keep (i) above zero are **CIK successions among current members**, not leavers: the universe
+file backfills a *successor* registrant's CIK over the historical interval — BG is CIK
+`0001996862` (Bunge Global SA, first filing 2024-02-22), BLK is CIK `0002012383` (BlackRock,
+Inc., first filing 2024-11-06), SKYD is CIK `0002041610` (Skydance Corp, first filing
+2025-05-14) — and `cik_successions.csv` has no row for any of them. Under D-10 they have no
+filing before their successor CIK's first filing. `XOM` is fine (its chain is in the CSV); the
+one member with no filing today is `VYLR` (a member from 2026-10-01, 0 filings). This is
+`T-153`'s SKYD/Paramount class, now with two more instances; part 3a does not add succession
+rows (that is stream A's CIK-successions task).
+
+**The leavers' price coverage (D8, R5).** `scripts/leaver_price_coverage.py`, run in full
+against the local gateway 2026-10-14, on `kg_schema.trading_calendar` (not a vendor calendar):
+**90 stints, 88 lines of 86 companies — 53 full, 0 partial, 37 zero**; the 37 zero stints are
+35 price lines of 34 companies. GPS is measured under GAP (22/22 days) and FBHS under FBIN
+(242/242) — both full. The repo calendar has **1,200 sessions** in 2022-01-03..2026-10-14,
+the reviewer's AAPL-candle count, so correction C finds **no difference**. Output:
+`docs/leaver_price_coverage.json`.
+
+**The leavers' filings (D5, R1).** The D2 scope is **589 companies and 5,891 filings**
+(current 503 / 5,026; leavers 86 / 865) and **1,106,376 expected trading days**; over master's
+5,076-filing store that is **+815 filings, +86 companies**. Six leavers have no filing in the
+window: `GPS` (left 2022-02-02, its last 10-K is 2021), `SBNY`/`FRC` (no 10-K or 10-Q on EDGAR
+at all — the declared gap), and the three one-to-four-day spin-off members `MBC`, `FTRE`,
+`PHIN`. `SBNY` and `FRC` stay declared, no substitute source.
+
+**The LLM budget (D7).** The 865 leaver filings at ~11,500 input + 1,500 output tokens per
+filing (`MASTER_PROMPT` 767 chars + the brief + the synthesis prompt + the specialists' system
+prompts, 38,922 chars = 9,730 tokens over the 9 groups; `agents._MAX_TOKENS` 1,500) is
+**11,245,000 tokens** (9,947,500 in, 1,297,500 out). The never-latest filings — the cost the
+symmetric rule adds — are **3 (leavers) + 31 (current members) = 34 filings, 442,000 tokens**.
+`completed_accessions`/`completed_units` keep a re-run from paying twice.
+
+**The company-type evidence (D6).** `scripts/leaver_company_types.py` staged the 86 leaver
+CIKs' last 10-Ks (`docs/checklist_sec/company_types_leavers.csv`): 5 carry an Article 9
+statement (CMA, SIVB, DRE, PBCT, DFS). **Two of the five are the method's own false positives**
+— CMA's quote is a generic Gramm-Leach-Bliley sentence and DRE's is about a director's seat on
+another bank ("Dee serves as a member of the Board of Directors of First Internet Bancorp"),
+both matched by `SELF_STATEMENT`'s `is a`/`serves as` without `NOT_THE_FILER` catching them.
+Recorded as evidence, not merged: part 3b assigns the type with GICS and can tighten the method.
+The rows are **not** in `company_profile.csv` yet.
+
+**Files.** `src/kg_schema/queries.py` (`WINDOW_START`, `WindowMember`, `members_over_range`),
+`src/kg_schema/data/ticker_history.csv`, `src/fundamental_agent/{pipeline,pending}.py`,
+`src/pricing_agent/{pipeline,pending}.py`, `scripts/leaver_price_coverage.py`,
+`scripts/leaver_company_types.py`, `scripts/verify_pilot.py` (T-153c), SPEC 1.20.0
+(FR-001/FR-004/FR-012). No migration: no table or column changes (contract stays 16).

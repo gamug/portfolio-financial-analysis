@@ -24,7 +24,7 @@ Every package calls `kg_schema.ensure(conn)` at the end of its own
 It also holds the shared run seams every agent uses: `env.universe_database_path`
 (`KG_UNIVERSE_DB`, default `/workspaces/thesis/data/universe.db`),
 `queries` (point-in-time reads over `universe.db` — `members_asof`,
-`symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
+`members_over_range`, `symbols_asof`, `resolve_asset_ids`, `connect_ro`), `rundate` (the
 `--analysis-date` argparse type + default-to-today), and `provenance.code_version`
 (git short SHA `+ -dirty`, falling back to the package version then `"unknown"`).
 "Dirty" is scoped, not "any uncommitted file in the checkout": `_git_version` runs
@@ -122,7 +122,14 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   resolves by its line's canonical symbol from `ticker_history` — so FB and META are one asset
   — and a matched asset whose CIK differs is *missing*, never merged; a member with no CIK keeps
   the old case-insensitive `assets.ticker` match. Chunked `in_clause` — creating a brand-new
-  `assets` row stays with the agents' `sync_universe`).
+  `assets` row stays with the agents' `sync_universe`). **`members_over_range(universe_db,
+  fin_db, start, end, *, universe="SP500") -> list[WindowMember]` (T-153 part 3a)** reads the
+  stints overlapping `[start, end]` (`WINDOW_START` is the backtest window's first session,
+  2022-01-03) and returns **one entry per CIK line**: a company's several stints collapse to one
+  line (CDAY then DAY), coexisting share classes stay separate (DISCA continues as WBD; DISCK is
+  another line), and each entry carries the line's own membership span (`window_from` clamped to
+  *start*, `window_to` `None` for a line still a member) — the bound every ingestion step
+  fetches to. The CIK line comes from `ticker_history` on *fin_db*; membership never does.
 - **Data-coverage report:** `check_coverage(fin_db, universe_db, as_of, *,
   universe="SP500", min_observation_days=504) -> CoverageReport` and
   `persist_coverage(fin_db, report) -> int` (upserts one `universe_coverage`

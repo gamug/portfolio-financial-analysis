@@ -85,12 +85,16 @@ it as a `cover` run error (T-132).
 
 ### universe source
 
-The Wikipedia scraper is gone. `pipeline._load_members` reads
-`kg_schema.queries.members_asof(universe_conn, analysis_date)` — a
-point-in-time query over `universe.db` — and `db.sync_universe` upserts those
+The Wikipedia scraper is gone. `pipeline._load_window` reads
+`kg_schema.queries.members_over_range(universe_conn, conn, WINDOW_START, analysis_date)` —
+every **CIK line** that was a member at any time in `[2022-01-03, D]`, one entry per line
+with its own membership span (T-153 part 3a) — and `db.sync_universe` upserts those
 `UniverseMember`s into `assets` / `sectors` (the identity-write path where a new
 S&P 500 symbol first gets its `assets.id`). No `universe_membership` /
-`reconcile` write anymore.
+`reconcile` write anymore. `_plan` lists a company that left the index only through its exit
+year, and `_process_filing` drops any filing filed after its last membership day — the same
+D-10 rule (filings from 2022-01-01) a current member already follows, with the exit as the
+upper bound.
 
 ### `statements.py` — `Statements`, `iter_facts`
 
