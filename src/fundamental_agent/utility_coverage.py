@@ -39,11 +39,20 @@ from portfolio_common.db import Database
 from fundamental_agent import db as agent_db
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.statements import Statements
+from kg_schema.versions import (
+    RULE_INPUT_GROUP,
+    UTILITY_COVERAGE_AMBIGUOUS_FLAG,
+    UTILITY_COVERAGE_BOUND_AS_WC,
+    UTILITY_COVERAGE_BOUND_IN,
+    UTILITY_COVERAGE_METRIC,
+    UTILITY_COVERAGE_MISSING_BOUND_FLAG,
+    UTILITY_COVERAGE_THRESHOLD,
+)
 
-GROUP: Final[str] = "rule_input"
-NAME: Final[str] = "utility_cash_coverage_3y"
+GROUP: Final[str] = RULE_INPUT_GROUP
+NAME: Final[str] = UTILITY_COVERAGE_METRIC
 YEARS: Final[int] = 3
-THRESHOLD: Final[float] = 0.05  # the Ba band's lower bound (C13 p.7), the rule's cutoff
+THRESHOLD: Final[float] = UTILITY_COVERAGE_THRESHOLD  # C13 p.7's Ba band lower bound
 SENSITIVITY: Final[tuple[float, float]] = (0.05, 0.12)  # the checklist's "5%-12% same result" range
 
 CURRENT: Final[str] = "current"
@@ -57,8 +66,8 @@ ASSET_RETIREMENT: Final[str] = "asset_retirement"
 AMBIGUOUS: Final[str] = "ambiguous"
 
 # The two bounds' names, in the stored inputs and the evidence.
-AMBIGUOUS_IN: Final[str] = "average_ambiguous_in"
-AMBIGUOUS_AS_WC: Final[str] = "average_ambiguous_as_wc"
+AMBIGUOUS_IN: Final[str] = UTILITY_COVERAGE_BOUND_IN
+AMBIGUOUS_AS_WC: Final[str] = UTILITY_COVERAGE_BOUND_AS_WC
 
 # Caption markers (the director's rule 1): a standard element whose B6 definition is silent is
 # classified from the filer's own caption for that line, as an extension is. A caption that mixes
@@ -375,13 +384,13 @@ def compute(conn: Database, filing_id: int, asset_id: int, stmts: Statements) ->
         "sensitivity_range": list(SENSITIVITY),
     }
     if average_in is None or average_wc is None:
-        inputs["flag_utility_cash_coverage_missing_bound"] = 1.0
+        inputs[UTILITY_COVERAGE_MISSING_BOUND_FLAG] = 1.0
     if (
         average_in is not None
         and average_wc is not None
         and (average_in < THRESHOLD) != (average_wc < THRESHOLD)
     ):
-        inputs["flag_utility_cash_coverage_ambiguous_working_capital"] = 1.0
+        inputs[UTILITY_COVERAGE_AMBIGUOUS_FLAG] = 1.0
     # The stored value is the primary bound, D-13's wording ("before working-capital changes": the
     # current items removed, an ambiguous line left in). The rule reads both bounds from the inputs.
     return MetricResult(NAME, average_in, "ratio", inputs)

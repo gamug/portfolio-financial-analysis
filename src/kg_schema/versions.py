@@ -212,6 +212,26 @@ def manifest_tag(manifest: Mapping[str, object]) -> str:
 DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v4"
 
 
+# The D-13 regulated-utility cash-coverage rule input (T-071 part 2a). It is stored in
+# ``fundamental_metrics`` under the ``rule_input`` pseudo-group -- deliberately **not** one of
+# :data:`METRIC_GROUPS`, so no metric consumer, pillar member or prompt ever reads it -- and
+# ``cycle``'s ``UTILITY_CASH_COVERAGE`` rule reads it directly. Kept here for the same reason as
+# ``DATA_QUALITY_GATE_VERSION``: the writer (``fundamental_agent.utility_coverage``) and the reader
+# (``cycle.data``) agree on the contract without importing each other.
+RULE_INPUT_GROUP: Final[str] = "rule_input"
+UTILITY_COVERAGE_METRIC: Final[str] = "utility_cash_coverage_3y"
+# The two three-year bounds the input carries (R2): with the ambiguous working-capital lines left in
+# the cash flow, and with them treated as working capital.
+UTILITY_COVERAGE_BOUND_IN: Final[str] = "average_ambiguous_in"
+UTILITY_COVERAGE_BOUND_AS_WC: Final[str] = "average_ambiguous_as_wc"
+# The two flags in ``inputs_json``: a bound is missing (fewer than three yearly ratios), or the two
+# bounds straddle the cutoff (so neither vetoes, but the ambiguity is reported).
+UTILITY_COVERAGE_MISSING_BOUND_FLAG: Final[str] = "flag_utility_cash_coverage_missing_bound"
+UTILITY_COVERAGE_AMBIGUOUS_FLAG: Final[str] = "flag_utility_cash_coverage_ambiguous_working_capital"
+# The cutoff (C13 p.7's Ba band lower bound). HARD only when **both** bounds are below it (R2).
+UTILITY_COVERAGE_THRESHOLD: Final[float] = 0.05
+
+
 # -- version constraints (T-093) -------------------------------------------------------------
 #
 # T-090's selection is exact: one version, or ``GROUP=VERSION`` pairs. A **constraint** also

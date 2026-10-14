@@ -55,6 +55,11 @@ class RuleContext:
     # asset_id -> its APP-00 company profile as of the cycle date, or None when unknown (T-071 part
     # 2a). The rules key "financial firm" and "regulated utility" on this, never on the GICS sector.
     profiles: dict[int, CompanyProfile | None] = field(default_factory=dict)
+    # asset_id -> the D-13 regulated-utility cash-coverage rule input of its newest 10-K usable on
+    # the cycle date (``cycle.data.utility_cash_coverage``): the stored primary bound plus both
+    # bounds and the two flags. A 10-Q carries none, so the rule reads the newest 10-K, never the
+    # latest filing (T-071 part 2a, D-13).
+    utility_cash_coverage: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 @runtime_checkable

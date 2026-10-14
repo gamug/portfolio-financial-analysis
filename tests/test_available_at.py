@@ -291,8 +291,9 @@ def test_the_as_of_consumers_filter_filings_by_available_at_alone() -> None:
 def test_the_scan_sees_the_readers_it_guards() -> None:
     """Guard the guard: the known as-of readers are string literals the scan parses."""
     cycle_sql = _sql_strings(SRC / "cycle" / "data.py")
-    # metrics, data-quality verdicts, the trailing net income of the earnings yield (T-149), fundamentals
-    assert sum("available_at <= ?" in s for s in cycle_sql) == 4
+    # metrics, data-quality verdicts, the trailing net income of the earnings yield (T-149),
+    # fundamentals, and the D-13 utility cash-coverage rule input (T-071 part 2a)
+    assert sum("available_at <= ?" in s for s in cycle_sql) == 5
     # T-132: the market cap is the shared reader's (cycle and quant no longer read a stored metric
     # for it), whose one filing read is the cover-share query
     quant_sql = _sql_strings(SRC / "quant" / "db.py")

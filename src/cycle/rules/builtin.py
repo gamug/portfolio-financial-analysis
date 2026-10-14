@@ -10,6 +10,7 @@ from typing import Any
 
 from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit
 from cycle.scores.technical import MIN_SECTOR_NAMES
+from kg_schema.versions import UTILITY_COVERAGE_THRESHOLD
 
 # The price vetoes (T-070) read the latest price_observation as of the cycle date. An observation
 # older than this many calendar days (a long weekend is 4) is not a reading of today: a halted or
@@ -47,6 +48,61 @@ class _ThresholdRule:
             evaluated.add(aid)
             breached = value > self.threshold if self.op == ">" else value < self.threshold
             if breached:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {"metric": self.metric, "value": value, "threshold": self.threshold},
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+@dataclass
+class _NegativeFcfRule:
+    """NEGATIVE_FCF: ``cashflow.free_cash_flow_margin < 0`` -- the trailing-twelve-month free cash
+    flow is negative (C5). It was a plain :class:`_ThresholdRule` until T-071 part 2a.
+
+    A **regulated utility** is now *evaluated and never hit* (D-13): its free cash flow is negative
+    by construction for years -- the rate base grows faster than depreciation, capex is funded with
+    debt, and rate recovery lags the spend -- so the signal is not distress there (T-147's replay
+    vetoed 22 to 26 of the 31 utilities in every cycle). This is the ``LIQUIDITY_DISTRESS``
+    exemption pattern: the asset is evaluated, so a stint opened before the overlay applied closes,
+    but it is never hit. Its replacement test is :class:`_UtilityCashCoverageRule`."""
+
+    RULE_ID = "NEGATIVE_FCF"
+    SEVERITY = "HARD"
+    DESCRIPTION = (
+        "negative trailing-twelve-month free-cash-flow margin; not applied to a regulated utility"
+    )
+    metric: str = "cashflow.free_cash_flow_margin"
+    op: str = "<"
+    threshold: float = 0.0
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": self.metric,
+            "op": self.op,
+            "threshold": self.threshold,
+            "exempt": "the regulated-utility overlay (the APP-00 profile, D-13)",
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, metrics in ctx.metrics.items():
+            profile = ctx.profiles.get(aid)
+            if profile is not None and profile.regulated_utility:
+                if metrics:
+                    evaluated.add(aid)  # never a hit: closes a stint opened before the overlay
+                continue
+            value = metrics.get(self.metric)
+            if value is None:
+                continue
+            evaluated.add(aid)
+            if value < self.threshold:
                 hits.append(
                     VetoHit(
                         aid,
@@ -371,6 +427,80 @@ class _LiquidityRule:
 
 
 @dataclass
+class _UtilityCashCoverageRule:
+    """UTILITY_CASH_COVERAGE (HARD, T-071 part 2a, D-13): a regulated utility whose **three-year
+    average** operating cash flow *before working-capital changes*, over its total debt, is below
+    5% -- C13 p.7's Ba band lower bound (the band is 5%-13%). It replaces ``NEGATIVE_FCF`` for the
+    overlay (C13 p.11, p.14, p.19, p.21).
+
+    The input (:func:`cycle.data.utility_cash_coverage`) is the newest **10-K** usable on the cycle
+    date, never the latest filing: a 10-Q does not carry a three-year cash-flow average. It holds two
+    bounds (R2, 2026-10-14): the three-year average with the *ambiguous* working-capital lines left
+    in the cash flow, and with them treated as working capital. The rule is HARD **only when both
+    bounds are below the cutoff**; a pair that straddles it, or a missing bound, is *evaluated and
+    never hit*, so no veto row exists for it -- the flag
+    (``flag_utility_cash_coverage_ambiguous_working_capital``) and both values stay in the rule
+    input's ``inputs_json``, which is this rule's evidence (D-13's "missing inputs: no veto,
+    flagged"). A utility whose newest 10-K carries no rule input at all is not evaluated ("could not
+    tell"), so an open stint stays open.
+
+    The classification that decides which lines are working capital, the C13 quotes and the three
+    declared inferences are in ``docs/model_fixes.md`` "T-071 part 2a"; the table itself is in
+    ``fundamental_agent.utility_coverage``."""
+
+    RULE_ID = "UTILITY_CASH_COVERAGE"
+    SEVERITY = "HARD"
+    DESCRIPTION = (
+        "regulated utility whose three-year average operating cash flow before working capital "
+        "covers less than 5% of total debt (C13 p.7)"
+    )
+    threshold: float = UTILITY_COVERAGE_THRESHOLD
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "rule_input.utility_cash_coverage_3y",
+            "op": "<",
+            "threshold": self.threshold,
+            "bounds": "both the ambiguous-in and the ambiguous-as-working-capital averages",
+            "applies_to": "the regulated-utility overlay (the APP-00 profile, D-13)",
+            "missing_input": "no veto, not evaluated",
+            "straddling_or_missing_bound": "no veto, evaluated, flagged in the rule input",
+            "source": "C13 p.7 (the Ba band, 5%-13%); C13 p.11, p.14, p.19, p.21",
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, record in ctx.utility_cash_coverage.items():
+            profile = ctx.profiles.get(aid)
+            if profile is None or not profile.regulated_utility:
+                continue  # only the overlay; an unknown profile is never guessed
+            evaluated.add(aid)
+            bound_in = record.get("ambiguous_in")
+            bound_wc = record.get("ambiguous_as_wc")
+            if bound_in is None or bound_wc is None:
+                continue  # a missing bound: no veto (R2); the flag is in the rule input
+            if bound_in < self.threshold and bound_wc < self.threshold:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "utility_cash_coverage_3y_ambiguous_in": bound_in,
+                            "utility_cash_coverage_3y_ambiguous_as_wc": bound_wc,
+                            "threshold": self.threshold,
+                            "ambiguous_working_capital": bool(
+                                record.get("ambiguous_working_capital")
+                            ),
+                        },
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+@dataclass
 class _TrendBreakRule:
     """BREAK_TREND_200 (SOFT, flag-only, T-070): the close is more than 5% under its 200-day simple
     moving average. SOFT, not HARD: a HARD veto here would purge half the index in any broad
@@ -592,14 +722,8 @@ class _CrashZRule:
 
 RULES: list[Rule] = [
     _LeverageRule(),
-    _ThresholdRule(
-        "NEGATIVE_FCF",
-        "HARD",
-        "negative trailing-twelve-month free-cash-flow margin",
-        "cashflow.free_cash_flow_margin",
-        "<",
-        0.0,
-    ),
+    _NegativeFcfRule(),
+    _UtilityCashCoverageRule(),
     _LiquidityRule(),
     _DrawdownRule(),
     _StaleFundamentalRule(),

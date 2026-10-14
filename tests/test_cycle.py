@@ -19,6 +19,7 @@ from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_sele
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, RuleResult, disabled_rule_ids, enabled_rules, seed_catalog
 from cycle.rules.base import VetoHit
+from cycle.rules.builtin import _NegativeFcfRule, _UtilityCashCoverageRule
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
@@ -384,6 +385,79 @@ def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Databas
     ]  # type: ignore[attr-defined]
     assert (1, "LEVERAGE_EXTREME", "HARD") in hits
     assert not any(h[0] == 2 and h[1] == "LEVERAGE_EXTREME" for h in hits)
+
+
+# -- D-13: the regulated-utility rules (T-071 part 2a) ----------
+
+
+def _utility_record(
+    bound_in: float | None, bound_wc: float | None, *, ambiguous: bool = False
+) -> dict[str, object]:
+    """The ``rule_input.utility_cash_coverage_3y`` row ``cycle.data.utility_cash_coverage`` reads."""
+    return {
+        "value": bound_in,
+        "ambiguous_in": bound_in,
+        "ambiguous_as_wc": bound_wc,
+        "missing_bound": bound_in is None or bound_wc is None,
+        "ambiguous_working_capital": ambiguous,
+    }
+
+
+def test_negative_fcf_exempts_a_regulated_utility_and_still_fires_otherwise() -> None:
+    """D-13: the overlay is evaluated and never hit, so a stint opened before it closes."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={
+            1: {"cashflow.free_cash_flow_margin": -0.2},  # regulated utility: exempt
+            2: {"cashflow.free_cash_flow_margin": -0.2},  # operating company: HARD
+            3: {"cashflow.free_cash_flow_margin": 0.1},  # positive: evaluated, not hit
+        },
+        price_obs={},
+        last_fundamental={},
+        profiles={1: _test_profile(regulated_utility=True), 2: _test_profile(), 3: _test_profile()},
+    )
+    result = _NegativeFcfRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [2]
+    assert result.hits[0].severity == "HARD"
+    assert result.evaluated == frozenset({1, 2, 3})
+
+
+def test_utility_cash_coverage_fires_only_when_both_bounds_are_below_the_cutoff() -> None:
+    """R2: HARD needs *both* the ambiguous-in and the ambiguous-as-working-capital bounds below 5%;
+    a straddling pair or a missing bound is evaluated and never hit, and a utility with no rule
+    input at all is not evaluated."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={},
+        price_obs={},
+        last_fundamental={},
+        profiles={
+            1: _test_profile(regulated_utility=True),  # both below: HARD
+            2: _test_profile(regulated_utility=True),  # straddles (CEG): no veto
+            3: _test_profile(regulated_utility=True),  # missing bound (ED/EXC/WEC): no veto
+            4: _test_profile(regulated_utility=True),  # no rule input: not evaluated
+            5: _test_profile(),  # not the overlay: not evaluated
+        },
+        utility_cash_coverage={
+            1: _utility_record(-0.10, 0.01),
+            2: _utility_record(-0.23, 0.56, ambiguous=True),
+            3: _utility_record(0.12, None),
+            5: _utility_record(-0.10, -0.10),
+        },
+    )
+    result = _UtilityCashCoverageRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [1]
+    assert result.hits[0].severity == "HARD"
+    assert result.hits[0].evidence["utility_cash_coverage_3y_ambiguous_in"] == -0.10
+    assert result.hits[0].evidence["utility_cash_coverage_3y_ambiguous_as_wc"] == 0.01
+    assert result.evaluated == frozenset({1, 2, 3})
+
+
+def test_utility_cash_coverage_keeps_the_declared_cutoff_and_applies_to_the_overlay() -> None:
+    rule = _UtilityCashCoverageRule()
+    assert rule.threshold == 0.05
+    assert rule.SEVERITY == "HARD"
+    assert "regulated-utility overlay" in rule.PARAMS["applies_to"]
 
 
 # -- full cycle smoke -----------------------------------------

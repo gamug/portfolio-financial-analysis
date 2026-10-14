@@ -15,7 +15,17 @@ from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
-from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
+from kg_schema.versions import (
+    DATA_QUALITY_GATE_VERSION,
+    RULE_INPUT_GROUP,
+    UTILITY_COVERAGE_AMBIGUOUS_FLAG,
+    UTILITY_COVERAGE_BOUND_AS_WC,
+    UTILITY_COVERAGE_BOUND_IN,
+    UTILITY_COVERAGE_METRIC,
+    UTILITY_COVERAGE_MISSING_BOUND_FLAG,
+    MetricVersions,
+    resolve_metric_versions,
+)
 
 
 def active_universe(
@@ -113,6 +123,55 @@ def latest_metrics(
         out.setdefault(int(r["asset_id"]), {})[f"{r['metric_group']}.{r['metric_name']}"] = r[
             "value"
         ]
+    return out
+
+
+def utility_cash_coverage(conn: Database, cycle_date: str) -> dict[int, dict[str, Any]]:
+    """asset_id -> the D-13 regulated-utility cash-coverage rule input of its newest **10-K**
+    *usable* on *cycle_date* (``available_at <= cycle_date``), read at the newest stored
+    ``rule_input`` engine version -- never a mix of versions.
+
+    A 10-Q does not carry the input (it is a three-year average over a 10-K's own cash-flow
+    statement), so this deliberately keys on ``form LIKE '10-K%'`` rather than reusing
+    :func:`latest_metrics`' "newest filing". The input lives outside
+    ``kg_schema.versions.METRIC_GROUPS``, so its engine version is resolved on its own here; an
+    asset whose newest 10-K has no such row is simply absent (never guessed).
+
+    The stored ``value`` is the primary bound (``average_ambiguous_in``); both bounds and the two
+    flags come from the row's ``inputs_json``, so the rule can require *both* bounds below the
+    cutoff (R2)."""
+    versions = resolve_metric_versions(conn, None, groups=(RULE_INPUT_GROUP,))
+    if not versions.by_group:
+        return {}
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.form LIKE '10-K%' AND f.period_end IS NOT NULL
+              AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, m.value, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = ? AND m.metric_name = ?
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, RULE_INPUT_GROUP, UTILITY_COVERAGE_METRIC, versions.json_param()),
+    ).fetchall()
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        inputs = _json_object(r["inputs_json"])
+        out[int(r["asset_id"])] = {
+            "value": r["value"],
+            "ambiguous_in": inputs.get(UTILITY_COVERAGE_BOUND_IN),
+            "ambiguous_as_wc": inputs.get(UTILITY_COVERAGE_BOUND_AS_WC),
+            "missing_bound": bool(inputs.get(UTILITY_COVERAGE_MISSING_BOUND_FLAG)),
+            "ambiguous_working_capital": bool(inputs.get(UTILITY_COVERAGE_AMBIGUOUS_FLAG)),
+        }
     return out
 
 
