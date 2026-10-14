@@ -17,6 +17,21 @@ def test_a_current_element_is_removed_from_cfo() -> None:
         assert uc.classification(concept)[0] == uc.CURRENT, concept
 
 
+def test_a_definition_that_states_the_period_settles_the_class() -> None:
+    """Rule 1: a B6 definition that states the period makes the class -- DerivativeAssets says
+    "due to be disposed of within one year", so it is current, not ambiguous."""
+    assert uc.classification("us-gaap_IncreaseDecreaseInDerivativeAssets") == (
+        uc.CURRENT,
+        "definition: within one year",
+    )
+    assert uc.classification("us-gaap_IncreaseDecreaseInDerivativeAssetsAndLiabilities")[0] == (
+        uc.CURRENT
+    )
+    assert uc.classification("us-gaap_IncreaseDecreaseInInsuranceSettlementsReceivable")[0] == (
+        uc.CURRENT
+    )
+
+
 def test_a_noncurrent_regulatory_pension_or_aro_element_stays_in_the_cash_flow() -> None:
     assert uc.classification("us-gaap_IncreaseDecreaseInOtherNoncurrentAssets") == (
         uc.IN,
@@ -36,22 +51,35 @@ def test_a_noncurrent_regulatory_pension_or_aro_element_stays_in_the_cash_flow()
     )
 
 
-def test_a_definition_that_does_not_say_current_is_left_in_and_ambiguous() -> None:
-    """The director's fallback (rule 3): not clearly a current item -> left in, and the sensitivity
-    compares it in vs out."""
-    assert uc.classification("us-gaap_IncreaseDecreaseInOtherOperatingCapitalNet") == (
-        uc.IN,
-        uc.AMBIGUOUS,
-    )
-    assert uc.classification("us-gaap_IncreaseDecreaseInDerivativeAssets") == (uc.IN, uc.AMBIGUOUS)
-    assert uc.classification("ceg_IncreaseDecreaseInOptionPremiumsCollectedReceived") == (
-        uc.IN,
-        uc.AMBIGUOUS,
-    )
+def test_a_silent_definition_is_classified_from_the_filers_own_caption() -> None:
+    """Rule 1: a standard element whose definition is silent reads the filer's caption for that
+    line, as an extension does."""
+    concept = "us-gaap_IncreaseDecreaseInOtherOperatingAssets"
+    assert uc.classification(concept, "Other current assets") == (uc.CURRENT, "caption")
+    assert uc.classification(concept, "Change in other long-term assets") == (uc.IN, uc.NONCURRENT)
+    assert uc.classification(concept, "Other — net assets") == (uc.IN, uc.AMBIGUOUS)
 
 
-def test_an_element_outside_the_table_is_left_in_and_unclassified() -> None:
-    assert uc.classification("us-gaap_IncreaseDecreaseInSomethingNew") == (uc.IN, uc.UNCLASSIFIED)
+def test_a_caption_that_mixes_current_and_noncurrent_is_ambiguous() -> None:
+    assert uc.classification(
+        "us-gaap_IncreaseDecreaseInOtherOperatingCapitalNet",
+        "Other current and noncurrent assets and liabilities",
+    ) == (uc.IN, uc.AMBIGUOUS)
+
+
+def test_a_regulatory_caption_stays_in_the_cash_flow_even_when_it_says_current() -> None:
+    assert uc.classification(
+        "us-gaap_IncreaseDecreaseInSomethingSilent", "Decrease in current regulatory asset"
+    ) == (uc.IN, uc.REGULATORY)
+
+
+def test_an_extension_is_classified_from_its_caption() -> None:
+    assert uc.classification("evrg_IncreaseDecreaseInEnergyRelatedInventory")[0] == uc.CURRENT
+    assert uc.classification("pnw_IncreaseDecreaseDeferredFuelAndPurchasedPowerAmortization") == (
+        uc.IN,
+        uc.REGULATORY,
+    )
+    assert uc.classification("pcg_IncreaseDecreaseInContributions") == (uc.IN, uc.AMBIGUOUS)
 
 
 def test_the_cash_reconciliation_is_not_a_working_capital_line() -> None:
@@ -65,6 +93,11 @@ def test_the_cash_reconciliation_is_not_a_working_capital_line() -> None:
     assert not uc._is_cash_reconciliation("us-gaap_IncreaseDecreaseInInventories")
 
 
-def test_the_cutoff_is_the_ba_bands_lower_bound() -> None:
+def test_the_two_bounds_and_the_cutoff_are_declared() -> None:
     assert uc.THRESHOLD == 0.05
+    assert uc.SENSITIVITY == (0.05, 0.12)
     assert uc.YEARS == 3
+    assert (uc.AMBIGUOUS_IN, uc.AMBIGUOUS_AS_WC) == (
+        "average_ambiguous_in",
+        "average_ambiguous_as_wc",
+    )
