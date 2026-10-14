@@ -649,6 +649,49 @@ classified filings, where the cause is a working-capital term refused or only pa
 the master prompt and the brief -- plus the synthesis prompt; each specialist call adds its skill and
 a group prompt on top, so the pilot's and `T-100`'s budget must add them).
 
+## Work item 8 — `T-155` (closed task) — the current members' CIK successions (stream A, step 3a) — DONE 2026-10-14
+
+Moved verbatim from `TASKS.md` when the task closed (PR #165); the rest of Work item 8
+(`T-141`, `T-077`, `T-070`, `T-147`, `T-149`, `T-148`, `T-150`, `T-151`, `T-076`, `T-073`, `T-074`, `T-071`)
+stays there, with `T-071` part 2 next. Ordered by work item number.
+
+- [x] **T-155** The current members' CIK successions (stream A, before `T-071` part 2 and the pilot) —
+      **done 2026-10-14, PR #165**; takes over the SKYD/Paramount item from `T-153`. `T-147`'s register
+      (`docs/checklist_sec/succession_8ks.csv`: 19 succession 8-Ks from 18 current members) lists every
+      such filing; only XOM was ever turned into a link (`src/kg_schema/data/cik_successions.csv`,
+      `T-149`). A company that reorganizes into a new legal entity (a new holding company, a redomicile)
+      gets a **new CIK**, and its earlier filings stay under the predecessor's CIK, so the by-CIK fetch
+      never sees them: production stores only a few filings for **BLK** (5), **FERG** (5), **BG** (6) and
+      **PSKY** (1), whose TTM, prior-year capital, growth and CAGR are therefore empty or thin (PSKY is
+      one of `T-073`'s unscored members). **In scope:** the current members. **Out:** the leavers
+      (`T-153` part 3) and the ticker-lookup code fixes (`T-153` part 2). APP-10b-2: a row is added only
+      when the successor's own succession 8-K names the predecessor (its accession and a verbatim quote
+      are the evidence); `T-149`'s rule: only for a company that loses filings without it; and each row
+      must pass APP-10b-3 (`pipeline._last_annual_report_missing`). The classification of the 19 filings,
+      the measurements and the declared items are in `docs/model_fixes.md` "T-155".
+      → `PLAN.md` Work item 8, step 3a (before `T-071` part 2).
+      Three rows added (BLK → Old BlackRock `0001364742`; BG → Bunge
+      Limited `0001144519`; PSKY → Paramount Global `0000813828`), all four passing APP-10b-3; **APO**
+      (its 8-K names AAM and AHL, but it is a member only from 2024-12-23 and its own CIK holds every
+      input a member date reads) and **FERG** (a member only from 2026-08-05, its own CIK covering every
+      input) get **no row**, each declared in `docs/model_fixes.md` "T-155". Measurement on
+      `t155/after.db`: BLK 8 → 19 filings, BG 11 → 19, SKYD 4 → 17; **T-073's unscored, on the members of
+      2026-09-22 (F2), 23 of 500 → 23 of 500** (SKYD stays unscored: its FY2025 10-K presents the year as
+      a business combination's predecessor and successor parts, with no full-year column, so the newest
+      10-Q's TTM has no prior 10-K — F1; declared, not a gateway defect); no `stage='succession'` error;
+      at 2024-12-31 the member resolves to `0002041610` and its filings come from Paramount through the
+      new row. Two `tests/test_cik_succession.py` tests replaced (the table now holds four rows) and
+      `tests/test_verify_t155.py::test_the_reading_covers_every_register_line` removed (F3; the check is
+      now in `verify_t155.py classify`).
+
+**Closed 2026-10-14 — PR #165** (reviewed and approved). Declared items that stay open: **APO and
+FERG get no row**, each declared in `docs/model_fixes.md` "T-155" (APO's own CIK holds every input a
+member date reads; FERG is a member only from 2026-08-05); **SKYD stays unscored until its FY2026 10-K**
+— its FY2025 10-K presents the year as a business combination's predecessor and successor parts, with no
+full-year column, a declared structural case, not a gateway defect and not `T-140`; and **T-073's
+unscored list is unchanged on the member basis** (23 of 500, 4.6%, at 2026-09-22; 503 members are 500
+CIKs, the share-class pairs sharing one).
+
 ## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to
