@@ -16,11 +16,12 @@ from cycle.scores.technical import MIN_SECTOR_NAMES
 # delisted name would otherwise be re-confirmed forever by a stale row, so it is "could not tell".
 MAX_OBSERVATION_AGE_DAYS = 7
 
-# GICS sectors the LIQUIDITY_DISTRESS test does not apply to (checklist APP-09): a financial has no
-# classified balance sheet (no current/non-current split), and a regulated utility's is shaped by
-# its rate base and its commercial-paper funding. T-071's company profile (type + overlays)
-# replaces this sector test; until then GICS stands in for it.
-LIQUIDITY_EXEMPT_SECTORS = frozenset({"Financials", "Utilities"})
+# LIQUIDITY_DISTRESS does not apply to a financial firm (no classified balance sheet) or a regulated
+# utility (its balance sheet is shaped by its rate base and commercial-paper funding) -- APP-09's two
+# cases, keyed on the APP-00 company profile's ``financial_firm`` / ``regulated_utility`` since
+# T-071 part 2a (D5), never on the GICS sector (a payment processor, an exchange or an insurance
+# broker in GICS Financials is an operating company under APP-00 and *is* evaluated; so is a
+# Utilities-sector company outside the overlay, e.g. AES or NRG).
 
 
 @dataclass
@@ -299,14 +300,14 @@ class _LiquidityRule:
 
     Either failing is a failed test. A missing metric is not a failed test; when *neither* is
     available the asset is not evaluated (an open stint stays open: "could not tell"). Not applied
-    to GICS Financials or Utilities (``LIQUIDITY_EXEMPT_SECTORS``): they are evaluated and never
+    to a financial firm or a regulated utility (the APP-00 profile, D5): they are evaluated and never
     hit, so a stint opened before the exemption closes."""
 
     RULE_ID = "LIQUIDITY_DISTRESS"
     SEVERITY = "SOFT"
     DESCRIPTION = (
         "current ratio below 1.0 and weak cash coverage (interest coverage or operating cash "
-        "flow margin); not applied to Financials or Utilities"
+        "flow margin); not applied to a financial firm or a regulated utility"
     )
     current_ratio_threshold: float = 1.0
     interest_coverage_floor: float = 1.5
@@ -320,14 +321,15 @@ class _LiquidityRule:
             "threshold": self.current_ratio_threshold,
             "interest_coverage_floor": self.interest_coverage_floor,
             "ocf_margin_floor": self.ocf_margin_floor,
-            "exempt_sectors": sorted(LIQUIDITY_EXEMPT_SECTORS),
+            "exempt": "a financial firm or the regulated-utility overlay (the APP-00 profile)",
         }
 
     def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
         evaluated = set()
         for aid, metrics in ctx.metrics.items():
-            if ctx.sectors.get(aid) in LIQUIDITY_EXEMPT_SECTORS:
+            profile = ctx.profiles.get(aid)
+            if profile is not None and (profile.financial_firm or profile.regulated_utility):
                 if metrics:
                     evaluated.add(aid)  # never a hit: closes a stint opened before the exemption
                 continue
