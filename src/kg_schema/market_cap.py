@@ -336,8 +336,10 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     wanted = sorted(set(asset_ids))
     if not wanted:
         return result
-    listing_tickers = [ticker for classes in CLASS_LISTING.values() for ticker in classes.values()]
-    ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_tickers)
+    listing_members = [
+        (ticker, cik) for cik, classes in CLASS_LISTING.items() for ticker in classes.values()
+    ]
+    ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_members, as_of=as_of)
     all_needed_assets = sorted(set(wanted) | set(ticker_to_asset.values()))
 
     counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))

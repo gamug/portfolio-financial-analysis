@@ -72,12 +72,17 @@ The single entrypoint. Sequence:
    `sync_universe` run before they write an asset, and the succession table: `cik_succession` is seeded on every
    `ensure` from `src/kg_schema/data/cik_successions.csv` (`seed_successions`), and `cik_chain(db, cik)` is the CIKs an
    asset's filings are fetched under, its own first.
-6. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
+6. `ticker_history.ensure_seeded(db)` — the as-of ticker history (`T-153` part 2): `ticker_history` is
+   seeded on every `ensure` from `src/kg_schema/data/ticker_history.csv`, one row per symbol of a
+   company's line, each citing the notice that dates it (L-11). It is what lets a renamed company's
+   symbols resolve to one asset (`queries.resolve_asset_ids`) and what `sync_universe` stores a
+   member under.
+7. `views.ensure_views(db)` — drop + recreate every `v_*` view. **Skipped, with a warning,
    when the database's `schema_version` is above the highest migration this code knows**
    (T-144): a later contract may have added columns and views this code does not define, and
    rebuilding would remove them. It protects later code from the next contract change; it
    cannot retrofit code that predates it.
-7. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
+8. If `run_migrations`: `migrations.apply_migrations(db)`, then rebuild views.
 
 Steps 1–6 are safe to run against the shared production DB at any time,
 concurrently with the other packages. Step 7 runs **only** via `python -m
@@ -112,10 +117,12 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   `valid_from <= D AND (valid_to IS NULL OR valid_to >= D)` — `valid_to` is the last
   day of membership, the day before the removal takes effect, inclusive — deduped by
   symbol keeping the latest stint; rejects any universe other than `SP500`),
-  `symbols_asof(...)`, and `resolve_asset_ids(financial_db, symbols) ->
-  (mapping, missing)` (pure read, case-insensitive `assets.ticker` match,
-  chunked `in_clause` — creating a brand-new `assets` row stays with the
-  agents' `sync_universe`).
+  `symbols_asof(...)`, and `resolve_asset_ids(db, members, *, as_of) ->
+  (mapping, missing)` (pure read; *members* are `(symbol, cik)` pairs. A member with a CIK
+  resolves by its line's canonical symbol from `ticker_history` — so FB and META are one asset
+  — and a matched asset whose CIK differs is *missing*, never merged; a member with no CIK keeps
+  the old case-insensitive `assets.ticker` match. Chunked `in_clause` — creating a brand-new
+  `assets` row stays with the agents' `sync_universe`).
 - **Data-coverage report:** `check_coverage(fin_db, universe_db, as_of, *,
   universe="SP500", min_observation_days=504) -> CoverageReport` and
   `persist_coverage(fin_db, report) -> int` (upserts one `universe_coverage`
@@ -132,6 +139,28 @@ Consolidates what used to be split across `version.py` / `universe_source.py` /
   as_of, run_id=None, run_kind=None, source) -> (opened, closed)` — opens
   memberships for newcomers, closes them for the departed. No longer on any
   write path (see `v_universe_membership` below), kept for compatibility.
+
+### `ticker_history.py` — the as-of ticker history (T-153 part 2)
+
+A company is its CIK (APP-10a), so a rename — the same CIK under a new ticker, FB → META — must
+stay **one asset**. Identity is one asset per `(CIK, line)`: a *line* is a maximal chain of one
+CIK's symbols where each symbol begins the day after the previous one ends
+(`valid_from == valid_to + 1`); share classes are separate lines that coexist (GOOGL/GOOG,
+FOXA/FOX, NWSA/NWS) and stay separate assets.
+
+- `HISTORY_CSV` (`data/ticker_history.csv`) is the **source of truth**: one row per symbol with
+  `canonical_symbol` (the line's newest symbol) and the notice that dates it (L-11).
+  `read_history()` parses and validates it; `seed(db)` inserts what is missing (called from
+  `ensure`); `ensure_seeded(db)` is the no-op-on-a-partial-schema wrapper.
+- `canonical_symbol(db, cik, symbol)` (by CIK, so a reused ticker is a different line),
+  `symbol_line(db, symbol, as_of)` (dated), `line_symbols(db, cik, canonical)` and
+  `canonical_for_member(db, *, symbol, cik, as_of=None)` are the reads.
+- `plan_members(db, members)` classifies each member of one dated universe: a member whose CIK
+  already has an asset under another symbol is a **share class** (another same-CIK member is in
+  the batch) → insert; a **recorded rename** → adopt (`MemberAsset.action == "adopt"`, the one
+  existing asset of the line retitled in place); otherwise → `TickerConflict`, **before anything
+  is written**. `Adoption` / `SyncResult` are what `sync_universe` returns so the run can report
+  each adoption.
 
 ### `market_cap.py` — market capitalisation as of a date (T-132)
 
@@ -227,6 +256,7 @@ are present / it hasn't already run).
 | m013 | `financial_facts.preferred_sign REAL` (`T-148`, contract 13): edgartools' +1/−1 hint, the displayed `value` times it being the value in the filed sign (ID-11/ID-12). Additive, `NULL` on every existing row -- **no backfill**: `financial_facts` is append-only on `(filing_id, statement, concept, period_key, filing_version)`, so a same-accession re-run cannot add it, and a `NULL` reads as the displayed sign, flagged. The fix takes effect on a database rebuilt with the engine that writes it. No view changes |
 | m014 | non-reusable IDs with AUTOINCREMENT (`T-145`, contract 14): rebuilds `cycle_run`, `analysis_run`, `pricing_run`, `quant_run`, and `sec_filings` with AUTOINCREMENT so deleted IDs are never reused; seeds `sqlite_sequence` from the maximum of each table's own ID and all referencing columns; adds read-only check functions `unresolved_run_references` and `invalid_sec_filings_accessions`. |
 | m015 | marker for the orchestrator provenance (`T-012`, contract 15): changes no table. `orchestrator_run` / `orchestrator_step` and their `v_*` views come from `ddl.py` / `views.py` on every `ensure`, so a fresh database has them without migrating; this raises the floor to 15 (as m010 did for T-144's views) and is safe to replay on a database that already has the tables. |
+| m016 | marker for the as-of ticker history (`T-153` part 2, contract 16): changes no table. `ticker_history` (`ddl.py`) and `v_ticker_history` (`views.py`) come from every `ensure`, so a fresh database has them without migrating; this raises the floor to 16 (as m010/m015 did for their views) and is safe to replay on a database that already has the table. |
 
 ### `views.py` — `VIEWS`, `ensure_views(db)`
 
@@ -318,7 +348,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 
 ### Versions and deployment
 
-- `schema_version` **15** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes; `m013` adds `financial_facts.preferred_sign`, `T-148`; `m014` adds AUTOINCREMENT on run tables and `sec_filings`, `T-145`; `m015` is the `T-012` orchestrator-provenance marker, no table changes). The views themselves are rebuilt
+- `schema_version` **16** (`m010` is a marker, no table changes; `m011` adds the `T-070` columns below; `m012` is the `T-149` filing-identity guard, no table changes; `m013` adds `financial_facts.preferred_sign`, `T-148`; `m014` adds AUTOINCREMENT on run tables and `sec_filings`, `T-145`; `m015` is the `T-012` orchestrator-provenance marker, no table changes; `m016` is the `T-153` part 2 as-of-ticker-history marker, no table changes). The views themselves are rebuilt
   by every `ensure`, so a database gets them as soon as any process on the new code opens it,
   whether or not it has been migrated; `migrate` is what raises the floor.
 - **Every process that opens the database is upgraded (or stopped) before `migrate` runs.**
@@ -327,7 +357,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   `ensure_views` guard (skip when `schema_version` is above the highest migration it knows)
   protects *later* code from the *next* contract change; it cannot retrofit code that predates it.
 - The production database (`/workspaces/thesis/data/financial.db`) is frozen until `T-100` and
-  stays at its current `schema_version`; a consumer must not raise its floor to 10, 11 or 12 for it.
+  stays at its current `schema_version`; a consumer must not raise its floor to 10, 11, 12 or 16 for it.
 
 ### New views
 
@@ -359,6 +389,12 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   stay in `v_veto`, it subtracts nothing); `null` on a HARD rule (it excludes instead). A rule absent from
   the catalog costs the run's `soft_veto_penalty`. So the penalty is no longer "15 × the number of SOFT
   vetoes" (`tests/test_kg_view_contract.py` pins the identity with a `BREAK_TREND_200` hit).
+- **`v_ticker_history`** (`T-153` part 2): `cik`, `symbol`, `valid_from`, `valid_to`,
+  `canonical_symbol`, `asset_id` (the one asset the line resolves to), `evidence_url`,
+  `evidence_date`, `rules`. One row per symbol of a company's line; `valid_to` is the symbol's last
+  day. Keyed by CIK — the same symbol reused by another CIK later is a different line, so a caller
+  never merges the two. `assets.ticker` is the line's canonical (current) symbol, so every other
+  view shows the current ticker even on a historical row; join this view for the as-of ticker.
 
 ### Columns added to existing views
 

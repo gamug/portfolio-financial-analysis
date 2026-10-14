@@ -11,7 +11,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
-from kg_schema.queries import connect_ro, resolve_asset_ids, symbols_asof
+from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
 
 
@@ -29,15 +29,17 @@ def active_universe(
     upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
     uconn = connect_ro(upath)
     try:
-        syms = symbols_asof(uconn, cycle_date, universe=universe)
+        members = members_asof(uconn, cycle_date, universe=universe)
     finally:
         uconn.close()
-    if not syms:
+    if not members:
         raise RuntimeError(f"universe.db ({upath}) has no {universe} members as of {cycle_date}")
-    mapping, _missing = resolve_asset_ids(conn, syms)
+    mapping, _missing = resolve_asset_ids(
+        conn, [(m.symbol, m.cik) for m in members], as_of=cycle_date
+    )
     if not mapping:
         raise RuntimeError(
-            f"none of the {len(syms)} {universe} members as of {cycle_date} exist in assets yet "
+            f"none of the {len(members)} {universe} members as of {cycle_date} exist in assets yet "
             f"-- run fundamental_agent / pricing_agent for this date first"
         )
     ids = sorted(mapping.values())

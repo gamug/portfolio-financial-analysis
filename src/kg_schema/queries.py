@@ -8,8 +8,8 @@ Read (``universe.db`` -- point-in-time S&P 500 membership, never written here):
                           from here)
     members_asof          open membership stints as of a date, as UniverseMember rows
     symbols_asof           just the ticker symbols from members_asof
-    resolve_asset_ids      case-insensitive ticker -> assets.id lookup (financial DB,
-                            chunked IN (...), never inserts)
+    resolve_asset_ids      member (symbol + CIK) -> assets.id lookup, by the CIK's ticker line
+                            as of a date (T-153 part 2; chunked IN (...), never inserts)
 
 Read (metric versions -- which engine versions of fundamental_metrics are stored):
     metric_versions_present  {metric_group: [engine_version, ...]} actually stored; the
@@ -52,6 +52,7 @@ from typing import Any
 
 from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
+from . import ticker_history
 from .coverage import DEFAULT_MIN_OBSERVATION_DAYS, CoverageReport, SymbolCoverage
 from .db import connect_ro as _kg_connect_ro
 from .ddl import (
@@ -65,6 +66,7 @@ from .ddl import (
     WRONG_CYCLE_TYPE_QUERIES,
     WRONG_CYCLE_TYPE_SAMPLE_QUERIES,
 )
+from .identity import normalize_cik
 
 SUPPORTED_UNIVERSE = "SP500"
 _ID_CHUNK = 900  # keep under SQLite's bound-parameter limit
@@ -168,34 +170,62 @@ def symbols_asof(
 
 
 def resolve_asset_ids(
-    financial_db: Database, symbols: Iterable[str]
+    db: Database,
+    members: Iterable[tuple[str, str | None]],
+    *,
+    as_of: str,
 ) -> tuple[dict[str, int], list[str]]:
-    """Map *symbols* to ``assets.id`` by case-insensitive ticker match.
+    """Map members to ``assets.id`` by CIK, as of a date (T-153 part 2).
 
-    Pure read -- never inserts. Returns ``(mapping, missing)`` where *missing*
-    lists the input symbols with no ``assets`` row yet (they need an agent run to
-    create their identity first).
+    *members* is an iterable of ``(symbol, cik)`` pairs. A member whose CIK has a recorded
+    ticker line (``ticker_history``, APP-10a) is matched by the line's **canonical** symbol, so a
+    rename (FB -> META) resolves to the one asset the whole line shares. A matched asset whose
+    stored CIK differs from the member's is **missing**, never merged -- a ticker is reassigned
+    (the symbol ``FB`` is ProShares Trust, CIK 0001174610, today). A member with no CIK falls
+    back to the line named by *as_of* (else the symbol itself) and a case-insensitive bare
+    ticker match, as before.
+
+    Pure read -- never inserts. Returns ``(mapping, missing)`` keyed by the input symbol
+    (upper-cased); *missing* lists the input symbols with no matching ``assets`` row (they need
+    an agent run to create their identity first).
     """
-    wanted: list[str] = []
+    wanted: list[tuple[str, str | None]] = []
     seen: set[str] = set()
-    for s in symbols:
-        key = s.upper()
+    for symbol, cik in members:
+        key = symbol.upper()
         if key not in seen:
             seen.add(key)
-            wanted.append(key)
+            wanted.append((key, cik))
 
-    mapping: dict[str, int] = {}
-    for start in range(0, len(wanted), _ID_CHUNK):
-        chunk = wanted[start : start + _ID_CHUNK]
+    canonical = {
+        key: ticker_history.canonical_for_member(db, symbol=key, cik=cik, as_of=as_of)
+        for key, cik in wanted
+    }
+    tickers = sorted({canonical[key] for key, _ in wanted})
+
+    by_ticker: dict[str, int] = {}
+    cik_by_id: dict[int, str | None] = {}
+    for start in range(0, len(tickers), _ID_CHUNK):
+        chunk = tickers[start : start + _ID_CHUNK]
         placeholders = in_clause(chunk)
-        rows = financial_db.execute(
-            f"SELECT id, ticker FROM assets WHERE UPPER(ticker) IN {placeholders}",  # noqa: S608
+        rows = db.execute(
+            f"SELECT id, ticker, cik FROM assets WHERE UPPER(ticker) IN {placeholders}",  # noqa: S608
             chunk,
         )
         for r in rows:
-            mapping[str(r["ticker"]).upper()] = int(r["id"])
+            by_ticker[str(r["ticker"]).upper()] = int(r["id"])
+            cik_by_id[int(r["id"])] = r["cik"]
 
-    missing = [s for s in wanted if s not in mapping]
+    mapping: dict[str, int] = {}
+    missing: list[str] = []
+    for key, cik in wanted:
+        asset_id = by_ticker.get(canonical[key].upper())
+        member_cik = normalize_cik(cik)
+        stored_cik = normalize_cik(cik_by_id.get(asset_id)) if asset_id is not None else None
+        if asset_id is None or (member_cik is not None and stored_cik not in (None, member_cik)):
+            missing.append(key)
+            continue
+        mapping[key] = asset_id
     return mapping, missing
 
 
@@ -498,8 +528,11 @@ def check_coverage(
     min_observation_days: int = DEFAULT_MIN_OBSERVATION_DAYS,
 ) -> CoverageReport:
     """Per-member core-data coverage for *universe* as of *as_of*."""
-    symbols = symbols_asof(universe_db, as_of, universe=universe)
-    id_by_symbol, _missing = resolve_asset_ids(fin_db, symbols)
+    members = members_asof(universe_db, as_of, universe=universe)
+    symbols = [m.symbol for m in members]
+    id_by_symbol, _missing = resolve_asset_ids(
+        fin_db, [(m.symbol, m.cik) for m in members], as_of=as_of
+    )
 
     fundamental_ids = _distinct_ids(
         fin_db,

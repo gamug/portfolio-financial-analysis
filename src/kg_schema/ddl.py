@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS cik_succession (
     UNIQUE (successor_cik, predecessor_cik)
 );
 
+-- T-153 part 2 (L-11): the as-of ticker history of a company's line. A rename is the same CIK
+-- under a new ticker (`APP-10a`: identity is the CIK); `canonical_symbol` is the line's newest
+-- symbol, so every symbol of one line resolves to the same asset. Seeded from
+-- `kg_schema/data/ticker_history.csv` (`ticker_history.seed`), one row per (cik, symbol,
+-- valid_from), each citing the notice that dates it. A symbol may be reused by another CIK
+-- later, so reads are keyed by (CIK, symbol), never by symbol alone.
+CREATE TABLE IF NOT EXISTS ticker_history (
+    cik              TEXT NOT NULL,
+    symbol           TEXT NOT NULL,
+    valid_from       TEXT NOT NULL,
+    valid_to         TEXT,
+    canonical_symbol TEXT NOT NULL,
+    evidence_url     TEXT NOT NULL,
+    evidence_date    TEXT NOT NULL,
+    rules            TEXT,
+    PRIMARY KEY (cik, symbol, valid_from)
+);
+
+CREATE INDEX IF NOT EXISTS ix_ticker_history_symbol ON ticker_history (symbol);
+
 CREATE TABLE IF NOT EXISTS universe_coverage (
     id               INTEGER PRIMARY KEY,
     as_of            TEXT NOT NULL,
