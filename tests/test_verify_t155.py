@@ -8,6 +8,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 _SPEC = importlib.util.spec_from_file_location(
     "verify_t155", Path(__file__).resolve().parent.parent / "scripts" / "verify_t155.py"
 )
@@ -40,6 +42,10 @@ def test_succession_sentence_is_none_without_a_succession() -> None:
     assert verify.succession_sentence("A plain 8-K about a dividend.", "X") is None
 
 
+@pytest.mark.skipif(
+    not verify.REGISTER.exists(),
+    reason="docs/checklist_sec is git-excluded; the register exists only on the dev machine",
+)
 def test_the_reading_covers_every_register_line() -> None:
     with verify.REGISTER.open(newline="", encoding="utf-8") as fh:
         register = list(csv.DictReader(fh))

@@ -8438,3 +8438,7 @@ a run on that date would score is **Paramount Global's Q3 2024 10-Q** (`00008138
   10-K need checking.
 * **The classification's quotes are normalized** (curly quotes → ASCII, tag-stripped whitespace
   collapsed), matching XOM's own row.
+* **`test_the_reading_covers_every_register_line` skips when the audit inputs are not checked out.**
+  It reads `docs/checklist_sec/succession_8ks.csv`, which is git-excluded (`.git/info/exclude`), so it
+  skips when the file is absent (CI) — the pattern `tests/test_sec_xcheck_document.py` uses — and runs
+  on the dev machine. Its first push failed CI for exactly this reason; fixed in the same PR.
