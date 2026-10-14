@@ -660,7 +660,7 @@ the final pilot, `T-143`.
         (`scripts/verify_t071a.py` -> `out/pillars.json`): the rubric must define what a filing scores when a
         pillar has no value;
       - **a staggered paid smoke test** (a few filings, then more), each stage approved by the user.
-      *(2026-10-14: **implemented, in review** (stream A, step 3; branch `feat/t073-pillar-score`). The plan,
+      *(2026-10-14: **implemented, in review — PR #160** (stream A, step 3; branch `feat/t073-pillar-score`). The plan,
       the measurements and the declared items are in `docs/model_fixes.md` "T-073". `fundamental_agent.pillars`
       holds the four pillars and the four statuses the code computes (`not_applicable`, `absent_by_form`,
       `empty`, `present`), `absent_by_form` being APP-09's own wording -- `AssetsCurrent` and
