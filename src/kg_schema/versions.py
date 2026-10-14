@@ -204,11 +204,12 @@ def manifest_tag(manifest: Mapping[str, object]) -> str:
 
 
 # The Ring-1 data-quality gate version (T-065; dq-v2 by T-116's DQ_NEG_EQUITY recalibration; dq-v3
-# by T-150's accounting-identity gate -- a gate-methodology change, so it re-gates as a parallel set
-# of rows rather than overwriting dq-v1's/dq-v2's). ``fundamental_agent`` writes
+# by T-150's accounting-identity gate; dq-v4 by T-071 part 2a's D-04 -- DQ_NEG_EQUITY is a record,
+# never a veto, and quarantines D/E only -- a gate-methodology change, so it re-gates as a parallel
+# set of rows rather than overwriting the earlier ones). ``fundamental_agent`` writes
 # ``data_quality_issue`` rows under it and ``cycle`` reads only rows of it; kept here so the writer
 # and the reader agree without importing each other.
-DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v3"
+DATA_QUALITY_GATE_VERSION: Final[str] = "dq-v4"
 
 
 # -- version constraints (T-093) -------------------------------------------------------------
