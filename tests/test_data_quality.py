@@ -440,11 +440,13 @@ def _valorization(conn: Database, asset_id: int, cycle_date: str) -> dict[str, A
     return dict(json.loads(row["inputs_json"]))
 
 
-def test_negative_equity_quarantine_keeps_leverage_the_worst_and_does_not_veto(
+def test_negative_equity_quarantine_keeps_leverage_the_worst_and_the_gate_does_not_veto(
     cycle_seed: Database,
 ) -> None:
-    """A SOFT DQ_NEG_EQUITY on AAA (the seed's lowest D/E): D/E and ROE read as NULL, the
-    leverage factor still ranks AAA worst (C2), and nothing vetoes it."""
+    """D-04 (T-071 part 2a): a SOFT DQ_NEG_EQUITY on AAA (the seed's lowest D/E) reads D/E as NULL,
+    the leverage factor still ranks AAA worst (C2), and the gate raises no DATA_QUALITY veto. The
+    hand-written record carries no credit inputs, so LEVERAGE_EXTREME routes the name to SOFT
+    review (T-116) -- never a HARD veto."""
     conn = cycle_seed
     run_selection(_cycle_settings(), "2026-06-29", conn=conn)
     before = _valorization(conn, 1, "2026-06-29")["quality"]
@@ -455,8 +457,11 @@ def test_negative_equity_quarantine_keeps_leverage_the_worst_and_does_not_veto(
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
     after = _valorization(conn, 1, "2026-06-30")["quality"]
     assert after < before
-    rules = {r[0] for r in conn.execute("SELECT rule_id FROM veto WHERE asset_id = 1")}
-    assert "DATA_QUALITY" not in rules and "LEVERAGE_EXTREME" not in rules
+    rules = {
+        (r[0], r[1]) for r in conn.execute("SELECT rule_id, severity FROM veto WHERE asset_id = 1")
+    }
+    assert "DATA_QUALITY" not in {rule for rule, _sev in rules}
+    assert ("LEVERAGE_EXTREME", "HARD") not in rules
 
 
 def test_a_quarantined_metric_drops_out_of_the_score(cycle_seed: Database) -> None:

@@ -30,6 +30,7 @@ from cycle.writers import (
     veto_out_of_order_reason,
     write_vetoes,
 )
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
@@ -170,31 +171,61 @@ def test_threshold_and_drawdown_rules(memory_db: Database) -> None:
     assert (2, "EARNINGS_MISSING", "SOFT") in hits
 
 
+def _neg_equity_record(**over: float | None) -> dict[str, float | None]:
+    """The DQ_NEG_EQUITY evidence a gate writes for a latest filing with equity <= 0 (D-04)."""
+    record: dict[str, float | None] = {
+        "equity": -1.0,
+        "net_debt_to_ebitda": None,
+        "interest_coverage": None,
+        "ebitda": None,
+        "net_debt": None,
+    }
+    record.update(over)
+    return record
+
+
+def _test_profile(
+    *, financial_firm: bool = False, regulated_utility: bool = False
+) -> CompanyProfile:
+    return CompanyProfile(
+        cik="0000000001",
+        ticker="TST",
+        company_name="Test Co",
+        type="article_9" if financial_firm else "operating",
+        financial_firm=financial_firm,
+        reit=False,
+        multi_class=False,
+        regulated_utility=regulated_utility,
+        sector=None,
+        sub_industry=None,
+        evidence_accession=None,
+        valid_from="2020-01-01",
+        valid_to="",
+    )
+
+
+def _leverage_hits(memory_db: Database, ctx: RuleContext) -> list[tuple[int, str, str]]:
+    seed_catalog(memory_db)
+    return [
+        (h.asset_id, h.rule_id, h.severity)
+        for r in enabled_rules(memory_db)  # type: ignore[attr-defined]
+        for h in r.evaluate(ctx)
+    ]
+
+
 def test_leverage_rule_hard_vetoes_negative_equity_with_high_net_debt_to_ebitda(
     memory_db: Database,
 ) -> None:
-    """T-116 (docs/model_fixes.md): SBAC-shaped negative book equity -- a
-    negative debt_to_equity would trivially evade a plain `> 3.0` check, but
-    a high net_debt_to_ebitda still triggers the veto."""
-    seed_catalog(memory_db)
+    """D-04 (T-071 part 2a): SBAC-shaped negative book equity. The gate nulls D/E, so the screen
+    keys on the equity sign from the DQ_NEG_EQUITY record and vetoes on a high net_debt_to_ebitda."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {
-                "leverage.debt_to_equity": -2.75,
-                "leverage.net_debt_to_ebitda": 7.35,
-                "leverage.interest_coverage": None,
-            },
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": 7.35, "leverage.interest_coverage": None}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=7.35)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
@@ -202,25 +233,35 @@ def test_leverage_rule_hard_vetoes_negative_equity_with_low_interest_coverage(
 ) -> None:
     """Proves net_debt_to_ebitda and interest_coverage are each independently
     sufficient (an OR, not an AND)."""
-    seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -10.0,
                 "leverage.net_debt_to_ebitda": 2.0,  # healthy
                 "leverage.interest_coverage": 1.0,  # < 1.5
             },
         },
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=2.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
+
+
+def test_leverage_rule_hard_vetoes_negative_equity_burning_cash_with_debt(
+    memory_db: Database,
+) -> None:
+    """T-116 (PR #95 review): net_debt_to_ebitda goes *negative* when EBITDA itself is negative
+    (WAT-shaped: EBITDA -$11M, net debt $4.4B, ratio -399) -- the most distressed profile. The rule
+    tells it apart from a net-cash position by the raw EBITDA/net debt the gate recorded."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.net_debt_to_ebitda": -399.0, "leverage.interest_coverage": None}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-11.0, net_debt=4400.0)},
+    )
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
@@ -229,99 +270,100 @@ def test_leverage_rule_spares_negative_equity_with_healthy_debt_load(
     """Not "any negative equity = HARD": MCD-shaped negative equity -- a
     healthy net_debt_to_ebitda/interest_coverage, including exactly at the
     calibrated thresholds (strict inequalities, not >=/<=), doesn't veto."""
-    seed_catalog(memory_db)
     ctx = RuleContext(
         cycle_date="2026-06-30",
         metrics={
             1: {
-                "leverage.debt_to_equity": -5.0,
                 "leverage.net_debt_to_ebitda": 5.0,  # exactly at threshold, not >
                 "leverage.interest_coverage": 1.5,  # exactly at threshold, not <
             },
         },
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=1.0, net_debt=5.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
+    hits = _leverage_hits(memory_db, ctx)
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
+
+
+def test_leverage_rule_spares_a_negative_ratio_with_net_cash_not_burning_cash(
+    memory_db: Database,
+) -> None:
+    """The same negative ratio, for the healthy reason (HUM-shaped: net cash exceeds debt, EBITDA
+    slightly negative): with net debt <= 0 and no coverage failure it is not distress."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.net_debt_to_ebitda": -1.1, "leverage.interest_coverage": 8.0}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-2.0, net_debt=-40.0)},
+    )
+    hits = _leverage_hits(memory_db, ctx)
     assert not any(h[1] == "LEVERAGE_EXTREME" for h in hits)
 
 
 def test_leverage_rule_negative_equity_with_no_corroborating_metrics_soft_vetoes(
     memory_db: Database,
 ) -> None:
-    """T-116: if both net_debt_to_ebitda and interest_coverage are missing, a
-    negative debt_to_equity can't be verified either way -- routed to SOFT
-    review, not silently passed (the pre-T-116 gap)."""
-    seed_catalog(memory_db)
+    """T-116: with no net_debt_to_ebitda, no interest_coverage and no EBITDA/net-debt pair, a
+    negative-equity filing can't be verified either way -- routed to SOFT review, not silently
+    passed (the pre-T-116 gap)."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={1: {"leverage.debt_to_equity": -38.96}},
+        metrics={1: {}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record()},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
+    hits = _leverage_hits(memory_db, ctx)
     assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
     assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
 
 
-def test_leverage_rule_treats_a_negative_net_debt_to_ebitda_as_unresolved_not_healthy(
+def test_leverage_rule_does_not_apply_its_negative_equity_screen_to_a_financial_firm(
     memory_db: Database,
 ) -> None:
-    """T-116 (PR #95 review): the rule only ever sees the already-divided ratio, never the raw
-    EBITDA/net debt it came from, so it cannot tell a genuine net-cash position (negative
-    ratio, healthy) apart from negative EBITDA with positive net debt (negative ratio, the most
-    distressed profile of all, WAT-shaped). A negative ratio is therefore unresolved, falling
-    back to interest_coverage alone -- SOFT review here, since neither is truly available."""
-    seed_catalog(memory_db)
+    """APP-00/APP-02 (D-04): the negative-equity distress screen does not apply to a financial
+    firm. The asset is evaluated and never hit, so a stint opened before the exemption closes."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {"leverage.debt_to_equity": -5.0, "leverage.net_debt_to_ebitda": -399.0},
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": 7.35, "leverage.interest_coverage": 0.5}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-1.0, net_debt=7.35)},
+        profiles={1: _test_profile(financial_firm=True)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "SOFT") in hits
-    assert not any(h[1] == "LEVERAGE_EXTREME" and h[2] == "HARD" for h in hits)
+    assert not any(h[1] == "LEVERAGE_EXTREME" for h in _leverage_hits(memory_db, ctx))
+
+
+def test_leverage_rule_still_applies_its_positive_equity_branch_to_a_financial_firm(
+    memory_db: Database,
+) -> None:
+    """Only the negative-equity screen is exempt for a financial firm; a D/E above the threshold is
+    still HARD (the profile changes one branch, not the rule)."""
+    ctx = RuleContext(
+        cycle_date="2026-06-30",
+        metrics={1: {"leverage.debt_to_equity": 4.0}},
+        price_obs={},
+        last_fundamental={1: "2026-03-31"},
+        profiles={1: _test_profile(financial_firm=True)},
+    )
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_a_negative_net_debt_to_ebitda_still_hard_vetoes_via_interest_coverage(
     memory_db: Database,
 ) -> None:
-    """The negative ratio contributes nothing either way, but interest_coverage is a
-    well-defined signal on its own and still fires."""
-    seed_catalog(memory_db)
+    """The negative ratio contributes nothing either way (a net-cash position here), but
+    interest_coverage is a well-defined signal on its own and still fires."""
     ctx = RuleContext(
         cycle_date="2026-06-30",
-        metrics={
-            1: {
-                "leverage.debt_to_equity": -5.0,
-                "leverage.net_debt_to_ebitda": -399.0,
-                "leverage.interest_coverage": 1.0,
-            },
-        },
+        metrics={1: {"leverage.net_debt_to_ebitda": -399.0, "leverage.interest_coverage": 1.0}},
         price_obs={},
         last_fundamental={1: "2026-03-31"},
+        negative_equity={1: _neg_equity_record(ebitda=-2.0, net_debt=-40.0)},
     )
-    hits = [
-        (h.asset_id, h.rule_id, h.severity)
-        for r in enabled_rules(memory_db)
-        for h in r.evaluate(ctx)
-    ]  # type: ignore[attr-defined]
-    assert (1, "LEVERAGE_EXTREME", "HARD") in hits
+    assert (1, "LEVERAGE_EXTREME", "HARD") in _leverage_hits(memory_db, ctx)
 
 
 def test_leverage_rule_positive_debt_to_equity_path_unchanged(memory_db: Database) -> None:

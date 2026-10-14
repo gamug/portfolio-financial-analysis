@@ -10,6 +10,7 @@ from typing import Any
 
 from portfolio_common.db import Database, Row, in_clause
 
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.pillar_score import total_from_block, weights_differ
@@ -65,6 +66,21 @@ def asset_labels(conn: Database, asset_ids: list[int]) -> dict[int, tuple[str, s
         asset_ids,
     )
     return {int(r["id"]): (str(r["ticker"]), r["sector"]) for r in rows}
+
+
+def asset_profiles(
+    conn: Database, asset_ids: list[int], as_of: str
+) -> dict[int, CompanyProfile | None]:
+    """``asset_id -> its APP-00 company profile`` as of *as_of*, or ``None`` when the CIK has no
+    profile (T-071 part 2a). The rules key "financial firm" (APP-00/APP-02) and the regulated-utility
+    overlay (D-13) on this, never on the GICS sector; an unknown CIK is never guessed."""
+    if not asset_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT id, cik FROM assets WHERE id IN {in_clause(asset_ids)}",  # noqa: S608
+        asset_ids,
+    )
+    return {int(r["id"]): profile_as_of(r["cik"], as_of) for r in rows}
 
 
 def latest_metrics(
@@ -147,8 +163,11 @@ class DataQuality:
     quarantined: dict[int, set[str]] = field(default_factory=dict)
     # asset_id -> the HARD issues (the DATA_QUALITY veto's evidence)
     hard: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
-    # assets whose latest filing reports book equity <= 0 (DQ_NEG_EQUITY)
-    negative_equity: set[int] = field(default_factory=set)
+    # asset_id -> the DQ_NEG_EQUITY record's evidence for a latest filing with book equity <= 0
+    # (equity, net debt/EBITDA, interest coverage, TTM EBITDA, net debt). D-04 (T-071 part 2a): the
+    # gate is always SOFT now, and this record is the equity sign the LEVERAGE_EXTREME screen keys
+    # on (the filing's D/E is quarantined, so the rule never sees a negative ratio).
+    negative_equity: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def apply(
         self, metrics: dict[int, dict[str, float | None]]
@@ -175,7 +194,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
             WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
         SELECT f.asset_id, d.metric_group, d.metric_name, d.rule_id, d.severity,
-               d.quarantined, d.value
+               d.quarantined, d.value, d.evidence_json
         FROM data_quality_issue d
         JOIN sec_filings f ON f.id = d.filing_id
         JOIN known k ON k.id = f.id AND k.rn = 1
@@ -193,7 +212,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
         if r["quarantined"]:
             out.quarantined.setdefault(aid, set()).add(key)
         if r["rule_id"] == "DQ_NEG_EQUITY":
-            out.negative_equity.add(aid)
+            out.negative_equity[aid] = _json_object(r["evidence_json"])
         if r["severity"] == "HARD":
             out.hard.setdefault(aid, []).append(
                 {"rule_id": r["rule_id"], "metric": key, "value": r["value"]}
@@ -278,15 +297,16 @@ def fundamental_value_under(row: Row, weights: Mapping[str, float]) -> float:
     ratings the row stored -- no LLM call and no rewrite of the stored row. A row with no pillar
     block (written before T-073, or one the code left unscored) keeps its own ``raw_value``.
     """
-    stored = _inputs_json(row["inputs_json"])
+    stored = _json_object(row["inputs_json"])
     if not stored or not weights_differ(stored, weights):
         return float(row["raw_value"])
     recomputed = total_from_block(stored, weights)
     return float(row["raw_value"]) if recomputed is None else recomputed
 
 
-def _inputs_json(raw: str | None) -> dict[str, Any]:
-    """The row's stored audit block; ``{}`` when it carries none or it is not an object."""
+def _json_object(raw: str | None) -> dict[str, Any]:
+    """A stored JSON audit blob (``inputs_json`` / ``evidence_json``) as a dict; ``{}`` when it
+    carries none or it is not an object."""
     try:
         value = json.loads(raw or "{}")
     except (TypeError, ValueError):
