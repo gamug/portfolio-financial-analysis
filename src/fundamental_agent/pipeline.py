@@ -15,7 +15,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
-from fundamental_agent import db, quality
+from fundamental_agent import db, quality, utility_coverage
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
     UNSCORED_MODEL_LABEL,
@@ -1011,6 +1011,9 @@ def _analyze_one(
     db.record_metrics(
         engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
     )
+    # T-071 part 2a (D-13): the regulated-utility cash-coverage rule input, on a 10-K only. A rule
+    # input outside the metric dictionary and the prompt (a pseudo-group row).
+    utility_coverage.write(engine.conn, filing_id, task.asset_id, stmts)
     # Ring-1 data-quality gates (T-065) over what was just stored, so every newly analysed
     # filing is gated; `python -m fundamental_agent quality` backfills older ones.
     quality.gate_version(engine.conn, db.METRICS_ENGINE_VERSION, filing_id=filing_id, run_id=run_id)
