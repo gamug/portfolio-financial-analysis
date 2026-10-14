@@ -767,8 +767,12 @@ the final pilot, `T-143`.
       review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
       - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
         Never overwrite the pilot's `universe.db`.
-      - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?`
-        to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
+      - **Done 2026-10-14, PR #158 (part 1).** `valid_to` is the last day of membership (the day before the
+        removal takes effect, inclusive; confirmed against data-mining's builder, `universe_history.py:245`, and
+        its own `>=` reader): `kg_schema/queries.py:138` `members_asof` reads `valid_to >= ?` (it read `valid_to > ?`,
+        which dropped a leaver on its last day). On `universe_history.db` all 62 leave dates since 2022 gain exactly
+        their leavers (96 stints) and no other day changes; FB is a member on 2022-06-08, PHIN (a one-day member)
+        on 2023-07-05. verify_pilot's T-153a check; SPEC 1.17.0.
       - For the 86 companies that left the index in the window: their filings by CIK, their type in
         `company_types.csv`, and their GICS classification (the historical source is still to be decided).
       - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average)
@@ -783,6 +787,9 @@ the final pilot, `T-143`.
         APP-10b-3's check must also accept the predecessor's last annual report when it is listed under the
         successor's CIK (A7 p.4: the successor files it "unless such report has been filed by the predecessor");
         today's `_last_annual_report_missing` looks only under the predecessor's CIK, which is correct for XOM.
+        **Done 2026-10-14, PR #158 (part 1):** `_last_annual_report_missing` looks under the predecessor's CIK
+        first and only then under the successor's (the run and `pending` pass the same successor); XOM's
+        gateway calls are unchanged (1).
       - **Verified 2026-10-11 against the SEC submissions files (read-only; 2022-2026, 10-K and 10-Q only, current
         members against production's stored filings, leavers against their membership periods):** XOM is the only
         current member whose stored filings are not under its own CIK (18 of 5,076; all `0000034088`). Among the 86
@@ -802,6 +809,9 @@ the final pilot, `T-143`.
       - Renames: a company that changes ticker in the window (11 CIKs today: FB→META, FLT→CPAY, RE→EG, CDAY→DAY,
         WLTW→WTW, DISCA/DISCK→WBD, ECHO→SATS, plus the share classes) must stay one asset across the rename; today
         assets are keyed by ticker.
+      - **Remaining:** part 2, renames as one asset (HARD; the Renames bullet above); part 3, the 86 leavers'
+        data (filings by CIK, `company_types.csv`, the GICS source -- to be decided) and the replay re-run
+        (waits for `T-071`).
 
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
