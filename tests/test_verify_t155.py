@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import csv
 import importlib.util
 import sqlite3
 import sys
 from pathlib import Path
-
-import pytest
 
 _SPEC = importlib.util.spec_from_file_location(
     "verify_t155", Path(__file__).resolve().parent.parent / "scripts" / "verify_t155.py"
@@ -40,18 +37,6 @@ def test_succession_sentence_falls_back_to_a_rule_12g_3_sentence() -> None:
 
 def test_succession_sentence_is_none_without_a_succession() -> None:
     assert verify.succession_sentence("A plain 8-K about a dividend.", "X") is None
-
-
-@pytest.mark.skipif(
-    not verify.REGISTER.exists(),
-    reason="docs/checklist_sec is git-excluded; the register exists only on the dev machine",
-)
-def test_the_reading_covers_every_register_line() -> None:
-    with verify.REGISTER.open(newline="", encoding="utf-8") as fh:
-        register = list(csv.DictReader(fh))
-    assert len(register) == 19
-    for row in register:
-        assert (row["ticker"], row["accession_number"]) in verify.READING
 
 
 def test_the_amendment_uses_the_original_filings_evidence() -> None:
@@ -103,3 +88,19 @@ def test_is_multi_year_marks_growth_cagr_and_the_cash_flow_group() -> None:
     assert verify._is_multi_year("net_income_cagr", "cagr")
     assert verify._is_multi_year("free_cash_flow_margin", "cashflow")  # trailing twelve months
     assert not verify._is_multi_year("net_margin", "profitability")
+
+
+def test_members_reads_the_universe_file_on_the_date(tmp_path: Path) -> None:
+    path = tmp_path / "u.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE universe_membership (symbol TEXT, cik TEXT, valid_from TEXT, valid_to TEXT)"
+    )
+    conn.execute("INSERT INTO universe_membership VALUES ('X', '0000000001', '2021-01-01', NULL)")
+    conn.execute(
+        "INSERT INTO universe_membership VALUES ('Y', '0000000002', '2023-05-01', '2023-06-01')"
+    )
+    conn.commit()
+    conn.close()
+    assert [m["symbol"] for m in verify._members(path, "2023-05-15")] == ["X", "Y"]
+    assert [m["symbol"] for m in verify._members(path, "2023-06-15")] == ["X"]

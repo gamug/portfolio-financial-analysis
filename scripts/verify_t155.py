@@ -32,6 +32,8 @@ import os
 import re
 import sqlite3
 import sys
+import urllib.request
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -41,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sec_xcheck.common import SecClient
 from sec_xcheck.submissions import all_filings
 
-from fundamental_agent import pipeline
+from fundamental_agent import pillars, pipeline
 from fundamental_agent.config import Settings
 from fundamental_agent.edgar_client import EdgarClient
 from kg_schema import identity
@@ -51,6 +53,20 @@ REPO = Path(__file__).resolve().parents[1]
 REGISTER = REPO / "docs" / "checklist_sec" / "succession_8ks.csv"
 DEFAULT_OUT = Path("/workspaces/thesis/scratch/t155/out")
 WINDOW_START = "2022-01-01"  # fundamental_agent.pipeline.DEFAULT_SINCE_YEAR
+
+# F1 (fix 1): each successor's first 10-K after its succession's effective date, checked for a
+# full-year column (a business combination presents a predecessor and a successor part instead).
+SPLIT = {
+    "BLK": ("0002012383", "2024-10-01"),
+    "BG": ("0001996862", "2023-10-31"),
+    "PSKY": ("0002041610", "2025-08-07"),
+    "XOM": ("0002115436", "2026-07-01"),
+}
+OPERATING_CASH_FLOW = "NetCashProvidedByUsedInOperatingActivities"
+REGISTER_LINES = 19  # T-147's register: 19 succession 8-Ks from 18 current members (T155_plan.md)
+PER08_YEAR = (364, 371)  # PER-08's year length, in days
+FACTS_CACHE = REPO / ".cache" / "sec_xcheck" / "companyfacts"
+USER_AGENT = "research@example.com"
 
 # The hand reading of each succession 8-K (APP-10b-2): the predecessor the filing names, as a label the
 # 8-K's own text carries (verified below), and its CIK. A `same_cik` filing keeps the member's own CIK
@@ -234,6 +250,15 @@ def cmd_classify(args: argparse.Namespace) -> int:
     client = SecClient(Path(args.cache), offline=not args.fetch)
     with REGISTER.open(newline="", encoding="utf-8") as fh:
         register = list(csv.DictReader(fh))
+    # F3 (fix 1): the register check lives here, not in a test -- AGENTS.md: tests never read
+    # docs/checklist_sec/ (it is git-excluded, so such a test always skips in CI and checks nothing).
+    assert len(register) == REGISTER_LINES, (
+        f"the register has {len(register)} lines, expected {REGISTER_LINES}"
+    )
+    for row in register:
+        key = (row["ticker"], row["accession_number"])
+        assert key in READING, f"the register line {key} is not read"
+    print(f"register: {len(register)} lines, every line read")
 
     rows: list[dict[str, str]] = []
     notes: list[str] = []
@@ -442,17 +467,78 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _load_module(name: str, path: Path) -> Any:
+    """Load a sibling script as a module (the repo's own measurement scripts, reused not copied)."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:  # pragma: no cover - a local file always loads
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _facts_only_analyst() -> Any:
     """The facts-only analyst from ``scripts/verify_t149.py`` (T-149): every metric computed, the score
     the rule-based fallback, no model and no network beyond the gateway."""
-    path = REPO / "scripts" / "verify_t149.py"
-    spec = importlib.util.spec_from_file_location("verify_t149", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - a local file always loads
-        raise RuntimeError("cannot load scripts/verify_t149.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["verify_t149"] = module
-    spec.loader.exec_module(module)
-    return module._FactsOnlyAnalyst
+    return _load_module("verify_t149", REPO / "scripts" / "verify_t149.py")._FactsOnlyAnalyst
+
+
+def _members(universe: str, day: str) -> list[dict[str, str]]:
+    """The members as of *day* (symbol, CIK, join date), from the universe file (F2, L-11's source)."""
+    uconn = _ro(universe)
+    return [
+        dict(r)
+        for r in uconn.execute(
+            "SELECT symbol, cik, valid_from FROM universe_membership WHERE valid_from <= ? "
+            "AND (valid_to IS NULL OR valid_to >= ?) ORDER BY symbol",
+            (day, day),
+        )
+    ]
+
+
+def _unscored_on_members(db: str, universe: str, day: str) -> dict[str, Any]:
+    """T-073's unscored members, counted on the **members as of *day*** (F2), not the copy's asset set.
+
+    A member is a symbol on the date (503 on 2026-09-22; the share-class pairs share a CIK). The copy
+    holds assets the index no longer has (a leaver) and may miss members added after it was built, so
+    neither enters the denominator; a member whose asset has no filing by the date is named.
+    """
+    t073 = _load_module("verify_t073", REPO / "scripts" / "verify_t073.py")
+    stored = t073.Stored(db)
+    latest = stored.latest_filings()
+    members = {m["symbol"]: m for m in _members(universe, day)}
+    # a member's asset: by CIK, and within a CIK's assets by symbol (the share classes), so a line the
+    # copy still carries under its old symbol (PSKY -> SKYD) is found and the classes are not merged
+    by_cik: dict[str, list[tuple[str, int]]] = {}
+    for aid, asset in stored.assets.items():
+        by_cik.setdefault(str(asset["cik"]), []).append((str(asset["ticker"]), aid))
+
+    def asset_for(symbol: str, cik: str) -> int | None:
+        candidates = by_cik.get(cik, [])
+        return next((aid for ticker, aid in candidates if ticker == symbol), None) or (
+            candidates[0][1] if candidates else None
+        )
+
+    has_filing = {
+        symbol: aid
+        for symbol, member in members.items()
+        if (aid := asset_for(symbol, member["cik"])) is not None and latest.get(aid) is not None
+    }
+    unscored = sorted(
+        s for s, aid in has_filing.items() if pillars.empty_pillars(stored.statuses(latest[aid]))
+    )
+    return {
+        "date": day,
+        "members": len(members),
+        "members_with_a_filing": len(has_filing),
+        "members_without_a_filing": [
+            {"symbol": s, "valid_from": members[s]["valid_from"]}
+            for s in sorted(set(members) - set(has_filing))
+        ],
+        "unscored": unscored,
+        "share": len(unscored) / len(has_filing) if has_filing else 0.0,
+    }
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -579,6 +665,10 @@ def cmd_measure(args: argparse.Namespace) -> int:
     ]
     for label, conn in (("before", before), ("after", after)):
         report[f"members_{label}"] = conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0]
+    report["unscored_on_members"] = {
+        "before": _unscored_on_members(args.before, args.universe, args.analysis_date),
+        "after": _unscored_on_members(args.db, args.universe, args.analysis_date),
+    }
     report["preclose"] = _preclose(args.universe, args.db, args.preclose_date)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text(json.dumps(report, indent=2) + "\n")
@@ -599,6 +689,14 @@ def cmd_measure(args: argparse.Namespace) -> int:
             + ", ".join(f"{x['metric']}({x['filings']})" for x in my)
         )
     print(f"  succession-stage errors: {len(report['succession_errors'])}")
+    for label in ("before", "after"):
+        u = report["unscored_on_members"][label]
+        missing = [m["symbol"] for m in u["members_without_a_filing"]]
+        print(
+            f"  unscored on the members ({label}, {u['date']}): {len(u['unscored'])} of "
+            f"{u['members_with_a_filing']} with a filing ({u['share']:.1%}) of {u['members']} members; "
+            f"no asset: {missing}"
+        )
     print(f"  pre-close {args.preclose_date}: {json.dumps(report['preclose'])}")
     return 0
 
@@ -661,9 +759,93 @@ def _preclose(universe: str, db: str, day: str) -> dict[str, Any]:
     }
 
 
+def _companyfacts(cik: str, *, fetch: bool) -> dict[str, Any]:
+    """The SEC's own ``companyfacts`` for *cik* (read-only), cached under ``.cache/sec_xcheck``."""
+    path = FACTS_CACHE / f"CIK{int(cik):010d}.json"
+    if not path.exists():
+        if not fetch:
+            raise FileNotFoundError(f"{path} is not cached; pass --fetch")
+        url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json"
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=120) as response:  # noqa: S310
+            body = response.read()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    return dict(json.loads(path.read_text(encoding="utf-8")))
+
+
+def _periods_for(facts: dict[str, Any], accession: str, concept: str) -> list[tuple[str, str, int]]:
+    """The distinct ``(start, end, days)`` of *concept*'s facts filed under *accession*."""
+    units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
+    out: set[tuple[str, str, int]] = set()
+    for rows in units.values():
+        for f in rows:
+            if f.get("accn") == accession and f.get("start") and f.get("end"):
+                days = (date.fromisoformat(f["end"]) - date.fromisoformat(f["start"])).days + 1
+                out.add((f["start"], f["end"], days))
+    return sorted(out)
+
+
+def cmd_split(args: argparse.Namespace) -> int:
+    """F1 (T-155 fix 1): does each successor's first 10-K after the effective date hold a full-year
+    column, or split its year into a predecessor and a successor part (a business combination)?
+
+    Reads the SEC's own ``companyfacts`` (read-only), the same source the FY2025 10-K's split is
+    visible in. ``--fetch`` downloads a companyfacts file that is not cached."""
+    client = SecClient(Path(args.cache), offline=True)
+    report: list[dict[str, Any]] = []
+    for ticker, (cik, effective) in SPLIT.items():
+        tens = sorted(
+            (
+                r
+                for r in all_filings(client, cik, since="2021-12-01") or []
+                if r["form"] == "10-K" and r["filingDate"] > effective
+            ),
+            key=lambda r: r["filingDate"],
+        )
+        entry: dict[str, Any] = {
+            "ticker": ticker,
+            "cik": cik,
+            "effective": effective,
+            "first_10k": tens[0]["accessionNumber"] if tens else None,
+            "first_10k_filed": tens[0]["filingDate"] if tens else None,
+            "source_url": f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json",
+        }
+        if tens:
+            facts = _companyfacts(cik, fetch=args.fetch)
+            periods = _periods_for(facts, tens[0]["accessionNumber"], OPERATING_CASH_FLOW)
+            report_end = tens[0]["reportDate"]
+            entry["period_end"] = report_end
+            entry["periods"] = [{"start": s, "end": e, "days": d} for s, e, d in periods]
+            # the filing's OWN fiscal year: a full-year period ending at its report date. A business
+            # combination presents that year as a predecessor part and a successor part instead.
+            entry["full_year_periods"] = [
+                f"{s}..{e}"
+                for s, e, d in periods
+                if PER08_YEAR[0] <= d <= PER08_YEAR[1] and e == report_end
+            ]
+            entry["splits"] = not entry["full_year_periods"]
+        report.append(entry)
+    path = Path(args.out)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"wrote {path}")
+    for e in report:
+        if e["first_10k"] is None:
+            print(f"  {e['ticker']:5} no 10-K filed after {e['effective']}")
+            continue
+        mark = "SPLITS its year" if e["splits"] else "holds a full-year column"
+        print(
+            f"  {e['ticker']:5} first 10-K {e['first_10k']} (filed {e['first_10k_filed']}): {mark}"
+        )
+        for p in e["periods"]:
+            print(f"        {p['start']} .. {p['end']}  {p['days']} days")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("command", choices=["classify", "used", "check", "run", "measure"])
+    parser.add_argument("command", choices=["classify", "used", "check", "run", "measure", "split"])
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--cache", default=str(REPO / ".cache" / "sec_xcheck"))
     parser.add_argument("--fetch", action="store_true", help="download what is not cached")
@@ -686,6 +868,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check(args)
     if args.command == "run":
         return cmd_run(args)
+    if args.command == "split":
+        return cmd_split(args)
     return cmd_measure(args)
 
 
