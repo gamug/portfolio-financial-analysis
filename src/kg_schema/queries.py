@@ -121,11 +121,13 @@ def members_asof(
     *,
     universe: str = SUPPORTED_UNIVERSE,
 ) -> list[UniverseMember]:
-    """Members with an open stint as of *analysis_date* (ISO ``YYYY-MM-DD``).
+    """Members with a stint covering *analysis_date* (ISO ``YYYY-MM-DD``).
 
-    A symbol that left and rejoined has one row per stint; only the stint covering
-    *analysis_date* matches. If the data ever carries overlapping stints for a
-    symbol, the one with the latest ``valid_from`` wins.
+    ``valid_to`` is the last day of membership (the day before the removal takes
+    effect), inclusive; ``NULL`` = still a member. A symbol that left and rejoined
+    has one row per stint; only the stint covering *analysis_date* matches. If the
+    data ever carries overlapping stints for a symbol, the one with the latest
+    ``valid_from`` wins.
     """
     _check_universe(universe)
     rows = universe_db.execute(
@@ -133,7 +135,7 @@ def members_asof(
         SELECT symbol, security, cik, gics_sector, gics_sub_industry,
                hq_location, date_added, founded, valid_from, valid_to
         FROM universe_membership
-        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)
+        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
         ORDER BY symbol, valid_from
         """,
         (analysis_date, analysis_date),
@@ -161,7 +163,7 @@ def symbols_asof(
     *,
     universe: str = SUPPORTED_UNIVERSE,
 ) -> list[str]:
-    """Just the ticker symbols with an open stint as of *analysis_date*, sorted."""
+    """Just the ticker symbols with a stint covering *analysis_date*, sorted."""
     return [m.symbol for m in members_asof(universe_db, analysis_date, universe=universe)]
 
 
@@ -634,6 +636,9 @@ def reconcile(  # noqa: PLR0913 - keyword-only provenance fields, all with defau
 
     Returns ``(opened, closed)`` counts. *as_of* is the effective date for both
     ``valid_from`` on new rows and ``valid_to`` on closed ones (ISO date string).
+    The frozen local table keeps the old exclusive ``valid_to`` (the effective date
+    of the removal); ``members_asof`` reads ``universe.db``, never this table. If
+    this writer is ever revived it must write the day before the removal.
     """
     open_rows = db.execute(
         "SELECT asset_id FROM universe_membership WHERE universe = ? AND valid_to IS NULL",

@@ -269,7 +269,7 @@ def _verify_successions(engine: _Engine, tasks: Sequence[_YearTask]) -> list[_Ye
         for pred in task.predecessors:
             key = (task.cik, pred)
             if key not in verdicts:
-                verdicts[key] = _last_annual_report_missing(engine, pred, effective[key])
+                verdicts[key] = _last_annual_report_missing(engine, pred, effective[key], task.cik)
             reason = verdicts[key]
             if reason is None:
                 kept.append(pred)
@@ -288,28 +288,38 @@ def _verify_successions(engine: _Engine, tasks: Sequence[_YearTask]) -> list[_Ye
     return verified
 
 
-def _last_annual_report_missing(engine: _Engine, predecessor: str, effective: str) -> str | None:
+def _last_annual_report_missing(
+    engine: _Engine, predecessor: str, effective: str, successor: str
+) -> str | None:
     """Why the predecessor's last 10-K before *effective* cannot be confirmed; ``None`` when it is listed.
 
     The last full fiscal year ended within :data:`_LAST_ANNUAL_WINDOW_DAYS` before the effective date and
-    its 10-K was filed that calendar year or the one before; an amendment does not count (L-04)."""
+    its 10-K was filed that calendar year or the one before; an amendment does not count (L-04). SEC Rule
+    12g-3 (A7 p.4) has the successor file that report "unless such report has been filed by the
+    predecessor", so it is looked for under the predecessor's CIK first and, only when it is not there,
+    under the successor's CIK with the same test."""
     end = date.fromisoformat(effective)
     first = end - timedelta(days=_LAST_ANNUAL_WINDOW_DAYS)
-    for year in (end.year, end.year - 1):
-        try:
-            refs = engine.edgar.filing_by_year(predecessor, "10-K", year)
-        except EdgarNotFoundError:
-            continue
-        except Exception as exc:  # the report cannot be confirmed: do not link
-            return f"its 10-K listing for {year} could not be read ({exc})"
-        for ref in refs:
-            if _is_amendment(ref) or ref.form.strip().upper() != "10-K" or not ref.period_of_report:
+    for cik in (predecessor, successor):
+        for year in (end.year, end.year - 1):
+            try:
+                refs = engine.edgar.filing_by_year(cik, "10-K", year)
+            except EdgarNotFoundError:
                 continue
-            if first <= date.fromisoformat(ref.period_of_report) < end:
-                return None
+            except Exception as exc:  # the report cannot be confirmed: do not link
+                return f"its 10-K listing for {year} under {cik} could not be read ({exc})"
+            for ref in refs:
+                if (
+                    _is_amendment(ref)
+                    or ref.form.strip().upper() != "10-K"
+                    or not ref.period_of_report
+                ):
+                    continue
+                if first <= date.fromisoformat(ref.period_of_report) < end:
+                    return None
     return (
-        f"no 10-K with a period ending {first} to {end} is listed under {predecessor}; "
-        "the predecessor's filings are not linked"
+        f"no 10-K with a period ending {first} to {end} is listed under {predecessor} "
+        f"or {successor}; the predecessor's filings are not linked"
     )
 
 

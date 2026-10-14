@@ -359,13 +359,17 @@ class _Lister:
         must not keep the step pending. Gateway GETs only; once per succession. A listing that
         cannot be read raises (the step would just not link, but an outage must never read as
         "not pending") and the check fails -> pending."""
-        own = self._plan.ciks[m.symbol][0][0]
-        key = (own, cik)
-        if key not in self._plan.effective:
-            return False  # the member's own CIK
+        chain = {c for c, _ in self._plan.ciks[m.symbol]}
+        # The successor is the CIK whose ``predecessors_of`` returned this predecessor -- the row the
+        # succession lookup recorded -- never the chain's first position: ``pipeline`` passes its
+        # ``_YearTask.cik`` the same way (T-017's one source of truth).
+        key = next((k for k in self._plan.effective if k[1] == cik and k[0] in chain), None)
+        if key is None:
+            return False  # the member's own CIK (no succession row carries it as a predecessor)
         if key not in self._linked:
+            successor, predecessor = key
             reason = pipeline._last_annual_report_missing(
-                self._engine, cik, self._plan.effective[key]
+                self._engine, predecessor, self._plan.effective[key], successor
             )
             if reason is not None and "could not be read" in reason:
                 raise EdgarError(reason)

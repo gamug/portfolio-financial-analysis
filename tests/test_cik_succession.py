@@ -15,15 +15,16 @@ import sqlite3
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 from conftest import write_universe_db
 from portfolio_common.db import Database
 from test_pipeline_multi_filing import _settings, _StubAnalyst
 
-from fundamental_agent import db, pipeline
-from fundamental_agent.edgar_client import EdgarNotFoundError, FilingRef
+from fundamental_agent import db, pending, pipeline
+from fundamental_agent.edgar_client import EdgarError, EdgarNotFoundError, FilingRef
 from fundamental_agent.pipeline import RunParams
 from kg_schema import identity
 
@@ -246,6 +247,114 @@ def test_the_last_annual_report_is_checked_once_and_a_complete_succession_record
     assert conn.execute(
         "SELECT COUNT(*) FROM analysis_run_error WHERE stage = 'succession'"
     ).fetchone() == (0,)
+
+
+# -- APP-10b-3: the report can be listed under the successor's CIK (A7 p.4) --------------------
+
+
+def _moved_to_successor(*, form: str = "10-K", period: str = "2025-12-31") -> type[_XomGateway]:
+    """The last annual report is listed under the SUCCESSOR's CIK instead of the predecessor's."""
+
+    class Moved(_XomGateway):
+        def filing_by_year(self, cik: str, form_: str, year: int) -> list[FilingRef]:
+            refs = super().filing_by_year(cik, form_, year)
+            if (cik, form_, year) == (PREDECESSOR, "10-K", 2026):
+                return [r for r in refs if r.accession_number != LAST_10K]
+            if (cik, form_, year) == (SUCCESSOR, "10-K", 2026):
+                return [FilingRef(form, "2026-02-18", LAST_10K, SUCCESSOR, period)]
+            return refs
+
+    return Moved
+
+
+def test_the_last_annual_report_under_the_successor_links_the_predecessor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gateway = _moved_to_successor()()
+    report = _run(monkeypatch, tmp_path, gateway, ("10-K", "10-Q"))
+    assert (report.completed, report.failed) == (19, 0)
+    assert not [e for e in report.errors if "[succession]" in e]
+    assert (SUCCESSOR, "10-K", 2026) in gateway.listing_calls  # the fallback read the successor
+    assert {c for c, _a in gateway.financials_calls} == {SUCCESSOR, PREDECESSOR}  # linked again
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    assert conn.execute(
+        "SELECT COUNT(*) FROM analysis_run_error WHERE stage = 'succession'"
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "why"),
+    [
+        ({"form": "10-K/A"}, "an amendment does not count (L-04)"),
+        ({"period": "2024-12-31"}, "a period outside the 371-day window does not count"),
+    ],
+)
+def test_a_decoy_under_the_successor_does_not_count(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kwargs: dict[str, str], why: str
+) -> None:
+    gateway = _moved_to_successor(**kwargs)()
+    report = _run(monkeypatch, tmp_path, gateway, ("10-K", "10-Q"))
+    assert report.failed == 0
+    assert PREDECESSOR not in {c for c, _a in gateway.financials_calls}  # refused, not linked
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    ((stage, message),) = conn.execute(
+        "SELECT stage, message FROM analysis_run_error WHERE stage = 'succession'"
+    ).fetchall()
+    assert stage == "succession" and PREDECESSOR in message and SUCCESSOR in message
+
+
+def test_the_last_annual_report_under_neither_cik_names_both_and_records_one_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gateway = _without_last_10k()()
+    report = _run(monkeypatch, tmp_path, gateway, ("10-K", "10-Q"))
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    errors = conn.execute(
+        "SELECT stage, message FROM analysis_run_error WHERE stage = 'succession'"
+    ).fetchall()
+    assert len(errors) == 1
+    stage, message = errors[0]
+    assert stage == "succession"
+    assert PREDECESSOR in message and SUCCESSOR in message
+    assert [e for e in report.errors if "[succession]" in e]
+
+
+def test_a_successor_listing_that_cannot_be_read_refuses() -> None:
+    class Down(_XomGateway):
+        def filing_by_year(self, cik: str, form: str, year: int) -> list[FilingRef]:
+            if (cik, form, year) == (PREDECESSOR, "10-K", 2026):
+                return []  # the predecessor's own listing lost it: fall through to the successor
+            if cik == SUCCESSOR and form == "10-K":
+                raise EdgarError("/filing_by_year failed after 3 attempts")
+            return super().filing_by_year(cik, form, year)
+
+    engine = cast("pipeline._Engine", SimpleNamespace(edgar=Down()))
+    verdict = pipeline._last_annual_report_missing(engine, PREDECESSOR, "2026-07-01", SUCCESSOR)
+    assert verdict is not None
+    assert "could not be read" in verdict and SUCCESSOR in verdict
+
+
+def test_the_run_and_pending_pass_the_same_successor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-017's one source of truth: both pass the CIK the ``cik_succession`` row records."""
+    seen: list[str] = []
+    original = pipeline._last_annual_report_missing
+
+    def recorded(engine: object, predecessor: str, effective: str, successor: str) -> str | None:
+        seen.append(successor)
+        return original(engine, predecessor, effective, successor)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(pipeline, "_last_annual_report_missing", recorded)
+    gateway = _XomGateway()
+    _run(monkeypatch, tmp_path, gateway, ("10-K", "10-Q"))
+    pending.pending_line(
+        tmp_path / "kg.db",
+        tmp_path / "universe.db",
+        "2026-09-22",
+        edgar=_XomGateway(),  # type: ignore[arg-type]
+    )
+    assert seen == [SUCCESSOR, SUCCESSOR]
 
 
 def test_a_filing_listed_under_a_cik_outside_the_chain_is_refused(
