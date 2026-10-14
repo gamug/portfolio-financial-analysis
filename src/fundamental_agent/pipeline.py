@@ -46,7 +46,7 @@ from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
 from fundamental_agent.statements import Period, Statements, iter_facts
-from kg_schema import connect, identity, rundate
+from kg_schema import connect, identity, rundate, ticker_history
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import UniverseMember, connect_ro, members_asof
@@ -148,8 +148,24 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         _refuse_shared_accessions(conn)
         _refuse_identity_violations(conn)
         members = _load_members(settings, params.analysis_date)
-        db.sync_universe(conn, members)
-        symbols = [m.symbol for m in members]
+        sync = db.sync_universe(conn, members)
+        _report_adoptions(sync)
+        # T-153 part 2: a renamed company is one asset -- load it under its line's canonical
+        # symbol, so a run dated before the rename (FB) still finds the asset that carries the
+        # current ticker (META). --tickers takes the symbol of the run's date too (F3).
+        symbols = [
+            ticker_history.canonical_for_member(conn, symbol=m.symbol, cik=m.cik) for m in members
+        ]
+        if params.tickers:
+            params = replace(
+                params,
+                tickers=ticker_history.canonical_tickers(
+                    conn,
+                    params.tickers,
+                    member_ciks={m.symbol.upper(): m.cik for m in members},
+                    as_of=params.analysis_date,
+                ),
+            )
         assets = db.load_universe(conn, tickers=params.tickers, symbols=symbols, limit=params.limit)
         if not assets:
             raise RuntimeError(
@@ -209,6 +225,15 @@ def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember
         )
     tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
     return members
+
+
+def _report_adoptions(sync: ticker_history.SyncResult) -> None:
+    """Print every recorded rename adopted in place (T-153 part 2, C4)."""
+    for adoption in sync.adoptions:
+        tqdm.write(
+            f"universe: adopted {adoption.old_ticker} -> {adoption.new_ticker} "
+            f"(asset {adoption.asset_id}, CIK {adoption.cik})"
+        )
 
 
 class MissingCikError(RuntimeError):

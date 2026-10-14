@@ -20,11 +20,16 @@ import csv
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from portfolio_common.db import Database
 
 from .ddl import IDENTITY_TABLES, IDENTITY_TRIGGERS
-from .queries import UniverseMember
+
+if TYPE_CHECKING:  # annotations only (`from __future__ import annotations`): keeping this off the
+    # runtime import path lets `kg_schema.ticker_history` (which imports `normalize_cik` from
+    # here) be imported by `kg_schema.queries` without a cycle.
+    from .queries import UniverseMember
 
 _CIK_DIGITS = 10
 SUCCESSIONS_CSV = Path(__file__).resolve().parent / "data" / "cik_successions.csv"

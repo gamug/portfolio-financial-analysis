@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -94,6 +95,87 @@ def fx(tmp_path: Path) -> Fx:
     f.bar("AAA")
     f.bar("BBB")
     return f
+
+
+# -- a rename: the member's symbol is not the asset's (T-153 part 2, F1) --------------------
+
+_RENAME_DAY = "2022-06-08"  # a Wednesday session; FB is the member that day
+
+
+def _fb_meta(tmp_path: Path) -> tuple[Settings, int]:
+    """A member FB (CIK 0001326801) whose one asset is META, with a bar + observation at the day."""
+    udb = write_universe_db(tmp_path / "u.db", [("FB", "2022-01-03", None)])
+    conn = sqlite3.connect(udb)
+    conn.execute("UPDATE universe_membership SET cik = '0001326801'")
+    conn.commit()
+    conn.close()
+    settings = Settings(db_path=tmp_path / "fin.db", universe_db_path=udb)
+    writable = connect(settings.db_path)
+    db.ensure_schema(writable)
+    writable.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('META', 'Meta', '0001326801')"
+    )
+    asset_id = int(writable.execute("SELECT id FROM assets").fetchone()["id"])
+    writable.execute(
+        "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 1.0)",
+        (asset_id, _RENAME_DAY),
+    )
+    writable.execute(
+        "INSERT INTO price_observation (asset_id, obs_date, close, event_time, computed_at, "
+        "engine_version) VALUES (?, ?, 1.0, ?, 'now', ?)",
+        (asset_id, _RENAME_DAY, _RENAME_DAY, PRICE_OBSERVATION_ENGINE_VERSION),
+    )
+    writable.commit()
+    writable.close()
+    return settings, asset_id
+
+
+def _check(settings: Settings, gateway: FakeGateway) -> tuple[bool, str]:
+    ro = connect(settings.db_path, read_only=True)
+    uni = connect(settings.universe_db_path, read_only=True)
+    try:
+        return pending.check(
+            ro,
+            members_asof(uni, _RENAME_DAY),
+            _RENAME_DAY,
+            client=gateway,  # type: ignore[arg-type]
+            now=NOW,  # type: ignore[arg-type]
+        )
+    finally:
+        ro.close()
+        uni.close()
+
+
+def test_a_check_before_a_rename_finds_the_canonical_asset(tmp_path: Path) -> None:
+    """F1: FB on 2022-06-08 is META's line -- the check must see META's bar, not 'lack'."""
+    settings, _ = _fb_meta(tmp_path)
+    gateway = FakeGateway()
+    assert _check(settings, gateway) == (False, f"1/1 members at {_RENAME_DAY}")
+    assert gateway.calls == []  # its bar is there; no gateway probe under the old symbol
+
+
+def test_a_refusal_recorded_under_the_canonical_ticker_counts(tmp_path: Path) -> None:
+    """F1: the refusal is recorded under META (the step's ticker); the check must read it there."""
+    settings, asset_id = _fb_meta(tmp_path)
+    writable = connect(settings.db_path)
+    writable.execute(
+        "INSERT INTO price_daily (asset_id, date, close, ingested_at) VALUES (?, '2022-05-01', 1, "
+        "'2022-05-02')",
+        (asset_id,),
+    )
+    writable.execute(
+        "INSERT INTO corporate_action (asset_id, action_type, ex_date, value, source, "
+        "engine_version, ingested_at) VALUES (?, 'SPLIT', '2022-05-15', 2.0, 'g', 'corpact-v1', 'now')",
+        (asset_id,),
+    )
+    run = db.start_run(writable, params_json="{}")
+    db.record_error(writable, run, db.RunError("META", None, "split_jump", "refused"))
+    writable.commit()
+    writable.close()
+    assert _check(settings, FakeGateway()) == (
+        False,
+        f"1/1 members at {_RENAME_DAY}; 1 refused split jump (META)",
+    )
 
 
 def test_a_fresh_database_is_pending(tmp_path: Path) -> None:

@@ -22,7 +22,7 @@ import kg_schema
 from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
-from kg_schema import identity
+from kg_schema import identity, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
@@ -304,7 +304,7 @@ def ensure_schema(conn: Database) -> None:
 # -- universe ---------------------------------------------------------------
 
 
-def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
+def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> ticker_history.SyncResult:
     """Insert/update ``assets`` and ``sectors`` from *members* -- the write-once
     identity path where a brand-new S&P 500 symbol first gets its ``assets.id``.
 
@@ -312,12 +312,28 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
     stored one raises :class:`kg_schema.identity.CikConflict` before anything is written, and a
     stored CIK is never overwritten or emptied (a missing one is filled in).
 
+    A rename is one asset (T-153 part 2): each member is stored under its CIK's line *canonical*
+    symbol (``kg_schema.ticker_history``), so FB and META share one ``assets.id``. A member whose
+    CIK already has an asset under another symbol is a share class (another same-CIK member in
+    this batch), a recorded rename the database predates (adopted in place, returned in the
+    result), or refused (:class:`kg_schema.ticker_history.TickerConflict`) -- before any write.
+
     Point-in-time membership itself is no longer kept here; it is read straight
-    from ``universe.db`` as of the run's ``analysis_date``. Returns the count."""
+    from ``universe.db`` as of the run's ``analysis_date``. Returns the count and any adoptions."""
     members = list(members)
     identity.refuse_cik_changes(conn, members)
+    plans = ticker_history.plan_members(conn, [(m.symbol, m.cik) for m in members])
+    adoptions: list[ticker_history.Adoption] = []
     count = 0
-    for m in members:
+    for m, plan in zip(members, plans, strict=True):
+        if plan.action == "adopt" and plan.asset_id is not None and plan.adopt_from is not None:
+            # C4: retitle the one existing asset of the line -- its id and cik stay unchanged.
+            # Adoption is not only for old databases: every future rename needs it. The ordinary
+            # upsert below then refreshes the member's name/sector like any other member.
+            conn.execute("UPDATE assets SET ticker = ? WHERE id = ?", (plan.ticker, plan.asset_id))
+            adoptions.append(
+                ticker_history.Adoption(plan.adopt_from, plan.ticker, plan.asset_id, str(plan.cik))
+            )
         sector_id = _upsert_sector(conn, m.gics_sector or "")
         conn.execute(
             """
@@ -329,11 +345,17 @@ def sync_universe(conn: Database, members: Iterable[UniverseMember]) -> int:
                 sector_id    = excluded.sector_id,
                 sub_industry = excluded.sub_industry
             """,
-            (m.symbol, m.security, identity.normalize_cik(m.cik), sector_id, m.gics_sub_industry),
+            (
+                plan.ticker,
+                m.security,
+                identity.normalize_cik(m.cik),
+                sector_id,
+                m.gics_sub_industry,
+            ),
         )
         count += 1
     conn.commit()
-    return count
+    return ticker_history.SyncResult(count, adoptions)
 
 
 def _upsert_sector(conn: Database, name: str) -> int | None:

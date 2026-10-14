@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from portfolio_common.db import Database
 
+import kg_schema
 from kg_schema.queries import (
     connect_ro,
     members_asof,
@@ -92,12 +93,58 @@ def test_members_asof_rejects_non_sp500(universe_db: _UDB) -> None:
         members_asof(c, "2021-01-01", universe="RUSSELL")
 
 
+def _identity_db(assets: list[tuple[int, str, str | None]]) -> Database:
+    """An in-memory DB with ``assets`` (id, ticker, cik) and the shared schema ensured, so the
+    seeded ``ticker_history`` is present (T-153 part 2)."""
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    conn.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE, cik TEXT)")
+    conn.executemany("INSERT INTO assets (id, ticker, cik) VALUES (?, ?, ?)", assets)
+    conn.commit()
+    kg_schema.ensure(conn)
+    return conn
+
+
 def test_resolve_asset_ids_hits_and_misses() -> None:
-    conn = sqlite3.connect(":memory:")
-    conn.row_factory = sqlite3.Row
-    conn.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE)")
-    conn.executemany("INSERT INTO assets (id, ticker) VALUES (?, ?)", [(1, "AAPL"), (2, "BRK.B")])
-    db = Database(conn)
-    mapping, missing = resolve_asset_ids(db, ["aapl", "BRK.B", "NEWCO"])
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    conn = Database(raw)
+    conn.execute("CREATE TABLE assets (id INTEGER PRIMARY KEY, ticker TEXT UNIQUE, cik TEXT)")
+    conn.executemany(
+        "INSERT INTO assets (id, ticker, cik) VALUES (?, ?, ?)",
+        [(1, "AAPL", None), (2, "BRK.B", None)],
+    )
+    mapping, missing = resolve_asset_ids(
+        conn, [("aapl", None), ("BRK.B", None), ("NEWCO", "0000000001")], as_of="2024-01-02"
+    )
     assert mapping == {"AAPL": 1, "BRK.B": 2}
     assert missing == ["NEWCO"]
+
+
+def test_resolve_asset_ids_maps_a_renames_old_symbol_by_its_cik() -> None:
+    """FB (CIK 0001326801) is META's line: on a 2022 date it is the one asset (T-153 part 2)."""
+    db = _identity_db([(7, "META", "0001326801")])
+    assert resolve_asset_ids(db, [("FB", "0001326801")], as_of="2022-05-02") == ({"FB": 7}, [])
+    assert resolve_asset_ids(db, [("META", "0001326801")], as_of="2022-06-09") == ({"META": 7}, [])
+
+
+def test_resolve_asset_ids_never_merges_a_reused_ticker() -> None:
+    """The symbol ``FB`` is ProShares Trust (CIK 0001174610) after the rename: a different CIK
+    on a different asset is MISSING, never merged; the Meta member still resolves."""
+    db = _identity_db([(7, "META", "0001326801"), (8, "FB", "0001326801")])
+    assert resolve_asset_ids(db, [("FB", "0001174610")], as_of="2026-01-02") == ({}, ["FB"])
+    assert resolve_asset_ids(db, [("FB", "0001326801")], as_of="2022-05-02") == ({"FB": 7}, [])
+
+
+def test_resolve_asset_ids_resolves_each_echo_by_its_cik() -> None:
+    """Two CIKs that share the symbol ``ECHO`` never merge (T-153 part 2)."""
+    db = _identity_db([(3, "ECHO", "0001415404")])
+    assert resolve_asset_ids(db, [("ECHO", "0001415404")], as_of="2026-07-01") == ({"ECHO": 3}, [])
+    assert resolve_asset_ids(db, [("ECHO", "0001234567")], as_of="2020-06-01") == ({}, ["ECHO"])
+
+
+def test_resolve_asset_ids_without_a_cik_matches_the_ticker_alone() -> None:
+    """A member with no CIK keeps today's behaviour: the bare ticker decides."""
+    db = _identity_db([(7, "META", "0001326801")])
+    assert resolve_asset_ids(db, [("META", None)], as_of="2026-01-02") == ({"META": 7}, [])

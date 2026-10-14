@@ -74,6 +74,53 @@ def _settings(tmp_path: Path) -> Settings:
 
 
 @pytest.mark.usefixtures("_stubbed")
+def test_tickers_take_the_symbol_of_the_run_date(tmp_path: Path) -> None:
+    """F3: ``--tickers FB`` on 2022-05-02 prices the META asset; FB on 2026-10-01 selects nothing."""
+    udb = write_universe_db(
+        tmp_path / "universe.db",
+        [("FB", "2022-01-03", "2022-06-08"), ("META", "2022-06-09", None)],
+    )
+    conn = sqlite3.connect(udb)
+    conn.execute("UPDATE universe_membership SET cik = '0001326801'")
+    conn.commit()
+    conn.close()
+    settings = Settings(
+        db_path=tmp_path / "kg.db", universe_db_path=udb, pricing_base_url="http://pricing.test"
+    )
+
+    report = pipeline.run(
+        settings,
+        RunParams(
+            start_date="2022-05-02",
+            end_date="2022-05-31",
+            analysis_date="2022-05-31",
+            tickers=["FB"],
+            store_daily=True,
+        ),
+    )
+    assert report.planned == 1  # the member is FB; the asset it belongs to is META
+    conn = sqlite3.connect(settings.db_path)
+    assert [r[0] for r in conn.execute("SELECT ticker FROM assets")] == ["META"]
+    params = json.loads(
+        conn.execute("SELECT params_json FROM pricing_run ORDER BY id DESC LIMIT 1").fetchone()[0]
+    )
+    assert params["tickers"] == ["META"]
+    conn.close()
+
+    # FB on a 2026 date is ProShares Trust, not this line: it selects nothing
+    with pytest.raises(RuntimeError, match="resolved to an asset row"):
+        pipeline.run(
+            settings,
+            RunParams(
+                start_date="2026-10-01",
+                end_date="2026-10-01",
+                analysis_date="2026-10-01",
+                tickers=["FB"],
+            ),
+        )
+
+
+@pytest.mark.usefixtures("_stubbed")
 def test_run_writes_full_and_by_year_windows_then_resumes(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     params = RunParams(start_date="2022-01-01", end_date="2023-12-31", by_year=True)

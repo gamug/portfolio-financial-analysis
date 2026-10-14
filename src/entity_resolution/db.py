@@ -33,16 +33,21 @@ def replace_edges(
     conn: Database,
     edges: Iterable[Edge],
     *,
+    ids: dict[str, int] | None = None,
     method: str = METHOD,
     run_id: int | None = None,
 ) -> int:
-    """Full method-versioned recompute: drop rows of *method*, then insert *edges*."""
-    ids = _asset_ids(conn)
+    """Full method-versioned recompute: drop rows of *method*, then insert *edges*.
+
+    *ids* is the ticker -> ``asset_id`` map. The caller passes one resolved as of its analysis
+    date, so a company's *old* ticker (FB) reaches the one asset its line shares (META), by CIK
+    (T-153 part 2). When omitted, every asset's current ticker is used."""
+    ticker_ids = _asset_ids(conn) if ids is None else {k.upper(): v for k, v in ids.items()}
     now = _now()
     conn.execute("DELETE FROM shared_executive_edge WHERE method = ?", (method,))
     rows = []
     for e in edges:
-        aid_a, aid_b = ids.get(e.ticker_a), ids.get(e.ticker_b)
+        aid_a, aid_b = ticker_ids.get(e.ticker_a.upper()), ticker_ids.get(e.ticker_b.upper())
         if aid_a is None or aid_b is None:
             continue
         lo, hi = sorted((aid_a, aid_b))

@@ -1,0 +1,34 @@
+# As-of ticker history (T-153 part 2, checklist L-11 / APP-10a). One row per symbol of a CIK's
+# *line*; `canonical_symbol` is the line's newest symbol, so a member of any row resolves to the
+# line's one asset. A rename is the same CIK under a new ticker (APP-10a: identity is the CIK);
+# each row cites the notice that dates it, per L-11 (an S&P DJI press release or the company's own
+# notice). Seeded into the `ticker_history` table by `kg_schema.ticker_history.seed` on every
+# `ensure`; `universe_history.db` is a cross-check (tests only), never the source.
+cik,symbol,valid_from,valid_to,canonical_symbol,evidence_url,evidence_date,rules
+0001326801,FB,2013-12-23,2022-06-08,META,https://www.prnewswire.com/news-releases/meta-to-change-ticker-symbol-to-meta-on-june-9-2022-301558000.html,2022-05-31,L-11;APP-10a
+0001326801,META,2022-06-09,,META,https://www.prnewswire.com/news-releases/meta-to-change-ticker-symbol-to-meta-on-june-9-2022-301558000.html,2022-05-31,L-11;APP-10a
+0001140536,WLTW,2016-01-05,2022-01-09,WTW,https://www.sec.gov/Archives/edgar/data/1140536/000119312522004045/d267396d8k.htm,2022-01-07,L-11;APP-10a
+0001140536,WTW,2022-01-10,,WTW,https://www.sec.gov/Archives/edgar/data/1140536/000119312522004045/d267396d8k.htm,2022-01-07,L-11;APP-10a
+0001095073,RE,2017-06-19,2023-07-09,EG,https://www.businesswire.com/news/home/20230518005273/en/Everest-Re-Group-Rebrands-as-Everest-Group-Ltd.,2023-05-18,L-11;APP-10a
+0001095073,EG,2023-07-10,,EG,https://www.businesswire.com/news/home/20230518005273/en/Everest-Re-Group-Rebrands-as-Everest-Group-Ltd.,2023-05-18,L-11;APP-10a
+0001175454,FLT,2018-06-20,2024-03-24,CPAY,https://www.sec.gov/Archives/edgar/data/1175454/000162828024010593/exhibit991corpayrebrand_re.htm,2024-03-07,L-11;APP-10a
+0001175454,CPAY,2024-03-25,,CPAY,https://www.sec.gov/Archives/edgar/data/1175454/000162828024010593/exhibit991corpayrebrand_re.htm,2024-03-07,L-11;APP-10a
+0001725057,CDAY,2021-09-20,2024-01-31,DAY,https://www.sec.gov/Archives/edgar/data/1725057/000095017024009619/day-20240131.htm,2024-01-31,L-11;APP-10a
+0001725057,DAY,2024-02-01,2026-02-08,DAY,https://www.sec.gov/Archives/edgar/data/1725057/000095017024009619/day-20240131.htm,2024-01-31,L-11;APP-10a
+0001415404,SATS,2026-03-23,2026-06-23,ECHO,https://www.globenewswire.com/news-release/2026/06/22/3103006/0/en/EchoStar-Corporation-to-Change-Nasdaq-Ticker-Symbol-to-ECHO.html,2026-06-22,L-11;APP-10a
+0001415404,ECHO,2026-06-24,,ECHO,https://www.globenewswire.com/news-release/2026/06/22/3103006/0/en/EchoStar-Corporation-to-Change-Nasdaq-Ticker-Symbol-to-ECHO.html,2026-06-22,L-11;APP-10a
+# Discovery Inc. (CIK 0001437107) traded Series A (DISCA), Series B (DISCB) and Series C (DISCK).
+# The S&P DJI notice (2022-04-07) has all classes "converted and reclassified into a single share
+# class line of newly named Warner Bros. Discovery Inc. (NASD:WBD), and it will remain in the S&P
+# 500"; the company's own FAQ names that single class Series A. Series A (DISCA) continues as WBD;
+# DISCK's line ends 2022-04-10 like any line that leaves. Cited together (SA-1).
+0001437107,DISCA,1976-07-01,2022-04-10,WBD,https://press.spglobal.com/2022-04-07-S-P-Dow-Jones-Indices-Announces-Treatment-of-AT-T-Transaction-with-Discovery ; https://s201.q4cdn.com/336605034/files/doc_downloads/2022/WBD-FAQs-Updated-4.10.22-FINAL.pdf,2022-04-07 ; 2022-04-10,L-11;APP-10a
+0001437107,DISCK,2014-08-06,2022-04-10,DISCK,https://press.spglobal.com/2022-04-07-S-P-Dow-Jones-Indices-Announces-Treatment-of-AT-T-Transaction-with-Discovery ; https://s201.q4cdn.com/336605034/files/doc_downloads/2022/WBD-FAQs-Updated-4.10.22-FINAL.pdf,2022-04-07 ; 2022-04-10,L-11;APP-10a
+0001437107,WBD,2022-04-11,2026-10-05,WBD,https://press.spglobal.com/2022-04-07-S-P-Dow-Jones-Indices-Announces-Treatment-of-AT-T-Transaction-with-Discovery ; https://s201.q4cdn.com/336605034/files/doc_downloads/2022/WBD-FAQs-Updated-4.10.22-FINAL.pdf,2022-04-07 ; 2022-04-10,L-11;APP-10a
+# CIK 0002041610 (formed as New Pluto Global, Inc.; renamed Paramount Skydance Corp on the
+# 2025-08-07 Skydance/Paramount close) traded as PSKY from 2025-08-07 and as SKYD from 2026-10-06
+# (the Warner Bros. Discovery close). Before 2025-08-07 this CIK had no listed line: the file's
+# 1994-09-30 SKYD interval belongs to Paramount Global (CIK 0000813828), a CIK succession, not a
+# rename -- out of part 2 (reported in the PR; the reviewer opens it as its own task).
+0002041610,PSKY,2025-08-07,2026-10-05,SKYD,https://www.sec.gov/Archives/edgar/data/2041610/000119312525175046/d841914dex991.htm ; https://www.sec.gov/Archives/edgar/data/2041610/000110465926113913/tm2626659d7_ex99-1.htm,2025-08-07 ; 2026-10-06,L-11;APP-10a
+0002041610,SKYD,2026-10-06,,SKYD,https://www.sec.gov/Archives/edgar/data/2041610/000110465926113913/tm2626659d7_ex99-1.htm,2026-10-06,L-11;APP-10a

@@ -941,6 +941,17 @@ def _m015_orchestrator_provenance(db: Database) -> None:
     tables changes nothing, so it is safe to run on one that does."""
 
 
+# -- m016: marker for the as-of ticker history (T-153 part 2) ------------------
+
+
+def _m016_ticker_history(db: Database) -> None:
+    """No structural change: the ``ticker_history`` table (`kg_schema/ddl.py`) and the
+    ``v_ticker_history`` view (`kg_schema/views.py`) are created by every ``ensure``, so a fresh
+    database has them without migrating. This only raises the floor to 16, as m010/m015 did for
+    their views. A marker: replaying it changes nothing, so it is safe on a database that already
+    has the table."""
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -1007,6 +1018,11 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "marker: orchestrator provenance -- orchestrator_run / orchestrator_step and their "
         "v_* views (T-012)",
         _m015_orchestrator_provenance,
+    ),
+    (
+        16,
+        "marker: the as-of ticker history -- ticker_history and v_ticker_history (T-153 part 2)",
+        _m016_ticker_history,
     ),
 ]
 

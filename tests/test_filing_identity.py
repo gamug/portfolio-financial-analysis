@@ -72,12 +72,12 @@ def _task(form: str = "10-K", year: int = 2024, cik: str = "0000007084") -> _Yea
 def test_a_ticker_arriving_with_another_cik_is_refused_and_nothing_is_written(
     memory_db: Database, sync: Any
 ) -> None:
-    sync(memory_db, [_member("FB", "0001326801"), _member("AAA", "0000000001")])
+    sync(memory_db, [_member("XYZ", "0000000009"), _member("AAA", "0000000001")])
     with pytest.raises(CikConflict) as info:
-        sync(memory_db, [_member("AAA", "0000000002"), _member("FB", "0001326801")])
+        sync(memory_db, [_member("AAA", "0000000002"), _member("XYZ", "0000000009")])
     assert "AAA: stored CIK 0000000001, incoming CIK 0000000002" in str(info.value)
     rows = {r["ticker"]: r["cik"] for r in memory_db.execute("SELECT ticker, cik FROM assets")}
-    assert rows == {"FB": "0001326801", "AAA": "0000000001"}
+    assert rows == {"XYZ": "0000000009", "AAA": "0000000001"}
 
 
 def test_every_conflicting_ticker_is_named(memory_db: Database) -> None:
@@ -226,7 +226,7 @@ def test_the_migration_installs_the_triggers_on_a_clean_database(memory_db: Data
     identity.drop_triggers(memory_db)
     memory_db.execute("DELETE FROM schema_version WHERE version >= 12")
     memory_db.commit()
-    assert migrations.apply_migrations(memory_db) == [12, 13, 14, 15]
+    assert migrations.apply_migrations(memory_db) == [12, 13, 14, 15, 16]
     names = {r[0] for r in memory_db.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
     assert {
         "trg_sf_cik_insert",
