@@ -1138,7 +1138,7 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
 15. **The historical universe (`T-153`, after `T-071`, needed for PER-10 and PER-11; review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11).**
     - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49. Never overwrite the pilot's `universe.db`.
     - Read `valid_to` as the last day of membership: `kg_schema/queries.py:124` changes from `valid_to > ?` to `valid_to >= ?` (today `valid_to > D` drops a leaver on its last day).
-    - For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source is still to be decided).
+    - For the 86 companies that left the index in the window: their filings by CIK, their type in `company_types.csv`, and their GICS classification (the historical source: Wikipedia as of each exit, decided 2026-10-14; see the T-153 entry in `TASKS.md`).
     - Then run the replay's figures (vetoes by sector, financial firms, utilities, the D-13 three-year average) again on the historical universe before they go into the thesis.
 
 **Acceptance criteria**:
