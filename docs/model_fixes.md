@@ -8324,6 +8324,11 @@ current members) lists every one; only XOM was ever turned into a link (T-149). 
 8-K, decides the class, and adds a row only where the member actually loses filings it reads (APP-10b-2,
 `T-149`'s rule).
 
+**Fix round 1 (reviewer A, 2026-10-14):** F1 — SKYD's FY2025 10-K splits its year (the cause is the
+filing's predecessor/successor presentation, not the gateway, and not `T-140`); F2 — the unscored count
+is taken on the members of the analysis date, not the copy's asset set; F3 — the register test removed
+and its check moved into `verify_t155.py classify`; F4 — the status lines say "in review", not "done".
+
 ### P1 — the classification (`out/classify.csv`, `out/p1_classify.txt`)
 
 Read each 8-K's own text; record the predecessor it names (its CIK from the SEC submissions file) and
@@ -8365,7 +8370,7 @@ All four rows (with XOM) **pass the pipeline's own APP-10b-3 test**
 (`pipeline._last_annual_report_missing`, `scripts/verify_t155.py check`, through the gateway;
 `out/p2_check.txt`). No code change was needed; `cik_chain` stays one level deep.
 
-### P3 — the measurement (`out/p3_measure.json`, `out/p3_run.txt`, `out/unscored_t155.json`)
+### P3 — the measurement (`out/p3_measure.json`, `out/p3_run.txt`, `out/f1_split.json`)
 
 `scripts/verify_t155.py run` (verify_t149's `_FactsOnlyAnalyst`: every metric computed, the score the
 rule-based fallback, **no model**) on `t155/after.db` for the affected members at 2026-09-22: 30 tasks,
@@ -8378,13 +8383,29 @@ rule-based fallback, **no model**) on `t155/after.db` for the affected members a
 | BG | 11 → 19 | 2023-12-31 → 2021-12-31 | capex_intensity(8), free_cash_flow_conversion(8), free_cash_flow_margin(8), operating_cash_flow_margin(8), net_income_growth(8), revenue_growth(8), net_income_cagr(1), revenue_cagr(2) |
 | SKYD | 4 → 17 | 2025-03-31 → 2021-12-31 | capex_intensity(13), free_cash_flow_margin(13), operating_cash_flow_margin(13), revenue_growth(13), net_income_growth(10), operating_income_growth(10), free_cash_flow_conversion(5), free_cash_flow_growth(5), operating_cash_flow_cagr(4), revenue_cagr(4), net_income_cagr(2) |
 
-**T-073's unscored members at 2026-09-22: 23 → 23** (`out/unscored_t071a.json` 23 of 503;
-`out/unscored_t155.json` 23 of 506). PSKY becomes SKYD (the universe's ticker, adopted in place) and
-**stays unscored**: its latest filing (10-Q, 2026-06-30) still has `cash_flow` empty with
-`prior_year_missing` — the TTM needs the prior 10-K, and PSKY's FY2025 10-K payload is refused by ID-07
-(the gateway returns the predecessor's 2024 fiscal year; the known PSKY FY2025 gap, `T-140`'s residual).
-The row adds Paramount's FY2021–FY2024 10-Ks and 2022–2024 10-Qs (growth, CAGR, TTM ratios on those
-filings), but it does not make the newest filing scorable.
+**T-073's unscored members at 2026-09-22: 23 → 23**, on the **members of that date** (F2). The copy's
+asset set is not the member set: it holds three leavers (TTD, BLDR, TAP, gone 2026-09-20) and, before the
+run, misses three additions (BE, ILMN, P, added 2026-09-21). `scripts/verify_t155.py measure` now counts
+from `members_asof(2026-09-22)` (`out/p3_measure.json` `unscored_on_members`): **503 members; 500 with a
+filing in each copy; the 3 without one — BE, ILMN, P (joined 2026-09-21); 23 unscored among the 500,
+4.6%, before and after**, the same 23 (T-073's list, with PSKY shown under the member's symbol SKYD).
+None of TTD, BLDR or TAP is in it, so T-073's own list does not change on the member basis; its "23 of
+503" was counted on the asset set, where 503 was the copy's assets, not the members.
+
+**SKYD's FY2025 10-K (F1) — the cause is the filing, not the gateway.** Its latest 10-Q (2026-06-30)
+still has `cash_flow` empty with `prior_year_missing`: the TTM needs the prior 10-K. SKYD's first 10-K
+after the succession (`0002041610-26-000011`, filed 2026-02-25) presents FY2025 as **two parts** —
+2025-01-01..2025-08-06 (218 days) and 2025-08-08..2025-12-31 (146 days), SEC's own `companyfacts`
+(`https://data.sec.gov/api/xbrl/companyfacts/CIK0002041610.json`; `out/f1_split.json`) — the business
+combination's predecessor/successor presentation; the only full-year columns in it are 2023 and 2024. So
+the gateway's year is the only full year the filing holds, and ID-07 refuses it **correctly**: no rule
+joins the two parts (each fails PER-08's year length, they are not contiguous — 08-07 is missing — they
+are on different accounting bases, and PER-06 builds a TTM only from contiguous periods). SKYD's TTM and
+cash-flow pillar stay empty until its first full successor year, the FY2026 10-K. Declared, and **not**
+`T-140`'s residual. The other three successors do not split: BLK's first 10-K after 2024-10-01
+(`0000950170-25-026584`) holds a full-year 2024 (366 days), BG's after 2023-10-31
+(`0001996862-24-000007`) a full-year 2023 (365 days), and XOM's is not filed yet (its succession was
+2026-07-01).
 
 **Unlinked filings: none.** No `stage='succession'` row in `analysis_run_error`.
 
@@ -8425,20 +8446,20 @@ a run on that date would score is **Paramount Global's Q3 2024 10-Q** (`00008138
 
 ### Declared limitations
 
-* **The measurement's copy gained three assets** (`BE`, `ILMN`, `P`, all S&P 500 additions of
-  2026-09-21) from `sync_universe` when the run synced the universe at 2026-09-22, so the unscored
-  *share* is 23/506, not 23/503. They have no filings, so the unscored *count* (the number `cycle`
-  reads) is unchanged. Declared, not removed: the run is the plan's own step and the extra assets are
-  the universe's, not the task's.
-* **PSKY/SKYD stays unscored** (above): the row does not make it scorable, because the FY2025 10-K the
-  TTM needs is refused by ID-07 — the gateway's payload holds the predecessor's 2024 fiscal year. This is
-  `T-140`'s recorded residual, not a defect of the row.
+* **The unscored count is on the members of the date, not the copy's assets** (F2, fix 1): the copy holds
+  three leavers (TTD, BLDR, TAP) and, before the run, misses three additions (BE, ILMN, P).
+  `measure` counts from `members_asof(2026-09-22)`, so the denominator is the 500 members with a filing,
+  not the asset count (503 before / 506 after).
+* **SKYD stays unscored** (F1, fix 1): the FY2025 10-K presents the year as a business combination's
+  predecessor and successor parts, with no full-year column, so ID-07 refuses it correctly and the TTM
+  has no prior 10-K. Declared as a structural case, not a gateway defect and not `T-140`.
 * **The `used` test's "prior 10-K" stands in for the prior-year capital**: a 10-K's own prior column
   carries the prior-year balance sheet (MET-02), so only the latest filing and, on a 10-Q, the prior
   10-K need checking.
 * **The classification's quotes are normalized** (curly quotes → ASCII, tag-stripped whitespace
   collapsed), matching XOM's own row.
-* **`test_the_reading_covers_every_register_line` skips when the audit inputs are not checked out.**
-  It reads `docs/checklist_sec/succession_8ks.csv`, which is git-excluded (`.git/info/exclude`), so it
-  skips when the file is absent (CI) — the pattern `tests/test_sec_xcheck_document.py` uses — and runs
-  on the dev machine. Its first push failed CI for exactly this reason; fixed in the same PR.
+* **`tests/test_verify_t155.py::test_the_reading_covers_every_register_line` was removed** (F3, fix 1):
+  it read `docs/checklist_sec/succession_8ks.csv`, which is git-excluded (`.git/info/exclude`) and which
+  AGENTS.md keeps out of tests (it always skipped in CI and checked nothing). The check — the register has
+  19 lines and every line is read — now lives in `verify_t155.py classify`, which asserts it and writes it
+  to `out/p1_classify.txt`.
