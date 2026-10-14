@@ -200,6 +200,36 @@ def test_a_filing_with_metrics_cannot_lose_its_date(filed: Database) -> None:
         filed.execute("UPDATE sec_filings SET filing_date = NULL, available_at = NULL WHERE id = 3")
 
 
+def test_a_newer_unscored_filing_leaves_the_member_unscored(filed: Database) -> None:
+    """T-073 (D1): the newest *usable* filing decides, scored or not. A filing whose applicable
+    pillar has no value carries no ``raw_value`` -- it is recorded (so the run resumes) but it is
+    not a score -- and an older *scored* filing must not be carried forward in its place: that
+    would read a stale value as the current one, which MET-00 rules out. The member is unscored
+    (T-119), and a later scored filing scores it again."""
+    # AAA's FY2025 10-K (filing 2) becomes its newest usable filing on 2026-02-23; strip its score
+    # the way an applicable `empty` pillar does.
+    filed.execute(
+        "UPDATE score_snapshot SET raw_value = NULL, normalized_score = NULL WHERE filing_id = 2"
+    )
+    filed.commit()
+
+    # before the unscored filing is usable, AAA's older Q3 10-Q (filing 1) is the newest *usable*
+    # one: still scored
+    assert cycle_data.latest_fundamental_score(filed, "2026-01-15")[1] == 1.0
+
+    day = "2026-02-23"
+    rows = cycle_data.latest_fundamental_rows(filed, day)
+    assert {int(r["asset_id"]) for r in rows} == {2}  # AAA dropped, BBB's FY2024 10-K stays
+    assert cycle_data.latest_fundamental_score(filed, day) == {2: 4.0}
+    assert 1 not in cycle_data.last_fundamental_dates(filed, day)
+    assert cycle_data.unscored_assets([1, 2], cycle_data.latest_fundamental_score(filed, day)) == [
+        1
+    ]
+
+    # AAA's next filing (Q1 2026, usable 2026-05-06) is scored: the member is scored again
+    assert cycle_data.latest_fundamental_score(filed, "2026-05-06") == {1: 3.0, 2: 4.0}
+
+
 def test_a_fundamental_score_with_no_filing_is_refused(filed: Database) -> None:
     with pytest.raises(sqlite3.IntegrityError, match="score_snapshot"):
         filed.execute(

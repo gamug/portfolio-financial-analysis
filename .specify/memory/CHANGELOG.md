@@ -592,6 +592,63 @@ version; and **the `DQ_NEG_EQUITY` basis question is handed to `T-071`** (the ga
 while ROE's denominator is the prior year's, so 7 filings carry an ROE it quarantines; `T-071` owns the gate
 under D-04).
 
+## Work item 8 — `T-073` (closed task) — the FUNDAMENTAL score built from four pillars (stream A, step 3) — DONE 2026-10-14
+
+Moved verbatim from `TASKS.md` when the task closed (PR #160); the rest of Work item 8
+(`T-141`, `T-077`, `T-070`, `T-147`, `T-149`, `T-148`, `T-150`, `T-151`, `T-076`, `T-074`, `T-071`)
+stays there, with `T-074` next. Ordered by work item number.
+
+- [x] **T-073** Fundamental continuous scoring rubric in `agents.py` (one-decimal-place score),
+      eliminating the 22-discrete-value quantization. → step 3. **Redesigned 2026-10-13 (user), before it
+      starts** (the old wording -- "4-pillar weighted" including "Moat", weights `0.30/0.25/0.25/0.20` -- is
+      superseded):
+      - **the LLM rates each pillar; the code applies the weights** (constitution AI behavior #1: the
+        deterministic part never sits with the model). The pillar ratings are stored;
+      - **four pillars, from computed metrics only:** `profitability` = the profitability, roic and efficiency
+        groups; `financial_strength` = leverage and liquidity; `cash_flow` = cashflow; `growth` = growth and
+        cagr;
+      - **"Moat" is dropped:** no computed input supports it and no loaded source states a moat metric, so it
+        would be an LLM judgement presented as a factor;
+      - **valuation stays in the narrative and out of the score** -- it is already its own stored component
+        (VALORIZATION), so scoring it here would count the same signal twice;
+      - **the weights are equal, declared as a calibration, and kept in one setting**, so changing them needs no
+        LLM call;
+      - **no neutral 50 anywhere** (MET-00: an empty metric is never a neutral reading);
+      - **the input** is `T-071` part 1's measurement of the filings with an empty *applicable* pillar
+        (`scripts/verify_t071a.py` -> `out/pillars.json`): the rubric must define what a filing scores when a
+        pillar has no value;
+      - **a staggered paid smoke test** (a few filings, then more), each stage approved by the user.
+      *(2026-10-14: **implemented, in review — PR #160** (stream A, step 3; branch `feat/t073-pillar-score`). The plan,
+      the measurements and the declared items are in `docs/model_fixes.md` "T-073". `fundamental_agent.pillars`
+      holds the four pillars and the four statuses the code computes (`not_applicable`, `absent_by_form`,
+      `empty`, `present`), `absent_by_form` being APP-09's own wording -- `AssetsCurrent` and
+      `LiabilitiesCurrent` are not filed -- **not** MD-38's `unclassified_balance_sheet` flag, which is a
+      consequence signal (the director's decision of 2026-10-14; the two disagree on 304 filings and the flag
+      would wrongly drop CPRT and ERIE). **Coverage rule (MET-00):** an applicable `empty` pillar leaves the
+      score empty and the member unscored (T-119) -- **23 of 503 members (4.6%)** at 2026-09-22,
+      `financial_strength` 18 (the REITs, the homebuilders, DE, PCAR, TXT, BRK.B) and `cash_flow` 5 (DPZ, PEP,
+      HONA, LHX, PSKY), by sector Real Estate 10 / Consumer Discretionary 5 / Industrials 5 / Communication
+      Services 1 / Consumer Staples 1 / Financials 1, under `cycle`'s 0.05. `cycle`'s
+      `latest_fundamental_rows` ranks each asset's usable filings and then drops the newest when it has no
+      value, so an older scored filing is never carried forward. The model rates the pillars the code decided
+      the company has; the code computes the total (equal weights by default, `kg_schema.pillar_score`'s shared
+      contract, `CycleSettings.fundamental_pillar_weights` recorded in `params_json`), and the rule-based
+      fallback rates the same pillars. `scripts/verify_t073.py` holds every number; no LLM call (D6).)*
+
+**Closed 2026-10-14 — PR #160** (reviewed and approved; the review of the D1+D2 commit added the
+`fix(cycle)` commit that made the newest usable filing decide). Declared items that stay open: **the
+equal pillar weights** (`kg_schema.pillar_score.DEFAULT_PILLAR_WEIGHTS`, tag `pillar-weights-equal-v1`)
+**and the fallback's nudges** (T-076's `_SCORE_RULES`) **and rating cutoffs** (60 / 40) **are declared
+calibrations**, not sourced constants; **the 23 unscored members (4.6%) and their sectors are T-119's
+and `T-143`'s input** — Real Estate 10, Consumer Discretionary 5, Industrials 5, Communication
+Services 1, Consumer Staples 1, Financials 1 (the checklist's Scope asks for the sector breakdown,
+because a cluster biases the sample); **MD-38's misnamed
+`flag_enterprise_fcf_yield_unclassified_balance_sheet` is handed to `T-071` part 2** (it fires on 304
+classified filings, where the cause is a working-capital term refused or only partially mapped); and
+**the token estimate excludes the specialists' own prompts** (it covers the orchestrator's prompt --
+the master prompt and the brief -- plus the synthesis prompt; each specialist call adds its skill and
+a group prompt on top, so the pilot's and `T-100`'s budget must add them).
+
 ## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to

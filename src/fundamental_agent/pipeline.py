@@ -18,6 +18,7 @@ from tqdm import tqdm
 from fundamental_agent import db, quality
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
+    UNSCORED_MODEL_LABEL,
     FilingContext,
     FundamentalAnalyst,
     build_model,
@@ -990,6 +991,16 @@ def _analyze_one(
     )
 
     assessment = result.assessment
+    # T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
+    # production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
+    # this way. T-073 (D1): a row whose applicable pillar has no value is not scored at all, and is
+    # labelled as such too -- the model was never asked about it.
+    if assessment.score is None:
+        model = UNSCORED_MODEL_LABEL
+    elif result.used_fallback:
+        model = FALLBACK_MODEL_LABEL
+    else:
+        model = engine.analyst.model_name
     db.insert_snapshot(
         engine.conn,
         SnapshotRow(
@@ -1002,13 +1013,11 @@ def _analyze_one(
             narrative=assessment.narrative,
             strengths=assessment.strengths,
             risks=assessment.risks,
-            # T-113: a fallback row is labelled as such, never under the LLM's own model_id --
-            # 1 of production's 377 FUNDAMENTAL scores was previously indistinguishable from
-            # real model output this way.
-            model=FALLBACK_MODEL_LABEL if result.used_fallback else engine.analyst.model_name,
+            model=model,
             metrics=result.flat_metrics,
             event_time=target.period.date,
             prompt_hash=result.prompt_hash,
+            pillars=result.pillars,
         ),
         run_id=run_id,
     )

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -125,8 +125,10 @@ class SnapshotRow:
     filing_id: int
     form: str
     fiscal_period: str
-    score: float
-    rating: str
+    # T-073 (D1): None when an applicable pillar has no value -- the score is empty, the row
+    # records why, and the member is unscored (T-119).
+    score: float | None
+    rating: str | None
     narrative: str
     strengths: Sequence[str]
     risks: Sequence[str]
@@ -134,6 +136,9 @@ class SnapshotRow:
     metrics: dict[str, float | None]
     event_time: str  # the filing's period-end -- what the score is *about*
     prompt_hash: str  # T-113: sha256 of the LLM interaction that produced (or failed into) this
+    # T-073 (D4): the pillar block (`pillars`, `pillar_weights`, `pillar_weights_version`,
+    # `coverage`), stored beside the flat metrics inside `score_snapshot.inputs_json`.
+    pillars: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1402,7 +1407,12 @@ def completed_accessions(conn: Database) -> set[str]:
 
 def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = None) -> None:
     """Append one immutable FUNDAMENTAL ``score_snapshot`` row. Resume-safe:
-    a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored."""
+    a repeat ``(asset_id, 'FUNDAMENTAL', event_time)`` is ignored.
+
+    ``inputs_json`` carries the flat metrics (``group.metric`` -> value) and, from T-073, the
+    pillar block beside them (D4) -- no schema change."""
+    inputs: dict[str, Any] = dict(row.metrics)
+    inputs.update(row.pillars)
     conn.execute(
         """
         INSERT INTO score_snapshot
@@ -1419,7 +1429,7 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
             row.event_time,
             _now(),
             row.model,
-            json.dumps(row.metrics),
+            json.dumps(inputs),
             row.filing_id,
             row.rating,
             row.narrative,

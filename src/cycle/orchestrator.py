@@ -483,7 +483,16 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 if r["raw_value"] is not None
             ]
             if frows:
-                fn = normalized_scores([float(r["raw_value"]) for r in frows])
+                # T-073 (D4): a row is normalized on its total *under this cycle's weights* -- its
+                # own `raw_value` when those are the weights it was scored with, else the total
+                # recomputed from the pillar ratings the row stored. No LLM call, and the stored
+                # row is never rewritten.
+                fn = normalized_scores(
+                    [
+                        data.fundamental_value_under(r, settings.fundamental_pillar_weights)
+                        for r in frows
+                    ]
+                )
                 conn.executemany(
                     "UPDATE score_snapshot SET normalized_score = ? WHERE id = ?",
                     [(fn[i], int(frows[i]["id"])) for i in range(len(frows))],

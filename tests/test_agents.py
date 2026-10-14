@@ -116,6 +116,27 @@ def test_an_empty_metric_reaches_the_brief_with_its_reason() -> None:
 # -- T-076, D5: a HARD DQ screen withholds a value -----------------------------------------------------------
 
 
+def _all_present() -> dict[str, Any]:
+    """T-073: a filing whose four pillars all carry a value, for the fallback's own tests."""
+    return agents.pillars.pillar_statuses(
+        [
+            (
+                pillar,
+                MetricResult(
+                    name,
+                    1.0,
+                    "ratio",
+                    {"current_assets": 100.0, "current_liabilities": 50.0}
+                    if name == "current_ratio"
+                    else {},
+                ),
+            )
+            for pillar, names in agents.pillars.PILLARS.items()
+            for name in names
+        ]
+    )
+
+
 def test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback() -> None:
     # |net_margin| > 5 trips DQ_MARGIN (Annex A-01): the value is withheld, not read.
     result = MetricResult("net_margin", 6.0, "ratio", {})
@@ -124,9 +145,19 @@ def test_a_hard_screen_withholds_a_value_from_the_model_and_the_fallback() -> No
     assert agents._metric_lines("profitability", [result], withheld) == [
         "net_margin: withheld (DQ_MARGIN)"
     ]
-    # The fallback's net-margin rule scores 12 points above 50; withheld, it scores none.
-    assert agents._fallback_assessment({"profitability.net_margin": 6.0}).score == 62.0
-    assert agents._fallback_assessment({"profitability.net_margin": 6.0}, withheld).score == 50.0
+    # T-073 (D3): the fallback rates each pillar 50 plus its own metrics' nudges, and the total is
+    # the weighted pillar ratings -- so the net-margin rule's 12 points lift profitability to 62 and
+    # the total to (62 + 50 + 50 + 50) / 4. Withheld, they lift nothing and the total stays 50.
+    statuses = _all_present()
+    lifted = agents._fallback_synthesis({"profitability.net_margin": 6.0}, statuses)
+    assert lifted.assessment.score == 53.0
+    assert lifted.pillars["pillars"]["profitability"]["rating"] == 62
+    assert (
+        agents._fallback_synthesis(
+            {"profitability.net_margin": 6.0}, statuses, withheld
+        ).assessment.score
+        == 50.0
+    )
 
 
 def test_a_clean_metric_is_not_withheld() -> None:
