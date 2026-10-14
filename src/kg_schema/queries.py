@@ -9,7 +9,7 @@ Read (``universe.db`` -- point-in-time S&P 500 membership, never written here):
     members_asof          open membership stints as of a date, as UniverseMember rows
     symbols_asof           just the ticker symbols from members_asof
     resolve_asset_ids      member (symbol + CIK) -> assets.id lookup, by the CIK's ticker line
-                            as of a date (T-153 part 2; chunked IN (...), never inserts)
+                            as of a date (T-153 part 2; `json_each`, never inserts)
 
 Read (metric versions -- which engine versions of fundamental_metrics are stored):
     metric_versions_present  {metric_group: [engine_version, ...]} actually stored; the
@@ -50,7 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from portfolio_common.db import Database, DatabaseError, Row, in_clause
+from portfolio_common.db import Database, DatabaseError, Row
 
 from . import ticker_history
 from .coverage import DEFAULT_MIN_OBSERVATION_DAYS, CoverageReport, SymbolCoverage
@@ -69,7 +69,6 @@ from .ddl import (
 from .identity import normalize_cik
 
 SUPPORTED_UNIVERSE = "SP500"
-_ID_CHUNK = 900  # keep under SQLite's bound-parameter limit
 
 VERSION_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -205,12 +204,11 @@ def resolve_asset_ids(
 
     by_ticker: dict[str, int] = {}
     cik_by_id: dict[int, str | None] = {}
-    for start in range(0, len(tickers), _ID_CHUNK):
-        chunk = tickers[start : start + _ID_CHUNK]
-        placeholders = in_clause(chunk)
+    if tickers:
         rows = db.execute(
-            f"SELECT id, ticker, cik FROM assets WHERE UPPER(ticker) IN {placeholders}",  # noqa: S608
-            chunk,
+            "SELECT id, ticker, cik FROM assets "
+            "WHERE UPPER(ticker) IN (SELECT value FROM json_each(?))",
+            (json.dumps(tickers),),
         )
         for r in rows:
             by_ticker[str(r["ticker"]).upper()] = int(r["id"])
