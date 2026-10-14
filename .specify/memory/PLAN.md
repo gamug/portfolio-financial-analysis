@@ -32,14 +32,14 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071`) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → **`T-073`** (next) → `T-074` → `T-071` part 2) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071`), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → **`T-073`** (next) → `T-074` → `T-071` part 2), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -823,8 +823,8 @@ as task `T-077`.
 
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
-`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → **`T-073`** (step 3, next) → `T-074`
-(step 4) → `T-071` (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
+`T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → `T-071` part 1 (step 2, done 2026-10-13, PR #156) → **`T-073`** (step 3, next) → `T-074`
+(step 4) → `T-071` part 2 (step 2) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
 `T-100`: it runs the LLM on every filing from a fresh database, with the final prompts.
@@ -844,7 +844,15 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    (`(R5d - μ60d)/σ60d < -2.5` → HARD-temporal). Persist an explicit
    expiration timestamp on temporal vetoes in the `veto` table so re-entry
    semantics are defined, not implicit.
-2. **Valorization redesign and company profile (`T-071`, `src/cycle/scores/valorization.py`)**: replace
+2. **Valorization redesign and company profile (`T-071`, `src/cycle/scores/valorization.py`).**
+   *(Split 2026-10-13, like `T-151`: **part 1 -- the company profile (APP-00) and the applicability
+   matrix applied by the metrics code -- DONE, PR #156** (the plan and the measurements are in
+   `docs/model_fixes.md` "T-071 part 1"; the tracked profile `src/kg_schema/data/company_profile.csv`,
+   one reader `kg_schema.company_profile.profile_as_of(cik, as_of)`, the matrix in
+   `src/kg_schema/data/` with `kg_schema.applicability.applicability` (NA > ADJ > A), applied by
+   `agents._compute_all`). **Part 2 keeps the redesign below**, with D-13, D-14, D-04's
+   `DQ_NEG_EQUITY` basis question, DQ-02's winsorizing, the market cap read at the cycle date and the
+   financials'/utilities' sector-specific factors. **D-07 = keep** (user, 2026-10-13).)* Replace
    book-to-market and `D/E` (both sign-broken under negative equity, see
    C2) with Enterprise-Value multiples — `enterprise_fcf_yield` (already
    computed) and a new `EBITDA/EV` factor (persist EBITDA in
@@ -877,13 +885,22 @@ commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-07
    inputs: no veto, flagged; CEG and VST fall inside the exemption through the GICS proxy, AES and NRG do not; report the
    5%–12% sensitivity.
    **D-14 (REITs, open):** measure how many REITs `NEGATIVE_FCF` vetoes in the replay first, then decide.
+   **Part 1 (done) also delivers the type the exemptions key on:** the profile carries the
+   regulated-utility overlay (D-13's GICS proxy) beside the APP-00 type, so part 2 reads one source.
 3. **Fundamental agent: continuous scoring rubric** (`agents.py`): the
    synthesis prompt currently asks for a bare `0-100` integer with no
    rubric, and the LLM anchors into 22 discrete round values (verified:
    4,844 scores, only 22 distinct values, top frequencies at 62/48/58/68/…)
-   — replace with an explicit 4-pillar weighted rubric requiring one
-   decimal place: `0.30·Profitability + 0.25·Solvency + 0.25·CashFlow +
-   0.20·Moat`.
+   — replace with a rubric requiring one decimal place, **redesigned 2026-10-13 (user) before it
+   starts**: the **LLM rates each pillar and the code applies the weights** (constitution AI behavior
+   #1); **four pillars from computed metrics only** — profitability (the profitability, roic and
+   efficiency groups), financial strength (leverage, liquidity), cash flow, growth (growth, cagr);
+   **"Moat" is dropped** (no computed input, no loaded source); **valuation stays in the narrative**
+   (it is already the stored VALORIZATION component, so scoring it here would double-count it); the
+   **weights are equal, declared as a calibration and kept in one setting** (changing them needs no
+   LLM call); **no neutral 50 anywhere** (MET-00); the input is `T-071` part 1's count of filings with
+   an empty *applicable* pillar (`scripts/verify_t071a.py` → `out/pillars.json`); and a **staggered
+   paid smoke test** (a few filings, then more), each stage approved by the user.
 4. **Structured `forensic_flags` end-to-end** — needs Work item 5 (A2)
    first: extend `FundamentalAssessment`/the synthesis JSON schema with the
    4-boolean `forensic_flags` object (`data_error_suspected`,
@@ -2369,7 +2386,7 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → **`T-073`** (next) → `T-074` → `T-071` → `T-153` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → **`T-073`** (next) → `T-074` → `T-071` part 2 → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 

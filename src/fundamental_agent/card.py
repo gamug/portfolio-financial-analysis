@@ -3,7 +3,8 @@
 ``python -m fundamental_agent card --db PATH --cik CIK --date YYYY-MM-DD [--metrics-version V]
 [--out FILE]`` prints, for one company and one as-of date, read-only (``mode=ro``):
 
-* the profile -- ticker, sector, sub-industry, REIT yes/no, negative equity yes/no;
+* the profile -- ticker, sector, sub-industry, REIT yes/no, negative equity yes/no, and (T-071 part 1)
+  the APP-00 profile: the base company type, its overlays and the evidence accession;
 * the filing used as of the date -- the latest one whose availability date (PER-01) is on or before
   the date;
 * each line item as the **stored** provenance records it (concept, how it was read, basis);
@@ -20,7 +21,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from fundamental_agent import db
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.versions import VERSION_FILTER_SQL, resolve_metric_versions
 
 # The stored-row reader, filtered by the per-group versions a consumer resolves (T-090): the same
@@ -49,6 +50,11 @@ class Card:
     as_of: str
     metrics_version: str
     filing: dict[str, Any]
+    # T-071 part 1 (P4): the profile the code reads (APP-00) -- the base type, its overlays and the
+    # evidence accession; ``None`` when the CIK has no profile.
+    company_type: str | None = None
+    overlays: tuple[str, ...] = ()
+    evidence_accession: str | None = None
     line_items: list[dict[str, Any]] = field(default_factory=list)
     metrics: list[dict[str, Any]] = field(default_factory=list)
     empty: list[dict[str, Any]] = field(default_factory=list)
@@ -56,7 +62,7 @@ class Card:
 
 def _asset_row(conn: Any, cik: str) -> Any:
     return conn.execute(
-        "SELECT a.id, a.ticker, a.company_name, s.name AS sector, a.sub_industry "
+        "SELECT a.id, a.ticker, a.company_name, a.cik, s.name AS sector, a.sub_industry "
         "FROM assets a LEFT JOIN sectors s ON a.sector_id = s.id WHERE a.cik = ?",
         (cik,),
     ).fetchone()
@@ -115,6 +121,22 @@ def _negative_equity(metrics: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _overlays(profile: CompanyProfile | None) -> tuple[str, ...]:
+    """The profile's overlays as the card prints them (T-071 part 1, P4)."""
+    if profile is None:
+        return ()
+    names: list[str] = []
+    if profile.reit:
+        names.append("reit")
+    if profile.multi_class:
+        names.append("multi-class")
+    if profile.regulated_utility:
+        names.append("regulated utility")
+    if profile.multi_sector:
+        names.append("multi-sector")
+    return tuple(names)
+
+
 def build_card(conn: Any, cik: str, as_of: str, *, metrics_version: str | None = None) -> Card:
     """Build one company's card from the **stored** metrics (read-only; never recomputes)."""
     asset = _asset_row(conn, cik)
@@ -126,6 +148,7 @@ def build_card(conn: Any, cik: str, as_of: str, *, metrics_version: str | None =
         raise SystemExit(f"no filing of CIK {cik} available on or before {as_of}")
 
     rows, version = _stored_rows(conn, int(filing["id"]), metrics_version)
+    profile = profile_as_of(str(asset["cik"]), as_of) if asset["cik"] else None
     metrics: list[dict[str, Any]] = []
     empty: list[dict[str, Any]] = []
     all_entries: list[dict[str, Any]] = []
@@ -161,10 +184,13 @@ def build_card(conn: Any, cik: str, as_of: str, *, metrics_version: str | None =
         company_name=str(asset["company_name"] or asset["ticker"]),
         sector=asset["sector"],
         sub_industry=asset["sub_industry"],
-        is_reit=db.is_equity_reit(conn, asset_id),
+        is_reit=bool(profile and profile.reit),
         negative_equity=_negative_equity(all_entries),
         as_of=as_of,
         metrics_version=version,
+        company_type=profile.type if profile else None,
+        overlays=_overlays(profile),
+        evidence_accession=profile.evidence_accession if profile else None,
         filing={
             "form": str(filing["form"]),
             "fiscal_period": str(filing["fiscal_period"]),
@@ -185,6 +211,8 @@ def render(card: Card) -> str:
         f"Profile: sector {card.sector} | sub-industry {card.sub_industry} | REIT "
         f"{'yes' if card.is_reit else 'no'} | negative equity "
         f"{'yes' if card.negative_equity else 'no'}",
+        f"Profile (APP-00): type {card.company_type or 'unknown'} | overlays "
+        f"{', '.join(card.overlays) or 'none'} | evidence {card.evidence_accession or '-'}",
         f"Filing: {card.filing['form']} {card.filing['fiscal_period']} "
         f"{card.filing['accession']} (period end {card.filing['period_end']}, "
         f"available {card.filing['available_at']})",

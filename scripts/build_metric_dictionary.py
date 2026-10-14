@@ -5,8 +5,9 @@ and writes four **tracked** files the code and the tests read:
 
 * ``docs/metric_dictionary.md`` -- every Annex B row (ID, metric, formula, basis, source, quote, note),
   with a header naming this script, the checklist version and the checklist file's sha256;
-* ``src/fundamental_agent/data/applicability_matrix.csv`` -- the applicability matrix (metric, company
-  type, code, rule ID), one row per cell;
+* ``src/kg_schema/data/applicability_matrix.csv`` -- the applicability matrix (metric, company
+  type, code, rule ID), one row per cell; every package reads it through
+  :func:`kg_schema.applicability.applicability` (T-071 part 1, P3);
 * ``src/fundamental_agent/data/metric_definitions.csv`` -- one row per Annex B row (metric, MD id,
   formula, basis); a specialist group's system prompt reads its own metrics' rows (T-076, D1);
 * ``src/fundamental_agent/data/checklist_rules.csv`` -- every rule ID of the checklist (the seven
@@ -27,7 +28,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 CHECKLIST = REPO / "docs" / "checklist_sec" / "checklist_v1.3.md"
 DICTIONARY = REPO / "docs" / "metric_dictionary.md"
-MATRIX = REPO / "src" / "fundamental_agent" / "data" / "applicability_matrix.csv"
+MATRIX = REPO / "src" / "kg_schema" / "data" / "applicability_matrix.csv"
 DEFINITIONS = REPO / "src" / "fundamental_agent" / "data" / "metric_definitions.csv"
 RULES = REPO / "src" / "fundamental_agent" / "data" / "checklist_rules.csv"
 
