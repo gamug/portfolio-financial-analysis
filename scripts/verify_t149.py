@@ -41,7 +41,7 @@ from cycle import data as cycle_data
 from cycle.config import CycleSettings
 from cycle.orchestrator import run_selection
 from fundamental_agent import db, pipeline
-from fundamental_agent.agents import AnalysisResult, FundamentalAnalyst, _fallback_assessment
+from fundamental_agent.agents import AnalysisResult, FundamentalAnalyst, facts_only_synthesis
 from fundamental_agent.config import Settings
 from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import RunParams
@@ -252,7 +252,8 @@ def cmd_triggers(args: argparse.Namespace) -> int:
 
 class _FactsOnlyAnalyst:
     """The pipeline's analyst without the LLM: every metric is computed, the score is the
-    deterministic rule-based fallback (``agents._fallback_assessment``). No network, no spend."""
+    deterministic rule-based fallback (``agents.facts_only_synthesis``, T-073). No network,
+    no spend."""
 
     def __init__(self, _model: object, model_name: str) -> None:
         self._inner = FundamentalAnalyst.__new__(FundamentalAnalyst)
@@ -263,12 +264,14 @@ class _FactsOnlyAnalyst:
     def analyze(self, ctx: Any) -> Any:
         computed = self._inner._compute_all(ctx)
         flat = {f"{g}.{r.name}": r.value for g, r in computed}
+        verdict = facts_only_synthesis(computed)
         return AnalysisResult(
-            assessment=_fallback_assessment(flat),
+            assessment=verdict.assessment,
             metrics=computed,
             flat_metrics=flat,
-            used_fallback=True,
+            used_fallback=verdict.used_fallback,
             prompt_hash="facts-only-no-llm",
+            pillars=verdict.pillars,
         )
 
 

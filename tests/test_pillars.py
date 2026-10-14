@@ -526,3 +526,79 @@ def test_a_not_applicable_pillar_still_scores(
     assert seen == ["called"]
     assert out.assessment.score == 50.0
     assert out.pillars["coverage"]["not_applicable"] == ["cash_flow"]
+
+
+# -- D3: the rule-based fallback on the same pillars ------------------------------------------------
+
+
+def test_the_fallback_rates_each_pillar_fifty_plus_its_own_nudges() -> None:
+    """D3: each nudge goes to its metric's pillar. `net_margin` (12 points, profitability) and
+    `current_ratio` (6, financial_strength) lift their own pillars and leave the other two at 50."""
+    statuses = _statuses()
+    synthesis = agents._fallback_synthesis(
+        {"profitability.net_margin": 0.20, "liquidity.current_ratio": 1.6}, statuses
+    )
+    ratings = {p: e["rating"] for p, e in synthesis.pillars["pillars"].items() if "rating" in e}
+    assert ratings == {
+        "profitability": 62,
+        "financial_strength": 56,
+        "cash_flow": 50,
+        "growth": 50,
+    }
+    assert synthesis.used_fallback is True
+    assert synthesis.assessment.score == 54.5  # (62 + 56 + 50 + 50) / 4
+    assert synthesis.assessment.rating == "neutral"
+
+
+def test_a_low_metric_takes_its_points_off_its_own_pillar() -> None:
+    statuses = _statuses()
+    synthesis = agents._fallback_synthesis({"growth.revenue_growth": -0.05}, statuses)
+    ratings = {p: e["rating"] for p, e in synthesis.pillars["pillars"].items() if "rating" in e}
+    assert ratings["growth"] == 42
+    assert ratings["profitability"] == 50
+    assert synthesis.assessment.score == 48.0
+    assert any("revenue_growth" in risk for risk in synthesis.assessment.risks)
+
+
+def test_the_valuation_nudge_leaves_the_score() -> None:
+    """D3: valuation is out of the score, so its nudge has no pillar and moves nothing."""
+    statuses = _statuses()
+    synthesis = agents._fallback_synthesis({"valuation.free_cash_flow_yield": 0.06}, statuses)
+    ratings = {p: e["rating"] for p, e in synthesis.pillars["pillars"].items() if "rating" in e}
+    assert set(ratings.values()) == {50}
+    assert synthesis.assessment.score == 50.0
+
+
+def test_the_high_leverage_penalty_hits_financial_strength() -> None:
+    statuses = _statuses()
+    synthesis = agents._fallback_synthesis({"leverage.debt_to_equity": 4.0}, statuses)
+    ratings = {p: e["rating"] for p, e in synthesis.pillars["pillars"].items() if "rating" in e}
+    assert ratings["financial_strength"] == 38
+    assert ratings["profitability"] == 50
+
+
+def test_a_pillar_the_company_does_not_have_is_never_rated_by_the_fallback() -> None:
+    """D3: a pillar that is `not_applicable` gets nothing -- the fallback rates the same present
+    pillars the model would, and the total stays on the declared scale."""
+    statuses = _statuses(
+        **{
+            name: {"value": None, "not_applicable": True, "reason": "not_applicable"}
+            for name in pillars.PILLARS["cash_flow"]
+        }
+    )
+    synthesis = agents._fallback_synthesis({"profitability.net_margin": 0.20}, statuses)
+    assert "rating" not in synthesis.pillars["pillars"]["cash_flow"]
+    assert synthesis.assessment.score == 54.0  # (62 + 50 + 50) / 3
+
+
+def test_the_fallback_stores_the_same_block_shape_as_the_model() -> None:
+    """D4: a fallback row and a model row are read alike -- same keys, same weights, same coverage."""
+    statuses = _statuses()
+    fallback = agents._fallback_synthesis({}, statuses)
+    model = agents._synthesize(
+        _orchestrator(_reply({p: 50 for p in pillars.PILLARS})), {}, statuses
+    )
+    assert set(fallback.pillars) == set(model.pillars)
+    assert fallback.pillars["pillar_weights"] == model.pillars["pillar_weights"]
+    assert fallback.pillars["coverage"] == model.pillars["coverage"]
+    assert set(fallback.pillars["pillars"]) == set(model.pillars["pillars"])

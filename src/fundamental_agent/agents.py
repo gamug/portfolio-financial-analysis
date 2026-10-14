@@ -457,13 +457,14 @@ class FundamentalAnalyst:
             # D1's coverage rule (MET-00): an applicable pillar with no value leaves the score
             # empty, so there is nothing to rate and the model is not asked (nothing it returned
             # would be scored). The block records the statuses and every empty reason.
+            verdict = facts_only_synthesis(computed)
             return AnalysisResult(
-                assessment=FundamentalAssessment(narrative=unscored_narrative(statuses)),
+                assessment=verdict.assessment,
                 metrics=computed,
                 flat_metrics=flat,
-                used_fallback=False,
+                used_fallback=verdict.used_fallback,
                 prompt_hash=self.prompt_hash,
-                pillars=pillars.score_block(statuses),
+                pillars=verdict.pillars,
             )
         by_group = _group(computed)
         withheld = withheld_metrics(computed)
@@ -657,11 +658,7 @@ def _synthesize(
                 pillars.score_block(statuses, parsed.ratings, parsed.reasons),
                 used_fallback=False,
             )
-    return _Synthesis(
-        _fallback_assessment(flat_metrics, withheld),
-        pillars.score_block(statuses),
-        used_fallback=True,
-    )
+    return _fallback_synthesis(flat_metrics, statuses, withheld)
 
 
 def _coerce(text: str, scored: Sequence[str]) -> _Parsed | None:
@@ -693,45 +690,83 @@ def _coerce(text: str, scored: Sequence[str]) -> _Parsed | None:
     )
 
 
-def _fallback_assessment(
-    flat: dict[str, float | None], withheld: Mapping[tuple[str, str], str] | None = None
-) -> FundamentalAssessment:
-    score = 50.0
+def facts_only_synthesis(
+    computed: Sequence[tuple[str, MetricResult]],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> _Synthesis:
+    """D1's coverage rule and D3's fallback, without the model.
+
+    The verdict a filing gets when there is no LLM: the measurement scripts
+    (``verify_t148b.py``, ``verify_t149.py``, ``verify_t076.py``) reconstruct a score this way, and
+    it is the same path ``analyze`` takes on an unparseable reply. An applicable `empty` pillar
+    leaves the score empty here too, exactly as in ``analyze``."""
+    statuses = pillars.pillar_statuses(computed)
+    if pillars.empty_pillars(statuses):
+        return _Synthesis(
+            FundamentalAssessment(narrative=unscored_narrative(statuses)),
+            pillars.score_block(statuses),
+            used_fallback=False,
+        )
+    flat = {f"{group}.{result.name}": result.value for group, result in computed}
+    return _fallback_synthesis(flat, statuses, withheld)
+
+
+def _fallback_synthesis(
+    flat: dict[str, float | None],
+    statuses: Mapping[str, pillars.PillarStatus],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> _Synthesis:
+    """D3: the rule-based fallback on the same pillars, with its declared calibrated nudges.
+
+    Each nudge goes to its metric's pillar, so a present pillar's rating is 50 plus and minus its
+    own metrics' points; the valuation nudge (`free_cash_flow_yield`) has no pillar and leaves the
+    score (valuation is out). The total uses the same weights and rounding as the model's answer,
+    and the block stores the same structure, so a fallback row and a model row are read alike."""
+    ratings: dict[str, float] = {pillar: 50.0 for pillar in pillars.scored_pillars(statuses)}
     strengths: list[str] = []
     risks: list[str] = []
     # A value a HARD DQ rule quarantines never scores, in the fallback as in the prompt (T-076, D5).
     blocked = set(withheld or {})
     for key, low, high, points in _SCORE_RULES:
         group, short = key.split(".", 1)
+        pillar = pillars.PILLAR_OF_METRIC.get(short)
+        if pillar is None or pillar not in ratings:
+            continue
         if (group, short) in blocked:
             continue
         value = flat.get(key)
         if value is None:
             continue
         if value >= high:
-            score += points
+            ratings[pillar] += points
             strengths.append(f"{short} {value:.2f}")
         elif value < low:
-            score -= points
+            ratings[pillar] -= points
             risks.append(f"{short} {value:.2f}")
 
     leverage = (
         None if ("leverage", "debt_to_equity") in blocked else flat.get("leverage.debt_to_equity")
     )
-    if leverage is not None and leverage > _HIGH_LEVERAGE:
-        score -= _HIGH_LEVERAGE_PENALTY
+    if leverage is not None and leverage > _HIGH_LEVERAGE and "financial_strength" in ratings:
+        ratings["financial_strength"] -= _HIGH_LEVERAGE_PENALTY
         risks.append(f"debt_to_equity {leverage:.2f}")
 
-    score = max(0.0, min(100.0, score))
-    return FundamentalAssessment(
-        score=score,
-        rating=_rating_for(score),
-        narrative=(
-            "Automated fallback: the language model could not return a usable JSON "
-            "verdict, so this score is derived directly from the computed ratios."
+    # D2's declared scale is 0-100 and a rating is an integer: clamp the nudged pillar.
+    clamped = {pillar: float(max(0, min(100, round(value)))) for pillar, value in ratings.items()}
+    total = pillars.total_from_ratings(clamped, statuses)
+    return _Synthesis(
+        FundamentalAssessment(
+            score=total,
+            rating=_rating_for(total),
+            narrative=(
+                "Automated fallback: the language model could not return a usable JSON "
+                "verdict, so this score is derived directly from the computed ratios."
+            ),
+            strengths=strengths or ["no standout strengths in the computed ratios"],
+            risks=risks or ["no standout risks in the computed ratios"],
         ),
-        strengths=strengths or ["no standout strengths in the computed ratios"],
-        risks=risks or ["no standout risks in the computed ratios"],
+        pillars.score_block(statuses, clamped),
+        used_fallback=True,
     )
 
 

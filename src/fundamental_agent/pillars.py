@@ -89,6 +89,12 @@ PILLARS: dict[str, tuple[str, ...]] = {
 # `financial_strength`. Pinned to the matrix by `tests/test_pillars.py`.
 LIQUIDITY_METRICS: tuple[str, ...] = ("current_ratio", "quick_ratio", "cash_ratio")
 
+# metric name -> the pillar that carries it (D3: the fallback's nudges go to their metric's pillar;
+# the valuation nudge has no pillar and so leaves the score).
+PILLAR_OF_METRIC: dict[str, str] = {
+    metric: pillar for pillar, metrics in PILLARS.items() for metric in metrics
+}
+
 # The pillar that carries APP-09's form rule.
 FINANCIAL_STRENGTH = "financial_strength"
 
@@ -145,11 +151,19 @@ def _metric_index(results: Iterable[tuple[str, MetricResult]]) -> dict[str, Metr
     return {result.name: result for _group, result in results}
 
 
-def _not_applicable(result: MetricResult) -> bool:
-    return bool(result.inputs.get(f"flag_{result.name}_{NOT_APPLICABLE}"))
+def _not_applicable(result: MetricResult | None) -> bool:
+    """A metric with no result at all is not NA: the group did not compute it for this filing
+    (`cagr` yields nothing on a 10-Q), which is an absent reading, not a company-type rule."""
+    return result is not None and bool(result.inputs.get(f"flag_{result.name}_{NOT_APPLICABLE}"))
 
 
-def _empty_reason_of(result: MetricResult) -> str:
+def _has_value(result: MetricResult | None) -> bool:
+    return result is not None and result.value is not None
+
+
+def _empty_reason_of(result: MetricResult | None) -> str:
+    if result is None:
+        return _DEFAULT_EMPTY_REASON
     block = result.inputs.get("provenance")
     if isinstance(block, Mapping):
         reason = block.get("empty_reason")
@@ -180,7 +194,7 @@ def pillar_statuses(results: Iterable[tuple[str, MetricResult]]) -> dict[str, Pi
     unclassified = balance_sheet_unclassified(pairs)
     out: dict[str, PillarStatus] = {}
     for pillar, metrics in PILLARS.items():
-        applicable = tuple(name for name in metrics if not _not_applicable(index[name]))
+        applicable = tuple(name for name in metrics if not _not_applicable(index.get(name)))
         remaining = (
             tuple(name for name in applicable if name not in LIQUIDITY_METRICS)
             if pillar == FINANCIAL_STRENGTH and unclassified
@@ -190,9 +204,8 @@ def pillar_statuses(results: Iterable[tuple[str, MetricResult]]) -> dict[str, Pi
             # Every member metric is NA, or APP-09's three were the pillar's only applicable ones.
             out[pillar] = PillarStatus(pillar, NOT_APPLICABLE)
             continue
-        valued = [name for name in remaining if index[name].value is not None]
-        if not valued:
-            reasons = sorted({_empty_reason_of(index[name]) for name in remaining})
+        if not any(_has_value(index.get(name)) for name in remaining):
+            reasons = sorted({_empty_reason_of(index.get(name)) for name in remaining})
             out[pillar] = PillarStatus(pillar, EMPTY, remaining, ",".join(reasons))
             continue
         dropped = len(applicable) != len(remaining)
