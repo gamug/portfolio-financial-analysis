@@ -647,3 +647,59 @@ def test_the_check_uses_the_steps_own_predicates() -> None:
     assert pending.pipeline._select_filings is pipeline._select_filings
     assert pending.completed_accessions.__module__ == "fundamental_agent.db"
     assert pending.DEFAULT_FORMS is pipeline.DEFAULT_FORMS
+
+
+# -- a leaver: covered through its exit only (T-153 part 3a) ----------------------------------
+
+
+def _leaver(tmp_path: Path, valid_to: str) -> tuple[Path, Path, int]:
+    """A one-line universe whose member left on *valid_to*, with its asset created."""
+    db_path = tmp_path / "fin.db"
+    udb = write_universe_db(tmp_path / "universe.db", [("AAA", "2020-01-01", valid_to)])
+    conn = connect(db_path)
+    ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('AAA', 'AAA Inc.', ?)",
+        (cik_for("AAA"),),
+    )
+    asset_id = int(conn.execute("SELECT id FROM assets").fetchone()["id"])
+    conn.commit()
+    conn.close()
+    return db_path, udb, asset_id
+
+
+def _store_unscored(db_path: Path, asset_id: int, accession: str, filed: str) -> None:
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date, "
+        "accession_number, period_end, retrieved_at, cik, available_at) "
+        "VALUES (?, '10-Q', ?, '2022Q9', ?, ?, ?, 'now', ?, ?)",
+        (
+            asset_id,
+            int(filed[:4]),
+            filed,
+            accession,
+            _period_for(filed),
+            cik_for("AAA"),
+            available_from(filed),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_a_leaver_is_pending_for_a_filing_filed_before_its_exit(tmp_path: Path) -> None:
+    """T-153 part 3a: the window covers a company that left, so its unscored filing counts."""
+    db_path, udb, asset_id = _leaver(tmp_path, "2022-06-15")
+    _store_unscored(db_path, asset_id, "0000000001-22-000001", "2022-05-01")
+    line = pending.pending_line(db_path, udb, D, edgar=FakeEdgar())  # type: ignore[arg-type]
+    assert line.startswith("pending: yes")
+    assert "AAA 10-Q" in line
+
+
+def test_a_filing_after_the_exit_does_not_make_the_leaver_pending(tmp_path: Path) -> None:
+    """T-153 part 3a: nothing filed after the company's exit is fetched, so it is not pending."""
+    db_path, udb, asset_id = _leaver(tmp_path, "2022-06-15")
+    _store_unscored(db_path, asset_id, "0000000001-22-000002", "2022-09-01")
+    line = pending.pending_line(db_path, udb, D, edgar=FakeEdgar())  # type: ignore[arg-type]
+    assert line.startswith("pending: no")

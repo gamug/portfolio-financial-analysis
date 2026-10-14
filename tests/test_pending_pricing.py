@@ -11,7 +11,7 @@ import pytest
 from conftest import cik_for, write_universe_db
 
 from kg_schema import connect
-from kg_schema.queries import members_asof
+from kg_schema.queries import WINDOW_START, members_asof, members_over_range
 from pricing_agent import cli, db, pending
 from pricing_agent.config import Settings
 from pricing_agent.db import PRICE_OBSERVATION_ENGINE_VERSION
@@ -204,10 +204,10 @@ def test_a_member_lacking_the_session_that_the_gateway_has_is_pending(fx: Fx) ->
     pending_, evidence = fx.check(gateway)
     assert pending_
     assert evidence == (
-        f"1 members lack {D} (BBB); the gateway has candles since 2022-01-01 for BBB"
+        f"1 members lack {D} (BBB); the gateway has candles since 2019-01-02 for BBB"
     )
-    # no stored bar: the step's own start date, to S, in one call
-    assert gateway.calls == [("BBB", "2022-01-01", D)]
+    # no stored bar: the step's own start date (T-153 part 3a, D2), to S, in one call
+    assert gateway.calls == [("BBB", "2019-01-02", D)]
 
 
 def test_a_member_several_sessions_behind_is_pending_when_the_gateway_has_older_candles(
@@ -334,3 +334,63 @@ def test_the_subcommand_prints_exactly_one_line(
     )
     out = capsys.readouterr().out
     assert code == 0 and out == f"pending: no 2/2 members at {D}\n"
+
+
+# -- a leaver: checked at its exit session, not the run's (T-153 part 3a) ---------------------
+
+
+def _leaver(tmp_path: Path, valid_to: str, bars: list[str]) -> Settings:
+    """A one-line universe whose member left on *valid_to*, with the given bars + observations."""
+    udb = write_universe_db(tmp_path / "u.db", [("AAA", "2020-01-01", valid_to)])
+    settings = Settings(db_path=tmp_path / "fin.db", universe_db_path=udb)
+    conn = connect(settings.db_path)
+    db.ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO assets (ticker, company_name, cik) VALUES ('AAA', 'AAA Inc.', ?)",
+        (cik_for("AAA"),),
+    )
+    asset_id = int(conn.execute("SELECT id FROM assets").fetchone()["id"])
+    for day in bars:
+        conn.execute(
+            "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 1.0)", (asset_id, day)
+        )
+        conn.execute(
+            "INSERT INTO price_observation (asset_id, obs_date, close, event_time, computed_at, "
+            "engine_version) VALUES (?, ?, 1.0, ?, 'now', ?)",
+            (asset_id, day, day, PRICE_OBSERVATION_ENGINE_VERSION),
+        )
+    conn.commit()
+    conn.close()
+    return settings
+
+
+def _check_leaver(settings: Settings, gateway: FakeGateway, date_: str) -> tuple[bool, str]:
+    ro = connect(settings.db_path, read_only=True)
+    uni = connect(settings.universe_db_path, read_only=True)
+    try:
+        window = members_over_range(uni, ro, WINDOW_START, date_)
+        members = [w.member for w in window]
+        exits = {w.member.symbol.upper(): w.window_to for w in window}
+        return pending.check(ro, members, date_, client=gateway, now=NOW, exits=exits)  # type: ignore[arg-type]
+    finally:
+        ro.close()
+        uni.close()
+
+
+def test_a_leaver_is_checked_at_its_exit_session(tmp_path: Path) -> None:
+    """T-153 part 3a: its exit-session bar is what the line must reach, not the run's session."""
+    settings = _leaver(tmp_path, "2022-10-31", ["2022-10-31"])
+    gateway = FakeGateway()
+    assert _check_leaver(settings, gateway, D) == (False, f"1/1 members at {D}")
+    assert gateway.calls == []  # its exit-session bar is there; no probe for the run's session
+
+
+def test_a_leaver_the_gateway_cannot_serve_past_its_exit_is_not_pending(tmp_path: Path) -> None:
+    """No bar at all, and the gateway has nothing through the exit: dead, not pending."""
+    settings = _leaver(tmp_path, "2022-10-31", [])
+    gateway = FakeGateway()
+    pending_, evidence = _check_leaver(settings, gateway, D)
+    assert not pending_
+    assert evidence == f"0/1 members at {D}; 1 without a gateway candle (AAA)"
+    # the probe ends at the exit session, never at the run's own session
+    assert gateway.calls == [("AAA", "2019-01-02", "2022-10-31")]

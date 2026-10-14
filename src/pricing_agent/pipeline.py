@@ -11,16 +11,21 @@ range, then derives the ``full`` window summary (and per-calendar-year summaries
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
 from kg_schema import connect, rundate, ticker_history
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
-from kg_schema.queries import UniverseMember, connect_ro, members_asof
+from kg_schema.queries import (
+    WINDOW_START,
+    WindowMember,
+    connect_ro,
+    members_over_range,
+)
 from kg_schema.trading_calendar import last_final_session, session_is_open_or_pending
 from pricing_agent import db
 from pricing_agent.config import Settings
@@ -35,7 +40,11 @@ from pricing_agent.observations import build_observations
 from pricing_agent.pricing_client import Candle, DailyPrices, PricingClient
 from pricing_agent.stats import WindowStats, slice_year, summarize
 
-DEFAULT_START_DATE = "2022-01-01"
+# T-153 part 3a (D2): one rule for every company -- prices from 2019-01-02, the backtest
+# window's first session (2022-01-03) minus quant's 756-day ``lookback_days`` (and the 200-day
+# moving average and the 252-day momentum are shorter). A line that left the index is fetched
+# only through its last membership day.
+DEFAULT_START_DATE = "2019-01-02"
 FULL_LABEL = "full"
 
 _Window = tuple[str, str, str, str]  # (ticker, start, end, label)
@@ -68,11 +77,6 @@ class RunParams:
         """The fetch/no-lookahead upper bound: ``--end`` clamped to ``analysis_date``."""
         return min(self.end_date, self.analysis_date) if self.end_date else self.analysis_date
 
-    def years(self) -> list[int]:
-        if not self.by_year:
-            return []
-        return list(range(int(self.start_date[:4]), int(self.resolved_end()[:4]) + 1))
-
 
 @dataclass
 class RunReport:
@@ -90,6 +94,10 @@ class RunReport:
 class _Task:
     asset_id: int
     ticker: str
+    # T-153 part 3a: the line's own fetch window -- from DEFAULT_START_DATE to min(the run's
+    # end, the line's last membership day), so a leaver is fetched nothing after its exit.
+    start: str
+    end: str
 
 
 @dataclass
@@ -118,7 +126,8 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise DirtyTree(
                 f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
             )
-        members = _load_members(settings, params.analysis_date)
+        window = _load_window(settings, conn, params.analysis_date)
+        members = [w.member for w in window]
         sync = db.sync_universe(conn, members)
         _report_adoptions(sync)
         # T-153 part 2: fetch under the line's canonical (current) ticker -- the gateway serves
@@ -137,6 +146,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                     as_of=params.analysis_date,
                 ),
             )
+        exits = {w.member.symbol.upper(): w.window_to for w in window}
         with PricingClient(settings.pricing_base_url) as client:
             assets = db.load_universe(
                 conn, tickers=params.tickers, symbols=symbols, limit=params.limit
@@ -145,7 +155,7 @@ def run(settings: Settings, params: RunParams) -> RunReport:
                 raise RuntimeError(
                     f"no S&P 500 members as of {params.analysis_date} resolved to an asset row"
                 )
-            tasks = [_Task(int(a["id"]), str(a["ticker"])) for a in assets]
+            tasks = [_task(params, a, exits) for a in assets]
             completed: set[_Window] = set() if params.fresh else db.completed_windows(conn)
 
             run_id = db.start_run(
@@ -189,19 +199,41 @@ def _require_closed_session(end: str) -> None:
         )
 
 
-def _load_members(settings: Settings, analysis_date: str) -> list[UniverseMember]:
-    """The S&P 500 constituents as of *analysis_date*, from ``universe.db``."""
+def _load_window(settings: Settings, conn: Database, analysis_date: str) -> list[WindowMember]:
+    """Every company that was a member at any time in ``[WINDOW_START, analysis_date]``.
+
+    One entry per CIK line (T-153 part 3a): the run fetches what every company that was a
+    member in the backtest window needs, leavers included, and the line's ``window_to`` bounds
+    its fetch. ``universe.db`` is membership only; the line comes from the ticker history."""
     uconn = connect_ro(settings.universe_db_path)
     try:
-        members = members_asof(uconn, analysis_date)
+        window = members_over_range(uconn, conn, WINDOW_START, analysis_date)
     finally:
         uconn.close()
-    if not members:
+    if not window:
         raise RuntimeError(
-            f"universe.db ({settings.universe_db_path}) has no members as of {analysis_date}"
+            f"universe.db ({settings.universe_db_path}) has no members in "
+            f"[{WINDOW_START}, {analysis_date}]"
         )
-    tqdm.write(f"universe: {len(members)} S&P 500 members as of {analysis_date}")
-    return members
+    tqdm.write(f"universe: {len(window)} S&P 500 lines in [{WINDOW_START}, {analysis_date}]")
+    return window
+
+
+def _task(params: RunParams, asset: Row, exits: Mapping[str, str | None]) -> _Task:
+    """The fetch window of one asset: from D2's start to min(the run's end, the line's exit)."""
+    ticker = str(asset["ticker"])
+    end = params.resolved_end()
+    exit_date = exits.get(ticker.upper())
+    if exit_date is not None:
+        end = min(end, exit_date)
+    return _Task(int(asset["id"]), ticker, params.start_date, end)
+
+
+def _window_years(start: str, end: str, params: RunParams) -> list[int]:
+    """The per-calendar-year labels a task's own window spans (``--by-year``)."""
+    if not params.by_year:
+        return []
+    return list(range(int(start[:4]), int(end[:4]) + 1))
 
 
 def _report_adoptions(sync: ticker_history.SyncResult) -> None:
@@ -213,14 +245,14 @@ def _report_adoptions(sync: ticker_history.SyncResult) -> None:
         )
 
 
-def _expected_labels(params: RunParams) -> set[str]:
-    return {FULL_LABEL, *(str(year) for year in params.years())}
+def _expected_labels(task: _Task, params: RunParams) -> set[str]:
+    return {FULL_LABEL, *(str(year) for year in _window_years(task.start, task.end, params))}
 
 
 def _run_task(engine: _Engine, task: _Task) -> None:
     params, report, conn = engine.params, engine.report, engine.conn
-    start, end = params.start_date, params.resolved_end()
-    wanted = _expected_labels(params)
+    start, end = task.start, task.end
+    wanted = _expected_labels(task, params)
     have = {label for label in wanted if (task.ticker, start, end, label) in engine.completed}
     if not params.fresh and wanted <= have and not params.store_daily and not params.observations:
         report.skipped += 1
@@ -260,7 +292,7 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 
 def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     params, conn = engine.params, engine.conn
-    start, end = params.start_date, params.resolved_end()
+    start, end = task.start, task.end
     run_id = engine.report.run_id
 
     # No lookahead: drop any candle dated after the analysis date.
@@ -273,7 +305,7 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     full = summarize(candles)
     if full is not None:
         windows.append((FULL_LABEL, full))
-    for year in params.years():
+    for year in _window_years(start, end, params):
         year_stats = summarize(slice_year(candles, year))
         if year_stats is not None:
             windows.append((str(year), year_stats))
@@ -320,7 +352,7 @@ def _reconcile_history(engine: _Engine, task: _Task, fetched: list[Candle]) -> l
     split-shaped jump that is still there afterwards -- or that no recorded split explains -- is
     refused rather than stored, unless ``allow_split_jumps`` accepts it as a real move."""
     params, conn = engine.params, engine.conn
-    end = params.resolved_end()
+    end = task.end
     stored = db.load_daily_candles(conn, task.asset_id, end=end)
     splits = db.recorded_split_values(conn, task.asset_id, end=end)
 
@@ -361,9 +393,8 @@ def _refetch_full(
 ) -> list[Candle]:
     """Re-fetch the asset's whole history (from its first stored bar, or ``--start`` if earlier),
     so a split adjusts every bar at once. Returns *fetched* unchanged if the gateway has nothing."""
-    params = engine.params
-    end = params.resolved_end()
-    start = min(stored[0].date, params.start_date) if stored else params.start_date
+    end = task.end
+    start = min(stored[0].date, task.start) if stored else task.start
     full = engine.client.daily_any_spelling(task.ticker, start, end)
     engine.report.full_refetches.append(task.ticker)
     rewritten = [c for c in full.candles if c.date <= end]

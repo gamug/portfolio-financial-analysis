@@ -53,7 +53,7 @@ from fundamental_agent.failures import classify
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR
 from kg_schema import identity, ticker_history
 from kg_schema.db import connect_ro
-from kg_schema.queries import UniverseMember, members_asof
+from kg_schema.queries import WINDOW_START, UniverseMember, members_over_range
 
 _ACCESSION_PREFIX = re.compile(r"^(\d{10}-\d{2}-\d{6}): ")
 # The stages that record a failed (or unusable) filing. ``label`` is a warning on a stored filing
@@ -115,9 +115,11 @@ def _named(items: Sequence[str]) -> str:
     return shown + (", ..." if len(items) > _SHOWN else "")
 
 
-def _years(analysis_date: str, *, full: bool) -> list[int]:
+def _years(analysis_date: str, *, full: bool, until: str | None = None) -> list[int]:
     last = int(analysis_date[:4])
     first = DEFAULT_SINCE_YEAR if full else max(DEFAULT_SINCE_YEAR, last - 1)
+    if until is not None:
+        last = min(last, int(until[:4]))  # T-153 part 3a: no filing after the company's exit
     return list(range(first, last + 1))
 
 
@@ -196,11 +198,11 @@ class _Judge:
     def _members(self, as_of: str) -> set[str]:
         if as_of not in self._members_by_date:
             # T-153 part 2: canonical tickers, as the step records its errors under (F1).
+            # T-153 part 3a: the run's own scope is every line in the window as of *as_of*, so a
+            # leaver a full run covered is recognised as covered too.
             self._members_by_date[as_of] = {
-                ticker_history.canonical_for_member(
-                    self._conn, symbol=m.symbol, cik=m.cik, as_of=as_of
-                )
-                for m in members_asof(self._universe, as_of)
+                w.member.symbol
+                for w in members_over_range(self._universe, self._conn, WINDOW_START, as_of)
             }
         return self._members_by_date[as_of]
 
@@ -276,12 +278,18 @@ class _Plan:
     # (successor CIK, predecessor CIK) -> effective date, from ``identity.predecessors_of`` as the
     # step reads it (``pipeline._verify_successions``)
     effective: dict[tuple[str, str], str] = field(default_factory=dict)
+    # ticker -> the line's last membership day (T-153 part 3a); None = still a member
+    until: dict[str, str | None] = field(default_factory=dict)
 
 
 def _plan(
-    conn: Database, members: list[UniverseMember], assets: dict[str, object], analysis_date: str
+    conn: Database,
+    members: list[UniverseMember],
+    assets: dict[str, object],
+    analysis_date: str,
+    exits: dict[str, str | None] | None = None,
 ) -> _Plan:
-    plan = _Plan({}, {})
+    plan = _Plan({}, {}, until=dict(exits or {}))
     for m in members:
         cik = identity.normalize_cik(_cik_of(m, assets))
         asset = assets.get(m.symbol)
@@ -292,7 +300,9 @@ def _plan(
             for pred, effective in identity.predecessors_of(conn, cik):
                 plan.effective[(cik, pred)] = effective
         plan.windows[m.symbol] = _years(
-            analysis_date, full=any(full for _, full in plan.ciks[m.symbol])
+            analysis_date,
+            full=any(full for _, full in plan.ciks[m.symbol]),
+            until=plan.until.get(m.symbol.upper()),
         )
     return plan
 
@@ -328,7 +338,9 @@ def _database_clauses(
         (analysis_date,),
     ).fetchall():
         in_scope = r["ticker"] in plan.windows and r["form"] in DEFAULT_FORMS
-        if in_scope and int(str(r["filing_date"])[:4]) >= DEFAULT_SINCE_YEAR:
+        until = plan.until.get(str(r["ticker"]).upper())
+        after_exit = until is not None and str(r["filing_date"]) > until
+        if in_scope and not after_exit and int(str(r["filing_date"])[:4]) >= DEFAULT_SINCE_YEAR:
             sorter.add(str(r["accession_number"]), f"{r['ticker']} {r['form']}")
     for accession, row in errors.items():
         if row.ticker in plan.windows and row.form in DEFAULT_FORMS:
@@ -350,10 +362,13 @@ class _Lister:
 
     def run(self, members: list[UniverseMember]) -> None:
         for m in members:
+            until = self._plan.until.get(m.symbol.upper())
             for cik, full in self._plan.ciks[m.symbol]:
                 if self._unlinked(m, cik):
                     continue
-                for form, year in itertools.product(DEFAULT_FORMS, _years(self._date, full=full)):
+                for form, year in itertools.product(
+                    DEFAULT_FORMS, _years(self._date, full=full, until=until)
+                ):
                     self._list(m, cik, form, year)
                     if self._verdict.pending:
                         self._verdict.partial = True
@@ -401,9 +416,12 @@ class _Lister:
                 self._verdict.unlisted.append(label)
             return
         chain = tuple(c for c, _ in self._plan.ciks[m.symbol])
+        until = self._plan.until.get(m.symbol.upper())
         for ref in refs:
             if not ref.filing_date or ref.filing_date > self._date:
                 continue  # undated, or filed after the analysis date (no lookahead)
+            if until is not None and ref.filing_date > until:
+                continue  # filed after the company's exit (T-153 part 3a)
             if ref.cik is not None and ref.cik not in chain:
                 continue  # another company's filing: the step records it as "identity"
             self._sorter.add(ref.accession_number, f"{m.symbol} {form}")
@@ -419,13 +437,15 @@ def check(
     """The verdict and the member count. *edgar* is only used for clause 3 (and may be
     ``None`` in tests that stop before it)."""
     verdict = Verdict()
-    members = members_asof(universe, analysis_date)
+    window = members_over_range(universe, conn, WINDOW_START, analysis_date)
+    members = [w.member for w in window]
+    exits = {w.member.symbol.upper(): w.window_to for w in window}
     for table in ("assets", "sec_filings", "score_snapshot"):
         if not conn.relation_exists(table):
             verdict.reason = f"no {table} table (fresh database)"
             return verdict, len(members)
     if not members:
-        verdict.reason = f"universe has no members as of {analysis_date}"
+        verdict.reason = f"universe has no members in [{WINDOW_START}, {analysis_date}]"
         return verdict, 0
     assets = {str(r["ticker"]): r for r in conn.execute("SELECT id, ticker, cik FROM assets")}
     members = _canonical_members(conn, members, analysis_date)  # T-153 part 2: by CIK, as of D
@@ -434,7 +454,7 @@ def check(
         verdict.reason = f"{len(keyless)} members lack a CIK ({_named(keyless)})"
         return verdict, len(members)
 
-    plan = _plan(conn, members, assets, analysis_date)
+    plan = _plan(conn, members, assets, analysis_date, exits)
     errors = (
         _latest_errors(conn, analysis_date) if conn.relation_exists("analysis_run_error") else {}
     )

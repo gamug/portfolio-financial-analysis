@@ -49,13 +49,18 @@ def _asset(conn: Database, asset_id: int, ticker: str, cik: str) -> None:
 
 def test_the_file_cites_every_row_and_names_the_canonical_line() -> None:
     rows = {r.symbol: r for r in ticker_history.read_history()}
-    assert len(rows) == 17
+    assert len(rows) == 21
     assert rows["FB"].canonical_symbol == "META"
     assert (rows["FB"].valid_to, rows["META"].valid_from) == ("2022-06-08", "2022-06-09")
     assert rows["DISCA"].canonical_symbol == "WBD"  # SA-1: Series A continues
     assert rows["DISCK"].canonical_symbol == "DISCK"  # Series C ends like a leaver
     assert rows["PSKY"].canonical_symbol == "SKYD"
     assert rows["PSKY"].valid_from == "2025-08-07"  # SA-2: PSKY's first day, never earlier
+    # D4 (part 3a): the post-exit renames -- GPS continues as GAP, FBHS as FBIN.
+    assert rows["GPS"].canonical_symbol == "GAP"
+    assert (rows["GPS"].valid_to, rows["GAP"].valid_from) == ("2024-08-21", "2024-08-22")
+    assert rows["FBHS"].canonical_symbol == "FBIN"
+    assert (rows["FBHS"].valid_to, rows["FBIN"].valid_from) == ("2022-12-14", "2022-12-15")
     for row in rows.values():
         assert row.evidence_url.startswith("http")
         assert row.evidence_date
@@ -64,7 +69,7 @@ def test_the_file_cites_every_row_and_names_the_canonical_line() -> None:
 def test_seed_makes_the_table_equal_the_file(tmp_path: Path) -> None:
     """The file is the source of truth (F5): a changed row is updated, a removed row is deleted."""
     conn = _bare_db()
-    assert ticker_history.seed(conn) == 17
+    assert ticker_history.seed(conn) == 21
     rows = ticker_history.read_history()
     lines = ["cik,symbol,valid_from,valid_to,canonical_symbol,evidence_url,evidence_date,rules"]
     for r in rows:
@@ -79,15 +84,15 @@ def test_seed_makes_the_table_equal_the_file(tmp_path: Path) -> None:
     path = tmp_path / "ticker_history.csv"
     path.write_text("\n".join(lines) + "\n")
 
-    assert ticker_history.seed(conn, path) == 16
+    assert ticker_history.seed(conn, path) == 20
     stored = {
         str(r["symbol"]): (str(r["canonical_symbol"]), r["valid_to"])
         for r in conn.execute("SELECT symbol, canonical_symbol, valid_to FROM ticker_history")
     }
-    assert len(stored) == 16
+    assert len(stored) == 20
     assert stored["FB"] == ("META2", "2022-06-07")  # the changed row took the file's value
     assert "WBD" not in stored  # the deleted row is gone
-    assert ticker_history.seed(conn, path) == 16  # a re-run on the same file changes nothing
+    assert ticker_history.seed(conn, path) == 20  # a re-run on the same file changes nothing
 
 
 def test_the_line_is_resolved_by_cik_and_dated_by_the_symbol() -> None:

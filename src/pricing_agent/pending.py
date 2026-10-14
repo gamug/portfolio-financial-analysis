@@ -29,7 +29,7 @@ from pathlib import Path
 from portfolio_common.db import Database, DatabaseError
 
 from kg_schema.db import connect_ro
-from kg_schema.queries import UniverseMember, members_asof
+from kg_schema.queries import WINDOW_START, UniverseMember, members_over_range
 from kg_schema.ticker_history import canonical_for_member
 from kg_schema.trading_calendar import last_session_on_or_before, session_is_open_or_pending
 from pricing_agent.config import Settings
@@ -60,6 +60,9 @@ class _Scan:
     lack: dict[str, str] = field(
         default_factory=dict
     )  # no bar at S -> where the gateway window starts
+    session: dict[str, str] = field(
+        default_factory=dict
+    )  # ticker -> the session the line must reach (its exit for a leaver)
     no_obs: list[str] = field(default_factory=list)  # a bar but no observation
     split: list[str] = field(default_factory=list)  # pre-split bars, re-fetchable
     refused: list[str] = field(default_factory=list)  # pre-split bars, re-fetch refused
@@ -78,7 +81,13 @@ def _window_start(conn: Database, asset_id: int | None, s: str) -> str:
     return (date.fromisoformat(str(row["d"])) + timedelta(days=1)).isoformat()
 
 
-def _scan(conn: Database, members: list[UniverseMember], s: str, analysis_date: str) -> _Scan:
+def _scan(
+    conn: Database,
+    members: list[UniverseMember],
+    s: str,
+    analysis_date: str,
+    exits: dict[str, str | None] | None = None,
+) -> _Scan:
     ids = {
         str(r["ticker"]).upper(): int(r["id"])
         for r in conn.execute("SELECT id, ticker FROM assets")
@@ -88,34 +97,44 @@ def _scan(conn: Database, members: list[UniverseMember], s: str, analysis_date: 
         # T-153 part 2: resolve the member by CIK to its line's canonical ticker, exactly as the
         # step does -- the bars, the split refusal and the run's errors are all under it (F1).
         ticker = canonical_for_member(conn, symbol=m.symbol, cik=m.cik, as_of=analysis_date)
+        # T-153 part 3a: a line that left the index must reach its own exit session, not the run's
+        # -- nothing after its exit is fetched for it, so the run's session would read as missing.
+        until = (exits or {}).get(m.symbol.upper())
+        member_s = last_session_on_or_before(date.fromisoformat(until)).isoformat() if until else s
         asset_id = ids.get(ticker.upper())
         if (
             asset_id is None
             or not conn.execute(
-                "SELECT 1 FROM price_daily WHERE asset_id = ? AND date = ?", (asset_id, s)
+                "SELECT 1 FROM price_daily WHERE asset_id = ? AND date = ?", (asset_id, member_s)
             ).fetchone()
         ):
-            scan.lack[ticker] = _window_start(conn, asset_id, s)
+            scan.lack[ticker] = _window_start(conn, asset_id, member_s)
         elif not conn.execute(
             "SELECT 1 FROM price_observation WHERE asset_id = ? AND obs_date = ? "
             "AND engine_version = ?",
-            (asset_id, s, PRICE_OBSERVATION_ENGINE_VERSION),
+            (asset_id, member_s, PRICE_OBSERVATION_ENGINE_VERSION),
         ).fetchone():
             scan.no_obs.append(ticker)
+        scan.session[ticker] = member_s
         if asset_id is not None and has_pre_split_rows(conn, asset_id, end=analysis_date):
             (scan.refused if _refused(conn, ticker) else scan.split).append(ticker)
     return scan
 
 
-def check(
+def check(  # noqa: PLR0913 - keyword-only ``exits`` with a default, like ``reconcile``'s fields
     conn: Database,
     members: list[UniverseMember],
     analysis_date: str,
     *,
     client: PricingClient,
     now: datetime | None = None,
+    exits: dict[str, str | None] | None = None,
 ) -> tuple[bool, str]:
-    """``(pending, evidence)``. *client* is only read for clause 1."""
+    """``(pending, evidence)``. *client* is only read for clause 1.
+
+    *exits* (T-153 part 3a) maps a canonical ticker to its line's last membership day: a leaver
+    is checked against its own exit session, not the run's. Without it every member is checked
+    against the run's session, as before."""
     session = last_session_on_or_before(date.fromisoformat(analysis_date))
     s = session.isoformat()
     if session_is_open_or_pending(session, now or datetime.now(tz=UTC)):
@@ -123,9 +142,13 @@ def check(
     for table in ("assets", "price_daily", "price_observation"):
         if not conn.relation_exists(table):
             return True, f"no {table} table (fresh database)"
-    scan = _scan(conn, members, s, analysis_date)
+    scan = _scan(conn, members, s, analysis_date, exits)
     if scan.no_obs:
-        return True, f"{len(scan.no_obs)} members lack the {s} observation ({_named(scan.no_obs)})"
+        when = ", ".join(sorted({scan.session[t] for t in scan.no_obs}))
+        return (
+            True,
+            f"{len(scan.no_obs)} members lack the {when} observation ({_named(scan.no_obs)})",
+        )
     if scan.split:
         return True, (
             f"{len(scan.split)} members hold bars from before a recorded split "
@@ -133,10 +156,10 @@ def check(
         )
     dead: list[str] = []
     for symbol, since in scan.lack.items():
-        if client.daily_any_spelling(symbol, since, s).candles:
+        if client.daily_any_spelling(symbol, since, scan.session[symbol]).candles:
             return True, (
-                f"{len(scan.lack)} members lack {s} ({_named(list(scan.lack))}); "
-                f"the gateway has candles since {since} for {symbol}"
+                f"{len(scan.lack)} members lack {scan.session[symbol]} "
+                f"({_named(list(scan.lack))}); the gateway has candles since {since} for {symbol}"
             )
         dead.append(symbol)
     extras = []
@@ -158,11 +181,13 @@ def pending_line(
     owns = client is None
     gateway = client or PricingClient(settings.pricing_base_url)
     try:
-        members = members_asof(universe, analysis_date)
+        window = members_over_range(universe, conn, WINDOW_START, analysis_date)
+        members = [w.member for w in window]
+        exits = {w.member.symbol.upper(): w.window_to for w in window}
         if not members:
-            return f"pending: yes universe has no members as of {analysis_date}"
+            return f"pending: yes universe has no members in [{WINDOW_START}, {analysis_date}]"
         try:
-            pending, evidence = check(conn, members, analysis_date, client=gateway)
+            pending, evidence = check(conn, members, analysis_date, client=gateway, exits=exits)
         except DatabaseError as exc:  # a partial schema is a P2 doubt
             return f"pending: yes cannot read the database ({exc})"
         return f"pending: {'yes' if pending else 'no'} {evidence}"

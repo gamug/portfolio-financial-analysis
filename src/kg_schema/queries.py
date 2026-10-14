@@ -8,6 +8,9 @@ Read (``universe.db`` -- point-in-time S&P 500 membership, never written here):
                           from here)
     members_asof          open membership stints as of a date, as UniverseMember rows
     symbols_asof           just the ticker symbols from members_asof
+    members_over_range    every company that was a member at any time in a date window,
+                          one entry per CIK line, with the line's own membership span
+                          (T-153 part 3a)
     resolve_asset_ids      member (symbol + CIK) -> assets.id lookup, by the CIK's ticker line
                             as of a date (T-153 part 2; `json_each`, never inserts)
 
@@ -45,7 +48,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -69,6 +72,10 @@ from .ddl import (
 from .identity import normalize_cik
 
 SUPPORTED_UNIVERSE = "SP500"
+
+#: The backtest window's first session (T-153 part 3a): every ingestion step must cover
+#: every company that was a member at any time from here to the run's analysis date.
+WINDOW_START = "2022-01-03"
 
 VERSION_DDL = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -166,6 +173,97 @@ def symbols_asof(
 ) -> list[str]:
     """Just the ticker symbols with a stint covering *analysis_date*, sorted."""
     return [m.symbol for m in members_asof(universe_db, analysis_date, universe=universe)]
+
+
+@dataclass(frozen=True)
+class WindowMember:
+    """One CIK line that was a member at some point in a date window (T-153 part 3a).
+
+    *member* is the line's representative stint -- the latest one inside the window, its
+    ``symbol`` the line's canonical (part 2) -- so ``sync_universe`` stores it like any
+    member. ``window_from``/``window_to`` are the line's own membership span inside the
+    window (``window_to is None`` = still a member), the bound every ingestion step
+    fetches to: nothing filed or traded after ``window_to`` is fetched for the line.
+    """
+
+    member: UniverseMember
+    window_from: str
+    window_to: str | None
+    stints: int
+
+
+def members_over_range(
+    universe_db: Database,
+    fin_db: Database,
+    start: str,
+    end: str,
+    *,
+    universe: str = SUPPORTED_UNIVERSE,
+) -> list[WindowMember]:
+    """Every company that was a member at any time in ``[start, end]`` (T-153 part 3a).
+
+    One entry per **CIK line** (part 2, APP-10a): a company's several stints collapse to one
+    line (CDAY then DAY is one asset), while coexisting share classes stay separate lines
+    (DISCA continues as WBD and is one line; DISCK is another). *fin_db* is read for the
+    tracked ticker history (``ticker_history``), which names each line's canonical symbol;
+    ``universe_db`` is read strictly as membership, never as identity.
+
+    ``window_from`` is clamped to *start* and ``window_to`` is ``None`` for a line still a
+    member at *end* -- the caller bounds its fetch by the line's own span, so a company that
+    left gets nothing dated after its exit. Sorted by canonical symbol."""
+    _check_universe(universe)
+    rows = universe_db.execute(
+        """
+        SELECT symbol, security, cik, gics_sector, gics_sub_industry,
+               hq_location, date_added, founded, valid_from, valid_to
+        FROM universe_membership
+        WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
+        ORDER BY symbol, valid_from
+        """,
+        (end, start),
+    ).fetchall()
+
+    grouped: dict[tuple[str, str], list[UniverseMember]] = {}
+    order: list[tuple[str, str]] = []
+    for r in rows:
+        stint = UniverseMember(
+            symbol=str(r["symbol"]),
+            security=str(r["security"]),
+            cik=r["cik"],
+            gics_sector=r["gics_sector"],
+            gics_sub_industry=r["gics_sub_industry"],
+            hq_location=r["hq_location"],
+            date_added=r["date_added"],
+            founded=r["founded"],
+            valid_from=str(r["valid_from"]),
+            valid_to=r["valid_to"],
+        )
+        canonical = ticker_history.canonical_for_member(fin_db, symbol=stint.symbol, cik=stint.cik)
+        own = normalize_cik(stint.cik)
+        # A CIK's line is keyed by (CIK, canonical); a member with no CIK is its own line.
+        key = (own, canonical.upper()) if own is not None else ("", canonical.upper())
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(stint)
+
+    out: list[WindowMember] = []
+    for key in order:
+        stints = grouped[key]
+        representative = max(stints, key=lambda s: (s.valid_from, s.symbol))
+        canonical = ticker_history.canonical_for_member(
+            fin_db, symbol=representative.symbol, cik=representative.cik
+        )
+        if canonical != representative.symbol:
+            representative = replace(representative, symbol=canonical)
+        window_from = max(min(s.valid_from for s in stints), start)
+        window_to = (
+            None
+            if any(s.valid_to is None for s in stints)
+            else max(s.valid_to for s in stints if s.valid_to is not None)
+        )
+        out.append(WindowMember(representative, window_from, window_to, len(stints)))
+    return sorted(out, key=lambda w: w.member.symbol)
 
 
 def resolve_asset_ids(
@@ -820,8 +918,10 @@ def invalid_sec_filings_accessions(db: Database) -> list[dict[str, Any]]:
 
 __all__ = [
     "SUPPORTED_UNIVERSE",
+    "WINDOW_START",
     "StaleAsOf",
     "UniverseMember",
+    "WindowMember",
     "check_coverage",
     "connect_ro",
     "current_version",
@@ -829,6 +929,7 @@ __all__ = [
     "invalid_sec_filings_accessions",
     "last_price_date",
     "members_asof",
+    "members_over_range",
     "persist_coverage",
     "reconcile",
     "record",

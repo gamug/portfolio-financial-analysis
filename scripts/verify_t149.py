@@ -47,7 +47,7 @@ from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.pipeline import RunParams
 from fundamental_agent.statements import REGISTRY, Statements, _parse_period
 from kg_schema import connect, ensure, identity, queries
-from kg_schema.queries import UniverseMember
+from kg_schema.queries import WINDOW_START, UniverseMember, WindowMember
 from kg_schema.versions import MetricVersions, resolve_metric_versions
 from pricing_agent import db as pricing_db
 from pricing_agent.observations import build_observations
@@ -317,9 +317,11 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         args.members_from_prod
     ):  # a cohort outside the pilot universe: the production assets, as members
         members = _members_of(prod, tickers)
-        pipeline._load_members = lambda _s, _d: members  # type: ignore[assignment]
+        pipeline._load_window = lambda _s, _c, _d: [  # type: ignore[assignment]
+            WindowMember(m, WINDOW_START, None, 1) for m in members
+        ]
     else:
-        members = pipeline._load_members(settings, args.analysis_date)
+        members = [w.member for w in pipeline._load_window(settings, conn, args.analysis_date)]
     db.sync_universe(conn, [m for m in members if m.symbol in tickers])
     pricing_db.ensure_schema(conn)
     conn.execute("PRAGMA foreign_keys = OFF")
@@ -613,7 +615,9 @@ def cmd_twitter(args: argparse.Namespace) -> int:
         "2013-11-07",
         "2022-10-28",
     )
-    pipeline._load_members = lambda _s, _d: [twitter]  # type: ignore[assignment]
+    pipeline._load_window = lambda _s, _c, _d: [  # type: ignore[assignment]
+        WindowMember(twitter, twitter.valid_from, twitter.valid_to, 1)
+    ]
     pipeline.FundamentalAnalyst = _FactsOnlyAnalyst  # type: ignore[misc,assignment]
     pipeline.build_model = lambda _s: None  # type: ignore[assignment]
     report = pipeline.run(
