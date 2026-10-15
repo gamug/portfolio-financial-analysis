@@ -122,35 +122,77 @@ def test_the_cover_page_symbols_are_staged_for_every_row_with_a_10k() -> None:
             assert row["last_10k_accession"]
 
 
-def test_the_multi_class_rows_under_the_cover_page_rule() -> None:
-    """A leaver is multi-class when its last 10-K's cover registers more than one class -- the
-    classification in force on its last membership day, not the submissions file's live list."""
-    multi = {r["symbols"] for r in _rows() if len(r["cover_symbols"].split(" | ")) > 1}
-    assert multi == {
-        "BIO",
-        "TAP",
-        "K",
-        "LNC",
-        "VFC",
-        "ZION",
-        "SIVB",
-        "VNO",
-        "BWA",
-        "EMN",
-        "LKQ",
-        "CE",
-        "UA/UAA",
-        "PBCT",
-        "DISCA/DISCK/WBD",
-        "WBA",
-        "DXC",
-        "CTVA",
-    }
+def test_the_multi_class_rows_count_common_equity_classes_only() -> None:
+    """A leaver is multi-class when its last 10-K's cover registers more than one **class of common
+    stock** (MKT-03; C6 p.9, C11) -- the classification in force on its last membership day, not the
+    submissions file's live list, and never its registered notes or preferred series."""
+    multi = {r["symbols"] for r in _rows() if len(r["cover_classes"].split(" | ")) > 1}
+    assert multi == {"BIO", "TAP", "UA/UAA"}
+    by_symbol = {r["symbols"]: r for r in _rows()}
+    # TAP's two classes, with its 2032 note beside them; WBD's and CTVA's second symbols are a
+    # note series and preferred series, so neither is multi-class (reviewer B's expectation)
+    assert by_symbol["TAP"]["cover_symbols"] == "TAP.A | TAP | TAP 32"
+    assert by_symbol["TAP"]["cover_classes"] == "TAP.A | TAP"
+    assert by_symbol["DISCA/DISCK/WBD"]["cover_symbols"] == "WBD | WBDI30 | WBDI33"
+    assert by_symbol["DISCA/DISCK/WBD"]["cover_classes"] == "WBD"
+    assert by_symbol["CTVA"]["cover_symbols"] == "CTVA | CTAPrA | CTAPrB"
+    assert by_symbol["CTVA"]["cover_classes"] == "CTVA"
+    assert by_symbol["K"]["cover_classes"] == "K"
     # Discovery's own classes (DISCA/DISCB/DISCK) are not the reason: the CIK's last 10-K is
     # WBD's (it left on 2026-10-05), whose cover registers WBD and two note series
-    discovery = next(r for r in _rows() if r["cik"] == "0001437107")
-    assert discovery["cover_symbols"] == "WBD | WBDI30 | WBDI33"
-    assert discovery["last_10k_accession"] == "0001437107-26-000020"
+    assert by_symbol["DISCA/DISCK/WBD"]["last_10k_accession"] == "0001437107-26-000020"
+
+
+def test_is_common_equity_reads_the_cover_title() -> None:
+    """MKT-03 counts share classes: common stock (Class A/B/C included) is one; a note, debenture,
+    preferred or depositary share, a warrant or a right is not."""
+    for title in (
+        "Common Stock",
+        "Common Stock, par value $0.01 per share",
+        "Class A Common Stock",
+        "Class B Common Stock Par Value $0.0001 per share",
+        "Class&#160;A Common Stock, $0.01 par value",
+        "Common Shares of beneficial interest, $.04 par value per share",
+        "Series A Common Stock",
+    ):
+        assert staged_script.is_common_equity(title), title
+    for title in (
+        "3.800% Senior Notes due 2032",
+        "1.250% Senior Notes due 2025",
+        "1.875% Notes Due 2026",
+        "Depositary Shares, each representing a 1/1000th interest in a share",
+        "Series A Floating-Rate Non-Cumulative Perpetual Preferred Stock",
+        "5.40% Series L",
+        "Fixed-to-Floating Rate Non-Cumulative Perpetual Preferred Stock, Series A, $0.01",
+        "Common Stock Purchase Warrants",
+        "",
+    ):
+        assert not staged_script.is_common_equity(title), title
+
+
+def test_cover_rows_pairs_each_symbol_with_its_title() -> None:
+    """The cover's table rows: a title cell then its symbol cell."""
+    html = (
+        '<ix:nonNumeric name="dei:Security12bTitle">Class A Common Stock</ix:nonNumeric>'
+        '<ix:nonNumeric name="dei:TradingSymbol">TAP.A</ix:nonNumeric>'
+        '<ix:nonNumeric name="dei:Security12bTitle">Class B Common Stock</ix:nonNumeric>'
+        '<ix:nonNumeric name="dei:TradingSymbol">TAP</ix:nonNumeric>'
+        '<ix:nonNumeric name="dei:Security12bTitle">3.800% Senior Notes due 2032</ix:nonNumeric>'
+        '<ix:nonNumeric name="dei:TradingSymbol">TAP 32</ix:nonNumeric>'
+    )
+
+    class FakeClient:
+        def get_document(self, cik: str, accession: str, name: str) -> str:
+            return html
+
+    filing = {"accessionNumber": "a", "primaryDocument": "d"}
+    assert staged_script.cover_rows(FakeClient(), "1", filing) == [
+        ("Class A Common Stock", "TAP.A"),
+        ("Class B Common Stock", "TAP"),
+        ("3.800% Senior Notes due 2032", "TAP 32"),
+    ]
+    assert staged_script.cover_classes(FakeClient(), "1", filing) == ["TAP.A", "TAP"]
+    assert staged_script.cover_symbols(FakeClient(), "1", filing) == ["TAP.A", "TAP", "TAP 32"]
 
 
 def test_cover_symbols_reads_the_inline_xbrl_facts() -> None:

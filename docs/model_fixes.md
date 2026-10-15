@@ -8880,8 +8880,9 @@ corrected in the fix round): APP-00 says "confirmed by the **10-K's** statement 
 2023-02-16) — not the 10-Q `0000059558-23-000047` the first measurement used. It carries
 `us-gaap_PremiumsEarnedNet` and **no** `us-gaap_AssetsCurrent`, so `premium_statement_form(facts)` is
 `True` (measured on the R2 copy; the 10-Q carries the same shape, 89 vs 97 stored facts). The
-profile's `basis` says the form is confirmed on the run that ingests the filing, because the pilot
-database holds no facts for a leaver. The 10-K method's gap (`HOLDING_PHRASE` cannot match a bank that is itself the registrant)
+profile's `basis` now cites that accession and those two facts
+(`STATEMENT_FORM_CONFIRMED` in `scripts/build_company_profile.py`), so an insurer whose form has not
+been measured yet keeps the "confirmed on the run that ingests its filings" wording. The 10-K method's gap (`HOLDING_PHRASE` cannot match a bank that is itself the registrant)
 is **not** widened: every bank leaver was checked by hand (CMA, SIVB, PBCT, DFS and ZION's own "is a
 bank headquartered in Salt Lake City" sentence are the staged evidence; the method's false positive
 on DRE was already removed in part 3a), and no current member's type is touched.
@@ -8893,6 +8894,12 @@ no Article 9 statement exists, and APP-00's other-financial codes (`40201020/40/
 is flagged `company_type_unknown` — and they have no filings, so nothing is measurable. The rule is
 in `scripts/sec_xcheck/company_types.py:BANK_SUB_INDUSTRIES` and the omission is printed by the
 generator.
+
+**The interval convention (reviewer B's fix round).** The profile's ``valid_to`` is **exclusive**
+— the day after the last membership day, because ``CompanyProfile.covers`` is
+``valid_from <= day < valid_to`` — while ``universe_history.db``'s ``valid_to`` is the last membership
+day, **inclusive**. The generated CSV's header says so, and a boundary test pins it: a leaver's profile
+covers its last membership day and not the next.
 
 **D4 — the interval, on the real data.** The earliest period end among the leavers' D-10 filings is
 **2021-11-28** (LW and CAG, whose fiscal years end in late November), and the latest is at or before
@@ -8935,17 +8942,27 @@ reclassification after an exit is not applied.* With it:
 * **the one pre-2023 label** — PBCT's `Thrifts & Mortgage Finance`, resolved from its own 10-K;
 * **the multi-class overlay is the cover page of the last 10-K on or before the exit** — the SEC's
   point-in-time class list, not the submissions file's live `tickers` (which shows the company as it
-  is today). **18 leavers** are multi-class under it: BIO, CE, CTVA, DXC, EMN, K, LKQ, LNC, PBCT,
-  SIVB, TAP, UA/UAA, VFC, VNO, WBA, WBD (CIK 0001437107), ZION. The overlay counts every registered
-  security the cover lists, preferred and note series included — the same breadth the current
-  members' rule has. **CIK 0001437107's row is WBD's**: its last 10-K is the FY2025 one (cover: WBD,
-  WBDI30, WBDI33), so DISCA/DISCK's 2022 classes do not count for it;
-* **10 leavers' cover-page symbol sets changed inside the window**
-  (`scripts/leaver_cover_classes.py` → `docs/leaver_cover_classes.json`, 865 filings read): BIO
-  (`BIOb` → `BIO.B`, a spelling of the same class), CDAY/DAY (the rename `CDAY` → `DAY`, already one
-  asset in `ticker_history`), TAP, K, VFC, EMN, LKQ, CE (note series maturing or registered), LNC
-  (`LNC PRD` added) and **DISCA/DISCK/WBD** (the merger: DISCA, DISCB, DISCK → WBD) — the only
-  *common-class* change, and the overlay takes the set in force at the exit;
+  is today) — and it counts **classes of common stock only** (MKT-03; C6 p.9, C11): a cover row is a
+  class when its `dei:Security12bTitle` names common stock (Class A/B/C included), never when it names
+  a note, debenture, preferred or depositary share, a warrant or a right. **3 leavers** are
+  multi-class under it: **BIO** (Class A/Class B), **TAP** (`TAP.A`/`TAP`) and **UA/UAA** (Class A/
+  Class C). Reviewer B's fix round: the first measurement counted **every** registered security, which
+  made 18 leavers multi-class and 15 of them wrong — **K, LNC, VFC, ZION, SIVB, VNO, BWA, EMN, LKQ,
+  CE, PBCT, WBD, WBA, DXC and CTVA** each had a note series (K, VFC, BWA, EMN, LKQ, CE, WBA, DXC,
+  WBD's WBDI30/WBDI33), a preferred series (ZION, SIVB, PBCT, CTVA's CTAPrA/CTAPrB), a depositary
+  share (LNC's `LNC PRD`) or a Series L–O preferred (VNO) beside their common stock, and are **not**
+  multi-class. **The current members' rows still count every listed ticker** (the submissions file's
+  `tickers`: 75 rows) — a **temporary difference**, declared here: the leavers count common classes
+  only, the current members count every listed ticker until `T-071` part 2b revisits their rule
+  (stream A's). **CIK 0001437107's row is WBD's**: its last 10-K is the FY2025 one (cover: WBD,
+  WBDI30, WBDI33 — one class), so DISCA/DISCK's 2022 classes do not count for it;
+* **3 leavers' cover-page class sets changed inside the window**
+  (`scripts/leaver_cover_classes.py` → `docs/leaver_cover_classes.json`, 865 filings read, the changes
+  computed on the common-equity classes): BIO (`BIOb` → `BIO.B`, a spelling of the same class),
+  CDAY/DAY (the rename `CDAY` → `DAY`, already one asset in `ticker_history`) and **DISCA/DISCK/WBD**
+  (the merger: DISCA, DISCB, DISCK → WBD) — the only economic class change; the overlay takes the set
+  in force at the exit. The note/preferred churn that the raw symbols showed (TAP, K, VFC, EMN, LKQ,
+  CE, LNC, WBA) is not a class change and is gone from this list;
 * **the 2 untyped** — SBNY and FRC (above);
 * **the 5 replaced rows** — BLDR, CTVA, TAP, TTD, WBD (above).
 
@@ -8967,7 +8984,8 @@ the module is `n_multi_class`, a count of the classes it summed (`market_cap.py:
 overlay is read in exactly one place, `applicability.active_columns`
 (`kg_schema/applicability.py:83`), where it adds the matrix's `multi_class` column (ADJ on the six
 MKT-03 metrics). Worked example, Discovery's FY2021 10-K (`0001437107-22-000031`, period end
-2021-12-31, available 2022-02-25) on a date before 2022-04-11: its cover files three classes —
+2021-12-31, available 2022-02-25) on a date before 2022-04-11: its cover files three classes of
+common stock (DISCA, DISCB, DISCK; MKT-03's reader takes them from the filing's own cover counts) —
 `us-gaap:CommonClassAMember` 169,580,151, `us-gaap:CommonClassBMember` 6,511,917,
 `us-gaap:CommonClassCMember` 330,153,753, as of 2022-02-10 — which `cover_total` sums to
 **506,245,821** shares (`n_classes` 3); the close is the asset's last one on or before 2022-03-31,

@@ -47,7 +47,7 @@ def test_a_leaver_keeps_no_row_when_no_cell_of_app00_applies() -> None:
         assert profile_as_of(cik) is None
 
 
-def test_a_leavers_interval_is_the_day_after_its_last_membership_day() -> None:
+def test_a_leavers_interval_covers_its_last_membership_day_and_not_the_next() -> None:
     staged, rows = _staged(), profiles()
     for cik, row in staged.items():
         profile = rows.get(cik)
@@ -58,12 +58,21 @@ def test_a_leavers_interval_is_the_day_after_its_last_membership_day() -> None:
             profile.valid_to
             == (date.fromisoformat(row["exit_date"]) + timedelta(days=1)).isoformat()
         )
-        # half-open (`covers` is `valid_from <= day < valid_to`): the exit day is inside, the next
-        # day is not -- and the whole of a D-10 filing's period end (from before 2022 to the exit)
-        # is covered, which is what the reader asks with
-        assert profile.covers(row["exit_date"])
+        # The boundary: this file's ``valid_to`` is EXCLUSIVE (`covers` is
+        # `valid_from <= day < valid_to`), while the universe file's ``valid_to`` is the last
+        # membership day, INCLUSIVE. So the profile covers the last membership day itself and not
+        # the day after it -- and the whole of a D-10 filing's period end (from before 2022 to the
+        # exit) is covered, which is what the reader asks with.
+        assert (
+            profile.valid_to
+            == (date.fromisoformat(row["exit_date"]) + timedelta(days=1)).isoformat()
+        )
+        assert profile.covers(row["exit_date"])  # the last membership day
+        assert not profile.covers(profile.valid_to)  # the next day
+        assert not profile.covers(
+            (date.fromisoformat(row["exit_date"]) + timedelta(days=2)).isoformat()
+        )
         assert profile.covers(profile.valid_from)
-        assert not profile.covers(profile.valid_to)
 
 
 def test_a_current_members_interval_stays_open() -> None:
@@ -107,12 +116,16 @@ def test_a_leavers_sector_and_label_come_from_the_delivered_file() -> None:
         assert profile.sub_industry == (row["gics_sub_industry"] or None)
 
 
-def test_the_multi_class_overlay_comes_from_the_cover_page() -> None:
-    """The share classes registered on the last 10-K's cover (L-03/L-11's classification in force
-    on the last membership day), not the submissions file's live ticker list."""
+def test_the_multi_class_overlay_comes_from_the_cover_pages_classes() -> None:
+    """The **common-equity** classes registered on the last 10-K's cover (L-03/L-11's classification
+    in force on the last membership day; MKT-03, C6 p.9, C11), not the submissions file's live
+    ticker list and not the cover's notes or preferred series."""
     staged, rows = _staged(), profiles()
     for cik, row in staged.items():
         profile = rows.get(cik)
         if profile is None:
             continue
-        assert profile.multi_class == (len(row["cover_symbols"].split(" | ")) > 1)
+        assert profile.multi_class == (len(row["cover_classes"].split(" | ")) > 1)
+    assert [rows[c].multi_class for c in ("0000012208", "0000024545", "0001336917")] == [True] * 3
+    for cik in ("0001755672", "0001437107"):  # CTVA's preferred series, WBD's note series
+        assert rows[cik].multi_class is False

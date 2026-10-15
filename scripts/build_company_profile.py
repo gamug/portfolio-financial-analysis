@@ -73,6 +73,15 @@ BASE_TYPES = ("operating", "article_9", "article_7", "other_financial", "multi_s
 #: The cover-page symbol separator in the staged evidence (a symbol may itself contain "/").
 COVER_SEPARATOR = " | "
 
+#: The insurers whose APP-00 statement form has been confirmed on the **10-K's own facts**, and how
+#: (T-153 part 3b). Measured on the R2 copy, 2026-10-15: LNC's FY2022 10-K (accession
+#: ``0000059558-23-000009``, period end 2022-12-31, filed 2023-02-16) carries
+#: ``us-gaap_PremiumsEarnedNet`` and **no** ``us-gaap_AssetsCurrent``, so
+#: ``premium_statement_form(facts)`` is ``True`` (the 10-K the staged evidence names).
+STATEMENT_FORM_CONFIRMED: dict[str, tuple[str, str]] = {
+    "0000059558": ("0000059558-23-000009", "PremiumsEarnedNet present, AssetsCurrent absent"),
+}
+
 
 def _header(source_sha256: str, leaver_sha256: str, member_sha256: str) -> list[str]:
     """The comment lines above the CSV header: the generator, the sources and their sha256."""
@@ -86,6 +95,9 @@ def _header(source_sha256: str, leaver_sha256: str, member_sha256: str) -> list[
         f" interval per row (a current member and a later joiner: valid_from {WINDOW_START}, valid_to"
         " empty = still current, L-03; a leaver: valid_to = the day after its last membership day,"
         " T-153 part 3b).",
+        "# Interval convention: this file's valid_to is EXCLUSIVE (CompanyProfile.covers is"
+        " `valid_from <= day < valid_to`), while universe_history.db's valid_to is the last"
+        " membership day, INCLUSIVE.",
     ]
 
 
@@ -118,9 +130,15 @@ def _member_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
         code = GICS_FINANCIAL_CODES.get(sub, "")
         kind, basis = classify(sub, sector, article_9=article_9)
         if kind == "article_7":
+            confirmed = STATEMENT_FORM_CONFIRMED.get(row["cik"])
             basis = (
-                f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
-                "facts on the run that ingests its filings (no facts for a new member here)"
+                f"GICS {code} (insurer); the statement form is confirmed on {confirmed[0]}"
+                f" ({confirmed[1]})"
+                if confirmed
+                else (
+                    f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
+                    "facts on the run that ingests its filings (no facts for a new member here)"
+                )
             )
         citation = f"GICS {sub}, the open stint from {row['joined_date']} (L-03: today's snapshot)"
         tickers = [t for t in row["live_tickers"].split("/") if t]
@@ -171,12 +189,18 @@ def _leaver_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
         code = GICS_FINANCIAL_CODES.get(sub, "")
         kind, basis = classify(sub, sector, article_9=article_9)
         if kind == "article_7":
-            # APP-00 confirms an insurer's type from the 10-K's statement form, which this
-            # database cannot hold for a leaver (no facts of its own): the confirmation is made on
-            # the run that ingests its filings (T-153 part 3b, R2).
+            # APP-00 confirms an insurer's type from the **10-K's** statement form. Where that has
+            # been measured it is cited with the accession and the facts; otherwise the confirmation
+            # is made on the run that ingests the filing (T-153 part 3b, R2).
+            confirmed = STATEMENT_FORM_CONFIRMED.get(row["cik"])
             basis = (
-                f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
-                "facts on the run that ingests its filings (no facts for a leaver here)"
+                f"GICS {code} (insurer); the statement form is confirmed on {confirmed[0]}"
+                f" ({confirmed[1]})"
+                if confirmed
+                else (
+                    f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
+                    "facts on the run that ingests its filings (no facts for a leaver here)"
+                )
             )
         citation = (
             f"GICS {sub} at the last membership day {row['exit_date']}"
@@ -199,7 +223,7 @@ def _leaver_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
                 "evidence_quote": html.unescape(row["evidence_quote"]),
                 "reit": str(is_reit(sector, sub)),
                 "negative_equity_latest": "",  # the pilot database holds no facts for a leaver
-                "multi_class_listed": str(len(row["cover_symbols"].split(COVER_SEPARATOR)) > 1),
+                "multi_class_listed": str(len(row["cover_classes"].split(COVER_SEPARATOR)) > 1),
                 "needs_override": "False",
                 "regulated_utility": str(sub in REGULATED_UTILITY_SUB_INDUSTRIES),
                 "valid_from": WINDOW_START,

@@ -59,16 +59,25 @@ FIELDS = [
     "article_9",
     "evidence_quote",
     "cover_symbols",
+    "cover_classes",
     "note",
 ]
 
-#: The XBRL cover page's registered trading symbols (T-153 part 3b, reviewer A): the SEC's own
+#: The XBRL cover page's registered securities (T-153 part 3b, reviewers A and B): the SEC's own
 #: **point-in-time** class list for the CIK, unlike the submissions file's `tickers`, which shows
-#: the company as it is today. ``dei:TradingSymbol`` is an inline-XBRL fact on the 10-K's cover.
-COVER_SYMBOL = re.compile(r'name\s*=\s*"dei:TradingSymbol"', re.IGNORECASE)
+#: the company as it is today. Each cover row is a ``dei:Security12bTitle`` (what the security is)
+#: and a ``dei:TradingSymbol`` (how it trades) -- both inline-XBRL facts on the 10-K's cover.
+COVER_FACT = re.compile(r'name\s*=\s*"dei:(Security12bTitle|TradingSymbol)"', re.IGNORECASE)
 COVER_CLOSE = re.compile(r"</ix:nonNumeric\s*>", re.IGNORECASE)
 #: A cover row's symbol is short ("CE /26A" is the longest seen); anything longer is not one.
 MAX_COVER_SYMBOL = 24
+#: MKT-03 counts **share classes**: a cover row is one only when its title names common stock (or
+#: Class A/B/C common shares). A registered note, debenture, preferred or depositary share is not a
+#: class of common stock (C6 p.9, C11), so it does not make a company multi-class.
+COMMON_TITLE = re.compile(r"\bcommon (?:stock|shares)\b", re.IGNORECASE)
+NOT_COMMON_TITLE = re.compile(
+    r"\b(?:notes?|debentures?|preferred|depositary|warrants?|rights?|units?)\b", re.IGNORECASE
+)
 
 
 def leaver_ciks(universe: Any, window_start: str = WINDOW_START) -> list[dict[str, str]]:
@@ -150,27 +159,64 @@ def leaver_labels(universe: Any, window_start: str = WINDOW_START) -> dict[str, 
     return {cik: {k: v for k, v in entry.items() if k != "valid_to"} for cik, entry in out.items()}
 
 
-def cover_symbols(client: Any, cik: str, filing: dict[str, Any]) -> list[str]:
-    """The trading symbols registered on the 10-K's cover page, in document order (D7).
+def _cover_text(primary: str, match: re.Match[str]) -> str:
+    """The text of the inline-XBRL fact *match* starts, entities decoded and whitespace collapsed."""
+    gt = primary.find(">", match.end())
+    if gt < 0:
+        return ""
+    close = COVER_CLOSE.search(primary, gt)
+    body = primary[gt + 1 : close.start()] if close else primary[gt + 1 : gt + 200]
+    return re.sub(r"[\s\u00a0]+", " ", html.unescape(re.sub(r"<[^>]+>", "", body))).strip()
 
-    The SEC's own **point-in-time** class list: the inline-XBRL ``dei:TradingSymbol`` facts of the
-    filing's primary document. Unlike the submissions file's ``tickers`` (which shows the company
-    as it is today), this is the cover of the 10-K the company filed while it was still a member.
-    One entry per fact (a cover row is one registered class, even when the symbol is written with a
-    space), distinct, in first-seen order; empty when the document is not cached."""
+
+def cover_rows(client: Any, cik: str, filing: dict[str, Any]) -> list[tuple[str, str]]:
+    """The cover page's ``(Security12bTitle, TradingSymbol)`` rows, in document order (D7).
+
+    One entry per registered security: each ``dei:TradingSymbol`` with the nearest preceding
+    ``dei:Security12bTitle`` (the cover's table row). Empty when the document is not cached."""
     primary = client.get_document(cik, filing["accessionNumber"], filing["primaryDocument"])
     if not primary:
         return []
+    out: list[tuple[str, str]] = []
+    title = ""
+    for match in COVER_FACT.finditer(primary):
+        text = _cover_text(primary, match)
+        if match.group(1).lower() == "security12btitle":
+            title = text
+        elif text and len(text) <= MAX_COVER_SYMBOL:
+            out.append((title, text))
+    return out
+
+
+def is_common_equity(title: str) -> bool:
+    """Whether a cover row's title is a class of **common stock** (MKT-03; C6 p.9, C11).
+
+    A registered note, debenture, preferred or depositary share, a warrant or a right is not one,
+    so it never makes a company multi-class."""
+    return bool(COMMON_TITLE.search(title)) and not NOT_COMMON_TITLE.search(title)
+
+
+def cover_symbols(client: Any, cik: str, filing: dict[str, Any]) -> list[str]:
+    """Every trading symbol registered on the 10-K's cover page, distinct, in document order (D7).
+
+    The raw evidence (all registered securities, notes and preferred included); the multi-class
+    overlay reads :func:`cover_classes`."""
     out: list[str] = []
-    for match in COVER_SYMBOL.finditer(primary):
-        gt = primary.find(">", match.end())
-        if gt < 0:
-            continue
-        close = COVER_CLOSE.search(primary, gt)
-        body = primary[gt + 1 : close.start()] if close else primary[gt + 1 : gt + 200]
-        text = re.sub(r"[\s\u00a0]+", " ", html.unescape(re.sub(r"<[^>]+>", "", body))).strip()
-        if text and len(text) <= MAX_COVER_SYMBOL and text.upper() not in {s.upper() for s in out}:
-            out.append(text)
+    for _title, symbol in cover_rows(client, cik, filing):
+        if symbol.upper() not in {s.upper() for s in out}:
+            out.append(symbol)
+    return out
+
+
+def cover_classes(client: Any, cik: str, filing: dict[str, Any]) -> list[str]:
+    """The **common-equity** classes the 10-K's cover page registers, distinct, in document order.
+
+    This is what MKT-03 counts: the cover's common stock (Class A/B/C included), never its notes,
+    debentures, preferred or depositary shares."""
+    out: list[str] = []
+    for title, symbol in cover_rows(client, cik, filing):
+        if is_common_equity(title) and symbol.upper() not in {s.upper() for s in out}:
+            out.append(symbol)
     return out
 
 
@@ -228,12 +274,14 @@ def build(
         filing = last_10k(filings, entry["exit_date"])
         quote, accession, filed, note = "", "", "", "no 10-K on or before the exit"
         symbols: list[str] = []
+        classes: list[str] = []
         if filing is not None:
             accession = filing["accessionNumber"]
             filed = filing["filingDate"]
             try:
                 found = evidence(client, cik10(entry["cik"]), filing)
                 symbols = cover_symbols(client, cik10(entry["cik"]), filing)
+                classes = cover_classes(client, cik10(entry["cik"]), filing)
             except FileNotFoundError as exc:  # not cached and not fetching
                 note = str(exc)
             else:
@@ -252,6 +300,7 @@ def build(
                 "article_9": "true" if quote else "false",
                 "evidence_quote": quote.replace("\n", " "),
                 "cover_symbols": " | ".join(symbols),
+                "cover_classes": " | ".join(classes),
                 "note": note,
             }
         )
@@ -264,6 +313,8 @@ def dump(rows: list[dict[str, str]]) -> str:
         "# Generated by scripts/leaver_company_types.py from the SEC submissions files, the delivered\n"
         "# universe_history_gics.db and the 10-K cover pages -- the leavers' APP-00 evidence and\n"
         "# point-in-time facts, merged into the company profile by scripts/build_company_profile.py.\n"
+        "# cover_symbols is every registered security (evidence); cover_classes is the common-equity\n"
+        "# subset MKT-03 counts (notes, debentures, preferred and depositary shares are not classes).\n"
         "# Not read by any runtime code (T-153 parts 3a/3b).\n"
     )
     writer = csv.DictWriter(buffer, fieldnames=FIELDS, lineterminator="\n")

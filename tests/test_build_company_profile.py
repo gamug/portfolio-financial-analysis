@@ -35,17 +35,23 @@ _SOURCE = (
 _HEADER = (
     "cik,symbols,company_name,exit_date,gics_sector,gics_sub_industry,gics_revision_id,"
     "gics_revision_timestamp,last_10k_accession,last_10k_filed,article_9,evidence_quote,"
-    "cover_symbols,note\n"
+    "cover_symbols,cover_classes,note\n"
 )
 
 
 def _leaver(row: dict[str, str]) -> str:
     """One staged leaver row; *row* carries cik, symbols, exit_date, sector, sub and any override."""
-    fields = {"article_9": "false", "quote": "", "cover": "X", **row}
+    fields = {
+        "article_9": "false",
+        "quote": "",
+        "cover": "X",
+        "classes": row.get("cover", "X"),
+        **row,
+    }
     return (
         f"{fields['cik']},{fields['symbols']},{fields['symbols']} Inc.,{fields['exit_date']},"
         f"{fields['sector']},{fields['sub']},123,2026-01-01T00:00:00Z,0000-00-000000,2024-02-01,"
-        f'{fields["article_9"]},"{fields["quote"]}",{fields["cover"]},\n'
+        f'{fields["article_9"]},"{fields["quote"]}",{fields["cover"]},{fields["classes"]},\n'
     )
 
 
@@ -137,7 +143,9 @@ def test_a_leaver_already_in_the_table_replaces_its_row() -> None:
     assert build_profile.replaced_ciks(_SOURCE, leavers) == ["0000000002"]
 
 
-def test_the_multi_class_overlay_comes_from_the_cover_symbols() -> None:
+def test_the_multi_class_overlay_comes_from_the_cover_classes() -> None:
+    """MKT-03 counts the cover's common-equity classes, so a second *registered* security that is a
+    note or a preferred series does not make the row multi-class."""
     one = _HEADER + _leaver(
         {
             "cik": "0000000006",
@@ -155,10 +163,23 @@ def test_the_multi_class_overlay_comes_from_the_cover_symbols() -> None:
             "sector": "Consumer Staples",
             "sub": "Brewers",
             "cover": "GGG | GGG.A",
+            "classes": "GGG | GGG.A",
+        }
+    )
+    notes_only = _HEADER + _leaver(
+        {
+            "cik": "0000000010",
+            "symbols": "III",
+            "exit_date": "2026-09-20",
+            "sector": "Consumer Staples",
+            "sub": "Brewers",
+            "cover": "III | III 32",
+            "classes": "III",
         }
     )
     assert _rows(build_profile.build(_SOURCE, one))[2]["multi_class_listed"] == "False"
     assert _rows(build_profile.build(_SOURCE, many))[2]["multi_class_listed"] == "True"
+    assert _rows(build_profile.build(_SOURCE, notes_only))[2]["multi_class_listed"] == "False"
 
 
 _MEMBERS = (

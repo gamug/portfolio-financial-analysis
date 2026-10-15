@@ -30,7 +30,10 @@ TYPES = {
     "multi_sector_holding": 1,
 }
 REITS = 31
-MULTI_CLASS = 93
+# the current members' rows still count every listed ticker (75: the table's 76 less TAP, which its
+# leaver row replaces) plus the leavers' common-equity classes (3: BIO, TAP, UA/UAA) -- a temporary
+# difference, stream A's to revisit in T-071 part 2b (docs/model_fixes.md)
+MULTI_CLASS = 78
 # D-13's GICS proxy: Electric 15, Gas 1, Multi- 12, Water 1; no leaver is a utility
 REGULATED_UTILITIES = 29
 

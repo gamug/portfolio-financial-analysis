@@ -3,11 +3,15 @@
   {
    "changes": [],
    "cik": "0000004447",
+   "cover_classes_last_10k": "HES",
    "cover_symbols_last_10k": "HES",
    "exit_date": "2025-07-22",
    "filings": [
     {
      "accession": "0001628280-22-004524",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -16,6 +20,9 @@
     },
     {
      "accession": "0001628280-22-012659",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -24,6 +31,9 @@
     },
     {
      "accession": "0001628280-22-021084",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -32,6 +42,9 @@
     },
     {
      "accession": "0001628280-22-028196",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -40,6 +53,9 @@
     },
     {
      "accession": "0001628280-23-005059",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -48,6 +64,9 @@
     },
     {
      "accession": "0001628280-23-015437",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -56,6 +75,9 @@
     },
     {
      "accession": "0001628280-23-027253",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -64,6 +86,9 @@
     },
     {
      "accession": "0001628280-23-036393",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -72,6 +97,9 @@
     },
     {
      "accession": "0001628280-24-006845",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2024-02-26",
      "form": "10-K",
      "symbols": [
@@ -80,6 +108,9 @@
     },
     {
      "accession": "0001628280-24-021077",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2024-05-07",
      "form": "10-Q",
      "symbols": [
@@ -88,6 +119,9 @@
     },
     {
      "accession": "0001628280-24-036142",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2024-08-08",
      "form": "10-Q",
      "symbols": [
@@ -96,6 +130,9 @@
     },
     {
      "accession": "0001628280-24-045716",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2024-11-06",
      "form": "10-Q",
      "symbols": [
@@ -104,6 +141,9 @@
     },
     {
      "accession": "0001628280-25-008716",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2025-02-27",
      "form": "10-K",
      "symbols": [
@@ -112,6 +152,9 @@
     },
     {
      "accession": "0001628280-25-023790",
+     "classes": [
+      "HES"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -124,11 +167,15 @@
   {
    "changes": [],
    "cik": "0000006201",
+   "cover_classes_last_10k": "AAL",
    "cover_symbols_last_10k": "AAL",
    "exit_date": "2024-09-22",
    "filings": [
     {
      "accession": "0000006201-22-000026",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -137,6 +184,9 @@
     },
     {
      "accession": "0000006201-22-000046",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2022-04-21",
      "form": "10-Q",
      "symbols": [
@@ -145,6 +195,9 @@
     },
     {
      "accession": "0000006201-22-000071",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2022-07-21",
      "form": "10-Q",
      "symbols": [
@@ -153,6 +206,9 @@
     },
     {
      "accession": "0000006201-22-000086",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2022-10-20",
      "form": "10-Q",
      "symbols": [
@@ -161,6 +217,9 @@
     },
     {
      "accession": "0000006201-23-000018",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -169,6 +228,9 @@
     },
     {
      "accession": "0000006201-23-000042",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -177,6 +239,9 @@
     },
     {
      "accession": "0000006201-23-000070",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2023-07-20",
      "form": "10-Q",
      "symbols": [
@@ -185,6 +250,9 @@
     },
     {
      "accession": "0000006201-23-000092",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2023-10-19",
      "form": "10-Q",
      "symbols": [
@@ -193,6 +261,9 @@
     },
     {
      "accession": "0000006201-24-000010",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2024-02-21",
      "form": "10-K",
      "symbols": [
@@ -201,6 +272,9 @@
     },
     {
      "accession": "0000006201-24-000032",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2024-04-25",
      "form": "10-Q",
      "symbols": [
@@ -209,6 +283,9 @@
     },
     {
      "accession": "0000006201-24-000048",
+     "classes": [
+      "AAL"
+     ],
      "filing_date": "2024-07-25",
      "form": "10-Q",
      "symbols": [
@@ -233,11 +310,16 @@
     }
    ],
    "cik": "0000012208",
+   "cover_classes_last_10k": "BIO | BIO.B",
    "cover_symbols_last_10k": "BIO | BIO.B",
    "exit_date": "2024-09-22",
    "filings": [
     {
      "accession": "0000012208-22-000011",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2022-02-11",
      "form": "10-K",
      "symbols": [
@@ -247,6 +329,10 @@
     },
     {
      "accession": "0000012208-22-000026",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -256,6 +342,10 @@
     },
     {
      "accession": "0000012208-22-000046",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2022-07-29",
      "form": "10-Q",
      "symbols": [
@@ -265,6 +355,10 @@
     },
     {
      "accession": "0000012208-22-000071",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -274,6 +368,10 @@
     },
     {
      "accession": "0000012208-23-000031",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2023-02-17",
      "form": "10-K",
      "symbols": [
@@ -283,6 +381,10 @@
     },
     {
      "accession": "0000012208-23-000047",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -292,6 +394,10 @@
     },
     {
      "accession": "0000012208-23-000063",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2023-08-04",
      "form": "10-Q",
      "symbols": [
@@ -301,6 +407,10 @@
     },
     {
      "accession": "0000012208-23-000072",
+     "classes": [
+      "BIO",
+      "BIOb"
+     ],
      "filing_date": "2023-10-27",
      "form": "10-Q",
      "symbols": [
@@ -310,6 +420,10 @@
     },
     {
      "accession": "0000012208-24-000013",
+     "classes": [
+      "BIO",
+      "BIO.B"
+     ],
      "filing_date": "2024-02-16",
      "form": "10-K",
      "symbols": [
@@ -319,6 +433,10 @@
     },
     {
      "accession": "0000012208-24-000039",
+     "classes": [
+      "BIO",
+      "BIO.B"
+     ],
      "filing_date": "2024-05-08",
      "form": "10-Q",
      "symbols": [
@@ -328,6 +446,10 @@
     },
     {
      "accession": "0000012208-24-000052",
+     "classes": [
+      "BIO",
+      "BIO.B"
+     ],
      "filing_date": "2024-08-02",
      "form": "10-Q",
      "symbols": [
@@ -341,11 +463,13 @@
   {
    "changes": [],
    "cik": "0000016732",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "CPB",
    "exit_date": "2026-06-21",
    "filings": [
     {
      "accession": "0000016732-22-000014",
+     "classes": [],
      "filing_date": "2022-03-09",
      "form": "10-Q",
      "symbols": [
@@ -354,6 +478,7 @@
     },
     {
      "accession": "0000016732-22-000048",
+     "classes": [],
      "filing_date": "2022-06-08",
      "form": "10-Q",
      "symbols": [
@@ -362,6 +487,7 @@
     },
     {
      "accession": "0000016732-22-000093",
+     "classes": [],
      "filing_date": "2022-09-22",
      "form": "10-K",
      "symbols": [
@@ -370,6 +496,7 @@
     },
     {
      "accession": "0000016732-22-000156",
+     "classes": [],
      "filing_date": "2022-12-07",
      "form": "10-Q",
      "symbols": [
@@ -378,6 +505,7 @@
     },
     {
      "accession": "0000016732-23-000037",
+     "classes": [],
      "filing_date": "2023-03-08",
      "form": "10-Q",
      "symbols": [
@@ -386,6 +514,7 @@
     },
     {
      "accession": "0000016732-23-000076",
+     "classes": [],
      "filing_date": "2023-06-07",
      "form": "10-Q",
      "symbols": [
@@ -394,6 +523,7 @@
     },
     {
      "accession": "0000016732-23-000109",
+     "classes": [],
      "filing_date": "2023-09-21",
      "form": "10-K",
      "symbols": [
@@ -402,6 +532,7 @@
     },
     {
      "accession": "0000016732-23-000176",
+     "classes": [],
      "filing_date": "2023-12-06",
      "form": "10-Q",
      "symbols": [
@@ -410,6 +541,7 @@
     },
     {
      "accession": "0000016732-24-000039",
+     "classes": [],
      "filing_date": "2024-03-06",
      "form": "10-Q",
      "symbols": [
@@ -418,6 +550,7 @@
     },
     {
      "accession": "0000016732-24-000082",
+     "classes": [],
      "filing_date": "2024-06-05",
      "form": "10-Q",
      "symbols": [
@@ -426,6 +559,7 @@
     },
     {
      "accession": "0000016732-24-000130",
+     "classes": [],
      "filing_date": "2024-09-19",
      "form": "10-K",
      "symbols": [
@@ -434,6 +568,7 @@
     },
     {
      "accession": "0000016732-24-000201",
+     "classes": [],
      "filing_date": "2024-12-04",
      "form": "10-Q",
      "symbols": [
@@ -442,6 +577,7 @@
     },
     {
      "accession": "0000016732-25-000026",
+     "classes": [],
      "filing_date": "2025-03-05",
      "form": "10-Q",
      "symbols": [
@@ -450,6 +586,7 @@
     },
     {
      "accession": "0000016732-25-000064",
+     "classes": [],
      "filing_date": "2025-06-02",
      "form": "10-Q",
      "symbols": [
@@ -458,6 +595,7 @@
     },
     {
      "accession": "0000016732-25-000112",
+     "classes": [],
      "filing_date": "2025-09-18",
      "form": "10-K",
      "symbols": [
@@ -466,6 +604,7 @@
     },
     {
      "accession": "0000016732-25-000126",
+     "classes": [],
      "filing_date": "2025-12-09",
      "form": "10-Q",
      "symbols": [
@@ -474,6 +613,7 @@
     },
     {
      "accession": "0000016732-26-000006",
+     "classes": [],
      "filing_date": "2026-03-11",
      "form": "10-Q",
      "symbols": [
@@ -482,6 +622,7 @@
     },
     {
      "accession": "0000016732-26-000012",
+     "classes": [],
      "filing_date": "2026-06-08",
      "form": "10-Q",
      "symbols": [
@@ -494,11 +635,15 @@
   {
    "changes": [],
    "cik": "0000018926",
+   "cover_classes_last_10k": "LUMN",
    "cover_symbols_last_10k": "LUMN",
    "exit_date": "2023-03-19",
    "filings": [
     {
      "accession": "0000018926-22-000007",
+     "classes": [
+      "LUMN"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -507,6 +652,9 @@
     },
     {
      "accession": "0000018926-22-000022",
+     "classes": [
+      "LUMN"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -515,6 +663,9 @@
     },
     {
      "accession": "0000018926-22-000030",
+     "classes": [
+      "LUMN"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -523,6 +674,9 @@
     },
     {
      "accession": "0000018926-22-000042",
+     "classes": [
+      "LUMN"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -531,6 +685,9 @@
     },
     {
      "accession": "0000018926-23-000013",
+     "classes": [
+      "LUMN"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -543,11 +700,15 @@
   {
    "changes": [],
    "cik": "0000023217",
+   "cover_classes_last_10k": "CAG",
    "cover_symbols_last_10k": "CAG",
    "exit_date": "2026-06-29",
    "filings": [
     {
      "accession": "0001564590-22-000559",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2022-01-06",
      "form": "10-Q",
      "symbols": [
@@ -556,6 +717,9 @@
     },
     {
      "accession": "0001564590-22-013862",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2022-04-07",
      "form": "10-Q",
      "symbols": [
@@ -564,6 +728,9 @@
     },
     {
      "accession": "0001437749-22-017530",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2022-07-21",
      "form": "10-K",
      "symbols": [
@@ -572,6 +739,9 @@
     },
     {
      "accession": "0001437749-22-023764",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2022-10-06",
      "form": "10-Q",
      "symbols": [
@@ -580,6 +750,9 @@
     },
     {
      "accession": "0001437749-23-000496",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2023-01-05",
      "form": "10-Q",
      "symbols": [
@@ -588,6 +761,9 @@
     },
     {
      "accession": "0001437749-23-009534",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2023-04-05",
      "form": "10-Q",
      "symbols": [
@@ -596,6 +772,9 @@
     },
     {
      "accession": "0001437749-23-019879",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2023-07-13",
      "form": "10-K",
      "symbols": [
@@ -604,6 +783,9 @@
     },
     {
      "accession": "0001437749-23-027773",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2023-10-05",
      "form": "10-Q",
      "symbols": [
@@ -612,6 +794,9 @@
     },
     {
      "accession": "0001437749-24-000605",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2024-01-04",
      "form": "10-Q",
      "symbols": [
@@ -620,6 +805,9 @@
     },
     {
      "accession": "0001437749-24-011081",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2024-04-04",
      "form": "10-Q",
      "symbols": [
@@ -628,6 +816,9 @@
     },
     {
      "accession": "0001558370-24-009764",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2024-07-11",
      "form": "10-K",
      "symbols": [
@@ -636,6 +827,9 @@
     },
     {
      "accession": "0001558370-24-013126",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2024-10-02",
      "form": "10-Q",
      "symbols": [
@@ -644,6 +838,9 @@
     },
     {
      "accession": "0001558370-24-016392",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2024-12-19",
      "form": "10-Q",
      "symbols": [
@@ -652,6 +849,9 @@
     },
     {
      "accession": "0001558370-25-004399",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2025-04-03",
      "form": "10-Q",
      "symbols": [
@@ -660,6 +860,9 @@
     },
     {
      "accession": "0001558370-25-009180",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2025-07-10",
      "form": "10-K",
      "symbols": [
@@ -668,6 +871,9 @@
     },
     {
      "accession": "0001104659-25-095651",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2025-10-01",
      "form": "10-Q",
      "symbols": [
@@ -676,6 +882,9 @@
     },
     {
      "accession": "0001104659-25-123200",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2025-12-19",
      "form": "10-Q",
      "symbols": [
@@ -684,6 +893,9 @@
     },
     {
      "accession": "0001104659-26-038548",
+     "classes": [
+      "CAG"
+     ],
      "filing_date": "2026-04-01",
      "form": "10-Q",
      "symbols": [
@@ -694,34 +906,18 @@
    "symbols": "CAG"
   },
   {
-   "changes": [
-    {
-     "added": [
-      "TAP 24"
-     ],
-     "from_filing": "2023-05-02",
-     "removed": [],
-     "to_accession": "0000024545-23-000016",
-     "to_filing": "2023-08-01"
-    },
-    {
-     "added": [
-      "TAP 32"
-     ],
-     "from_filing": "2024-04-30",
-     "removed": [
-      "TAP 24"
-     ],
-     "to_accession": "0000024545-24-000018",
-     "to_filing": "2024-08-06"
-    }
-   ],
+   "changes": [],
    "cik": "0000024545",
+   "cover_classes_last_10k": "TAP.A | TAP",
    "cover_symbols_last_10k": "TAP.A | TAP | TAP 32",
    "exit_date": "2026-09-20",
    "filings": [
     {
      "accession": "0000024545-22-000005",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2022-02-23",
      "form": "10-K",
      "symbols": [
@@ -731,6 +927,10 @@
     },
     {
      "accession": "0000024545-22-000010",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -740,6 +940,10 @@
     },
     {
      "accession": "0000024545-22-000014",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2022-08-02",
      "form": "10-Q",
      "symbols": [
@@ -749,6 +953,10 @@
     },
     {
      "accession": "0000024545-22-000018",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2022-11-01",
      "form": "10-Q",
      "symbols": [
@@ -758,6 +966,10 @@
     },
     {
      "accession": "0000024545-23-000006",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2023-02-21",
      "form": "10-K",
      "symbols": [
@@ -767,6 +979,10 @@
     },
     {
      "accession": "0000024545-23-000011",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2023-05-02",
      "form": "10-Q",
      "symbols": [
@@ -776,6 +992,10 @@
     },
     {
      "accession": "0000024545-23-000016",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2023-08-01",
      "form": "10-Q",
      "symbols": [
@@ -786,6 +1006,10 @@
     },
     {
      "accession": "0000024545-23-000020",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -796,6 +1020,10 @@
     },
     {
      "accession": "0000024545-24-000005",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2024-02-20",
      "form": "10-K",
      "symbols": [
@@ -806,6 +1034,10 @@
     },
     {
      "accession": "0000024545-24-000012",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2024-04-30",
      "form": "10-Q",
      "symbols": [
@@ -816,6 +1048,10 @@
     },
     {
      "accession": "0000024545-24-000018",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2024-08-06",
      "form": "10-Q",
      "symbols": [
@@ -826,6 +1062,10 @@
     },
     {
      "accession": "0000024545-24-000024",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2024-11-08",
      "form": "10-Q",
      "symbols": [
@@ -836,6 +1076,10 @@
     },
     {
      "accession": "0000024545-25-000007",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2025-02-18",
      "form": "10-K",
      "symbols": [
@@ -846,6 +1090,10 @@
     },
     {
      "accession": "0000024545-25-000014",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -856,6 +1104,10 @@
     },
     {
      "accession": "0000024545-25-000021",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2025-08-05",
      "form": "10-Q",
      "symbols": [
@@ -866,6 +1118,10 @@
     },
     {
      "accession": "0000024545-25-000039",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2025-11-04",
      "form": "10-Q",
      "symbols": [
@@ -876,6 +1132,10 @@
     },
     {
      "accession": "0000024545-26-000006",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2026-02-18",
      "form": "10-K",
      "symbols": [
@@ -886,6 +1146,10 @@
     },
     {
      "accession": "0000024545-26-000036",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2026-04-30",
      "form": "10-Q",
      "symbols": [
@@ -896,6 +1160,10 @@
     },
     {
      "accession": "0000024545-26-000071",
+     "classes": [
+      "TAP.A",
+      "TAP"
+     ],
      "filing_date": "2026-08-06",
      "form": "10-Q",
      "symbols": [
@@ -910,11 +1178,15 @@
   {
    "changes": [],
    "cik": "0000028412",
+   "cover_classes_last_10k": "CMA",
    "cover_symbols_last_10k": "CMA",
    "exit_date": "2024-06-23",
    "filings": [
     {
      "accession": "0000028412-22-000067",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2022-02-16",
      "form": "10-K",
      "symbols": [
@@ -923,6 +1195,9 @@
     },
     {
      "accession": "0000028412-22-000096",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2022-04-27",
      "form": "10-Q",
      "symbols": [
@@ -931,6 +1206,9 @@
     },
     {
      "accession": "0000028412-22-000127",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -939,6 +1217,9 @@
     },
     {
      "accession": "0000028412-22-000163",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -947,6 +1228,9 @@
     },
     {
      "accession": "0000028412-23-000094",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2023-02-14",
      "form": "10-K",
      "symbols": [
@@ -955,6 +1239,9 @@
     },
     {
      "accession": "0000028412-23-000163",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2023-04-28",
      "form": "10-Q",
      "symbols": [
@@ -963,6 +1250,9 @@
     },
     {
      "accession": "0000028412-23-000181",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2023-07-26",
      "form": "10-Q",
      "symbols": [
@@ -971,6 +1261,9 @@
     },
     {
      "accession": "0000028412-23-000238",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2023-10-30",
      "form": "10-Q",
      "symbols": [
@@ -979,6 +1272,9 @@
     },
     {
      "accession": "0000028412-24-000185",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2024-02-28",
      "form": "10-K",
      "symbols": [
@@ -987,6 +1283,9 @@
     },
     {
      "accession": "0000028412-24-000263",
+     "classes": [
+      "CMA"
+     ],
      "filing_date": "2024-04-26",
      "form": "10-Q",
      "symbols": [
@@ -999,11 +1298,15 @@
   {
    "changes": [],
    "cik": "0000037785",
+   "cover_classes_last_10k": "FMC",
    "cover_symbols_last_10k": "FMC",
    "exit_date": "2025-03-23",
    "filings": [
     {
      "accession": "0000037785-22-000025",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -1012,6 +1315,9 @@
     },
     {
      "accession": "0000037785-22-000040",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -1020,6 +1326,9 @@
     },
     {
      "accession": "0000037785-22-000075",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1028,6 +1337,9 @@
     },
     {
      "accession": "0000037785-22-000090",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -1036,6 +1348,9 @@
     },
     {
      "accession": "0000037785-23-000019",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -1044,6 +1359,9 @@
     },
     {
      "accession": "0000037785-23-000099",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2023-05-02",
      "form": "10-Q",
      "symbols": [
@@ -1052,6 +1370,9 @@
     },
     {
      "accession": "0000037785-23-000153",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1060,6 +1381,9 @@
     },
     {
      "accession": "0000037785-23-000178",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2023-11-07",
      "form": "10-Q",
      "symbols": [
@@ -1068,6 +1392,9 @@
     },
     {
      "accession": "0000037785-24-000033",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2024-02-27",
      "form": "10-K",
      "symbols": [
@@ -1076,6 +1403,9 @@
     },
     {
      "accession": "0000037785-24-000066",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2024-05-07",
      "form": "10-Q",
      "symbols": [
@@ -1084,6 +1414,9 @@
     },
     {
      "accession": "0000037785-24-000102",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -1092,6 +1425,9 @@
     },
     {
      "accession": "0000037785-24-000119",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2024-10-30",
      "form": "10-Q",
      "symbols": [
@@ -1100,6 +1436,9 @@
     },
     {
      "accession": "0000037785-25-000030",
+     "classes": [
+      "FMC"
+     ],
      "filing_date": "2025-02-28",
      "form": "10-K",
      "symbols": [
@@ -1112,6 +1451,7 @@
   {
    "changes": [],
    "cik": "0000039911",
+   "cover_classes_last_10k": "GPS",
    "cover_symbols_last_10k": "GPS",
    "exit_date": "2022-02-02",
    "filings": [],
@@ -1120,11 +1460,15 @@
   {
    "changes": [],
    "cik": "0000051644",
+   "cover_classes_last_10k": "IPG",
    "cover_symbols_last_10k": "IPG",
    "exit_date": "2025-11-27",
    "filings": [
     {
      "accession": "0000051644-22-000010",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -1133,6 +1477,9 @@
     },
     {
      "accession": "0000051644-22-000018",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -1141,6 +1488,9 @@
     },
     {
      "accession": "0000051644-22-000031",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2022-07-27",
      "form": "10-Q",
      "symbols": [
@@ -1149,6 +1499,9 @@
     },
     {
      "accession": "0000051644-22-000050",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2022-10-26",
      "form": "10-Q",
      "symbols": [
@@ -1157,6 +1510,9 @@
     },
     {
      "accession": "0000051644-23-000010",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2023-02-21",
      "form": "10-K",
      "symbols": [
@@ -1165,6 +1521,9 @@
     },
     {
      "accession": "0000051644-23-000017",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -1173,6 +1532,9 @@
     },
     {
      "accession": "0000051644-23-000033",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2023-07-26",
      "form": "10-Q",
      "symbols": [
@@ -1181,6 +1543,9 @@
     },
     {
      "accession": "0000051644-23-000051",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2023-10-25",
      "form": "10-Q",
      "symbols": [
@@ -1189,6 +1554,9 @@
     },
     {
      "accession": "0000051644-24-000013",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2024-02-20",
      "form": "10-K",
      "symbols": [
@@ -1197,6 +1565,9 @@
     },
     {
      "accession": "0000051644-24-000021",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2024-04-24",
      "form": "10-Q",
      "symbols": [
@@ -1205,6 +1576,9 @@
     },
     {
      "accession": "0000051644-24-000036",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2024-07-24",
      "form": "10-Q",
      "symbols": [
@@ -1213,6 +1587,9 @@
     },
     {
      "accession": "0000051644-24-000049",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2024-10-23",
      "form": "10-Q",
      "symbols": [
@@ -1221,6 +1598,9 @@
     },
     {
      "accession": "0000051644-25-000024",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -1229,6 +1609,9 @@
     },
     {
      "accession": "0000051644-25-000039",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2025-04-24",
      "form": "10-Q",
      "symbols": [
@@ -1237,6 +1620,9 @@
     },
     {
      "accession": "0000051644-25-000051",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2025-07-23",
      "form": "10-Q",
      "symbols": [
@@ -1245,6 +1631,9 @@
     },
     {
      "accession": "0000051644-25-000061",
+     "classes": [
+      "IPG"
+     ],
      "filing_date": "2025-11-10",
      "form": "10-Q",
      "symbols": [
@@ -1255,43 +1644,17 @@
    "symbols": "IPG"
   },
   {
-   "changes": [
-    {
-     "added": [],
-     "from_filing": "2022-11-03",
-     "removed": [
-      "K 22A"
-     ],
-     "to_accession": "0001628280-23-004299",
-     "to_filing": "2023-02-21"
-    },
-    {
-     "added": [
-      "K 34"
-     ],
-     "from_filing": "2024-05-02",
-     "removed": [
-      "K 24"
-     ],
-     "to_accession": "0001628280-24-034156",
-     "to_filing": "2024-08-01"
-    },
-    {
-     "added": [],
-     "from_filing": "2025-02-21",
-     "removed": [
-      "K 25"
-     ],
-     "to_accession": "0001628280-25-021351",
-     "to_filing": "2025-05-01"
-    }
-   ],
+   "changes": [],
    "cik": "0000055067",
+   "cover_classes_last_10k": "K",
    "cover_symbols_last_10k": "K | K 25 | K 29 | K 34",
    "exit_date": "2025-12-10",
    "filings": [
     {
      "accession": "0001628280-22-003345",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -1304,6 +1667,9 @@
     },
     {
      "accession": "0001628280-22-012661",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -1316,6 +1682,9 @@
     },
     {
      "accession": "0001628280-22-021083",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -1328,6 +1697,9 @@
     },
     {
      "accession": "0001628280-22-028218",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -1340,6 +1712,9 @@
     },
     {
      "accession": "0001628280-23-004299",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2023-02-21",
      "form": "10-K",
      "symbols": [
@@ -1351,6 +1726,9 @@
     },
     {
      "accession": "0001628280-23-015761",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -1362,6 +1740,9 @@
     },
     {
      "accession": "0001628280-23-027251",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1373,6 +1754,9 @@
     },
     {
      "accession": "0001628280-23-037866",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2023-11-08",
      "form": "10-Q",
      "symbols": [
@@ -1384,6 +1768,9 @@
     },
     {
      "accession": "0001628280-24-005583",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2024-02-20",
      "form": "10-K",
      "symbols": [
@@ -1395,6 +1782,9 @@
     },
     {
      "accession": "0001628280-24-020015",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -1406,6 +1796,9 @@
     },
     {
      "accession": "0001628280-24-034156",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -1417,6 +1810,9 @@
     },
     {
      "accession": "0001628280-24-044436",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2024-10-31",
      "form": "10-Q",
      "symbols": [
@@ -1428,6 +1824,9 @@
     },
     {
      "accession": "0001628280-25-007118",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2025-02-21",
      "form": "10-K",
      "symbols": [
@@ -1439,6 +1838,9 @@
     },
     {
      "accession": "0001628280-25-021351",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2025-05-01",
      "form": "10-Q",
      "symbols": [
@@ -1449,6 +1851,9 @@
     },
     {
      "accession": "0001628280-25-036852",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2025-07-31",
      "form": "10-Q",
      "symbols": [
@@ -1459,6 +1864,9 @@
     },
     {
      "accession": "0000055067-25-000191",
+     "classes": [
+      "K"
+     ],
      "filing_date": "2025-10-30",
      "form": "10-Q",
      "symbols": [
@@ -1471,23 +1879,17 @@
    "symbols": "K"
   },
   {
-   "changes": [
-    {
-     "added": [
-      "LNC PRD"
-     ],
-     "from_filing": "2022-11-03",
-     "removed": [],
-     "to_accession": "0000059558-23-000009",
-     "to_filing": "2023-02-16"
-    }
-   ],
+   "changes": [],
    "cik": "0000059558",
+   "cover_classes_last_10k": "LNC",
    "cover_symbols_last_10k": "LNC | LNC PRD",
    "exit_date": "2023-09-17",
    "filings": [
     {
      "accession": "0000059558-22-000008",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2022-02-17",
      "form": "10-K",
      "symbols": [
@@ -1496,6 +1898,9 @@
     },
     {
      "accession": "0000059558-22-000022",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -1504,6 +1909,9 @@
     },
     {
      "accession": "0000059558-22-000038",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -1512,6 +1920,9 @@
     },
     {
      "accession": "0000059558-22-000043",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -1520,6 +1931,9 @@
     },
     {
      "accession": "0000059558-23-000009",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2023-02-16",
      "form": "10-K",
      "symbols": [
@@ -1529,6 +1943,9 @@
     },
     {
      "accession": "0000059558-23-000031",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2023-05-10",
      "form": "10-Q",
      "symbols": [
@@ -1538,6 +1955,9 @@
     },
     {
      "accession": "0000059558-23-000047",
+     "classes": [
+      "LNC"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1551,11 +1971,15 @@
   {
    "changes": [],
    "cik": "0000078239",
+   "cover_classes_last_10k": "PVH",
    "cover_symbols_last_10k": "PVH",
    "exit_date": "2022-09-18",
    "filings": [
     {
      "accession": "0000078239-22-000031",
+     "classes": [
+      "PVH"
+     ],
      "filing_date": "2022-03-30",
      "form": "10-K",
      "symbols": [
@@ -1564,6 +1988,9 @@
     },
     {
      "accession": "0000078239-22-000070",
+     "classes": [
+      "PVH"
+     ],
      "filing_date": "2022-06-09",
      "form": "10-Q",
      "symbols": [
@@ -1572,6 +1999,9 @@
     },
     {
      "accession": "0000078239-22-000119",
+     "classes": [
+      "PVH"
+     ],
      "filing_date": "2022-09-08",
      "form": "10-Q",
      "symbols": [
@@ -1584,11 +2014,15 @@
   {
    "changes": [],
    "cik": "0000096943",
+   "cover_classes_last_10k": "TFX",
    "cover_symbols_last_10k": "TFX",
    "exit_date": "2025-03-23",
    "filings": [
     {
      "accession": "0000096943-22-000016",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -1597,6 +2031,9 @@
     },
     {
      "accession": "0000096943-22-000039",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -1605,6 +2042,9 @@
     },
     {
      "accession": "0000096943-22-000092",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -1613,6 +2053,9 @@
     },
     {
      "accession": "0000096943-22-000106",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -1621,6 +2064,9 @@
     },
     {
      "accession": "0000096943-23-000024",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -1629,6 +2075,9 @@
     },
     {
      "accession": "0000096943-23-000049",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -1637,6 +2086,9 @@
     },
     {
      "accession": "0000096943-23-000090",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1645,6 +2097,9 @@
     },
     {
      "accession": "0000096943-23-000102",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2023-11-03",
      "form": "10-Q",
      "symbols": [
@@ -1653,6 +2108,9 @@
     },
     {
      "accession": "0000096943-24-000036",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -1661,6 +2119,9 @@
     },
     {
      "accession": "0000096943-24-000072",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2024-05-03",
      "form": "10-Q",
      "symbols": [
@@ -1669,6 +2130,9 @@
     },
     {
      "accession": "0000096943-24-000132",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2024-08-02",
      "form": "10-Q",
      "symbols": [
@@ -1677,6 +2141,9 @@
     },
     {
      "accession": "0000096943-24-000148",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2024-10-31",
      "form": "10-Q",
      "symbols": [
@@ -1685,6 +2152,9 @@
     },
     {
      "accession": "0000096943-25-000031",
+     "classes": [
+      "TFX"
+     ],
      "filing_date": "2025-02-28",
      "form": "10-K",
      "symbols": [
@@ -1697,11 +2167,15 @@
   {
    "changes": [],
    "cik": "0000101778",
+   "cover_classes_last_10k": "MRO",
    "cover_symbols_last_10k": "MRO",
    "exit_date": "2024-11-25",
    "filings": [
     {
      "accession": "0000101778-22-000016",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2022-02-17",
      "form": "10-K",
      "symbols": [
@@ -1710,6 +2184,9 @@
     },
     {
      "accession": "0000101778-22-000118",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -1718,6 +2195,9 @@
     },
     {
      "accession": "0000101778-22-000168",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -1726,6 +2206,9 @@
     },
     {
      "accession": "0000101778-22-000192",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -1734,6 +2217,9 @@
     },
     {
      "accession": "0000101778-23-000030",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2023-02-16",
      "form": "10-K",
      "symbols": [
@@ -1742,6 +2228,9 @@
     },
     {
      "accession": "0000101778-23-000096",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -1750,6 +2239,9 @@
     },
     {
      "accession": "0000101778-23-000107",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1758,6 +2250,9 @@
     },
     {
      "accession": "0000101778-23-000146",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -1766,6 +2261,9 @@
     },
     {
      "accession": "0000101778-24-000023",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -1774,6 +2272,9 @@
     },
     {
      "accession": "0000101778-24-000099",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -1782,6 +2283,9 @@
     },
     {
      "accession": "0000101778-24-000115",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2024-08-08",
      "form": "10-Q",
      "symbols": [
@@ -1790,6 +2294,9 @@
     },
     {
      "accession": "0000101778-24-000136",
+     "classes": [
+      "MRO"
+     ],
      "filing_date": "2024-11-06",
      "form": "10-Q",
      "symbols": [
@@ -1800,33 +2307,17 @@
    "symbols": "MRO"
   },
   {
-   "changes": [
-    {
-     "added": [
-      "VFC26",
-      "VFC29"
-     ],
-     "from_filing": "2023-02-08",
-     "removed": [],
-     "to_accession": "0000103379-23-000006",
-     "to_filing": "2023-05-25"
-    },
-    {
-     "added": [],
-     "from_filing": "2023-08-03",
-     "removed": [
-      "VFC23"
-     ],
-     "to_accession": "0000103379-23-000018",
-     "to_filing": "2023-11-03"
-    }
-   ],
+   "changes": [],
    "cik": "0000103379",
+   "cover_classes_last_10k": "VFC",
    "cover_symbols_last_10k": "VFC | VFC23 | VFC26 | VFC28 | VFC29 | VFC32",
    "exit_date": "2024-04-02",
    "filings": [
     {
      "accession": "0000103379-22-000003",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2022-01-28",
      "form": "10-Q",
      "symbols": [
@@ -1838,6 +2329,9 @@
     },
     {
      "accession": "0000103379-22-000006",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2022-05-26",
      "form": "10-K",
      "symbols": [
@@ -1849,6 +2343,9 @@
     },
     {
      "accession": "0000103379-22-000013",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -1860,6 +2357,9 @@
     },
     {
      "accession": "0000103379-22-000016",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -1871,6 +2371,9 @@
     },
     {
      "accession": "0000103379-23-000003",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2023-02-08",
      "form": "10-Q",
      "symbols": [
@@ -1882,6 +2385,9 @@
     },
     {
      "accession": "0000103379-23-000006",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2023-05-25",
      "form": "10-K",
      "symbols": [
@@ -1895,6 +2401,9 @@
     },
     {
      "accession": "0000103379-23-000015",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -1908,6 +2417,9 @@
     },
     {
      "accession": "0000103379-23-000018",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2023-11-03",
      "form": "10-Q",
      "symbols": [
@@ -1920,6 +2432,9 @@
     },
     {
      "accession": "0000103379-24-000003",
+     "classes": [
+      "VFC"
+     ],
      "filing_date": "2024-02-07",
      "form": "10-Q",
      "symbols": [
@@ -1936,11 +2451,15 @@
   {
    "changes": [],
    "cik": "0000106640",
+   "cover_classes_last_10k": "WHR",
    "cover_symbols_last_10k": "WHR",
    "exit_date": "2024-03-17",
    "filings": [
     {
      "accession": "0000106640-22-000015",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2022-02-10",
      "form": "10-K",
      "symbols": [
@@ -1949,6 +2468,9 @@
     },
     {
      "accession": "0000106640-22-000091",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2022-04-26",
      "form": "10-Q",
      "symbols": [
@@ -1957,6 +2479,9 @@
     },
     {
      "accession": "0000106640-22-000118",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2022-07-26",
      "form": "10-Q",
      "symbols": [
@@ -1965,6 +2490,9 @@
     },
     {
      "accession": "0000106640-22-000138",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2022-10-21",
      "form": "10-Q",
      "symbols": [
@@ -1973,6 +2501,9 @@
     },
     {
      "accession": "0000106640-23-000015",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2023-02-10",
      "form": "10-K",
      "symbols": [
@@ -1981,6 +2512,9 @@
     },
     {
      "accession": "0000106640-23-000089",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2023-04-25",
      "form": "10-Q",
      "symbols": [
@@ -1989,6 +2523,9 @@
     },
     {
      "accession": "0000106640-23-000116",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2023-07-25",
      "form": "10-Q",
      "symbols": [
@@ -1997,6 +2534,9 @@
     },
     {
      "accession": "0000106640-23-000131",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2023-10-26",
      "form": "10-Q",
      "symbols": [
@@ -2005,6 +2545,9 @@
     },
     {
      "accession": "0000106640-24-000020",
+     "classes": [
+      "WHR"
+     ],
      "filing_date": "2024-02-14",
      "form": "10-K",
      "symbols": [
@@ -2017,11 +2560,15 @@
   {
    "changes": [],
    "cik": "0000109380",
+   "cover_classes_last_10k": "ZION",
    "cover_symbols_last_10k": "ZION | ZIONP | ZIONO | ZIONL",
    "exit_date": "2024-03-17",
    "filings": [
     {
      "accession": "0000109380-22-000072",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -2033,6 +2580,9 @@
     },
     {
      "accession": "0000109380-22-000155",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -2044,6 +2594,9 @@
     },
     {
      "accession": "0000109380-22-000170",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -2055,6 +2608,9 @@
     },
     {
      "accession": "0000109380-22-000184",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -2066,6 +2622,9 @@
     },
     {
      "accession": "0000109380-23-000074",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -2077,6 +2636,9 @@
     },
     {
      "accession": "0000109380-23-000114",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -2088,6 +2650,9 @@
     },
     {
      "accession": "0000109380-23-000155",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2023-08-04",
      "form": "10-Q",
      "symbols": [
@@ -2099,6 +2664,9 @@
     },
     {
      "accession": "0000109380-23-000172",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2023-11-03",
      "form": "10-Q",
      "symbols": [
@@ -2110,6 +2678,9 @@
     },
     {
      "accession": "0000109380-24-000061",
+     "classes": [
+      "ZION"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -2125,11 +2696,15 @@
   {
    "changes": [],
    "cik": "0000315213",
+   "cover_classes_last_10k": "RHI",
    "cover_symbols_last_10k": "RHI",
    "exit_date": "2024-06-23",
    "filings": [
     {
      "accession": "0000315213-22-000018",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2022-02-14",
      "form": "10-K",
      "symbols": [
@@ -2138,6 +2713,9 @@
     },
     {
      "accession": "0000315213-22-000044",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -2146,6 +2724,9 @@
     },
     {
      "accession": "0000315213-22-000071",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -2154,6 +2735,9 @@
     },
     {
      "accession": "0000315213-22-000090",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -2162,6 +2746,9 @@
     },
     {
      "accession": "0000315213-23-000016",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2023-02-10",
      "form": "10-K",
      "symbols": [
@@ -2170,6 +2757,9 @@
     },
     {
      "accession": "0000315213-23-000041",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -2178,6 +2768,9 @@
     },
     {
      "accession": "0000315213-23-000081",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2023-08-01",
      "form": "10-Q",
      "symbols": [
@@ -2186,6 +2779,9 @@
     },
     {
      "accession": "0000315213-23-000105",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2023-10-31",
      "form": "10-Q",
      "symbols": [
@@ -2194,6 +2790,9 @@
     },
     {
      "accession": "0000315213-24-000011",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2024-02-20",
      "form": "10-K",
      "symbols": [
@@ -2202,6 +2801,9 @@
     },
     {
      "accession": "0000315213-24-000055",
+     "classes": [
+      "RHI"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -2214,11 +2816,15 @@
   {
    "changes": [],
    "cik": "0000701985",
+   "cover_classes_last_10k": "BBWI",
    "cover_symbols_last_10k": "BBWI",
    "exit_date": "2024-09-30",
    "filings": [
     {
      "accession": "0000701985-22-000009",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2022-03-18",
      "form": "10-K",
      "symbols": [
@@ -2227,6 +2833,9 @@
     },
     {
      "accession": "0000701985-22-000017",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2022-06-02",
      "form": "10-Q",
      "symbols": [
@@ -2235,6 +2844,9 @@
     },
     {
      "accession": "0000701985-22-000032",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2022-09-02",
      "form": "10-Q",
      "symbols": [
@@ -2243,6 +2855,9 @@
     },
     {
      "accession": "0000701985-22-000040",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2022-11-30",
      "form": "10-Q",
      "symbols": [
@@ -2251,6 +2866,9 @@
     },
     {
      "accession": "0000701985-23-000008",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2023-03-17",
      "form": "10-K",
      "symbols": [
@@ -2259,6 +2877,9 @@
     },
     {
      "accession": "0000701985-23-000018",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2023-06-02",
      "form": "10-Q",
      "symbols": [
@@ -2267,6 +2888,9 @@
     },
     {
      "accession": "0000701985-23-000030",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2023-09-01",
      "form": "10-Q",
      "symbols": [
@@ -2275,6 +2899,9 @@
     },
     {
      "accession": "0000701985-23-000035",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2023-12-01",
      "form": "10-Q",
      "symbols": [
@@ -2283,6 +2910,9 @@
     },
     {
      "accession": "0000701985-24-000010",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2024-03-22",
      "form": "10-K",
      "symbols": [
@@ -2291,6 +2921,9 @@
     },
     {
      "accession": "0000701985-24-000018",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2024-06-04",
      "form": "10-Q",
      "symbols": [
@@ -2299,6 +2932,9 @@
     },
     {
      "accession": "0000701985-24-000027",
+     "classes": [
+      "BBWI"
+     ],
      "filing_date": "2024-08-28",
      "form": "10-Q",
      "symbols": [
@@ -2311,11 +2947,15 @@
   {
    "changes": [],
    "cik": "0000712515",
+   "cover_classes_last_10k": "EA",
    "cover_symbols_last_10k": "EA",
    "exit_date": "2026-08-04",
    "filings": [
     {
      "accession": "0000712515-22-000003",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2022-02-08",
      "form": "10-Q",
      "symbols": [
@@ -2324,6 +2964,9 @@
     },
     {
      "accession": "0000712515-22-000011",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2022-05-25",
      "form": "10-K",
      "symbols": [
@@ -2332,6 +2975,9 @@
     },
     {
      "accession": "0000712515-22-000036",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2022-08-09",
      "form": "10-Q",
      "symbols": [
@@ -2340,6 +2986,9 @@
     },
     {
      "accession": "0000712515-22-000068",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2022-11-08",
      "form": "10-Q",
      "symbols": [
@@ -2348,6 +2997,9 @@
     },
     {
      "accession": "0000712515-23-000008",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2023-02-07",
      "form": "10-Q",
      "symbols": [
@@ -2356,6 +3008,9 @@
     },
     {
      "accession": "0000712515-23-000028",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2023-05-24",
      "form": "10-K",
      "symbols": [
@@ -2364,6 +3019,9 @@
     },
     {
      "accession": "0000712515-23-000037",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2023-08-08",
      "form": "10-Q",
      "symbols": [
@@ -2372,6 +3030,9 @@
     },
     {
      "accession": "0000712515-23-000048",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2023-11-07",
      "form": "10-Q",
      "symbols": [
@@ -2380,6 +3041,9 @@
     },
     {
      "accession": "0000712515-24-000007",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2024-02-06",
      "form": "10-Q",
      "symbols": [
@@ -2388,6 +3052,9 @@
     },
     {
      "accession": "0000712515-24-000023",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2024-05-22",
      "form": "10-K",
      "symbols": [
@@ -2396,6 +3063,9 @@
     },
     {
      "accession": "0000712515-24-000039",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2024-08-02",
      "form": "10-Q",
      "symbols": [
@@ -2404,6 +3074,9 @@
     },
     {
      "accession": "0000712515-24-000048",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2024-11-01",
      "form": "10-Q",
      "symbols": [
@@ -2412,6 +3085,9 @@
     },
     {
      "accession": "0000712515-25-000015",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2025-02-05",
      "form": "10-Q",
      "symbols": [
@@ -2420,6 +3096,9 @@
     },
     {
      "accession": "0000712515-25-000022",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2025-05-13",
      "form": "10-K",
      "symbols": [
@@ -2428,6 +3107,9 @@
     },
     {
      "accession": "0000712515-25-000030",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2025-08-01",
      "form": "10-Q",
      "symbols": [
@@ -2436,6 +3118,9 @@
     },
     {
      "accession": "0001628280-25-047811",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2025-10-31",
      "form": "10-Q",
      "symbols": [
@@ -2444,6 +3129,9 @@
     },
     {
      "accession": "0001628280-26-005101",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2026-02-03",
      "form": "10-Q",
      "symbols": [
@@ -2452,6 +3140,9 @@
     },
     {
      "accession": "0001628280-26-033617",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2026-05-11",
      "form": "10-K",
      "symbols": [
@@ -2460,6 +3151,9 @@
     },
     {
      "accession": "0001628280-26-051829",
+     "classes": [
+      "EA"
+     ],
      "filing_date": "2026-08-03",
      "form": "10-Q",
      "symbols": [
@@ -2472,11 +3166,15 @@
   {
    "changes": [],
    "cik": "0000718877",
+   "cover_classes_last_10k": "ATVI",
    "cover_symbols_last_10k": "ATVI",
    "exit_date": "2023-10-17",
    "filings": [
     {
      "accession": "0001628280-22-003992",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -2485,6 +3183,9 @@
     },
     {
      "accession": "0001628280-22-011987",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -2493,6 +3194,9 @@
     },
     {
      "accession": "0001628280-22-019955",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2022-08-01",
      "form": "10-Q",
      "symbols": [
@@ -2501,6 +3205,9 @@
     },
     {
      "accession": "0001628280-22-028658",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2022-11-07",
      "form": "10-Q",
      "symbols": [
@@ -2509,6 +3216,9 @@
     },
     {
      "accession": "0001628280-23-004842",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -2517,6 +3227,9 @@
     },
     {
      "accession": "0001628280-23-015712",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -2525,6 +3238,9 @@
     },
     {
      "accession": "0001628280-23-026269",
+     "classes": [
+      "ATVI"
+     ],
      "filing_date": "2023-07-31",
      "form": "10-Q",
      "symbols": [
@@ -2537,11 +3253,15 @@
   {
    "changes": [],
    "cik": "0000719739",
+   "cover_classes_last_10k": "SIVB",
    "cover_symbols_last_10k": "SIVB | SIVBP",
    "exit_date": "2023-03-14",
    "filings": [
     {
      "accession": "0000719739-22-000023",
+     "classes": [
+      "SIVB"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -2551,6 +3271,9 @@
     },
     {
      "accession": "0000719739-22-000040",
+     "classes": [
+      "SIVB"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -2560,6 +3283,9 @@
     },
     {
      "accession": "0000719739-22-000055",
+     "classes": [
+      "SIVB"
+     ],
      "filing_date": "2022-08-08",
      "form": "10-Q",
      "symbols": [
@@ -2569,6 +3295,9 @@
     },
     {
      "accession": "0000719739-22-000081",
+     "classes": [
+      "SIVB"
+     ],
      "filing_date": "2022-11-07",
      "form": "10-Q",
      "symbols": [
@@ -2578,6 +3307,9 @@
     },
     {
      "accession": "0000719739-23-000021",
+     "classes": [
+      "SIVB"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -2591,11 +3323,15 @@
   {
    "changes": [],
    "cik": "0000743988",
+   "cover_classes_last_10k": "XLNX",
    "cover_symbols_last_10k": "XLNX",
    "exit_date": "2022-02-14",
    "filings": [
     {
      "accession": "0000743988-22-000008",
+     "classes": [
+      "XLNX"
+     ],
      "filing_date": "2022-01-27",
      "form": "10-Q",
      "symbols": [
@@ -2608,11 +3344,15 @@
   {
    "changes": [],
    "cik": "0000766421",
+   "cover_classes_last_10k": "ALK",
    "cover_symbols_last_10k": "ALK",
    "exit_date": "2023-12-17",
    "filings": [
     {
      "accession": "0000766421-22-000009",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2022-02-11",
      "form": "10-K",
      "symbols": [
@@ -2621,6 +3361,9 @@
     },
     {
      "accession": "0000766421-22-000036",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -2629,6 +3372,9 @@
     },
     {
      "accession": "0000766421-22-000062",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2022-08-02",
      "form": "10-Q",
      "symbols": [
@@ -2637,6 +3383,9 @@
     },
     {
      "accession": "0000766421-22-000071",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -2645,6 +3394,9 @@
     },
     {
      "accession": "0000766421-23-000009",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2023-02-13",
      "form": "10-K",
      "symbols": [
@@ -2653,6 +3405,9 @@
     },
     {
      "accession": "0000766421-23-000023",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -2661,6 +3416,9 @@
     },
     {
      "accession": "0000766421-23-000034",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2023-08-02",
      "form": "10-Q",
      "symbols": [
@@ -2669,6 +3427,9 @@
     },
     {
      "accession": "0000766421-23-000046",
+     "classes": [
+      "ALK"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -2681,11 +3442,15 @@
   {
    "changes": [],
    "cik": "0000783280",
+   "cover_classes_last_10k": "DRE",
    "cover_symbols_last_10k": "DRE",
    "exit_date": "2022-10-02",
    "filings": [
     {
      "accession": "0000783280-22-000010",
+     "classes": [
+      "DRE"
+     ],
      "filing_date": "2022-02-18",
      "form": "10-K",
      "symbols": [
@@ -2694,6 +3459,9 @@
     },
     {
      "accession": "0000783280-22-000033",
+     "classes": [
+      "DRE"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -2702,6 +3470,9 @@
     },
     {
      "accession": "0000783280-22-000054",
+     "classes": [
+      "DRE"
+     ],
      "filing_date": "2022-08-08",
      "form": "10-Q",
      "symbols": [
@@ -2714,11 +3485,15 @@
   {
    "changes": [],
    "cik": "0000804753",
+   "cover_classes_last_10k": "CERN",
    "cover_symbols_last_10k": "CERN",
    "exit_date": "2022-06-07",
    "filings": [
     {
      "accession": "0000804753-22-000009",
+     "classes": [
+      "CERN"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -2727,6 +3502,9 @@
     },
     {
      "accession": "0000804753-22-000024",
+     "classes": [
+      "CERN"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -2739,11 +3517,15 @@
   {
    "changes": [],
    "cik": "0000814453",
+   "cover_classes_last_10k": "NWL",
    "cover_symbols_last_10k": "NWL",
    "exit_date": "2023-09-17",
    "filings": [
     {
      "accession": "0000814453-22-000017",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2022-02-14",
      "form": "10-K",
      "symbols": [
@@ -2752,6 +3534,9 @@
     },
     {
      "accession": "0000814453-22-000069",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -2760,6 +3545,9 @@
     },
     {
      "accession": "0000814453-22-000110",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2022-07-29",
      "form": "10-Q",
      "symbols": [
@@ -2768,6 +3556,9 @@
     },
     {
      "accession": "0000814453-22-000129",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -2776,6 +3567,9 @@
     },
     {
      "accession": "0000814453-23-000026",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2023-02-15",
      "form": "10-K",
      "symbols": [
@@ -2784,6 +3578,9 @@
     },
     {
      "accession": "0000814453-23-000068",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2023-04-28",
      "form": "10-Q",
      "symbols": [
@@ -2792,6 +3589,9 @@
     },
     {
      "accession": "0000814453-23-000139",
+     "classes": [
+      "NWL"
+     ],
      "filing_date": "2023-07-28",
      "form": "10-Q",
      "symbols": [
@@ -2804,11 +3604,15 @@
   {
    "changes": [],
    "cik": "0000815094",
+   "cover_classes_last_10k": "ABMD",
    "cover_symbols_last_10k": "ABMD",
    "exit_date": "2022-12-21",
    "filings": [
     {
      "accession": "0001564590-22-003810",
+     "classes": [
+      "ABMD"
+     ],
      "filing_date": "2022-02-03",
      "form": "10-Q",
      "symbols": [
@@ -2817,6 +3621,9 @@
     },
     {
      "accession": "0000950170-22-010402",
+     "classes": [
+      "ABMD"
+     ],
      "filing_date": "2022-05-20",
      "form": "10-K",
      "symbols": [
@@ -2825,6 +3632,9 @@
     },
     {
      "accession": "0000950170-22-014795",
+     "classes": [
+      "ABMD"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -2833,6 +3643,9 @@
     },
     {
      "accession": "0000950170-22-021880",
+     "classes": [
+      "ABMD"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -2845,11 +3658,15 @@
   {
    "changes": [],
    "cik": "0000818479",
+   "cover_classes_last_10k": "XRAY",
    "cover_symbols_last_10k": "XRAY",
    "exit_date": "2024-04-02",
    "filings": [
     {
      "accession": "0000818479-22-000015",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -2858,6 +3675,9 @@
     },
     {
      "accession": "0001140361-22-040133",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2022-11-07",
      "form": "10-Q",
      "symbols": [
@@ -2866,6 +3686,9 @@
     },
     {
      "accession": "0001140361-22-040134",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2022-11-07",
      "form": "10-Q",
      "symbols": [
@@ -2874,6 +3697,9 @@
     },
     {
      "accession": "0000818479-22-000119",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2022-11-14",
      "form": "10-Q",
      "symbols": [
@@ -2882,6 +3708,9 @@
     },
     {
      "accession": "0000818479-23-000017",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2023-03-01",
      "form": "10-K",
      "symbols": [
@@ -2890,6 +3719,9 @@
     },
     {
      "accession": "0000818479-23-000034",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -2898,6 +3730,9 @@
     },
     {
      "accession": "0000818479-23-000064",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2023-08-07",
      "form": "10-Q",
      "symbols": [
@@ -2906,6 +3741,9 @@
     },
     {
      "accession": "0000818479-23-000084",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -2914,6 +3752,9 @@
     },
     {
      "accession": "0000818479-24-000021",
+     "classes": [
+      "XRAY"
+     ],
      "filing_date": "2024-02-29",
      "form": "10-K",
      "symbols": [
@@ -2926,11 +3767,15 @@
   {
    "changes": [],
    "cik": "0000851968",
+   "cover_classes_last_10k": "MHK",
    "cover_symbols_last_10k": "MHK",
    "exit_date": "2025-12-21",
    "filings": [
     {
      "accession": "0000851968-22-000026",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2022-02-23",
      "form": "10-K",
      "symbols": [
@@ -2939,6 +3784,9 @@
     },
     {
      "accession": "0000851968-22-000058",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -2947,6 +3795,9 @@
     },
     {
      "accession": "0000851968-22-000076",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2022-07-29",
      "form": "10-Q",
      "symbols": [
@@ -2955,6 +3806,9 @@
     },
     {
      "accession": "0000851968-22-000091",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -2963,6 +3817,9 @@
     },
     {
      "accession": "0000851968-23-000033",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -2971,6 +3828,9 @@
     },
     {
      "accession": "0000851968-23-000065",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2023-04-28",
      "form": "10-Q",
      "symbols": [
@@ -2979,6 +3839,9 @@
     },
     {
      "accession": "0000851968-23-000086",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2023-07-28",
      "form": "10-Q",
      "symbols": [
@@ -2987,6 +3850,9 @@
     },
     {
      "accession": "0000851968-23-000097",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2023-10-27",
      "form": "10-Q",
      "symbols": [
@@ -2995,6 +3861,9 @@
     },
     {
      "accession": "0000851968-24-000027",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -3003,6 +3872,9 @@
     },
     {
      "accession": "0000851968-24-000082",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2024-04-26",
      "form": "10-Q",
      "symbols": [
@@ -3011,6 +3883,9 @@
     },
     {
      "accession": "0000851968-24-000106",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2024-07-26",
      "form": "10-Q",
      "symbols": [
@@ -3019,6 +3894,9 @@
     },
     {
      "accession": "0000851968-24-000125",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2024-10-25",
      "form": "10-Q",
      "symbols": [
@@ -3027,6 +3905,9 @@
     },
     {
      "accession": "0000851968-25-000023",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -3035,6 +3916,9 @@
     },
     {
      "accession": "0000851968-25-000097",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2025-05-02",
      "form": "10-Q",
      "symbols": [
@@ -3043,6 +3927,9 @@
     },
     {
      "accession": "0000851968-25-000114",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2025-07-25",
      "form": "10-Q",
      "symbols": [
@@ -3051,6 +3938,9 @@
     },
     {
      "accession": "0000851968-25-000133",
+     "classes": [
+      "MHK"
+     ],
      "filing_date": "2025-10-24",
      "form": "10-Q",
      "symbols": [
@@ -3063,11 +3953,15 @@
   {
    "changes": [],
    "cik": "0000858470",
+   "cover_classes_last_10k": "CTRA",
    "cover_symbols_last_10k": "CTRA",
    "exit_date": "2026-05-06",
    "filings": [
     {
      "accession": "0000858470-22-000009",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -3076,6 +3970,9 @@
     },
     {
      "accession": "0000858470-22-000018",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -3084,6 +3981,9 @@
     },
     {
      "accession": "0000858470-22-000032",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -3092,6 +3992,9 @@
     },
     {
      "accession": "0000858470-22-000042",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -3100,6 +4003,9 @@
     },
     {
      "accession": "0000858470-23-000011",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2023-02-27",
      "form": "10-K",
      "symbols": [
@@ -3108,6 +4014,9 @@
     },
     {
      "accession": "0000858470-23-000028",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -3116,6 +4025,9 @@
     },
     {
      "accession": "0000858470-23-000037",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2023-08-08",
      "form": "10-Q",
      "symbols": [
@@ -3124,6 +4036,9 @@
     },
     {
      "accession": "0000858470-23-000056",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2023-11-07",
      "form": "10-Q",
      "symbols": [
@@ -3132,6 +4047,9 @@
     },
     {
      "accession": "0000858470-24-000019",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -3140,6 +4058,9 @@
     },
     {
      "accession": "0000858470-24-000069",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2024-05-03",
      "form": "10-Q",
      "symbols": [
@@ -3148,6 +4069,9 @@
     },
     {
      "accession": "0000858470-24-000106",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2024-08-02",
      "form": "10-Q",
      "symbols": [
@@ -3156,6 +4080,9 @@
     },
     {
      "accession": "0000858470-24-000121",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2024-11-01",
      "form": "10-Q",
      "symbols": [
@@ -3164,6 +4091,9 @@
     },
     {
      "accession": "0000858470-25-000075",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2025-02-25",
      "form": "10-K",
      "symbols": [
@@ -3172,6 +4102,9 @@
     },
     {
      "accession": "0000858470-25-000111",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2025-05-06",
      "form": "10-Q",
      "symbols": [
@@ -3180,6 +4113,9 @@
     },
     {
      "accession": "0000858470-25-000165",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2025-08-05",
      "form": "10-Q",
      "symbols": [
@@ -3188,6 +4124,9 @@
     },
     {
      "accession": "0000858470-25-000199",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2025-11-04",
      "form": "10-Q",
      "symbols": [
@@ -3196,6 +4135,9 @@
     },
     {
      "accession": "0000858470-26-000073",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2026-02-27",
      "form": "10-K",
      "symbols": [
@@ -3204,6 +4146,9 @@
     },
     {
      "accession": "0000858470-26-000082",
+     "classes": [
+      "CTRA"
+     ],
      "filing_date": "2026-05-06",
      "form": "10-Q",
      "symbols": [
@@ -3216,11 +4161,15 @@
   {
    "changes": [],
    "cik": "0000859737",
+   "cover_classes_last_10k": "HOLX",
    "cover_symbols_last_10k": "HOLX",
    "exit_date": "2026-04-08",
    "filings": [
     {
      "accession": "0000859737-22-000004",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2022-02-02",
      "form": "10-Q",
      "symbols": [
@@ -3229,6 +4178,9 @@
     },
     {
      "accession": "0000859737-22-000011",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2022-04-27",
      "form": "10-Q",
      "symbols": [
@@ -3237,6 +4189,9 @@
     },
     {
      "accession": "0000859737-22-000018",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2022-07-27",
      "form": "10-Q",
      "symbols": [
@@ -3245,6 +4200,9 @@
     },
     {
      "accession": "0000859737-22-000022",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2022-11-15",
      "form": "10-K",
      "symbols": [
@@ -3253,6 +4211,9 @@
     },
     {
      "accession": "0000859737-23-000004",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2023-02-01",
      "form": "10-Q",
      "symbols": [
@@ -3261,6 +4222,9 @@
     },
     {
      "accession": "0000859737-23-000011",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2023-05-02",
      "form": "10-Q",
      "symbols": [
@@ -3269,6 +4233,9 @@
     },
     {
      "accession": "0000859737-23-000019",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2023-08-01",
      "form": "10-Q",
      "symbols": [
@@ -3277,6 +4244,9 @@
     },
     {
      "accession": "0000859737-23-000023",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2023-11-21",
      "form": "10-K",
      "symbols": [
@@ -3285,6 +4255,9 @@
     },
     {
      "accession": "0000859737-24-000003",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2024-02-02",
      "form": "10-Q",
      "symbols": [
@@ -3293,6 +4266,9 @@
     },
     {
      "accession": "0000859737-24-000014",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2024-05-03",
      "form": "10-Q",
      "symbols": [
@@ -3301,6 +4277,9 @@
     },
     {
      "accession": "0000859737-24-000020",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2024-07-30",
      "form": "10-Q",
      "symbols": [
@@ -3309,6 +4288,9 @@
     },
     {
      "accession": "0000859737-24-000024",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2024-11-27",
      "form": "10-K",
      "symbols": [
@@ -3317,6 +4299,9 @@
     },
     {
      "accession": "0000859737-25-000005",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2025-02-06",
      "form": "10-Q",
      "symbols": [
@@ -3325,6 +4310,9 @@
     },
     {
      "accession": "0000859737-25-000008",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2025-05-02",
      "form": "10-Q",
      "symbols": [
@@ -3333,6 +4321,9 @@
     },
     {
      "accession": "0000859737-25-000022",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2025-07-31",
      "form": "10-Q",
      "symbols": [
@@ -3341,6 +4332,9 @@
     },
     {
      "accession": "0000859737-25-000072",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2025-11-18",
      "form": "10-K",
      "symbols": [
@@ -3349,6 +4343,9 @@
     },
     {
      "accession": "0000859737-26-000008",
+     "classes": [
+      "HOLX"
+     ],
      "filing_date": "2026-01-29",
      "form": "10-Q",
      "symbols": [
@@ -3361,11 +4358,15 @@
   {
    "changes": [],
    "cik": "0000877890",
+   "cover_classes_last_10k": "CTXS",
    "cover_symbols_last_10k": "CTXS",
    "exit_date": "2022-10-02",
    "filings": [
     {
      "accession": "0000877890-22-000019",
+     "classes": [
+      "CTXS"
+     ],
      "filing_date": "2022-02-16",
      "form": "10-K",
      "symbols": [
@@ -3374,6 +4375,9 @@
     },
     {
      "accession": "0000877890-22-000060",
+     "classes": [
+      "CTXS"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -3382,6 +4386,9 @@
     },
     {
      "accession": "0000877890-22-000079",
+     "classes": [
+      "CTXS"
+     ],
      "filing_date": "2022-07-26",
      "form": "10-Q",
      "symbols": [
@@ -3394,11 +4401,15 @@
   {
    "changes": [],
    "cik": "0000891103",
+   "cover_classes_last_10k": "MTCH",
    "cover_symbols_last_10k": "MTCH",
    "exit_date": "2026-03-22",
    "filings": [
     {
      "accession": "0000891103-22-000020",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -3407,6 +4418,9 @@
     },
     {
      "accession": "0000891103-22-000039",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -3415,6 +4429,9 @@
     },
     {
      "accession": "0000891103-22-000082",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -3423,6 +4440,9 @@
     },
     {
      "accession": "0000891103-22-000095",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -3431,6 +4451,9 @@
     },
     {
      "accession": "0000891103-23-000013",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -3439,6 +4462,9 @@
     },
     {
      "accession": "0000891103-23-000047",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -3447,6 +4473,9 @@
     },
     {
      "accession": "0000891103-23-000099",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -3455,6 +4484,9 @@
     },
     {
      "accession": "0000891103-23-000114",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -3463,6 +4495,9 @@
     },
     {
      "accession": "0000891103-24-000014",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -3471,6 +4506,9 @@
     },
     {
      "accession": "0000891103-24-000057",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2024-05-08",
      "form": "10-Q",
      "symbols": [
@@ -3479,6 +4517,9 @@
     },
     {
      "accession": "0000891103-24-000095",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -3487,6 +4528,9 @@
     },
     {
      "accession": "0000891103-24-000114",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2024-11-12",
      "form": "10-Q",
      "symbols": [
@@ -3495,6 +4539,9 @@
     },
     {
      "accession": "0000891103-25-000027",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2025-02-27",
      "form": "10-K",
      "symbols": [
@@ -3503,6 +4550,9 @@
     },
     {
      "accession": "0000891103-25-000076",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -3511,6 +4561,9 @@
     },
     {
      "accession": "0000891103-25-000124",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2025-08-06",
      "form": "10-Q",
      "symbols": [
@@ -3519,6 +4572,9 @@
     },
     {
      "accession": "0000891103-25-000180",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2025-11-05",
      "form": "10-Q",
      "symbols": [
@@ -3527,6 +4583,9 @@
     },
     {
      "accession": "0000891103-26-000025",
+     "classes": [
+      "MTCH"
+     ],
      "filing_date": "2026-02-26",
      "form": "10-K",
      "symbols": [
@@ -3539,11 +4598,15 @@
   {
    "changes": [],
    "cik": "0000899689",
+   "cover_classes_last_10k": "VNO",
    "cover_symbols_last_10k": "VNO | VNO/PL | VNO/PM | VNO/PN | VNO/PO",
    "exit_date": "2023-01-04",
    "filings": [
     {
      "accession": "0000899689-22-000006",
+     "classes": [
+      "VNO"
+     ],
      "filing_date": "2022-02-14",
      "form": "10-K",
      "symbols": [
@@ -3556,6 +4619,9 @@
     },
     {
      "accession": "0000899689-22-000021",
+     "classes": [
+      "VNO"
+     ],
      "filing_date": "2022-05-02",
      "form": "10-Q",
      "symbols": [
@@ -3568,6 +4634,9 @@
     },
     {
      "accession": "0000899689-22-000038",
+     "classes": [
+      "VNO"
+     ],
      "filing_date": "2022-08-01",
      "form": "10-Q",
      "symbols": [
@@ -3580,6 +4649,9 @@
     },
     {
      "accession": "0000899689-22-000047",
+     "classes": [
+      "VNO"
+     ],
      "filing_date": "2022-10-31",
      "form": "10-Q",
      "symbols": [
@@ -3596,11 +4668,15 @@
   {
    "changes": [],
    "cik": "0000908255",
+   "cover_classes_last_10k": "BWA",
    "cover_symbols_last_10k": "BWA | BWA31",
    "exit_date": "2025-03-23",
    "filings": [
     {
      "accession": "0000908255-22-000009",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2022-02-15",
      "form": "10-K",
      "symbols": [
@@ -3610,6 +4686,9 @@
     },
     {
      "accession": "0000908255-22-000018",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -3619,6 +4698,9 @@
     },
     {
      "accession": "0000908255-22-000031",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -3628,6 +4710,9 @@
     },
     {
      "accession": "0000908255-22-000041",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -3637,6 +4722,9 @@
     },
     {
      "accession": "0000908255-23-000013",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2023-02-09",
      "form": "10-K",
      "symbols": [
@@ -3646,6 +4734,9 @@
     },
     {
      "accession": "0000908255-23-000027",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -3655,6 +4746,9 @@
     },
     {
      "accession": "0000908255-23-000044",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2023-08-02",
      "form": "10-Q",
      "symbols": [
@@ -3664,6 +4758,9 @@
     },
     {
      "accession": "0000908255-23-000051",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -3673,6 +4770,9 @@
     },
     {
      "accession": "0000908255-24-000007",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2024-02-08",
      "form": "10-K",
      "symbols": [
@@ -3682,6 +4782,9 @@
     },
     {
      "accession": "0000908255-24-000023",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -3691,6 +4794,9 @@
     },
     {
      "accession": "0000908255-24-000036",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2024-07-31",
      "form": "10-Q",
      "symbols": [
@@ -3700,6 +4806,9 @@
     },
     {
      "accession": "0000908255-24-000043",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2024-10-31",
      "form": "10-Q",
      "symbols": [
@@ -3709,6 +4818,9 @@
     },
     {
      "accession": "0000908255-25-000007",
+     "classes": [
+      "BWA"
+     ],
      "filing_date": "2025-02-06",
      "form": "10-K",
      "symbols": [
@@ -3720,23 +4832,17 @@
    "symbols": "BWA"
   },
   {
-   "changes": [
-    {
-     "added": [],
-     "from_filing": "2023-04-28",
-     "removed": [
-      "EMN23"
-     ],
-     "to_accession": "0000915389-23-000136",
-     "to_filing": "2023-07-28"
-    }
-   ],
+   "changes": [],
    "cik": "0000915389",
+   "cover_classes_last_10k": "EMN",
    "cover_symbols_last_10k": "EMN | EMN26",
    "exit_date": "2025-11-03",
    "filings": [
     {
      "accession": "0000915389-22-000010",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -3747,6 +4853,9 @@
     },
     {
      "accession": "0000915389-22-000023",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -3757,6 +4866,9 @@
     },
     {
      "accession": "0000915389-22-000039",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2022-08-01",
      "form": "10-Q",
      "symbols": [
@@ -3767,6 +4879,9 @@
     },
     {
      "accession": "0000915389-22-000051",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -3777,6 +4892,9 @@
     },
     {
      "accession": "0000915389-23-000015",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2023-02-15",
      "form": "10-K",
      "symbols": [
@@ -3787,6 +4905,9 @@
     },
     {
      "accession": "0000915389-23-000091",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2023-04-28",
      "form": "10-Q",
      "symbols": [
@@ -3797,6 +4918,9 @@
     },
     {
      "accession": "0000915389-23-000136",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2023-07-28",
      "form": "10-Q",
      "symbols": [
@@ -3806,6 +4930,9 @@
     },
     {
      "accession": "0000915389-23-000170",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2023-10-27",
      "form": "10-Q",
      "symbols": [
@@ -3815,6 +4942,9 @@
     },
     {
      "accession": "0000915389-24-000016",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2024-02-14",
      "form": "10-K",
      "symbols": [
@@ -3824,6 +4954,9 @@
     },
     {
      "accession": "0000915389-24-000133",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2024-04-26",
      "form": "10-Q",
      "symbols": [
@@ -3833,6 +4966,9 @@
     },
     {
      "accession": "0000915389-24-000192",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2024-07-26",
      "form": "10-Q",
      "symbols": [
@@ -3842,6 +4978,9 @@
     },
     {
      "accession": "0000915389-24-000227",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2024-11-01",
      "form": "10-Q",
      "symbols": [
@@ -3851,6 +4990,9 @@
     },
     {
      "accession": "0000915389-25-000012",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2025-02-14",
      "form": "10-K",
      "symbols": [
@@ -3860,6 +5002,9 @@
     },
     {
      "accession": "0000915389-25-000105",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2025-04-25",
      "form": "10-Q",
      "symbols": [
@@ -3869,6 +5014,9 @@
     },
     {
      "accession": "0000915389-25-000155",
+     "classes": [
+      "EMN"
+     ],
      "filing_date": "2025-08-01",
      "form": "10-Q",
      "symbols": [
@@ -3882,11 +5030,15 @@
   {
    "changes": [],
    "cik": "0000915912",
+   "cover_classes_last_10k": "AVB",
    "cover_symbols_last_10k": "AVB",
    "exit_date": "2026-08-17",
    "filings": [
     {
      "accession": "0000915912-22-000005",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -3895,6 +5047,9 @@
     },
     {
      "accession": "0000915912-22-000011",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -3903,6 +5058,9 @@
     },
     {
      "accession": "0000915912-22-000015",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -3911,6 +5069,9 @@
     },
     {
      "accession": "0000915912-22-000020",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2022-11-08",
      "form": "10-Q",
      "symbols": [
@@ -3919,6 +5080,9 @@
     },
     {
      "accession": "0000915912-23-000004",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -3927,6 +5091,9 @@
     },
     {
      "accession": "0000915912-23-000010",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -3935,6 +5102,9 @@
     },
     {
      "accession": "0000915912-23-000014",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2023-08-04",
      "form": "10-Q",
      "symbols": [
@@ -3943,6 +5113,9 @@
     },
     {
      "accession": "0000915912-23-000018",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2023-11-03",
      "form": "10-Q",
      "symbols": [
@@ -3951,6 +5124,9 @@
     },
     {
      "accession": "0000915912-24-000004",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -3959,6 +5135,9 @@
     },
     {
      "accession": "0000915912-24-000011",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2024-05-03",
      "form": "10-Q",
      "symbols": [
@@ -3967,6 +5146,9 @@
     },
     {
      "accession": "0000915912-24-000015",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2024-08-06",
      "form": "10-Q",
      "symbols": [
@@ -3975,6 +5157,9 @@
     },
     {
      "accession": "0000915912-24-000021",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2024-11-12",
      "form": "10-Q",
      "symbols": [
@@ -3983,6 +5168,9 @@
     },
     {
      "accession": "0000915912-25-000005",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2025-02-27",
      "form": "10-K",
      "symbols": [
@@ -3991,6 +5179,9 @@
     },
     {
      "accession": "0000915912-25-000012",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -3999,6 +5190,9 @@
     },
     {
      "accession": "0000915912-25-000019",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -4007,6 +5201,9 @@
     },
     {
      "accession": "0000915912-25-000025",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2025-11-06",
      "form": "10-Q",
      "symbols": [
@@ -4015,6 +5212,9 @@
     },
     {
      "accession": "0000915912-26-000004",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2026-02-27",
      "form": "10-K",
      "symbols": [
@@ -4023,6 +5223,9 @@
     },
     {
      "accession": "0000915912-26-000012",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2026-05-07",
      "form": "10-Q",
      "symbols": [
@@ -4031,6 +5234,9 @@
     },
     {
      "accession": "0000915912-26-000020",
+     "classes": [
+      "AVB"
+     ],
      "filing_date": "2026-07-30",
      "form": "10-Q",
      "symbols": [
@@ -4043,11 +5249,15 @@
   {
    "changes": [],
    "cik": "0000921738",
+   "cover_classes_last_10k": "PENN",
    "cover_symbols_last_10k": "PENN",
    "exit_date": "2022-09-18",
    "filings": [
     {
      "accession": "0000921738-22-000011",
+     "classes": [
+      "PENN"
+     ],
      "filing_date": "2022-02-28",
      "form": "10-K",
      "symbols": [
@@ -4056,6 +5266,9 @@
     },
     {
      "accession": "0000921738-22-000019",
+     "classes": [
+      "PENN"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -4064,6 +5277,9 @@
     },
     {
      "accession": "0000921738-22-000037",
+     "classes": [
+      "PENN"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -4076,11 +5292,15 @@
   {
    "changes": [],
    "cik": "0000945841",
+   "cover_classes_last_10k": "POOL",
    "cover_symbols_last_10k": "POOL",
    "exit_date": "2026-06-21",
    "filings": [
     {
      "accession": "0000945841-22-000023",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -4089,6 +5309,9 @@
     },
     {
      "accession": "0000945841-22-000063",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -4097,6 +5320,9 @@
     },
     {
      "accession": "0000945841-22-000100",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -4105,6 +5331,9 @@
     },
     {
      "accession": "0000945841-22-000122",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -4113,6 +5342,9 @@
     },
     {
      "accession": "0000945841-23-000015",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -4121,6 +5353,9 @@
     },
     {
      "accession": "0000945841-23-000078",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -4129,6 +5364,9 @@
     },
     {
      "accession": "0000945841-23-000117",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2023-07-27",
      "form": "10-Q",
      "symbols": [
@@ -4137,6 +5375,9 @@
     },
     {
      "accession": "0000945841-23-000135",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2023-10-26",
      "form": "10-Q",
      "symbols": [
@@ -4145,6 +5386,9 @@
     },
     {
      "accession": "0000945841-24-000021",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2024-02-27",
      "form": "10-K",
      "symbols": [
@@ -4153,6 +5397,9 @@
     },
     {
      "accession": "0000945841-24-000089",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2024-04-29",
      "form": "10-Q",
      "symbols": [
@@ -4161,6 +5408,9 @@
     },
     {
      "accession": "0000945841-24-000136",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2024-07-30",
      "form": "10-Q",
      "symbols": [
@@ -4169,6 +5419,9 @@
     },
     {
      "accession": "0000945841-24-000160",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2024-10-30",
      "form": "10-Q",
      "symbols": [
@@ -4177,6 +5430,9 @@
     },
     {
      "accession": "0000945841-25-000032",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2025-02-27",
      "form": "10-K",
      "symbols": [
@@ -4185,6 +5441,9 @@
     },
     {
      "accession": "0000945841-25-000072",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2025-04-29",
      "form": "10-Q",
      "symbols": [
@@ -4193,6 +5452,9 @@
     },
     {
      "accession": "0000945841-25-000130",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2025-07-30",
      "form": "10-Q",
      "symbols": [
@@ -4201,6 +5463,9 @@
     },
     {
      "accession": "0001193125-25-255740",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2025-10-29",
      "form": "10-Q",
      "symbols": [
@@ -4209,6 +5474,9 @@
     },
     {
      "accession": "0001193125-26-074833",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2026-02-26",
      "form": "10-K",
      "symbols": [
@@ -4217,6 +5485,9 @@
     },
     {
      "accession": "0001193125-26-185263",
+     "classes": [
+      "POOL"
+     ],
      "filing_date": "2026-04-28",
      "form": "10-Q",
      "symbols": [
@@ -4229,11 +5500,15 @@
   {
    "changes": [],
    "cik": "0001001082",
+   "cover_classes_last_10k": "DISH",
    "cover_symbols_last_10k": "DISH",
    "exit_date": "2023-06-19",
    "filings": [
     {
      "accession": "0001558370-22-001816",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -4242,6 +5517,9 @@
     },
     {
      "accession": "0001558370-22-007502",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -4250,6 +5528,9 @@
     },
     {
      "accession": "0001558370-22-011733",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -4258,6 +5539,9 @@
     },
     {
      "accession": "0001558370-22-015893",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -4266,6 +5550,9 @@
     },
     {
      "accession": "0001558370-23-001811",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -4274,6 +5561,9 @@
     },
     {
      "accession": "0001558370-23-008370",
+     "classes": [
+      "DISH"
+     ],
      "filing_date": "2023-05-08",
      "form": "10-Q",
      "symbols": [
@@ -4286,11 +5576,15 @@
   {
    "changes": [],
    "cik": "0001012100",
+   "cover_classes_last_10k": "SEE",
    "cover_symbols_last_10k": "SEE",
    "exit_date": "2023-12-17",
    "filings": [
     {
      "accession": "0001628280-22-003294",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -4299,6 +5593,9 @@
     },
     {
      "accession": "0001628280-22-012510",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -4307,6 +5604,9 @@
     },
     {
      "accession": "0001628280-22-020518",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -4315,6 +5615,9 @@
     },
     {
      "accession": "0001628280-22-027548",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2022-11-01",
      "form": "10-Q",
      "symbols": [
@@ -4323,6 +5626,9 @@
     },
     {
      "accession": "0001628280-23-004277",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2023-02-21",
      "form": "10-K",
      "symbols": [
@@ -4331,6 +5637,9 @@
     },
     {
      "accession": "0001628280-23-015755",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -4339,6 +5648,9 @@
     },
     {
      "accession": "0001628280-23-028223",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2023-08-08",
      "form": "10-Q",
      "symbols": [
@@ -4347,6 +5659,9 @@
     },
     {
      "accession": "0001628280-23-036460",
+     "classes": [
+      "SEE"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -4359,11 +5674,15 @@
   {
    "changes": [],
    "cik": "0001013462",
+   "cover_classes_last_10k": "ANSS",
    "cover_symbols_last_10k": "ANSS",
    "exit_date": "2025-07-17",
    "filings": [
     {
      "accession": "0001013462-22-000005",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2022-02-23",
      "form": "10-K",
      "symbols": [
@@ -4372,6 +5691,9 @@
     },
     {
      "accession": "0001013462-22-000012",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -4380,6 +5702,9 @@
     },
     {
      "accession": "0001013462-22-000026",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -4388,6 +5713,9 @@
     },
     {
      "accession": "0001013462-22-000031",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -4396,6 +5724,9 @@
     },
     {
      "accession": "0001013462-23-000013",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -4404,6 +5735,9 @@
     },
     {
      "accession": "0001013462-23-000028",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -4412,6 +5746,9 @@
     },
     {
      "accession": "0001013462-23-000046",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2023-08-02",
      "form": "10-Q",
      "symbols": [
@@ -4420,6 +5757,9 @@
     },
     {
      "accession": "0001013462-23-000055",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2023-11-01",
      "form": "10-Q",
      "symbols": [
@@ -4428,6 +5768,9 @@
     },
     {
      "accession": "0001013462-24-000007",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2024-02-21",
      "form": "10-K",
      "symbols": [
@@ -4436,6 +5779,9 @@
     },
     {
      "accession": "0001013462-24-000015",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2024-05-01",
      "form": "10-Q",
      "symbols": [
@@ -4444,6 +5790,9 @@
     },
     {
      "accession": "0001013462-24-000024",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2024-07-31",
      "form": "10-Q",
      "symbols": [
@@ -4452,6 +5801,9 @@
     },
     {
      "accession": "0001013462-24-000028",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2024-11-06",
      "form": "10-Q",
      "symbols": [
@@ -4460,6 +5812,9 @@
     },
     {
      "accession": "0001013462-25-000009",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2025-02-19",
      "form": "10-K",
      "symbols": [
@@ -4468,6 +5823,9 @@
     },
     {
      "accession": "0001013462-25-000017",
+     "classes": [
+      "ANSS"
+     ],
      "filing_date": "2025-04-30",
      "form": "10-Q",
      "symbols": [
@@ -4480,11 +5838,15 @@
   {
    "changes": [],
    "cik": "0001038357",
+   "cover_classes_last_10k": "PXD",
    "cover_symbols_last_10k": "PXD",
    "exit_date": "2024-05-07",
    "filings": [
     {
      "accession": "0001038357-22-000039",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -4493,6 +5855,9 @@
     },
     {
      "accession": "0001038357-22-000076",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -4501,6 +5866,9 @@
     },
     {
      "accession": "0001038357-22-000118",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2022-08-02",
      "form": "10-Q",
      "symbols": [
@@ -4509,6 +5877,9 @@
     },
     {
      "accession": "0001038357-22-000136",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -4517,6 +5888,9 @@
     },
     {
      "accession": "0001038357-23-000039",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -4525,6 +5899,9 @@
     },
     {
      "accession": "0001038357-23-000064",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -4533,6 +5910,9 @@
     },
     {
      "accession": "0001038357-23-000084",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2023-08-01",
      "form": "10-Q",
      "symbols": [
@@ -4541,6 +5921,9 @@
     },
     {
      "accession": "0001038357-23-000094",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -4549,6 +5932,9 @@
     },
     {
      "accession": "0001038357-24-000020",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -4557,6 +5943,9 @@
     },
     {
      "accession": "0001038357-24-000043",
+     "classes": [
+      "PXD"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -4569,11 +5958,15 @@
   {
    "changes": [],
    "cik": "0001043604",
+   "cover_classes_last_10k": "JNPR",
    "cover_symbols_last_10k": "JNPR",
    "exit_date": "2025-07-08",
    "filings": [
     {
      "accession": "0001043604-22-000017",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2022-02-11",
      "form": "10-K",
      "symbols": [
@@ -4582,6 +5975,9 @@
     },
     {
      "accession": "0001043604-22-000076",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -4590,6 +5986,9 @@
     },
     {
      "accession": "0001043604-22-000140",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2022-07-29",
      "form": "10-Q",
      "symbols": [
@@ -4598,6 +5997,9 @@
     },
     {
      "accession": "0001043604-22-000163",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2022-10-28",
      "form": "10-Q",
      "symbols": [
@@ -4606,6 +6008,9 @@
     },
     {
      "accession": "0001043604-23-000016",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2023-02-10",
      "form": "10-K",
      "symbols": [
@@ -4614,6 +6019,9 @@
     },
     {
      "accession": "0001043604-23-000064",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2023-04-28",
      "form": "10-Q",
      "symbols": [
@@ -4622,6 +6030,9 @@
     },
     {
      "accession": "0001043604-23-000133",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2023-07-28",
      "form": "10-Q",
      "symbols": [
@@ -4630,6 +6041,9 @@
     },
     {
      "accession": "0001043604-23-000156",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2023-10-27",
      "form": "10-Q",
      "symbols": [
@@ -4638,6 +6052,9 @@
     },
     {
      "accession": "0001043604-24-000014",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2024-02-07",
      "form": "10-K",
      "symbols": [
@@ -4646,6 +6063,9 @@
     },
     {
      "accession": "0001043604-24-000066",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2024-04-26",
      "form": "10-Q",
      "symbols": [
@@ -4654,6 +6074,9 @@
     },
     {
      "accession": "0001043604-24-000144",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2024-07-26",
      "form": "10-Q",
      "symbols": [
@@ -4662,6 +6085,9 @@
     },
     {
      "accession": "0001043604-24-000154",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2024-10-31",
      "form": "10-Q",
      "symbols": [
@@ -4670,6 +6096,9 @@
     },
     {
      "accession": "0001043604-25-000025",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2025-02-21",
      "form": "10-K",
      "symbols": [
@@ -4678,6 +6107,9 @@
     },
     {
      "accession": "0001043604-25-000065",
+     "classes": [
+      "JNPR"
+     ],
      "filing_date": "2025-05-09",
      "form": "10-Q",
      "symbols": [
@@ -4688,23 +6120,17 @@
    "symbols": "JNPR"
   },
   {
-   "changes": [
-    {
-     "added": [
-      "LKQ31"
-     ],
-     "from_filing": "2024-02-22",
-     "removed": [],
-     "to_accession": "0001065696-24-000086",
-     "to_filing": "2024-04-23"
-    }
-   ],
+   "changes": [],
    "cik": "0001065696",
+   "cover_classes_last_10k": "LKQ",
    "cover_symbols_last_10k": "LKQ | LKQ31",
    "exit_date": "2025-12-21",
    "filings": [
     {
      "accession": "0001065696-22-000006",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -4713,6 +6139,9 @@
     },
     {
      "accession": "0001065696-22-000032",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -4721,6 +6150,9 @@
     },
     {
      "accession": "0001065696-22-000055",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2022-08-02",
      "form": "10-Q",
      "symbols": [
@@ -4729,6 +6161,9 @@
     },
     {
      "accession": "0001065696-22-000077",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2022-11-01",
      "form": "10-Q",
      "symbols": [
@@ -4737,6 +6172,9 @@
     },
     {
      "accession": "0001065696-23-000008",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -4745,6 +6183,9 @@
     },
     {
      "accession": "0001065696-23-000040",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -4753,6 +6194,9 @@
     },
     {
      "accession": "0001065696-23-000064",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2023-07-27",
      "form": "10-Q",
      "symbols": [
@@ -4761,6 +6205,9 @@
     },
     {
      "accession": "0001065696-23-000102",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2023-10-27",
      "form": "10-Q",
      "symbols": [
@@ -4769,6 +6216,9 @@
     },
     {
      "accession": "0001065696-24-000009",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -4777,6 +6227,9 @@
     },
     {
      "accession": "0001065696-24-000086",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2024-04-23",
      "form": "10-Q",
      "symbols": [
@@ -4786,6 +6239,9 @@
     },
     {
      "accession": "0001065696-24-000112",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2024-07-25",
      "form": "10-Q",
      "symbols": [
@@ -4795,6 +6251,9 @@
     },
     {
      "accession": "0001065696-24-000125",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2024-10-24",
      "form": "10-Q",
      "symbols": [
@@ -4804,6 +6263,9 @@
     },
     {
      "accession": "0001065696-25-000015",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -4813,6 +6275,9 @@
     },
     {
      "accession": "0001065696-25-000028",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2025-04-24",
      "form": "10-Q",
      "symbols": [
@@ -4822,6 +6287,9 @@
     },
     {
      "accession": "0001065696-25-000044",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2025-07-24",
      "form": "10-Q",
      "symbols": [
@@ -4831,6 +6299,9 @@
     },
     {
      "accession": "0001065696-25-000063",
+     "classes": [
+      "LKQ"
+     ],
      "filing_date": "2025-10-30",
      "form": "10-Q",
      "symbols": [
@@ -4844,11 +6315,15 @@
   {
    "changes": [],
    "cik": "0001111928",
+   "cover_classes_last_10k": "IPGP",
    "cover_symbols_last_10k": "IPGP",
    "exit_date": "2022-06-20",
    "filings": [
     {
      "accession": "0001111928-22-000025",
+     "classes": [
+      "IPGP"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -4857,6 +6332,9 @@
     },
     {
      "accession": "0001111928-22-000073",
+     "classes": [
+      "IPGP"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -4869,6 +6347,7 @@
   {
    "changes": [],
    "cik": "0001132979",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2023-05-03",
    "filings": [],
@@ -4877,11 +6356,15 @@
   {
    "changes": [],
    "cik": "0001158449",
+   "cover_classes_last_10k": "AAP",
    "cover_symbols_last_10k": "AAP",
    "exit_date": "2023-08-24",
    "filings": [
     {
      "accession": "0001158449-22-000037",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2022-02-15",
      "form": "10-K",
      "symbols": [
@@ -4890,6 +6373,9 @@
     },
     {
      "accession": "0001158449-22-000176",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2022-05-24",
      "form": "10-Q",
      "symbols": [
@@ -4898,6 +6384,9 @@
     },
     {
      "accession": "0001158449-22-000235",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2022-08-24",
      "form": "10-Q",
      "symbols": [
@@ -4906,6 +6395,9 @@
     },
     {
      "accession": "0001158449-22-000268",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2022-11-16",
      "form": "10-Q",
      "symbols": [
@@ -4914,6 +6406,9 @@
     },
     {
      "accession": "0001158449-23-000035",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2023-02-28",
      "form": "10-K",
      "symbols": [
@@ -4922,6 +6417,9 @@
     },
     {
      "accession": "0001158449-23-000142",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2023-06-06",
      "form": "10-Q",
      "symbols": [
@@ -4930,6 +6428,9 @@
     },
     {
      "accession": "0001158449-23-000204",
+     "classes": [
+      "AAP"
+     ],
      "filing_date": "2023-08-23",
      "form": "10-Q",
      "symbols": [
@@ -4942,11 +6443,15 @@
   {
    "changes": [],
    "cik": "0001170010",
+   "cover_classes_last_10k": "KMX",
    "cover_symbols_last_10k": "KMX",
    "exit_date": "2025-10-30",
    "filings": [
     {
      "accession": "0001170010-22-000004",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2022-01-06",
      "form": "10-Q",
      "symbols": [
@@ -4955,6 +6460,9 @@
     },
     {
      "accession": "0001170010-22-000017",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2022-04-14",
      "form": "10-K",
      "symbols": [
@@ -4963,6 +6471,9 @@
     },
     {
      "accession": "0001170010-22-000063",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2022-06-27",
      "form": "10-Q",
      "symbols": [
@@ -4971,6 +6482,9 @@
     },
     {
      "accession": "0001170010-22-000097",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2022-09-30",
      "form": "10-Q",
      "symbols": [
@@ -4979,6 +6493,9 @@
     },
     {
      "accession": "0001170010-23-000006",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2023-01-06",
      "form": "10-Q",
      "symbols": [
@@ -4987,6 +6504,9 @@
     },
     {
      "accession": "0001170010-23-000010",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2023-04-13",
      "form": "10-K",
      "symbols": [
@@ -4995,6 +6515,9 @@
     },
     {
      "accession": "0001170010-23-000065",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2023-06-26",
      "form": "10-Q",
      "symbols": [
@@ -5003,6 +6526,9 @@
     },
     {
      "accession": "0001170010-23-000114",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2023-09-29",
      "form": "10-Q",
      "symbols": [
@@ -5011,6 +6537,9 @@
     },
     {
      "accession": "0001170010-24-000002",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2024-01-05",
      "form": "10-Q",
      "symbols": [
@@ -5019,6 +6548,9 @@
     },
     {
      "accession": "0001170010-24-000034",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2024-04-15",
      "form": "10-K",
      "symbols": [
@@ -5027,6 +6559,9 @@
     },
     {
      "accession": "0001170010-24-000087",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2024-06-27",
      "form": "10-Q",
      "symbols": [
@@ -5035,6 +6570,9 @@
     },
     {
      "accession": "0001170010-24-000130",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2024-09-27",
      "form": "10-Q",
      "symbols": [
@@ -5043,6 +6581,9 @@
     },
     {
      "accession": "0001170010-25-000004",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2025-01-07",
      "form": "10-Q",
      "symbols": [
@@ -5051,6 +6592,9 @@
     },
     {
      "accession": "0001170010-25-000024",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2025-04-11",
      "form": "10-K",
      "symbols": [
@@ -5059,6 +6603,9 @@
     },
     {
      "accession": "0001170010-25-000083",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2025-06-26",
      "form": "10-Q",
      "symbols": [
@@ -5067,6 +6614,9 @@
     },
     {
      "accession": "0001170010-25-000118",
+     "classes": [
+      "KMX"
+     ],
      "filing_date": "2025-09-26",
      "form": "10-Q",
      "symbols": [
@@ -5079,11 +6629,15 @@
   {
    "changes": [],
    "cik": "0001179929",
+   "cover_classes_last_10k": "MOH",
    "cover_symbols_last_10k": "MOH",
    "exit_date": "2026-03-22",
    "filings": [
     {
      "accession": "0001179929-22-000025",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2022-02-14",
      "form": "10-K",
      "symbols": [
@@ -5092,6 +6646,9 @@
     },
     {
      "accession": "0001179929-22-000080",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -5100,6 +6657,9 @@
     },
     {
      "accession": "0001179929-22-000112",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -5108,6 +6668,9 @@
     },
     {
      "accession": "0001179929-22-000172",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -5116,6 +6679,9 @@
     },
     {
      "accession": "0001179929-23-000025",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2023-02-13",
      "form": "10-K",
      "symbols": [
@@ -5124,6 +6690,9 @@
     },
     {
      "accession": "0001179929-23-000069",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -5132,6 +6701,9 @@
     },
     {
      "accession": "0001179929-23-000098",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2023-07-27",
      "form": "10-Q",
      "symbols": [
@@ -5140,6 +6712,9 @@
     },
     {
      "accession": "0001179929-23-000132",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2023-10-26",
      "form": "10-Q",
      "symbols": [
@@ -5148,6 +6723,9 @@
     },
     {
      "accession": "0001179929-24-000033",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2024-02-13",
      "form": "10-K",
      "symbols": [
@@ -5156,6 +6734,9 @@
     },
     {
      "accession": "0001179929-24-000089",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2024-04-25",
      "form": "10-Q",
      "symbols": [
@@ -5164,6 +6745,9 @@
     },
     {
      "accession": "0001179929-24-000123",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2024-07-25",
      "form": "10-Q",
      "symbols": [
@@ -5172,6 +6756,9 @@
     },
     {
      "accession": "0001179929-24-000151",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2024-10-24",
      "form": "10-Q",
      "symbols": [
@@ -5180,6 +6767,9 @@
     },
     {
      "accession": "0001179929-25-000023",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2025-02-11",
      "form": "10-K",
      "symbols": [
@@ -5188,6 +6778,9 @@
     },
     {
      "accession": "0001179929-25-000070",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2025-04-24",
      "form": "10-Q",
      "symbols": [
@@ -5196,6 +6789,9 @@
     },
     {
      "accession": "0001179929-25-000119",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2025-07-24",
      "form": "10-Q",
      "symbols": [
@@ -5204,6 +6800,9 @@
     },
     {
      "accession": "0001179929-25-000128",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2025-10-23",
      "form": "10-Q",
      "symbols": [
@@ -5212,6 +6811,9 @@
     },
     {
      "accession": "0001179929-26-000005",
+     "classes": [
+      "MOH"
+     ],
      "filing_date": "2026-02-10",
      "form": "10-K",
      "symbols": [
@@ -5224,11 +6826,15 @@
   {
    "changes": [],
    "cik": "0001278021",
+   "cover_classes_last_10k": "MKTX",
    "cover_symbols_last_10k": "MKTX",
    "exit_date": "2025-09-21",
    "filings": [
     {
      "accession": "0000950170-22-001811",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2022-02-23",
      "form": "10-K",
      "symbols": [
@@ -5237,6 +6843,9 @@
     },
     {
      "accession": "0000950170-22-006389",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2022-04-27",
      "form": "10-Q",
      "symbols": [
@@ -5245,6 +6854,9 @@
     },
     {
      "accession": "0000950170-22-013225",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2022-07-27",
      "form": "10-Q",
      "symbols": [
@@ -5253,6 +6865,9 @@
     },
     {
      "accession": "0000950170-22-020175",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2022-10-26",
      "form": "10-Q",
      "symbols": [
@@ -5261,6 +6876,9 @@
     },
     {
      "accession": "0000950170-23-003824",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -5269,6 +6887,9 @@
     },
     {
      "accession": "0000950170-23-015318",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2023-04-27",
      "form": "10-Q",
      "symbols": [
@@ -5277,6 +6898,9 @@
     },
     {
      "accession": "0000950170-23-035159",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2023-07-27",
      "form": "10-Q",
      "symbols": [
@@ -5285,6 +6909,9 @@
     },
     {
      "accession": "0000950170-23-055230",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2023-10-25",
      "form": "10-Q",
      "symbols": [
@@ -5293,6 +6920,9 @@
     },
     {
      "accession": "0000950170-24-018935",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -5301,6 +6931,9 @@
     },
     {
      "accession": "0000950170-24-054646",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2024-05-07",
      "form": "10-Q",
      "symbols": [
@@ -5309,6 +6942,9 @@
     },
     {
      "accession": "0000950170-24-091990",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2024-08-06",
      "form": "10-Q",
      "symbols": [
@@ -5317,6 +6953,9 @@
     },
     {
      "accession": "0000950170-24-122345",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2024-11-06",
      "form": "10-Q",
      "symbols": [
@@ -5325,6 +6964,9 @@
     },
     {
      "accession": "0000950170-25-025606",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2025-02-24",
      "form": "10-K",
      "symbols": [
@@ -5333,6 +6975,9 @@
     },
     {
      "accession": "0000950170-25-065612",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2025-05-07",
      "form": "10-Q",
      "symbols": [
@@ -5341,6 +6986,9 @@
     },
     {
      "accession": "0000950170-25-103993",
+     "classes": [
+      "MKTX"
+     ],
      "filing_date": "2025-08-06",
      "form": "10-Q",
      "symbols": [
@@ -5353,48 +7001,24 @@
   {
    "changes": [],
    "cik": "0001288784",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2023-03-14",
    "filings": [],
    "symbols": "SBNY"
   },
   {
-   "changes": [
-    {
-     "added": [
-      "CE /26A",
-      "CE /29A"
-     ],
-     "from_filing": "2022-04-29",
-     "removed": [],
-     "to_accession": "0001306830-22-000145",
-     "to_filing": "2022-07-29"
-    },
-    {
-     "added": [],
-     "from_filing": "2023-08-08",
-     "removed": [
-      "CE /23"
-     ],
-     "to_accession": "0001306830-23-000161",
-     "to_filing": "2023-11-08"
-    },
-    {
-     "added": [],
-     "from_filing": "2024-11-12",
-     "removed": [
-      "CE /25"
-     ],
-     "to_accession": "0001306830-25-000027",
-     "to_filing": "2025-02-21"
-    }
-   ],
+   "changes": [],
    "cik": "0001306830",
+   "cover_classes_last_10k": "CE",
    "cover_symbols_last_10k": "CE | CE /26A | CE /27 | CE /28 | CE /29A",
    "exit_date": "2025-03-23",
    "filings": [
     {
      "accession": "0001306830-22-000017",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2022-02-10",
      "form": "10-K",
      "symbols": [
@@ -5407,6 +7031,9 @@
     },
     {
      "accession": "0001306830-22-000098",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2022-04-29",
      "form": "10-Q",
      "symbols": [
@@ -5419,6 +7046,9 @@
     },
     {
      "accession": "0001306830-22-000145",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2022-07-29",
      "form": "10-Q",
      "symbols": [
@@ -5433,6 +7063,9 @@
     },
     {
      "accession": "0001306830-22-000184",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -5447,6 +7080,9 @@
     },
     {
      "accession": "0001306830-23-000023",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -5461,6 +7097,9 @@
     },
     {
      "accession": "0001306830-23-000086",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2023-05-10",
      "form": "10-Q",
      "symbols": [
@@ -5475,6 +7114,9 @@
     },
     {
      "accession": "0001306830-23-000129",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2023-08-08",
      "form": "10-Q",
      "symbols": [
@@ -5489,6 +7131,9 @@
     },
     {
      "accession": "0001306830-23-000161",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2023-11-08",
      "form": "10-Q",
      "symbols": [
@@ -5502,6 +7147,9 @@
     },
     {
      "accession": "0001306830-24-000029",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -5515,6 +7163,9 @@
     },
     {
      "accession": "0001306830-24-000098",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2024-05-10",
      "form": "10-Q",
      "symbols": [
@@ -5528,6 +7179,9 @@
     },
     {
      "accession": "0001306830-24-000155",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2024-08-02",
      "form": "10-Q",
      "symbols": [
@@ -5541,6 +7195,9 @@
     },
     {
      "accession": "0001306830-24-000184",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2024-11-12",
      "form": "10-Q",
      "symbols": [
@@ -5554,6 +7211,9 @@
     },
     {
      "accession": "0001306830-25-000027",
+     "classes": [
+      "CE"
+     ],
      "filing_date": "2025-02-21",
      "form": "10-K",
      "symbols": [
@@ -5570,11 +7230,15 @@
   {
    "changes": [],
    "cik": "0001316835",
+   "cover_classes_last_10k": "BLDR",
    "cover_symbols_last_10k": "BLDR",
    "exit_date": "2026-09-20",
    "filings": [
     {
      "accession": "0001564590-22-007980",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -5583,6 +7247,9 @@
     },
     {
      "accession": "0001564590-22-019150",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2022-05-10",
      "form": "10-Q",
      "symbols": [
@@ -5591,6 +7258,9 @@
     },
     {
      "accession": "0000950170-22-013626",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2022-08-01",
      "form": "10-Q",
      "symbols": [
@@ -5599,6 +7269,9 @@
     },
     {
      "accession": "0000950170-22-023056",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2022-11-08",
      "form": "10-Q",
      "symbols": [
@@ -5607,6 +7280,9 @@
     },
     {
      "accession": "0000950170-23-004939",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2023-02-28",
      "form": "10-K",
      "symbols": [
@@ -5615,6 +7291,9 @@
     },
     {
      "accession": "0000950170-23-016998",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -5623,6 +7302,9 @@
     },
     {
      "accession": "0000950170-23-036892",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2023-08-02",
      "form": "10-Q",
      "symbols": [
@@ -5631,6 +7313,9 @@
     },
     {
      "accession": "0000950170-23-057261",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2023-11-01",
      "form": "10-Q",
      "symbols": [
@@ -5639,6 +7324,9 @@
     },
     {
      "accession": "0000950170-24-018584",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -5647,6 +7335,9 @@
     },
     {
      "accession": "0000950170-24-054249",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2024-05-07",
      "form": "10-Q",
      "symbols": [
@@ -5655,6 +7346,9 @@
     },
     {
      "accession": "0000950170-24-091788",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2024-08-06",
      "form": "10-Q",
      "symbols": [
@@ -5663,6 +7357,9 @@
     },
     {
      "accession": "0000950170-24-121436",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2024-11-05",
      "form": "10-Q",
      "symbols": [
@@ -5671,6 +7368,9 @@
     },
     {
      "accession": "0000950170-25-023953",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -5679,6 +7379,9 @@
     },
     {
      "accession": "0000950170-25-061689",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2025-05-01",
      "form": "10-Q",
      "symbols": [
@@ -5687,6 +7390,9 @@
     },
     {
      "accession": "0000950170-25-100705",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2025-07-31",
      "form": "10-Q",
      "symbols": [
@@ -5695,6 +7401,9 @@
     },
     {
      "accession": "0001193125-25-257970",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2025-10-30",
      "form": "10-Q",
      "symbols": [
@@ -5703,6 +7412,9 @@
     },
     {
      "accession": "0001193125-26-054643",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2026-02-17",
      "form": "10-K",
      "symbols": [
@@ -5711,6 +7423,9 @@
     },
     {
      "accession": "0001193125-26-195140",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2026-04-30",
      "form": "10-Q",
      "symbols": [
@@ -5719,6 +7434,9 @@
     },
     {
      "accession": "0001193125-26-325451",
+     "classes": [
+      "BLDR"
+     ],
      "filing_date": "2026-07-30",
      "form": "10-Q",
      "symbols": [
@@ -5731,11 +7449,16 @@
   {
    "changes": [],
    "cik": "0001336917",
+   "cover_classes_last_10k": "UAA | UA",
    "cover_symbols_last_10k": "UAA | UA",
    "exit_date": "2022-06-20",
    "filings": [
     {
      "accession": "0001336917-22-000010",
+     "classes": [
+      "UAA",
+      "UA"
+     ],
      "filing_date": "2022-02-23",
      "form": "10-K",
      "symbols": [
@@ -5749,11 +7472,15 @@
   {
    "changes": [],
    "cik": "0001352010",
+   "cover_classes_last_10k": "EPAM",
    "cover_symbols_last_10k": "EPAM",
    "exit_date": "2026-06-01",
    "filings": [
     {
      "accession": "0001352010-22-000020",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -5762,6 +7489,9 @@
     },
     {
      "accession": "0001352010-22-000036",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2022-05-10",
      "form": "10-Q",
      "symbols": [
@@ -5770,6 +7500,9 @@
     },
     {
      "accession": "0001352010-22-000048",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -5778,6 +7511,9 @@
     },
     {
      "accession": "0001352010-22-000057",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -5786,6 +7522,9 @@
     },
     {
      "accession": "0001352010-23-000013",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -5794,6 +7533,9 @@
     },
     {
      "accession": "0001352010-23-000027",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -5802,6 +7544,9 @@
     },
     {
      "accession": "0001352010-23-000044",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -5810,6 +7555,9 @@
     },
     {
      "accession": "0001352010-23-000051",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2023-11-03",
      "form": "10-Q",
      "symbols": [
@@ -5818,6 +7566,9 @@
     },
     {
      "accession": "0001352010-24-000008",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -5826,6 +7577,9 @@
     },
     {
      "accession": "0001352010-24-000018",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2024-05-09",
      "form": "10-Q",
      "symbols": [
@@ -5834,6 +7588,9 @@
     },
     {
      "accession": "0001352010-24-000027",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2024-08-08",
      "form": "10-Q",
      "symbols": [
@@ -5842,6 +7599,9 @@
     },
     {
      "accession": "0001352010-24-000044",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2024-11-07",
      "form": "10-Q",
      "symbols": [
@@ -5850,6 +7610,9 @@
     },
     {
      "accession": "0001352010-25-000007",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2025-02-28",
      "form": "10-K",
      "symbols": [
@@ -5858,6 +7621,9 @@
     },
     {
      "accession": "0001352010-25-000015",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -5866,6 +7632,9 @@
     },
     {
      "accession": "0001352010-25-000029",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -5874,6 +7643,9 @@
     },
     {
      "accession": "0001352010-25-000056",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2025-11-06",
      "form": "10-Q",
      "symbols": [
@@ -5882,6 +7654,9 @@
     },
     {
      "accession": "0001352010-26-000015",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2026-02-26",
      "form": "10-K",
      "symbols": [
@@ -5890,6 +7665,9 @@
     },
     {
      "accession": "0001352010-26-000029",
+     "classes": [
+      "EPAM"
+     ],
      "filing_date": "2026-05-07",
      "form": "10-Q",
      "symbols": [
@@ -5902,11 +7680,15 @@
   {
    "changes": [],
    "cik": "0001370637",
+   "cover_classes_last_10k": "ETSY",
    "cover_symbols_last_10k": "ETSY",
    "exit_date": "2024-09-22",
    "filings": [
     {
      "accession": "0001370637-22-000024",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2022-02-25",
      "form": "10-K",
      "symbols": [
@@ -5915,6 +7697,9 @@
     },
     {
      "accession": "0001370637-22-000049",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -5923,6 +7708,9 @@
     },
     {
      "accession": "0001370637-22-000069",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -5931,6 +7719,9 @@
     },
     {
      "accession": "0001370637-22-000081",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -5939,6 +7730,9 @@
     },
     {
      "accession": "0001370637-23-000017",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -5947,6 +7741,9 @@
     },
     {
      "accession": "0001370637-23-000049",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -5955,6 +7752,9 @@
     },
     {
      "accession": "0001370637-23-000071",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -5963,6 +7763,9 @@
     },
     {
      "accession": "0001370637-23-000080",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -5971,6 +7774,9 @@
     },
     {
      "accession": "0001370637-24-000013",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2024-02-22",
      "form": "10-K",
      "symbols": [
@@ -5979,6 +7785,9 @@
     },
     {
      "accession": "0001370637-24-000030",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -5987,6 +7796,9 @@
     },
     {
      "accession": "0001370637-24-000043",
+     "classes": [
+      "ETSY"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -5999,11 +7811,15 @@
   {
    "changes": [],
    "cik": "0001378946",
+   "cover_classes_last_10k": "PBCT",
    "cover_symbols_last_10k": "PBCT | PBCTP",
    "exit_date": "2022-04-03",
    "filings": [
     {
      "accession": "0001628280-22-004389",
+     "classes": [
+      "PBCT"
+     ],
      "filing_date": "2022-03-01",
      "form": "10-K",
      "symbols": [
@@ -6017,11 +7833,15 @@
   {
    "changes": [],
    "cik": "0001393612",
+   "cover_classes_last_10k": "DFS",
    "cover_symbols_last_10k": "DFS",
    "exit_date": "2025-05-18",
    "filings": [
     {
      "accession": "0001393612-22-000007",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -6030,6 +7850,9 @@
     },
     {
      "accession": "0001393612-22-000016",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -6038,6 +7861,9 @@
     },
     {
      "accession": "0001393612-22-000029",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2022-07-27",
      "form": "10-Q",
      "symbols": [
@@ -6046,6 +7872,9 @@
     },
     {
      "accession": "0001628280-22-027220",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -6054,6 +7883,9 @@
     },
     {
      "accession": "0001393612-23-000007",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2023-02-23",
      "form": "10-K",
      "symbols": [
@@ -6062,6 +7894,9 @@
     },
     {
      "accession": "0001393612-23-000031",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2023-04-25",
      "form": "10-Q",
      "symbols": [
@@ -6070,6 +7905,9 @@
     },
     {
      "accession": "0001393612-23-000041",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2023-07-28",
      "form": "10-Q",
      "symbols": [
@@ -6078,6 +7916,9 @@
     },
     {
      "accession": "0001393612-23-000052",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2023-10-26",
      "form": "10-Q",
      "symbols": [
@@ -6086,6 +7927,9 @@
     },
     {
      "accession": "0001393612-24-000010",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -6094,6 +7938,9 @@
     },
     {
      "accession": "0001393612-24-000032",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2024-05-01",
      "form": "10-Q",
      "symbols": [
@@ -6102,6 +7949,9 @@
     },
     {
      "accession": "0001393612-24-000047",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2024-07-31",
      "form": "10-Q",
      "symbols": [
@@ -6110,6 +7960,9 @@
     },
     {
      "accession": "0001393612-24-000076",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2024-12-23",
      "form": "10-Q",
      "symbols": [
@@ -6118,6 +7971,9 @@
     },
     {
      "accession": "0001393612-25-000009",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -6126,6 +7982,9 @@
     },
     {
      "accession": "0001393612-25-000020",
+     "classes": [
+      "DFS"
+     ],
      "filing_date": "2025-04-30",
      "form": "10-Q",
      "symbols": [
@@ -6138,11 +7997,15 @@
   {
    "changes": [],
    "cik": "0001418091",
+   "cover_classes_last_10k": "TWTR",
    "cover_symbols_last_10k": "TWTR",
    "exit_date": "2022-10-31",
    "filings": [
     {
      "accession": "0001418091-22-000029",
+     "classes": [
+      "TWTR"
+     ],
      "filing_date": "2022-02-16",
      "form": "10-K",
      "symbols": [
@@ -6151,6 +8014,9 @@
     },
     {
      "accession": "0001418091-22-000075",
+     "classes": [
+      "TWTR"
+     ],
      "filing_date": "2022-05-02",
      "form": "10-Q",
      "symbols": [
@@ -6159,6 +8025,9 @@
     },
     {
      "accession": "0001418091-22-000147",
+     "classes": [
+      "TWTR"
+     ],
      "filing_date": "2022-07-26",
      "form": "10-Q",
      "symbols": [
@@ -6171,11 +8040,15 @@
   {
    "changes": [],
    "cik": "0001419612",
+   "cover_classes_last_10k": "SEDG",
    "cover_symbols_last_10k": "SEDG",
    "exit_date": "2023-12-17",
    "filings": [
     {
      "accession": "0001178913-22-000760",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2022-02-22",
      "form": "10-K",
      "symbols": [
@@ -6184,6 +8057,9 @@
     },
     {
      "accession": "0001178913-22-001805",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -6192,6 +8068,9 @@
     },
     {
      "accession": "0001178913-22-002939",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -6200,6 +8079,9 @@
     },
     {
      "accession": "0001178913-22-003868",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2022-11-08",
      "form": "10-Q",
      "symbols": [
@@ -6208,6 +8090,9 @@
     },
     {
      "accession": "0001178913-23-000707",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -6216,6 +8101,9 @@
     },
     {
      "accession": "0001178913-23-001734",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2023-05-08",
      "form": "10-Q",
      "symbols": [
@@ -6224,6 +8112,9 @@
     },
     {
      "accession": "0001178913-23-002728",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2023-08-07",
      "form": "10-Q",
      "symbols": [
@@ -6232,6 +8123,9 @@
     },
     {
      "accession": "0001178913-23-003538",
+     "classes": [
+      "SEDG"
+     ],
      "filing_date": "2023-11-06",
      "form": "10-Q",
      "symbols": [
@@ -6255,54 +8149,20 @@
      ],
      "to_accession": "0001437107-22-000138",
      "to_filing": "2022-04-26"
-    },
-    {
-     "added": [
-      "WBDI30",
-      "WBDI33"
-     ],
-     "from_filing": "2024-05-09",
-     "removed": [],
-     "to_accession": "0001437107-24-000165",
-     "to_filing": "2024-08-07"
-    },
-    {
-     "added": [
-      "WBDI30A",
-      "WBDI33A"
-     ],
-     "from_filing": "2025-05-08",
-     "removed": [],
-     "to_accession": "0001437107-25-000192",
-     "to_filing": "2025-08-07"
-    },
-    {
-     "added": [],
-     "from_filing": "2025-11-06",
-     "removed": [
-      "WBDI30A",
-      "WBDI33A"
-     ],
-     "to_accession": "0001437107-26-000020",
-     "to_filing": "2026-02-27"
-    },
-    {
-     "added": [
-      "WBDI30A",
-      "WBDI33A"
-     ],
-     "from_filing": "2026-02-27",
-     "removed": [],
-     "to_accession": "0001437107-26-000057",
-     "to_filing": "2026-05-06"
     }
    ],
    "cik": "0001437107",
+   "cover_classes_last_10k": "WBD",
    "cover_symbols_last_10k": "WBD | WBDI30 | WBDI33",
    "exit_date": "2026-10-05",
    "filings": [
     {
      "accession": "0001437107-22-000031",
+     "classes": [
+      "DISCA",
+      "DISCB",
+      "DISCK"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -6313,6 +8173,9 @@
     },
     {
      "accession": "0001437107-22-000138",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2022-04-26",
      "form": "10-Q",
      "symbols": [
@@ -6321,6 +8184,9 @@
     },
     {
      "accession": "0001437107-22-000209",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -6329,6 +8195,9 @@
     },
     {
      "accession": "0001437107-22-000231",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -6337,6 +8206,9 @@
     },
     {
      "accession": "0001437107-23-000019",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2023-02-24",
      "form": "10-K",
      "symbols": [
@@ -6345,6 +8217,9 @@
     },
     {
      "accession": "0001437107-23-000077",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -6353,6 +8228,9 @@
     },
     {
      "accession": "0001437107-23-000144",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -6361,6 +8239,9 @@
     },
     {
      "accession": "0001437107-23-000173",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2023-11-08",
      "form": "10-Q",
      "symbols": [
@@ -6369,6 +8250,9 @@
     },
     {
      "accession": "0001437107-24-000017",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2024-02-23",
      "form": "10-K",
      "symbols": [
@@ -6377,6 +8261,9 @@
     },
     {
      "accession": "0001437107-24-000110",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2024-05-09",
      "form": "10-Q",
      "symbols": [
@@ -6385,6 +8272,9 @@
     },
     {
      "accession": "0001437107-24-000165",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2024-08-07",
      "form": "10-Q",
      "symbols": [
@@ -6395,6 +8285,9 @@
     },
     {
      "accession": "0001437107-24-000187",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2024-11-07",
      "form": "10-Q",
      "symbols": [
@@ -6405,6 +8298,9 @@
     },
     {
      "accession": "0001437107-25-000031",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2025-02-27",
      "form": "10-K",
      "symbols": [
@@ -6415,6 +8311,9 @@
     },
     {
      "accession": "0001437107-25-000096",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -6425,6 +8324,9 @@
     },
     {
      "accession": "0001437107-25-000192",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -6437,6 +8339,9 @@
     },
     {
      "accession": "0001437107-25-000216",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2025-11-06",
      "form": "10-Q",
      "symbols": [
@@ -6449,6 +8354,9 @@
     },
     {
      "accession": "0001437107-26-000020",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2026-02-27",
      "form": "10-K",
      "symbols": [
@@ -6459,6 +8367,9 @@
     },
     {
      "accession": "0001437107-26-000057",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2026-05-06",
      "form": "10-Q",
      "symbols": [
@@ -6471,6 +8382,9 @@
     },
     {
      "accession": "0001437107-26-000075",
+     "classes": [
+      "WBD"
+     ],
      "filing_date": "2026-08-06",
      "form": "10-Q",
      "symbols": [
@@ -6487,11 +8401,15 @@
   {
    "changes": [],
    "cik": "0001463101",
+   "cover_classes_last_10k": "ENPH",
    "cover_symbols_last_10k": "ENPH",
    "exit_date": "2025-09-21",
    "filings": [
     {
      "accession": "0001463101-22-000016",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2022-02-11",
      "form": "10-K",
      "symbols": [
@@ -6500,6 +8418,9 @@
     },
     {
      "accession": "0001463101-22-000053",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2022-04-26",
      "form": "10-Q",
      "symbols": [
@@ -6508,6 +8429,9 @@
     },
     {
      "accession": "0001463101-22-000094",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2022-07-26",
      "form": "10-Q",
      "symbols": [
@@ -6516,6 +8440,9 @@
     },
     {
      "accession": "0001463101-22-000112",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2022-10-25",
      "form": "10-Q",
      "symbols": [
@@ -6524,6 +8451,9 @@
     },
     {
      "accession": "0001463101-23-000025",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2023-02-13",
      "form": "10-K",
      "symbols": [
@@ -6532,6 +8462,9 @@
     },
     {
      "accession": "0001463101-23-000085",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2023-04-25",
      "form": "10-Q",
      "symbols": [
@@ -6540,6 +8473,9 @@
     },
     {
      "accession": "0001463101-23-000140",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2023-07-27",
      "form": "10-Q",
      "symbols": [
@@ -6548,6 +8484,9 @@
     },
     {
      "accession": "0001463101-23-000165",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2023-10-26",
      "form": "10-Q",
      "symbols": [
@@ -6556,6 +8495,9 @@
     },
     {
      "accession": "0001463101-24-000024",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2024-02-09",
      "form": "10-K",
      "symbols": [
@@ -6564,6 +8506,9 @@
     },
     {
      "accession": "0001463101-24-000071",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2024-04-23",
      "form": "10-Q",
      "symbols": [
@@ -6572,6 +8517,9 @@
     },
     {
      "accession": "0001463101-24-000119",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2024-07-23",
      "form": "10-Q",
      "symbols": [
@@ -6580,6 +8528,9 @@
     },
     {
      "accession": "0001463101-24-000141",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2024-10-22",
      "form": "10-Q",
      "symbols": [
@@ -6588,6 +8539,9 @@
     },
     {
      "accession": "0001463101-25-000024",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2025-02-10",
      "form": "10-K",
      "symbols": [
@@ -6596,6 +8550,9 @@
     },
     {
      "accession": "0001463101-25-000056",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2025-04-22",
      "form": "10-Q",
      "symbols": [
@@ -6604,6 +8561,9 @@
     },
     {
      "accession": "0001463101-25-000101",
+     "classes": [
+      "ENPH"
+     ],
      "filing_date": "2025-07-22",
      "form": "10-Q",
      "symbols": [
@@ -6616,11 +8576,13 @@
   {
    "changes": [],
    "cik": "0001492633",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "NLSN",
    "exit_date": "2022-10-11",
    "filings": [
     {
      "accession": "0001564590-22-007612",
+     "classes": [],
      "filing_date": "2022-02-28",
      "form": "10-K",
      "symbols": [
@@ -6629,6 +8591,7 @@
     },
     {
      "accession": "0001564590-22-016434",
+     "classes": [],
      "filing_date": "2022-04-28",
      "form": "10-Q",
      "symbols": [
@@ -6637,6 +8600,7 @@
     },
     {
      "accession": "0001564590-22-026683",
+     "classes": [],
      "filing_date": "2022-07-27",
      "form": "10-Q",
      "symbols": [
@@ -6649,11 +8613,15 @@
   {
    "changes": [],
    "cik": "0001519751",
+   "cover_classes_last_10k": "FBHS",
    "cover_symbols_last_10k": "FBHS",
    "exit_date": "2022-12-18",
    "filings": [
     {
      "accession": "0000950170-22-002294",
+     "classes": [
+      "FBHS"
+     ],
      "filing_date": "2022-02-28",
      "form": "10-K",
      "symbols": [
@@ -6662,6 +8630,9 @@
     },
     {
      "accession": "0000950170-22-007055",
+     "classes": [
+      "FBHS"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -6670,6 +8641,9 @@
     },
     {
      "accession": "0000950170-22-013367",
+     "classes": [
+      "FBHS"
+     ],
      "filing_date": "2022-07-28",
      "form": "10-Q",
      "symbols": [
@@ -6678,6 +8652,9 @@
     },
     {
      "accession": "0000950170-22-020316",
+     "classes": [
+      "FBHS"
+     ],
      "filing_date": "2022-10-27",
      "form": "10-Q",
      "symbols": [
@@ -6690,11 +8667,15 @@
   {
    "changes": [],
    "cik": "0001590895",
+   "cover_classes_last_10k": "CZR",
    "cover_symbols_last_10k": "CZR",
    "exit_date": "2025-09-21",
    "filings": [
     {
      "accession": "0001590895-22-000061",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2022-02-24",
      "form": "10-K",
      "symbols": [
@@ -6703,6 +8684,9 @@
     },
     {
      "accession": "0001590895-22-000100",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -6711,6 +8695,9 @@
     },
     {
      "accession": "0001590895-22-000126",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -6719,6 +8706,9 @@
     },
     {
      "accession": "0001590895-22-000148",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -6727,6 +8717,9 @@
     },
     {
      "accession": "0001590895-23-000070",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2023-02-22",
      "form": "10-K",
      "symbols": [
@@ -6735,6 +8728,9 @@
     },
     {
      "accession": "0001590895-23-000077",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -6743,6 +8739,9 @@
     },
     {
      "accession": "0001590895-23-000091",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2023-08-01",
      "form": "10-Q",
      "symbols": [
@@ -6751,6 +8750,9 @@
     },
     {
      "accession": "0001590895-23-000122",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2023-10-31",
      "form": "10-Q",
      "symbols": [
@@ -6759,6 +8761,9 @@
     },
     {
      "accession": "0001590895-24-000051",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2024-02-20",
      "form": "10-K",
      "symbols": [
@@ -6767,6 +8772,9 @@
     },
     {
      "accession": "0001590895-24-000088",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2024-04-30",
      "form": "10-Q",
      "symbols": [
@@ -6775,6 +8783,9 @@
     },
     {
      "accession": "0001590895-24-000124",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2024-07-30",
      "form": "10-Q",
      "symbols": [
@@ -6783,6 +8794,9 @@
     },
     {
      "accession": "0001590895-24-000138",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2024-10-29",
      "form": "10-Q",
      "symbols": [
@@ -6791,6 +8805,9 @@
     },
     {
      "accession": "0001590895-25-000068",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2025-02-25",
      "form": "10-K",
      "symbols": [
@@ -6799,6 +8816,9 @@
     },
     {
      "accession": "0001590895-25-000110",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2025-04-29",
      "form": "10-Q",
      "symbols": [
@@ -6807,6 +8827,9 @@
     },
     {
      "accession": "0001590895-25-000126",
+     "classes": [
+      "CZR"
+     ],
      "filing_date": "2025-07-29",
      "form": "10-Q",
      "symbols": [
@@ -6819,11 +8842,15 @@
   {
    "changes": [],
    "cik": "0001590955",
+   "cover_classes_last_10k": "PAYC",
    "cover_symbols_last_10k": "PAYC",
    "exit_date": "2026-03-22",
    "filings": [
     {
      "accession": "0001564590-22-005562",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2022-02-17",
      "form": "10-K",
      "symbols": [
@@ -6832,6 +8859,9 @@
     },
     {
      "accession": "0001564590-22-018242",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -6840,6 +8870,9 @@
     },
     {
      "accession": "0001564590-22-028006",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -6848,6 +8881,9 @@
     },
     {
      "accession": "0000950170-22-021851",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -6856,6 +8892,9 @@
     },
     {
      "accession": "0000950170-23-003049",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2023-02-16",
      "form": "10-K",
      "symbols": [
@@ -6864,6 +8903,9 @@
     },
     {
      "accession": "0000950170-23-017840",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -6872,6 +8914,9 @@
     },
     {
      "accession": "0000950170-23-037954",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -6880,6 +8925,9 @@
     },
     {
      "accession": "0000950170-23-058167",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -6888,6 +8936,9 @@
     },
     {
      "accession": "0000950170-24-015863",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2024-02-15",
      "form": "10-K",
      "symbols": [
@@ -6896,6 +8947,9 @@
     },
     {
      "accession": "0000950170-24-052070",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -6904,6 +8958,9 @@
     },
     {
      "accession": "0000950170-24-089322",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -6912,6 +8969,9 @@
     },
     {
      "accession": "0000950170-24-119531",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2024-10-31",
      "form": "10-Q",
      "symbols": [
@@ -6920,6 +8980,9 @@
     },
     {
      "accession": "0000950170-25-024136",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2025-02-20",
      "form": "10-K",
      "symbols": [
@@ -6928,6 +8991,9 @@
     },
     {
      "accession": "0000950170-25-066910",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -6936,6 +9002,9 @@
     },
     {
      "accession": "0001590955-25-000005",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -6944,6 +9013,9 @@
     },
     {
      "accession": "0001193125-25-269543",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2025-11-06",
      "form": "10-Q",
      "symbols": [
@@ -6952,6 +9024,9 @@
     },
     {
      "accession": "0001193125-26-059372",
+     "classes": [
+      "PAYC"
+     ],
      "filing_date": "2026-02-19",
      "form": "10-K",
      "symbols": [
@@ -6964,11 +9039,15 @@
   {
    "changes": [],
    "cik": "0001596783",
+   "cover_classes_last_10k": "CTLT",
    "cover_symbols_last_10k": "CTLT",
    "exit_date": "2024-12-22",
    "filings": [
     {
      "accession": "0001596783-22-000027",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2022-02-01",
      "form": "10-Q",
      "symbols": [
@@ -6977,6 +9056,9 @@
     },
     {
      "accession": "0001596783-22-000039",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2022-05-03",
      "form": "10-Q",
      "symbols": [
@@ -6985,6 +9067,9 @@
     },
     {
      "accession": "0001596783-22-000129",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2022-08-29",
      "form": "10-K",
      "symbols": [
@@ -6993,6 +9078,9 @@
     },
     {
      "accession": "0001596783-22-000185",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2022-11-01",
      "form": "10-Q",
      "symbols": [
@@ -7001,6 +9089,9 @@
     },
     {
      "accession": "0001596783-23-000017",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2023-02-07",
      "form": "10-Q",
      "symbols": [
@@ -7009,6 +9100,9 @@
     },
     {
      "accession": "0001596783-23-000038",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2023-06-12",
      "form": "10-Q",
      "symbols": [
@@ -7017,6 +9111,9 @@
     },
     {
      "accession": "0001596783-23-000185",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2023-12-08",
      "form": "10-K",
      "symbols": [
@@ -7025,6 +9122,9 @@
     },
     {
      "accession": "0001596783-23-000186",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2023-12-08",
      "form": "10-Q",
      "symbols": [
@@ -7033,6 +9133,9 @@
     },
     {
      "accession": "0001596783-24-000020",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2024-02-14",
      "form": "10-Q",
      "symbols": [
@@ -7041,6 +9144,9 @@
     },
     {
      "accession": "0001596783-24-000033",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2024-05-08",
      "form": "10-Q",
      "symbols": [
@@ -7049,6 +9155,9 @@
     },
     {
      "accession": "0001596783-24-000087",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2024-09-06",
      "form": "10-K",
      "symbols": [
@@ -7057,6 +9166,9 @@
     },
     {
      "accession": "0001596783-24-000120",
+     "classes": [
+      "CTLT"
+     ],
      "filing_date": "2024-11-05",
      "form": "10-Q",
      "symbols": [
@@ -7069,11 +9181,15 @@
   {
    "changes": [],
    "cik": "0001598014",
+   "cover_classes_last_10k": "INFO",
    "cover_symbols_last_10k": "INFO",
    "exit_date": "2022-03-01",
    "filings": [
     {
      "accession": "0001598014-22-000011",
+     "classes": [
+      "INFO"
+     ],
      "filing_date": "2022-01-24",
      "form": "10-K",
      "symbols": [
@@ -7086,11 +9202,15 @@
   {
    "changes": [],
    "cik": "0001604778",
+   "cover_classes_last_10k": "QRVO",
    "cover_symbols_last_10k": "QRVO",
    "exit_date": "2024-12-22",
    "filings": [
     {
      "accession": "0001604778-22-000010",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2022-02-03",
      "form": "10-Q",
      "symbols": [
@@ -7099,6 +9219,9 @@
     },
     {
      "accession": "0001604778-22-000029",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2022-05-20",
      "form": "10-K",
      "symbols": [
@@ -7107,6 +9230,9 @@
     },
     {
      "accession": "0001604778-22-000042",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -7115,6 +9241,9 @@
     },
     {
      "accession": "0001604778-22-000064",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2022-11-03",
      "form": "10-Q",
      "symbols": [
@@ -7123,6 +9252,9 @@
     },
     {
      "accession": "0001604778-23-000034",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2023-02-02",
      "form": "10-Q",
      "symbols": [
@@ -7131,6 +9263,9 @@
     },
     {
      "accession": "0001604778-23-000055",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2023-05-19",
      "form": "10-K",
      "symbols": [
@@ -7139,6 +9274,9 @@
     },
     {
      "accession": "0001604778-23-000083",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -7147,6 +9285,9 @@
     },
     {
      "accession": "0001604778-23-000100",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2023-11-02",
      "form": "10-Q",
      "symbols": [
@@ -7155,6 +9296,9 @@
     },
     {
      "accession": "0001604778-24-000018",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2024-02-01",
      "form": "10-Q",
      "symbols": [
@@ -7163,6 +9307,9 @@
     },
     {
      "accession": "0001604778-24-000036",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2024-05-20",
      "form": "10-K",
      "symbols": [
@@ -7171,6 +9318,9 @@
     },
     {
      "accession": "0001604778-24-000063",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2024-07-31",
      "form": "10-Q",
      "symbols": [
@@ -7179,6 +9329,9 @@
     },
     {
      "accession": "0001604778-24-000082",
+     "classes": [
+      "QRVO"
+     ],
      "filing_date": "2024-10-30",
      "form": "10-Q",
      "symbols": [
@@ -7191,11 +9344,15 @@
   {
    "changes": [],
    "cik": "0001618921",
+   "cover_classes_last_10k": "WBA",
    "cover_symbols_last_10k": "WBA | WBA25 | WBA26",
    "exit_date": "2025-08-27",
    "filings": [
     {
      "accession": "0001618921-22-000004",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2022-01-06",
      "form": "10-Q",
      "symbols": [
@@ -7206,6 +9363,9 @@
     },
     {
      "accession": "0001618921-22-000024",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2022-03-31",
      "form": "10-Q",
      "symbols": [
@@ -7216,6 +9376,9 @@
     },
     {
      "accession": "0001618921-22-000040",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2022-06-30",
      "form": "10-Q",
      "symbols": [
@@ -7226,6 +9389,9 @@
     },
     {
      "accession": "0001618921-22-000064",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2022-10-13",
      "form": "10-K",
      "symbols": [
@@ -7236,6 +9402,9 @@
     },
     {
      "accession": "0001618921-23-000005",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2023-01-05",
      "form": "10-Q",
      "symbols": [
@@ -7246,6 +9415,9 @@
     },
     {
      "accession": "0001618921-23-000019",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2023-03-28",
      "form": "10-Q",
      "symbols": [
@@ -7256,6 +9428,9 @@
     },
     {
      "accession": "0001618921-23-000043",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2023-06-27",
      "form": "10-Q",
      "symbols": [
@@ -7266,6 +9441,9 @@
     },
     {
      "accession": "0001618921-23-000062",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2023-10-12",
      "form": "10-K",
      "symbols": [
@@ -7276,6 +9454,9 @@
     },
     {
      "accession": "0001618921-24-000004",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2024-01-04",
      "form": "10-Q",
      "symbols": [
@@ -7286,6 +9467,9 @@
     },
     {
      "accession": "0001618921-24-000035",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2024-03-28",
      "form": "10-Q",
      "symbols": [
@@ -7296,6 +9480,9 @@
     },
     {
      "accession": "0001618921-24-000065",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2024-06-27",
      "form": "10-Q",
      "symbols": [
@@ -7306,6 +9493,9 @@
     },
     {
      "accession": "0001618921-24-000084",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2024-10-15",
      "form": "10-K",
      "symbols": [
@@ -7316,6 +9506,9 @@
     },
     {
      "accession": "0001618921-25-000009",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2025-01-10",
      "form": "10-Q",
      "symbols": [
@@ -7326,6 +9519,9 @@
     },
     {
      "accession": "0001618921-25-000036",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2025-04-08",
      "form": "10-Q",
      "symbols": [
@@ -7336,6 +9532,9 @@
     },
     {
      "accession": "0001618921-25-000056",
+     "classes": [
+      "WBA"
+     ],
      "filing_date": "2025-06-26",
      "form": "10-Q",
      "symbols": [
@@ -7350,11 +9549,15 @@
   {
    "changes": [],
    "cik": "0001671933",
+   "cover_classes_last_10k": "TTD",
    "cover_symbols_last_10k": "TTD",
    "exit_date": "2026-09-20",
    "filings": [
     {
      "accession": "0001564590-22-005385",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2022-02-16",
      "form": "10-K",
      "symbols": [
@@ -7363,6 +9566,9 @@
     },
     {
      "accession": "0001564590-22-019334",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2022-05-10",
      "form": "10-Q",
      "symbols": [
@@ -7371,6 +9577,9 @@
     },
     {
      "accession": "0001628280-22-021984",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2022-08-09",
      "form": "10-Q",
      "symbols": [
@@ -7379,6 +9588,9 @@
     },
     {
      "accession": "0001671933-22-000016",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2022-11-09",
      "form": "10-Q",
      "symbols": [
@@ -7387,6 +9599,9 @@
     },
     {
      "accession": "0001671933-23-000007",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2023-02-15",
      "form": "10-K",
      "symbols": [
@@ -7395,6 +9610,9 @@
     },
     {
      "accession": "0001671933-23-000032",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2023-05-10",
      "form": "10-Q",
      "symbols": [
@@ -7403,6 +9621,9 @@
     },
     {
      "accession": "0001671933-23-000042",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2023-08-09",
      "form": "10-Q",
      "symbols": [
@@ -7411,6 +9632,9 @@
     },
     {
      "accession": "0001671933-23-000050",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2023-11-09",
      "form": "10-Q",
      "symbols": [
@@ -7419,6 +9643,9 @@
     },
     {
      "accession": "0001671933-24-000014",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2024-02-15",
      "form": "10-K",
      "symbols": [
@@ -7427,6 +9654,9 @@
     },
     {
      "accession": "0001671933-24-000059",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2024-05-10",
      "form": "10-Q",
      "symbols": [
@@ -7435,6 +9665,9 @@
     },
     {
      "accession": "0001671933-24-000090",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2024-08-08",
      "form": "10-Q",
      "symbols": [
@@ -7443,6 +9676,9 @@
     },
     {
      "accession": "0001671933-24-000122",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2024-11-07",
      "form": "10-Q",
      "symbols": [
@@ -7451,6 +9687,9 @@
     },
     {
      "accession": "0001671933-25-000029",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2025-02-21",
      "form": "10-K",
      "symbols": [
@@ -7459,6 +9698,9 @@
     },
     {
      "accession": "0001671933-25-000062",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -7467,6 +9709,9 @@
     },
     {
      "accession": "0001671933-25-000125",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -7475,6 +9720,9 @@
     },
     {
      "accession": "0001671933-25-000144",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2025-11-06",
      "form": "10-Q",
      "symbols": [
@@ -7483,6 +9731,9 @@
     },
     {
      "accession": "0001671933-26-000014",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2026-02-27",
      "form": "10-K",
      "symbols": [
@@ -7491,6 +9742,9 @@
     },
     {
      "accession": "0001671933-26-000054",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2026-05-07",
      "form": "10-Q",
      "symbols": [
@@ -7499,6 +9753,9 @@
     },
     {
      "accession": "0001671933-26-000086",
+     "classes": [
+      "TTD"
+     ],
      "filing_date": "2026-08-06",
      "form": "10-Q",
      "symbols": [
@@ -7511,11 +9768,15 @@
   {
    "changes": [],
    "cik": "0001679273",
+   "cover_classes_last_10k": "LW",
    "cover_symbols_last_10k": "LW",
    "exit_date": "2026-03-22",
    "filings": [
     {
      "accession": "0001558370-22-000090",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2022-01-06",
      "form": "10-Q",
      "symbols": [
@@ -7524,6 +9785,9 @@
     },
     {
      "accession": "0001558370-22-005152",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2022-04-07",
      "form": "10-Q",
      "symbols": [
@@ -7532,6 +9796,9 @@
     },
     {
      "accession": "0001558370-22-011121",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2022-07-27",
      "form": "10-K",
      "symbols": [
@@ -7540,6 +9807,9 @@
     },
     {
      "accession": "0001558370-22-014848",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2022-10-05",
      "form": "10-Q",
      "symbols": [
@@ -7548,6 +9818,9 @@
     },
     {
      "accession": "0001558370-23-000048",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2023-01-05",
      "form": "10-Q",
      "symbols": [
@@ -7556,6 +9829,9 @@
     },
     {
      "accession": "0001558370-23-005546",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2023-04-06",
      "form": "10-Q",
      "symbols": [
@@ -7564,6 +9840,9 @@
     },
     {
      "accession": "0001558370-23-012203",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2023-07-25",
      "form": "10-K",
      "symbols": [
@@ -7572,6 +9851,9 @@
     },
     {
      "accession": "0001558370-23-016256",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2023-10-05",
      "form": "10-Q",
      "symbols": [
@@ -7580,6 +9862,9 @@
     },
     {
      "accession": "0001558370-24-000050",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2024-01-04",
      "form": "10-Q",
      "symbols": [
@@ -7588,6 +9873,9 @@
     },
     {
      "accession": "0001679273-24-000021",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2024-04-04",
      "form": "10-Q",
      "symbols": [
@@ -7596,6 +9884,9 @@
     },
     {
      "accession": "0001679273-24-000036",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2024-07-24",
      "form": "10-K",
      "symbols": [
@@ -7604,6 +9895,9 @@
     },
     {
      "accession": "0001679273-24-000073",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2024-10-02",
      "form": "10-Q",
      "symbols": [
@@ -7612,6 +9906,9 @@
     },
     {
      "accession": "0001679273-24-000087",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2024-12-20",
      "form": "10-Q",
      "symbols": [
@@ -7620,6 +9917,9 @@
     },
     {
      "accession": "0001679273-25-000026",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2025-04-03",
      "form": "10-Q",
      "symbols": [
@@ -7628,6 +9928,9 @@
     },
     {
      "accession": "0001679273-25-000049",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2025-07-23",
      "form": "10-K",
      "symbols": [
@@ -7636,6 +9939,9 @@
     },
     {
      "accession": "0001679273-25-000070",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2025-09-30",
      "form": "10-Q",
      "symbols": [
@@ -7644,6 +9950,9 @@
     },
     {
      "accession": "0001679273-25-000076",
+     "classes": [
+      "LW"
+     ],
      "filing_date": "2025-12-19",
      "form": "10-Q",
      "symbols": [
@@ -7656,11 +9965,15 @@
   {
    "changes": [],
    "cik": "0001688568",
+   "cover_classes_last_10k": "DXC",
    "cover_symbols_last_10k": "DXC | DXC 26",
    "exit_date": "2023-10-02",
    "filings": [
     {
      "accession": "0001688568-22-000006",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2022-02-03",
      "form": "10-Q",
      "symbols": [
@@ -7670,6 +9983,9 @@
     },
     {
      "accession": "0001688568-22-000027",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2022-05-26",
      "form": "10-K",
      "symbols": [
@@ -7679,6 +9995,9 @@
     },
     {
      "accession": "0001688568-22-000062",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2022-08-04",
      "form": "10-Q",
      "symbols": [
@@ -7688,6 +10007,9 @@
     },
     {
      "accession": "0001688568-22-000073",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -7697,6 +10019,9 @@
     },
     {
      "accession": "0001688568-23-000010",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2023-02-02",
      "form": "10-Q",
      "symbols": [
@@ -7706,6 +10031,9 @@
     },
     {
      "accession": "0001688568-23-000030",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2023-05-19",
      "form": "10-K",
      "symbols": [
@@ -7715,6 +10043,9 @@
     },
     {
      "accession": "0001688568-23-000090",
+     "classes": [
+      "DXC"
+     ],
      "filing_date": "2023-08-03",
      "form": "10-Q",
      "symbols": [
@@ -7740,11 +10071,15 @@
     }
    ],
    "cik": "0001725057",
+   "cover_classes_last_10k": "DAY",
    "cover_symbols_last_10k": "DAY",
    "exit_date": "2026-02-08",
    "filings": [
     {
      "accession": "0000950170-22-002143",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2022-02-28",
      "form": "10-K",
      "symbols": [
@@ -7753,6 +10088,9 @@
     },
     {
      "accession": "0000950170-22-007418",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2022-05-04",
      "form": "10-Q",
      "symbols": [
@@ -7761,6 +10099,9 @@
     },
     {
      "accession": "0000950170-22-014283",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2022-08-03",
      "form": "10-Q",
      "symbols": [
@@ -7769,6 +10110,9 @@
     },
     {
      "accession": "0000950170-22-021260",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2022-11-02",
      "form": "10-Q",
      "symbols": [
@@ -7777,6 +10121,9 @@
     },
     {
      "accession": "0000950170-23-005559",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2023-03-01",
      "form": "10-K",
      "symbols": [
@@ -7785,6 +10132,9 @@
     },
     {
      "accession": "0000950170-23-017233",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2023-05-03",
      "form": "10-Q",
      "symbols": [
@@ -7793,6 +10143,9 @@
     },
     {
      "accession": "0000950170-23-037196",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2023-08-02",
      "form": "10-Q",
      "symbols": [
@@ -7801,6 +10154,9 @@
     },
     {
      "accession": "0000950170-23-062430",
+     "classes": [
+      "CDAY"
+     ],
      "filing_date": "2023-11-13",
      "form": "10-Q",
      "symbols": [
@@ -7809,6 +10165,9 @@
     },
     {
      "accession": "0000950170-24-022100",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2024-02-28",
      "form": "10-K",
      "symbols": [
@@ -7817,6 +10176,9 @@
     },
     {
      "accession": "0000950170-24-050892",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2024-05-01",
      "form": "10-Q",
      "symbols": [
@@ -7825,6 +10187,9 @@
     },
     {
      "accession": "0000950170-24-088237",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2024-07-31",
      "form": "10-Q",
      "symbols": [
@@ -7833,6 +10198,9 @@
     },
     {
      "accession": "0000950170-24-118595",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2024-10-30",
      "form": "10-Q",
      "symbols": [
@@ -7841,6 +10209,9 @@
     },
     {
      "accession": "0000950170-25-029980",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2025-02-28",
      "form": "10-K",
      "symbols": [
@@ -7849,6 +10220,9 @@
     },
     {
      "accession": "0000950170-25-065024",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2025-05-07",
      "form": "10-Q",
      "symbols": [
@@ -7857,6 +10231,9 @@
     },
     {
      "accession": "0000950170-25-103537",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2025-08-06",
      "form": "10-Q",
      "symbols": [
@@ -7865,6 +10242,9 @@
     },
     {
      "accession": "0001193125-25-256366",
+     "classes": [
+      "DAY"
+     ],
      "filing_date": "2025-10-29",
      "form": "10-Q",
      "symbols": [
@@ -7877,11 +10257,15 @@
   {
    "changes": [],
    "cik": "0001732845",
+   "cover_classes_last_10k": "WRK",
    "cover_symbols_last_10k": "WRK",
    "exit_date": "2024-07-07",
    "filings": [
     {
      "accession": "0000950170-22-000869",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2022-02-08",
      "form": "10-Q",
      "symbols": [
@@ -7890,6 +10274,9 @@
     },
     {
      "accession": "0000950170-22-008103",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -7898,6 +10285,9 @@
     },
     {
      "accession": "0000950170-22-015014",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -7906,6 +10296,9 @@
     },
     {
      "accession": "0000950170-22-025444",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2022-11-18",
      "form": "10-K",
      "symbols": [
@@ -7914,6 +10307,9 @@
     },
     {
      "accession": "0000950170-23-001757",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2023-02-03",
      "form": "10-Q",
      "symbols": [
@@ -7922,6 +10318,9 @@
     },
     {
      "accession": "0000950170-23-018302",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -7930,6 +10329,9 @@
     },
     {
      "accession": "0000950170-23-038588",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2023-08-04",
      "form": "10-Q",
      "symbols": [
@@ -7938,6 +10340,9 @@
     },
     {
      "accession": "0000950170-23-064855",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2023-11-17",
      "form": "10-K",
      "symbols": [
@@ -7946,6 +10351,9 @@
     },
     {
      "accession": "0000950170-24-010481",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2024-02-02",
      "form": "10-Q",
      "symbols": [
@@ -7954,6 +10362,9 @@
     },
     {
      "accession": "0000950170-24-052908",
+     "classes": [
+      "WRK"
+     ],
      "filing_date": "2024-05-03",
      "form": "10-Q",
      "symbols": [
@@ -7966,11 +10377,15 @@
   {
    "changes": [],
    "cik": "0001755672",
+   "cover_classes_last_10k": "CTVA",
    "cover_symbols_last_10k": "CTVA | CTAPrA | CTAPrB",
    "exit_date": "2026-10-05",
    "filings": [
     {
      "accession": "0001755672-22-000005",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2022-02-10",
      "form": "10-K",
      "symbols": [
@@ -7981,6 +10396,9 @@
     },
     {
      "accession": "0001755672-22-000011",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2022-05-05",
      "form": "10-Q",
      "symbols": [
@@ -7991,6 +10409,9 @@
     },
     {
      "accession": "0001755672-22-000020",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -8001,6 +10422,9 @@
     },
     {
      "accession": "0001755672-22-000026",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -8011,6 +10435,9 @@
     },
     {
      "accession": "0001755672-23-000005",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2023-02-09",
      "form": "10-K",
      "symbols": [
@@ -8021,6 +10448,9 @@
     },
     {
      "accession": "0001755672-23-000011",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2023-05-04",
      "form": "10-Q",
      "symbols": [
@@ -8031,6 +10461,9 @@
     },
     {
      "accession": "0001755672-23-000018",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2023-08-04",
      "form": "10-Q",
      "symbols": [
@@ -8041,6 +10474,9 @@
     },
     {
      "accession": "0001755672-23-000025",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2023-11-09",
      "form": "10-Q",
      "symbols": [
@@ -8051,6 +10487,9 @@
     },
     {
      "accession": "0001755672-24-000004",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2024-02-08",
      "form": "10-K",
      "symbols": [
@@ -8061,6 +10500,9 @@
     },
     {
      "accession": "0001755672-24-000013",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2024-05-02",
      "form": "10-Q",
      "symbols": [
@@ -8071,6 +10513,9 @@
     },
     {
      "accession": "0001755672-24-000019",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2024-08-01",
      "form": "10-Q",
      "symbols": [
@@ -8081,6 +10526,9 @@
     },
     {
      "accession": "0001755672-24-000024",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2024-11-07",
      "form": "10-Q",
      "symbols": [
@@ -8091,6 +10539,9 @@
     },
     {
      "accession": "0001755672-25-000005",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2025-02-14",
      "form": "10-K",
      "symbols": [
@@ -8101,6 +10552,9 @@
     },
     {
      "accession": "0001755672-25-000011",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2025-05-08",
      "form": "10-Q",
      "symbols": [
@@ -8111,6 +10565,9 @@
     },
     {
      "accession": "0001755672-25-000017",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2025-08-07",
      "form": "10-Q",
      "symbols": [
@@ -8121,6 +10578,9 @@
     },
     {
      "accession": "0001755672-25-000022",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2025-11-05",
      "form": "10-Q",
      "symbols": [
@@ -8131,6 +10591,9 @@
     },
     {
      "accession": "0001755672-26-000004",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2026-02-12",
      "form": "10-K",
      "symbols": [
@@ -8141,6 +10604,9 @@
     },
     {
      "accession": "0001755672-26-000010",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2026-05-06",
      "form": "10-Q",
      "symbols": [
@@ -8151,6 +10617,9 @@
     },
     {
      "accession": "0001755672-26-000025",
+     "classes": [
+      "CTVA"
+     ],
      "filing_date": "2026-07-31",
      "form": "10-Q",
      "symbols": [
@@ -8165,11 +10634,15 @@
   {
    "changes": [],
    "cik": "0001821825",
+   "cover_classes_last_10k": "OGN",
    "cover_symbols_last_10k": "OGN",
    "exit_date": "2023-10-17",
    "filings": [
     {
      "accession": "0001821825-22-000002",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2022-03-21",
      "form": "10-K",
      "symbols": [
@@ -8178,6 +10651,9 @@
     },
     {
      "accession": "0001821825-22-000006",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2022-05-06",
      "form": "10-Q",
      "symbols": [
@@ -8186,6 +10662,9 @@
     },
     {
      "accession": "0001821825-22-000009",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2022-08-05",
      "form": "10-Q",
      "symbols": [
@@ -8194,6 +10673,9 @@
     },
     {
      "accession": "0001821825-22-000012",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2022-11-04",
      "form": "10-Q",
      "symbols": [
@@ -8202,6 +10684,9 @@
     },
     {
      "accession": "0001821825-23-000003",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2023-02-27",
      "form": "10-K",
      "symbols": [
@@ -8210,6 +10695,9 @@
     },
     {
      "accession": "0001821825-23-000006",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2023-05-05",
      "form": "10-Q",
      "symbols": [
@@ -8218,6 +10706,9 @@
     },
     {
      "accession": "0001821825-23-000010",
+     "classes": [
+      "OGN"
+     ],
      "filing_date": "2023-08-09",
      "form": "10-Q",
      "symbols": [
@@ -8230,6 +10721,7 @@
   {
    "changes": [],
    "cik": "0001941365",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2022-12-18",
    "filings": [],
@@ -8238,6 +10730,7 @@
   {
    "changes": [],
    "cik": "0001965040",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2023-07-05",
    "filings": [],
@@ -8246,6 +10739,7 @@
   {
    "changes": [],
    "cik": "0001968915",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2023-07-05",
    "filings": [],
@@ -8254,11 +10748,15 @@
   {
    "changes": [],
    "cik": "0002011286",
+   "cover_classes_last_10k": "AMTM",
    "cover_symbols_last_10k": "AMTM",
    "exit_date": "2024-12-22",
    "filings": [
     {
      "accession": "0002011286-24-000072",
+     "classes": [
+      "AMTM"
+     ],
      "filing_date": "2024-12-17",
      "form": "10-K",
      "symbols": [
@@ -8271,11 +10769,15 @@
   {
    "changes": [],
    "cik": "0002064953",
+   "cover_classes_last_10k": "",
    "cover_symbols_last_10k": "",
    "exit_date": "2025-12-21",
    "filings": [
     {
      "accession": "0002064953-25-000018",
+     "classes": [
+      "SOLS"
+     ],
      "filing_date": "2025-11-13",
      "form": "10-Q",
      "symbols": [
@@ -8288,6 +10790,6 @@
  ],
  "filings_read": 865,
  "leavers": 86,
- "leavers_with_a_change": 10,
+ "leavers_with_a_change": 3,
  "types": "/workspaces/portfolio-financial-analysis/docs/leaver_company_types.csv"
 }

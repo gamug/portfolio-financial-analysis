@@ -3,15 +3,15 @@
     uv run python scripts/leaver_cover_classes.py [--types FILE] [--out FILE] [--fetch]
 
 Read-only. For each leaver CIK it reads the cover page of every 10-K/10-Q it filed inside the
-backtest window (up to its exit) and reports the symbols registered there -- the SEC's own
-**point-in-time** list, so a change inside the window is visible with the dates. The profile's
-multi-class overlay is the set on the **last** 10-K on or before the exit (L-03/L-11, D7); this
-measurement is the evidence for every leaver whose set changed, declared in ``docs/model_fixes.md``.
+backtest window (up to its exit) and reports both the symbols registered there (every security, the
+raw evidence) and the **common-equity classes** among them -- MKT-03's share classes (C6 p.9, C11),
+so a registered note, debenture, preferred or depositary share is not one. A change inside the window
+is therefore a change of **classes**, with its dates. The profile's multi-class overlay is the set on
+the **last** 10-K on or before the exit (L-03/L-11, D7); this measurement is the evidence for every
+leaver whose class set changed, declared in ``docs/model_fixes.md``.
 
-The set is what the cover registers: the ``dei:TradingSymbol`` facts, so a registered preferred or
-note series counts beside the common classes -- the same breadth the current members' rule has
-(``scripts/sec_xcheck/company_types.py`` counts the submissions file's ticker list). A maturing note
-therefore reads as a change; the declaration says so.
+The current members' rows still count **every** listed ticker (their broader rule is stream A's, to
+be revisited in `T-071` part 2b); the temporary difference is declared in ``docs/model_fixes.md``.
 
 Output is committed (``docs/leaver_cover_classes.json``) so the list is reproducible from the repo.
 """
@@ -30,7 +30,7 @@ from typing import Any
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from leaver_company_types import cover_symbols  # noqa: E402
+from leaver_company_types import cover_classes, cover_symbols  # noqa: E402
 from sec_xcheck.common import SecClient, cache_dir, cik10  # noqa: E402
 from sec_xcheck.submissions import all_filings  # noqa: E402
 
@@ -40,10 +40,10 @@ FORMS = ("10-K", "10-Q")
 
 
 def changes_over(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The symbol-set changes between consecutive filings (the dates, and what moved)."""
+    """The **class**-set changes between consecutive filings (the dates, and what moved)."""
     out: list[dict[str, Any]] = []
     for before, after in pairwise(rows):
-        was, now = set(before["symbols"]), set(after["symbols"])
+        was, now = set(before["classes"]), set(after["classes"])
         if was != now:
             out.append(
                 {
@@ -84,6 +84,7 @@ def measure(types_path: str, client: Any) -> dict[str, Any]:
                     "form": filing["form"],
                     "filing_date": filing["filingDate"],
                     "symbols": symbols,
+                    "classes": cover_classes(client, cik, filing),
                 }
             )
         filings_read += len(rows)
@@ -93,6 +94,7 @@ def measure(types_path: str, client: Any) -> dict[str, Any]:
                 "symbols": row["symbols"],
                 "exit_date": row["exit_date"],
                 "cover_symbols_last_10k": row["cover_symbols"],
+                "cover_classes_last_10k": row["cover_classes"],
                 "filings": rows,
                 "changes": changes_over(rows),
             }
@@ -121,7 +123,7 @@ def main() -> int:
     Path(args.out).write_text(json.dumps(report, indent=1, sort_keys=True) + "\n")
     print(
         f"{report['leavers']} leavers, {report['filings_read']} filings read: "
-        f"{report['leavers_with_a_change']} whose cover-page symbol set changed in the window"
+        f"{report['leavers_with_a_change']} whose cover-page **class** set changed in the window"
     )
     for entry in report["detail"]:
         if not entry["changes"]:
