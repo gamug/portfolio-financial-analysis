@@ -27,6 +27,7 @@ Sub-commands::
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import statistics
 from collections import Counter, defaultdict
@@ -36,16 +37,28 @@ from typing import Any
 from cycle import data
 from cycle.rules.base import RuleContext, VetoHit
 from cycle.rules.builtin import RULES, _LeverageRule
+from kg_schema import versions as kg_versions
 from kg_schema.db import connect_ro
-from kg_schema.versions import (
-    DATA_QUALITY_GATE_VERSION,
-    UTILITY_COVERAGE_AMBIGUOUS_FLAG,
-    UTILITY_COVERAGE_BOUND_AS_WC,
-    UTILITY_COVERAGE_BOUND_IN,
-    UTILITY_COVERAGE_MISSING_BOUND_FLAG,
-    UTILITY_COVERAGE_THRESHOLD,
-    resolve_metric_versions,
+
+DATA_QUALITY_GATE_VERSION = kg_versions.DATA_QUALITY_GATE_VERSION
+resolve_metric_versions = kg_versions.resolve_metric_versions
+# The D-13 rule-input contract (T-071 part 2a). Absent on master, which the R7 control runs, where
+# the rule input and its rule do not exist -- the fallbacks are the stored names themselves.
+UTILITY_COVERAGE_BOUND_IN = getattr(
+    kg_versions, "UTILITY_COVERAGE_BOUND_IN", "average_ambiguous_in"
 )
+UTILITY_COVERAGE_BOUND_AS_WC = getattr(
+    kg_versions, "UTILITY_COVERAGE_BOUND_AS_WC", "average_ambiguous_as_wc"
+)
+UTILITY_COVERAGE_MISSING_BOUND_FLAG = getattr(
+    kg_versions, "UTILITY_COVERAGE_MISSING_BOUND_FLAG", "flag_utility_cash_coverage_missing_bound"
+)
+UTILITY_COVERAGE_AMBIGUOUS_FLAG = getattr(
+    kg_versions,
+    "UTILITY_COVERAGE_AMBIGUOUS_FLAG",
+    "flag_utility_cash_coverage_ambiguous_working_capital",
+)
+UTILITY_COVERAGE_THRESHOLD = getattr(kg_versions, "UTILITY_COVERAGE_THRESHOLD", 0.05)
 
 UNIVERSE = "SP500"
 UNIVERSE_DB = "/workspaces/thesis/data/universe_history.db"
@@ -102,37 +115,65 @@ def _json_object(raw: str | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _data_quality(conn: Any, date: str, versions: Any, gate_version: str) -> Any:
+    """``data.data_quality`` with the gate version when the reader accepts one (this branch), else
+    the code's own default (the R7 control, whose default is the gate version ``before.db`` holds)."""
+    try:
+        return data.data_quality(conn, date, versions, gate_version=gate_version)
+    except TypeError:
+        return data.data_quality(conn, date, versions)
+
+
 class Snapshot:
-    """One database read through ``cycle``'s readers at one date."""
+    """One database read through ``cycle``'s readers at one date.
+
+    It builds ``RuleContext`` from ``dataclasses.fields`` and tolerates the readers this branch adds
+    (``asset_profiles``, ``utility_cash_coverage``, the ``gate_version`` parameter), so the *same*
+    script also runs against master's code -- the R7 control. On master those readers are absent and
+    the gate version is the code's own (``dq-v3``, the one ``before.db`` holds)."""
 
     def __init__(self, db: str, date: str, gate_version: str) -> None:
         self.db, self.date, self.gate_version = db, date, gate_version
         self.conn = connect_ro(db)
         self.versions = resolve_metric_versions(self.conn)
-        self.dq = data.data_quality(self.conn, date, self.versions, gate_version=gate_version)
+        self.dq = _data_quality(self.conn, date, self.versions, gate_version)
         self.raw_metrics = data.latest_metrics(self.conn, date, self.versions)
         self.metrics = self.dq.apply(self.raw_metrics)
         rows = data.active_universe(self.conn, UNIVERSE, date, UNIVERSE_DB)
         self.asset_ids = [int(r["id"]) for r in rows]
         self.ticker = {int(r["id"]): str(r["ticker"]) for r in rows}
         self.sector = {int(r["id"]): r["sector"] for r in rows}
-        self.profiles = data.asset_profiles(self.conn, self.asset_ids, date)
-        self.coverage = data.utility_cash_coverage(self.conn, date)
-        self.ctx = RuleContext(
-            cycle_date=date,
-            metrics={a: self.metrics.get(a, {}) for a in self.asset_ids},
-            price_obs={},
-            last_fundamental=data.last_fundamental_dates(self.conn, date),
-            data_quality={a: self.dq.hard[a] for a in self.asset_ids if a in self.dq.hard},
-            sectors={a: self.sector.get(a) for a in self.asset_ids},
-            negative_equity={
-                a: self.dq.negative_equity[a]
-                for a in self.asset_ids
-                if a in self.dq.negative_equity
-            },
-            profiles=self.profiles,
-            utility_cash_coverage=self.coverage,
+        self.profiles = (
+            data.asset_profiles(self.conn, self.asset_ids, date)
+            if hasattr(data, "asset_profiles")
+            else {}
         )
+        self.coverage = (
+            data.utility_cash_coverage(self.conn, date)
+            if hasattr(data, "utility_cash_coverage")
+            else {}
+        )
+        raw_neg = getattr(self.dq, "negative_equity", None)
+        # This branch's DataQuality.negative_equity is the DQ_NEG_EQUITY evidence per asset; master's
+        # is a plain set of asset ids, which its rules never read.
+        self.negative_equity: dict[int, dict[str, Any]] = (
+            raw_neg if isinstance(raw_neg, dict) else {}
+        )
+        values: dict[str, Any] = {
+            "cycle_date": date,
+            "metrics": {a: self.metrics.get(a, {}) for a in self.asset_ids},
+            "price_obs": {},
+            "last_fundamental": data.last_fundamental_dates(self.conn, date),
+            "data_quality": {a: self.dq.hard[a] for a in self.asset_ids if a in self.dq.hard},
+            "sectors": {a: self.sector.get(a) for a in self.asset_ids},
+            "negative_equity": {
+                a: self.negative_equity[a] for a in self.asset_ids if a in self.negative_equity
+            },
+            "profiles": self.profiles,
+            "utility_cash_coverage": self.coverage,
+        }
+        accepted = {f.name for f in dataclasses.fields(RuleContext)}
+        self.ctx = RuleContext(**{k: v for k, v in values.items() if k in accepted})
 
     def members_with_a_usable_filing(self) -> int:
         return sum(1 for a in self.asset_ids if self.raw_metrics.get(a))
@@ -172,22 +213,60 @@ def _sector_counts(hard: dict[str, dict[str, list[str]]]) -> dict[str, Any]:
 
 
 def cmd_vetoes(args: argparse.Namespace) -> None:
-    """Per rule x sector x date, before -> after (plan, "Measurement")."""
+    """Per rule x sector x date, before -> after (plan, "Measurement").
+
+    Two modes:
+
+    * ``--side before --db B`` -- evaluate one side and write its per-date, per-rule, per-sector
+      result. Run this **with master's code on the path** (``PYTHONPATH`` = the control worktree's
+      ``src``) to get R7's control: the *old* rules on ``before.db``.
+    * ``--after A --before-json control.json`` -- evaluate the branch's rules on ``after.db`` and pair
+      them with the control's output, writing the combined ``vetoes_by_sector.json``. A plain
+      ``--before B`` (no ``--before-json``) evaluates both sides with this branch's code, which shows
+      only the database change, not a code-level one.
+    """
     dates = [CYCLE_DATE] + [d for d in _quarter_ends(FIRST_QUARTER, CYCLE_DATE) if d != CYCLE_DATE]
+    if args.side == "before":
+        control: dict[str, Any] = {
+            "db": args.db,
+            "gate": BEFORE_GATE,
+            "per_date": {
+                date: {
+                    "members_with_a_usable_filing": (
+                        snap := Snapshot(args.db, date, BEFORE_GATE)
+                    ).members_with_a_usable_filing(),
+                    "rules": _sector_counts(snap.hard_by_rule_sector()),
+                }
+                for date in dates
+            },
+        }
+        Path(args.out).write_text(json.dumps(control, indent=2) + "\n")
+        print(f"wrote {args.out} (before side, {len(dates)} dates)")
+        return
+    before_json = getattr(args, "before_json", None)
+    loaded = json.loads(Path(before_json).read_text()) if before_json else None
     report: dict[str, Any] = {
         "universe": UNIVERSE,
         "rules": list(REPORTED_RULES),
         "before_gate": BEFORE_GATE,
         "after_gate": AFTER_GATE,
+        "before_source": before_json or args.before,
         "per_date": {},
     }
     for date in dates:
-        before = Snapshot(args.before, date, BEFORE_GATE)
         after = Snapshot(args.after, date, AFTER_GATE)
+        if loaded is not None:
+            entry = loaded["per_date"][date]
+            before_rules, before_usable = entry["rules"], entry["members_with_a_usable_filing"]
+        else:
+            before = Snapshot(args.before, date, BEFORE_GATE)
+            before_rules = _sector_counts(before.hard_by_rule_sector())
+            before_usable = before.members_with_a_usable_filing()
         report["per_date"][date] = {
             "members": len(after.asset_ids),
             "members_with_a_usable_filing": after.members_with_a_usable_filing(),
-            "before": _sector_counts(before.hard_by_rule_sector()),
+            "before_members_with_a_usable_filing": before_usable,
+            "before": before_rules,
             "after": _sector_counts(after.hard_by_rule_sector()),
         }
         print(f"{date}: after {report['per_date'][date]['after']}", flush=True)
@@ -239,6 +318,45 @@ def _roe_quarantine_rows(conn: Any) -> list[dict[str, Any]]:
                 or inputs.get("equity_prior_year")
                 or inputs.get("average_equity"),
                 "roe_inputs": inputs,
+            }
+        )
+    return out
+
+
+def _roe_regained(after_conn: Any, before_conn: Any) -> list[dict[str, Any]]:
+    """R6: the DQ_NEG_EQUITY filings whose ROE has a value now, with the equity it divides by.
+
+    ``before`` is the same filing's ROE on the copy as it was: the matrix emptied it from the
+    current equity, so it is ``None`` there."""
+    rows = after_conn.execute(
+        """
+        SELECT f.id, f.accession_number, f.form, f.period_end, a.ticker, m.value, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN assets a ON a.id = f.asset_id
+        WHERE m.metric_name = 'return_on_equity' AND m.value IS NOT NULL
+          AND f.id IN (SELECT filing_id FROM data_quality_issue WHERE rule_id = 'DQ_NEG_EQUITY')
+        ORDER BY a.ticker, f.period_end
+        """
+    ).fetchall()
+    out = []
+    for r in rows:
+        inputs = _json_object(r["inputs_json"])
+        before = before_conn.execute(
+            "SELECT value FROM fundamental_metrics WHERE filing_id = ? "
+            "AND metric_name = 'return_on_equity'",
+            (int(r["id"]),),
+        ).fetchone()
+        out.append(
+            {
+                "ticker": r["ticker"],
+                "form": r["form"],
+                "period_end": r["period_end"],
+                "accession": r["accession_number"],
+                "equity": inputs.get("equity"),
+                "prior_year_equity": inputs.get("prior_equity"),
+                "roe": r["value"],
+                "roe_before": before["value"] if before else None,
             }
         )
     return out
@@ -314,6 +432,8 @@ def cmd_neg_equity(args: argparse.Namespace) -> None:
         ],
         # D1's own subject: the filings whose DQ_NEG_EQUITY row names ROE, on either gate version.
         "roe_quarantine": _roe_quarantine_rows(before.conn),
+        # R6: the ROE values the applicability fix gives back.
+        "roe_regained": _roe_regained(after.conn, before.conn),
     }
     Path(args.out).write_text(json.dumps(report, indent=2) + "\n")
     print(f"wrote {args.out}")
@@ -329,11 +449,21 @@ def cmd_neg_equity(args: argparse.Namespace) -> None:
         f"{report['leverage_extreme_negative_equity']['after']}"
     )
     quarantined = [r for r in report["roe_quarantine"] if r["quarantined"]]
-    kept = [r for r in report["roe_quarantine"] if not r["quarantined"] and r["roe"] is not None]
     print(
         f"  ROE quarantine rows {len(report['roe_quarantine'])}; quarantined {len(quarantined)} "
-        f"({sorted({r['ticker'] for r in quarantined})}); dq-v4 keeps the ROE {len(kept)}"
+        f"({sorted({r['ticker'] for r in quarantined})})"
     )
+    regained = report["roe_regained"]
+    print(
+        f"  R6: DQ_NEG_EQUITY filings whose ROE has a value now: {len(regained)}"
+        f" ({len({r['ticker'] for r in regained})} companies); "
+        f"ROE before on those filings: {sum(1 for r in regained if r['roe_before'] is not None)}"
+    )
+    for r in regained[:6]:
+        print(
+            f"    {r['ticker']:5} {r['form']:4} {r['period_end']} roe={r['roe']:.4f} "
+            f"equity={r['equity']} prior_equity={r['prior_year_equity']}"
+        )
 
 
 # -- D2's 3x3 sensitivity grid -----------------------------------------------------------------
@@ -515,7 +645,9 @@ def cmd_d14(args: argparse.Namespace) -> None:
             filing = _latest_filing(after, aid)
             inputs = _json_object(filing["inputs_json"]) if filing else {}
             period = (inputs.get("provenance") or {}).get("period")
-            acq = _acquisition_value(after, filing["filing_id"] if filing else None, period)
+            acq, acq_concepts = _acquisition_value(
+                after, filing["filing_id"] if filing else None, inputs
+            )
             capex = _fcf_part(inputs, "capital_expenditure")
             rows.append(
                 {
@@ -527,6 +659,7 @@ def cmd_d14(args: argparse.Namespace) -> None:
                     "free_cash_flow": _fcf_part(inputs, "free_cash_flow"),
                     "free_cash_flow_margin": row,
                     "acquisitions_value": acq,
+                    "acquisitions_concepts": acq_concepts,
                     "acquisitions_share_of_capex": (
                         acq / capex if acq is not None and capex else None
                     ),
@@ -549,12 +682,12 @@ def cmd_d14(args: argparse.Namespace) -> None:
         "before_gate": BEFORE_GATE,
         "after_gate": AFTER_GATE,
         "note": (
-            "D-14 is measured, not decided. ``acquisitions_value`` is the sum of the standard "
-            "APP-04b lines (PaymentsToAcquireRealEstate, ...HeldForInvestment) at the FCF row's own "
-            "period key; it is null when the filing files no such standard line there (a filer "
-            "extension, e.g. are_AcquisitionOfRealEstateAndOtherAssets..., is not read) -- for those "
-            "the acquisitions share is effectively 0 against the capex the row used. The capex "
-            "concepts are reported per row."
+            "D-14 is measured, not decided. ``acquisitions_value`` sums every cash-flow concept whose "
+            "own caption names an acquisition of real estate or properties (R8's R1 rule: the "
+            "filer's words decide, so a REIT that files only an extension element -- ARE's "
+            "are_AcquisitionOfRealEstateAndOtherAssets... -- is counted), over the same terms the "
+            "capex composite used, plus the two standard APP-04b concepts. "
+            "``acquisitions_concepts`` names the lines summed; the capex concepts are per row."
         ),
         "per_date": per_date,
     }
@@ -583,16 +716,85 @@ def _latest_filing(snap: Snapshot, asset_id: int) -> Any:
     return {"filing_id": int(row["filing_id"]), "inputs_json": row["inputs_json"]} if row else None
 
 
-def _acquisition_value(snap: Snapshot, filing_id: int | None, period: str | None) -> float | None:
-    """APP-04b's real-estate acquisition lines at the FCF row's own period key."""
-    if filing_id is None or not period:
-        return None
-    row = snap.conn.execute(
-        "SELECT SUM(value) AS total FROM financial_facts WHERE filing_id = ? AND period_key = ? "
-        "AND concept IN (?, ?)",
-        (filing_id, period, *REIT_ACQUISITION_CONCEPTS),
-    ).fetchone()
-    return row["total"] if row and row["total"] is not None else None
+def _acquisition_value(
+    snap: Snapshot, filing_id: int | None, inputs: dict[str, Any]
+) -> tuple[float | None, list[str]]:
+    """APP-04b's acquisition share, with the line classified from the filer's own caption (R8).
+
+    The capex item records the columns it used -- a 10-K's fiscal year, or a 10-Q's
+    ``prior_fiscal_year`` / ``prior_ytd`` / ``ytd`` terms. Every cash-flow concept whose **own
+    caption** names an acquisition of real estate or properties (the filer's words, as R1 classifies
+    an extension) is summed over those same terms, with the same weights as the capex composite. This
+    is what fills the share for a REIT that files its acquisitions only under an extension element
+    (ARE files ``are_AcquisitionOfRealEstateAndOtherAssets...``), which the standard concepts miss.
+    """
+    if filing_id is None:
+        return None, []
+    items = ((inputs.get("provenance") or {}).get("items") or {}).get("capital_expenditure") or []
+    if not items:
+        return None, []
+    columns = items[0].get("columns") or []
+    if not columns:
+        return None, []
+    facts = snap.conn.execute(
+        "SELECT filing_id, concept, label, statement, period_key, value, preferred_sign "
+        "FROM financial_facts WHERE statement = 'cash_flow' AND (filing_id = ? OR filing_id IN "
+        "(SELECT id FROM sec_filings WHERE accession_number IN (SELECT value FROM json_each(?))))",
+        (filing_id, json.dumps([c[2] for c in columns if c[2]])),
+    ).fetchall()
+    # ID-11: the resolver reads the filed value times the row's preferred_sign, never abs(). The
+    # capex columns reach into the *prior 10-K* for the prior fiscal year (a 10-Q's own statement
+    # carries only year-to-date columns), so the facts come from every accession the item names.
+    by_key = {
+        (int(r["filing_id"]), str(r["concept"]), str(r["period_key"])): (
+            None if r["value"] is None else r["value"] * (r["preferred_sign"] or 1.0)
+        )
+        for r in facts
+    }
+    accession_to_filing = {
+        str(r["accession_number"]): int(r["id"])
+        for r in snap.conn.execute(
+            "SELECT id, accession_number FROM sec_filings WHERE accession_number IN "
+            "(SELECT value FROM json_each(?))",
+            (json.dumps([c[2] for c in columns if c[2]]),),
+        )
+    }
+    concepts = {
+        str(r["concept"])
+        for r in facts
+        if int(r["filing_id"]) == filing_id
+        and _is_real_estate_acquisition(str(r["concept"]), str(r["label"] or ""))
+    } | set(REIT_ACQUISITION_CONCEPTS)
+    total = 0.0
+    found = False
+    for role, key, accession in columns:
+        source = accession_to_filing.get(str(accession), filing_id) if accession else filing_id
+        weight = -1.0 if role == "prior_ytd" else 1.0
+        for concept in concepts:
+            # a 10-K column names the instant (``2025-12-31``); its cash-flow duration key is the FY
+            for candidate in (str(key), f"{key} (FY)"):
+                value = by_key.get((source, concept, candidate))
+                if value is not None:
+                    total += weight * value
+                    found = True
+                    break
+    return (total if found else None), sorted(concepts)
+
+
+def _is_real_estate_acquisition(concept: str, label: str) -> bool:
+    """The filer's own caption names an acquisition (R8's R1 rule), and it is not an intangible.
+
+    APP-04b puts a REIT's acquisitions in its capex, so a filer extension counts (ARE's
+    ``are_AcquisitionOfRealEstateAndOtherAssets...``, DLR's
+    ``dlr_PaymentsToAcquireAssetOrBusinessesNetOfCashAcquired``) and so does a REIT's business
+    combination (IRM's ``PaymentsToAcquireBusinessesNetOfCashAcquired``, captioned "Cash paid for
+    acquisitions, net of cash acquired"). A bare acquisition of intangibles, and the income
+    statement's acquisition costs, are not capex.
+    """
+    text = label.lower()
+    if "acquisition" not in text:
+        return False
+    return "intangible" not in concept.lower() and "businesscombination" not in concept.lower()
 
 
 # -- D5: liquidity by company type -------------------------------------------------------------
@@ -857,7 +1059,7 @@ def cmd_all(args: argparse.Namespace) -> None:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     jobs = (
-        ("vetoes_by_sector.json", cmd_vetoes, ("before", "after")),
+        ("vetoes_by_sector.json", cmd_vetoes, ("before", "after", "side", "before_json")),
         ("neg_equity.json", cmd_neg_equity, ("before", "after")),
         ("d04_sensitivity.json", cmd_d04, ("before",)),
         ("d13_utilities.json", cmd_d13, ("db",)),
@@ -866,7 +1068,13 @@ def cmd_all(args: argparse.Namespace) -> None:
         ("r5_debt.json", cmd_debt, ("db",)),
     )
     for name, handler, fields in jobs:
-        kwargs = {"before": args.before, "after": args.after, "db": args.after}
+        kwargs = {
+            "before": args.before,
+            "after": args.after,
+            "db": args.after,
+            "side": "after",
+            "before_json": getattr(args, "before_json", None),
+        }
         handler(argparse.Namespace(out=str(out / name), **{f: kwargs[f] for f in fields}))
 
 
@@ -884,7 +1092,7 @@ def main() -> None:
     ):
         sub = subparsers.add_parser(name, help=handler.__doc__)
         needs = {
-            "vetoes": ("before", "after"),
+            "vetoes": (),
             "neg-equity": ("before", "after"),
             "d04": ("before",),
             "d13": ("db",),
@@ -894,11 +1102,30 @@ def main() -> None:
         }[name]
         for field in needs:
             sub.add_argument(f"--{field}", required=True)
+        if name == "vetoes":
+            sub.add_argument(
+                "--side",
+                choices=("before", "after"),
+                default="after",
+                help="before: write the control's per-date result (run with master's code on the "
+                "path); after: write the combined before -> after report",
+            )
+            sub.add_argument(
+                "--db", help="the database this side reads (required for --side before)"
+            )
+            sub.add_argument("--before", help="the before database, when no --before-json is given")
+            sub.add_argument(
+                "--before-json",
+                default=None,
+                help="the control's --side before output, produced by master's code",
+            )
+            sub.add_argument("--after", help="the after database (required for --side after)")
         sub.add_argument("--out", required=True)
         sub.set_defaults(func=handler)
     p_all = subparsers.add_parser("all", help="every measurement, into --out-dir")
     p_all.add_argument("--before", required=True)
     p_all.add_argument("--after", required=True)
+    p_all.add_argument("--before-json", default=None, help="the control's --side before output")
     p_all.add_argument("--out-dir", required=True)
     p_all.set_defaults(func=cmd_all)
     args = parser.parse_args()

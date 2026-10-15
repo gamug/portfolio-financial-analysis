@@ -636,6 +636,20 @@ the final pilot, `T-143`.
       D-04's `DQ_NEG_EQUITY` basis question (part 1 deliberately left it as the metrics' own APP-07 evaluation,
       so no published value changed basis), DQ-02's winsorizing and the market cap read at the cycle date.
       **New order: `T-071` part 1 -> `T-073` -> `T-074` -> `T-071` part 2 -> `T-153`.)*
+      *(2026-10-15, user: `T-071` part 2 is split again, like `T-151`. **Part 2a -- IN REVIEW, PR (stream A, step 2):
+      the cycle exclusion rules** -- D-04 (negative equity: `DQ_NEG_EQUITY` is a record, never a veto, and quarantines
+      D/E only; the distress screen moves to `LEVERAGE_EXTREME` keyed on the equity sign, reading the gate record's
+      credit inputs; R6: the applicability matrix's negative-equity column reads the equity the metric divides by, so
+      ROE keeps the value its own prior-year-equity test allows), D-13 (a regulated utility is exempt from
+      `NEGATIVE_FCF` and gets `UTILITY_CASH_COVERAGE`, HARD below 5% on **both** three-year bounds, read from the
+      newest 10-K's `rule_input` row whose working-capital lines are classified from their own source only), D-14
+      (REITs and `NEGATIVE_FCF`: measured, not decided) and D5 (`LIQUIDITY_DISTRESS` exempts by the APP-00 profile,
+      not by GICS sector). The plan is `/workspaces/thesis/handoff/T071b_plan.md` with the rulings
+      `T071b_rulings.md`; the numbers are in `docs/model_fixes.md` "T-071 part 2a" and
+      `scripts/verify_t071b.py`'s outputs. **Part 2b (later) -- the VALORIZATION score**: value only; E/P,
+      book-to-market, EBITDA/EV and enterprise FCF yield, all priced on the analysis date (MKT-01); size removed; the
+      FCF measures dropped for regulated utilities; DQ-02, N9, coverage; and the financial firms' sector-specific
+      factors.)*
 - [ ] **T-072** *(**Absorbed by `T-151` 2026-10-08 — implement there, not here.**)* Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →
       step 2 (EBITDA sub-task). *(2026-09-29 system review, scope addition: net debt
