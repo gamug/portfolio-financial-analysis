@@ -448,8 +448,9 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`blended_score`** is 0-100 minus the active SOFT rules' `penalty_points` (15 each by default, 0 for the
   flag-only `BREAK_TREND_200`), so it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
   mean over the non-null components, i.e. weights renormalized (`effective_weight` above).
-- **`normalized_score`** is `50 + 10z` over the cohort (z against the 2%-winsorized mean and standard
-  deviation), clamped to [0, 100]; the same function for SECTOR. The cohort mean is near 50, not
+- **`normalized_score`** is `50 + 10z` over the cohort (z against the 0.5%-winsorized mean and standard
+  deviation), clamped to [0, 100]; the same function for SECTOR. DQ-02 (T-071 part 2b, D3): `winsorize`
+  trims `floor(0.005 × n)` values per tail and nothing when `n < 200`. The cohort mean is near 50, not
   exactly 50. FUNDAMENTAL's `normalized_score` is **rewritten by every cycle** (`T-106`), so the stored
   value is the last cycle's; the per-cycle value is `component_value`.
 - **SECTOR `raw_value`** is the asset's TECHNICAL raw score minus its sector's mean, in TECHNICAL

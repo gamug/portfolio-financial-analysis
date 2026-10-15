@@ -268,10 +268,15 @@ FUNDAMENTAL scores; a filing with no date has none and is never read. A run refu
 
 ### `scores/normalize.py`
 
-`cross_sectional_z(values, winsor=0.02)` — winsorized z-score against the cohort
+`cross_sectional_z(values, winsor=0.005)` — winsorized z-score against the cohort
 (zeros if degenerate). `z_to_score(z)` → `clamp(50 + 10z, 0, 100)`.
 `normalized_scores(raw)` composes both. `rank_pct(values, higher_is_better=True)` —
-cross-sectional percentile rank in `[0,1]`, `None` in → `None` out.
+cross-sectional percentile rank in `[0,1]`, `None` in → `None` out. **DQ-02** (T-071 part 2b, D3):
+`winsorize` trims `floor(0.005 × n)` values per tail and **nothing** when `n < 200` — the count is a
+floor, never `max(1, …)`, so a 20-name cohort is not winsorized at all. Every score type
+`normalized_scores` normalizes (TECHNICAL, VALORIZATION, SEMANTIC, the sector momentum and
+FUNDAMENTAL) uses it; VALORIZATION winsorizes each of its four measures with the same function before
+ranking them.
 
 ### Composite weights — known effects (T-141)
 

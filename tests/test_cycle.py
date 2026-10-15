@@ -21,7 +21,15 @@ from cycle.rules import RuleContext, RuleResult, disabled_rule_ids, enabled_rule
 from cycle.rules.base import VetoHit
 from cycle.rules.builtin import _NegativeFcfRule, _UtilityCashCoverageRule
 from cycle.scores import sector, technical, valorization
-from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
+from cycle.scores.normalize import (
+    DEFAULT_WINSOR,
+    MIN_FOR_WINSOR,
+    cross_sectional_z,
+    normalized_scores,
+    rank_pct,
+    winsorize,
+    z_to_score,
+)
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import (
     OutOfOrderCycle,
@@ -54,6 +62,33 @@ def test_rank_pct_handles_none_and_direction() -> None:
     assert asc[0] == 0.0 and asc[2] == 1.0 and asc[3] is None
     desc = rank_pct([10.0, 20.0, 30.0], higher_is_better=False)
     assert desc[0] == 1.0 and desc[2] == 0.0
+
+
+# -- DQ-02 winsorizing (T-071 part 2b, D3) ----------------------------------
+
+
+def test_dq02_trims_floor_half_a_percent_per_tail_at_200_or_more() -> None:
+    """``floor(0.005 x n)`` values per tail: 1 at n = 200, 2 at n = 495, none below 200."""
+    assert MIN_FOR_WINSOR == 200
+    assert DEFAULT_WINSOR == 0.005
+    # n = 495: the two lowest and the two highest are trimmed (the 3rd smallest is the floor)
+    values = [float(i) for i in range(495)]
+    out = winsorize(values, DEFAULT_WINSOR)
+    assert out[0] == out[1] == 2.0  # the two lowest clamped to the 3rd smallest
+    assert out[-1] == out[-2] == 492.0  # the two highest clamped to the 3rd largest
+    assert winsorize(values, DEFAULT_WINSOR) != values
+    # n = 199: nothing is trimmed, whatever the fraction
+    assert winsorize([float(i) for i in range(199)], DEFAULT_WINSOR) == [
+        float(i) for i in range(199)
+    ]
+
+
+def test_dq02_below_200_is_the_identity_and_normalized_scores_uses_the_default() -> None:
+    """A 5-name cohort is untouched: ``normalized_scores``' default is DQ-02's 0.5%, not 2%."""
+    assert winsorize([1.0, 2.0, 3.0, 4.0, 5.0]) == [1.0, 2.0, 3.0, 4.0, 5.0]
+    raw = [float(i) for i in range(500)] + [1e6]
+    assert normalized_scores(raw) == normalized_scores(raw, winsor=0.005)
+    assert normalized_scores(raw) != normalized_scores(raw, winsor=0.02)
 
 
 # -- score modules ------------------------------------------------
