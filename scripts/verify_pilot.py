@@ -329,15 +329,17 @@ def _early_rows(fin: Any) -> list[str]:
 
 
 def leaver_profile_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
-    """The leavers' company profiles and sectors (T-153d).
+    """Every line's company profile and sector (T-153d).
 
-    (a) every leaver line that has a stored filing has an APP-00 profile that **covers each of that
-    filing's period ends** -- the leaver's own interval (``T-153`` part 3b), so a period end before
-    2022 (a 10-K filed in 2022) and one up to its exit are both inside it;
-    (b) no ``sectors`` row has an empty name (``sync_universe`` must not create one for a leaver the
-    delivered universe file leaves unclassified), and every leaver asset with a stored filing has a
-    sector -- a leaver with neither (MBC, FTRE, PHIN) is allowed to have none.
-    Returns ``(leaver_lines, filings, problems)``; both connections are read-only."""
+    (a) **every line ``members_over_range`` returns** -- a current member, a company that left, and a
+    company that left and rejoined (ILMN) -- that has a stored filing has an APP-00 profile that
+    **covers each of that filing's period ends**: a period end before 2022 (a 10-K filed in 2022) and
+    one up to its exit are both inside a leaver's own interval, and a member's open interval covers
+    its whole window, so a company the checklist's table predates is caught here (``T-153`` part 3b);
+    (b) no ``sectors`` row has an empty name (``sync_universe`` must not create one for a line the
+    delivered universe file leaves unclassified), and every line the file classifies has a sector on
+    its asset -- a line with neither (MBC, FTRE, PHIN) is allowed to have none.
+    Returns ``(lines, filings, problems)``; both connections are read-only."""
     with (
         contextlib.closing(connect_ro(fin_db_path)) as fin,
         contextlib.closing(connect_ro(universe_path)) as universe,
@@ -349,8 +351,6 @@ def leaver_profile_problems(fin_db_path: str, universe_path: str) -> tuple[int, 
         end = date.today().isoformat()
         lines = filings = 0
         for w in members_over_range(universe, fin, WINDOW_START, end):
-            if w.window_to is None:
-                continue
             lines += 1
             row = fin.execute(
                 "SELECT id, cik, sector_id FROM assets WHERE UPPER(ticker) = ?",
@@ -1325,7 +1325,7 @@ def main() -> int:  # noqa: C901, PLR0915
         report(
             "T-153d",
             "FAIL" if bad else "PASS",
-            f"leaver profiles vs {universe_path}: {lines} leaver lines, {filings} filings; "
+            f"company profiles vs {universe_path}: {lines} lines, {filings} filings; "
             + (
                 "; ".join(bad[:6])
                 if bad

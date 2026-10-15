@@ -17,11 +17,13 @@ from kg_schema.company_profile import PROFILE_CSV, profile_as_of, profiles
 # the checklist's own counts (APP-00's table: 24 Article 9, 17 Article 7, 10 other financial,
 # 1 multi-sector holding, 448 operating; overlays REIT 28, multi-class 76), plus the leavers'
 # (T-153 part 3b: 5 Article 9 -- CMA, SIVB, ZION, PBCT, DFS; 1 Article 7 -- LNC; 78 operating;
-# REIT 3 -- DRE, VNO, AVB; multi-class 18, from the last 10-K's cover page). Five of the table's
-# rows (BLDR, CTVA, TAP, TTD, WBD) left the index after it was generated and are replaced by their
-# own leaver row, so the file holds 579 rows, one per CIK.
+# REIT 3 -- DRE, VNO, AVB; multi-class 18, from the last 10-K's cover page) and the five members
+# that joined after the table was generated (TWLO, VYLR, BE, P, ILMN -- 5 operating, L-03's
+# today's snapshot with an open interval). Five of the table's rows (BLDR, CTVA, TAP, TTD, WBD) left
+# the index after it was generated and are replaced by their own leaver row, so the file holds 584
+# rows, one per CIK.
 TYPES = {
-    "operating": 521,
+    "operating": 526,
     "article_9": 29,
     "article_7": 18,
     "other_financial": 10,
@@ -42,12 +44,13 @@ def test_the_header_names_the_generator_and_the_source_sha256() -> None:
     assert any("scripts/build_company_profile.py" in line for line in header)
     assert any("docs/checklist_sec/company_types.csv" in line for line in header)
     assert any("docs/leaver_company_types.csv" in line for line in header)
-    assert len([line for line in header if re.search(r"sha256 [0-9a-f]{64}", line)]) == 2
+    assert any("docs/new_member_company_types.csv" in line for line in header)
+    assert len([line for line in header if re.search(r"sha256 [0-9a-f]{64}", line)]) == 3
 
 
 def test_the_profile_is_the_checklists_type_table_with_the_added_columns() -> None:
     rows = list(profiles().values())
-    assert len(rows) == sum(TYPES.values()) == 579
+    assert len(rows) == sum(TYPES.values()) == 584
     assert Counter(row.type for row in rows) == Counter(TYPES)
     assert sum(1 for row in rows if row.reit) == REITS
     assert sum(1 for row in rows if row.multi_class) == MULTI_CLASS

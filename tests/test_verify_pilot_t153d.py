@@ -1,8 +1,9 @@
-"""The T-153d verify_pilot check: the leavers' profiles and sectors (T-153 part 3b).
+"""The T-153d verify_pilot check: every line's profile and sector (T-153 part 3b).
 
-Two directions: every leaver filing's period end is inside the company's profile interval (its own,
-up to its exit), and no leaver asset that the universe file classifies carries no sector (the path
-from the delivered file to the SECTOR score) -- with no empty-named ``sectors`` row.
+Two directions: **every line ``members_over_range`` returns** -- a current member, a leaver, and a
+company that left and rejoined -- has a profile covering each stored filing's period end, and no
+asset the universe file classifies carries no sector (the path from the delivered file to the SECTOR
+score) -- with no empty-named ``sectors`` row.
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ sys.modules["verify_pilot"] = verify
 _SPEC.loader.exec_module(verify)
 
 #: CMA (Comerica, CIK 0000028412) left the index on 2024-06-23, so its profile in the tracked file
-#: covers [2020-01-01, 2024-06-24). ZZZ is a CIK no profile holds.
+#: covers [2020-01-01, 2024-06-24). ILMN (CIK 0001110803) left on 2024-06-23 and rejoined on
+#: 2026-09-21: it is a member again, so its profile is open -- and its 2022 filings must be covered
+#: by it, which is what the widened check is for. ZZZ is a CIK no profile holds.
 _UNIVERSE_DDL = """
 CREATE TABLE universe_membership (
     symbol TEXT NOT NULL, security TEXT NOT NULL,
@@ -63,6 +66,19 @@ def _db(
     conn.commit()
     conn.close()
     return fin, udb
+
+
+def _add_stint(udb: Path, row: tuple[str, str, str, str | None, str, str]) -> None:
+    """A second stint: ``(symbol, cik, valid_from, valid_to, sector, sub_industry)``."""
+    symbol, cik, valid_from, valid_to, sector, sub = row
+    conn = sqlite3.connect(udb)
+    conn.execute(
+        "INSERT INTO universe_membership (symbol, security, gics_sector, gics_sub_industry, cik,"
+        " valid_from, valid_to, source) VALUES (?, ?, ?, ?, ?, ?, ?, 'test')",
+        (symbol, f"{symbol} Inc.", sector, sub, cik, valid_from, valid_to),
+    )
+    conn.commit()
+    conn.close()
 
 
 def _add_filing(fin: Path, asset_id: int, period_end: str) -> None:
@@ -133,6 +149,25 @@ def test_the_check_flags_a_classified_line_whose_asset_has_no_sector(tmp_path: P
     _add_filing(fin, 1, "2022-06-30")
     _, _, problems = verify.leaver_profile_problems(str(fin), str(udb))
     assert any("gives it a sector but the asset has none" in p for p in problems)
+
+
+def test_a_rejoined_member_is_checked_over_its_whole_window(tmp_path: Path) -> None:
+    """ILMN left on 2024-06-23 and rejoined on 2026-09-21: one line, an open profile, and its 2022
+    filings must be covered by it -- the case the leaver-only check missed."""
+    fin, udb = _db(
+        tmp_path,
+        members=[
+            ("ILMN", "0001110803", "2024-06-23", "Health Care", "Life Sciences Tools & Services")
+        ],
+    )
+    _add_stint(
+        udb,
+        ("ILMN", "0001110803", "2026-09-21", None, "Health Care", "Life Sciences Tools & Services"),
+    )
+    _add_filing(fin, 1, "2022-03-31")  # its first membership
+    _add_filing(fin, 1, "2024-03-31")  # up to its exit
+    _add_filing(fin, 1, "2026-06-30")  # after it rejoined
+    assert verify.leaver_profile_problems(str(fin), str(udb)) == (1, 3, [])
 
 
 def test_a_file_with_no_label_asks_nothing_of_the_sector(tmp_path: Path) -> None:

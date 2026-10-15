@@ -1,8 +1,10 @@
-"""The company-profile generator's leaver merge (T-153 part 3b, D1 option (b)).
+"""The company-profile generator's staged merges (T-153 part 3b, D1 option (b)).
 
-The current rows keep the checklist table's one fixed interval; a leaver row is built from the
-staged evidence (its label, its Article 9 statement, its cover-page classes) with its own interval;
-a bank label with no Article 9 statement gets no row at all.
+The table's rows keep their one fixed interval; a **leaver** row is built from the staged evidence
+(its last-day label, its Article 9 statement, its cover-page classes) with its own interval; a
+**later joiner** (a member the table predates) is built under the current-member rule (its open
+stint's label, its live tickers, an open interval); a bank label with no Article 9 statement gets no
+row at all.
 """
 
 from __future__ import annotations
@@ -157,6 +159,83 @@ def test_the_multi_class_overlay_comes_from_the_cover_symbols() -> None:
     )
     assert _rows(build_profile.build(_SOURCE, one))[2]["multi_class_listed"] == "False"
     assert _rows(build_profile.build(_SOURCE, many))[2]["multi_class_listed"] == "True"
+
+
+_MEMBERS = (
+    "cik,symbols,company_name,joined_date,gics_sector,gics_sub_industry,last_10k_accession,"
+    "last_10k_filed,article_9,evidence_quote,live_tickers,note\n"
+)
+
+
+def _member(row: dict[str, str]) -> str:
+    """One staged later-joiner row; *row* carries cik, symbols, joined_date, sector, sub and overrides."""
+    fields = {
+        "last_10k_accession": "",
+        "last_10k_filed": "",
+        "article_9": "false",
+        "evidence_quote": "",
+        "live_tickers": row["symbols"],
+        "note": "",
+        **row,
+    }
+    return (
+        f"{fields['cik']},{fields['symbols']},{fields['symbols']} Inc.,{fields['joined_date']},"
+        f"{fields['sector']},{fields['sub']},{fields['last_10k_accession']},{fields['last_10k_filed']},"
+        f'{fields["article_9"]},"{fields["evidence_quote"]}",{fields["live_tickers"]},{fields["note"]}\n'
+    )
+
+
+def test_a_later_joiner_gets_an_open_interval_and_the_live_multi_class() -> None:
+    """The mirror of a leaver: the table predates it, so its row is today's snapshot (L-03) with an
+    open interval, and the multi-class overlay is the **live** ticker list (the current members'
+    rule), not a cover page."""
+    members = _MEMBERS + _member(
+        {
+            "cik": "0000000008",
+            "symbols": "HHH",
+            "joined_date": "2026-09-21",
+            "sector": "Health Care",
+            "sub": "Life Sciences Tools & Services",
+            "live_tickers": "HHH/HHH.A",
+        }
+    )
+    rows = _rows(build_profile.build(_SOURCE, _HEADER, members))
+    hhh = next(r for r in rows if r["cik"] == "0000000008")
+    assert hhh["type"] == "operating" and hhh["financial_firm"] == "False"
+    assert hhh["valid_from"] == "2020-01-01" and hhh["valid_to"] == ""
+    assert hhh["multi_class_listed"] == "True"
+    assert "the open stint from 2026-09-21" in hhh["basis"]
+
+
+def test_a_later_joiner_with_a_bank_label_and_no_statement_gets_no_row() -> None:
+    members = _MEMBERS + _member(
+        {
+            "cik": "0000000009",
+            "symbols": "III",
+            "joined_date": "2026-09-21",
+            "sector": "Financials",
+            "sub": "Regional Banks",
+        }
+    )
+    out = build_profile.build(_SOURCE, _HEADER, members)
+    assert "0000000009" not in {r["cik"] for r in _rows(out)}
+
+
+def test_a_later_joiner_already_in_the_table_replaces_its_row() -> None:
+    members = _MEMBERS + _member(
+        {
+            "cik": "0000000002",
+            "symbols": "BBB",
+            "joined_date": "2026-09-21",
+            "sector": "Real Estate",
+            "sub": "Office REITs",
+        }
+    )
+    rows = [
+        r for r in _rows(build_profile.build(_SOURCE, _HEADER, members)) if r["cik"] == "0000000002"
+    ]
+    assert len(rows) == 1 and rows[0]["gics_sub_industry"] == "Office REITs"
+    assert build_profile.replaced_ciks(_SOURCE, "", members) == ["0000000002"]
 
 
 def test_the_header_names_both_sources() -> None:
