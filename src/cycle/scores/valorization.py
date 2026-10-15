@@ -40,8 +40,9 @@ components, so the coverage is visible, and the blend renormalizes over the comp
 
 **Weights.** No source gives weights between the four measures, so the raw score is 100 x the
 equal-weight mean of the present measures' percentiles (the 1/N argument, as T-141 did for the
-composite). Each measure is winsorized at DQ-02's 0.5% per tail (:func:`winsorize`) before it is
-ranked.
+composite). Each measure is winsorized at DQ-02's 0.5% per tail (:func:`winsorize`) and ranked
+**within the member's cohort** (F5): a financial firm's E/P and B/M among the financial firms on the
+date, every other member's measures across the rest.
 """
 
 from __future__ import annotations
@@ -57,6 +58,13 @@ SCORE_TYPE = "VALORIZATION"
 
 #: A score needs at least ``min(MIN_PRESENT, the applicable count)`` present measures.
 MIN_PRESENT: Final[int] = 2
+
+#: The ranking cohorts (F5): a financial firm's equity multiples are ranked among the financial
+#: firms on the date (C2 p.27 compares them across financial service firms; C4 p.3 has Fama and
+#: French exclude financial firms), every other member's measures across the rest.
+FINANCIAL: Final[str] = "financial"
+OTHER: Final[str] = "other"
+COHORTS: Final[tuple[str, ...]] = (FINANCIAL, OTHER)
 
 EARNINGS_YIELD: Final[str] = "earnings_yield"
 BOOK_TO_MARKET: Final[str] = "book_to_market"
@@ -109,13 +117,16 @@ class Member:
     """One universe member's VALORIZATION inputs on the cycle date.
 
     ``values`` is D1's rule input (its ``inputs_json``); ``applicable`` maps each measure to the
-    matrix's ``(code, rule)``; ``quarantined`` is the gate's key set for the member's filing."""
+    matrix's ``(code, rule)``; ``quarantined`` is the gate's key set for the member's filing;
+    ``cohort`` is the ranking cohort (F5: a financial firm's equity multiples are ranked among the
+    financial firms, everyone else's across the rest -- C2 p.27, C4 p.3)."""
 
     asset_id: int
     market_cap: float | None = None
     values: dict[str, Any] = field(default_factory=dict)
     applicable: dict[str, tuple[str, str]] = field(default_factory=dict)
     quarantined: frozenset[str] = frozenset()
+    cohort: str = "other"
     # the audit trail
     share_date: str | None = None
     close_date: str | None = None
@@ -214,13 +225,30 @@ def compute(members: dict[int, Member]) -> list[RawScore]:
     """One :class:`RawScore` per member, in *members*' order.
 
     Every member gets a row -- with its components and coverage -- even when the score is empty
-    (``raw_value`` is ``None``); the caller writes them all, so the coverage is visible."""
+    (``raw_value`` is ``None``); the caller writes them all, so the coverage is visible.
+
+    **Cohorts (F5).** Each measure is ranked **within the member's cohort** -- a financial firm's
+    E/P and B/M among the financial firms on the date (C2 p.27 compares the equity multiples across
+    financial service firms; C4 p.3 has Fama and French exclude financial firms), every other
+    member's measures across the rest. DQ-02's winsorizing is applied per cohort too (at ~51
+    financial members, nothing is trimmed)."""
     asset_ids = list(members)
     if not asset_ids:
         return []
     per_measure = {name: [_measure(members[aid], name) for aid in asset_ids] for name in MEASURES}
-    # Rank each measure across every member that has it, after DQ-02's winsorizing (D3).
-    percentiles = {name: rank_pct(_clipped([m[0] for m in per_measure[name]])) for name in MEASURES}
+    # Rank each measure within its cohort, after DQ-02's winsorizing of that cohort (D3/F5).
+    percentiles: dict[str, list[float | None]] = {
+        name: [None] * len(asset_ids) for name in MEASURES
+    }
+    for name in MEASURES:
+        values = [m[0] for m in per_measure[name]]
+        for cohort in COHORTS:
+            indices = [i for i, aid in enumerate(asset_ids) if members[aid].cohort == cohort]
+            if not indices:
+                continue
+            ranked = rank_pct(_clipped([values[i] for i in indices]))
+            for position, i in enumerate(indices):
+                percentiles[name][i] = ranked[position]
     out: list[RawScore] = []
     for i, aid in enumerate(asset_ids):
         member = members[aid]
@@ -239,24 +267,26 @@ def compute(members: dict[int, Member]) -> list[RawScore]:
                 "flags": flags,
                 "matrix": code,
                 "matrix_rule": rule,
+                "cohort": member.cohort,
             }
         need = min(MIN_PRESENT, applicable)
-        ranked: list[float] = []
+        present_percentiles: list[float] = []
         for name in present:
             percentile = percentiles[name][i]
-            if percentile is None:  # a present measure always has one; never assume it
-                ranked = []
-                break
-            ranked.append(float(percentile))
+            if percentile is not None:  # a present measure always has one; never assume it
+                present_percentiles.append(float(percentile))
         raw = (
-            100.0 * sum(ranked) / len(ranked)
-            if ranked and len(ranked) >= need and len(ranked) == len(present)
+            100.0 * sum(present_percentiles) / len(present_percentiles)
+            if present_percentiles
+            and len(present_percentiles) >= need
+            and len(present_percentiles) == len(present)
             else None
         )
         components: dict[str, Any] = {
             "measures": measures,
             "applicable": float(applicable),
             "present": float(len(present)),
+            "cohort": member.cohort,
             "market_cap": member.market_cap,
             "enterprise_value": enterprise_value(member),
             "share_date": member.share_date,

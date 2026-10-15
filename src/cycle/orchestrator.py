@@ -457,6 +457,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     no_cap += 1  # T-132: a missing market cap, reported rather than guessed
                 rule = rule_inputs.get(a) or {}
                 inputs = rule.get("inputs") or {}
+                profile = profiles.get(a)
                 net_income = inputs.get("net_income_ttm")
                 if isinstance(net_income, (int, float)) and not isinstance(net_income, bool):
                     negative_earnings += float(net_income) < 0.0
@@ -464,8 +465,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                     asset_id=a,
                     market_cap=mcap.get(a),
                     values=inputs,
-                    applicable=_value_applicability(profiles.get(a), a in dq.negative_equity),
+                    applicable=_value_applicability(profile, a in dq.negative_equity),
                     quarantined=frozenset(dq.quarantined.get(a, set())),
+                    cohort=(
+                        valorization.FINANCIAL
+                        if profile is not None and profile.financial_firm
+                        else valorization.OTHER
+                    ),
                     share_date=cap.share_as_of if cap is not None else None,
                     close_date=cap.close_date if cap is not None else None,
                     accession=rule.get("accession"),

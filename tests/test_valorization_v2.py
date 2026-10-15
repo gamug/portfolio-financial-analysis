@@ -48,6 +48,11 @@ def _member(
         values=dict(values or {}),
         applicable=_value_applicability(profile, False),
         quarantined=quarantined,
+        cohort=(
+            valorization.FINANCIAL
+            if profile is not None and profile.financial_firm
+            else valorization.OTHER
+        ),
     )
 
 
@@ -278,7 +283,18 @@ def test_the_components_carry_the_audit_trail() -> None:
     assert components["close_date"] == "2026-06-30"
     assert components["accession"] == "0000000000-26-000001"
     measure = components["measures"]["earnings_yield"]
-    assert set(measure) == {"value", "percentile", "status", "flags", "matrix", "matrix_rule"}
+    assert set(measure) == {
+        "value",
+        "percentile",
+        "status",
+        "flags",
+        "matrix",
+        "matrix_rule",
+        "cohort",
+    }
+    assert (
+        components["cohort"] == valorization.OTHER
+    )  # an unknown profile is never a financial firm
 
 
 def test_an_empty_cohort_is_no_scores() -> None:
@@ -305,3 +321,32 @@ def test_book_to_market_tests_the_equity_sign_before_the_gate() -> None:
     assert bm1["flags"] == ["book_equity_nonpositive"]
     bm2 = scores[2].components["measures"]["book_to_market"]
     assert bm2["status"] == valorization.QUARANTINED  # equity > 0, but its value is quarantined
+
+
+# -- F5 (fix round 1): a financial firm's equity multiples rank among the financial firms ----------
+
+
+def test_a_financial_firm_ranks_within_the_financial_cohort() -> None:
+    """F5: C2 p.27 compares the equity multiples across financial service firms, and C4 p.3 has
+    Fama and French exclude financial firms. So the best financial firm takes the top percentile of
+    its own cohort even when an operating member's E/P is higher, and the cohort is recorded."""
+    members = {
+        1: _member(1, profile=_financial(), values={**_FULL, "net_income_ttm": 50.0}),
+        2: _member(2, profile=_financial(), values={**_FULL, "net_income_ttm": 10.0}),
+        3: _member(
+            3, values={**_FULL, "net_income_ttm": 100.0}
+        ),  # an operating member, the best E/P
+        4: _member(4, values={**_FULL, "net_income_ttm": 20.0}),
+    }
+    scores = {s.asset_id: s for s in valorization.compute(members)}
+    fin = scores[1].components["measures"]["earnings_yield"]["percentile"]
+    other = scores[3].components["measures"]["earnings_yield"]["percentile"]
+    assert fin == pytest.approx(1.0)  # the financial cohort's best
+    assert other == pytest.approx(1.0)  # the other cohort's best
+    assert scores[1].components["measures"]["earnings_yield"]["cohort"] == valorization.FINANCIAL
+    assert scores[3].components["measures"]["earnings_yield"]["cohort"] == valorization.OTHER
+    # within the financial cohort member 1 is above member 2, even though member 3's E/P is higher
+    assert (
+        scores[1].components["measures"]["earnings_yield"]["percentile"]
+        > scores[2].components["measures"]["earnings_yield"]["percentile"]
+    )

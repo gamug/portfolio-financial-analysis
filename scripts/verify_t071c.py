@@ -116,12 +116,18 @@ class Snapshot:
         out = {}
         for a in self.asset_ids:
             rule = self.values.get(a) or {}
+            profile = self.profiles.get(a)
             out[a] = valorization.Member(
                 asset_id=a,
                 market_cap=self.mcap.get(a),
                 values=rule.get("inputs") or {},
-                applicable=_applicability(self.profiles.get(a), a in self.dq.negative_equity),
+                applicable=_applicability(profile, a in self.dq.negative_equity),
                 quarantined=frozenset(self.dq.quarantined.get(a, set())),
+                cohort=(
+                    valorization.FINANCIAL
+                    if profile is not None and profile.financial_firm
+                    else valorization.OTHER
+                ),
                 share_date=self.caps[a].share_as_of if a in self.caps else None,
                 close_date=self.caps[a].close_date if a in self.caps else None,
                 accession=rule.get("accession"),
