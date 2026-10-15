@@ -18,6 +18,7 @@ from datetime import date
 from typing import Any
 
 from fundamental_agent import fiscal
+from fundamental_agent.dq01 import dq01_tolerance
 
 STATEMENT_KEYS = ("income_statement", "balance_sheet", "cash_flow")
 _DURATION_RE = re.compile(r"^\s*(?P<date>\d{4}-\d{2}-\d{2})\s*\((?P<tag>[A-Za-z0-9]+)\)\s*$")
@@ -288,6 +289,18 @@ _DA_NAME_RE = re.compile(r"depreciat|amorti|deplet", re.IGNORECASE)
 # is net proceeds whatever its filed sign (COP: "Proceeds from asset dispositions" displayed
 # -17,000,000 with ``preferred_sign`` -1, a filed +17,000,000).
 _NET_ELEMENT_PROCEEDS_RE = re.compile(r"proceeds?|\bsales?\b|disposition", re.IGNORECASE)
+
+# T-071 part 2b (D6): a caption naming a proceeds, a sale, a disposition or a **gain** is not a
+# capex payment, whatever its sign (the C3 net-element test, plus "gain").
+_NOT_A_CAPEX_PAYMENT_RE = re.compile(r"proceeds?|\bsales?\b|disposition|gain", re.IGNORECASE)
+
+# T-071 part 2b (D6, ruling of 2026-10-15): the REIT extension path takes only a *cash* capex line.
+# A concept's local name or caption naming an accrual, an amount still unpaid or a period-end mirror
+# is refused -- the filer's own wording is the discriminator (PSA's "…RemainingUnpaidAtPeriodEnd"
+# lines carry the *same caption* as their cash counterpart, so only the concept name separates them).
+_NOT_AN_EXTENSION_CAPEX_RE = re.compile(
+    r"accrual|accrued|unpaid|remaining|payable|at period end", re.IGNORECASE
+)
 
 # -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
 _CASH_PAREN_RE = re.compile(r"\([^)]*\)")
@@ -1510,29 +1523,30 @@ class Statements:
     def _capex_reit(
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
-        acq_concepts = (
-            G + "PaymentsToAcquireRealEstate",
-            G + "PaymentsToAcquireRealEstateHeldForInvestment",
-        )
-        base_concepts = (
-            G + "PaymentsToAcquirePropertyPlantAndEquipment",
-            *acq_concepts,
-            G + "PaymentsToDevelopRealEstateAssets",
-        )
-        used: dict[str, float] = {}
-        for c in base_concepts:
-            val = self._concept_value(spec, column, c)
-            if val is not None and val != 0:
-                used[c] = val
+        """Equity-REIT capex (APP-04b, T-148 (f); extended by T-071 part 2b's D6).
 
-        capimp = self._concept_value(spec, column, G + "PaymentsForCapitalImprovements")
-        if capimp is not None and capimp != 0:
-            if any(c in used for c in acq_concepts):
-                self._flag("capital_improvements_overlap_not_added")
-            else:
-                used[G + "PaymentsForCapitalImprovements"] = capimp
+        APP-04b: capex = corporate items + existing properties + development + acquisitions, summed
+        under MET-08 (c). The **real-estate acquisition part** follows the FASB 2026 calculation tree
+        (``docs/checklist_sec/sec_xcheck/fasb_2026_dl/x/us-gaap-2026``,
+        ``stm/us-gaap-stm-scf-indir-cal-2026.xml``): ``PaymentsToAcquireRealEstate`` is the **parent**
+        of ``PaymentsToAcquireCommercialRealEstate`` and ``PaymentsForCapitalImprovements``. So when
+        the parent is filed it is used **alone** -- APP-04b's own sentence, capital improvements are
+        inside it -- and a filed child is flagged ``capital_improvements_overlap_not_added``; when the
+        parent is not filed, the filed children are added, because siblings in a calculation sum to
+        the parent and are therefore explicitly disjoint (MET-08 (b)), flagged ``reit_sibling_sum``.
 
+        The **extension sum** reads the filer's own "capital expenditures" lines the concept map has
+        no element for -- :meth:`_reit_extension_capex`, flagged ``reit_extension_sum``."""
+        used = self._reit_components(spec, column)
         if used:
+            extensions = self._reit_extension_capex(spec, column)
+            if extensions and self._extension_is_a_total(extensions, list(used.values())):
+                self._flag("reit_extension_total_present")
+                extensions = {}
+            if extensions:
+                self._flag("caption_fallback")
+                self._flag("reit_extension_sum")
+                used.update({c: v for c, v in extensions.items() if c not in used})
             self._flag("reit_components")
             self._flag("fcf_non_standard_reit")
             total = sum(used.values())
@@ -1552,6 +1566,117 @@ class Statements:
                 return prod, prod_c, "fallback"
 
         return None, None, None
+
+    def _reit_components(self, spec: LineItem, column: str) -> dict[str, float]:
+        """APP-04b's us-gaap REIT components (corporate, development, held-for-investment) and the
+        real-estate acquisition part, by the FASB 2026 calculation tree.
+
+        ``PaymentsToAcquireRealEstate`` is the **parent** of ``PaymentsToAcquireCommercialRealEstate``
+        and ``PaymentsForCapitalImprovements``: a filed parent is used alone (APP-04b's sentence --
+        capital improvements are inside it) and a filed child is flagged
+        ``capital_improvements_overlap_not_added``; when the parent is not filed, the filed children
+        are added, because siblings in a calculation sum to the parent and are therefore explicitly
+        disjoint (MET-08 (b)), flagged ``reit_sibling_sum``."""
+        parent = G + "PaymentsToAcquireRealEstate"
+        children = (
+            G + "PaymentsToAcquireCommercialRealEstate",
+            G + "PaymentsForCapitalImprovements",
+        )
+        used: dict[str, float] = {}
+        for c in (
+            G + "PaymentsToAcquirePropertyPlantAndEquipment",
+            G + "PaymentsToAcquireRealEstateHeldForInvestment",
+            G + "PaymentsToDevelopRealEstateAssets",
+        ):
+            val = self._concept_value(spec, column, c)
+            if val is not None and val != 0:
+                used[c] = val
+
+        parent_value = self._concept_value(spec, column, parent)
+        if parent_value is not None and parent_value != 0:
+            used[parent] = parent_value
+            if any(self._concept_value(spec, column, c) is not None for c in children):
+                self._flag("capital_improvements_overlap_not_added")
+        else:
+            siblings = {
+                c: v
+                for c in children
+                if (v := self._concept_value(spec, column, c)) is not None and v != 0
+            }
+            if siblings:
+                self._flag("reit_sibling_sum")
+                used.update(siblings)
+        return used
+
+    @staticmethod
+    def _extension_is_a_total(extensions: dict[str, float], taken: list[float]) -> bool:
+        """DQ-01 (T-071 part 2b, D6's ruling): whether a us-gaap line the composite already takes
+        **is** the extension lines' total -- it equals their sum, or that sum plus another taken
+        line -- in which case the extension lines are its *parts*, not separate outflows, and must
+        not be added. The tolerance is :func:`dq01_tolerance` (``max(L-10 rounding, 0.5% x |base|)``)
+        with the parts' count as ``n_terms``."""
+        ext_sum = sum(extensions.values())
+        parts = len(extensions)
+        for i, value in enumerate(taken):
+            if abs(value - ext_sum) <= dq01_tolerance(value, parts + 1):
+                return True
+            for j, other in enumerate(taken):
+                if i != j and abs(value - (ext_sum + other)) <= dq01_tolerance(value, parts + 2):
+                    return True
+        return False
+
+    def _reit_extension_capex(self, spec: LineItem, column: str) -> dict[str, float]:
+        """The REIT-only sum of the capex caption's **company-extension** lines (T-071 part 2b, D6).
+
+        The shared caption fallback (:meth:`_label_fallback_row`) refuses more than one matching line
+        -- "one caption, one line": a partial figure is worse than none. Inside the REIT composite the
+        opposite holds: APP-04b's capex is the sum of the components the filer presents, and FRT's
+        "Capital expenditures - development and redevelopment" beside "Capital expenditures - other"
+        are two of them. So when the caption matches several lines, every match is summed that is
+
+        * a **company extension** -- never a ``us-gaap``/``dei`` concept, which stays with the concept
+          map (VTR's "Other capital expenditures" = ``PaymentsToAcquireOtherProductiveAssets`` is
+          therefore not taken here);
+        * a line of this cash-flow statement's own face (``_rows_for``: non-abstract,
+          non-dimensional -- the store records no section, so "the investing section" is the capex
+          spec's cash-flow scope) whose caption is not one of proceeds, a sale, a disposition or a
+          gain;
+        * **presented as an outflow**: ``preferred_sign = -1``, the negated label the investing
+          outflows carry. This refuses a non-cash accrual (CPT's
+          ``cpt_AccrualAssociatedWithConstructionAndCapitalExpenditures``, ``+1``) without a new
+          caption word;
+        * **cash and not a mirror**: neither the concept's local name nor its caption names an
+          accrual, an amount still unpaid or a period-end mirror
+          (:data:`_NOT_AN_EXTENSION_CAPEX_RE`);
+
+        and only when no us-gaap line already taken is their total (:meth:`_extension_is_a_total`).
+
+        Flagged ``reit_extension_sum`` (and ``caption_fallback``; ``extension_concept`` rides from the
+        resolution). The one-line rule is unchanged for every other filer."""
+        if not spec.label_fallback:
+            return {}
+        wanted = re.compile(spec.label_fallback, re.IGNORECASE)
+        unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
+        out: dict[str, float] = {}
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept.startswith(("us-gaap_", "dei_")):
+                continue
+            label = str(row.get("label") or "")
+            if not wanted.search(label) or unwanted.search(label):
+                continue
+            if _NOT_A_CAPEX_PAYMENT_RE.search(label):
+                continue
+            if _preferred_sign(row) != -1.0:
+                continue
+            if _NOT_AN_EXTENSION_CAPEX_RE.search(concept.split("_", 1)[-1]):
+                continue
+            if _NOT_AN_EXTENSION_CAPEX_RE.search(label):
+                continue
+            value = self._read(row, column, spec)
+            if value is not None:
+                out.setdefault(concept, value)
+        return out
 
     def _capex_tier1(
         self, spec: LineItem, column: str

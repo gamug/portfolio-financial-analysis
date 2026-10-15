@@ -78,6 +78,7 @@ from typing import Any, Final
 from portfolio_common.db import Database
 
 from fundamental_agent import fiscal
+from fundamental_agent.dq01 import MATERIALITY
 from fundamental_agent.metrics.base import TTMFlow
 from kg_schema import queries
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, METRIC_GROUPS, MetricVersions
@@ -341,7 +342,9 @@ GATES: Final[tuple[tuple[str, str, str, Callable[[FilingMetrics], list[Issue]]],
 
 G = "us-gaap_"
 IDENTITY_GROUP: Final[str] = "identity"
-MATERIALITY: Final[float] = 0.005  # DQ-01: 0.5% of the base
+# `MATERIALITY` (DQ-01's 0.5% of the base) and `dq01_tolerance` are imported from
+# `fundamental_agent.dq01` above and re-exported here for this module's own callers.
+G = "us-gaap_"
 CON_RULE_IDS: Final[tuple[str, ...]] = (
     "CON_01",
     "CON_02",

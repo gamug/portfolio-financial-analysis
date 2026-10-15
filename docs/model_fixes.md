@@ -9004,3 +9004,115 @@ no table or column changes (contract stays 16). Tests: `tests/test_leaver_profil
 `tests/test_build_company_profile.py`, `tests/test_leaver_company_types.py`,
 `tests/test_leaver_sic_check.py`, `tests/test_verify_pilot_t153d.py`, `tests/test_company_profile.py`,
 `tests/test_db.py`.
+
+## T-071 part 2b — the VALORIZATION score (stream A, Work item 8 step 2)
+
+*(In progress. D6 is recorded below with its numbers; D1, D2, D3, D4 and D5 are added by the same
+work item.)*
+
+### D6 — REIT capex completeness, and the D-14 table re-measured
+
+`Statements._capex_reit` (`src/fundamental_agent/statements.py`) sums APP-04b's four parts under
+MET-08 (c). Two things were missing, both found re-measuring D-14 (T-071 part 2a) and ruled by
+reviewer A on 2026-10-15. **No rule changed for any other filer**; the shared caption fallback's
+"one caption, one line" rule (`_label_fallback_row`) is untouched.
+
+**The real-estate acquisition part, by the FASB 2026 calculation tree.** The pinned zip
+(`docs/checklist_sec/sec_xcheck/fasb_2026_dl/x/us-gaap-2026/`) makes `PaymentsToAcquireRealEstate`
+the **parent** of `PaymentsToAcquireCommercialRealEstate` and of `PaymentsForCapitalImprovements`:
+
+| file | parent | child | weight |
+|---|---|---|---|
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireRealEstate` | `us-gaap_PaymentsToAcquireCommercialRealEstate` | 1.0 |
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireRealEstate` | `us-gaap_PaymentsForCapitalImprovements` | 1.0 |
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireInvestments` | `us-gaap_PaymentsToAcquireRealEstateHeldForInvestment` | 1.0 |
+| `stm/us-gaap-stm-scf-dbo-cal-2026.xml` | `us-gaap_PaymentsForProceedsFromRealEstateHeldforinvestment` | `us-gaap_PaymentsToAcquireRealEstateHeldForInvestment` | 1.0 |
+
+So: a filed **parent** is used **alone** -- APP-04b's own sentence, capital improvements are inside it
+-- and a filed child beside it is flagged `capital_improvements_overlap_not_added`; when the parent
+is **not** filed, the filed children are **added**, because siblings in a calculation sum to the
+parent and are therefore explicitly disjoint (MET-08 (b)), flagged `reit_sibling_sum`.
+`PaymentsToAcquireRealEstateHeldForInvestment` is **not** a child of the parent (its own parents are
+`PaymentsToAcquireInvestments` and `PaymentsForProceedsFromRealEstateHeldforinvestment`, two other
+trees), so it stays an independent component -- which is why UDR keeps
+`PaymentsForCapitalImprovements` beside it (`out/d6_sibling_arcs.txt`).
+
+**Declared inference.** APP-04b names `PaymentsToAcquireRealEstate` "such as" an acquisition line,
+and its reason (`PaymentsForCapitalImprovements` is contained in it) is **containment**. The
+calculation tree shows containment holds between the parent and its children, **not between
+siblings** -- so the two children are added together when the parent is absent. This is an inference
+from the tree, with the arcs above as its reference.
+
+**The REIT extension sum** (`_reit_extension_capex`, ruling of 2026-10-15). FRT files its capex as
+two filer extensions -- `frt_CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures -
+development and redevelopment") and `frt_CapitalExpendituresOther` ("Capital expenditures - other")
+-- and the shared caption fallback refuses **both** (two matches). Inside the REIT composite the
+opposite of "one caption, one line" holds: APP-04b's capex is the sum of the components the filer
+presents, so every captioned line is summed that is
+
+* a **company extension** (never a `us-gaap`/`dei` concept -- those stay with the concept map, so
+  VTR's "Other capital expenditures" = `PaymentsToAcquireOtherProductiveAssets` is not taken);
+* on the face of this cash-flow statement and not captioned as proceeds, a sale, a disposition or a
+  gain (`_NOT_A_CAPEX_PAYMENT_RE`);
+* **presented as an outflow**: `preferred_sign = -1` (the negated label the investing outflows
+  carry). This refuses CPT's `cpt_AccrualAssociatedWithConstructionAndCapitalExpenditures`
+  (`+1`, a non-cash accrual, caption "Accrual associated with construction and capital expenditures")
+  without a new caption word;
+* **cash, not a mirror**: neither the concept's local name nor its caption names accrual, accrued,
+  unpaid, remaining, payable or "at period end" (`_NOT_AN_EXTENSION_CAPEX_RE`). This refuses PSA's
+  three `*RemainingUnpaidAtPeriodEnd` / `*RemainingAtPeriodEnd` lines, whose **captions are identical
+  to their cash counterparts** ("Capital expenditures for property enhancements", "…energy
+  efficiencies (…)", "…to maintain real estate facilities") -- the concept name is the filer's own
+  wording and is declared the discriminator;
+
+and only when no already-taken `us-gaap` line **is their total** (`_extension_is_a_total`:
+`abs(taken - ext_sum) <= dq01_tolerance(taken, parts + 1)`, or the sum plus another taken line),
+which flags `reit_extension_total_present` instead of adding the parts. DQ-01's tolerance moved to
+`src/fundamental_agent/dq01.py` (a leaf) so the resolver can use it without the cycle
+`statements -> quality -> metrics -> cashflow -> statements`; `quality` and `fidelity` re-export it.
+
+Flags: `reit_extension_sum`, `caption_fallback` and (from the resolution) `extension_concept`.
+
+**Measured reach (the store's 1,703 REIT filing columns, `out/d6_extension_reach.txt`,
+`out/d6_extension_columns.txt`).** The extension path changes **211 columns across 5 companies --
+ESS, FRT, PSA, VMRK, WY** (CPT is gone via the outflow test, PSA's mirrors via the name test;
+`reit_extension_total_present` never fired). The manual look
+(`out/d6_investing_section.txt`) puts **every** taken line between the operating total and the
+investing total of its own statement -- the investing section -- for all five. The parent/sibling
+rule changes **112 columns across 7 companies -- BXP, DOC, HST, O, UDR, VTR, WELL**.
+
+**Per filing, the resolver basis the engine reads** (`out/d6_report.txt`; a 10-K's own fiscal year,
+a 10-Q's own year-to-date column):
+
+| company | filing | capex before | capex after | terms after |
+|---|---|---|---|---|
+| FRT | 10-K 2025-12-31 FY | 735,274,000 | 1,026,612,000 | `frt_CapitalExpendituresDevelopmentRedevelopment + frt_CapitalExpendituresOther + PaymentsToAcquireRealEstate` |
+| FRT | 10-Q 2026-06-30 YTD | 85,397,000 | **220,417,000** | same |
+| VTR | 10-K 2025-12-31 FY | 2,574,521,000 | 2,574,521,000 | `PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| VTR | 10-Q 2026-06-30 YTD | 149,676,000 | 2,598,479,000 | `PaymentsToAcquireCommercialRealEstate + PaymentsToDevelopRealEstateAssets` |
+| BXP | 10-K 2025-12-31 FY | 216,687,000 | 272,551,000 | `PaymentsForCapitalImprovements + PaymentsToAcquireCommercialRealEstate` |
+| HST | 10-K 2025-12-31 FY | 282,000,000 | 284,000,000 | same |
+| O | 10-K 2025-12-31 FY | 131,800,000 | 4,779,673,000 | same |
+| WELL | 10-K 2025-12-31 FY | 1,050,263,000 | 1,050,263,000 | `PaymentsForCapitalImprovements` |
+| DOC | 10-K 2025-12-31 FY | 763,656,000 | 763,656,000 | `PaymentsToDevelopRealEstateAssets` |
+| UDR | 10-K 2025-12-31 FY | 296,552,000 | 296,552,000 | `PaymentsForCapitalImprovements + PaymentsToDevelopRealEstateAssets` |
+| UDR | 10-Q 2026-06-30 YTD | 106,378,000 | 210,562,000 | `PaymentsForCapitalImprovements + PaymentsToAcquireRealEstateHeldForInvestment + PaymentsToDevelopRealEstateAssets` |
+| ESS | 10-K 2025-12-31 FY | 893,539,000 | 1,033,887,000 | `ess_RevenueGeneratingCapitalExpenditures + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| VMRK | 10-K 2025-12-31 FY | 773,402,000 | 1,115,442,000 | `eqr_PaymentsForCapitalExpendituresToRealEstate + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| WY | 10-K 2025-12-31 FY | 51,000,000 | 474,000,000 | `PaymentsForCapitalImprovements + wy_PaymentsForCapitalExpendituresOfPropertyPlantAndEquipment` |
+| PSA | 10-K 2025-12-31 FY | 1,256,322,000 | 1,545,700,000 | `psa_CapitalExpendituresForEnergyEfficiencies + psa_CapitalExpendituresForPropertyEnhancements + psa_CapitalExpendituresToMaintainRealEstateFacilities + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+
+**VTR's TTM.** Its 10-K files `PaymentsToAcquireRealEstate` and its 10-Qs
+`PaymentsToAcquireCommercialRealEstate`, both captioned "Net investment in real estate property" --
+one economic line. The TTM identity (`FY(prior 10-K) - YTD(last year) + YTD(this year)`) therefore
+combines the same line across the two elements: 2,574,521,000 - 1,086,265,000 + 2,598,479,000 =
+**4,086,735,000** (2,598,659,000 before the fix, whose YTD terms were development only).
+
+**Engine version: unchanged (`metrics-v7`)** -- T-151 part 2's precedent (no bump while it is not in
+production); the recompute deletes and rewrites the `metrics-v7` rows. **Files:**
+`src/fundamental_agent/statements.py` (`_capex_reit`, `_reit_components`, `_reit_extension_capex`,
+`_extension_is_a_total`, `_NOT_A_CAPEX_PAYMENT_RE`, `_NOT_AN_EXTENSION_CAPEX_RE`),
+`src/fundamental_agent/dq01.py` (new leaf),
+`src/fundamental_agent/quality.py` / `fidelity.py` (re-export). Tests:
+`tests/test_capex_resolution.py` (the parent/sibling rule, the extension sum, the outflow and mirror
+refusals, the no-total check, and the non-REIT one-line rule).

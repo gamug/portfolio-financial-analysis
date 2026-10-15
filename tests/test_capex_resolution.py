@@ -14,6 +14,11 @@ Rules tested:
   - Acquisitions + developments summed with reit_components and fcf_non_standard_reit.
   - Acquisitions + improvements raises capital_improvements_overlap_not_added and improvements omitted.
   - Every REIT capex carries fcf_non_standard_reit.
+- REIT capex under T-071 part 2b (D6): the FASB 2026 calculation tree makes
+  PaymentsToAcquireRealEstate the parent of PaymentsToAcquireCommercialRealEstate and
+  PaymentsForCapitalImprovements (a filed parent is used alone; the filed children are summed when it
+  is absent, flagged reit_sibling_sum), and the REIT-only extension sum reads every captioned
+  "capital expenditures" **company-extension** line (FRT), flagged reit_extension_sum.
 - Capex flag inputs reach both cash-flow and valuation metrics.
 """
 
@@ -40,14 +45,17 @@ def _cashflow(*rows: dict[str, Any], reit: bool = False) -> Statements:
     )
 
 
-def _row(concept: str, label: str, val: float | None = None) -> dict[str, Any]:
-    return {
+def _row(concept: str, label: str, val: float | None = None, *, sign: float | None = None) -> dict:
+    row: dict[str, Any] = {
         "concept": concept,
         "label": label,
         "abstract": False,
         "dimension": False,
         FY: val,
     }
+    if sign is not None:
+        row["preferred_sign"] = sign
+    return row
 
 
 def test_dow_capex_sums_machinery_and_gas_field_developments() -> None:
@@ -228,6 +236,181 @@ def test_reit_improvements_without_acquisitions_added() -> None:
     assert "reit_components" in res.flags
     assert "capital_improvements_overlap_not_added" not in res.flags
     assert "fcf_non_standard_reit" in res.flags
+
+
+# -- T-071 part 2b (D6): the acquisition parent, the sibling sum and the extension sum -----------
+
+
+def test_reit_parent_filed_is_used_alone_and_its_children_are_not_added() -> None:
+    """The FASB 2026 calculation tree (``us-gaap-stm-scf-indir-cal-2026.xml``):
+    ``PaymentsToAcquireRealEstate`` is the parent of ``PaymentsToAcquireCommercialRealEstate`` and
+    ``PaymentsForCapitalImprovements``, so a filed parent is used **alone** -- APP-04b's own sentence
+    (capital improvements are inside it) -- and the children are not added."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisitions of real estate", 200_000_000.0),
+        _row("us-gaap_PaymentsToAcquireCommercialRealEstate", "Net investment", 90_000_000.0),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Capital improvements", 30_000_000.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 200_000_000.0
+    assert res.concept == "us-gaap_PaymentsToAcquireRealEstate"
+    assert "capital_improvements_overlap_not_added" in res.flags
+    assert "reit_sibling_sum" not in res.flags
+
+
+def test_reit_parent_absent_sums_the_sibling_children() -> None:
+    """Parent not filed: its children are siblings in the calculation sum, so their definitions are
+    explicitly disjoint (MET-08 (b)) and both are added -- BXP/HST/O/WELL keep the capital
+    improvements *and* gain the Commercial line."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquireCommercialRealEstate", "Net investment", 90_000_000.0),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Capital improvements", 30_000_000.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 120_000_000.0
+    assert res.how == "map"
+    assert "reit_sibling_sum" in res.flags
+    assert "capital_improvements_overlap_not_added" not in res.flags
+
+
+def test_reit_extension_sum_takes_every_captioned_extension_line() -> None:
+    """FRT: "Capital expenditures - development and redevelopment" beside "Capital expenditures -
+    other" are both filer extensions **presented as outflows**, so the REIT composite sums them with
+    the concept-map components (the shared fallback's one-line rule refuses both)."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisition of real estate", 85_397_000.0),
+        _row(
+            "frt_CapitalExpendituresDevelopmentRedevelopment",
+            "Capital expenditures - development and redevelopment",
+            -78_779_000.0,
+            sign=-1.0,
+        ),
+        _row(
+            "frt_CapitalExpendituresOther",
+            "Capital expenditures - other",
+            -56_241_000.0,
+            sign=-1.0,
+        ),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 220_417_000.0
+    assert res.how == "map"
+    for flag in ("reit_extension_sum", "caption_fallback", "extension_concept", "reit_components"):
+        assert flag in res.flags
+
+
+def test_reit_extension_sum_takes_only_extensions_and_only_payment_captions() -> None:
+    """Only company extensions, only payment captions: a us-gaap line with the capex caption stays
+    with the concept map (VTR's "Other capital expenditures"), and an extension captioned as proceeds
+    is not a payment."""
+    stmts = _cashflow(
+        _row(
+            "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment",
+            "Capital expenditures",
+            10_000_000.0,
+        ),
+        _row(
+            "us-gaap_PaymentsToAcquireOtherProductiveAssets",
+            "Other capital expenditures",
+            5_000_000.0,
+        ),
+        _row(
+            "xyz_CapitalExpendituresOther", "Capital expenditures - other", -3_000_000.0, sign=-1.0
+        ),
+        _row(
+            "xyz_CapitalExpendituresProceeds",
+            "Capital expenditures, proceeds",
+            -7_000_000.0,
+            sign=-1.0,
+        ),
+        _row(
+            "xyz_CapitalExpendituresGain",
+            "Capital expenditures, gain on sale",
+            -9_000_000.0,
+            sign=-1.0,
+        ),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 13_000_000.0  # PP&E 10M + the extension 3M; not the us-gaap 5M nor the two
+    assert "reit_extension_sum" in res.flags
+
+
+def test_reit_extension_sum_refuses_a_non_outflow_and_a_mirror_line() -> None:
+    """Ruling of 2026-10-15, (b) and (c): a line not presented as an outflow (CPT's accrual, +1) and
+    a line whose concept name names an accrual / an unpaid / a period-end mirror (PSA's
+    "…RemainingUnpaidAtPeriodEnd", whose *caption* is identical to its cash line) are both refused."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisition of real estate", 85_397_000.0),
+        _row(
+            "cpt_AccrualAssociatedWithConstructionAndCapitalExpenditures",
+            "Accrual associated with construction and capital expenditures",
+            12_000_000.0,
+            sign=1.0,  # a non-cash accrual, not an outflow
+        ),
+        _row(
+            "psa_CapitalExpendituresForPropertyEnhancements",
+            "Capital expenditures for property enhancements",
+            -8_000_000.0,
+            sign=-1.0,
+        ),
+        _row(
+            "psa_CapitalExpendituresForPropertyEnhancementsRemainingUnpaidAtPeriodEnd",
+            "Capital expenditures for property enhancements",  # the same caption as its cash line
+            -8_000_000.0,
+            sign=-1.0,
+        ),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    # only the PSA cash line is added: the accrual and the unpaid mirror are refused
+    assert res.value == 93_397_000.0
+    assert "psa_CapitalExpendituresForPropertyEnhancements" in (res.concept or "")
+    assert "RemainingUnpaid" not in (res.concept or "")
+    assert "cpt_" not in (res.concept or "")
+
+
+def test_reit_extension_sum_is_not_added_when_a_taken_line_is_their_total() -> None:
+    """Ruling of 2026-10-15, (d): a us-gaap line the composite already takes that equals the extension
+    lines' sum (DQ-01's tolerance) IS their total -- the extensions are its parts, so they are not
+    added and reit_extension_total_present is flagged instead."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisition of real estate", 135_020_000.0),
+        _row(
+            "xyz_CapitalExpendituresDevelopment",
+            "Capital expenditures - development",
+            -78_779_000.0,
+            sign=-1.0,
+        ),
+        _row(
+            "xyz_CapitalExpendituresOther", "Capital expenditures - other", -56_241_000.0, sign=-1.0
+        ),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 135_020_000.0  # the filer's own total, not the parts on top of it
+    assert "reit_extension_total_present" in res.flags
+    assert "reit_extension_sum" not in res.flags
+
+
+def test_non_reit_caption_fallback_still_refuses_two_matching_lines() -> None:
+    """The one-line rule is unchanged for every other filer: the REIT extension sum is REIT-only."""
+    stmts = _cashflow(
+        _row(
+            "xyz_CapitalExpendituresDevelopment",
+            "Capital expenditures - development",
+            -8_000_000.0,
+            sign=-1.0,
+        ),
+        _row(
+            "xyz_CapitalExpendituresOther", "Capital expenditures - other", -5_000_000.0, sign=-1.0
+        ),
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value is None
 
 
 def test_capex_flags_propagate_to_cashflow_and_valuation_inputs() -> None:
