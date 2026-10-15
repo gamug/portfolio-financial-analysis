@@ -265,3 +265,33 @@ def test_the_header_names_both_sources() -> None:
     ]
     assert any("company_types.csv" in line for line in header)
     assert any("leaver_company_types.csv" in line for line in header)
+
+
+# -- T-071 part 2b (D5): the cover's common classes decide the overlay -----------------------------
+
+_COVERS = (
+    "cik,ticker,accession,period_end,available_at,class_member,value,as_of_date,"
+    "n_common_classes,multi_class\n"
+    "0000000002,BBB,acc-1,2025-12-31,2026-02-02,us-gaap:CommonClassAMember,100,2026-01-20,2,True\n"
+    "0000000003,CCC,acc-2,2025-12-31,2026-02-02,(total),200,2026-01-20,0,False\n"
+)
+
+
+def test_the_cover_classes_override_the_tables_multi_class_column() -> None:
+    """D5: a current member's ``multi_class_listed`` is the newest 10-K cover's **common** classes
+    (more than one -> True), never the table's count of every listed security. A CIK with no staged
+    cover keeps the table's own value (the declared gap)."""
+    source = _SOURCE + (
+        "0000000003,CCC,Gamma,Utilities,Electric Utilities,,operating,False,GICS Utilities,,,"
+        "False,False,True,False\n"
+    )
+    rows = {r["cik"]: r for r in _rows(build_profile.build(source, covers_text=_COVERS))}
+    assert rows["0000000002"]["multi_class_listed"] == "True"  # the table says False
+    assert rows["0000000003"]["multi_class_listed"] == "False"  # the table says True
+    assert rows["0000000001"]["multi_class_listed"] == "False"  # no staged cover: unchanged
+
+
+def test_the_header_names_the_cover_source() -> None:
+    header = [line for line in build_profile.build(_SOURCE).splitlines() if line.startswith("#")]
+    assert any("docs/multi_class_covers.csv" in line for line in header)
+    assert any("MORE THAN ONE CLASS OF COMMON STOCK" in line for line in header)
