@@ -824,7 +824,7 @@ as task `T-077`.
 **Order inside this work item (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit)**: `T-141` (step 9) →
 `T-077` (step 6) → `T-070` (step 1) → `T-147` (step 10) → `T-149` (step 12) → `T-148` (step 11) → `T-150` (step 13) →
 `T-151` (step 14, done 2026-10-13, PR #148; absorbs step 2's EBITDA sub-task and step 5's growth item) → `T-076` (step 5, done 2026-10-13, PR #152) → `T-071` part 1 (step 2, done 2026-10-13, PR #156) → `T-073` (step 3, done 2026-10-14, PR #160) → `T-074` (step 4, superseded 2026-10-14) →
-`T-155` (step 3a, the current members' CIK successions, done 2026-10-14, PR #165) → **`T-071` part 2a** (step 2, the cycle exclusion rules -- D-04, D-13, D-14 measured, D5; in review) → `T-071` part 2b (the VALORIZATION score) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
+`T-155` (step 3a, the current members' CIK successions, done 2026-10-14, PR #165) → **`T-071` part 2a** (step 2, the cycle exclusion rules -- D-04, D-13, D-14 measured, D5; done 2026-10-15, PR #167) → `T-071` part 2b (the VALORIZATION score) → `T-153` (step 15). `T-077` and `T-070` read no SEC statement data, so they run while the user builds the
 checklist; the tasks that build on SEC-derived metrics wait for `T-151`. One task per PR, each ending with its status
 commit after approval. `T-079` (the bundled LLM re-run of steps 3+4+5) and `T-075` (step 4's bridge) are superseded by
 `T-100`: it runs the LLM on every filing from a fresh database, with the final prompts.

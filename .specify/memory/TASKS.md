@@ -636,7 +636,7 @@ the final pilot, `T-143`.
       D-04's `DQ_NEG_EQUITY` basis question (part 1 deliberately left it as the metrics' own APP-07 evaluation,
       so no published value changed basis), DQ-02's winsorizing and the market cap read at the cycle date.
       **New order: `T-071` part 1 -> `T-073` -> `T-074` -> `T-071` part 2 -> `T-153`.)*
-      *(2026-10-15, user: `T-071` part 2 is split again, like `T-151`. **Part 2a -- IN REVIEW, PR (stream A, step 2):
+      *(2026-10-15, user: `T-071` part 2 is split again, like `T-151`. **Part 2a -- DONE, PR #167 (stream A, step 2):
       the cycle exclusion rules** -- D-04 (negative equity: `DQ_NEG_EQUITY` is a record, never a veto, and quarantines
       D/E only; the distress screen moves to `LEVERAGE_EXTREME` keyed on the equity sign, reading the gate record's
       credit inputs; R6: the applicability matrix's negative-equity column reads the equity the metric divides by, so

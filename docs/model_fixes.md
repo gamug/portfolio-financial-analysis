@@ -8716,18 +8716,29 @@ Measured at 2026-09-22 (acquisitions / capex): ARE **0.5%** (9M / 1,739M -- its 
 2,146M -- its `PaymentsToAcquireBusinessesNetOfCashAcquired`), VTR **88.3%** (2,294M / 2,599M). So
 the vetoes on DLR, FRT and VTR are dominated by buying properties; ARE's and IRM's are not.
 
-**The denominator is the line the capex composite read, not the whole investing programme.** FRT's
-`capital_expenditure` is its acquisition line alone (`PaymentsToAcquireRealEstate`, "Acquisition of
-real estate"), so its 100% reflects that read rather than zero development spending: FRT also files
-`CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures - development and
-redevelopment"), a filer extension MET-08's concept map does not read, beside
-`PaymentsToAcquireInterestInSubsidiariesAndAffiliates` ("Investment in partnerships") and
-`ProceedsFromRealEstateAndRealEstateJointVentures`. DLR's capex row names **development only**
-(`PaymentsToDevelopRealEstateAssets`, captioned "Improvements to investments in real estate") while
-its acquisitions are the separate extension line above, so its 65.4% is measured against a
-development-only capex. APP-04b / MET-08 (b) is why `PaymentsForCapitalImprovements` is never added
-to an acquisition line -- its definition covers "acquisition of or capital improvements", so adding
-it would double count. The user decides D-14 from this table after the PR.
+**Per REIT: which lines the capex composite read, and whether the acquisition lines are inside that
+read** (`capex_concepts` and `acquisitions_concepts` in `out/d14_reits.json`):
+
+| REIT | the capex composite read | the acquisition lines |
+|---|---|---|
+| ARE | `PaymentsToDevelopRealEstateAssets` (development) | outside it -- its own extension line |
+| CPT | `PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` | **inside** it |
+| DLR | `PaymentsToDevelopRealEstateAssets` (development) | outside it -- its extension line |
+| FRT | `PaymentsToAcquireRealEstate`, **its only capex line** | **inside** it: the 100% is that line read, not zero development spending -- FRT also files `CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures - development and redevelopment"), a filer extension MET-08's concept map does not read, beside `PaymentsToAcquireInterestInSubsidiariesAndAffiliates` ("Investment in partnerships") and `ProceedsFromRealEstateAndRealEstateJointVentures` |
+| IRM | `PaymentsToAcquirePropertyPlantAndEquipment` | outside it -- its business-combination line |
+| VTR | `PaymentsToDevelopRealEstateAssets` (development) | outside it: its own real-estate line is `PaymentsToAcquireCommercialRealEstate` ("Net investment in real estate property"), which neither the caption rule nor the standard pair matches |
+
+APP-04b / MET-08 (b) is why `PaymentsForCapitalImprovements` is never added to an acquisition line --
+its definition covers "acquisition of or capital improvements", so adding it would double count.
+
+**This table is not decision-ready.** The numerator is matched by the filer's caption and the two
+standard concepts, never by the capex composite's own provenance, so where a REIT's current filing
+files no matching concept the sum can fall back to one only an **earlier** filing filed: VTR's 2,294M
+is its prior 10-K's own `PaymentsToAcquireRealEstate` (2025-12-31 (FY), 2,293,769,000, captioned "Net
+investment in real estate property"), which is one of the capex's three terms -- so its 88.3% is not
+a trailing-twelve-month figure over the same terms as the denominator. `T-071` part 2b re-measures
+the D-14 table from the capex provenance itself; the values above are the provisional measure, and
+the user decides D-14 from part 2b's table, not this one.
 
 ### D5 — `LIQUIDITY_DISTRESS` exempts by company type, not by GICS sector
 
