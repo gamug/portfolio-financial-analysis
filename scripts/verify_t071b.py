@@ -683,11 +683,22 @@ def cmd_d14(args: argparse.Namespace) -> None:
         "after_gate": AFTER_GATE,
         "note": (
             "D-14 is measured, not decided. ``acquisitions_value`` sums every cash-flow concept whose "
-            "own caption names an acquisition of real estate or properties (R8's R1 rule: the "
-            "filer's words decide, so a REIT that files only an extension element -- ARE's "
-            "are_AcquisitionOfRealEstateAndOtherAssets... -- is counted), over the same terms the "
-            "capex composite used, plus the two standard APP-04b concepts. "
-            "``acquisitions_concepts`` names the lines summed; the capex concepts are per row."
+            "own caption names an acquisition (R8's R1 rule: the filer's words decide, so a REIT "
+            "that files only an extension element -- ARE's are_AcquisitionOfRealEstateAndOtherAssets…, "
+            "DLR's dlr_PaymentsToAcquireAssetOrBusinessesNetOfCashAcquired -- is counted), over the "
+            "same terms the capex composite used (including the prior fiscal year's own 10-K, by its "
+            "accession), each fact as filed x preferred_sign (ID-11), plus the two standard APP-04b "
+            "concepts. ``acquisitions_concepts`` names the lines summed; ``capex_concepts`` is the "
+            "line the composite read, which is not the whole investing programme. Two cases: FRT's "
+            "capex is its acquisition line alone (``PaymentsToAcquireRealEstate``), so its 100% is "
+            "the line read, not zero development spending -- FRT also files "
+            '``CapitalExpendituresDevelopmentRedevelopment`` ("Capital expenditures - development and '
+            "redevelopment\"), a filer extension MET-08's map does not read; and DLR's capex row names "
+            'development only (``PaymentsToDevelopRealEstateAssets``, "Improvements to investments in '
+            'real estate") while its acquisitions are the separate extension line above. APP-04b / '
+            "MET-08 (b) is why ``PaymentsForCapitalImprovements`` is never added to an acquisition "
+            'line: it covers "acquisition of or capital improvements", so adding it would double '
+            "count."
         ),
         "per_date": per_date,
     }

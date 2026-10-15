@@ -62,7 +62,8 @@ class _ThresholdRule:
 @dataclass
 class _NegativeFcfRule:
     """NEGATIVE_FCF: ``cashflow.free_cash_flow_margin < 0`` -- the trailing-twelve-month free cash
-    flow is negative (C5). It was a plain :class:`_ThresholdRule` until T-071 part 2a.
+    flow (MD-04: operating cash flow, CON-08, less capex, MET-08) over revenue (MD-27; the checklist
+    leaves that measure's source pending). It was a plain :class:`_ThresholdRule` until T-071 part 2a.
 
     A **regulated utility** is now *evaluated and never hit* (D-13): its free cash flow is negative
     by construction for years -- the rate base grows faster than depreciation, capex is funded with
@@ -134,7 +135,8 @@ class _LeverageRule:
     HARD when any of T-116's conditions holds (thresholds unchanged):
 
     - EBITDA <= 0 with net debt > 0 (burning cash with debt);
-    - net debt/EBITDA > 5.0, with EBITDA > 0 (the S&P "highly leveraged" band);
+    - net debt/EBITDA > 5.0, with EBITDA > 0 (T-116's declared calibration -- no rating
+      methodology is loaded);
     - interest coverage < 1.5.
 
     A filing with no usable credit input at all is routed to SOFT review, never silently passed

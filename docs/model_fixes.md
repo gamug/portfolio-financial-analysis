@@ -8582,9 +8582,26 @@ profitability group recomputed on `after.db`): **59** filings of **28** companie
 note names are among them: CAH 10-K 2022-06-30 (equity -709M, prior-year equity +1,791M, ROE
 -0.5209), CCI 10-K 2024-12-31 (-133M / +6,381M, -0.6117), LYV 10-Q 2026-03-31 (-139M / +271M,
 0.3087), NCLH 10-Q 2023-03-31 (-99.5M / +68.6M, -21.089), STX 10-K 2023-06-30 (-1,199M / +109M,
--4.8532). The 59 are every such filing in the store, not only the latest per company, which is why
-the count exceeds the note's 7. The D1 gate does not re-quarantine any of them: `dq-v4` names
-`return_on_equity` on **0** rows (D1's own gate is SOFT and quarantines D/E only).
+-4.8532).
+
+**Why 59/28 and not the plan's 7/5.** The plan's figure (TASKS.md's 2026-10-13 note, `T-076` fix
+round 1) was measured on **production's** store, which holds a small part of the window; the copy
+here holds the whole 2022–2026 scope (9,373 filings, 603 with a `DQ_NEG_EQUITY` row), so it sees
+every filing the condition touches, not only the latest per company. The condition is ROE's own:
+MET-02 divides by the equity at the **prior fiscal year end**, so a filing whose current equity is
+negative but whose prior-year equity is positive keeps its ROE -- ABBV is the example: its 10-K
+2025-12-31 has equity -3,270M against a prior-year equity of +3,325M, so ROE = 1.2710 (its 10-Q
+2025-06-30, -183M / +3,325M, gives 1.1317). All five of the plan's companies are in the 59, with
+CAH 2022-06-30 as the case the note itself used.
+
+**The large values are the measure, not a defect.** A small positive denominator gives a large ROE
+(ABBV 1.13, AON 2.63, MTD 35.8), which is what APP-07's own basis produces once the denominator is
+positive; MET-02 and APP-07 say nothing about the magnitude. Those values enter a cross-sectional
+factor only through `T-071` part 2b's VALORIZATION score, where DQ-02's winsorizing (0.5% per tail)
+bounds them -- a declared item of part 2b, not of this task.
+
+The D1 gate does not re-quarantine any of them: `dq-v4` names `return_on_equity` on **0** rows
+(D1's own gate is SOFT and quarantines D/E only).
 
 ### D2 — the distress screen moves to `LEVERAGE_EXTREME`, keyed on the equity sign (D-04)
 
@@ -8697,8 +8714,20 @@ Measured at 2026-09-22 (acquisitions / capex): ARE **0.5%** (9M / 1,739M -- its 
 (2,273M / 3,474M -- its extension `dlr_PaymentsToAcquireAssetOrBusinessesNetOfCashAcquired`), FRT
 **100.0%** (700M / 700M -- its capex *is* `PaymentsToAcquireRealEstate`), IRM **3.1%** (67M /
 2,146M -- its `PaymentsToAcquireBusinessesNetOfCashAcquired`), VTR **88.3%** (2,294M / 2,599M). So
-the vetoes on DLR, FRT and VTR are dominated by buying properties; ARE's and IRM's are not. The user
-decides D-14 from this table after the PR.
+the vetoes on DLR, FRT and VTR are dominated by buying properties; ARE's and IRM's are not.
+
+**The denominator is the line the capex composite read, not the whole investing programme.** FRT's
+`capital_expenditure` is its acquisition line alone (`PaymentsToAcquireRealEstate`, "Acquisition of
+real estate"), so its 100% reflects that read rather than zero development spending: FRT also files
+`CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures - development and
+redevelopment"), a filer extension MET-08's concept map does not read, beside
+`PaymentsToAcquireInterestInSubsidiariesAndAffiliates` ("Investment in partnerships") and
+`ProceedsFromRealEstateAndRealEstateJointVentures`. DLR's capex row names **development only**
+(`PaymentsToDevelopRealEstateAssets`, captioned "Improvements to investments in real estate") while
+its acquisitions are the separate extension line above, so its 65.4% is measured against a
+development-only capex. APP-04b / MET-08 (b) is why `PaymentsForCapitalImprovements` is never added
+to an acquisition line -- its definition covers "acquisition of or capital improvements", so adding
+it would double count. The user decides D-14 from this table after the PR.
 
 ### D5 — `LIQUIDITY_DISTRESS` exempts by company type, not by GICS sector
 
@@ -8730,14 +8759,17 @@ the missing input is **D&A** (hence EBITDA, net debt/EBITDA and interest coverag
 rule takes T-116's "no usable credit input at all" SOFT review.
 
 It is **not** a REIT debt capture failure (the N23 family) and **not** a defect this branch
-introduced. IRM files its combined D&A on the **income statement**
-(`us-gaap_DepreciationDepletionAndAmortization`, 776/901/1,024M for FY2023–FY2025) while its
-**cash-flow** statement carries `us-gaap_Depreciation` (526/629/731M) and
-`us-gaap_AdjustmentForAmortization` (267/297/326M). `depreciation_amortization` is a `_CASHFLOW`
-line item, so the resolver sees only the cash-flow statement: it refuses `Depreciation` (flagged
-`depreciation_only_not_da`), and the sourced-sum path needs a recognised amortization or depletion
-child, which `AdjustmentForAmortization` is not. This is a T-148/T-151 resolver finding, reported
-here; the director decides the follow-up.
+introduced: it is T-151's sourced D&A rule **working**. IRM files its combined D&A on the **income
+statement** (`us-gaap_DepreciationDepletionAndAmortization`, 776/901/1,024M for FY2023–FY2025) while
+its **cash-flow** statement carries `us-gaap_Depreciation` (526/629/731M) and
+`us-gaap_AdjustmentForAmortization` (267/297/326M). `depreciation_amortization` is a `_CASHFLOW` line
+item, so the resolver sees only the cash-flow statement: it refuses `Depreciation` (flagged
+`depreciation_only_not_da`), and `statements.py:275-283`'s sourced-sum rule
+(`DA_SOURCED_CHILDREN`) accepts only the four D&A-**nature** children -- `Depreciation`, `Depletion`,
+`OtherDepreciationAndAmortization`, `AmortizationOfIntangibleAssets` -- because
+`AdjustmentForAmortization`'s own FASB children include non-D&A items (financing costs, debt
+discount or premium, deferred charges, loan fees). So the sum is refused and EBITDA is empty; IRM's
+SOFT review is the declared rule working, by design.
 
 ### R7 — the before/after control
 
