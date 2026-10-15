@@ -197,7 +197,8 @@ def cmd_compare(args: argparse.Namespace) -> None:
     ]
     ranks_b = _ranks({a: before[a]["raw"] for a in common})
     ranks_a = _ranks({a: after[a]["raw"] for a in common})
-    spearman = _spearman([ranks_b[a] for a in common], [ranks_a[a] for a in common])
+    both = [a for a in common if a in ranks_b and a in ranks_a]
+    spearman = _spearman([ranks_b[a] for a in both], [ranks_a[a] for a in both])
     top_b, top_a = _top(ranks_b, 30), _top(ranks_a, 30)
     dec_b, dec_a = (
         _top(ranks_b, max(1, len(common) // 10)),
@@ -224,8 +225,8 @@ def cmd_compare(args: argparse.Namespace) -> None:
         "financial_share_of_top_decile_before": (
             sum(1 for a in dec_b if before[a]["financial_firm"]) / len(dec_b) if dec_b else None
         ),
-        "financial_rank_median_before": _median([ranks_b[a] for a in fin]),
-        "financial_rank_median_after": _median([ranks_a[a] for a in fin]),
+        "financial_rank_median_before": _median([ranks_b[a] for a in fin if a in ranks_b]),
+        "financial_rank_median_after": _median([ranks_a[a] for a in fin if a in ranks_a]),
         "spearman_note": "Spearman over the members both sides score (a NULL raw is never ranked)",
     }
     _write(args.out, payload)
@@ -280,12 +281,93 @@ def _sector_mix(members: dict[str, Any], chosen: set[str]) -> dict[str, int]:
     return dict(sorted(out.items(), key=lambda kv: -kv[1]))
 
 
+# -- value_measures: the measures on D and the period-end value --------------------------------
+
+
+def cmd_value_measures(args: argparse.Namespace) -> None:
+    """Per member at the date: the profile, the four measures (value on D, status, percentile), the
+    market cap and EV on D -- and, for E/P and the enterprise FCF yield, the **period-end** value
+    the stored per-filing metrics carry, so MKT-01's change is visible."""
+    snap = Snapshot(args.db, args.date)
+    scores = {int(s.asset_id): s for s in snap.scores()}
+    rows: dict[str, Any] = {}
+    diffs: dict[str, list[float]] = {"earnings_yield": [], "enterprise_fcf_yield": []}
+    for aid, score in scores.items():
+        components = score.components or {}
+        measures = components.get("measures") or {}
+        profile = snap.profiles.get(aid)
+        stored = snap.metrics.get(aid) or {}
+        stored_cap = stored.get("valuation.market_capitalization")
+        net_income = (snap.values.get(aid) or {}).get("inputs", {}).get("net_income_ttm")
+        period_end = {
+            "earnings_yield": (
+                max(float(net_income), 0.0) / float(stored_cap)
+                if isinstance(net_income, (int, float)) and stored_cap
+                else None
+            ),
+            "enterprise_fcf_yield": stored.get("valuation.enterprise_fcf_yield"),
+        }
+        entry = {
+            "ticker": snap.ticker.get(aid),
+            "sector": snap.sector.get(aid),
+            "type": None if profile is None else profile.type,
+            "financial_firm": bool(profile and profile.financial_firm),
+            "reit": bool(profile and profile.reit),
+            "regulated_utility": bool(profile and profile.regulated_utility),
+            "multi_class": bool(profile and profile.multi_class),
+            "market_cap_on_d": components.get("market_cap"),
+            "enterprise_value_on_d": components.get("enterprise_value"),
+            "stored_market_capitalization": stored_cap,
+            "raw": score.raw_value,
+            "measures": {},
+        }
+        for name, measure in measures.items():
+            item = {
+                "value_on_d": measure.get("value"),
+                "percentile": measure.get("percentile"),
+                "status": measure.get("status"),
+                "flags": measure.get("flags"),
+            }
+            if name in period_end:
+                item["period_end_value"] = period_end[name]
+                on_d = measure.get("value")
+                if on_d is not None and period_end[name] is not None:
+                    item["difference"] = on_d - period_end[name]
+                    diffs[name].append(item["difference"])
+            entry["measures"][name] = item
+        rows[str(aid)] = entry
+    payload = {
+        "date": args.date,
+        "n_members": len(rows),
+        "members": rows,
+        "differences": {
+            name: {
+                "n": len(values),
+                "min": min(values) if values else None,
+                "median": _median_float(values),
+                "max": max(values) if values else None,
+            }
+            for name, values in diffs.items()
+        },
+        "note": (
+            "value_on_d is priced on the analysis date (MKT-01); period_end_value is what the stored "
+            "per-filing metric carried (E/P over the stored period-end market cap, and the stored "
+            "enterprise_fcf_yield), which VALORIZATION no longer reads."
+        ),
+    }
+    _write(args.out, payload)
+
+
 # -- the blend ------------------------------------------------------------------------------------
 
 
 def cmd_blend(args: argparse.Namespace) -> None:
     """The side's own cycle ranking (``cycle monitor``), plus its ``select --dry-run`` book."""
-    settings = CycleSettings(db_path=Path(args.db), top_n=30)
+    settings = CycleSettings(
+        db_path=Path(args.db),
+        top_n=30,
+        observation_engine_version=args.observation_engine_version,
+    )
     run_monitoring(settings, args.date, conn=None)
     conn = connect(args.db)
     ensure_schema(conn)
@@ -417,6 +499,14 @@ def _kind(profile: Any) -> str:
 # -- D1: the preferred-stock measurement ----------------------------------------------------------
 
 
+def _median_float(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    return ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+
+
 def cmd_book_equity(args: argparse.Namespace) -> None:
     """D1: the members filing ``PreferredStockValue`` > 0 and its median share of parent equity."""
     snap = Snapshot(args.db, args.date)
@@ -425,7 +515,7 @@ def cmd_book_equity(args: argparse.Namespace) -> None:
         filing = snap.conn.execute(
             """
             WITH known AS (
-                SELECT f.id, ROW_NUMBER() OVER (
+                SELECT f.id, f.asset_id, ROW_NUMBER() OVER (
                     PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
                 ) AS rn
                 FROM sec_filings f
@@ -433,34 +523,37 @@ def cmd_book_equity(args: argparse.Namespace) -> None:
             )
             SELECT ff.period_key, ff.value FROM financial_facts ff
             JOIN known k ON k.id = ff.filing_id AND k.rn = 1
-            WHERE ff.filing_id = k.id AND ff.concept = 'us-gaap_PreferredStockValue' AND ff.value > 0
+            WHERE k.asset_id = ? AND ff.concept = 'us-gaap_PreferredStockValue' AND ff.value > 0
             """,
-            (args.date,),
+            (args.date, aid),
         ).fetchone()
         if filing is None:
             continue
-        equity = (snap.metrics.get(aid) or {}).get("leverage.debt_to_equity")
+        inputs = (snap.values.get(aid) or {}).get("inputs") or {}
+        equity = inputs.get("book_equity")
+        preferred = float(filing["value"])
         rows.append(
             {
                 "ticker": snap.ticker.get(aid),
                 "period_key": filing["period_key"],
-                "preferred": float(filing["value"]),
-                "debt_to_equity": equity,
+                "preferred": preferred,
+                "book_equity": equity,
+                "share_of_equity": (preferred / equity) if equity else None,
             }
         )
-    shares = [r["preferred"] / (r["debt_to_equity"] and 1.0) for r in rows if r["debt_to_equity"]]
+    shares = [r["share_of_equity"] for r in rows if r["share_of_equity"] is not None]
     payload = {
         "date": args.date,
         "members": len(snap.asset_ids),
         "members_filing_preferred_positive": len(rows),
+        "median_share_of_equity": _median_float(shares),
         "rows": rows,
         "note": (
             "D1's declared difference from C4: preferred stock is NOT subtracted from book equity "
-            "(the checklist leaves it pending, as in MD-35); this is its measured size. The median "
-            "share of equity needs the parent equity, which the value input carries -- see "
-            "value_measures.json."
+            "(the checklist leaves it pending, as in MD-35). This is its measured size: the members "
+            "whose newest filing reports a positive us-gaap_PreferredStockValue, and that value's "
+            "median share of the parent equity the value input carries (book_equity)."
         ),
-        "preferred_over_debt_ratio_sample": shares[:5],
     }
     _write(args.out, payload)
 
@@ -599,9 +692,14 @@ def main() -> None:
     p.add_argument("--date", default=MAIN)
     p.set_defaults(func=cmd_compare)
 
+    p = sub.add_parser("value-measures")
+    _common(p)
+    p.set_defaults(func=cmd_value_measures)
+
     p = sub.add_parser("blend")
     _common(p)
     p.add_argument("--side", required=True)
+    p.add_argument("--observation-engine-version", default="priceobs-v2")
     p.set_defaults(func=cmd_blend)
 
     p = sub.add_parser("dq02")
@@ -610,7 +708,7 @@ def main() -> None:
 
     p = sub.add_parser("coverage")
     _common(p)
-    p.add_argument("--dates", default=",".join(DATES))
+    p.add_argument("--dates", default=",".join(DATES), type=lambda s: s.split(","))
     p.set_defaults(func=cmd_coverage)
 
     p = sub.add_parser("book-equity")
