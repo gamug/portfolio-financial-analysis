@@ -69,6 +69,7 @@ def test_raw_is_the_weighted_sector_z_blend() -> None:
         assert scores[i].components["z_mom_12_1"] == pytest.approx(zm[i])
         assert scores[i].components["n_mom_12_1"] == 6.0  # the sector, not the cross-section
     best, worst = scores[0], scores[5]
+    assert best.raw_value is not None and worst.raw_value is not None
     assert best.raw_value > worst.raw_value  # higher momentum, lower vol, shallower drawdown
 
 
@@ -81,7 +82,9 @@ def test_each_signal_points_the_documented_way() -> None:
         4: _row(0.1, 0.3, -0.05),  # shallower drawdown (less negative): better
     }
     raw = {s.asset_id: s.raw_value for s in technical.compute(cohort)}
-    assert raw[2] > raw[1] and raw[3] > raw[1] and raw[4] > raw[1]
+    values = {a: float(v) for a, v in raw.items() if v is not None}
+    assert len(values) == len(raw)  # every member is scored
+    assert values[2] > values[1] and values[3] > values[1] and values[4] > values[1]
 
 
 def test_a_sector_under_five_names_uses_the_whole_cross_section() -> None:

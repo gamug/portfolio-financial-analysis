@@ -28,6 +28,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 VERSION = "technical-v2"
 SCORE_TYPE = "TECHNICAL"
@@ -45,8 +46,8 @@ MIN_SIGNALS = 2
 @dataclass
 class RawScore:
     asset_id: int
-    raw_value: float
-    components: dict[str, float | None] = field(default_factory=dict)
+    raw_value: float | None
+    components: dict[str, Any] = field(default_factory=dict)
 
 
 def mom_12_1(obs: Mapping[str, float | None]) -> float | None:

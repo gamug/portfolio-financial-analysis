@@ -111,49 +111,84 @@ def test_technical_prefers_momentum_and_low_vol() -> None:
         },
     }
     scores = {s.asset_id: s.raw_value for s in technical.compute(obs)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_prefers_cheap_and_profitable() -> None:
-    rows: dict[int, dict[str, float | None]] = {
-        1: {
-            "valuation.free_cash_flow_yield": 0.08,
-            "profitability.return_on_equity": 0.30,
-            "leverage.debt_to_equity": 0.4,
-            "earnings_yield": 0.07,
-        },
-        2: {
-            "valuation.free_cash_flow_yield": 0.01,
-            "profitability.return_on_equity": 0.02,
-            "leverage.debt_to_equity": 4.0,
-            "earnings_yield": 0.01,
-        },
+def _value_member(aid: int, **values: float) -> valorization.Member:
+    """A member with all four measures applicable and a market cap of 1,000 on D."""
+    return valorization.Member(
+        asset_id=aid,
+        market_cap=1000.0,
+        values=dict(values),
+        applicable={name: ("A", "") for name in valorization.MEASURES},
+    )
+
+
+def test_valorization_prefers_the_cheapest_and_the_strongest_on_every_measure() -> None:
+    """VALORIZATION v2 (T-071 part 2b): the four measures are priced on D and ranked across the
+    cohort -- E/P, B/M, EBITDA/EV and the enterprise FCF yield. Member 1 is cheapest on all four."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=10.0,
+            book_equity=50.0,
+            ebitda=20.0,
+            md38_numerator=8.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
+    scores = {s.asset_id: s.raw_value for s in valorization.compute(members)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_negative_equity_leverage_ranks_worst_not_best() -> None:
-    """C2 (docs/model_fixes.md): a negative debt_to_equity (negative book
-    equity) must not be inverted into the BEST leverage percentile by
-    higher_is_better=False -- it should rank worst, same as very high
-    positive leverage would."""
-    rows: dict[int, dict[str, float | None]] = {
-        1: {  # negative equity, extreme leverage
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": -38.96,
-        },
-        2: {  # moderate positive leverage, otherwise identical quality inputs
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": 1.0,
-        },
+def test_valorization_leaves_a_nonpositive_book_equity_out_and_never_inverts_it() -> None:
+    """C4 p.15: negative-BE firms "we do not include them in the tests" -- B/M is left out and
+    flagged ``book_equity_nonpositive``, so a negative book equity can never rank as the cheapest
+    (the old ``_leverage_for_ranking`` inversion is gone)."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=-500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
-    assert scores[1] < scores[2]
+    scores = {s.asset_id: s for s in valorization.compute(members)}
+    bm1 = scores[1].components["measures"]["book_to_market"]
+    assert bm1["value"] is None
+    assert bm1["status"] == valorization.EXCLUDED_EQUITY
+    assert "book_equity_nonpositive" in bm1["flags"]
+    # member 1 still scores on the other three measures; member 2's B/M is present
+    assert scores[1].raw_value is not None and scores[2].raw_value is not None
+    assert scores[2].components["measures"]["book_to_market"]["status"] == valorization.PRESENT
 
 
 def test_sector_roll_up_mean_and_deviation() -> None:
@@ -512,13 +547,31 @@ def test_selection_cycle_end_to_end(cycle_seed: Database) -> None:
     run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run_row["status"] == "completed"
 
-    for stype in ("TECHNICAL", "VALORIZATION", "SECTOR"):
+    for stype in ("TECHNICAL", "SECTOR"):
         n = conn.execute(
             "SELECT COUNT(*) FROM score_snapshot WHERE score_type = ? AND event_time = '2026-06-30' "
             "AND normalized_score IS NOT NULL",
             (stype,),
         ).fetchone()[0]
         assert n == 5
+
+    # VALORIZATION v2 (T-071 part 2b): this cohort has no market cap and no D1 rule input, so every
+    # measure is `missing_input` and the raw score is empty -- never a neutral 50. The row is still
+    # written, with its components, so the coverage is visible, and the blend renormalizes over
+    # FUNDAMENTAL and TECHNICAL.
+    val = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(raw_value IS NOT NULL) AS scored FROM score_snapshot "
+        "WHERE score_type = 'VALORIZATION' AND event_time = '2026-06-30'"
+    ).fetchone()
+    assert val["n"] == 5 and val["scored"] == 0
+    components = json.loads(
+        conn.execute(
+            "SELECT inputs_json FROM score_snapshot WHERE score_type = 'VALORIZATION' "
+            "AND asset_id = 1 AND event_time = '2026-06-30'"
+        ).fetchone()["inputs_json"]
+    )
+    assert components["applicable"] == 4.0 and components["present"] == 0.0
+    assert components["measures"]["earnings_yield"]["status"] == "missing_input"
 
     # one sector_aggregate_snapshot row per sector present in the cohort
     agg = conn.execute(

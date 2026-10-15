@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
@@ -50,6 +49,8 @@ from cycle.state import (
 )
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
+from kg_schema.applicability import applicability
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import (
     StaleAsOf,
@@ -224,6 +225,25 @@ def _t_minus_1(cycle_date: str) -> str:
     return (date.fromisoformat(cycle_date) - timedelta(days=1)).isoformat()
 
 
+def _value_applicability(
+    profile: CompanyProfile | None, negative_equity: bool
+) -> dict[str, tuple[str, str]]:
+    """Each VALORIZATION measure's applicability cell (D2) on the member's APP-00 profile.
+
+    The matrix's cell for the measure's own metric (``valorization.MATRIX_METRIC``); a member with
+    **no** profile is never guessed, so every measure applies; the regulated-utility overlay (D-13,
+    the user's decision) leaves the enterprise FCF yield not applicable."""
+    out: dict[str, tuple[str, str]] = {}
+    for measure, metric in valorization.MATRIX_METRIC.items():
+        if profile is None:
+            out[measure] = ("A", "")
+        else:
+            out[measure] = applicability(metric, profile, negative_equity=negative_equity)
+    if profile is not None and profile.regulated_utility:
+        out[valorization.ENTERPRISE_FCF_YIELD] = ("NA", "the user's decision (D-13)")
+    return out
+
+
 def _fundamental_normalization(
     conn: Database, cycle_date: str, weights: Mapping[str, float]
 ) -> tuple[list[Row], list[float]]:
@@ -335,6 +355,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "manifest": manifest,
             "manifest_tag": tag,
             "technical_version": technical.VERSION,
+            "valorization_version": valorization.VERSION,
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
@@ -424,31 +445,32 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- valorization
         def _valorization() -> dict:
             mcap = data.market_cap_estimates(conn, cycle_date, list(asset_ids))
-            trailing_ni = data.latest_trailing_net_income(conn, cycle_date, versions)
-            rows = {}
+            caps = data.market_cap_details(conn, cycle_date, list(asset_ids))
+            rule_inputs = data.value_inputs(conn, cycle_date)
+            profiles = data.asset_profiles(conn, list(asset_ids), cycle_date)
+            members: dict[int, valorization.Member] = {}
             no_cap = 0
             negative_earnings = 0
             for a in asset_ids:
-                m = dict(metrics.get(a, {}))
-                quarantined = dq.quarantined.get(a, set())
-                mc = None if "valuation.market_capitalization" in quarantined else mcap.get(a)
-                if a in dq.negative_equity:
-                    # D/E is quarantined, but negative book equity is still the worst leverage
-                    # in the cohort, never a missing factor (C2, docs/model_fixes.md).
-                    m["leverage.debt_to_equity"] = float("inf")
-                ni = trailing_ni.get(a)
-                if ni is not None and mc and "profitability.return_on_assets" not in quarantined:
-                    # MET-05 (Fama and French): E(+)/P -- the positive part -- with the
-                    # negative-earnings dummy kept apart (counted below, not ranked): a loss
-                    # contributes 0, the lowest earnings yield, never a negative one.
-                    m["earnings_yield"] = max(ni, 0.0) / mc
-                    negative_earnings += ni < 0
-                if mc:
-                    m["neg_log_market_cap"] = -math.log(mc)
-                else:
-                    no_cap += 1  # T-132: a missing size factor, reported rather than guessed
-                rows[a] = m
-            scores = valorization.compute(rows)
+                cap = caps.get(a)
+                if mcap.get(a) is None:
+                    no_cap += 1  # T-132: a missing market cap, reported rather than guessed
+                rule = rule_inputs.get(a) or {}
+                inputs = rule.get("inputs") or {}
+                net_income = inputs.get("net_income_ttm")
+                if isinstance(net_income, (int, float)) and not isinstance(net_income, bool):
+                    negative_earnings += float(net_income) < 0.0
+                members[a] = valorization.Member(
+                    asset_id=a,
+                    market_cap=mcap.get(a),
+                    values=inputs,
+                    applicable=_value_applicability(profiles.get(a), a in dq.negative_equity),
+                    quarantined=frozenset(dq.quarantined.get(a, set())),
+                    share_date=cap.share_as_of if cap is not None else None,
+                    close_date=cap.close_date if cap is not None else None,
+                    accession=rule.get("accession"),
+                )
+            scores = valorization.compute(members)
             writers.write_scores(
                 conn,
                 "VALORIZATION",
@@ -457,12 +479,12 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {},
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
+                model=valorization.VERSION,
             )
-            with_yield = sum(1 for r in rows.values() if r.get("earnings_yield") is not None)
             return {
-                "scored": len(scores),
+                "scored": sum(1 for s in scores if s.raw_value is not None),
+                "empty": sum(1 for s in scores if s.raw_value is None),
                 "market_cap_missing": no_cap,
-                "earnings_yield": with_yield,
                 "negative_earnings": negative_earnings,
             }
 
