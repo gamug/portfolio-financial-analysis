@@ -283,3 +283,25 @@ def test_the_components_carry_the_audit_trail() -> None:
 
 def test_an_empty_cohort_is_no_scores() -> None:
     assert valorization.compute({}) == []
+
+
+# -- F1 (fix round 1): B/M tests the book-equity sign before the gate ------------------------------
+
+
+def test_book_to_market_tests_the_equity_sign_before_the_gate() -> None:
+    """F1: DQ_NEG_EQUITY quarantines ``leverage.debt_to_equity`` for the *sign* itself, which D-04
+    made a record. A non-positive book equity is therefore ``excluded_nonpositive_book_equity``
+    (C4 p.15), never ``quarantined`` -- while a gate that quarantines the equity *value* (CON_01's
+    or CON_04's identity, which also blocks D/E) still drops B/M."""
+    negative = _member(
+        1,
+        quarantined=frozenset({"leverage.debt_to_equity"}),
+        values={**_FULL, "book_equity": -500.0},
+    )
+    value_wrong = _member(2, quarantined=frozenset({"leverage.debt_to_equity"}), values=_FULL)
+    scores = {s.asset_id: s for s in valorization.compute({1: negative, 2: value_wrong})}
+    bm1 = scores[1].components["measures"]["book_to_market"]
+    assert bm1["status"] == valorization.EXCLUDED_EQUITY
+    assert bm1["flags"] == ["book_equity_nonpositive"]
+    bm2 = scores[2].components["measures"]["book_to_market"]
+    assert bm2["status"] == valorization.QUARANTINED  # equity > 0, but its value is quarantined

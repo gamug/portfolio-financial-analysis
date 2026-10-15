@@ -149,13 +149,24 @@ def _earnings_yield(member: Member, cap: float) -> tuple[float | None, str, list
     return max(net_income, 0.0) / cap, PRESENT, []
 
 
-def _book_to_market(member: Member, cap: float) -> tuple[float | None, str, list[str]]:
+def _book_to_market(member: Member) -> tuple[float | None, str, list[str]]:
+    """C4 p.15 first: a non-positive BE is left out of the test **whatever the gate says**.
+
+    DQ_NEG_EQUITY quarantines ``leverage.debt_to_equity`` for the *sign* itself -- and D-04
+    (T-071 part 2a) made that a record, never a data-quality problem. So the sign is tested before
+    the gate: only the gates that quarantine the equity **value** (CON_01's and CON_04's accounting
+    identities, which block ``leverage.debt_to_equity`` because the equity itself is wrong) may
+    label B/M ``quarantined``."""
     equity = _number(member.values.get(_BOOK_EQUITY))
+    if equity is not None and equity <= 0.0:
+        return None, EXCLUDED_EQUITY, ["book_equity_nonpositive"]
+    if any(key in member.quarantined for key in CARRIERS[BOOK_TO_MARKET]):
+        return None, QUARANTINED, []
+    cap = member.market_cap
+    if cap is None:
+        return None, MISSING_INPUT, ["market_cap_missing"]
     if equity is None:
         return None, MISSING_INPUT, []
-    if equity <= 0.0:
-        # C4 p.15: negative-BE firms "we do not include them in the tests". Never abs() (ID-11).
-        return None, EXCLUDED_EQUITY, ["book_equity_nonpositive"]
     return equity / cap, PRESENT, []
 
 
@@ -179,6 +190,9 @@ def _measure(member: Member, name: str) -> tuple[float | None, str, list[str]]:
     code, rule = member.applicable.get(name, ("A", ""))
     if code == "NA":
         return None, NOT_APPLICABLE, [rule] if rule else []
+    if name == BOOK_TO_MARKET:
+        # B/M tests the book-equity sign itself before the gate (F1, T-071 part 2b fix round 1).
+        return _book_to_market(member)
     if any(key in member.quarantined for key in CARRIERS[name]):
         return None, QUARANTINED, []
     cap = member.market_cap
@@ -186,8 +200,6 @@ def _measure(member: Member, name: str) -> tuple[float | None, str, list[str]]:
         return None, MISSING_INPUT, ["market_cap_missing"]
     if name == EARNINGS_YIELD:
         return _earnings_yield(member, cap)
-    if name == BOOK_TO_MARKET:
-        return _book_to_market(member, cap)
     return _over_ev(member, name)
 
 
