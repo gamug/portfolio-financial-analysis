@@ -9275,3 +9275,71 @@ the joiner rule's value.
 2026-09-22 are **ARE, CPT, DLR, FRT, IRM, O, VTR** (7, up from part 2a's 6): **O enters** (its FCF
 margin 0.6606 -> -0.3275) and **VTR was already firing** (-0.1238 -> -0.3548, deepening) -- it does
 not "enter". The user decides D-14 from this table after the PR.
+
+#### T-071 part 2b — fix round 1 (reviewer A, 2026-10-15)
+
+**F1 — B/M tests the book-equity sign before the gate.** DQ_NEG_EQUITY quarantines
+``leverage.debt_to_equity`` for the *sign* itself, and D-04 made that a record, never a
+data-quality problem -- so the members with equity <= 0 were labelled ``book_to_market
+"quarantined"``. ``_book_to_market`` now tests the sign first
+(``excluded_nonpositive_book_equity``, C4 p.15) and the gate after it. The gates that quarantine
+``leverage.debt_to_equity`` are: **DQ_NEG_EQUITY** (SOFT, ``_EQUITY_DENOMINATED`` -- the sign, which
+this test now precedes), **CON_01** (``Assets = Liabilities + StockholdersEquity``, BLOCK,
+``_CON01_METRICS``) and **CON_04** (``equity incl. NCI = StockholdersEquity + MinorityInterest``,
+DQ-01, ``_CON04_METRICS``) -- the latter two are the equity **value** and still drop B/M;
+``CON_08``, ``CON_19``, ``DQ_REVENUE_POS`` and ``DQ_MCAP_SCALE`` do not include D/E. Re-measured
+(``coverage.json``, ``scores_after.json``): **33** members are
+``excluded_nonpositive_book_equity`` (ABBV, AZO, BKNG, CAH, CCI, DELL, DPZ, DVA, FDXF, FICO, HCA,
+HLT, HONA, HPQ, IRM, IT, LOW, MAR, MAS, MCD, ...), **none** is ``quarantined``, and the empty
+reasons change from ``book_to_market:quarantined`` (9) to
+``book_to_market:excluded_nonpositive_book_equity`` (9).
+
+**F2 — DQ-02 on FUNDAMENTAL.** Measured with the cycle's own reader
+(``latest_fundamental_rows`` + ``fundamental_value_under`` under the cycle's weights,
+``dq02.json``): n = **503**, **2** values trimmed per tail (10 at 2%), **0** members move by more
+than one point, the largest move 0.156, and the **blended top 30 is identical** before -> after the
+winsorizing change alone (30/30 overlap; the other components are the stored run's and each asset's
+soft-veto penalty is held at what the stored blend implies). The PR's earlier sentence (the copies'
+FUNDAMENTAL table is empty) was wrong -- corrected.
+
+**F3 — the D-14 table is decision-ready** (``d14_reits_v2.json``). For every REIT vetoed by
+NEGATIVE_FCF at **2026-09-22 and at each quarter end** it now carries the operating cash flow, the
+capex split into APP-04b's four parts read from the terms the capex composite summed (its
+provenance's own columns, on the metric's basis -- TTM on a 10-Q: prior fiscal year - last year's
+YTD + this year's YTD; a first-quarter YTD column is keyed ``(Q1)`` in the facts, so both tags are
+tried), FCF and the acquisition share. The parts sum to the metric's capex on **every** row (0
+mismatches over the 15 dates). At 2026-09-22, capex (M) by part -- corporate / existing properties
+/ development / acquisitions -- and the acquisition share: ARE 0 / 0 / 1,739.2 / 0 (0%), CPT 0 / 0 /
+485.1 / 531.5 (52.3%), DLR 0 / 0 / 3,473.8 / 0 (0%), FRT 113.2 / 0 / 188.5 / 700.3 (69.9%), IRM
+2,146.3 / 0 / 0 / 0 (0%), **O 0 / 166.1 / 0 / 5,983.1 (97.3%)**, **VTR 0 / 0 / 304.9 / 3,781.8
+(92.5%)**. **O's and VTR's FCF is negative because of acquisitions**: O's operating cash flow
+4,166.2M against 5,983.1M of acquisitions (FCF -1,983.1M), VTR's 1,801.4M against 3,781.8M (FCF
+-2,285.3M) -- not development (O 0, VTR 304.9M) and not existing properties (O 166.1M, VTR 0).
+
+**F4 — coverage in the PR body** (``coverage.json``, report only). At 2026-09-22, present/applicable
+per measure by company type: operating 381/394 E/P, 361/394 B/M, **203/394 EBITDA/EV**, **195/394
+enterprise FCF yield**; financial firms 51/51 E/P and 51/51 B/M (the two firm-value measures NA);
+REITs 26/28 E/P, 24/28 B/M, **5/28 EBITDA/EV**, FCF NA; regulated utilities 28/29, 28/29, 19/29,
+FCF NA; the one multi-sector holding 1/1, 1/1, 0/1, 0/1. **231** members' latest filings lack
+``leverage.ebitda``: ``da_absent`` 151 (MSFT, TSLA, LLY, BRK.B, AMD, JPM, XOM, JNJ, CSCO, CVX, BAC,
+GE, MS, PM, GS, CRWD, WFC, MRVL, C, IBM), ``da_refused:flag_depreciation_amortization_depreciation_only_not_da``
+68 (GOOGL, GOOG, AVGO, MRK, TXN, GILD, UNP, DHR, PH, PGR, SYK, MCK, VRT, GD, LITE, MRSH, INTU, SHW,
+CTAS, ECL), ``operating_income_absent`` 7 (KLAC, ADP, NKE, DVN, SWK, CLX, BXP) and
+``da_refused:flag_depreciation_amortization_da_element_nonproduction`` 5 (FOX, FOXA, CASY, NWS,
+NWSA). ``da_sum_refused_other_lines`` occurs 173 times in the store but on **none** of these 231
+filings.
+
+**F5 — financial firms rank among financial firms** (the user's D-07 sector-specific factor). Each
+measure is now ranked **within the member's cohort** on the date: a financial firm's E/P and B/M
+among the financial firms (C2 p.27 compares the equity multiples across financial service firms; C4
+p.3 has Fama and French exclude financial firms), every other member's measures across the rest.
+DQ-02's winsorizing is applied per cohort (at 51 financial members, none is trimmed). ``Member``
+gains a ``cohort`` field, the cycle sets it from the APP-00 profile's ``financial_firm``, and each
+measure's components (and the row's) record it. Re-measured (``valorization_compare.json``, old v1
+vs new v2): Spearman **0.511** (0.564 before F5), the top-decile overlap 15/50, the top-30 overlap
+**7**; **the financial firms' tilt: 24% of the top decile before -> 6% after** (46% before F5), and
+their median rank 135 -> **226** (59 before F5) -- ranking them among themselves removes the
+cross-sector bias that put 46% of the top decile in Financials. The blended top 30
+(``blend_before/after.json``) overlaps **15** (ADBE, ALL, BMY, CF, CINF, EOG, FSLR, INCY, INTU,
+LDOS, LULU, NEM, OXY, TPR, TROW); before-only 15, after-only 15 (BRK.B, BRO, COP, CTSH, CVX, DVN,
+EXE, FIS, HON, MKC, NXPI, PYPL, ROP, STZ, UHS).
