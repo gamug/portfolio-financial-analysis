@@ -29,7 +29,7 @@ import argparse
 import json
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from cycle import data
 from cycle.config import CycleSettings
@@ -38,6 +38,7 @@ from cycle.orchestrator import run_monitoring
 from cycle.scores import valorization
 from cycle.scores.normalize import normalized_scores
 from fundamental_agent import db as agent_db
+from fundamental_agent import statements as S
 from kg_schema import connect
 from kg_schema.applicability import applicability
 from kg_schema.company_profile import profile_as_of, profiles
@@ -369,6 +370,23 @@ def cmd_value_measures(args: argparse.Namespace) -> None:
 
 def cmd_blend(args: argparse.Namespace) -> None:
     """The side's own cycle ranking (``cycle monitor``), plus its ``select --dry-run`` book."""
+    if args.fresh:
+        # a completed run would be resumed step-by-step and nothing would re-run: drop it (a copy)
+        conn0 = connect(args.db)
+        ensure_schema(conn0)
+        run_ids = [
+            int(r["id"])
+            for r in conn0.execute(
+                "SELECT id FROM cycle_run WHERE cycle_type = 'MONITORING' AND cycle_date = ?",
+                (args.date,),
+            )
+        ]
+        for run_id in run_ids:
+            conn0.execute("DELETE FROM cycle_ranking WHERE cycle_run_id = ?", (run_id,))
+            conn0.execute("DELETE FROM cycle_checkpoint WHERE cycle_run_id = ?", (run_id,))
+            conn0.execute("DELETE FROM cycle_run WHERE id = ?", (run_id,))
+        conn0.commit()
+        conn0.close()
     settings = CycleSettings(
         db_path=Path(args.db),
         top_n=30,
@@ -409,11 +427,17 @@ def cmd_blend(args: argparse.Namespace) -> None:
 
 
 def cmd_dq02(args: argparse.Namespace) -> None:
-    """D3: per score type, n, the values trimmed per tail, and the assets whose normalized score
-    moves by more than one point between 2% and DQ-02's 0.5%."""
+    """D3/F2: per score type, n, the values trimmed per tail, and the members whose normalized score
+    moves by more than one point between 2% and DQ-02's 0.5%.
+
+    FUNDAMENTAL is measured with the **cycle's own reader** (``latest_fundamental_rows`` +
+    ``fundamental_value_under`` under the cycle's weights) -- the same totals ``_normalize``
+    normalizes -- and the blended top 30 is compared **before -> after the winsorizing change
+    alone** (the other components are the stored run's, and each asset's soft-veto penalty is held
+    at the value the stored blend implies)."""
     snap = Snapshot(args.db, args.date)
     payload: dict[str, Any] = {"date": args.date, "score_types": {}}
-    for stype in ("TECHNICAL", "VALORIZATION", "SEMANTIC", "FUNDAMENTAL"):
+    for stype in ("TECHNICAL", "VALORIZATION", "SEMANTIC"):
         raws = [
             float(r["raw_value"])
             for r in snap.conn.execute(
@@ -424,19 +448,89 @@ def cmd_dq02(args: argparse.Namespace) -> None:
         ]
         if not raws:
             continue
-        trimmed = int(len(raws) * 0.005)
-        old = normalized_scores(raws, winsor=0.02)
-        new = normalized_scores(raws, winsor=0.005)
-        payload["score_types"][stype] = {
-            "n": len(raws),
-            "trimmed_per_tail_at_half_percent": trimmed,
-            "trimmed_per_tail_at_two_percent": int(len(raws) * 0.02),
-            "movers_over_one_point": sum(
-                1 for a, b in zip(old, new, strict=True) if abs(a - b) > ONE_POINT
-            ),
-            "max_move": max((abs(a - b) for a, b in zip(old, new, strict=True)), default=0.0),
-        }
+        payload["score_types"][stype] = _winsor_row(raws)
+    weights = CycleSettings(db_path=Path(args.db)).fundamental_pillar_weights
+    fundamental_rows = [
+        r for r in data.latest_fundamental_rows(snap.conn, args.date) if r["raw_value"] is not None
+    ]
+    totals = [data.fundamental_value_under(r, weights) for r in fundamental_rows]
+    if totals:
+        entry = _winsor_row(totals)
+        entry["members_normalized"] = len(fundamental_rows)
+        entry["blended_top30"] = _blend_under(
+            snap,
+            args.date,
+            {int(r["asset_id"]): v for r, v in zip(fundamental_rows, totals, strict=True)},
+        )
+        payload["score_types"]["FUNDAMENTAL"] = entry
     _write(args.out, payload)
+
+
+def _winsor_row(raws: list[float]) -> dict[str, Any]:
+
+    old = normalized_scores(raws, winsor=0.02)
+    new = normalized_scores(raws, winsor=0.005)
+    return {
+        "n": len(raws),
+        "trimmed_per_tail_at_half_percent": int(len(raws) * 0.005),
+        "trimmed_per_tail_at_two_percent": int(len(raws) * 0.02),
+        "movers_over_one_point": sum(
+            1 for a, b in zip(old, new, strict=True) if abs(a - b) > ONE_POINT
+        ),
+        "max_move": max((abs(a - b) for a, b in zip(old, new, strict=True)), default=0.0),
+    }
+
+
+def _blend_under(snap: Snapshot, date: str, fundamental: dict[int, float]) -> dict[str, Any]:
+    """The stored MONITORING ranking re-blended with each winsorizing of FUNDAMENTAL alone."""
+
+    rows = list(
+        snap.conn.execute(
+            "SELECT r.asset_id, a.ticker, r.blended_score, r.components_json FROM cycle_ranking r "
+            "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+            "WHERE cr.cycle_date = ? AND cr.cycle_type = 'MONITORING'",
+            (date,),
+        )
+    )
+    if not rows:
+        return {"note": "no MONITORING ranking stored at this date"}
+    assets = [int(r["asset_id"]) for r in rows if int(r["asset_id"]) in fundamental]
+    if not assets:
+        return {"note": "the ranking holds no member the FUNDAMENTAL reader scores"}
+    totals = [fundamental[a] for a in assets]
+    old_norm = normalized_scores(totals, winsor=0.02)
+    new_norm = normalized_scores(totals, winsor=0.005)
+    old_by = dict(zip(assets, old_norm, strict=True))
+    new_by = dict(zip(assets, new_norm, strict=True))
+    out: dict[str, Any] = {"before": [], "after": [], "overlap": []}
+    for label, replacement in (("before", old_by), ("after", new_by)):
+        scored = []
+        for r in rows:
+            aid = int(r["asset_id"])
+            components = json.loads(r["components_json"] or "{}")
+            present = [v for k, v in components.items() if v is not None and k != "FUNDAMENTAL"]
+            if aid in replacement:
+                present.append(replacement[aid])
+            if not present:
+                continue
+            mean = sum(present) / len(present)
+            stored_mean = _stored_mean(components)
+            penalty = float(r["blended_score"]) - stored_mean if stored_mean is not None else 0.0
+            scored.append((str(r["ticker"]), mean - penalty))
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        out[label] = [ticker for ticker, _score in scored[:30]]
+    out["overlap"] = sorted(set(out["before"]) & set(out["after"]))
+    out["note"] = (
+        "the other components are the stored run's (the copies hold no TECHNICAL); each asset's "
+        "soft-veto penalty is held at what the stored blend implies (blended_score - its stored "
+        "component mean), so only the FUNDAMENTAL winsorizing moves"
+    )
+    return out
+
+
+def _stored_mean(components: dict[str, Any]) -> float | None:
+    values = [float(v) for v in components.values() if v is not None]
+    return sum(values) / len(values) if values else None
 
 
 # -- coverage -------------------------------------------------------------------------------------
@@ -485,7 +579,66 @@ def cmd_coverage(args: argparse.Namespace) -> None:
                 if measure.get("status") == "present":
                     entry["measures"][name]["present"] += 1
         payload["dates"][date] = by_type
+    payload["ebitda_empty"] = _ebitda_breakdown(Snapshot(args.db, MAIN))
     _write(args.out, payload)
+
+
+def _ebitda_breakdown(snap: Snapshot) -> dict[str, Any]:
+    """F4: why ``leverage.ebitda`` is empty on the members whose latest filing lacks it -- the D&A
+    refusal (by its own flag), an absent D&A, or an absent operating income -- with the counts and
+    the 20 largest companies by market cap in each class."""
+    classes: dict[str, list[dict[str, Any]]] = {}
+    missing = 0
+    for aid in snap.asset_ids:
+        if (snap.metrics.get(aid) or {}).get("leverage.ebitda") is not None:
+            continue
+        missing += 1
+        row = snap.conn.execute(
+            """
+            WITH known AS (
+                SELECT f.id, f.asset_id, ROW_NUMBER() OVER (
+                    PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+                ) AS rn
+                FROM sec_filings f
+                WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
+            )
+            SELECT m.inputs_json FROM fundamental_metrics m
+            JOIN known k ON k.id = m.filing_id AND k.rn = 1
+            WHERE k.asset_id = ? AND m.metric_group = 'leverage' AND m.metric_name = 'ebitda'
+            """,
+            (snap.date, aid),
+        ).fetchone()
+        inputs = json.loads(row["inputs_json"]) if row is not None else {}
+        flags = sorted(k for k in inputs if k.startswith("flag_"))
+        da_flags = [f for f in flags if "depreciation" in f or "amortization" in f]
+        op_flags = [f for f in flags if "operating_income" in f]
+        if da_flags:
+            klass = f"da_refused:{da_flags[0]}"
+        elif op_flags:
+            klass = f"operating_income_refused:{op_flags[0]}"
+        elif "depreciation_amortization" not in inputs:
+            klass = "da_absent"
+        elif "operating_income" not in inputs:
+            klass = "operating_income_absent"
+        else:
+            klass = "other"
+        classes.setdefault(klass, []).append(
+            {"ticker": snap.ticker.get(aid), "market_cap": snap.mcap.get(aid)}
+        )
+    return {
+        "members": len(snap.asset_ids),
+        "members_without_ebitda": missing,
+        "classes": {
+            klass: {
+                "count": len(rows),
+                "largest_by_market_cap": [
+                    r["ticker"]
+                    for r in sorted(rows, key=lambda r: r["market_cap"] or 0.0, reverse=True)[:20]
+                ],
+            }
+            for klass, rows in sorted(classes.items(), key=lambda kv: -len(kv[1]))
+        },
+    }
 
 
 def _kind(profile: Any) -> str:
@@ -649,43 +802,206 @@ def cmd_reit_capex(args: argparse.Namespace) -> None:
     _write(args.out, payload)
 
 
-def cmd_d14(args: argparse.Namespace) -> None:
-    """The re-measured D-14 table: the REITs vetoed by NEGATIVE_FCF, with capex by APP-04b's parts
-    and the acquisition share, read from the composite's own provenance (the side's own metrics)."""
-    snap = Snapshot(args.db, args.date)
-    payload: dict[str, Any] = {"date": args.date, "reits": []}
-    for aid in snap.asset_ids:
-        profile = snap.profiles.get(aid)
-        if profile is None or not profile.reit:
+# APP-04b's four parts: corporate items + existing properties + development + acquisitions.
+PARTS: Final[tuple[str, ...]] = (
+    "corporate",
+    "existing_properties",
+    "development",
+    "acquisitions",
+)
+_CONCEPT_PART: Final[dict[str, str]] = {
+    "us-gaap_PaymentsToAcquirePropertyPlantAndEquipment": "corporate",
+    "us-gaap_PaymentsToAcquireProductiveAssets": "corporate",
+    "us-gaap_PaymentsToAcquireOtherProductiveAssets": "corporate",
+    "us-gaap_PaymentsForCapitalImprovements": "existing_properties",
+    "us-gaap_PaymentsToDevelopRealEstateAssets": "development",
+    "us-gaap_PaymentsToAcquireRealEstate": "acquisitions",
+    "us-gaap_PaymentsToAcquireRealEstateHeldForInvestment": "acquisitions",
+    "us-gaap_PaymentsToAcquireCommercialRealEstate": "acquisitions",
+}
+
+
+def _part_of(concept: str) -> str:
+    """APP-04b's part of one term the capex composite summed (a filer extension by its own wording)."""
+    if concept in _CONCEPT_PART:
+        return _CONCEPT_PART[concept]
+    low = concept.lower()
+    if "development" in low or "redevelopment" in low:
+        return "development"
+    if "acquir" in low:
+        return "acquisitions"
+    if "capitalimprovement" in low:
+        return "existing_properties"
+    return "corporate"
+
+
+def _parts_of_column(
+    conn: Any, spec: Any, stmts: Any, column: str
+) -> tuple[dict[str, float], str | None]:
+    """APP-04b's four parts of one column's capex composite, from the terms it summed.
+
+    The provenance records a year-to-date column's tag as ``(YTD)``; on a **first quarter** filing
+    the facts key that same column ``(Q1)`` (``_is_first_quarter``), so the bare column is tried
+    first and its quarter tag next."""
+    resolution = stmts.resolve("capital_expenditure", column)
+    if resolution.concept is None and str(column).endswith("(YTD)"):
+        column = f"{str(column).removesuffix('(YTD)').rstrip()} (Q1)"
+        resolution = stmts.resolve("capital_expenditure", column)
+    parts = dict.fromkeys(PARTS, 0.0)
+    for raw in (resolution.concept or "").split(" + "):
+        concept = raw.strip()
+        if not concept:
             continue
-        metrics = snap.metrics.get(aid) or {}
-        margin = metrics.get("cashflow.free_cash_flow_margin")
-        capex = metrics.get("valuation.market_capitalization")  # presence check only
-        payload["reits"].append(
-            {
-                "ticker": snap.ticker.get(aid),
-                "free_cash_flow_margin": margin,
-                "negative_fcf": bool(margin is not None and margin < 0),
-                "has_market_cap_metric": capex is not None,
-            }
+        value = stmts._concept_value(spec, column, concept)  # the resolver's own read
+        if value is None:
+            continue
+        parts[_part_of(concept)] += float(value)
+    return parts, resolution.concept
+
+
+def _first(item: Any) -> dict[str, Any]:
+    """A provenance item: the block's own list-of-one (T-151 part 3's shape), or the dict itself."""
+    if isinstance(item, list):
+        return item[0] if item and isinstance(item[0], dict) else {}
+    return item if isinstance(item, dict) else {}
+
+
+def _reit_capex_row(conn: Any, spec: Any, aid: int, ticker: str, date: str) -> dict[str, Any]:
+    """One REIT's capex on the **TTM basis** (a 10-K's own fiscal year), split into APP-04b's four
+    parts, from the composite's own provenance terms."""
+    filing = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
-    payload["vetoed"] = sorted(r["ticker"] for r in payload["reits"] if r["negative_fcf"])
+        SELECT f.id, f.period_end, f.accession_number, m.inputs_json FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE f.asset_id = ? AND m.metric_group = 'cashflow'
+          AND m.metric_name = 'free_cash_flow_margin'
+        """,
+        (date, aid),
+    ).fetchone()
+    if filing is None:
+        return {"ticker": ticker, "note": "no cashflow metric"}
+    inputs = json.loads(filing["inputs_json"] or "{}")
+    provenance = inputs.get("provenance") or {}
+    items = provenance.get("items") or {}
+    ocf_item = _first(items.get("operating_cash_flow"))
+    capex_item = _first(items.get("capital_expenditure"))
+    stmts = agent_db.statements_from_facts(conn, int(filing["id"]))
+    profile = profile_as_of(
+        conn.execute("SELECT cik FROM assets WHERE id = ?", (aid,)).fetchone()["cik"],
+        str(filing["period_end"]),
+    )
+    stmts.reit = bool(profile and profile.reit)
+    # the terms the composite summed, per column the TTM used (its provenance's own columns)
+    columns = capex_item.get("columns") or []
+    per_column: dict[str, dict[str, float]] = {}
+    concepts: dict[str, str | None] = {}
+    for label, raw_column, accession in columns:
+        # the provenance's fiscal-year column carries the bare period end; the facts key it "(FY)"
+        column = (
+            f"{raw_column} (FY)"
+            if label in ("prior_fiscal_year", "fiscal_year")
+            and not str(raw_column).endswith("(FY)")
+            else raw_column
+        )
+        source = stmts
+        row = conn.execute(
+            "SELECT id FROM sec_filings WHERE accession_number = ?", (accession,)
+        ).fetchone()
+        if row is not None and int(row["id"]) != int(filing["id"]):
+            source = agent_db.statements_from_facts(conn, int(row["id"]))
+            source.reit = stmts.reit
+        per_column[label], concepts[label] = _parts_of_column(conn, spec, source, column)
+    parts = dict.fromkeys(PARTS, 0.0)
+    if capex_item.get("basis") == "ttm" and {"prior_fiscal_year", "prior_ytd", "ytd"} <= set(
+        per_column
+    ):
+        for part in PARTS:
+            parts[part] = (
+                per_column["prior_fiscal_year"][part]
+                - per_column["prior_ytd"][part]
+                + per_column["ytd"][part]
+            )
+    else:  # a 10-K: its own fiscal year
+        own = per_column.get("fiscal_year") or next(
+            iter(per_column.values()), dict.fromkeys(PARTS, 0.0)
+        )
+        parts = dict(own)
+    total = sum(parts.values())
+    return {
+        "ticker": ticker,
+        "form": str(filing["period_end"]),
+        "basis": capex_item.get("basis"),
+        "method": capex_item.get("method"),
+        "operating_cash_flow": ocf_item.get("value"),
+        "capex": capex_item.get("value"),
+        "capex_parts": parts,
+        "capex_total_from_parts": total,
+        "acquisition_share": (parts["acquisitions"] / total) if total else None,
+        "free_cash_flow": _difference(ocf_item.get("value"), capex_item.get("value")),
+        "terms": concepts,
+    }
+
+
+def _difference(left: Any, right: Any) -> float | None:
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return float(left) - float(right)
+    return None
+
+
+def cmd_d14(args: argparse.Namespace) -> None:
+    """The re-measured D-14 table, decision-ready: for every REIT vetoed by NEGATIVE_FCF at
+    2026-09-22 **and at each quarter end**, its operating cash flow, capex split into APP-04b's four
+    parts (from the composite's own provenance terms, on the TTM basis on a 10-Q), FCF and the
+    acquisition share."""
+    spec = S.REGISTRY["capital_expenditure"]
+    conn = data.connect_ro(args.db)
+    payload: dict[str, Any] = {"dates": {}}
+    for date in args.dates:
+        snap = Snapshot(args.db, date)
+        vetoed = []
+        for aid in snap.asset_ids:
+            profile = snap.profiles.get(aid)
+            if profile is None or not profile.reit:
+                continue
+            margin = (snap.metrics.get(aid) or {}).get("cashflow.free_cash_flow_margin")
+            if margin is not None and margin < 0:
+                vetoed.append((aid, snap.ticker.get(aid) or ""))
+        rows = []
+        for aid, ticker in vetoed:
+            row = _reit_capex_row(conn, spec, aid, ticker, date)
+            row["free_cash_flow_margin"] = (snap.metrics.get(aid) or {}).get(
+                "cashflow.free_cash_flow_margin"
+            )
+            rows.append(row)
+        payload["dates"][date] = {
+            "reits_with_negative_fcf": sorted(ticker for _aid, ticker in vetoed),
+            "rows": rows,
+        }
     payload["note"] = (
-        "NEGATIVE_FCF = cashflow.free_cash_flow_margin < 0 on the member's newest usable filing "
-        "(the D-14 table's own condition). The capex-by-part breakdown is in reit_capex.json."
+        "NEGATIVE_FCF = cashflow.free_cash_flow_margin < 0 on the member's newest usable filing. "
+        "capex_parts is APP-04b's split of the terms the capex composite summed, on the metric's own "
+        "basis (TTM on a 10-Q: prior fiscal year - last year's YTD + this year's YTD); the parts' sum "
+        "is checked against the metric's capex in capex_total_from_parts."
     )
     _write(args.out, payload)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    sub = parser.add_subparsers(dest="command", required=True)
+def _common(p: argparse.ArgumentParser) -> None:
+    """``--db``, ``--out`` and ``--date`` for the subcommands that read one database."""
+    p.add_argument("--db", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--date", default=MAIN)
 
-    def _common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--db", required=True)
-        p.add_argument("--out", required=True)
-        p.add_argument("--date", default=MAIN)
 
+def _subcommands(sub: Any) -> None:
+    """Wire every subcommand (kept out of :func:`main`, which stays a short dispatcher)."""
     p = sub.add_parser("scores")
     _common(p)
     p.add_argument("--side", required=True)
@@ -706,6 +1022,7 @@ def main() -> None:
     _common(p)
     p.add_argument("--side", required=True)
     p.add_argument("--observation-engine-version", default="priceobs-v2")
+    p.add_argument("--fresh", action="store_true", help="drop the stored run first, so it re-runs")
     p.set_defaults(func=cmd_blend)
 
     p = sub.add_parser("dq02")
@@ -736,8 +1053,14 @@ def main() -> None:
 
     p = sub.add_parser("d14")
     _common(p)
+    p.add_argument("--dates", default=",".join(DATES), type=lambda s: s.split(","))
     p.set_defaults(func=cmd_d14)
 
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="command", required=True)
+    _subcommands(sub)
     args = parser.parse_args()
     args.func(args)
 
