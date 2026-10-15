@@ -8536,3 +8536,271 @@ director's seat on another bank, so its row is `article_9 = false`. The rows are
 `scripts/leaver_company_types.py`, `scripts/ingestion_budget.py`, `scripts/verify_pilot.py` (T-153c),
 `docs/leaver_price_coverage.json`, `docs/ingestion_budget.json`, `docs/leaver_company_types.csv`,
 SPEC 1.20.0 (FR-001/FR-004/FR-012). No migration: no table or column changes (contract stays 16).
+
+## T-071 part 2a — the exclusion rules: negative equity (D-04), utilities (D-13), REITs (D-14 measured), liquidity by company type (stream A, Work item 8 step 2)
+
+Branch `feat/t071b-vetoes`. Plan `/workspaces/thesis/handoff/T071b_plan.md`, rulings
+`T071b_rulings.md` (R1–R9). Every number below comes from `scripts/verify_t071b.py` with its output
+file under `/workspaces/thesis/scratch/t071b/out/`; the databases are the task's own scratch copies
+(`before.db`: the copy as it was, gate `dq-v3`, no rule input; `after.db`: recomputed with this
+branch, gate `dq-v4` and the D-13 rule input). Production sha1 unchanged:
+`financial.db` `5c5c0642619bcc2f80aa72f13599bf824f676675`, `universe.db`
+`04adf644f892597d5de1b60f11c0cd6cbc271ed1`, `universe_history.db`
+`fddbdccb71ab4243a0fb76b3027774474d352b99`.
+
+### D1 — `DQ_NEG_EQUITY` is a record, never a veto (D-04)
+
+`quality._neg_equity` is always SOFT and quarantines **D/E only** (`_EQUITY_DENOMINATED` is D/E
+alone); ROE keeps its own APP-07 test on the **prior-year** equity it divides by (MET-02). The gate
+still records the credit inputs (equity, net debt/EBITDA, interest coverage, TTM EBITDA, net debt)
+for the cycle rule. `DATA_QUALITY_GATE_VERSION` `dq-v3` → `dq-v4`.
+
+Measured at 2026-09-22 (`out/neg_equity.json`, `out/p5_neg_equity.txt`): the HARD `DATA_QUALITY`
+`DQ_NEG_EQUITY` vetoes go **3 → 0** (CCI, SBAC, WYNN leave it); every other HARD gate is unchanged
+(`DQ_REVENUE_POS` 201, `DQ_MARGIN` 20, `DQ_MCAP_SCALE` 15, `DQ_FCF_YIELD` 13, `DQ_OCF_MARGIN` 1).
+
+**R6 — the ROE basis.** The plan's D1 expected "those 7 filings keep their ROE". Measured before the
+fix: **603** filings carry a `DQ_NEG_EQUITY` row naming `profitability.return_on_equity`, and **0**
+of them had an ROE value. The gate quarantine was never what emptied ROE: the applicability matrix
+was. `fundamental_agent.applicability.metric_negative_equity` returned True from the **current**
+equity (the group's shared `equity` input, or any `negative_equity` key in the shared inputs dict),
+so `cells('return_on_equity')['negative_equity'] == ('NA','APP-07')` emptied an ROE that
+`metrics/profitability.py` had correctly computed on the prior-year equity. Example: CAH 10-K
+2022-06-30, `equity = -709,000,000`, `prior_equity = +1,791,000,000`, ROE `None`,
+`empty_reason = not_applicable`.
+
+The fix (R6): a metric that carries its **own** denominator test uses only its own flag
+`flag_<result.name>_negative_equity` -- `return_on_equity` (the prior-year equity) and
+`debt_to_equity` (the current equity) -- and never another metric's flag from the shared group
+inputs; every other metric keeps the current-equity fallback (ROIC, whose APP-07 cell is ADJ,
+unchanged). This is a methodology change on real data (APP-07's source C7 p.12 ties "meaningless" to
+the book value the ratio **divides by**).
+
+**Measured after the fix** (`out/neg_equity.json` `roe_regained`, `out/p6_neg_equity.txt`; the
+profitability group recomputed on `after.db`): **59** filings of **28** companies that carry a
+`DQ_NEG_EQUITY` row have an ROE value now, and **0** of them had one before. The five the plan's
+note names are among them: CAH 10-K 2022-06-30 (equity -709M, prior-year equity +1,791M, ROE
+-0.5209), CCI 10-K 2024-12-31 (-133M / +6,381M, -0.6117), LYV 10-Q 2026-03-31 (-139M / +271M,
+0.3087), NCLH 10-Q 2023-03-31 (-99.5M / +68.6M, -21.089), STX 10-K 2023-06-30 (-1,199M / +109M,
+-4.8532).
+
+**Why 59/28 and not the plan's 7/5.** The plan's figure (TASKS.md's 2026-10-13 note, `T-076` fix
+round 1) was measured on **production's** store, which holds a small part of the window; the copy
+here holds the whole 2022–2026 scope (9,373 filings, 603 with a `DQ_NEG_EQUITY` row), so it sees
+every filing the condition touches, not only the latest per company. The condition is ROE's own:
+MET-02 divides by the equity at the **prior fiscal year end**, so a filing whose current equity is
+negative but whose prior-year equity is positive keeps its ROE -- ABBV is the example: its 10-K
+2025-12-31 has equity -3,270M against a prior-year equity of +3,325M, so ROE = 1.2710 (its 10-Q
+2025-06-30, -183M / +3,325M, gives 1.1317). All five of the plan's companies are in the 59, with
+CAH 2022-06-30 as the case the note itself used.
+
+**The large values are the measure, not a defect.** A small positive denominator gives a large ROE
+(ABBV 1.13, AON 2.63, MTD 35.8), which is what APP-07's own basis produces once the denominator is
+positive; MET-02 and APP-07 say nothing about the magnitude. Those values enter a cross-sectional
+factor only through `T-071` part 2b's VALORIZATION score, where DQ-02's winsorizing (0.5% per tail)
+bounds them -- a declared item of part 2b, not of this task.
+
+The D1 gate does not re-quarantine any of them: `dq-v4` names `return_on_equity` on **0** rows
+(D1's own gate is SOFT and quarantines D/E only).
+
+### D2 — the distress screen moves to `LEVERAGE_EXTREME`, keyed on the equity sign (D-04)
+
+For an asset whose latest usable filing has equity ≤ 0, and whose profile is **not** a financial
+firm (the profile's `financial_firm`, APP-00/APP-02, never the GICS sector):
+
+- HARD when EBITDA ≤ 0 with net debt > 0, or net debt/EBITDA > 5.0 (EBITDA > 0), or interest
+  coverage < 1.5 (T-116's thresholds, unchanged);
+- no usable credit input at all: SOFT review, as today;
+- the positive-equity branch (`debt_to_equity > 3.0`) is unchanged.
+
+The rule reads the equity sign and the credit inputs from the `DQ_NEG_EQUITY` record
+(`RuleContext.negative_equity`), never from a negative D/E (APP-07 makes D/E NA on negative equity,
+so a plain `dte > 3.0` check let a maximally leveraged buyback-driven negative equity pass).
+
+At 2026-09-22: 33 members have negative book equity (`out/neg_equity.json`); the screen is HARD on
+**3** (WYNN, CCI, SBAC) and SOFT-review on 5 (HCA, HONA, HPQ, IRM, PM). T-116's conditions were
+expected to flag 4 (CCI, **IRM**, SBAC, WYNN); IRM's answer is R8's, below. The 3×3 sensitivity
+(`out/d04_sensitivity.json`), by sector:
+
+| net debt/EBITDA > | coverage < 1.0 | coverage < 1.5 | coverage < 2.0 |
+|---|---|---|---|
+| 4.0 | 5 (WYNN, FDXF, FICO, CCI, SBAC) | 5 | 5 |
+| 5.0 | 3 (WYNN, CCI, SBAC) | 3 | 3 |
+| 6.0 | 2 (CCI, SBAC) | 2 | 3 |
+
+The thresholds are T-116's declared calibrations; the user did not load S&P Global Ratings'
+"Corporate Methodology" (2013) before the PR, so they stay declared.
+
+### D3 — regulated utilities: exempt from `NEGATIVE_FCF`, a replacement veto (D-13)
+
+**The rule input** (`fundamental_agent/utility_coverage.py`): for each 10-K, the three-year average
+of (cash flow from operations before working-capital changes) / total debt, stored as a `rule_input`
+pseudo-group row -- outside the metric dictionary, the prompt and the applicability matrix, and not
+a pillar member. CFO by CON-08, debt by MET-07 (the 10-K's two year ends; the third from the
+previous 10-K). Regulatory assets and liabilities **stay in** the cash flow (C13 p.14).
+
+**R1 — the classification is from the source only.** A B6 definition that states the period, or
+names a kind rule 3 lists as current, makes the class; a definition that names noncurrent,
+regulatory, pension or asset retirement leaves the line in; a **silent** definition, or a filer
+extension, is classified from the **filer's own caption** (`financial_facts.label`); still silent →
+left in and `ambiguous`. Nothing moves because it "usually" is current. The 60 us-gaap
+`IncreaseDecrease…` elements the utilities file were added to B6 verbatim from the pinned FASB 2026
+zip (116 → **176** headings, sha256
+`eb1190292fd180523b2b3a24a7ae9e2b0541cebe940a02a6c4b86b3c6d42456c`), with the count and SHA-256
+updated in `docs/checklist_sec/sources_register.md` (reviewer-authorized; B6 is git-excluded, so
+the table below is the record the reviewer can read).
+
+| Source | Class |
+|---|---|
+| B6 definition states the period, or names a current kind | Current (e.g. `IncreaseDecreaseInDerivativeAssets`, "due to be disposed of within one year") |
+| B6 definition names noncurrent, regulatory, pension or asset retirement | Left in the cash flow |
+| Silent definition, or a filer extension | The filer's own caption decides |
+| Still silent | Left in, `ambiguous` |
+
+Current working capital: receivables; inventories (including fuel, materials and supplies);
+payables; accrued liabilities; prepaid; customer deposits/advances; income taxes payable or
+receivable; other current assets or liabilities. Left in: noncurrent items; regulatory items
+(including deferred, under- or over-recovered fuel and purchased-power costs); pension; asset
+retirement. The full element-by-element table, with each definition and caption, is in
+`out/d13_definitions.txt` and `out/d13_sources.txt` (60 us-gaap elements + 32 filer extensions).
+
+**R2 — two bounds.** The input carries `average_ambiguous_in` (the ambiguous lines left in the cash
+flow) and `average_ambiguous_as_wc` (them treated as working capital).
+`UTILITY_CASH_COVERAGE` is HARD **only when both are below 5%**; a straddling pair, or a missing
+bound, is evaluated and never hit, flagged `ambiguous_working_capital` with both values in the rule
+input -- D-13's "missing inputs: no veto, flagged". No recalibration: no dropped negative-CFO
+years, no normalization, the 5% threshold stays.
+
+**Measured** (`out/d13_utilities.json`): 29 utilities, **26** with both bounds, **none with both
+below 5%**. CEG straddles (**-0.2330** in / **+0.5628** as-WC); the `_in` bound runs
+**0.1085–0.3469**. ED, EXC and WEC have no bound (R5's debt finding, below).
+
+**R3 — CEG.** Its reported CFO is genuinely negative in FY2023 (-5.30B) and FY2024 (-2.46B). From
+its own 10-K (`0001868275-26-000032`): the receivables facility's collections, the filer's caption
+"Collection of DPP, net" (`us-gaap_ProceedsFromCollectionOfRetainedInterestInSecuritizedReceivables`),
+are reported in **investing** (+7.34B 2023 / +10.22B 2024 / 0.0 2025). Recorded under D-13's
+declared inference (c), an unregulated generator inside the GICS sub-industry proxy. Its two bounds
+straddle 5%, so no veto.
+
+**R4 — the checklist's single-year claim.** Checklist v1.3 recorded a single-year measurement on 28
+utilities' latest 10-Ks of 12.2%–47.7%, "none below 5%, any threshold 5%–12% gives the same result".
+On the **three-year average** the sensitivity is: cutoff 0.05–0.10 → **1** utility below on the `_in`
+bound (CEG) and **0** on the as-WC bound; 0.11 → 2 / 1; 0.12 → 4 / 3. So the same result holds to
+10% and breaks from 11%. `checklist_v1.3.md` is not edited; this is the input for its next version.
+
+**The rules (`cycle`).** `NEGATIVE_FCF` now exempts the regulated-utility overlay (the profile's
+`regulated_utility`): such an asset is *evaluated and never hit* -- the `LIQUIDITY_DISTRESS` pattern,
+so a stint opened before the overlay applied closes. Its replacement is `UTILITY_CASH_COVERAGE`
+(HARD), which reads the input from the **newest 10-K** usable on the cycle date (a 10-Q carries
+none), at the newest stored `rule_input` engine version. It cites C13 p.7 (the Ba band, 5%–13%; the
+crop `C13_p7_scorecard_financial_strength.png`) and C13 p.11, p.14, p.19, p.21.
+
+### D4 — REITs and `NEGATIVE_FCF`: measured, not decided (D-14)
+
+No rule change. `out/d14_reits.json`: 28 REITs, **6** vetoed by `NEGATIVE_FCF` at 2026-09-22 (ARE,
+CPT, DLR, FRT, IRM, VTR), each with operating cash flow, capex and FCF. Across the replay the veto
+count runs **3 to 7 of 28** per quarter end (3 in 2024, 6–7 in 2025 and 2026).
+
+**R8 — the acquisition share.** APP-04b's share is filled by summing every **cash-flow** concept
+whose **own caption** names an acquisition (R1's rule) and is not an intangible or an income
+statement's acquisition cost, over the same terms the capex composite used -- including the
+`prior_fiscal_year` column, which reaches into the **prior 10-K** by its accession -- plus the two
+standard concepts (`PaymentsToAcquireRealEstate`, `PaymentsToAcquireRealEstateHeldForInvestment`),
+each fact read as the filed value times its `preferred_sign` (ID-11, never `abs()`). The lines summed
+are recorded per row in `acquisitions_concepts`.
+
+Measured at 2026-09-22 (acquisitions / capex): ARE **0.5%** (9M / 1,739M -- its extension
+`are_AcquisitionOfRealEstateAndOtherAssets...`), CPT **52.3%** (531M / 1,017M), DLR **65.4%**
+(2,273M / 3,474M -- its extension `dlr_PaymentsToAcquireAssetOrBusinessesNetOfCashAcquired`), FRT
+**100.0%** (700M / 700M -- its capex *is* `PaymentsToAcquireRealEstate`), IRM **3.1%** (67M /
+2,146M -- its `PaymentsToAcquireBusinessesNetOfCashAcquired`), VTR **88.3%** (2,294M / 2,599M). So
+the vetoes on DLR, FRT and VTR are dominated by buying properties; ARE's and IRM's are not.
+
+**Per REIT: which lines the capex composite read, and whether the acquisition lines are inside that
+read** (`capex_concepts` and `acquisitions_concepts` in `out/d14_reits.json`):
+
+| REIT | the capex composite read | the acquisition lines |
+|---|---|---|
+| ARE | `PaymentsToDevelopRealEstateAssets` (development) | outside it -- its own extension line |
+| CPT | `PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` | **inside** it |
+| DLR | `PaymentsToDevelopRealEstateAssets` (development) | outside it -- its extension line |
+| FRT | `PaymentsToAcquireRealEstate`, **its only capex line** | **inside** it: the 100% is that line read, not zero development spending -- FRT also files `CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures - development and redevelopment"), a filer extension MET-08's concept map does not read, beside `PaymentsToAcquireInterestInSubsidiariesAndAffiliates` ("Investment in partnerships") and `ProceedsFromRealEstateAndRealEstateJointVentures` |
+| IRM | `PaymentsToAcquirePropertyPlantAndEquipment` | outside it -- its business-combination line |
+| VTR | `PaymentsToDevelopRealEstateAssets` (development) | outside it: its own real-estate line is `PaymentsToAcquireCommercialRealEstate` ("Net investment in real estate property"), which neither the caption rule nor the standard pair matches |
+
+APP-04b / MET-08 (b) is why `PaymentsForCapitalImprovements` is never added to an acquisition line --
+its definition covers "acquisition of or capital improvements", so adding it would double count.
+
+**This table is not decision-ready.** The numerator is matched by the filer's caption and the two
+standard concepts, never by the capex composite's own provenance, so where a REIT's current filing
+files no matching concept the sum can fall back to one only an **earlier** filing filed: VTR's 2,294M
+is its prior 10-K's own `PaymentsToAcquireRealEstate` (2025-12-31 (FY), 2,293,769,000, captioned "Net
+investment in real estate property"), which is one of the capex's three terms -- so its 88.3% is not
+a trailing-twelve-month figure over the same terms as the denominator. `T-071` part 2b re-measures
+the D-14 table from the capex provenance itself; the values above are the provisional measure, and
+the user decides D-14 from part 2b's table, not this one.
+
+### D5 — `LIQUIDITY_DISTRESS` exempts by company type, not by GICS sector
+
+`LIQUIDITY_EXEMPT_SECTORS` is removed; the exemption is the profile: a financial firm, or the
+regulated-utility overlay. Measured at 2026-09-22 (`out/liquidity.json`): exempt **107 → 80**;
+**27 newly evaluated** -- the payment processors (MA, V, PYPL, GPN, FIS, FISV, CPAY, XYZ, FDS), the
+exchanges (ICE, CME, CBOE, NDAQ, COIN), the insurance brokers (AON, MRSH, AJG, BRO, WTW, ERIE), and
+BRK.B, MCO, SPGI, MSCI, JKHY; plus the Utilities-sector companies outside the overlay (AES, NRG).
+**None hits** (the rule is SOFT).
+
+### R5 — ED, EXC, WEC: no debt, so no veto, declared. No resolver change.
+
+Of the **1,377** filings that carry `us-gaap_LongTermDebtAndCapitalLeaseObligationsCurrent` and no
+`LongTermDebtCurrent`, MET-07 formed `total_debt` (`out/r5_debt.json`): **1,290** from a total that
+already includes the current portion, **43** from the parts without it (**understated**), **44**
+empty. The understated set is 43 filings / **5 companies** (CEG, EXC, FDX, MCK, UPS); the missing
+line is median **4.71%** of the stored `total_debt` (p90 13.26%, max 25.92%). By R5's test
+(> 5% of debt for > 20 companies) this is **not material**. At 2026-09-22 **3 companies'** reading
+would change if it were added (CEG, EXC, FDX), and none crosses the `LEVERAGE_EXTREME` threshold.
+The class is already recorded: `total_debt_short_term_debt_only` (25 companies / 242 filings) and
+`total_debt_capture_failure` (103 / 1,519) in this file's T-148 table.
+
+### R8 — IRM
+
+IRM's latest usable filing at 2026-09-22 is its 10-Q 2026-06-30 (`0001020569-26-000071`). Its
+inputs: `equity = -1,280,920,000`, `total_debt = 17,128,840,000`, `cash = 204,793,000`, net debt
+`16,924,047,000`; **`ebitda = None`**, `net_debt_to_ebitda = None`, `interest_coverage = None`. So
+the missing input is **D&A** (hence EBITDA, net debt/EBITDA and interest coverage), not debt: the
+rule takes T-116's "no usable credit input at all" SOFT review.
+
+It is **not** a REIT debt capture failure (the N23 family) and **not** a defect this branch
+introduced: it is T-151's sourced D&A rule **working**. IRM files its combined D&A on the **income
+statement** (`us-gaap_DepreciationDepletionAndAmortization`, 776/901/1,024M for FY2023–FY2025) while
+its **cash-flow** statement carries `us-gaap_Depreciation` (526/629/731M) and
+`us-gaap_AdjustmentForAmortization` (267/297/326M). `depreciation_amortization` is a `_CASHFLOW` line
+item, so the resolver sees only the cash-flow statement: it refuses `Depreciation` (flagged
+`depreciation_only_not_da`), and `statements.py:275-283`'s sourced-sum rule
+(`DA_SOURCED_CHILDREN`) accepts only the four D&A-**nature** children -- `Depreciation`, `Depletion`,
+`OtherDepreciationAndAmortization`, `AmortizationOfIntangibleAssets` -- because
+`AdjustmentForAmortization`'s own FASB children include non-D&A items (financing costs, debt
+discount or premium, deferred charges, loan fees). So the sum is refused and EBITDA is empty; IRM's
+SOFT review is the declared rule working, by design.
+
+### R7 — the before/after control
+
+Both sides of the comparison must not run the new code. The control is **master's rules**
+(`ab91385`, a git worktree under `/workspaces/thesis/scratch/t071b/control`) run through the same
+script on `before.db`; the branch's rules run on `after.db`. `scripts/verify_t071b.py vetoes --side
+before` writes the control's per-date result (run with `PYTHONPATH` pointing at the worktree's
+`src`), and `--before-json` pairs it with the branch's side.
+
+At 2026-09-22 (`out/vetoes_by_sector.json`, control in `out/vetoes_before_control.json`):
+
+| rule | control (master on `before.db`) | branch on `after.db` |
+|---|---|---|
+| `LEVERAGE_EXTREME` | 28 | 31 |
+| `NEGATIVE_FCF` | 43 | 24 |
+| `UTILITY_CASH_COVERAGE` | 0 | 0 |
+| `LIQUIDITY_DISTRESS` | 0 | 0 |
+| `DATA_QUALITY` | 6 | 3 |
+
+The 3 added to `LEVERAGE_EXTREME` are CCI, SBAC and WYNN (D2's negative-equity screen). The 19
+removed from `NEGATIVE_FCF` are the overlay's utilities (AEE, ATO, AWK, CNP, DUK, EIX, ETR, EVRG,
+EXC, FE, LNT, NI, PCG, PNW, PPL, SO, SRE, WEC, XEL); AES and NRG stay vetoed (outside the overlay).
+`DATA_QUALITY` 6 → 3 is D1 (CCI, SBAC, WYNN leave it).

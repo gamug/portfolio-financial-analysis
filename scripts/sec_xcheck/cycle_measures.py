@@ -19,6 +19,7 @@ from typing import Any
 from cycle.rules.base import RuleContext
 from cycle.rules.builtin import RULES
 from fundamental_agent import quality
+from kg_schema.company_profile import profile_as_of
 from sec_xcheck.findings import Finding, spread
 from sec_xcheck.records import Rec
 
@@ -65,7 +66,7 @@ def replay_cycle(annual: dict[str, Rec], as_of: str) -> dict[str, Any]:
     """The orchestrator's quarantine + veto step over *annual* (cik -> Rec): ``{cik: {...}}`` and the hits."""
     metrics: dict[int, dict[str, float | None]] = {}
     hard: dict[int, list[dict[str, Any]]] = {}
-    negative_equity: set[int] = set()
+    negative_equity: dict[int, dict[str, Any]] = {}
     ids = {cik: i for i, cik in enumerate(sorted(annual))}
     by_id = {i: cik for cik, i in ids.items()}
     for cik, r in annual.items():
@@ -86,9 +87,15 @@ def replay_cycle(annual: dict[str, Rec], as_of: str) -> dict[str, Any]:
                     }
                 )
             if i.rule_id == "DQ_NEG_EQUITY":
-                negative_equity.add(aid)
+                negative_equity[aid] = dict(i.evidence)
     ctx = RuleContext(
-        cycle_date=as_of, metrics=metrics, price_obs={}, last_fundamental={}, data_quality=hard
+        cycle_date=as_of,
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        data_quality=hard,
+        negative_equity=negative_equity,
+        profiles={ids[cik]: profile_as_of(cik, as_of) for cik in annual},
     )
     hits: list[tuple[str, str, str, dict[str, Any]]] = []
     for rule in RULES:

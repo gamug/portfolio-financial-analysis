@@ -77,8 +77,10 @@ def test_a_missing_revenue_hard_vetoes_through_data_quality() -> None:
     assert "DQ_REVENUE_POS" in hits[0][3]["gates"]
 
 
-def test_negative_equity_quarantines_the_ratios_so_the_leverage_rules_never_see_them() -> None:
-    """D-04: the negative-equity branch of LEVERAGE_EXTREME reads a debt/equity that the gate has already nulled."""
+def test_negative_equity_is_vetoed_through_the_gate_record_not_the_nulled_ratio() -> None:
+    """D-04 (T-071 part 2a): the gate nulls D/E, so LEVERAGE_EXTREME keys on the equity sign from the
+    DQ_NEG_EQUITY record and reads TTM EBITDA/net debt from it. This rec is distressed on both the
+    net-debt/EBITDA and the coverage condition."""
     r = rec(
         cik="9",
         items={"equity": -10.0},
@@ -97,7 +99,9 @@ def test_negative_equity_quarantines_the_ratios_so_the_leverage_rules_never_see_
     )
     out = cm.replay_cycle({"9": r}, "2026-09-22")
     assert out["negative_equity"] == {"9"}
-    assert not [h for h in out["hits"] if h[1] == "LEVERAGE_EXTREME"]
+    hits = [h for h in out["hits"] if h[1] == "LEVERAGE_EXTREME"]
+    assert len(hits) == 1 and hits[0][2] == "HARD"
+    assert hits[0][3]["failed"] == ["net_debt_to_ebitda", "interest_coverage"]
 
 
 def test_distress_conditions_use_the_gates_formulas_and_drop_without_condition_2() -> None:

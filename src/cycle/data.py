@@ -10,11 +10,22 @@ from typing import Any
 
 from portfolio_common.db import Database, Row, in_clause
 
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.env import universe_database_path
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
-from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
+from kg_schema.versions import (
+    DATA_QUALITY_GATE_VERSION,
+    RULE_INPUT_GROUP,
+    UTILITY_COVERAGE_AMBIGUOUS_FLAG,
+    UTILITY_COVERAGE_BOUND_AS_WC,
+    UTILITY_COVERAGE_BOUND_IN,
+    UTILITY_COVERAGE_METRIC,
+    UTILITY_COVERAGE_MISSING_BOUND_FLAG,
+    MetricVersions,
+    resolve_metric_versions,
+)
 
 
 def active_universe(
@@ -67,6 +78,21 @@ def asset_labels(conn: Database, asset_ids: list[int]) -> dict[int, tuple[str, s
     return {int(r["id"]): (str(r["ticker"]), r["sector"]) for r in rows}
 
 
+def asset_profiles(
+    conn: Database, asset_ids: list[int], as_of: str
+) -> dict[int, CompanyProfile | None]:
+    """``asset_id -> its APP-00 company profile`` as of *as_of*, or ``None`` when the CIK has no
+    profile (T-071 part 2a). The rules key "financial firm" (APP-00/APP-02) and the regulated-utility
+    overlay (D-13) on this, never on the GICS sector; an unknown CIK is never guessed."""
+    if not asset_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT id, cik FROM assets WHERE id IN {in_clause(asset_ids)}",  # noqa: S608
+        asset_ids,
+    )
+    return {int(r["id"]): profile_as_of(r["cik"], as_of) for r in rows}
+
+
 def latest_metrics(
     conn: Database, cycle_date: str, versions: MetricVersions
 ) -> dict[int, dict[str, float | None]]:
@@ -97,6 +123,55 @@ def latest_metrics(
         out.setdefault(int(r["asset_id"]), {})[f"{r['metric_group']}.{r['metric_name']}"] = r[
             "value"
         ]
+    return out
+
+
+def utility_cash_coverage(conn: Database, cycle_date: str) -> dict[int, dict[str, Any]]:
+    """asset_id -> the D-13 regulated-utility cash-coverage rule input of its newest **10-K**
+    *usable* on *cycle_date* (``available_at <= cycle_date``), read at the newest stored
+    ``rule_input`` engine version -- never a mix of versions.
+
+    A 10-Q does not carry the input (it is a three-year average over a 10-K's own cash-flow
+    statement), so this deliberately keys on ``form LIKE '10-K%'`` rather than reusing
+    :func:`latest_metrics`' "newest filing". The input lives outside
+    ``kg_schema.versions.METRIC_GROUPS``, so its engine version is resolved on its own here; an
+    asset whose newest 10-K has no such row is simply absent (never guessed).
+
+    The stored ``value`` is the primary bound (``average_ambiguous_in``); both bounds and the two
+    flags come from the row's ``inputs_json``, so the rule can require *both* bounds below the
+    cutoff (R2)."""
+    versions = resolve_metric_versions(conn, None, groups=(RULE_INPUT_GROUP,))
+    if not versions.by_group:
+        return {}
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.form LIKE '10-K%' AND f.period_end IS NOT NULL
+              AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, m.value, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = ? AND m.metric_name = ?
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, RULE_INPUT_GROUP, UTILITY_COVERAGE_METRIC, versions.json_param()),
+    ).fetchall()
+    out: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        inputs = _json_object(r["inputs_json"])
+        out[int(r["asset_id"])] = {
+            "value": r["value"],
+            "ambiguous_in": inputs.get(UTILITY_COVERAGE_BOUND_IN),
+            "ambiguous_as_wc": inputs.get(UTILITY_COVERAGE_BOUND_AS_WC),
+            "missing_bound": bool(inputs.get(UTILITY_COVERAGE_MISSING_BOUND_FLAG)),
+            "ambiguous_working_capital": bool(inputs.get(UTILITY_COVERAGE_AMBIGUOUS_FLAG)),
+        }
     return out
 
 
@@ -147,8 +222,11 @@ class DataQuality:
     quarantined: dict[int, set[str]] = field(default_factory=dict)
     # asset_id -> the HARD issues (the DATA_QUALITY veto's evidence)
     hard: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
-    # assets whose latest filing reports book equity <= 0 (DQ_NEG_EQUITY)
-    negative_equity: set[int] = field(default_factory=set)
+    # asset_id -> the DQ_NEG_EQUITY record's evidence for a latest filing with book equity <= 0
+    # (equity, net debt/EBITDA, interest coverage, TTM EBITDA, net debt). D-04 (T-071 part 2a): the
+    # gate is always SOFT now, and this record is the equity sign the LEVERAGE_EXTREME screen keys
+    # on (the filing's D/E is quarantined, so the rule never sees a negative ratio).
+    negative_equity: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def apply(
         self, metrics: dict[int, dict[str, float | None]]
@@ -161,10 +239,19 @@ class DataQuality:
         return out
 
 
-def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> DataQuality:
+def data_quality(
+    conn: Database,
+    cycle_date: str,
+    versions: MetricVersions,
+    gate_version: str = DATA_QUALITY_GATE_VERSION,
+) -> DataQuality:
     """The quarantines and HARD issues recorded against each asset's latest *usable* filing
     (the same filing :func:`latest_metrics` reads, T-106/T-107), for the metric *versions* the run resolved and the
-    current gate version only. A SOFT, unquarantined issue is a review item and is skipped."""
+    current gate version only. A SOFT, unquarantined issue is a review item and is skipped.
+
+    *gate_version* is the gate methodology to read (T-065); it defaults to the current one. A
+    measurement that compares two gate versions on two databases (T-071 part 2a's before/after) passes
+    the earlier one, so both sides go through this one reader."""
     rows = conn.execute(
         """
         WITH known AS (
@@ -175,7 +262,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
             WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
         )
         SELECT f.asset_id, d.metric_group, d.metric_name, d.rule_id, d.severity,
-               d.quarantined, d.value
+               d.quarantined, d.value, d.evidence_json
         FROM data_quality_issue d
         JOIN sec_filings f ON f.id = d.filing_id
         JOIN known k ON k.id = f.id AND k.rn = 1
@@ -184,7 +271,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
           AND (d.quarantined = 1 OR d.severity = 'HARD')
         ORDER BY f.asset_id, d.rule_id, d.metric_group, d.metric_name
         """,
-        (cycle_date, versions.json_param(), DATA_QUALITY_GATE_VERSION),
+        (cycle_date, versions.json_param(), gate_version),
     ).fetchall()
     out = DataQuality()
     for r in rows:
@@ -193,7 +280,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
         if r["quarantined"]:
             out.quarantined.setdefault(aid, set()).add(key)
         if r["rule_id"] == "DQ_NEG_EQUITY":
-            out.negative_equity.add(aid)
+            out.negative_equity[aid] = _json_object(r["evidence_json"])
         if r["severity"] == "HARD":
             out.hard.setdefault(aid, []).append(
                 {"rule_id": r["rule_id"], "metric": key, "value": r["value"]}
@@ -278,15 +365,16 @@ def fundamental_value_under(row: Row, weights: Mapping[str, float]) -> float:
     ratings the row stored -- no LLM call and no rewrite of the stored row. A row with no pillar
     block (written before T-073, or one the code left unscored) keeps its own ``raw_value``.
     """
-    stored = _inputs_json(row["inputs_json"])
+    stored = _json_object(row["inputs_json"])
     if not stored or not weights_differ(stored, weights):
         return float(row["raw_value"])
     recomputed = total_from_block(stored, weights)
     return float(row["raw_value"]) if recomputed is None else recomputed
 
 
-def _inputs_json(raw: str | None) -> dict[str, Any]:
-    """The row's stored audit block; ``{}`` when it carries none or it is not an object."""
+def _json_object(raw: str | None) -> dict[str, Any]:
+    """A stored JSON audit blob (``inputs_json`` / ``evidence_json``) as a dict; ``{}`` when it
+    carries none or it is not an object."""
     try:
         value = json.loads(raw or "{}")
     except (TypeError, ValueError):

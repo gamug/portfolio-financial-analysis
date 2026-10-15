@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from fundamental_agent.applicability import apply_applicability
+from fundamental_agent.applicability import apply_applicability, metric_negative_equity
 from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.cashflow import compute as cashflow_compute
@@ -768,6 +768,82 @@ _ARTICLE_9 = CompanyProfile(
     valid_from="2020-01-01",
     valid_to="",
 )
+
+
+# -- R6 (T-071 part 2a): the matrix reads the equity the metric divides by -------------------------
+
+
+def _roe_row(
+    *, equity: float | None, prior_equity: float | None, value: float | None
+) -> MetricResult:
+    """An ROE row as ``metrics/profitability.py`` builds it: the group's ``equity`` (the current
+    equity), ``prior_equity`` (ROE's own denominator), and the metric's own flag."""
+    inputs: dict[str, float] = {}
+    if equity is not None:
+        inputs["equity"] = equity
+    if prior_equity is not None:
+        inputs["prior_equity"] = prior_equity
+        if prior_equity <= 0.0:
+            inputs["flag_return_on_equity_negative_equity"] = 1.0
+    return MetricResult("return_on_equity", value, "ratio", inputs)
+
+
+def test_roe_keeps_its_value_when_only_the_current_equity_is_negative() -> None:
+    """R6: APP-07 ties "meaningless" to the book value the ratio **divides by** -- ROE's is the prior
+    year's equity (MET-02). A negative current equity beside a positive prior-year equity must not
+    empty ROE (CAH 10-K 2022-06-30: equity -709M, prior-year equity +1,791M)."""
+    result = _roe_row(equity=-709_000_000.0, prior_equity=1_791_000_000.0, value=0.42)
+    assert metric_negative_equity(result) is False
+    pairs = [("profitability", result)]
+    apply_applicability(pairs, _OPERATING)
+    kept = pairs[0][1]
+    assert kept.value == 0.42
+    assert "flag_return_on_equity_not_applicable" not in kept.inputs
+
+
+def test_roe_is_na_when_the_equity_it_divides_by_is_not_positive() -> None:
+    """R6: ROE's own flag decides -- prior-year equity <= 0 is NA (APP-07), as before."""
+    result = _roe_row(equity=-100.0, prior_equity=-50.0, value=None)
+    assert metric_negative_equity(result) is True
+    pairs = [("profitability", result)]
+    apply_applicability(pairs, _OPERATING)
+    row = pairs[0][1]
+    assert row.value is None
+    assert row.inputs["flag_return_on_equity_not_applicable"] == 1.0
+
+
+def test_debt_to_equity_still_reads_the_current_equity() -> None:
+    """R6: D/E's denominator is the same filing's current equity -- unchanged."""
+    result = MetricResult(
+        "debt_to_equity",
+        None,
+        "ratio",
+        {"equity": -709_000_000.0, "flag_debt_to_equity_negative_equity": 1.0},
+    )
+    assert metric_negative_equity(result) is True
+
+
+def test_roic_keeps_its_adjusted_cell_from_the_current_equity() -> None:
+    """R6: ROIC sets no own flag, so the current-equity fallback (and its ADJ cell) is unchanged."""
+    result = MetricResult("return_on_invested_capital", 0.1, "ratio", {"equity": -5.0})
+    assert metric_negative_equity(result) is True
+    pairs = [("roic", result)]
+    apply_applicability(pairs, _OPERATING)
+    row = pairs[0][1]
+    assert row.value == 0.1
+    assert row.inputs["flag_return_on_invested_capital_adj"] == 1.0
+
+
+def test_a_metric_never_takes_another_metrics_negative_equity_flag() -> None:
+    """R6: the group's shared inputs carry ROE's flag into its siblings; only the metric that set it
+    may read it (a positive equity here must not become a negative-equity overlay)."""
+    result = MetricResult(
+        "return_on_assets",
+        0.1,
+        "ratio",
+        {"equity": 5.0, "flag_return_on_equity_negative_equity": 1.0},
+    )
+    assert metric_negative_equity(result) is False
 
 
 def test_a_matrix_na_cell_wins_over_a_negative_denominator() -> None:
