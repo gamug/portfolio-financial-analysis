@@ -8570,6 +8570,23 @@ after it was generated — **BLDR, CTVA, TAP, TTD, WBD** — are **replaced** by
 reading). No hand-edited generated file: only the scripts read `docs/checklist_sec/`, the runtime
 keeps reading the tracked profile, and the tests read the tracked profile plus the staged file.
 
+**The mirror of the leavers: the members that joined after the table was generated (fix round).**
+Checked against the delivered file's **open** stints, five current members have no row in the
+checklist's table, because the table is generated from a database's `assets` and they joined later:
+**TWLO** (2026-10-06), **VYLR** (2026-10-01), **BE**, **P** and **ILMN** (2026-09-21). ILMN matters
+most: it left on 2024-06-23 and rejoined, so it is not one of the 86 leavers, but it was a member
+2022-01…2024-06-23 and its filings in that window are scored. `scripts/new_member_company_types.py`
+stages them (`docs/new_member_company_types.csv`, the open stints whose CIK the table does not hold)
+and `build_company_profile.py` merges them under the **current-member rule** (L-03: the open stint's
+label, the 10-K's own Article 9 statement, the **live** ticker list for the multi-class overlay, an
+**open** interval from 2020-01-01) — never by regenerating the checklist table. All five are
+`operating` (their 10-Ks carry no bank/financial-holding statement; VYLR has no 10-K and its label is
+Agricultural Products & Services, a non-bank one) and none is multi-class (the live lists are single).
+The profile now holds **584 rows**: 495 table + 84 leaver + 5 later joiner. verify_pilot's **T-153d**
+was widened from the leavers to **every line `members_over_range` returns**, so a line the table
+predates is caught (measured on the R4 copy: 36 lines, 578 filings, PASS), and a unit test pins the
+rejoined-member case.
+
 **D2 — the labels outside C5's current structure: one.** C5 (`C5_GICS_Methodology.pdf`, April 2026,
 sha256 `c5972363…`, verified against `docs/checklist_sec/sources_register.md:78`) lists **163
 sub-industries** (§1.2 The GICS Structure, pp.7–13). Of the leavers' **51 distinct labels**, exactly
@@ -8589,12 +8606,14 @@ APP-00's operating row names 40203040. REIT overlay: **DRE, VNO, AVB** (3). Regu
 no leaver. **DFS wins Article 9 over "other financial"**: APP-00's Article 9 row "Includes holding
 companies classified elsewhere by GICS … that state they are bank or financial holding companies",
 and its own sentence ("We are a bank holding company under the Bank Holding Company Act of 1956 …")
-is staged. **LNC's Article 7 statement form is confirmed on the ingested facts** (reviewer A's
-follow-up): its last 10-K on or before its exit, `0000059558-23-000047` (period end 2023-06-30),
-carries `us-gaap_PremiumsEarnedNet` and no `us-gaap_AssetsCurrent`, so
-`premium_statement_form(facts)` is `True` — measured on the R2 copy; the profile's `basis` says the
-form is confirmed on the run that ingests the filing, because the pilot database holds no facts for a
-leaver. The 10-K method's gap (`HOLDING_PHRASE` cannot match a bank that is itself the registrant)
+is staged. **LNC's Article 7 statement form is confirmed on the ingested facts** (reviewer A's follow-up,
+corrected in the fix round): APP-00 says "confirmed by the **10-K's** statement form", and LNC's last
+10-K on or before its exit is **`0000059558-23-000009`** (FY2022, period end 2022-12-31, filed
+2023-02-16) — not the 10-Q `0000059558-23-000047` the first measurement used. It carries
+`us-gaap_PremiumsEarnedNet` and **no** `us-gaap_AssetsCurrent`, so `premium_statement_form(facts)` is
+`True` (measured on the R2 copy; the 10-Q carries the same shape, 89 vs 97 stored facts). The
+profile's `basis` says the form is confirmed on the run that ingests the filing, because the pilot
+database holds no facts for a leaver. The 10-K method's gap (`HOLDING_PHRASE` cannot match a bank that is itself the registrant)
 is **not** widened: every bank leaver was checked by hand (CMA, SIVB, PBCT, DFS and ZION's own "is a
 bank headquartered in Salt Lake City" sentence are the staged evidence; the method's false positive
 on DRE was already removed in part 3a), and no current member's type is touched.
