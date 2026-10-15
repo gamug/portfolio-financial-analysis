@@ -239,10 +239,19 @@ class DataQuality:
         return out
 
 
-def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> DataQuality:
+def data_quality(
+    conn: Database,
+    cycle_date: str,
+    versions: MetricVersions,
+    gate_version: str = DATA_QUALITY_GATE_VERSION,
+) -> DataQuality:
     """The quarantines and HARD issues recorded against each asset's latest *usable* filing
     (the same filing :func:`latest_metrics` reads, T-106/T-107), for the metric *versions* the run resolved and the
-    current gate version only. A SOFT, unquarantined issue is a review item and is skipped."""
+    current gate version only. A SOFT, unquarantined issue is a review item and is skipped.
+
+    *gate_version* is the gate methodology to read (T-065); it defaults to the current one. A
+    measurement that compares two gate versions on two databases (T-071 part 2a's before/after) passes
+    the earlier one, so both sides go through this one reader."""
     rows = conn.execute(
         """
         WITH known AS (
@@ -262,7 +271,7 @@ def data_quality(conn: Database, cycle_date: str, versions: MetricVersions) -> D
           AND (d.quarantined = 1 OR d.severity = 'HARD')
         ORDER BY f.asset_id, d.rule_id, d.metric_group, d.metric_name
         """,
-        (cycle_date, versions.json_param(), DATA_QUALITY_GATE_VERSION),
+        (cycle_date, versions.json_param(), gate_version),
     ).fetchall()
     out = DataQuality()
     for r in rows:
