@@ -135,6 +135,10 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
 
     # MD-38 (D8): (NOPAT - (capex - D&A + Δ non-cash working capital)) / EV.
     fcff_md38 = _md38(stmts, period_key, cap, annual, inputs)
+    # T-071 part 2b (D1): the numerator itself, so the VALORIZATION value-input rule input can
+    # carry it -- the score prices MD-38 / EV on the analysis date, so it needs the numerator
+    # independently of this period-end price. An audit input only; nothing else reads it.
+    inputs.update(present(md38_numerator=fcff_md38))
 
     sbc_adjusted_fcf = (
         fcfe_annual - sbc_annual if fcfe_annual is not None and sbc_annual is not None else None

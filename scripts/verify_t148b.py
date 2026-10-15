@@ -30,7 +30,7 @@ from sec_xcheck.common import filings, open_ro, own_period_key, statements_from_
 from sec_xcheck.dqc_lists import dqc14, dqc15
 
 import fundamental_agent
-from fundamental_agent import db, quality, utility_coverage
+from fundamental_agent import db, quality, utility_coverage, value_inputs
 from fundamental_agent.agents import FilingContext, FundamentalAnalyst, facts_only_synthesis
 from fundamental_agent.db import SnapshotRow
 from fundamental_agent.edgar_client import EdgarClient
@@ -1003,6 +1003,7 @@ def _recompute_single_filing(
     db.stamp_ytd(computed, ttm)
     db.record_metrics(conn, fid, computed, event_time=f["period_end"], run_id=None)
     utility_coverage.write(conn, fid, aid, stmts)
+    value_inputs.write(conn, fid, computed)
     quality.gate_version(conn, db.METRICS_ENGINE_VERSION, filing_id=fid, run_id=None)
     quality.record_ttm_crosscheck(
         conn, fid, aid, ttm, engine_version=db.METRICS_ENGINE_VERSION, run_id=None
