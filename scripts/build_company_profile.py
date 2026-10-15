@@ -1,19 +1,29 @@
-"""Generate the tracked company profile (APP-00) from ``docs/checklist_sec/company_types.csv``.
+"""Generate the tracked company profile (APP-00) from two sources.
 
 Reads the checklist's own company-type table -- the live snapshot `T-147` delivered, git-excluded
-per AGENTS.md and never read by the tests or the runtime -- and writes the **tracked** copy the code
-reads:
+per AGENTS.md and never read by the tests or the runtime -- and the leavers' staged evidence
+(``docs/leaver_company_types.csv``, `T-153` parts 3a/3b: the Article 9 statement, the delivered
+GICS label with its Wikipedia revision, and the 10-K cover page's registered symbols). Writes the
+**tracked** copy the code reads:
 
 * ``src/kg_schema/data/company_profile.csv`` -- every column of the source, plus
 
   - ``regulated_utility``: the overlay D-13 names (GICS sub-industry Electric, Gas, Multi- or Water
     Utilities, the GICS proxy declared there);
-  - ``valid_from`` / ``valid_to``: one interval covering the whole window. ``valid_from`` is
-    :data:`WINDOW_START` (ID-20's data window, 2020-2026) and ``valid_to`` is empty: the file is the
-    **current** classification (L-03 declares it) and is applied backwards, so it is still valid.
-    `T-153` adds the leavers and the changes, each with its own interval.
+  - ``valid_from`` / ``valid_to``: one interval per row. For a **current member** it is one interval
+    covering the whole window (``valid_from`` :data:`WINDOW_START`, ``valid_to`` empty: the file is
+    the **current** classification (L-03 declares it) and is applied backwards, so it is still
+    valid). For a **leaver** it is its own: ``valid_from`` :data:`WINDOW_START` and ``valid_to`` the
+    day after its last membership day, so the profile covers every filing it is scored on (its
+    D-10 filings' period ends, from before 2022 up to its exit) and nothing after the exit --
+    L-03/L-11's "the classification in force on the last membership day" (`T-153` part 3b).
 
-The header names this generator and the source file's sha256, the way ``docs/metric_dictionary.md``
+The leavers' rows are merged here rather than regenerated into ``docs/checklist_sec/company_types.csv``
+(`T-153` part 3b, D1 option (b)): regenerating that table from a database moves DB-derived columns on
+the 500 current rows (`negative_equity_latest` for PM, `multi_class_listed` for PSKY, measured
+2026-10-14), and the leavers' evidence is staged, not derived from the pilot's assets.
+
+The header names this generator and each source file's sha256, the way ``docs/metric_dictionary.md``
 does. Run it with no arguments from the repo root to write the file, or with ``--check`` to verify
 the tracked copy against a fresh generation (the local half of the traceability test -- CI holds no
 ``docs/checklist_sec/`` and never runs this).
@@ -24,12 +34,25 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import html
 import io
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO / "scripts"))
+
+from sec_xcheck.company_types import (  # noqa: E402
+    BANK_SUB_INDUSTRIES,
+    GICS_FINANCIAL_CODES,
+    classify,
+    is_reit,
+)
+
 SOURCE = REPO / "docs" / "checklist_sec" / "company_types.csv"
+LEAVERS = REPO / "docs" / "leaver_company_types.csv"
+MEMBERS = REPO / "docs" / "new_member_company_types.csv"
 PROFILE = REPO / "src" / "kg_schema" / "data" / "company_profile.csv"
 
 # D-13: the regulated-utility overlay, the GICS proxy the decision names.
@@ -47,16 +70,34 @@ ADDED_COLUMNS = ("regulated_utility", "valid_from", "valid_to")
 # APP-00: "financial firm" means Article 9 filers, Article 7 filers and other financial firms.
 FINANCIAL_TYPES = frozenset({"article_9", "article_7", "other_financial"})
 BASE_TYPES = ("operating", "article_9", "article_7", "other_financial", "multi_sector_holding")
+#: The cover-page symbol separator in the staged evidence (a symbol may itself contain "/").
+COVER_SEPARATOR = " | "
+
+#: The insurers whose APP-00 statement form has been confirmed on the **10-K's own facts**, and how
+#: (T-153 part 3b). Measured on the R2 copy, 2026-10-15: LNC's FY2022 10-K (accession
+#: ``0000059558-23-000009``, period end 2022-12-31, filed 2023-02-16) carries
+#: ``us-gaap_PremiumsEarnedNet`` and **no** ``us-gaap_AssetsCurrent``, so
+#: ``premium_statement_form(facts)`` is ``True`` (the 10-K the staged evidence names).
+STATEMENT_FORM_CONFIRMED: dict[str, tuple[str, str]] = {
+    "0000059558": ("0000059558-23-000009", "PremiumsEarnedNet present, AssetsCurrent absent"),
+}
 
 
-def _header(source_sha256: str) -> list[str]:
-    """The comment lines above the CSV header: the generator, the source and its sha256."""
+def _header(source_sha256: str, leaver_sha256: str, member_sha256: str) -> list[str]:
+    """The comment lines above the CSV header: the generator, the sources and their sha256."""
     return [
-        "# Generated by scripts/build_company_profile.py from docs/checklist_sec/company_types.csv"
-        " -- do not edit by hand.",
+        "# Generated by scripts/build_company_profile.py from docs/checklist_sec/company_types.csv,"
+        " docs/leaver_company_types.csv and docs/new_member_company_types.csv -- do not edit by hand.",
         f"# Source docs/checklist_sec/company_types.csv sha256 {source_sha256}",
-        "# Adds regulated_utility (D-13: GICS Electric/Gas/Multi-/Water Utilities) and the validity"
-        f" interval (valid_from {WINDOW_START}, valid_to empty = still current, L-03).",
+        f"# Source docs/leaver_company_types.csv sha256 {leaver_sha256}",
+        f"# Source docs/new_member_company_types.csv sha256 {member_sha256}",
+        "# Adds regulated_utility (D-13: GICS Electric/Gas/Multi-/Water Utilities) and one validity"
+        f" interval per row (a current member and a later joiner: valid_from {WINDOW_START}, valid_to"
+        " empty = still current, L-03; a leaver: valid_to = the day after its last membership day,"
+        " T-153 part 3b).",
+        "# Interval convention: this file's valid_to is EXCLUSIVE (CompanyProfile.covers is"
+        " `valid_from <= day < valid_to`), while universe_history.db's valid_to is the last"
+        " membership day, INCLUSIVE.",
     ]
 
 
@@ -64,22 +105,160 @@ def _true(value: str) -> bool:
     return str(value).strip().lower() == "true"
 
 
-def build(source_text: str) -> str:
-    """The company-profile CSV for *source_text*, comments and header included."""
+def _data_lines(text: str) -> list[str]:
+    """The rows of a CSV with ``#`` header comments: the header plus its records."""
+    return [line for line in text.splitlines() if line and not line.startswith("#")]
+
+
+def _member_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
+    """The rows of the members that joined **after** the checklist's table was generated.
+
+    The mirror of the leavers, under the **current-member rule** (L-03: today's snapshot, applied
+    backwards): the label of the company's **open** stint, its 10-K's own Article 9 statement, the
+    **live ticker list** (the current members' rule for the multi-class overlay, not a leaver's
+    cover page) and an **open** interval from :data:`WINDOW_START`. The same two lists as
+    :func:`_leaver_rows`: the rows, and the CIKs APP-00's table leaves untyped.
+    """
+    out: list[dict[str, str]] = []
+    untyped: list[str] = []
+    for row in csv.DictReader(_data_lines(text)):
+        sub, sector = row["gics_sub_industry"], row["gics_sector"]
+        article_9 = _true(row["article_9"])
+        if not article_9 and sub in BANK_SUB_INDUSTRIES:
+            untyped.append(row["symbols"] or row["cik"])
+            continue
+        code = GICS_FINANCIAL_CODES.get(sub, "")
+        kind, basis = classify(sub, sector, article_9=article_9)
+        if kind == "article_7":
+            confirmed = STATEMENT_FORM_CONFIRMED.get(row["cik"])
+            basis = (
+                f"GICS {code} (insurer); the statement form is confirmed on {confirmed[0]}"
+                f" ({confirmed[1]})"
+                if confirmed
+                else (
+                    f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
+                    "facts on the run that ingests its filings (no facts for a new member here)"
+                )
+            )
+        citation = f"GICS {sub}, the open stint from {row['joined_date']} (L-03: today's snapshot)"
+        tickers = [t for t in row["live_tickers"].split("/") if t]
+        out.append(
+            {
+                "cik": row["cik"],
+                "tickers": row["symbols"],
+                "company_name": row["company_name"],
+                "gics_sector": sector,
+                "gics_sub_industry": sub,
+                "gics_code": code,
+                "type": kind,
+                "financial_firm": str(kind in FINANCIAL_TYPES),
+                "basis": f"{basis}; {citation}",
+                "evidence_accession": (
+                    row["last_10k_accession"] if kind in {"article_9", "article_7"} else ""
+                ),
+                "evidence_quote": html.unescape(row["evidence_quote"]),
+                "reit": str(is_reit(sector, sub)),
+                "negative_equity_latest": "",  # the pilot database holds no facts for it
+                "multi_class_listed": str(len(tickers) > 1),
+                "needs_override": "False",
+                "regulated_utility": str(sub in REGULATED_UTILITY_SUB_INDUSTRIES),
+                "valid_from": WINDOW_START,
+                "valid_to": WINDOW_END_OPEN,
+            }
+        )
+    return out, untyped
+
+
+def _leaver_rows(text: str) -> tuple[list[dict[str, str]], list[str]]:
+    """The leavers' profile rows, and the CIKs APP-00's table leaves untyped.
+
+    One row per leaver CIK, built exactly like a current member's (the same :func:`classify` and
+    :func:`is_reit`), from the staged evidence: the delivered GICS label as of the last membership
+    day, the 10-K's own Article 9 statement, the cover page's registered symbols (the multi-class
+    overlay) and the exit that bounds the interval. A *bank* label with no Article 9 statement is
+    returned in the second list instead -- APP-00's table assigns it no type (see ``sec_xcheck.company_types.BANK_SUB_INDUSTRIES``).
+    """
+    out: list[dict[str, str]] = []
+    untyped: list[str] = []
+    for row in csv.DictReader(_data_lines(text)):
+        sub, sector = row["gics_sub_industry"], row["gics_sector"]
+        article_9 = _true(row["article_9"])
+        if not article_9 and sub in BANK_SUB_INDUSTRIES:
+            untyped.append(row["symbols"] or row["cik"])
+            continue
+        code = GICS_FINANCIAL_CODES.get(sub, "")
+        kind, basis = classify(sub, sector, article_9=article_9)
+        if kind == "article_7":
+            # APP-00 confirms an insurer's type from the **10-K's** statement form. Where that has
+            # been measured it is cited with the accession and the facts; otherwise the confirmation
+            # is made on the run that ingests the filing (T-153 part 3b, R2).
+            confirmed = STATEMENT_FORM_CONFIRMED.get(row["cik"])
+            basis = (
+                f"GICS {code} (insurer); the statement form is confirmed on {confirmed[0]}"
+                f" ({confirmed[1]})"
+                if confirmed
+                else (
+                    f"GICS {code} (insurer); the statement form is confirmed from the filing's own "
+                    "facts on the run that ingests its filings (no facts for a leaver here)"
+                )
+            )
+        citation = (
+            f"GICS {sub} at the last membership day {row['exit_date']}"
+            f" (Wikipedia revision {row['gics_revision_id']})"
+        )
+        out.append(
+            {
+                "cik": row["cik"],
+                "tickers": row["symbols"],
+                "company_name": row["company_name"],
+                "gics_sector": sector,
+                "gics_sub_industry": sub,
+                "gics_code": code,
+                "type": kind,
+                "financial_firm": str(kind in FINANCIAL_TYPES),
+                "basis": f"{basis}; {citation}",
+                "evidence_accession": row["last_10k_accession"]
+                if kind in {"article_9", "article_7"}
+                else "",
+                "evidence_quote": html.unescape(row["evidence_quote"]),
+                "reit": str(is_reit(sector, sub)),
+                "negative_equity_latest": "",  # the pilot database holds no facts for a leaver
+                "multi_class_listed": str(len(row["cover_classes"].split(COVER_SEPARATOR)) > 1),
+                "needs_override": "False",
+                "regulated_utility": str(sub in REGULATED_UTILITY_SUB_INDUSTRIES),
+                "valid_from": WINDOW_START,
+                "valid_to": (date.fromisoformat(row["exit_date"]) + timedelta(days=1)).isoformat(),
+            }
+        )
+    return out, untyped
+
+
+def build(source_text: str, leaver_text: str = "", member_text: str = "") -> str:
+    """The profile CSV for *source_text* plus the staged leavers and later joiners, header included."""
     source_sha = hashlib.sha256(source_text.encode()).hexdigest()
+    leaver_sha = hashlib.sha256(leaver_text.encode()).hexdigest()
+    member_sha = hashlib.sha256(member_text.encode()).hexdigest()
     rows = list(csv.DictReader(io.StringIO(source_text)))
     if not rows:
         raise SystemExit(f"{SOURCE} holds no rows")
     missing = [c for c in ("cik", "type", "financial_firm", "reit") if c not in rows[0]]
     if missing:
         raise SystemExit(f"{SOURCE} is missing {missing}")
+    leavers, _untyped = _leaver_rows(leaver_text) if leaver_text else ([], [])
+    members, _untyped_members = _member_rows(member_text) if member_text else ([], [])
     fieldnames = [*rows[0], *ADDED_COLUMNS]
+    # One row per CIK: a company that has left the index since the checklist's table was generated
+    # is still in that table (the pilot's assets predate its exit), so its leaver row **replaces**
+    # it -- its own interval is the point-in-time truth (L-03/L-11, D7), not the table's open one.
+    by_cik = {row["cik"]: row for row in [*leavers, *members]}
     buffer = io.StringIO()
-    for line in _header(source_sha):
+    for line in _header(source_sha, leaver_sha, member_sha):
         buffer.write(line + "\n")
     writer = csv.DictWriter(buffer, fieldnames=fieldnames, lineterminator="\n")
     writer.writeheader()
     for row in rows:
+        if row["cik"] in by_cik:
+            continue  # written below, as a leaver
         kind = row["type"]
         if kind not in BASE_TYPES:
             raise SystemExit(f"unknown company type {kind!r} for CIK {row['cik']}")
@@ -90,7 +269,18 @@ def build(source_text: str) -> str:
         row["valid_from"] = WINDOW_START
         row["valid_to"] = WINDOW_END_OPEN
         writer.writerow(row)
+    for row in [*leavers, *members]:
+        writer.writerow(row)
     return buffer.getvalue()
+
+
+def replaced_ciks(source_text: str, leaver_text: str = "", member_text: str = "") -> list[str]:
+    """The table's CIKs a staged row replaces (a company that left since it was generated)."""
+    rows = list(csv.DictReader(io.StringIO(source_text)))
+    leavers, _untyped = _leaver_rows(leaver_text) if leaver_text else ([], [])
+    members, _untyped_members = _member_rows(member_text) if member_text else ([], [])
+    by_cik = {row["cik"] for row in [*leavers, *members]}
+    return sorted(row["cik"] for row in rows if row["cik"] in by_cik)
 
 
 def main() -> None:
@@ -102,7 +292,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     source_text = SOURCE.read_text()
-    generated = build(source_text)
+    leaver_text = LEAVERS.read_text()
+    member_text = MEMBERS.read_text()
+    generated = build(source_text, leaver_text, member_text)
     if args.check:
         if not PROFILE.exists() or PROFILE.read_text() != generated:
             print(
@@ -121,7 +313,24 @@ def main() -> None:
     regulated = sum(
         1 for row in rows if row["gics_sub_industry"] in REGULATED_UTILITY_SUB_INDUSTRIES
     )
-    print(f"wrote {PROFILE} ({len(rows)} rows, {regulated} regulated utilities)")
+    leavers, untyped = _leaver_rows(leaver_text)
+    members, untyped_members = _member_rows(member_text)
+    replaced = replaced_ciks(source_text, leaver_text, member_text)
+    print(
+        f"wrote {PROFILE} ({len(rows) - len(replaced)} table + {len(leavers)} leaver + "
+        f"{len(members)} later-joiner rows, {len(rows) + len(leavers) + len(members) - len(replaced)} total)"
+    )
+    print(f"  table: {regulated} regulated utilities")
+    if replaced:
+        print(f"  replaced {len(replaced)} table rows by their leaver row: {replaced}")
+    kinds: dict[str, int] = {}
+    for row in leavers:
+        kinds[row["type"]] = kinds.get(row["type"], 0) + 1
+    member_kinds: dict[str, int] = {}
+    for row in members:
+        member_kinds[row["type"]] = member_kinds.get(row["type"], 0) + 1
+    print(f"  leavers: types {kinds}; no type assigned: {untyped}")
+    print(f"  later joiners: types {member_kinds}; no type assigned: {untyped_members}")
 
 
 if __name__ == "__main__":

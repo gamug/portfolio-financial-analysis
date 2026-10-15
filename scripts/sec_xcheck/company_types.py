@@ -50,6 +50,17 @@ OPERATING_FINANCIAL_CODES = {
     "40203040",
     "40301010",
 }  # payments, exchanges & data, insurance brokers
+#: The sub-industry *names* of the bank codes, plus the pre-2023 "Thrifts & Mortgage Finance"
+#: (discontinued on 2023-03-17, C5 -- PBCT carries it): the labels APP-00's bank rows key on. A
+#: bank label with no Article 9 statement matches no cell of the table (the other-financial list
+#: does not include the bank codes), so `T-153` part 3b leaves that company untyped.
+BANK_SUB_INDUSTRIES = frozenset(
+    [*[n for n, c in GICS_FINANCIAL_CODES.items() if c in BANK_CODES], "Thrifts & Mortgage Finance"]
+)
+#: The sub-industry names of the Article 7 codes: APP-00's insurers.
+INSURER_SUB_INDUSTRIES = frozenset(
+    [n for n, c in GICS_FINANCIAL_CODES.items() if c in ARTICLE_7_CODES]
+)
 
 HOLDING_PHRASE = re.compile(
     r"\b(?:(?:bank|financial|savings and loan|savings) holding compan(?:y|ies)|BHCs?|FHCs?|SLHCs?)\b",

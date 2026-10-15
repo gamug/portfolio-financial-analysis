@@ -19,6 +19,7 @@ from datetime import date, timedelta
 from typing import Any
 
 from api import orchestrator
+from kg_schema.company_profile import profile_as_of
 from kg_schema.db import connect_ro
 from kg_schema.env import universe_database_path
 from kg_schema.queries import (
@@ -325,6 +326,55 @@ def _early_rows(fin: Any) -> list[str]:
             f"{early_filings['n']} filings before {FILINGS_SINCE} (first {early_filings['d']})"
         )
     return problems
+
+
+def leaver_profile_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
+    """Every line's company profile and sector (T-153d).
+
+    (a) **every line ``members_over_range`` returns** -- a current member, a company that left, and a
+    company that left and rejoined (ILMN) -- that has a stored filing has an APP-00 profile that
+    **covers each of that filing's period ends**: a period end before 2022 (a 10-K filed in 2022) and
+    one up to its exit are both inside a leaver's own interval, and a member's open interval covers
+    its whole window, so a company the checklist's table predates is caught here (``T-153`` part 3b);
+    (b) no ``sectors`` row has an empty name (``sync_universe`` must not create one for a line the
+    delivered universe file leaves unclassified), and every line the file classifies has a sector on
+    its asset -- a line with neither (MBC, FTRE, PHIN) is allowed to have none.
+    Returns ``(lines, filings, problems)``; both connections are read-only."""
+    with (
+        contextlib.closing(connect_ro(fin_db_path)) as fin,
+        contextlib.closing(connect_ro(universe_path)) as universe,
+    ):
+        problems: list[str] = []
+        empty = int(fin.execute("SELECT COUNT(*) FROM sectors WHERE name = ''").fetchone()[0])
+        if empty:
+            problems.append(f"{empty} sectors rows have an empty name")
+        end = date.today().isoformat()
+        lines = filings = 0
+        for w in members_over_range(universe, fin, WINDOW_START, end):
+            lines += 1
+            row = fin.execute(
+                "SELECT id, cik, sector_id FROM assets WHERE UPPER(ticker) = ?",
+                (w.member.symbol.upper(),),
+            ).fetchone()
+            if row is None:
+                continue  # the line has no asset yet: nothing was ingested for it
+            stored = fin.execute(
+                "SELECT period_end FROM sec_filings WHERE asset_id = ?", (int(row["id"]),)
+            ).fetchall()
+            # The delivered file classifies this line, so the asset must carry its sector -- the
+            # one path from the file to the SECTOR score (T-153 part 3b, D5). A file that carries
+            # no label for the line (a scratch universe) asks nothing of it.
+            if stored and w.member.gics_sector and row["sector_id"] is None:
+                problems.append(
+                    f"{w.member.symbol}: the universe file gives it a sector but the asset has none"
+                )
+            for filing in stored:
+                filings += 1
+                period_end = str(filing["period_end"])
+                profile = profile_as_of(row["cik"], period_end)
+                if profile is None or not profile.covers(period_end):
+                    problems.append(f"{w.member.symbol}: no profile covering {period_end}")
+        return lines, filings, problems
 
 
 def scope_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
@@ -1258,6 +1308,32 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153c", t153c)
+
+    def t153d() -> None:
+        universe_path = universe_database_path()
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        lines = filings = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_lines, n_filings, problems = leaver_profile_problems(path, universe_path)
+            lines = max(lines, n_lines)
+            filings = max(filings, n_filings)
+            bad += [f"{prefix}{m}" for m in problems]
+        report(
+            "T-153d",
+            "FAIL" if bad else "PASS",
+            f"company profiles vs {universe_path}: {lines} lines, {filings} filings; "
+            + (
+                "; ".join(bad[:6])
+                if bad
+                else "every filing is covered by its profile, no empty-named sector"
+            ),
+        )
+
+    check("T-153d", t153d)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

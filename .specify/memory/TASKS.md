@@ -770,8 +770,10 @@ the final pilot, `T-143`.
       afterward. → `PLAN.md` Work item 8 acceptance criteria.
 - [ ] **T-153** The historical universe (after `T-071`, the last task of Work item 8, and before Work item 19; a prerequisite of `T-100`; needed for PER-10 and PER-11;
       review points 1 and 4 of `phase3_decisions.md` §9–§10 and `checklist_v1.3.md` L-11). → `PLAN.md` Work item 8, step 15.
-      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history.db`, built by data-mining PR #49.
-        Never overwrite the pilot's `universe.db`.
+      - Point `KG_UNIVERSE_DB` at `/workspaces/thesis/data/universe_history_gics.db` (data-mining
+        PR #51: `universe_history.db` with the leaver stints' GICS filled; sha1
+        `db5b16290b03a191b55215e8b98fc893a93f0e5b`), built by data-mining PR #49. Never overwrite
+        the pilot's `universe.db`.
       - **Done 2026-10-14, PR #158 (part 1).** `valid_to` is the last day of membership (the day before the
         removal takes effect, inclusive; confirmed against data-mining's builder, `universe_history.py:245`, and
         its own `>=` reader): `kg_schema/queries.py:138` `members_asof` reads `valid_to >= ?` (it read `valid_to > ?`,
@@ -829,7 +831,14 @@ the final pilot, `T-143`.
         separately), from 2019-01-02: `quant`'s 756-day `lookback_days` before 2022-01-03. The user sends it
         with the GICS request. Fallback if a line cannot be obtained: declared under PER-11 with the unpriced
         names' measured index weight and the direction of the bias, naming each one an acquisition target or a
-        failure (SIVB, SBNY, FRC).
+        failure (SIVB, SBNY, FRC). **Feasibility (data-mining, 2026-10-14/15): PASS WITH LIMITATIONS** — 33
+        of the 35 lines delivered in full (2019-01-02 → index exit), one **declared exception** (ANSS, below)
+        and two lines **unobtainable**: **INFO** (Tiingo's `INFO` is a reused 2024→ ETF, so no IHS Markit
+        history) and **WRK** (one row, no WestRock history). The **licence is pending Tiingo's written answer**
+        (the free tier is internal-use-only; nothing has been committed). The PER-11 declaration states
+        **INFO's and WRK's index weight, stint dates and exit type** — both acquisitions (IHS Markit by S&P
+        Global; WestRock into Smurfit Westrock) — so the bias direction is stated. Report
+        `/workspaces/thesis/handoff/task_b_feasibility_report.md`.
       - **The leavers' GICS source (decided by reviewer A, 2026-10-14):** Wikipedia's "List of S&P 500
         companies" as of each stint's exit. Per stint, take the last revision that still lists the company,
         dated on or before its `valid_to`. Find the row by CIK, copy the sector and sub-industry names as
@@ -876,14 +885,39 @@ the final pilot, `T-143`.
           statuses, per its entry. verify_pilot's T-153c check; SPEC 1.20.0. Still open from 3a: **SBNY and
           FRC** enter with no fundamentals — their index weight is measured with part 3b's price fallback,
           and no substitute source is invented.
-        - **Part 3b (the GICS is delivered; its GICS-keyed steps can start):** the insurer, other financial
-          firm, REIT and regulated-utility steps and the SECTOR score, the pre-2023 labels, the SIC check,
-          the declaration, and the merge of 3a's staged `docs/leaver_company_types.csv` rows into
-          `company_types.csv` / `company_profile.csv` (with each leaver's profile interval). The replay
-          re-run still waits for `T-071`, and the price fallback's declaration for the prices request. The
-          **D6 method gap**: `HOLDING_PHRASE` cannot match a bank that is itself the registrant (ZION, a
-          national bank since 2018, so no holding-company sentence exists), so part 3b checks the bank
-          leavers by hand or tightens the method.
+        - **Done 2026-10-15, PR #168 (part 3b).** Every company that left the index gets the same APP-00
+          profile a current member has, in the tracked `src/kg_schema/data/company_profile.csv` — now
+          **584 rows** (495 table + 84 leaver + 5 later joiner), one per CIK. The 84 leaver rows are
+          5 Article 9 (CMA, SIVB, ZION, PBCT, DFS), 1 Article 7 (LNC), 78 operating, 3 REIT (DRE, VNO,
+          AVB), **3 multi-class** (the last 10-K cover's common classes: BIO, TAP, UA/UAA — 18 covers
+          register more than one security, notes and preferred series included) and 0 regulated utility
+          (no leaver is in the Utilities sector); each leaver's interval is `valid_from` 2020-01-01 and
+          `valid_to` **the day after its last membership day** (the profile's `valid_to` is exclusive,
+          the universe file's is the last membership day inclusive). The **5 later joiners** the
+          checklist's table predates are merged under the **current-member rule** (TWLO, VYLR, BE, P,
+          ILMN; the table is built from a database's `assets`, so ILMN — which left in 2024 and rejoined
+          — has its 2022-2024 membership covered too). **SBNY and FRC are untyped**, declared: no 10-K
+          or 10-Q exists, and APP-00's other-financial codes do not include the bank codes. **PBCT's
+          `Thrifts & Mortgage Finance`** is the only leaver label outside **C5**'s current structure
+          (C5 p.11: the Banks group has 40101010/40101015 only), resolved from its own 10-K with no
+          guessed code. **LNC's Article 7** is confirmed on its FY2022 10-K (`0000059558-23-000009`:
+          `PremiumsEarnedNet` present, no `AssetsCurrent`). The **SIC check** (D6) reports 3
+          disagreements (FRC, MOH, PBCT) and changes no label. `T-100` points `KG_UNIVERSE_DB` at
+          `universe_history_gics.db`. verify_pilot's **T-153d** check (every line `members_over_range`
+          returns: each stored filing's period ends are covered by its profile); SPEC 1.22.0.
+        - **Part 3c (decided by reviewer A, 2026-10-15): an unpriced member is ineligible on a cycle
+          date.** "Unpriced" means no usable price observation under `MAX_OBSERVATION_AGE_DAYS`, so a
+          holiday or a one-day gap does not exclude a name. It is recorded as a **data gap like
+          `UNSCORED`** — marked in `cycle_ranking` with the rule named and **no `veto` row written**, so
+          the backtest credits no rule — and it counts **with** the unscored ones against `cycle`'s
+          `unscored_max_share` (0.05), the run's record reporting unscored and unpriced **separately**.
+          Found on part 3b's R4 copy: `cycle select` on 2023-03-31 held **CMA (3.4%) and DFS (3.9%)**
+          with no price data at all (`cost_basis` NULL), because a member with a FUNDAMENTAL score is
+          eligible and the price vetoes read a missing observation as "could not tell". Its
+          **measurement** — per weekly replay date, the unpriced members named and classed
+          **Tiingo-dependent** (one of the 33 deliverable lines) or **permanent** (INFO, WRK, a
+          failure's last days) — **feeds the PER-11 declaration**; the full unscored share is measured
+          in `T-100`'s own run. Brief `/workspaces/thesis/handoff/T-153p3c_task.md`.
         - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
           before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
 
@@ -1010,6 +1044,18 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
+      **Delisting-return policy inputs (Shumway 1997; reviewer A, 2026-10-15).** How a position closed by
+      an index exit or a halt is valued is decided in this task; its inputs are recorded here. The
+      feasibility step's **exit-event table** — one row per unpriced line: the index-exit event, any later
+      delisting, the first OTC trade after it and the consideration — is in
+      `/workspaces/thesis/handoff/task_b_feasibility_report.md` §7, with every deal's terms **cited from
+      the company's own filings** (form, accession, verbatim quote). The **contingent rights** to value:
+      **WBA** $11.45 cash + a Divested Asset Proceeds Right of up to $3.00 (8-K 2025-07-11
+      `0001193125-25-158216`); **HOLX** $76.00 cash + a CVR of up to $3.00 (cash take-private,
+      Blackstone/TPG, 2026-04-07); **ABMD** $380.00 cash + a CVR of up to $35.00 (8-K 2022-11-01
+      `0001193125-22-274497`). **ANSS is the declared exception**: its last real trade (374.30, 2025-07-16)
+      is **5.01% below** the deal value ($197.00 cash + 0.3450 SNPS = 394.06) and it is kept **as traded**.
+      How each counts is decided here, not in `T-153`.
       **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
       ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
       statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the

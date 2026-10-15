@@ -8804,3 +8804,203 @@ The 3 added to `LEVERAGE_EXTREME` are CCI, SBAC and WYNN (D2's negative-equity s
 removed from `NEGATIVE_FCF` are the overlay's utilities (AEE, ATO, AWK, CNP, DUK, EIX, ETR, EVRG,
 EXC, FE, LNT, NI, PCG, PNW, PPL, SO, SRE, WEC, XEL); AES and NRG stay vetoed (outside the overlay).
 `DATA_QUALITY` 6 → 3 is D1 (CCI, SBAC, WYNN leave it).
+
+## T-153 part 3b — the leavers' classification: type, overlays, sector and interval
+
+**Stream B, Work item 8.** Parts 1 (`valid_to`, PR #158), 2 (a renamed company is one asset, PR
+#161) and 3a (the ingestion scope, PR #166) are done; part 3b is the classification. The reviewer's
+rulings of 2026-10-14 (D1–D8, and the two follow-ups of 2026-10-15) are the brief.
+
+**The change.** Every company that left the index in the window gets the same APP-00 profile a
+current member has, from cited sources and valid over the dates its filings need.
+`scripts/leaver_company_types.py` stages the evidence (`docs/leaver_company_types.csv`): the last
+10-K's own Article 9 statement, the **delivered** GICS label of the stint that ends on its last
+membership day with its Wikipedia revision (`universe_history_gics.db`, data-mining PR #51), and the
+**cover page's registered symbols** (the inline-XBRL `dei:TradingSymbol` facts).
+`scripts/build_company_profile.py` merges it into the tracked
+`src/kg_schema/data/company_profile.csv`, which now holds **one row per CIK** — 495 current + 84
+leaver rows = 579 — assigning the type with APP-00's own `classify()` and the REIT overlay with
+`is_reit()` (the same functions the 500 current rows use), and writing each row's own interval. A
+leaver's interval is `valid_from` **2020-01-01** (ID-20's window, L-03's floor) and `valid_to` the
+**day after its last membership day**, so `covers()` — `valid_from <= day < valid_to`, asked with the
+filing's **period end** (`fundamental_agent/db.py:1670`, `agents.py:521`) — holds for every period
+end of its D-10 filings and the profile is not applied after the exit. The SECTOR score needs no
+change: a leaver's `assets.sector_id` comes from the delivered file at `sync_universe`
+(`fundamental_agent/db.py:337` → `_upsert_sector` → `cycle/orchestrator.py:341` → `scores/sector.py`).
+
+**D1 — option (b): the merge, not a regenerated `company_types.csv`.** Regenerating the checklist's
+own table from a database moves DB-derived columns on the current rows: measured 2026-10-14 on the
+pilot database, `negative_equity_latest` flips for **PM** (`False` → `True`) and
+`multi_class_listed` for **PSKY** (`False` → `True`), so the leavers' rows are merged as a second
+tracked source instead. The current table's 500 rows keep 495 byte-identical; the five that left
+after it was generated — **BLDR, CTVA, TAP, TTD, WBD** — are **replaced** by their own leaver row
+(their own interval and label; WBD's and CTVA's `multi_class_listed` also gain the cover-page
+reading). No hand-edited generated file: only the scripts read `docs/checklist_sec/`, the runtime
+keeps reading the tracked profile, and the tests read the tracked profile plus the staged file.
+
+**The mirror of the leavers: the members that joined after the table was generated (fix round).**
+Checked against the delivered file's **open** stints, five current members have no row in the
+checklist's table, because the table is generated from a database's `assets` and they joined later:
+**TWLO** (2026-10-06), **VYLR** (2026-10-01), **BE**, **P** and **ILMN** (2026-09-21). ILMN matters
+most: it left on 2024-06-23 and rejoined, so it is not one of the 86 leavers, but it was a member
+2022-01…2024-06-23 and its filings in that window are scored. `scripts/new_member_company_types.py`
+stages them (`docs/new_member_company_types.csv`, the open stints whose CIK the table does not hold)
+and `build_company_profile.py` merges them under the **current-member rule** (L-03: the open stint's
+label, the 10-K's own Article 9 statement, the **live** ticker list for the multi-class overlay, an
+**open** interval from 2020-01-01) — never by regenerating the checklist table. All five are
+`operating` (their 10-Ks carry no bank/financial-holding statement; VYLR has no 10-K and its label is
+Agricultural Products & Services, a non-bank one) and none is multi-class (the live lists are single).
+The profile now holds **584 rows**: 495 table + 84 leaver + 5 later joiner. verify_pilot's **T-153d**
+was widened from the leavers to **every line `members_over_range` returns**, so a line the table
+predates is caught (measured on the R4 copy: 36 lines, 578 filings, PASS), and a unit test pins the
+rejoined-member case.
+
+**D2 — the labels outside C5's current structure: one.** C5 (`C5_GICS_Methodology.pdf`, April 2026,
+sha256 `c5972363…`, verified against `docs/checklist_sec/sources_register.md:78`) lists **163
+sub-industries** (§1.2 The GICS Structure, pp.7–13). Of the leavers' **51 distinct labels**, exactly
+**one** is not in it: **`Thrifts & Mortgage Finance`** (PBCT, exit 2022-04-03) — C5 p.11 gives the
+Banks industry group `40101010 Diversified Banks` and `40101015 Regional Banks` only, with no
+`401020` industry. It is resolved per company from its own 10-K (APP-00's Article 9 row: "is a bank
+holding company and a financial holding company registered under the Bank Holding Company Act"), and
+`gics_code` stays **empty** — no code is guessed for a label the current structure does not carry.
+The reviewer's other example, `Data Processing & Outsourced Services`, **is** in C5's structure
+(Industrials, `20202030`; the discontinued 2023 item is the *Information Technology* sub-industry
+`45102020` of that name), and no leaver carries it, so it decides nothing here.
+
+**D3 — the types.** Article 9 by the 10-K's own statement: **CMA, SIVB, ZION, PBCT, DFS** (5).
+Article 7 by GICS 40301030: **LNC** (1). Operating: everyone else (78), including **MKTX** —
+APP-00's operating row names 40203040. REIT overlay: **DRE, VNO, AVB** (3). Regulated utility
+(D-13): **none** — no leaver is in the Utilities sector, so the four GICS names the proxy lists match
+no leaver. **DFS wins Article 9 over "other financial"**: APP-00's Article 9 row "Includes holding
+companies classified elsewhere by GICS … that state they are bank or financial holding companies",
+and its own sentence ("We are a bank holding company under the Bank Holding Company Act of 1956 …")
+is staged. **LNC's Article 7 statement form is confirmed on the ingested facts** (reviewer A's follow-up,
+corrected in the fix round): APP-00 says "confirmed by the **10-K's** statement form", and LNC's last
+10-K on or before its exit is **`0000059558-23-000009`** (FY2022, period end 2022-12-31, filed
+2023-02-16) — not the 10-Q `0000059558-23-000047` the first measurement used. It carries
+`us-gaap_PremiumsEarnedNet` and **no** `us-gaap_AssetsCurrent`, so `premium_statement_form(facts)` is
+`True` (measured on the R2 copy; the 10-Q carries the same shape, 89 vs 97 stored facts). The
+profile's `basis` now cites that accession and those two facts
+(`STATEMENT_FORM_CONFIRMED` in `scripts/build_company_profile.py`), so an insurer whose form has not
+been measured yet keeps the "confirmed on the run that ingests its filings" wording. The 10-K method's gap (`HOLDING_PHRASE` cannot match a bank that is itself the registrant)
+is **not** widened: every bank leaver was checked by hand (CMA, SIVB, PBCT, DFS and ZION's own "is a
+bank headquartered in Salt Lake City" sentence are the staged evidence; the method's false positive
+on DRE was already removed in part 3a), and no current member's type is touched.
+
+**SBNY and FRC keep no row (reviewer A's ruling).** They have **no 10-K or 10-Q on EDGAR** at all, so
+no Article 9 statement exists, and APP-00's other-financial codes (`40201020/40/50/02010/03010/
+03020/03030/04010`) do not include the bank codes `40101010/40101015`; the code's
+`other_financial` fallback is **not** used. Their type stays unknown — every metric they would have
+is flagged `company_type_unknown` — and they have no filings, so nothing is measurable. The rule is
+in `scripts/sec_xcheck/company_types.py:BANK_SUB_INDUSTRIES` and the omission is printed by the
+generator.
+
+**The interval convention (reviewer B's fix round).** The profile's ``valid_to`` is **exclusive**
+— the day after the last membership day, because ``CompanyProfile.covers`` is
+``valid_from <= day < valid_to`` — while ``universe_history.db``'s ``valid_to`` is the last membership
+day, **inclusive**. The generated CSV's header says so, and a boundary test pins it: a leaver's profile
+covers its last membership day and not the next.
+
+**D4 — the interval, on the real data.** The earliest period end among the leavers' D-10 filings is
+**2021-11-28** (LW and CAG, whose fiscal years end in late November), and the latest is at or before
+each exit (e.g. MOH 2025-12-31 with exit 2026-03-22), so `valid_from` 2020-01-01 covers every filing
+and `valid_to` = exit + 1 day bounds it. A late joiner needs the same floor: BLDR joined 2023-12-18
+but is scored on filings with 2021-12-31 period ends, which part 3a's D-10 window ingests.
+`db.py:1524` (`is_equity_reit`) asks with no date, so it skips the interval check and returns the
+CIK's own row — right for a leaver: APP-04/04b/04c must apply to its filings.
+
+**D5 — the sector and the SECTOR score.** The path is the delivered file →
+`members_over_range` (`kg_schema/queries.py:215`) → `sync_universe` (`fundamental_agent/db.py:337`,
+`pricing_agent/db.py:162`) → `_upsert_sector` (`db.py:361`) → `assets.sector_id` → `cycle/data.py:50`
+→ `orchestrator.py:341` → `scores/sector.py:27` → the SECTOR `score_snapshot`. **MBC, FTRE and PHIN**
+are the three stints the delivered file leaves unclassified (one-to-four-day spin-off members the
+page never listed): `_upsert_sector(conn, "")` returns `None` **before** the INSERT
+(`db.py:362-363`), so no empty-named `sectors` row is created (measured: none) and their asset has no
+`sector_id` → no SECTOR score; they have no filing in the window either, so no FUNDAMENTAL score.
+**T-100's pointer is a docs line, not a default**: `TASKS.md`'s first T-153 bullet and
+`PLAN.md:1139` now name `/workspaces/thesis/data/universe_history_gics.db`; `KG_UNIVERSE_DB`'s
+packaged default (`src/kg_schema/env.py:21`, the pilot's `universe.db`) is unchanged.
+
+**D6 — the SIC check, a check only.** `scripts/leaver_sic_check.py` → `docs/leaver_sic_check.json`:
+of the 86 leavers, **11** carry one of the four types the request names, and **3 disagree** with the
+SEC's SIC code — each opened, **no label changed**:
+
+* **FRC** — its submissions file carries **no SIC at all** (`sic: ""`); nothing to compare, declared.
+* **MOH** — SIC **6324** (Hospital & Medical Service Plans) against the label *Managed Health Care*:
+  APP-00 classifies Managed Health Care as an **operating** company (`checklist_v1.3.md:230`), so the
+  SIC is the misleading side and the label stands — the "check, never a source" case.
+* **PBCT** — SIC **6035** (Savings Institution, Federally Chartered) against *Thrifts & Mortgage
+  Finance*: the request's band is `602x` and a thrift's code is `603x`, so the disagreement is the
+  band's edge, not the label; PBCT's type is Article 9 by its own statement either way.
+
+**D7 — the declaration (L-03 / L-11, for the checklist's next version).** *Leavers carry the
+classification in force on their last membership day; current members carry today's snapshot; a
+reclassification after an exit is not applied.* With it:
+
+* **the 3 unfilled stints** — MBC, FTRE, PHIN, the one-to-four-day spin-off members the Wikipedia
+  page never listed; they carry no type keyed on GICS beyond `operating`, no sector and no filing;
+* **the one pre-2023 label** — PBCT's `Thrifts & Mortgage Finance`, resolved from its own 10-K;
+* **the multi-class overlay is the cover page of the last 10-K on or before the exit** — the SEC's
+  point-in-time class list, not the submissions file's live `tickers` (which shows the company as it
+  is today) — and it counts **classes of common stock only** (MKT-03; C6 p.9, C11): a cover row is a
+  class when its `dei:Security12bTitle` names common stock (Class A/B/C included), never when it names
+  a note, debenture, preferred or depositary share, a warrant or a right. **3 leavers** are
+  multi-class under it: **BIO** (Class A/Class B), **TAP** (`TAP.A`/`TAP`) and **UA/UAA** (Class A/
+  Class C). Reviewer B's fix round: the first measurement counted **every** registered security, which
+  made 18 leavers multi-class and 15 of them wrong — **K, LNC, VFC, ZION, SIVB, VNO, BWA, EMN, LKQ,
+  CE, PBCT, WBD, WBA, DXC and CTVA** each had a note series (K, VFC, BWA, EMN, LKQ, CE, WBA, DXC,
+  WBD's WBDI30/WBDI33), a preferred series (ZION, SIVB, PBCT, CTVA's CTAPrA/CTAPrB), a depositary
+  share (LNC's `LNC PRD`) or a Series L–O preferred (VNO) beside their common stock, and are **not**
+  multi-class. **The current members' rows still count every listed ticker** (the submissions file's
+  `tickers`: 75 rows) — a **temporary difference**, declared here: the leavers count common classes
+  only, the current members count every listed ticker until `T-071` part 2b revisits their rule
+  (stream A's). **CIK 0001437107's row is WBD's**: its last 10-K is the FY2025 one (cover: WBD,
+  WBDI30, WBDI33 — one class), so DISCA/DISCK's 2022 classes do not count for it;
+* **3 leavers' cover-page class sets changed inside the window**
+  (`scripts/leaver_cover_classes.py` → `docs/leaver_cover_classes.json`, 865 filings read, the changes
+  computed on the common-equity classes): BIO (`BIOb` → `BIO.B`, a spelling of the same class),
+  CDAY/DAY (the rename `CDAY` → `DAY`, already one asset in `ticker_history`) and **DISCA/DISCK/WBD**
+  (the merger: DISCA, DISCB, DISCK → WBD) — the only economic class change; the overlay takes the set
+  in force at the exit. The note/preferred churn that the raw symbols showed (TAP, K, VFC, EMN, LKQ,
+  CE, LNC, WBA) is not a class change and is gone from this list;
+* **the 2 untyped** — SBNY and FRC (above);
+* **the 5 replaced rows** — BLDR, CTVA, TAP, TTD, WBD (above).
+
+**R4 — the SECTOR score on a real cohort.** `cycle select` refused the early dates for their unscored share (a 36-line scratch cohort of the 12 sample leavers + 24 current members, the limit 5%): 2022-06-30 9/35 (25.7%), 2022-07-29 8/35, 2022-09-30 6/35, 2022-12-30 2/34 (5.9%); the first date that runs is **2023-03-31**. There the leavers' sectors come from the delivered file and five carry a SECTOR score — ZION (TECHNICAL -1.06 → SECTOR -1.06, normalized 34.98), LNC (-1.42 → 30.07), MKTX (0.83 → 61.06), TAP (0.45 → -0.61 → 41.24) and LW (1.67 → 0.61 → 58.06) — while the six the pricing gateway serves no candles for (CMA, DFS, AVB, DRE, PBCT, SIVB) have no TECHNICAL score and therefore none: the declared price gap. VNO's SECTOR rows sit on its own membership dates (2022-06-30 … 2022-12-30), whose *selections* the guard refused but whose score steps had run. The early refusals are an artefact of a 16/36-line scratch cohort, not of the classification: the one unscored name, AVB, is unscored for a REIT's empty leverage pillar (`capture_failure,missing_input` — MET-07's declared debt-map limitation), which is true on every date and independent of part 3b.
+
+**D8 — point-in-time and the read contract.** A leaver's profile and sector change no current
+member's profile, metric inputs, score or ranking: R3 diffs the 10 current members' stored
+`sec_filings`, `fundamental_metrics`, FUNDAMENTAL and SECTOR `score_snapshot`, `price_daily`,
+`assets` and `sectors` rows between the branch and `master` on two copies of the same starting
+database and finds them identical. No `v_*` view changes (there is no profile view) and no table or
+column is added: **no migration, contract stays 16**.
+
+**The market-cap overlay is a flag, never the classes (reviewer A's follow-up).** MKT-03's reader,
+`kg_schema/market_cap.py`, takes the share counts **from each filing's own cover**
+(`queries.cover_share_rows` → `_filing_counts` → `cover_total`, `market_cap.py:161-236,345`) — the
+filer's own total when it filed one, else its classes summed, converted only for the CIKs
+`CLASS_LISTING`/`CLASS_CONVERSION` cite — and it never reads the profile: the only "multi_class" in
+the module is `n_multi_class`, a count of the classes it summed (`market_cap.py:92`). The profile's
+overlay is read in exactly one place, `applicability.active_columns`
+(`kg_schema/applicability.py:83`), where it adds the matrix's `multi_class` column (ADJ on the six
+MKT-03 metrics). Worked example, Discovery's FY2021 10-K (`0001437107-22-000031`, period end
+2021-12-31, available 2022-02-25) on a date before 2022-04-11: its cover files three classes of
+common stock (DISCA, DISCB, DISCK; MKT-03's reader takes them from the filing's own cover counts) —
+`us-gaap:CommonClassAMember` 169,580,151, `us-gaap:CommonClassBMember` 6,511,917,
+`us-gaap:CommonClassCMember` 330,153,753, as of 2022-02-10 — which `cover_total` sums to
+**506,245,821** shares (`n_classes` 3); the close is the asset's last one on or before 2022-03-31,
+**24.92**, and the cap is **12,615,645,897.94**, flagged `incomplete_classes` (Discovery is not in
+`CLASS_LISTING`, so one close prices the three summed classes — MKT-03's own declared
+approximation). The DISCK asset has no price (`no_recent_price`) — the leaver price gap the prices
+request covers.
+
+**Files.** `scripts/build_company_profile.py`, `scripts/leaver_company_types.py`,
+`scripts/leaver_cover_classes.py`, `scripts/leaver_sic_check.py`,
+`scripts/sec_xcheck/company_types.py` (`BANK_SUB_INDUSTRIES`/`INSURER_SUB_INDUSTRIES`),
+`scripts/verify_pilot.py` (T-153d), `src/kg_schema/data/company_profile.csv`,
+`docs/leaver_company_types.csv`, `docs/leaver_cover_classes.json`, `docs/leaver_sic_check.json`,
+`.specify/memory/{TASKS,PLAN}.md` (the pointer), SPEC 1.21.0 (FR-001/FR-005/FR-012). No migration:
+no table or column changes (contract stays 16). Tests: `tests/test_leaver_profile.py`,
+`tests/test_build_company_profile.py`, `tests/test_leaver_company_types.py`,
+`tests/test_leaver_sic_check.py`, `tests/test_verify_pilot_t153d.py`, `tests/test_company_profile.py`,
+`tests/test_db.py`.
