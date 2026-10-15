@@ -313,21 +313,30 @@ group it was standardized against (`n_<signal>`: 5 or more is the sector, otherw
 definition in "Price vetoes and TECHNICAL v2 (T-070)" above. `mom_12_1(obs)` and `sector_z(values, sectors)`
 are public and tested on their own.
 
-### `scores/valorization.py` — `SCORE_TYPE = "VALORIZATION"`, `compute(metrics) -> list[RawScore]`
+### `scores/valorization.py` — `SCORE_TYPE = "VALORIZATION"`, `VERSION = "valorization-v2"`
 
-Proposed. Factor blend: **value** .45 (`valuation.free_cash_flow_yield`,
-`valuation.enterprise_fcf_yield`, synthetic `earnings_yield` — N2 / MET-05, T-149: the **positive part** of the
-trailing-year net income over the as-of market cap, `max(NI, 0) / cap`, so a loss-maker contributes 0, the
-lowest yield, never a negative one; the trailing-year net income is `inputs.net_income_ttm` of the filing's
-`profitability` metric rows — a 10-K's fiscal year or a 10-Q's real trailing twelve months, none for a 10-Q that
-could only be annualized as one quarter × 4, and none when `profitability.return_on_assets` is quarantined — read by
-`data.latest_trailing_net_income`; the valorization step records how many names got a yield, `earnings_yield`, and
-how many are the Fama–French negative-earnings dummy, `negative_earnings`; before T-149 the step read a
-`profitability.net_income` metric that does not exist, so the value factor ranked without it), **quality** .40
-(`profitability.return_on_equity`, `roic.return_on_invested_capital`,
-`cashflow.free_cash_flow_margin`, low `leverage.debt_to_equity`), **size** .15
-(synthetic `neg_log_market_cap`). Each factor = mean of its available sub-metric
-percentiles.
+**v2 (T-071 part 2b, D2)**: value only, priced on the **analysis date** (MKT-01). Four measures, each
+on the filing's own *value inputs* (D1's `rule_input` row, read by `data.value_inputs`) and the market
+cap on D (`data.market_cap_estimates`):
+
+| measure | formula | edge cases |
+|---|---|---|
+| `earnings_yield` | `max(net income, 0) / cap` | MD-39, MET-05: the positive part; the negative-earnings dummy is counted, never ranked |
+| `book_to_market` | `book equity / cap` | a non-positive BE is left out, flagged `book_equity_nonpositive` (C4 p.15) |
+| `ebitda_to_ev` | `EBITDA / EV` | a non-positive EV is left out (MET-09) |
+| `enterprise_fcf_yield` | `MD-38 numerator / EV` | as EBITDA/EV |
+
+EV = the cap on D + MD-35's bridge (debt + NCI − cash − short-term investments). Applicability is the
+matrix's cell for the measure's own metric (`MATRIX_METRIC`) on the member's APP-00 profile plus the
+D-13 regulated-utility overlay (NA = *not applicable*, never "missing"; ADJ keeps the value and
+records the rule). A measure whose carrier metric (`CARRIERS`) the Ring-1 gate quarantines is
+dropped. Each measure is winsorized at DQ-02's 0.5% per tail and ranked across the cohort; the raw
+score is 100 × the equal-weight mean of the present measures' percentiles, and a score needs at
+least `min(2, applicable)` present measures — otherwise `raw_value` is NULL, never a neutral 50.
+The components carry, per measure, the value, the percentile, the status, the flags and the matrix
+cell, plus the applicable and present counts, the market cap and EV on D, the share and close dates
+and the filing's accession. The v1 factors (quality, size), `_leverage_for_ranking`, the `inf`
+substitution and the neutral 50 are removed; the stored per-filing valuation metrics are unchanged.
 
 ### `scores/sector.py` — `SCORE_TYPE = "SECTOR"`, `roll_up(sector_of, technical_raw, technical_norm)`
 

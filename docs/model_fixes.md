@@ -9007,8 +9007,8 @@ no table or column changes (contract stays 16). Tests: `tests/test_leaver_profil
 
 ## T-071 part 2b — the VALORIZATION score (stream A, Work item 8 step 2)
 
-*(In progress. D6 is recorded below with its numbers; D1, D2, D3, D4 and D5 are added by the same
-work item.)*
+*(The plan is `/workspaces/thesis/handoff/T071c_plan.md`; the measurement is
+`scripts/verify_t071c.py` with its outputs under `/workspaces/thesis/scratch/t071c/out/`.)*
 
 ### D6 — REIT capex completeness, and the D-14 table re-measured
 
@@ -9116,3 +9116,162 @@ production); the recompute deletes and rewrites the `metrics-v7` rows. **Files:*
 `src/fundamental_agent/quality.py` / `fidelity.py` (re-export). Tests:
 `tests/test_capex_resolution.py` (the parent/sibling rule, the extension sum, the outflow and mirror
 refusals, the no-total check, and the non-REIT one-line rule).
+
+### D1 — the value inputs, stored per filing (`fundamental_agent/value_inputs.py`)
+
+VALORIZATION v2 prices its measures on the **analysis date** (MKT-01), so it needs each filing's
+numerators and its enterprise-value bridge independently of any price. `value_inputs.write` stores a
+``rule_input`` row on every filing (10-K and 10-Q) -- the same pseudo-group as D-13's cash-coverage
+input, so no metric consumer, pillar member, applicability-matrix row or prompt ever reads it.
+
+**Every value is the one the filing's metric rows already carry**, read from the results just
+computed: ``profitability.return_on_assets``'s ``net_income_ttm`` (a quarter-times-four,
+``annualized_x4``, gives none), MD-01's persisted ``leverage.ebitda``, the MD-38 numerator (the new
+``md38_numerator`` input of ``valuation.enterprise_fcf_yield``, the value ``valuation._md38`` itself
+returned), ``leverage.debt_to_equity``'s ``equity`` (parent stockholders' equity at the filing's
+balance-sheet date, the value MD-10/MD-15 use) and ``valuation.enterprise_value``'s ``total_debt``,
+``nci``, ``cash`` and ``short_term_investments`` with their ``flag_*`` keys. A missing term is empty
+with its carrier metric's own ``provenance.empty_reason`` (MET-00).
+
+**Book equity's two declared differences from C4**: balance-sheet deferred taxes are **not** added,
+and preferred stock is **not** subtracted (the checklist leaves it pending, as in MD-35). Measured at
+2026-09-22 (`out/book_equity.json`): **34 of the 503 members** file a positive
+``us-gaap_PreferredStockValue``, and its median share of the parent equity the input carries is
+**7.23%** -- so not subtracting it overstates book equity by about that much for those 34.
+
+**The prompt hash is unchanged** (`out/d1_prompt_hash.txt`):
+``_prompt_version_hash("gpt-4o")`` is ``bf2bfb8acb53a6721fcb4426caf2f481151fb3a139faf495eb5b0deb5a12ce44``
+under master's code and under this branch; ``agents.flat_metrics`` carries the metric *values* only,
+and the rule input is not one of them (`tests/test_value_inputs.py` asserts the brief carries none of
+its keys). Engine version unchanged (``metrics-v7``); the recompute rewrites the rows.
+
+### D2 — VALORIZATION v2 (`cycle/scores/valorization.py`)
+
+``valorization.VERSION = "valorization-v2"``, recorded in ``cycle_run.params_json``
+(``valorization_version``) and on the rows (``model``). **Four measures**, each on D1's inputs and the
+market cap **on D** (``data.market_cap_estimates``, T-132):
+
+| measure | formula | source |
+|---|---|---|
+| earnings yield (E/P) | ``max(net income, 0) / market cap`` | MD-39, MET-05 (C4 p.13, p.18): the positive part, the negative-earnings dummy counted, never ranked |
+| book-to-market (B/M) | ``book equity / market cap`` | C4 p.2, p.13 ("BE/ME, the ratio of the book value of common equity to its market value"); C4 p.15 leaves a non-positive BE out, flagged ``book_equity_nonpositive`` |
+| EBITDA/EV | ``EBITDA / EV`` | C10 p.46; EV is MD-35's (market cap on D + the filing's bridge), EBITDA MD-01's |
+| enterprise FCF yield | ``MD-38 numerator / EV`` | MD-38, C10's EBIT form |
+
+The yields are the inverse of the multiples C4 and C10 use -- the same form C4 gives E/P and BE/ME.
+MET-09: a non-positive EV leaves the two EV measures out, flagged (a negative numerator with a
+positive denominator is a valid low value).
+
+**Applicability** is the matrix's cell for the measure's own metric
+(``MATRIX_METRIC``: E/P -> ``earnings_yield``, B/M -> ``market_capitalization``, EBITDA/EV ->
+``enterprise_value``, FCF -> ``enterprise_fcf_yield``) on the member's APP-00 profile, plus the
+regulated-utility overlay. So a financial firm is scored on E/P and B/M only (APP-02, C2 p.27), a
+REIT on E/P (ADJ, APP-04), B/M and EBITDA/EV (MD-38 leaves its FCF yield NA), and a regulated
+utility on E/P, B/M and EBITDA/EV (the user's decision, D-13). NA leaves the measure
+**not applicable**, never "missing"; ADJ keeps the value and records the rule; a member with no
+profile is never guessed (every measure applies). **B/M has no matrix row**: it reads
+``market_capitalization``'s cell -- A for every company type, ADJ for a multi-class one (MKT-03) -- a
+declared limitation, like ``ebitda``.
+
+**The data-quality gate** (``CARRIERS``): E/P <- ``profitability.return_on_assets``; B/M <-
+``leverage.debt_to_equity``; EBITDA/EV <- ``leverage.ebitda`` + ``valuation.enterprise_value``; FCF
+<- ``valuation.enterprise_fcf_yield`` + ``valuation.enterprise_value``. A quarantined carrier drops
+the measure (status ``quarantined``). The market cap **on D** is not a metric -- it is
+``data.market_cap_estimates`` -- so no stored-metric quarantine applies to it; a member without one
+is ``missing_input`` with the flag ``market_cap_missing``.
+
+**The score.** Each measure is winsorized at DQ-02's 0.5% per tail (D3) and ranked across the
+members that have it (``rank_pct``, higher is better). The raw score is 100 x the **equal-weight
+mean** of the present measures' percentiles -- no source gives weights between them (the 1/N
+argument, as T-141 did for the composite). **Coverage**: a score needs at least
+``min(2, the applicable count)`` present measures; otherwise ``raw_value`` is **NULL, never a neutral
+50**. The row is still written with its components (per measure: the value on D, the percentile, the
+status, the flags, the matrix cell and its rule; plus the applicable and present counts, the market
+cap and EV on D, the share date, the close date and the filing's accession). The blend already
+averages over the components it has (``_blended``), so an empty VALORIZATION **reweights** the
+asset's blend, as a missing SEMANTIC does today -- counted in the step's checkpoint
+(``empty``/``scored``) and declared here.
+
+**Removed**: the quality factor (ROE, ROIC, FCF margin, D/E), the size factor,
+``_leverage_for_ranking``, the ``inf`` substitution in ``orchestrator._valorization`` and the neutral
+50. **Unchanged**: the stored per-filing valuation metrics -- MKT-01: "Ratios stored per filing: D =
+the period end"; FUNDAMENTAL and the KG still read them, VALORIZATION no longer does. A financial
+firm is scored on the two equity multiples C2 p.27 names; **ROE is not added** (VALORIZATION is value
+only and ROE sits in FUNDAMENTAL's profitability pillar) -- declared.
+
+**Measured at 2026-09-22** (``out/``): 503 members, 481 scored (``coverage.json``); **22 empty**
+(4.4%), of which 4 have no market cap on D -- so the empty share **excluding** those is
+**18/503 = 3.58%**, under the plan's 5% stop. The reasons are one present measure only
+(``earnings_yield:missing_input`` 11, ``book_to_market:quarantined`` 9, ``book_to_market:missing_input``
+1, ``earnings_yield:quarantined`` 1). Old (v1) vs new (v2) at that date
+(``valorization_compare.json``): **Spearman 0.564** over the 481 both sides score; the **top-30
+overlap is 16**; the top-decile overlap 18 of 50. The **financial firms' tilt** (D6, reported not
+decided): 10.1% of the members, **24% of the top decile before -> 46% after**; their median rank
+135 -> 59. The top decile's sector mix moves from Financials 17 / IT 7 / Consumer Discretionary 7 to
+Financials 27 / Energy 5 / Consumer Discretionary 4.
+
+### D3 — DQ-02 in the normalization (`cycle/scores/normalize.py`)
+
+``_winsorize`` becomes the public ``winsorize``: it trims ``floor(0.005 x n)`` values per tail and
+returns the cohort untouched when ``n < 200`` -- the count is a **floor**, never ``max(1, ...)``, so
+a 21-name cohort is no longer winsorized at 5% per tail. The default fraction of
+``cross_sectional_z``/``normalized_scores`` becomes 0.005, so every score type they normalize
+(TECHNICAL, VALORIZATION, SEMANTIC, the sector momentum, FUNDAMENTAL) follows DQ-02, and
+VALORIZATION winsorizes each of its four measures with the same function before ranking them.
+
+**Measured at 2026-09-22** (``dq02.json``): VALORIZATION n = 481, **2 values trimmed per tail** (9 at
+2%), **0 members move by more than one point**, the largest move 0.13. **TASKS.md's estimate (at
+n = 495, 245 members move by more than a point) is not reproduced**: it was computed on the pilot's
+*v1* stored cross-sections, whose heavy tail the v2 measures do not have (each measure is a ratio on
+D1's inputs, winsorized before ranking). The copies hold **no** TECHNICAL component
+(``price_observation`` is at ``priceobs-v1``, whose rows carry no ``realized_vol_90d`` /
+``max_drawdown_90d`` -- the step scored 0 of 503), so the copies' TECHNICAL/SEMANTIC/FUNDAMENTAL
+winsorizing tables are empty; declared, and the copies' blend is FUNDAMENTAL + VALORIZATION on both
+sides (like with like).
+
+### D4 — N9: the ranking reads its own cycle's FUNDAMENTAL normalization (`cycle/orchestrator.py`)
+
+``_normalize`` writes FUNDAMENTAL's normalized score onto the shared filing snapshot row (an
+``UPDATE`` by id) and the contract keeps that declaration (the stored value is the last cycle's; the
+per-cycle value is ``v_cycle_ranking_component.component_value``). ``_rank`` no longer reads it back:
+it recomputes the same normalization with the same function, rows and weights
+(``_fundamental_normalization`` = ``data.latest_fundamental_rows`` + ``data.fundamental_value_under``
++ ``normalized_scores``). A run resumed at ``rank`` after another cycle date ran in between (``cycle
+backfill`` resumes from checkpoints) would otherwise blend the other date's value. No view change.
+
+Hermetic test: D1 runs uninterrupted (the baseline), D2 (a later date whose cohort has one more
+member, so its normalization differs) overwrites the shared rows, D1 is resumed at ``rank``, and its
+ranking equals the baseline. Verified to **fail against master's code**
+(``out/d4_control_fails_on_master.txt``).
+
+### D5 — the multi-class flag of the current members (`docs/multi_class_covers.csv`)
+
+The checklist's ``company_types.csv`` counted **every listed security** on the cover, so **75**
+current rows carried ``multi_class_listed = True`` (JPM, BAC, DUK, SO, NEE, T...). MKT-03's
+multi-class company has **more than one class of common stock outstanding**, listed or not
+("unlisted share class lines are included"); a registered note, debenture, preferred or depositary
+share is not a class (C6 p.9, C11). ``scripts/multi_class_covers.py`` stages each current member's
+newest 10-K cover into ``docs/multi_class_covers.csv`` (cik, ticker, accession, each class's member
+and count, ``n_common_classes``, ``multi_class``) -- the classes ``kg_schema.market_cap`` counts as
+``n_classes``, after its not-common-member exclusion. ``scripts/build_company_profile.py`` applies
+it; the column name is kept and **now means "more than one common class"** (the file's header says
+so). The leavers keep `T-153` part 3b's ``cover_classes`` (the same rule, from the cover page of the
+last 10-K on or before the exit).
+
+**Measured** (`out/d5_report.txt`, `out/d5_leavers.txt`): **94 of the 500 current rows change** --
+**62 True -> False** (each filing a single total count: JPM, BAC, DUK, SO, NEE, T, GS, MS, WFC, ORCL,
+TMUS, DLR, FRT, PSA, PLD and others) and **32 False -> True** (a second common class the table
+missed: ABNB, ACN, AOS, APP, CME, COIN, CVNA, DASH, DDOG, DELL, ECHO, EL, ERIE, EXPE, HOOD, HSY,
+IBKR, MA, META, NKE, PLTR, PSKY, RDDT, REGN, RL, STZ, TKO, TSN, UHS, UPS, V, WDAY). **No leaver flag
+changes** (the plan's stop condition). **Zero real disagreements** with the stored ``n_classes`` (493
+of the 494 staged CIKs have one; FDXF's market cap was missing). The MKT-03 ADJ flag therefore
+**appears on 32 rows and disappears from 62**, for each of the matrix's six ``multi_class`` metrics
+(``market_capitalization``, ``enterprise_value``, ``free_cash_flow_yield``,
+``sbc_adjusted_fcf_yield``, ``enterprise_fcf_yield``, ``earnings_yield``). **Declared gap**: 6
+current members have no cover in the store (BE, HONA, ILMN, P, TWLO, VYLR) and keep the table's or
+the joiner rule's value.
+
+**The D-14 table re-measured** (`out/d14_reits_v2.json`): the REITs vetoed by ``NEGATIVE_FCF`` at
+2026-09-22 are **ARE, CPT, DLR, FRT, IRM, O, VTR** (7, up from part 2a's 6): **O enters** (its FCF
+margin 0.6606 -> -0.3275) and **VTR was already firing** (-0.1238 -> -0.3548, deepening) -- it does
+not "enter". The user decides D-14 from this table after the PR.

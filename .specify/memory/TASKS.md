@@ -646,7 +646,8 @@ the final pilot, `T-143`.
       (REITs and `NEGATIVE_FCF`: measured, not decided) and D5 (`LIQUIDITY_DISTRESS` exempts by the APP-00 profile,
       not by GICS sector). The plan is `/workspaces/thesis/handoff/T071b_plan.md` with the rulings
       `T071b_rulings.md`; the numbers are in `docs/model_fixes.md` "T-071 part 2a" and
-      `scripts/verify_t071b.py`'s outputs. **Part 2b (later) -- the VALORIZATION score**: value only; E/P,
+      `scripts/verify_t071b.py`'s outputs. **Part 2b -- IN REVIEW, PR (stream A, step 2): the
+      VALORIZATION score** (`valorization-v2`): value only; E/P,
       book-to-market, EBITDA/EV and enterprise FCF yield, all priced on the analysis date (MKT-01); size removed; the
       FCF measures dropped for regulated utilities; DQ-02, N9, coverage; and the financial firms' sector-specific
       factors.)*

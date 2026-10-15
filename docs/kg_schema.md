@@ -482,7 +482,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 |---|---|---|
 | `universe_membership` | S&P 500 membership history (**frozen** — superseded by `universe.db`) | `UNIQUE(asset_id, universe, valid_from)` |
 | `universe_coverage` | per-member core-data coverage for a dated universe (from `coverage`) | `UNIQUE(as_of, universe, symbol)` |
-| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
+| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)`; a VALORIZATION row's `inputs_json` carries the v2 components (per measure the value on D, the percentile, the status, the flags and the matrix cell, plus the applicable and present counts, the market cap and EV on D, the share and close dates and the filing's accession — T-071 part 2b) |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule-hit stints (`raised_on`/`cleared_on`/`last_seen_on`, T-125), closed not deleted; at most one open stint per `(asset_id, rule_id)` (partial unique `WHERE cleared_on IS NULL`) | `UNIQUE(asset_id, rule_id, raised_on)` |
