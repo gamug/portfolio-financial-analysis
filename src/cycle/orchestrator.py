@@ -15,7 +15,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -222,6 +222,25 @@ def _log_book(cycle_type: str, cycle_date: str, book: BookResult) -> None:
 
 def _t_minus_1(cycle_date: str) -> str:
     return (date.fromisoformat(cycle_date) - timedelta(days=1)).isoformat()
+
+
+def _fundamental_normalization(
+    conn: Database, cycle_date: str, weights: Mapping[str, float]
+) -> tuple[list[Row], list[float]]:
+    """``(rows, normalized)`` for each asset's newest scored FUNDAMENTAL row usable on *cycle_date*.
+
+    T-073 (D4) decides a row's total under *weights* (:func:`data.fundamental_value_under`); this
+    normalizes those totals across the cohort. **One function for both the ``normalize`` writer and
+    the ``rank`` reader** (T-071 part 2b, D4/N9): the ranking must read *this* cycle's normalization,
+    not whatever the shared filing snapshot row's ``normalized_score`` holds -- a run resumed at
+    ``rank`` after another cycle date ran in between would otherwise blend the other date's value
+    (``cycle backfill`` resumes from checkpoints, so this happens). It is deterministic, so a fresh
+    run and a resumed one get the same numbers."""
+    rows = [r for r in data.latest_fundamental_rows(conn, cycle_date) if r["raw_value"] is not None]
+    if not rows:
+        return [], []
+    normalized = normalized_scores([data.fundamental_value_under(r, weights) for r in rows])
+    return rows, normalized
 
 
 def _blended(
@@ -477,22 +496,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # FUNDAMENTAL is normalized against each asset's latest *public* filing snapshot
             # (T-106), and the value lands on that snapshot row alone -- by id, not on every
             # row of the asset that happens to share its raw score.
-            frows = [
-                r
-                for r in data.latest_fundamental_rows(conn, cycle_date)
-                if r["raw_value"] is not None
-            ]
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights
+            )
             if frows:
-                # T-073 (D4): a row is normalized on its total *under this cycle's weights* -- its
-                # own `raw_value` when those are the weights it was scored with, else the total
-                # recomputed from the pillar ratings the row stored. No LLM call, and the stored
-                # row is never rewritten.
-                fn = normalized_scores(
-                    [
-                        data.fundamental_value_under(r, settings.fundamental_pillar_weights)
-                        for r in frows
-                    ]
-                )
                 conn.executemany(
                     "UPDATE score_snapshot SET normalized_score = ? WHERE id = ?",
                     [(fn[i], int(frows[i]["id"])) for i in range(len(frows))],
@@ -609,11 +616,19 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             cutoff = _t_minus_1(cycle_date)
             hard = writers.hard_vetoed_as_of(conn, cutoff)
             soft = writers.active_soft_vetoes(conn, cutoff)
+            # N9 (T-071 part 2b, D4): read **this** cycle's FUNDAMENTAL normalization, recomputed
+            # from the rows, never the shared snapshot row's `normalized_score` -- a `rank` resumed
+            # after another cycle date ran in between would otherwise blend the other date's value.
+            # The `normalize` step still writes the column, for the contract (the stored value is
+            # the last cycle's; the per-cycle value is `v_cycle_ranking_component.component_value`).
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights
+            )
+            fundamental: dict[int, float | None] = {
+                int(frows[i]["asset_id"]): fn[i] for i in range(len(frows))
+            }
             per_type = {
-                "FUNDAMENTAL": {
-                    int(r["asset_id"]): r["normalized_score"]
-                    for r in data.latest_fundamental_rows(conn, cycle_date)
-                },
+                "FUNDAMENTAL": fundamental,
                 "TECHNICAL": _norm_map(conn, "TECHNICAL", cycle_date),
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),

@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import cik_for
 from portfolio_common.db import Database
 
 import cycle.orchestrator as cycle_orchestrator
@@ -546,6 +547,102 @@ def test_cycle_resumes_without_duplicating(cycle_seed: Database) -> None:
     assert set(again.steps_skipped) >= {"technical", "valorization", "rank", "positions"}
     assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
+
+
+# -- T-071 part 2b, D4 (N9): the ranking reads its own cycle's FUNDAMENTAL normalization ------
+
+D1, D2 = "2026-06-30", "2026-07-31"
+
+
+def _ranking(conn: Database, cycle_date: str = D1) -> list[tuple[str, int, float]]:
+    return [
+        (str(r["ticker"]), int(r["rank"]), float(r["blended_score"]))
+        for r in conn.execute(
+            "SELECT a.ticker, r.rank, r.blended_score FROM cycle_ranking r "
+            "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+            "WHERE cr.cycle_date = ? AND cr.cycle_type = 'SELECTION' ORDER BY r.rank",
+            (cycle_date,),
+        )
+    ]
+
+
+def _join_sixth_member(conn: Database, udb: Path) -> None:
+    """FFF joins the index on D2: a 10-K and a FUNDAMENTAL score **usable from 2026-07-15**, so D2's
+    cohort is six names (its normalization is not D1's) while D1, at 2026-06-30, still sees five."""
+    raw = sqlite3.connect(udb)
+    raw.execute(
+        "INSERT INTO universe_membership (symbol, security, gics_sector, gics_sub_industry, cik, "
+        "valid_from, valid_to, source) VALUES ('FFF', 'FFF Inc.', 'S1', 'SI0', ?, '2026-07-01', "
+        "NULL, 'test')",
+        (cik_for("FFF"),),
+    )
+    raw.commit()
+    raw.close()
+    conn.execute("INSERT INTO assets (id, ticker, sector_id) VALUES (6, 'FFF', 1)")
+    fid = conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+        "filing_date, available_at, retrieved_at) VALUES (6, '10-K', 2025, 'FY2025', '2025-12-31', "
+        "'2026-07-14', '2026-07-15', '2026-07-14T00:00:00Z') RETURNING id"
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, event_time, "
+        "computed_at, model, run_kind, filing_id, available_at) VALUES "
+        "(6, 'FUNDAMENTAL', 72.0, 72.0, '2025-12-31', '2026-07-14T00:00:00Z', 'seed', 'analysis', ?, "
+        "'2026-07-15')",
+        (fid,),
+    )
+    conn.commit()
+
+
+def test_rank_reads_its_own_cycles_fundamental_normalization(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """N9 (T-071 part 2b, D4): a ``rank`` resumed after another cycle date ran in between must read
+    **D1's** FUNDAMENTAL normalization, not the value D2's ``normalize`` left on the shared filing
+    snapshot row (``cycle backfill`` resumes from checkpoints, so this happens).
+
+    1. D1 runs uninterrupted -- its ranking is the baseline; 2. D2 (a later date, one more universe
+    member, so its normalization differs) runs and overwrites the shared rows; 3. D1 is resumed at
+    ``rank``; 4. its ranking must equal the baseline. Fails on master, whose ``_rank`` reads
+    ``score_snapshot.normalized_score`` back off the shared row instead of recomputing it.
+    """
+    conn = cycle_seed
+    # 1: the uninterrupted D1 run -- the baseline.
+    run_selection(_settings(conn), D1, conn=conn)
+    baseline = _ranking(conn)
+    d1_run = conn.execute(
+        "SELECT id FROM cycle_run WHERE cycle_type = 'SELECTION' AND cycle_date = ?", (D1,)
+    ).fetchone()["id"]
+    before = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+
+    # 2: D2 (a MONITORING run, so it writes no book that D1's re-run would clash with) -- its
+    # `normalize` rewrites the shared FUNDAMENTAL rows with the six-name cohort's values.
+    _join_sixth_member(conn, tmp_path / "cycle_universe.db")
+    run_monitoring(_settings(conn), D2, conn=conn)
+    after = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+    assert any(before[a] != after[a] for a in before if a in after)  # D2 really moved them
+
+    # 3: resume D1 at `rank` -- what an interrupted `cycle backfill` leaves behind.
+    conn.execute(
+        "DELETE FROM cycle_checkpoint WHERE cycle_run_id = ? AND step IN ('rank', 'positions')",
+        (d1_run,),
+    )
+    conn.commit()
+    resumed = run_selection(_settings(conn), D1, conn=conn)
+    assert "rank" in resumed.steps_run
+
+    # 4: D1's own ranking, not D2's normalization.
+    assert _ranking(conn) == baseline
 
 
 # -- T-097: the out-of-order-cycle guard -------------------------
