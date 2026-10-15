@@ -560,6 +560,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 last_fundamental=data.last_fundamental_dates(conn, cycle_date),
                 data_quality={a: dq.hard[a] for a in asset_ids if a in dq.hard},
                 sectors={a: sector_name_of.get(a) for a in asset_ids},
+                negative_equity={
+                    a: dq.negative_equity[a] for a in asset_ids if a in dq.negative_equity
+                },
+                profiles=data.asset_profiles(conn, list(asset_ids), cycle_date),
+                utility_cash_coverage=data.utility_cash_coverage(conn, cycle_date),
             )
             # RuleResult.evaluated (T-125 b): each rule's own could-resolve set, so a missing
             # cycle keeps a stint open instead of the writer misreading "no data" as "cleared".

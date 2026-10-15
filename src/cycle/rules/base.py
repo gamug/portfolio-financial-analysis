@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
+from kg_schema.company_profile import CompanyProfile
+
 
 @dataclass(frozen=True)
 class VetoHit:
@@ -45,6 +47,19 @@ class RuleContext:
     # asset_id -> its GICS sector name (today's sector, L-03). For a rule that does not apply to a
     # kind of company; T-071's company profile replaces it.
     sectors: dict[int, str | None] = field(default_factory=dict)
+    # asset_id -> the DQ_NEG_EQUITY record's evidence for a latest filing with book equity <= 0
+    # (equity, net debt/EBITDA, interest coverage, TTM EBITDA, net debt). D-04 (T-071 part 2a): the
+    # negative-equity distress screen keys on this equity sign, and reads EBITDA and net debt from
+    # here rather than reconstructing them from the ratio's sign.
+    negative_equity: dict[int, dict[str, float | None]] = field(default_factory=dict)
+    # asset_id -> its APP-00 company profile as of the cycle date, or None when unknown (T-071 part
+    # 2a). The rules key "financial firm" and "regulated utility" on this, never on the GICS sector.
+    profiles: dict[int, CompanyProfile | None] = field(default_factory=dict)
+    # asset_id -> the D-13 regulated-utility cash-coverage rule input of its newest 10-K usable on
+    # the cycle date (``cycle.data.utility_cash_coverage``): the stored primary bound plus both
+    # bounds and the two flags. A 10-Q carries none, so the rule reads the newest 10-K, never the
+    # latest filing (T-071 part 2a, D-13).
+    utility_cash_coverage: dict[int, dict[str, Any]] = field(default_factory=dict)
 
 
 @runtime_checkable

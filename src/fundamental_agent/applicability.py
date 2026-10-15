@@ -13,13 +13,14 @@ block's empty reason reads the NA cell:
 
 The negative-equity overlay is not a profile field: APP-07's condition is the one the metric's own
 code already evaluated. That keeps ROE's denominator the prior year's equity, exactly as
-``metrics/profitability.py`` computes it, and leaves the ``DQ_NEG_EQUITY`` basis question to T-071
-part 2 (where the checklist puts it).
+``metrics/profitability.py`` computes it (R6, 2026-10-15: the matrix reads a metric's own
+``flag_<metric>_negative_equity`` and never another metric's flag from the shared group inputs).
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Final
 
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.metrics.provenance import (
@@ -31,17 +32,30 @@ from fundamental_agent.metrics.provenance import (
 from kg_schema import applicability
 from kg_schema.company_profile import CompanyProfile
 
+# The metrics whose own code tests the book equity **they** divide by, so the negative-equity column
+# reads that metric's own flag and nothing else (R6, 2026-10-15). ``return_on_equity`` divides by the
+# prior year's equity (MET-02; APP-07's source C7 p.12 ties "meaningless" to the book value the ratio
+# divides by); ``debt_to_equity`` by the current equity (``metrics/leverage.py``). A metric with no
+# own flag falls back to the current equity input -- ROIC, whose APP-07 cell is ADJ.
+OWN_NEGATIVE_EQUITY_FLAG: Final[dict[str, str]] = {
+    "return_on_equity": "flag_return_on_equity_negative_equity",
+    "debt_to_equity": "flag_debt_to_equity_negative_equity",
+}
+
 
 def metric_negative_equity(result: MetricResult) -> bool:
     """APP-07's negative-book-equity condition, as the metric's own code evaluated it.
 
-    ROE and D/E carry ``flag_<metric>_negative_equity`` when the equity they divide by is not
-    positive; a metric that reads an ``equity`` input reads the same filing's equity, so a negative
-    one is that same overlay (ROIC, whose APP-07 cell is ADJ). The matrix makes no claim on the
-    negative-equity column for the other metrics, so flipping this on for them decides nothing.
+    A metric that carries its **own** denominator test is decided by its own flag alone -- never by a
+    flag another metric of the shared group inputs left behind (a negative current equity beside a
+    positive prior-year equity must not empty ROE). Every other metric that reads an ``equity`` input
+    reads the same filing's current equity, so a negative one is that same overlay (ROIC, whose
+    APP-07 cell is ADJ). The matrix makes no claim on the negative-equity column for any other
+    metric, so flipping this on for them decides nothing.
     """
-    if any("negative_equity" in key for key in result.inputs):
-        return True
+    own = OWN_NEGATIVE_EQUITY_FLAG.get(result.name)
+    if own is not None:
+        return bool(result.inputs.get(own))
     equity = result.inputs.get("equity")
     return equity is not None and equity < 0.0
 

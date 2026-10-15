@@ -10,17 +10,19 @@ from typing import Any
 
 from cycle.rules.base import Rule, RuleContext, RuleResult, VetoHit
 from cycle.scores.technical import MIN_SECTOR_NAMES
+from kg_schema.versions import UTILITY_COVERAGE_THRESHOLD
 
 # The price vetoes (T-070) read the latest price_observation as of the cycle date. An observation
 # older than this many calendar days (a long weekend is 4) is not a reading of today: a halted or
 # delisted name would otherwise be re-confirmed forever by a stale row, so it is "could not tell".
 MAX_OBSERVATION_AGE_DAYS = 7
 
-# GICS sectors the LIQUIDITY_DISTRESS test does not apply to (checklist APP-09): a financial has no
-# classified balance sheet (no current/non-current split), and a regulated utility's is shaped by
-# its rate base and its commercial-paper funding. T-071's company profile (type + overlays)
-# replaces this sector test; until then GICS stands in for it.
-LIQUIDITY_EXEMPT_SECTORS = frozenset({"Financials", "Utilities"})
+# LIQUIDITY_DISTRESS does not apply to a financial firm (no classified balance sheet) or a regulated
+# utility (its balance sheet is shaped by its rate base and commercial-paper funding) -- APP-09's two
+# cases, keyed on the APP-00 company profile's ``financial_firm`` / ``regulated_utility`` since
+# T-071 part 2a (D5), never on the GICS sector (a payment processor, an exchange or an insurance
+# broker in GICS Financials is an operating company under APP-00 and *is* evaluated; so is a
+# Utilities-sector company outside the overlay, e.g. AES or NRG).
 
 
 @dataclass
@@ -58,36 +60,89 @@ class _ThresholdRule:
 
 
 @dataclass
+class _NegativeFcfRule:
+    """NEGATIVE_FCF: ``cashflow.free_cash_flow_margin < 0`` -- the trailing-twelve-month free cash
+    flow (MD-04: operating cash flow, CON-08, less capex, MET-08) over revenue (MD-27; the checklist
+    leaves that measure's source pending). It was a plain :class:`_ThresholdRule` until T-071 part 2a.
+
+    A **regulated utility** is now *evaluated and never hit* (D-13): its free cash flow is negative
+    by construction for years -- the rate base grows faster than depreciation, capex is funded with
+    debt, and rate recovery lags the spend -- so the signal is not distress there (T-147's replay
+    vetoed 22 to 26 of the 31 utilities in every cycle). This is the ``LIQUIDITY_DISTRESS``
+    exemption pattern: the asset is evaluated, so a stint opened before the overlay applied closes,
+    but it is never hit. Its replacement test is :class:`_UtilityCashCoverageRule`."""
+
+    RULE_ID = "NEGATIVE_FCF"
+    SEVERITY = "HARD"
+    DESCRIPTION = (
+        "negative trailing-twelve-month free-cash-flow margin; not applied to a regulated utility"
+    )
+    metric: str = "cashflow.free_cash_flow_margin"
+    op: str = "<"
+    threshold: float = 0.0
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": self.metric,
+            "op": self.op,
+            "threshold": self.threshold,
+            "exempt": "the regulated-utility overlay (the APP-00 profile, D-13)",
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, metrics in ctx.metrics.items():
+            profile = ctx.profiles.get(aid)
+            if profile is not None and profile.regulated_utility:
+                if metrics:
+                    evaluated.add(aid)  # never a hit: closes a stint opened before the overlay
+                continue
+            value = metrics.get(self.metric)
+            if value is None:
+                continue
+            evaluated.add(aid)
+            if value < self.threshold:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {"metric": self.metric, "value": value, "threshold": self.threshold},
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+@dataclass
 class _LeverageRule:
-    """LEVERAGE_EXTREME, with a negative-book-equity guard (C2,
-    docs/model_fixes.md; recalibrated T-116): a plain ``debt_to_equity >
-    threshold`` check lets a negative-equity firm's *negative* ratio (large
-    buyback-driven negative equity -- MCD, SBUX, PM, ...) trivially evade the
-    veto, even though it's actually maximally leveraged.
-    ``leverage.py::_total_debt`` sums only non-negative balance-sheet items,
-    so a negative ratio here is itself reliable evidence of non-positive
-    book equity -- no separate ``equity`` metric is needed. When that
-    happens, gate on the standard credit pair, ``net_debt_to_ebitda``/
-    ``interest_coverage``, instead: ``debt_to_assets`` (C2's original guard)
-    is a balance-sheet solvency ratio, not a leverage-capacity one, and on
-    real production data it stays inert for a buyback-heavy but genuinely
-    investment-grade name (MCD: 0.665-0.72 across 22 filings, never near the
-    0.8 guard) while telling you nothing about debt-service capacity.
-    ``net_debt_to_ebitda`` -- debt relative to cash-flow-generating capacity
-    -- is what corporate credit analysis actually keys leverage bands on
-    (S&P Global Ratings, "Corporate Methodology," 2013: >5.0x is the
-    "highly leveraged" band); paired with ``interest_coverage`` (debt-
-    service capacity), thresholds reuse PLAN.md's Ring-1 ``DQ_NEG_EQUITY``
-    calibration, recomputed under T-105's now-annualized
-    ``net_debt_to_ebitda`` (docs/model_fixes.md, T-116) rather than
-    inventing new, unverified numbers. A negative-equity asset with neither
-    metric available is routed to SOFT review, not silently passed. A
-    *negative* ``net_debt_to_ebitda`` is itself ambiguous -- it can mean a
-    genuine net-cash position (healthy) or negative EBITDA with positive net
-    debt (the most distressed profile of all), and this rule sees only the
-    already-divided ratio, never the raw EBITDA/net-debt it came from -- so
-    it is treated as unresolved (PR #95 review), falling back to
-    ``interest_coverage`` alone, the same as a missing value.
+    """LEVERAGE_EXTREME, in two branches.
+
+    **Positive book equity:** ``debt_to_equity > debt_to_equity_threshold`` (3.0), unchanged (C2,
+    T-116).
+
+    **Non-positive book equity (D-04, T-071 part 2a):** keyed on the *equity sign*, never on a
+    negative D/E. Since T-071 part 1's APP-07, D/E is NA (quarantined) when equity <= 0, so a plain
+    ``dte > 3.0`` check would let a maximally leveraged firm -- a large buyback-driven negative
+    equity (MCD, SBUX, PM, ...) -- pass silently. The equity sign and the credit inputs come from
+    the ``DQ_NEG_EQUITY`` record (:attr:`RuleContext.negative_equity`), which the gate fills for
+    every latest filing with equity <= 0. The rule reads TTM EBITDA and net debt from that record
+    rather than reconstructing them from the ratio's sign: a negative ``net_debt_to_ebitda`` is
+    either a genuine net-cash position (healthy) or negative EBITDA with positive net debt (the most
+    distressed profile of all), and only the raw inputs tell them apart (T-116, PR #95 review).
+
+    HARD when any of T-116's conditions holds (thresholds unchanged):
+
+    - EBITDA <= 0 with net debt > 0 (burning cash with debt);
+    - net debt/EBITDA > 5.0, with EBITDA > 0 (T-116's declared calibration -- no rating
+      methodology is loaded);
+    - interest coverage < 1.5.
+
+    A filing with no usable credit input at all is routed to SOFT review, never silently passed
+    (T-116). The screen **does not apply to a financial firm** (APP-00/APP-02, the profile's
+    ``financial_firm``): such an asset is evaluated and never hit, so a stint opened before the
+    exemption closes -- the ``LIQUIDITY_DISTRESS`` pattern.
     """
 
     RULE_ID = "LEVERAGE_EXTREME"
@@ -103,69 +158,30 @@ class _LeverageRule:
             "metric": "leverage.debt_to_equity",
             "op": ">",
             "threshold": self.debt_to_equity_threshold,
+            "negative_equity": "keyed on the equity sign (the DQ_NEG_EQUITY record, D-04)",
             "neg_equity_net_debt_to_ebitda_threshold": self.neg_equity_net_debt_to_ebitda_threshold,
             "neg_equity_interest_coverage_threshold": self.neg_equity_interest_coverage_threshold,
+            "not_applied_to": "financial firms (the profile's financial_firm, APP-00/APP-02)",
         }
 
     def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
         evaluated = set()
         for aid, metrics in ctx.metrics.items():
+            record = ctx.negative_equity.get(aid)
+            if record is not None:
+                evaluated.add(aid)
+                profile = ctx.profiles.get(aid)
+                if profile is not None and profile.financial_firm:
+                    continue  # APP-02: the distress screen does not apply to a financial firm
+                hit = self._negative_equity_hit(aid, metrics, record)
+                if hit is not None:
+                    hits.append(hit)
+                continue
             dte = metrics.get("leverage.debt_to_equity")
             if dte is None:
                 continue
             evaluated.add(aid)
-            if dte < 0:
-                # Non-negative debt means a negative ratio implies non-positive
-                # book equity -- the plain threshold comparison below is
-                # meaningless here, so gate on the standard credit pair
-                # instead. Neither metric available: can't tell, route to
-                # SOFT review rather than pass silently (T-116).
-                ndte_raw = metrics.get("leverage.net_debt_to_ebitda")
-                cov = metrics.get("leverage.interest_coverage")
-                # T-116 (PR #95 review): net_debt_to_ebitda goes *negative* when EBITDA itself
-                # is negative, even with substantial positive net debt -- the most distressed
-                # profile, not a healthy one. Unlike fundamental_agent's DQ_NEG_EQUITY, this
-                # rule only ever sees the already-divided ratio (never the raw EBITDA/net-debt
-                # it was built from), so it cannot tell that case apart from a genuine net-cash
-                # position (also negative). A negative ratio is therefore unresolved here, not
-                # evidence of health -- it falls back to interest_coverage alone, same as if
-                # net_debt_to_ebitda were missing.
-                ndte = ndte_raw if ndte_raw is not None and ndte_raw >= 0 else None
-                if ndte is None and cov is None:
-                    hits.append(
-                        VetoHit(
-                            aid,
-                            self.RULE_ID,
-                            "SOFT",
-                            {
-                                "metric": "leverage.debt_to_equity",
-                                "value": dte,
-                                "net_debt_to_ebitda": ndte_raw,
-                                "interest_coverage": None,
-                                "reason": "negative book equity, no corroborating leverage metric",
-                            },
-                        )
-                    )
-                    continue
-                breached = (
-                    ndte is not None and ndte > self.neg_equity_net_debt_to_ebitda_threshold
-                ) or (cov is not None and cov < self.neg_equity_interest_coverage_threshold)
-                if breached:
-                    hits.append(
-                        VetoHit(
-                            aid,
-                            self.RULE_ID,
-                            self.SEVERITY,
-                            {
-                                "metric": "leverage.debt_to_equity",
-                                "value": dte,
-                                "net_debt_to_ebitda": ndte_raw,
-                                "interest_coverage": cov,
-                            },
-                        )
-                    )
-                continue
             if dte > self.debt_to_equity_threshold:
                 hits.append(
                     VetoHit(
@@ -180,6 +196,58 @@ class _LeverageRule:
                     )
                 )
         return RuleResult(hits, frozenset(evaluated))
+
+    def _negative_equity_hit(
+        self, aid: int, metrics: dict[str, float | None], record: dict[str, float | None]
+    ) -> VetoHit | None:
+        """D-04's screen for one non-positive-equity filing: its HARD hit, its SOFT review when no
+        credit input is usable, or ``None`` (evaluated, not distressed)."""
+        ebitda = record.get("ebitda")
+        net_debt = record.get("net_debt")
+        ndte_raw = metrics.get("leverage.net_debt_to_ebitda")
+        cov = metrics.get("leverage.interest_coverage")
+        # T-116 (PR #95 review): a negative ratio is ambiguous (net cash vs burning cash with debt)
+        # and is not used; a non-negative one is reliable on its own. With EBITDA <= 0 the ratio is
+        # not meaningful at all (the plan's "(EBITDA > 0)") -- condition 1 covers that profile.
+        ndte = ndte_raw if ndte_raw is not None and ndte_raw >= 0 else None
+        if ebitda is not None and ebitda <= 0:
+            ndte = None
+        burning_cash_with_debt = (
+            ebitda is not None and ebitda <= 0 and net_debt is not None and net_debt > 0
+        )
+        failed = [
+            name
+            for name, fired in (
+                ("ebitda_nonpositive_with_net_debt", burning_cash_with_debt),
+                (
+                    "net_debt_to_ebitda",
+                    ndte is not None and ndte > self.neg_equity_net_debt_to_ebitda_threshold,
+                ),
+                (
+                    "interest_coverage",
+                    cov is not None and cov < self.neg_equity_interest_coverage_threshold,
+                ),
+            )
+            if fired
+        ]
+        evidence: dict[str, Any] = {
+            "equity": record.get("equity"),
+            "net_debt_to_ebitda": ndte_raw,
+            "interest_coverage": cov,
+            "ebitda": ebitda,
+            "net_debt": net_debt,
+        }
+        if failed:
+            return VetoHit(aid, self.RULE_ID, self.SEVERITY, {**evidence, "failed": failed})
+        if ndte is None and cov is None and not (ebitda is not None and net_debt is not None):
+            # No usable credit input at all: could not tell (T-116), never a silent pass.
+            return VetoHit(
+                aid,
+                self.RULE_ID,
+                "SOFT",
+                {**evidence, "reason": "negative book equity, no corroborating leverage metric"},
+            )
+        return None
 
 
 @dataclass
@@ -290,14 +358,14 @@ class _LiquidityRule:
 
     Either failing is a failed test. A missing metric is not a failed test; when *neither* is
     available the asset is not evaluated (an open stint stays open: "could not tell"). Not applied
-    to GICS Financials or Utilities (``LIQUIDITY_EXEMPT_SECTORS``): they are evaluated and never
+    to a financial firm or a regulated utility (the APP-00 profile, D5): they are evaluated and never
     hit, so a stint opened before the exemption closes."""
 
     RULE_ID = "LIQUIDITY_DISTRESS"
     SEVERITY = "SOFT"
     DESCRIPTION = (
         "current ratio below 1.0 and weak cash coverage (interest coverage or operating cash "
-        "flow margin); not applied to Financials or Utilities"
+        "flow margin); not applied to a financial firm or a regulated utility"
     )
     current_ratio_threshold: float = 1.0
     interest_coverage_floor: float = 1.5
@@ -311,14 +379,15 @@ class _LiquidityRule:
             "threshold": self.current_ratio_threshold,
             "interest_coverage_floor": self.interest_coverage_floor,
             "ocf_margin_floor": self.ocf_margin_floor,
-            "exempt_sectors": sorted(LIQUIDITY_EXEMPT_SECTORS),
+            "exempt": "a financial firm or the regulated-utility overlay (the APP-00 profile)",
         }
 
     def evaluate(self, ctx: RuleContext) -> RuleResult:
         hits = []
         evaluated = set()
         for aid, metrics in ctx.metrics.items():
-            if ctx.sectors.get(aid) in LIQUIDITY_EXEMPT_SECTORS:
+            profile = ctx.profiles.get(aid)
+            if profile is not None and (profile.financial_firm or profile.regulated_utility):
                 if metrics:
                     evaluated.add(aid)  # never a hit: closes a stint opened before the exemption
                 continue
@@ -353,6 +422,80 @@ class _LiquidityRule:
                                 )
                                 if failed
                             ],
+                        },
+                    )
+                )
+        return RuleResult(hits, frozenset(evaluated))
+
+
+@dataclass
+class _UtilityCashCoverageRule:
+    """UTILITY_CASH_COVERAGE (HARD, T-071 part 2a, D-13): a regulated utility whose **three-year
+    average** operating cash flow *before working-capital changes*, over its total debt, is below
+    5% -- C13 p.7's Ba band lower bound (the band is 5%-13%). It replaces ``NEGATIVE_FCF`` for the
+    overlay (C13 p.11, p.14, p.19, p.21).
+
+    The input (:func:`cycle.data.utility_cash_coverage`) is the newest **10-K** usable on the cycle
+    date, never the latest filing: a 10-Q does not carry a three-year cash-flow average. It holds two
+    bounds (R2, 2026-10-14): the three-year average with the *ambiguous* working-capital lines left
+    in the cash flow, and with them treated as working capital. The rule is HARD **only when both
+    bounds are below the cutoff**; a pair that straddles it, or a missing bound, is *evaluated and
+    never hit*, so no veto row exists for it -- the flag
+    (``flag_utility_cash_coverage_ambiguous_working_capital``) and both values stay in the rule
+    input's ``inputs_json``, which is this rule's evidence (D-13's "missing inputs: no veto,
+    flagged"). A utility whose newest 10-K carries no rule input at all is not evaluated ("could not
+    tell"), so an open stint stays open.
+
+    The classification that decides which lines are working capital, the C13 quotes and the three
+    declared inferences are in ``docs/model_fixes.md`` "T-071 part 2a"; the table itself is in
+    ``fundamental_agent.utility_coverage``."""
+
+    RULE_ID = "UTILITY_CASH_COVERAGE"
+    SEVERITY = "HARD"
+    DESCRIPTION = (
+        "regulated utility whose three-year average operating cash flow before working capital "
+        "covers less than 5% of total debt (C13 p.7)"
+    )
+    threshold: float = UTILITY_COVERAGE_THRESHOLD
+
+    @property
+    def PARAMS(self) -> dict[str, Any]:
+        return {
+            "metric": "rule_input.utility_cash_coverage_3y",
+            "op": "<",
+            "threshold": self.threshold,
+            "bounds": "both the ambiguous-in and the ambiguous-as-working-capital averages",
+            "applies_to": "the regulated-utility overlay (the APP-00 profile, D-13)",
+            "missing_input": "no veto, not evaluated",
+            "straddling_or_missing_bound": "no veto, evaluated, flagged in the rule input",
+            "source": "C13 p.7 (the Ba band, 5%-13%); C13 p.11, p.14, p.19, p.21",
+        }
+
+    def evaluate(self, ctx: RuleContext) -> RuleResult:
+        hits = []
+        evaluated = set()
+        for aid, record in ctx.utility_cash_coverage.items():
+            profile = ctx.profiles.get(aid)
+            if profile is None or not profile.regulated_utility:
+                continue  # only the overlay; an unknown profile is never guessed
+            evaluated.add(aid)
+            bound_in = record.get("ambiguous_in")
+            bound_wc = record.get("ambiguous_as_wc")
+            if bound_in is None or bound_wc is None:
+                continue  # a missing bound: no veto (R2); the flag is in the rule input
+            if bound_in < self.threshold and bound_wc < self.threshold:
+                hits.append(
+                    VetoHit(
+                        aid,
+                        self.RULE_ID,
+                        self.SEVERITY,
+                        {
+                            "utility_cash_coverage_3y_ambiguous_in": bound_in,
+                            "utility_cash_coverage_3y_ambiguous_as_wc": bound_wc,
+                            "threshold": self.threshold,
+                            "ambiguous_working_capital": bool(
+                                record.get("ambiguous_working_capital")
+                            ),
                         },
                     )
                 )
@@ -581,14 +724,8 @@ class _CrashZRule:
 
 RULES: list[Rule] = [
     _LeverageRule(),
-    _ThresholdRule(
-        "NEGATIVE_FCF",
-        "HARD",
-        "negative trailing-twelve-month free-cash-flow margin",
-        "cashflow.free_cash_flow_margin",
-        "<",
-        0.0,
-    ),
+    _NegativeFcfRule(),
+    _UtilityCashCoverageRule(),
     _LiquidityRule(),
     _DrawdownRule(),
     _StaleFundamentalRule(),

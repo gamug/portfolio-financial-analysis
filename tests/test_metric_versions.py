@@ -288,7 +288,8 @@ def test_the_known_readers_are_actually_covered_by_that_guard() -> None:
     """Guard the guard: the two consumer modules must really be scanned and really filtered."""
     # T-132: quant reads no stored metric any more (its market cap is the shared reader's)
     # T-149: cycle/data.py reads the metrics twice -- the values, and the trailing net income's inputs
-    for rel, reads in (("cycle/data.py", 2), ("quant/db.py", 0)):
+    # T-071 part 2a (D-13): a third read -- the utility cash-coverage rule input (the rule_input group)
+    for rel, reads in (("cycle/data.py", 3), ("quant/db.py", 0)):
         text = (SRC / rel).read_text()
         assert len(_READ.findall(text)) == reads, rel
         assert text.count(VERSION_FILTER_SQL) == reads, rel

@@ -20,7 +20,7 @@ against production data are in ``docs/model_fixes.md``'s T-065 entry.
 | ``DQ_MARGIN_REVIEW``| ``|net_margin|`` in ``(1, 5]``                     | SOFT      | nothing     |
 | ``DQ_OCF_MARGIN``  | ``|operating_cash_flow_margin| > 3``               | HARD      | OCF margin  |
 | ``DQ_MCAP_SCALE``  | ``market_cap / total_assets`` outside ``[0.001, 100]`` | HARD  | market cap and every valuation metric built on it |
-| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | HARD if also ``net_debt_to_ebitda > 5.0``, ``ebitda <= 0`` with positive net debt, or ``interest_coverage < 1.5``, else SOFT | D/E and ROE |
+| ``DQ_NEG_EQUITY``  | ``equity <= 0``                                    | SOFT always (a record, never a veto -- D-04, T-071 part 2a) | D/E only (ROE keeps its own APP-07 test) |
 | ``DQ_REVENUE_POS`` | ``revenue <= 0`` or missing, with net income present | HARD    | the revenue-denominated ratios |
 
 The gates read the stored rows (value + ``inputs_json``) of one metrics engine version at a
@@ -90,6 +90,10 @@ NET_MARGIN_REVIEW: Final[float] = 1.0
 OCF_MARGIN_MAX: Final[float] = 3.0
 MCAP_TO_ASSETS_MIN: Final[float] = 0.001
 MCAP_TO_ASSETS_MAX: Final[float] = 100.0
+# The negative-equity distress calibration (T-116). D-04 (T-071 part 2a) moved the *screen* that
+# applies them from this gate to `cycle`'s LEVERAGE_EXTREME (keyed on the equity sign); the gate
+# only records the inputs now. `cycle/rules/builtin.py::_LeverageRule` carries the same two numbers,
+# and the audit replay (`scripts/sec_xcheck/cycle_measures.py`) reads them from here.
 NEG_EQUITY_NET_DEBT_TO_EBITDA: Final[float] = 5.0
 NEG_EQUITY_INTEREST_COVERAGE: Final[float] = 1.5
 
@@ -104,10 +108,11 @@ _MCAP_DERIVED: Final[tuple[MetricKey, ...]] = (
     ("valuation", "sbc_adjusted_fcf_yield"),
 )
 # Ratios with book equity in the denominator: meaningless when equity <= 0.
-_EQUITY_DENOMINATED: Final[tuple[MetricKey, ...]] = (
-    ("leverage", "debt_to_equity"),
-    ("profitability", "return_on_equity"),
-)
+# D-04 (T-071 part 2a): only D/E is quarantined by DQ_NEG_EQUITY. Its own equity is the value it
+# divides by. ROE is **not** -- its denominator is the *prior year's* equity (MET-02; APP-07's
+# source C7 p.12 ties "meaningless" to the book value the ratio divides by), and the metrics'
+# own APP-07 test (`metrics/profitability.py`) already empties it when that prior equity <= 0.
+_EQUITY_DENOMINATED: Final[tuple[MetricKey, ...]] = (("leverage", "debt_to_equity"),)
 # Ratios with revenue in the denominator (or revenue as the growth base).
 _REVENUE_DENOMINATED: Final[tuple[MetricKey, ...]] = (
     ("profitability", "gross_margin"),
@@ -240,43 +245,33 @@ def _net_debt(fm: FilingMetrics) -> float | None:
 
 
 def _neg_equity(fm: FilingMetrics) -> list[Issue]:
-    """T-116 (PR #95 review): ``net_debt_to_ebitda = safe_div(net_debt, ebitda)`` goes
-    *negative* when EBITDA itself is negative, even with substantial positive net debt --
-    exactly the most distressed profile, and a plain ``> NEG_EQUITY_NET_DEBT_TO_EBITDA`` check
-    reads that negative ratio as comfortably healthy (real data: WAT 10-Q 2026-04-04,
-    EBITDA -$11M, net debt $4.4B, ratio -399). Distinguished from a genuine net-cash position
-    (HUM 10-Q 2023-03-31, ratio -1.1, healthy) by reconstructing EBITDA and net debt from the
-    same stored inputs the ratio itself was divided from, rather than trusting the ratio's sign
-    alone."""
+    """Book equity <= 0 is a **record**, never a veto (D-04, T-071 part 2a).
+
+    The gate always writes SOFT and quarantines D/E only -- the filing's own equity is the value
+    D/E divides by, so the ratio is not meaningful. ROE is left alone: its APP-07 test runs on the
+    *prior year's* equity it divides by (MET-02; `metrics/profitability.py`), so the 7 filings
+    whose prior-year equity is positive keep a meaningful ROE even with this year's equity <= 0
+    (T-076 fix round 1).
+
+    The *distress* screen is a `cycle` policy, not a data-quality verdict: it moved to
+    ``LEVERAGE_EXTREME`` (D2, `cycle/rules/builtin.py`), keyed on the equity sign. The gate still
+    records the credit inputs it resolved (equity, net debt/EBITDA, interest coverage, TTM EBITDA
+    and net debt), because the rule reads them from here rather than reconstructing them from a
+    ratio's sign. ``net_debt_to_ebitda`` goes *negative* when EBITDA itself is negative (T-116, PR
+    #95 review): the rule tells that case apart from a genuine net-cash position by the EBITDA and
+    net-debt inputs recorded here, never by the ratio's sign."""
     equity = _input(fm, "equity")
     if equity is None or equity > 0:
         return []
-    ndte = _value(fm, ("leverage", "net_debt_to_ebitda"))
-    cov = _value(fm, ("leverage", "interest_coverage"))
-    ebitda = _ebitda(fm)
-    net_debt = _net_debt(fm)
-    burning_cash_with_debt = (
-        ebitda is not None and ebitda <= 0 and net_debt is not None and net_debt > 0
-    )
-    distressed = (
-        burning_cash_with_debt
-        or (ndte is not None and ndte > NEG_EQUITY_NET_DEBT_TO_EBITDA)
-        or (cov is not None and cov < NEG_EQUITY_INTEREST_COVERAGE)
-    )
     evidence = {
         "equity": equity,
-        "net_debt_to_ebitda": ndte,
-        "interest_coverage": cov,
-        "ebitda": ebitda,
-        "net_debt": net_debt,
+        "net_debt_to_ebitda": _value(fm, ("leverage", "net_debt_to_ebitda")),
+        "interest_coverage": _value(fm, ("leverage", "interest_coverage")),
+        "ebitda": _ebitda(fm),
+        "net_debt": _net_debt(fm),
     }
     return _hits(
-        fm,
-        _EQUITY_DENOMINATED,
-        "DQ_NEG_EQUITY",
-        "HARD" if distressed else "SOFT",
-        quarantined=True,
-        evidence=evidence,
+        fm, _EQUITY_DENOMINATED, "DQ_NEG_EQUITY", "SOFT", quarantined=True, evidence=evidence
     )
 
 
@@ -325,9 +320,9 @@ GATES: Final[tuple[tuple[str, str, str, Callable[[FilingMetrics], list[Issue]]],
     ),
     (
         "DQ_NEG_EQUITY",
-        "HARD/SOFT",
-        "book equity <= 0: D/E and ROE quarantined; HARD only if net debt/EBITDA > "
-        f"{NEG_EQUITY_NET_DEBT_TO_EBITDA} or interest coverage < {NEG_EQUITY_INTEREST_COVERAGE}",
+        "SOFT",
+        "book equity <= 0: D/E quarantined (ROE is not -- its own APP-07 test runs on the "
+        "prior-year equity it divides by); a record, never a veto (D-04)",
         _neg_equity,
     ),
     (

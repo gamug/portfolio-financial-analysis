@@ -28,7 +28,6 @@ from cycle.rules import (
 )
 from cycle.rules.base import RuleResult, VetoHit
 from cycle.rules.builtin import (
-    LIQUIDITY_EXEMPT_SECTORS,
     MAX_OBSERVATION_AGE_DAYS,
     _CrashZRule,
     _LiquidityRule,
@@ -36,6 +35,7 @@ from cycle.rules.builtin import (
     _VolatilityShockRule,
 )
 from cycle.writers import hard_vetoed_as_of, write_vetoes
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.trading_calendar import add_trading_days
 
 TODAY = "2026-07-31"
@@ -659,15 +659,36 @@ def _liq(
     }
 
 
+def _test_profile(
+    *, financial_firm: bool = False, regulated_utility: bool = False
+) -> CompanyProfile:
+    return CompanyProfile(
+        cik="0000000001",
+        ticker="TST",
+        company_name="Test Co",
+        type="article_9" if financial_firm else "operating",
+        financial_firm=financial_firm,
+        reit=False,
+        multi_class=False,
+        regulated_utility=regulated_utility,
+        sector=None,
+        sub_industry=None,
+        evidence_accession=None,
+        valid_from="2020-01-01",
+        valid_to="",
+    )
+
+
 def _liquidity(
-    metrics: dict[int, dict[str, float | None]], sectors: dict[int, str | None] | None = None
+    metrics: dict[int, dict[str, float | None]],
+    profiles: dict[int, CompanyProfile | None] | None = None,
 ) -> tuple[set[int], frozenset[int]]:
     ctx = RuleContext(
         cycle_date=TODAY,
         metrics=metrics,
         price_obs={},
         last_fundamental={},
-        sectors=sectors or {},
+        profiles=profiles or {},
     )
     return _hit_ids(_LiquidityRule(), ctx)
 
@@ -716,15 +737,33 @@ def test_liquidity_distress_hit_names_the_failed_tests() -> None:
     assert by_asset[2].severity == "SOFT"
 
 
-def test_financials_and_utilities_are_exempt_and_never_hit() -> None:
-    assert {"Financials", "Utilities"} == LIQUIDITY_EXEMPT_SECTORS
+def test_a_financial_firm_and_a_regulated_utility_are_exempt_and_never_hit() -> None:
+    """D5 (T-071 part 2a): the exemption is the APP-00 company profile -- a financial firm or the
+    regulated-utility overlay -- not the GICS sector. An unknown profile is not exempt (never
+    guessed)."""
     weak = _liq(0.3, coverage=0.2, ocf_margin=-0.4)
     hits, evaluated = _liquidity(
         {1: weak, 2: weak, 3: weak, 4: weak},
-        {1: "Financials", 2: "Utilities", 3: "Real Estate", 4: None},
+        {
+            1: _test_profile(financial_firm=True),
+            2: _test_profile(regulated_utility=True),
+            3: _test_profile(),  # an operating company
+            4: None,  # an unknown profile
+        },
     )
     assert hits == {3, 4}
     assert evaluated == {1, 2, 3, 4}  # an exempt name is evaluated -- and found clean
+
+
+def test_a_financials_sector_operating_company_is_now_evaluated() -> None:
+    """A payment processor, an exchange or an insurance broker sits in GICS Financials but is an
+    operating company under APP-00: it is no longer exempt and can be flagged (D5)."""
+    weak = _liq(0.3, coverage=0.2, ocf_margin=-0.4)
+    hits, evaluated = _liquidity(
+        {1: weak, 2: weak},
+        {1: _test_profile(), 2: _test_profile(financial_firm=True)},
+    )
+    assert hits == {1} and evaluated == {1, 2}
 
 
 def test_an_exemption_closes_a_stint_opened_before_it(memory_db: Database) -> None:
@@ -733,17 +772,17 @@ def test_an_exemption_closes_a_stint_opened_before_it(memory_db: Database) -> No
     weak = _liq(0.53, coverage=0.4, ocf_margin=-0.1)
     rule = _LiquidityRule()
 
-    def verdict(sector: str) -> RuleResult:
-        return rule.evaluate(RuleContext(TODAY, {1: weak}, {}, {}, sectors={1: sector}))
+    def verdict(profile: CompanyProfile) -> RuleResult:
+        return rule.evaluate(RuleContext(TODAY, {1: weak}, {}, {}, profiles={1: profile}))
 
-    first = verdict("Industrials")
+    first = verdict(_test_profile())  # an operating company: flagged
     write_vetoes(
         memory_db, "2026-06-01", first.hits, {"LIQUIDITY_DISTRESS": first.evaluated}, [], run_id=1
     )
     assert (
         memory_db.execute("SELECT COUNT(*) FROM veto WHERE cleared_on IS NULL").fetchone()[0] == 1
     )
-    second = verdict("Utilities")
+    second = verdict(_test_profile(regulated_utility=True))  # now exempt: the stint closes
     write_vetoes(
         memory_db, "2026-06-08", second.hits, {"LIQUIDITY_DISTRESS": second.evaluated}, [], run_id=2
     )
@@ -769,7 +808,10 @@ def test_the_pilots_seven_healthy_names_are_no_longer_flagged() -> None:
         t for t, (cr, *_rest) in pilot.items() if cr < 1.0
     }  # the old rule: current ratio only
     assert before == set(pilot)
-    hits, evaluated = _liquidity(metrics, {ids[t]: s[3] for t, s in pilot.items()})
+    hits, evaluated = _liquidity(
+        metrics,
+        {ids[t]: _test_profile(regulated_utility=(t == "NEE")) for t in pilot},
+    )
     assert hits == set()
     assert evaluated == set(ids.values())
 
