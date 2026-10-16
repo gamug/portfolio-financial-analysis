@@ -9316,7 +9316,7 @@ mismatches over the 15 dates). At 2026-09-22, capex (M) by part -- corporate / e
 4,166.2M against 5,983.1M of acquisitions (FCF -1,983.1M), VTR's 1,801.4M against 3,781.8M (FCF
 -2,285.3M) -- not development (O 0, VTR 304.9M) and not existing properties (O 166.1M, VTR 0).
 
-**F4 — coverage in the PR body** (``coverage.json``, report only). At 2026-09-22, present/applicable
+**F4 — coverage in the PR body** (``coverage.json``, report only; the ``leverage.ebitda`` classes below are the **stored ``empty_reason``**, not the cause: 48 of the 231 are financial firms, for which EBITDA is NA under APP-02, and MSFT's own D&A extension is counted ``da_absent``; `T-156` classifies the cause). At 2026-09-22, present/applicable
 per measure by company type: operating 381/394 E/P, 361/394 B/M, **203/394 EBITDA/EV**, **195/394
 enterprise FCF yield**; financial firms 51/51 E/P and 51/51 B/M (the two firm-value measures NA);
 REITs 26/28 E/P, 24/28 B/M, **5/28 EBITDA/EV**, FCF NA; regulated utilities 28/29, 28/29, 19/29,
@@ -9329,7 +9329,12 @@ CTAS, ECL), ``operating_income_absent`` 7 (KLAC, ADP, NKE, DVN, SWK, CLX, BXP) a
 NWSA). ``da_sum_refused_other_lines`` occurs 173 times in the store but on **none** of these 231
 filings.
 
-**F5 — financial firms rank among financial firms** (the user's D-07 sector-specific factor). Each
+**F5 — financial firms rank among financial firms** (the user's D-07 sector-specific factor).
+**Declared departure from the Scope.** The checklist's Scope says "Ranking is across the whole universe, not
+within sectors" (VALORIZATION ranks every asset together), and reserves the question: "How financial firms are
+scored when most VALORIZATION factors are NA for them belongs with `T-071` (sector-specific factors)." F5 answers
+that reservation with cohort ranking, **decided by the user (D-07)**: the financial firms stay in the universe and
+are scored with sector-specific factors. The departure is declared here, once, as the Scope asks. Each
 measure is now ranked **within the member's cohort** on the date: a financial firm's E/P and B/M
 among the financial firms (C2 p.27 compares the equity multiples across financial service firms; C4
 p.3 has Fama and French exclude financial firms), every other member's measures across the rest.
@@ -9343,3 +9348,54 @@ cross-sector bias that put 46% of the top decile in Financials. The blended top 
 (``blend_before/after.json``) overlaps **15** (ADBE, ALL, BMY, CF, CINF, EOG, FSLR, INCY, INTU,
 LDOS, LULU, NEM, OXY, TPR, TROW); before-only 15, after-only 15 (BRK.B, BRO, COP, CTSH, CVX, DVN,
 EXE, FIS, HON, MKC, NXPI, PYPL, ROP, STZ, UHS).
+
+
+#### D-14 — REITs are exempt from `NEGATIVE_FCF` (decided by the user, 2026-10-15)
+
+**Who.** The APP-00 profile's **REIT overlay** on the cycle date (``profile_as_of``), never the GICS
+sector. **How.** The ``LIQUIDITY_DISTRESS`` / D-13 exemption pattern: a REIT is *evaluated and never
+hit*, so an open stint closes. Every other rule still applies to a REIT -- ``LEVERAGE_EXTREME``
+(including the negative-equity screen), the price vetoes and ``DATA_QUALITY``.
+
+**The sources, in order.**
+
+1. **APP-04b** (checklist v1.3; C1_Nareit_FFO_White_Paper_2018 pp.7-8): REIT capex includes
+   acquisitions and development -- "The total of capital" · "expenditures should be separately
+   presented for amounts being spent on corporate items, existing properties, development of new
+   properties, and acquisitions." -- and "FCF-based metrics are flagged as non-standard for REITs."
+2. **C6 p.10** (APP-04's source): "Equity REITs' financial viability is based on GAAP net income from
+   continuing operations, and/or Funds From Operations (FFO), if reported."
+3. **C5 p.54** (APP-04c's source): REITs are companies "where majority of the company's taxable
+   Income is paid out as a dividend" -- so growth capex is funded externally, D-13's argument (an
+   **inference**, declared as D-13's was).
+4. The checklist Scope's D-14 paragraph (``phase3_decisions.md``): "D-13's argument (negative free
+   cash flow as the normal state, funded externally) applies to REITs too, and APP-04b puts
+   acquisitions in REIT capex. To measure first: how many REITs ``NEGATIVE_FCF`` vetoes in the replay.
+   Then decide, with sources, as for D-13."
+5. **The measurement** (below).
+
+Every quote is copied verbatim and verified with ``scripts/sec_xcheck/quotecheck.py``'s method
+(``out/g1_quotecheck.txt``: 161 of 161 rule quotes and 28 of 28 Annex B quotes verified, 0 problems;
+APP-04's C6 p.10 row and APP-04c's C5 p.54 row are `OK`).
+
+**Declared: no replacement veto.** No loaded source gives a REIT cash-coverage threshold -- C13 is
+utilities only -- and a threshold is never invented (MET-00).
+
+**Measured** (``d14_reits_v2.json``, ``negfcf_before.json`` / ``negfcf_after.json``; the before side
+runs master's rule, which has no REIT exemption). At **2026-09-22** the acquisition share of capex is
+**O 97.3%, VTR 92.5%, FRT 69.9%, CPT 52.3%**; **ARE, DLR and IRM 0%** -- so the vetoes on O, VTR,
+FRT and CPT were dominated by buying properties (the F3 table). `NEGATIVE_FCF` hits before -> after
+by date: 2023-03-31 **33 -> 24**, 2023-06-30 29 -> 22, 2023-09-30 24 -> 17, 2023-12-31 23 -> 17,
+2024-03-31 21 -> 16, 2024-06-30 20 -> 15, 2024-09-30 25 -> 20, 2024-12-31 22 -> 16, 2025-03-31
+26 -> 18, 2025-06-30 29 -> 20, 2025-09-30 27 -> 19, 2025-12-31 21 -> 14, 2026-03-31 24 -> 17,
+2026-06-30 23 -> 17, **2026-09-22 25 -> 18**. The REITs leaving the veto per date are the REITs that
+were hit: 2023-03-31 ARE, CPT, DLR, EXR, FRT, O, PLD, VICI, WELL; 2023-06-30 ARE, CPT, DLR, DOC, O,
+PLD, WELL; 2023-09-30 ARE, DLR, FRT, IRM, O, PLD, WELL; 2023-12-31 ARE, DLR, IRM, O, PLD, WELL;
+2024-03-31 / 2024-06-30 / 2024-09-30 ARE, DLR, IRM, O, WELL; 2024-12-31 ARE, DLR, HST, IRM, VMRK,
+WELL; 2025-03-31 ARE, DLR, ESS, HST, IRM, PLD, VMRK, VTR; 2025-06-30 ARE, DLR, ESS, HST, IRM, O,
+PLD, VMRK, VTR; 2025-09-30 ARE, DLR, ESS, IRM, O, PLD, VMRK, VTR; 2025-12-31 ARE, DLR, ESS, FRT,
+IRM, O, VTR; 2026-03-31 ARE, CPT, DLR, FRT, IRM, O, VTR; 2026-06-30 and 2026-09-22 ARE, DLR, FRT,
+IRM, O, VTR. At 2026-09-22 the remaining **18** hits are all non-REIT (Industrials 4, Consumer
+Discretionary 3, IT 3, Health Care 2, Materials 2, Communication Services 1, Consumer Staples 1,
+Energy 1, Utilities 1 -- AES, not a regulated utility), and the 28 REIT members are all evaluated
+and never hit.

@@ -643,7 +643,9 @@ the final pilot, `T-143`.
       ROE keeps the value its own prior-year-equity test allows), D-13 (a regulated utility is exempt from
       `NEGATIVE_FCF` and gets `UTILITY_CASH_COVERAGE`, HARD below 5% on **both** three-year bounds, read from the
       newest 10-K's `rule_input` row whose working-capital lines are classified from their own source only), D-14
-      (REITs and `NEGATIVE_FCF`: measured, not decided) and D5 (`LIQUIDITY_DISTRESS` exempts by the APP-00 profile,
+      (REITs and `NEGATIVE_FCF`: **D-14 closed by the user's decision of 2026-10-15** -- the APP-00 REIT
+      overlay is exempt, evaluated and never hit, with no replacement veto; the measurement is in
+      `docs/model_fixes.md` "T-071 part 2b, D-14") and D5 (`LIQUIDITY_DISTRESS` exempts by the APP-00 profile,
       not by GICS sector). The plan is `/workspaces/thesis/handoff/T071b_plan.md` with the rulings
       `T071b_rulings.md`; the numbers are in `docs/model_fixes.md` "T-071 part 2a" and
       `scripts/verify_t071b.py`'s outputs. **Part 2b -- IN REVIEW, PR (stream A, step 2): the
