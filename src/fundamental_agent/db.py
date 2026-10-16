@@ -91,8 +91,15 @@ _CROSS_ITEM_BAND = 1.25
 # value being skipped for the caption fallback (C3); and a 10-Q's quarter label follows the
 # company's own fiscal year end, overriding a payload balance-sheet instant that disagrees (C4).
 # Every new flag reaches the metrics as ``flag_<item>_<flag>`` inputs, as T-148's do (C6).
+# ``metrics-v8`` (T-156): the D&A resolver reads the income statement when the cash-flow statement
+# files no D&A fact at all (E1, flagged ``da_income_statement``), and the depreciation-only filers
+# recover through the existing sourced sum when its amortization child is on the income statement
+# (E2, flagged ``da_sum_cross_statement``). A company-extension caption equal to the standard label
+# of an accepted D&A element is read through the shared caption fallback (E3, flagged
+# ``caption_fallback`` + ``extension_concept``), and operating income is formed from the FASB 2026
+# ``soi`` calculation identities when its terms are filed (E4, flagged ``oi_from_calc_identity``).
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v7"
+METRICS_ENGINE_VERSION = "metrics-v8"
 
 
 @dataclass(frozen=True)

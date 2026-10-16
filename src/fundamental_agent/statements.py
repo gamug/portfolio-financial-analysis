@@ -1454,11 +1454,53 @@ class Statements:
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
         """D&A (MD-01, ID-02b; C1, T-151 part 1): the filed aggregate first, unchanged, else the
-        sourced sum of the filed D&A-nature children, else a refusal."""
+        sourced sum of the filed D&A-nature children, else a refusal.
+
+        E1 (T-156): when the cash-flow statement files **no** D&A fact at all, the same elements are
+        read from the income statement instead, flagged ``da_income_statement``. B6's definitions
+        name no statement, so the element decides and not the statement: the pinned FASB 2026 text
+        (``elts/us-gaap-doc-2026.xml``, B6) reads ``DepreciationDepletionAndAmortization`` "The
+        aggregate expense recognized in the current period that allocates the cost of tangible
+        assets, intangible assets, or depleting assets to periods that benefit from use of the
+        assets", ``Depreciation`` "The amount of expense recognized in the current period that
+        reflects the allocation of the cost of tangible assets over the assets' useful lives",
+        ``OtherDepreciationAndAmortization`` "Amount of expense charged against earnings to allocate
+        the cost of tangible and intangible assets over their remaining economic lives, classified as
+        other" and ``AmortizationOfIntangibleAssets`` "Amount of amortization expense for
+        finite-lived intangible asset" -- none names a statement. The two statements are never mixed
+        in one value: the income statement is read only when the cash-flow statement has no D&A fact
+        at all, so a cash-flow D&A fact in any column keeps today's behaviour."""
         value, concept, how = self._component_row(spec, column)
         if value is not None:
             return value, concept, how
-        return self._da_sourced_sum(spec, column)
+        result = self._da_sourced_sum(spec, column)
+        if result[0] is not None:
+            return result
+        if not self._da_filed_on_statement("cash_flow"):
+            income_spec = replace(spec, statements=_INCOME)
+            value, concept, how = self._component_row(income_spec, column)
+            if value is None:
+                value, concept, how = self._da_sourced_sum(income_spec, column)
+            if value is not None:
+                self._flag("da_income_statement")
+                return value, concept, how
+        return result
+
+    def _da_filed_on_statement(self, statement: str) -> bool:
+        """Whether *statement* carries any D&A-nature row with a value in any column (E1, T-156): a
+        non-abstract, non-dimensional row whose concept's local name or caption names depreciation,
+        amortization or depletion (:data:`_DA_NAME_RE`), the same scan
+        :meth:`da_lines_outside_sourced` makes over the cash-flow lines."""
+        for row in self.raw.get(statement, []):
+            if row.get("abstract") or row.get("dimension"):
+                continue
+            concept = str(row.get("concept") or "")
+            label = str(row.get("label") or "")
+            if not (_DA_NAME_RE.search(concept.split("_", 1)[-1]) or _DA_NAME_RE.search(label)):
+                continue
+            if any(_numeric(row.get(period.key)) is not None for period in self.periods):
+                return True
+        return False
 
     def _da_sourced_sum(
         self, spec: LineItem, column: str
