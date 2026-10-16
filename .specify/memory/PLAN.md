@@ -2266,6 +2266,44 @@ work item starts). Read endpoints are untouched.
 **Acceptance criteria**: FR-015's acceptance column, as tests (`T-146`); the read endpoints behave identically
 with and without the settings; `docs/api.md` documents both settings.
 
+## Work item 21 — Upstream: `portfolio-common` patch re-pin `v1.2.1` → `v1.2.2` (external, P2) — DONE 2026-10-16
+
+**Why**: `portfolio-common` `v1.2.2` narrows `Database.attach(read_only=True)`'s
+stale-WAL preflight to reject only an orphaned WAL (non-empty `-wal`, no
+`-shm`), not a live writer's WAL — the production concurrency bug that
+blocked `portfolio-nlp`'s `attach_source()` while `portfolio-data-mining`'s
+collector held `urls.db` open. `T-159`: re-pin this repo too, for baseline
+consistency across every `portfolio-common` consumer, even though the fix
+doesn't touch a code path this repo uses.
+
+**This repo's own `urls.db` read path was never affected either way.**
+`entity_resolution/news_db.py`, opened via `kg_schema.connect_ro` ->
+`Database.connect(read_only=True)`, is a bare `mode=ro` open, not
+`Database.attach()` — the buggy preflight only ever lived inside `attach()`.
+Demonstrated, not just reasoned about:
+`tests/test_entity_resolution.py::test_connect_ro_reads_through_a_live_writers_wal`
+holds a real writer open on a WAL-mode `urls.db` and asserts a read through
+`entity_resolution.news_db.article_ids_for_ticker` both doesn't block and
+sees the writer's just-committed row.
+
+**Acceptance criteria** (all verified met, PR #172):
+
+- ✅ `pyproject.toml`'s `portfolio-common` source pins `tag = "v1.2.2"`;
+  `uv.lock` diff scoped to exactly the `portfolio-common` version/source
+  lines.
+- ✅ `uv run pytest` (2652 passed); `ruff check`/`format --check`; `mypy` —
+  all green except pre-existing Windows-local-only failures (`fcntl`,
+  `os.symlink` privilege, `cp1252` fixture decoding), confirmed identical
+  against the old `v1.2.1` pin via `git stash`.
+- ✅ `SPEC.md` NR-004, the storage/upstream-library bullets, and
+  `constitution.md`'s storage clause updated from "currently `v1.2.1`" to
+  "currently `v1.2.2`" — constitution AI behavior #11 reconciliation for
+  this item. (Work item 1's own closed record is left untouched per its
+  "do not re-open" note; this is the new, separately-scoped item it asked
+  for.) Both architecture artifacts (Portfolio Thesis + Portfolio Financial
+  Analysis) still need a pass to confirm they don't name a stale
+  `portfolio-common` version — not yet done from this session.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small

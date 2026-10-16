@@ -52,7 +52,7 @@ assumes the stack actually pinned in `pyproject.toml`.
    schema-introspection helpers (`table_columns`/`relation_exists`/
    `relation_kind`/`relation_ddl`/`create_schema`/`ensure_columns`), the
    neutral `Row` type, and `DatabaseError` (git-tag-pinned `portfolio-common`,
-   currently `v1.2.1` in `[tool.uv.sources]`) — a DB-engine-contract change is
+   currently `v1.2.2` in `[tool.uv.sources]`) — a DB-engine-contract change is
    an explicit, reviewed re-pin, not a floating version. No non-test module
    under `src/` imports `sqlite3` directly anymore (`docs/portfolio-common-
    v1.2-engine-agnostic.md`); what stays SQLite-flavoured is held only as SQL
