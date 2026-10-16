@@ -9368,7 +9368,7 @@ hit*, so an open stint closes. Every other rule still applies to a REIT -- ``LEV
 3. **C5 p.54** (APP-04c's source): REITs are companies "where majority of the company's taxable
    Income is paid out as a dividend" -- so growth capex is funded externally, D-13's argument (an
    **inference**, declared as D-13's was).
-4. The checklist Scope's D-14 paragraph (``phase3_decisions.md``): "D-13's argument (negative free
+4. ``phase3_decisions.md``, D-14 (the checklist v1.3 decision record): "D-13's argument (negative free
    cash flow as the normal state, funded externally) applies to REITs too, and APP-04b puts
    acquisitions in REIT capex. To measure first: how many REITs ``NEGATIVE_FCF`` vetoes in the replay.
    Then decide, with sources, as for D-13."

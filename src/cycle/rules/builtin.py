@@ -78,8 +78,8 @@ class _NegativeFcfRule:
     income from continuing operations, and/or Funds From Operations (FFO), if reported". (3) **C5
     p.54** (APP-04c's source): REITs are companies "where majority of the company's taxable Income
     is paid out as a dividend", so growth capex is funded externally -- D-13's argument, an
-    inference declared as D-13's was. (4) the checklist Scope's D-14 paragraph
-    (``phase3_decisions.md``): "D-13's argument (negative free cash flow as the normal state, funded
+    inference declared as D-13's was. (4) ``phase3_decisions.md``, D-14 (the checklist v1.3 decision
+    record): "D-13's argument (negative free cash flow as the normal state, funded
     externally) applies to REITs too, and APP-04b puts acquisitions in REIT capex." (5) the
     measurement (``docs/model_fixes.md`` "T-071 part 2b, D-14"): the REITs' acquisition share of
     capex -- O 97.3%, VTR 92.5%, FRT 69.9%, CPT 52.3%; ARE, DLR and IRM 0% -- and the per-date
@@ -108,6 +108,10 @@ class _NegativeFcfRule:
             "exempt": (
                 "the regulated-utility overlay (D-13) and the REIT overlay (D-14) -- the APP-00 "
                 "profile, never the GICS sector"
+            ),
+            "sources": (
+                "D-14 (phase3_decisions.md, the checklist v1.3 decision record): APP-04b (C1 "
+                "pp.7-8), C6 p.10, C5 p.54"
             ),
             "replacement": "none for a REIT (no source gives a threshold, MET-00)",
         }
