@@ -819,6 +819,8 @@ the final pilot, `T-143`.
 
 - [x] **T-155** The current members' CIK successions — **done 2026-10-14, PR #165** (stream A, step 3a). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-155` (closed task)"). → `PLAN.md` Work item 8, step 3a.
 
+- [x] **T-156** EBITDA coverage: what the rules allow us to recover — **done 2026-10-16, PR #170** (stream A, step 3c). The entry, its measurements and its open declared items moved verbatim to `CHANGELOG.md` ("Work item 8 — `T-156` (closed task)"). → `PLAN.md` Work item 8, step 3c.
+
 ## Work item 9 — P2: entity-resolution sanitization and `v_quant_vs_live` consumption — `T-080`/`T-081`/`T-082`/`T-084` DEFERRED until after `T-100`
 
 **Deferred 2026-10-05 (user: finish this repo first).** Reason: `T-080`/`T-081`/`T-082`/`T-084` change what

@@ -284,6 +284,31 @@ DA_SOURCED_CHILDREN: tuple[str, ...] = (
 )
 # A cash-flow row whose concept or caption names D&A: the C1 (c) "only lines" scan.
 _DA_NAME_RE = re.compile(r"depreciat|amorti|deplet", re.IGNORECASE)
+# E3 (T-156, ID-01 with MD-01 as the item's definition): the captions a company extension on the
+# cash-flow statement may carry to be read as D&A. A1 5.6.1: "filers should normally assign an
+# appropriate label for a concept already defined in a standard taxonomy", so the filer's own caption
+# names the standard concept. The plain pair "Depreciation and amortization" (the element
+# ``DepreciationAndAmortization``'s own name) and the standard labels of the three aggregate D&A
+# elements the resolver accepts (``elts/us-gaap-lab-2026.xml``): ``DepreciationDepletionAndAmortization``
+# "Depreciation, Depletion and Amortization"; ``DepreciationAndAmortization`` "Depreciation, Depletion
+# and Amortization, Nonproduction"; ``DepreciationAmortizationAndAccretionNet`` "Depreciation,
+# Amortization and Accretion, Net". A caption that adds anything -- "and other", "impairment",
+# "accretion", "depletion" alone, a component's label -- is not read.
+DA_CAPTION_ELEMENTS: dict[str, str] = {
+    "depreciation and amortization": G + "DepreciationAndAmortization",
+    "depreciation depletion and amortization": G + "DepreciationDepletionAndAmortization",
+    "depreciation depletion and amortization nonproduction": G + "DepreciationAndAmortization",
+    "depreciation amortization and accretion net": G + "DepreciationAmortizationAndAccretionNet",
+}
+
+
+def _normalize_caption(label: str) -> str:
+    """A caption comparable across case, punctuation, "&" for "and" and a trailing "expense" (E3)."""
+    text = label.lower().replace("&", " and ")
+    text = re.sub(r"[^a-z0-9 ]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r" expense$", "", text)
+
 
 # C3 (T-151 part 1): a net-element caption that names proceeds, a sale or a disposition. Such a line
 # is net proceeds whatever its filed sign (COP: "Proceeds from asset dispositions" displayed
@@ -1454,11 +1479,97 @@ class Statements:
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
         """D&A (MD-01, ID-02b; C1, T-151 part 1): the filed aggregate first, unchanged, else the
-        sourced sum of the filed D&A-nature children, else a refusal."""
+        sourced sum of the filed D&A-nature children, else a refusal.
+
+        E1 (T-156): when the cash-flow statement files **no** D&A fact at all, the same elements are
+        read from the income statement instead, flagged ``da_income_statement``. B6's definitions
+        name no statement, so the element decides and not the statement: the pinned FASB 2026 text
+        (``elts/us-gaap-doc-2026.xml``, B6) reads ``DepreciationDepletionAndAmortization`` "The
+        aggregate expense recognized in the current period that allocates the cost of tangible
+        assets, intangible assets, or depleting assets to periods that benefit from use of the
+        assets", ``Depreciation`` "The amount of expense recognized in the current period that
+        reflects the allocation of the cost of tangible assets over the assets' useful lives",
+        ``OtherDepreciationAndAmortization`` "Amount of expense charged against earnings to allocate
+        the cost of tangible and intangible assets over their remaining economic lives, classified as
+        other" and ``AmortizationOfIntangibleAssets`` "Amount of amortization expense for
+        finite-lived intangible asset" -- none names a statement. The two statements are never mixed
+        in one value: the income statement is read only when the cash-flow statement has no D&A fact
+        at all, so a cash-flow D&A fact in any column keeps today's behaviour."""
         value, concept, how = self._component_row(spec, column)
         if value is not None:
             return value, concept, how
-        return self._da_sourced_sum(spec, column)
+        result = self._da_sourced_sum(spec, column)
+        if result[0] is not None:
+            return result
+        cross = self._da_cross_statement_sum(spec, column)
+        if cross[0] is not None:
+            return cross
+        if not self._da_filed_on_statement("cash_flow"):
+            income_spec = replace(spec, statements=_INCOME)
+            value, concept, how = self._component_row(income_spec, column)
+            if value is None:
+                value, concept, how = self._da_sourced_sum(income_spec, column)
+            if value is not None:
+                self._flag("da_income_statement")
+                return value, concept, how
+        caption = self._da_caption_fallback(spec, column)
+        if caption[0] is not None:
+            return caption
+        return result
+
+    def _da_caption_fallback(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """E3 (T-156, ID-01): a company extension on the cash-flow statement whose own caption names
+        exactly depreciation and amortization, or equals the standard label of an aggregate D&A
+        element the resolver accepts (:data:`DA_CAPTION_ELEMENTS`). Exactly one matching line, as the
+        shared caption fallback requires; a negative value of an element ID-13 lists is rejected,
+        never repaired (ID-11). Flagged ``caption_fallback``; ``extension_concept`` rides on the
+        concept itself, and ``da_element_nonproduction`` when the caption names
+        ``DepreciationAndAmortization`` -- the element's own flag, as if the standard element had
+        been filed."""
+        found: list[tuple[str, float, str]] = []
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if not concept or concept.startswith(("us-gaap_", "dei_")):
+                continue
+            element = DA_CAPTION_ELEMENTS.get(_normalize_caption(str(row.get("label") or "")))
+            if element is None:
+                continue
+            value = self._read(row, column)
+            if value is None:
+                continue
+            if value < 0 and element in spec.nonnegative:
+                self._flag(
+                    "wrong_sign_rejected"
+                    if _preferred_sign(row) is not None
+                    else "sign_unknown_negative_rejected"
+                )
+                continue
+            found.append((concept, value, element))
+        if len(found) != 1:
+            return None, None, None
+        concept, value, element = found[0]
+        self._flag("caption_fallback")
+        if element == G + "DepreciationAndAmortization":
+            self._flag("da_element_nonproduction")
+        return value, concept, "label_fallback"
+
+    def _da_filed_on_statement(self, statement: str) -> bool:
+        """Whether *statement* carries any D&A-nature row with a value in any column (E1, T-156): a
+        non-abstract, non-dimensional row whose concept's local name or caption names depreciation,
+        amortization or depletion (:data:`_DA_NAME_RE`), the same scan
+        :meth:`da_lines_outside_sourced` makes over the cash-flow lines."""
+        for row in self.raw.get(statement, []):
+            if row.get("abstract") or row.get("dimension"):
+                continue
+            concept = str(row.get("concept") or "")
+            label = str(row.get("label") or "")
+            if not (_DA_NAME_RE.search(concept.split("_", 1)[-1]) or _DA_NAME_RE.search(label)):
+                continue
+            if any(_numeric(row.get(period.key)) is not None for period in self.periods):
+                return True
+        return False
 
     def _da_sourced_sum(
         self, spec: LineItem, column: str
@@ -1492,6 +1603,41 @@ class Statements:
             return None, None, None
         filed = {c: self._concept_value(spec, column, c) for c in children}
         self._flag("da_sourced_sum")
+        return (
+            sum(v for v in filed.values() if v is not None),
+            " + ".join(sorted(c for c, v in filed.items() if v is not None)),
+            "map",
+        )
+
+    def _da_cross_statement_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """E2 (T-156): the sourced D&A sum with its amortization term read on the income statement.
+
+        N14/D7 stays -- depreciation alone is never D&A -- so the sum is formed only when a
+        D&A-nature amortization or depletion child is filed (condition (b), read on the income
+        statement: E1's reading) and the cash-flow statement's other D&A-named lines are the four
+        children (condition (c), exactly as :meth:`_da_sourced_sum` states it). ``Depreciation``
+        itself stays the cash-flow statement's row. Flagged ``da_sum_cross_statement``; each term
+        keeps its filed sign (ID-12). A refusal here raises no flag: the filing is simply not
+        recovered."""
+        depreciation = self._concept_value(spec, column, G + "Depreciation")
+        if depreciation is None:
+            return None, None, None
+        income_spec = replace(spec, statements=_INCOME)
+        amortization = [
+            c
+            for c in DA_SOURCED_CHILDREN
+            if c != G + "Depreciation" and self._concept_value(income_spec, column, c) is not None
+        ]
+        if not amortization:
+            return None, None, None
+        if self.da_lines_outside_sourced(spec):
+            return None, None, None
+        filed: dict[str, float | None] = {G + "Depreciation": depreciation}
+        for child in amortization:
+            filed[child] = self._concept_value(income_spec, column, child)
+        self._flag("da_sum_cross_statement")
         return (
             sum(v for v in filed.values() if v is not None),
             " + ".join(sorted(c for c, v in filed.items() if v is not None)),
