@@ -40,7 +40,7 @@ from cycle.writers import (
     veto_out_of_order_reason,
     write_vetoes,
 )
-from kg_schema.company_profile import CompanyProfile
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
@@ -257,7 +257,7 @@ def _neg_equity_record(**over: float | None) -> dict[str, float | None]:
 
 
 def _test_profile(
-    *, financial_firm: bool = False, regulated_utility: bool = False
+    *, financial_firm: bool = False, regulated_utility: bool = False, reit: bool = False
 ) -> CompanyProfile:
     return CompanyProfile(
         cik="0000000001",
@@ -265,7 +265,7 @@ def _test_profile(
         company_name="Test Co",
         type="article_9" if financial_firm else "operating",
         financial_firm=financial_firm,
-        reit=False,
+        reit=reit,
         multi_class=False,
         regulated_utility=regulated_utility,
         sector=None,
@@ -491,6 +491,59 @@ def test_negative_fcf_exempts_a_regulated_utility_and_still_fires_otherwise() ->
     assert [h.asset_id for h in result.hits] == [2]
     assert result.hits[0].severity == "HARD"
     assert result.evaluated == frozenset({1, 2, 3})
+
+
+def test_the_reit_overlay_is_evaluated_and_never_hit() -> None:
+    """D-14 (the user's decision, 2026-10-15): a REIT is evaluated and never hit, so a stint opened
+    before the overlay closes; an operating company with the same margin is HARD. The profile is
+    the APP-00 one (the REIT overlay), never the GICS sector."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={
+            1: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            2: {"cashflow.free_cash_flow_margin": -0.2},  # operating company: HARD
+            3: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            4: {"cashflow.free_cash_flow_margin": 0.1},  # REIT, positive: evaluated, not hit
+        },
+        price_obs={},
+        last_fundamental={},
+        profiles={
+            1: _test_profile(reit=True),
+            2: _test_profile(),
+            3: _test_profile(reit=True),
+            4: _test_profile(reit=True),
+        },
+    )
+    result = _NegativeFcfRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [2]
+    assert result.hits[0].severity == "HARD"
+    assert result.evaluated == frozenset({1, 2, 3, 4})
+
+
+def test_a_reit_whose_profile_interval_ends_is_evaluated_as_its_new_profile_says() -> None:
+    """D-14 keys on ``profile_as_of`` on the cycle date: a leaver REIT is exempt while its interval
+    holds and, once it has ended, is evaluated as an unknown profile -- an operating company -- and
+    hit like any other member."""
+    dre = profile_as_of("0000783280", "2022-06-30")  # Duke Realty, valid_to 2022-10-03
+    after = profile_as_of("0000783280", "2023-06-30")
+    assert dre is not None and dre.reit and after is None
+    metrics: dict[int, dict[str, float | None]] = {1: {"cashflow.free_cash_flow_margin": -0.2}}
+    ctx = RuleContext(
+        cycle_date="2022-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: dre},
+    )
+    assert _NegativeFcfRule().evaluate(ctx).hits == []
+    later = RuleContext(
+        cycle_date="2023-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: after},
+    )
+    assert [h.asset_id for h in _NegativeFcfRule().evaluate(later).hits] == [1]
 
 
 def test_utility_cash_coverage_fires_only_when_both_bounds_are_below_the_cutoff() -> None:
