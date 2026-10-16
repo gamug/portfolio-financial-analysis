@@ -9778,25 +9778,52 @@ evaluation step will apply C11 pp.5-7 and 34-35: bankrupt or FDIC receivership, 
 zero unless OTC prices; an M&A cash deal → the lower of the close and the deal price; a stock deal →
 the deal ratio; a suspension → the last close carried.
 
-**R2. The behaviour.** On part 3b's copy at 2023-03-31 (the run that held CMA and DFS with
-`cost_basis NULL`), `cycle select` at the shipped 5% **refuses**: "3/32 universe members (9.4%) are
-unrankable … 1 unscored … asset_ids [1]; 3 unpriced … asset_ids [1, 3, 4]" — AVB is both and counts
-once. With the declared measurement setting (`unscored_max_share = 0.5`, a `CycleSettings` value,
-never an `--allow-*` flag): DFS (rank 1), CMA (rank 5) and AVB (`["UNSCORED","UNPRICED"]`) carry the
-marker with `vetoed = 1`, **no `veto` row named a marker**, and the 29-name book has **no position
-without a price** (0 NULL `cost_basis`; the "before" held 2).
+**R2. The behaviour (`cycle select`, part 3b's copy, 2023-03-31).** The "before": run 6 held 29
+names — CMA rank 5 (0.0338) and DFS rank 1 (0.0391), both `cost_basis NULL`, with the T-1 HARD set
+`{LW, PLD}` (DRE and VNO are in the veto table's active stints but outside that day's cohort), AVB
+`UNSCORED`, and 29 positions of which 2 have a NULL cost basis. The reset that a re-run under this
+code needs keeps the stints raised **before** the date — the ones the run's T-1 cutoff reads — and
+applies exactly the rules `cycle.replay.reset_replay_range` applies to `veto`, from 2023-03-31:
+`DELETE FROM veto WHERE raised_on >= '2023-03-31'` (16 rows), `UPDATE veto SET cleared_on = NULL,
+cleared_at = NULL WHERE cleared_on >= '2023-03-31'` (5), `UPDATE veto SET last_seen_on = raised_on
+WHERE raised_on < '2023-03-31' AND last_seen_on >= '2023-03-31'` (6), `restore_expiries_from(conn,
+'2023-03-31')` (0), plus `DELETE FROM cycle_run WHERE cycle_date >= '2023-03-31'` (5: run 6 and the
+four later SELECTION runs, cascading their checkpoints and rankings) and `DELETE FROM
+portfolio_position` (29) — 16 veto rows left. (An earlier pass deleted every veto row: LW and PLD
+then re-entered the book, which is why the reset is stated here.)
 
-**R3. The replay.** `cycle backfill`'s four weekly dates 2023-03-03..2023-03-24 on the same copy
-(again with the declared setting): unpriced = AVB, CMA, DFS, SIVB on 03-03 and 03-10 and AVB, CMA,
-DFS on 03-17/24; **SIVB is never held**; every marker row carries no veto row; the rebalance closes
-29 stints at 2023-03-10 (`valid_to` set, the `cost_basis` it opened with, **no price written at the
-close**) and the 24 open stints have no NULL cost basis.
+At the shipped 5% **`cycle select` refuses**: "3/32 universe members (9.4%) are unrankable, over the
+5% limit: 1 unscored (no FUNDAMENTAL score at all) asset_ids [1]; 3 unpriced (no close on the
+session) asset_ids [1, 3, 4]" — AVB is both and counts once; 1 = AVB, 3 and 4 = CMA and DFS. With
+the declared measurement setting (`unscored_max_share = 0.5`, a `CycleSettings` value, never an
+`--allow-*` flag): 27 selected, `unscored 1 ['AVB']`, `unpriced 3 ['AVB','CMA','DFS']`; DFS rank 1,
+CMA rank 5 and AVB rank 32 carry the marker with `vetoed = 1` (`AVB` both markers), **no `veto` row
+named a marker**, and the 27-name book has **no position without a price** (0 NULL `cost_basis`).
+The **T-1 HARD set is run 6's** (`LW`, `PLD`, never selected; the same set at the cutoff on both
+sides). Against **master's own code on the same reset copy** (the clean comparison, since the copy's
+stored run 6 predates the intervening VALORIZATION/pillar work): the only differences are CMA and
+DFS (the `UNPRICED` marker, `selected 1 -> 0`, `target_weight -> NULL`) plus the weights renormalized
+over 27 names, and **no name takes their place** — the book is short (27 of 30, never padded). The
+blended scores themselves are **not comparable with run 6** (KO: `FUNDAMENTAL 60.5, TECHNICAL None`
+then against `60.67` / `51.09` now), so the eligibility facts, not the ranks, are the evidence.
 
-**R4. Unchanged where every name is priced.** master and the branch each on a fresh copy at
-2026-08-24 (the first replay date after AVB's 2026-08-17 exit where all 25 cohort members have a
-close on the session): 24 selected, 25 ranking rows, **unpriced 0**, and the ranking (ticker, rank,
-blended score, vetoed, rules, selected, target weight) and the positions (ticker, weight, cost
-basis, interval) are **identical** between the two.
+**R3. The replay.** A fresh copy, re-gated, reset by the same veto rules **from 2023-03-03** (16
+deleted, 5 reopened, 6 rolled back, 0 expiries, 5 runs, 29 positions; 16 veto rows left). The four
+weekly dates 2023-03-03..2023-03-24 (again with the declared setting): T-1 HARD `{LW, PLD}` in the
+cohort; unpriced = AVB, CMA, DFS, SIVB on 03-03 and 03-10 and AVB, CMA, DFS on 03-17/24 → the books
+hold 27, 26, 26, 24; **SIVB is never held**; 14 marker rows, **no veto row named a marker**; the
+open stints have no NULL cost basis. D5's held-and-then-unpriced case has no real instance here, so
+its hermetic test stands.
+
+**R4. Unchanged where every name is priced.** A fresh copy per side, re-gated, reset from
+2026-08-24 (no `veto` row is raised on or after that date — 0 deleted, 0 reopened — so the
+copy keeps all 32; `DELETE FROM portfolio_position` 29; the replay book is empty). Date 2026-08-24,
+the first weekly replay date after AVB's 2026-08-17 exit where all 25 cohort members have a close on
+the session (checked before the runs). T-1 HARD `{DRE, PLD, VNO}` → only PLD in the cohort, never
+selected. master and the branch each 23 selected, 23 positions, 0 NULL cost basis, `unpriced 0`, the
+same marked rows (PEP `UNSCORED`, PLD, TAP), and the ranking (ticker, rank, blended score, its
+components, vetoed, rules, selected, target weight) and the positions (ticker, weight, cost basis)
+are **identical** between master and the branch.
 
 **The measurement settings, declared.** On the scratch copies only: `fundamental_agent quality`
 (the DQ gate-version guard's own remedy, 139 dq-v3 rows → 29 dq-v4) and the reset a re-run needs —
