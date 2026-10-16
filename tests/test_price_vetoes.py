@@ -556,6 +556,12 @@ def test_undo_run_never_touches_vetoes(memory_db: Database) -> None:
 def _obs(conn: Database, asset: int, day: str, version: str, **cols: float | None) -> None:
     fields = ["asset_id", "obs_date", "close", "event_time", "computed_at", "engine_version", *cols]
     values = [asset, day, 100.0, day, "2026-07-31T00:00:00Z", version, *cols.values()]
+    # the shared cycle_seed fixture already holds a row for that session (eligibility, T-153
+    # part 3c): replace it rather than tripping the (asset, date, version) uniqueness
+    conn.execute(
+        "DELETE FROM price_observation WHERE asset_id = ? AND obs_date = ? AND engine_version = ?",
+        (asset, day, version),
+    )
     conn.execute(
         f"INSERT INTO price_observation ({', '.join(fields)}) "  # noqa: S608 - test literals
         f"VALUES ({', '.join('?' * len(fields))})",

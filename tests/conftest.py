@@ -19,7 +19,7 @@ from portfolio_common.db import Database
 from fundamental_agent import db
 from fundamental_agent.statements import Statements
 from kg_schema import provenance
-from kg_schema.trading_calendar import available_from
+from kg_schema.trading_calendar import available_from, is_trading_day
 from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
@@ -479,6 +479,17 @@ def quant_seed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[...,
     return _seed
 
 
+def _sessions(first: str, last: str) -> list[date]:
+    """The NYSE sessions in [first, last] (the calendar the cycle's eligibility reads)."""
+    out: list[date] = []
+    day = date.fromisoformat(first)
+    while day <= date.fromisoformat(last):
+        if is_trading_day(day):
+            out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
 @pytest.fixture
 def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Database:
     conn = memory_db
@@ -518,7 +529,12 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
             "'2026-02-02')",
             (i, 80 - 8 * i, 80 - 8 * i, fid),
         )
-        for d in range(1, 121):
+        # one observation per NYSE session, 2026-01-01..2026-09-30: eligibility (T-153 part 3c)
+        # is a close on the cycle date's own session, so the fixture must hold every session the
+        # tests run at, not a window around one date.
+        for offset, obs_date in enumerate(
+            day.isoformat() for day in _sessions("2026-01-01", "2026-09-30")
+        ):
             conn.execute(
                 "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "
                 "realized_vol_90d, max_drawdown_90d, momentum_63d, momentum_21d, event_time, "
@@ -526,14 +542,14 @@ def cycle_seed(memory_db: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: P
                 "'2026-06-30T00:00:00Z', 'priceobs-v2')",
                 (
                     i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
-                    100.0 + d * (6 - i),
+                    obs_date,
+                    100.0 + offset * (6 - i),
                     2.0 * i,
                     0.10 * i,
                     -0.03 * i,
                     0.25 - 0.06 * i,
                     0.05 - 0.01 * i,
-                    f"2026-{1 + d // 28:02d}-{1 + d % 28:02d}",
+                    obs_date,
                 ),
             )
     conn.commit()

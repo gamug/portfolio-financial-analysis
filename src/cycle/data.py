@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ from kg_schema.env import universe_database_path
 from kg_schema.market_cap import MarketCap, market_caps_as_of
 from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
+from kg_schema.trading_calendar import last_session_on_or_before
 from kg_schema.versions import (
     DATA_QUALITY_GATE_VERSION,
     RULE_INPUT_GROUP,
@@ -459,11 +461,13 @@ def unscored_assets(asset_ids: list[int], scored: dict[int, Any]) -> list[int]:
 
 
 class TooManyUnscored(RuntimeError):
-    """More than ``CycleSettings.unscored_max_share`` of the universe has no FUNDAMENTAL score
-    at all (T-119, PR #78 review) -- refuses to rank/select rather than silently building a
-    portfolio blind on most of the universe. An unscored asset is ineligible for selection, not
-    penalized like a stale one (``EARNINGS_MISSING``, SOFT): this is a data-completeness circuit
-    breaker on the whole run, not a per-asset veto."""
+    """More than ``CycleSettings.unscored_max_share`` of the universe is unrankable (T-119,
+    PR #78 review; the unpriced gap added by T-153 part 3c, D2) -- refuses to rank/select rather
+    than silently building a portfolio blind on most of the universe. An unrankable asset is
+    ineligible for selection, not penalized like a stale one (``EARNINGS_MISSING``, SOFT): this
+    is a data-completeness circuit breaker on the whole run, not a per-asset veto. The name is
+    kept (it is read by the CLI and the tests; no view or API carries it) and the message names
+    both gaps separately."""
 
 
 def too_many_unscored_reason(
@@ -482,6 +486,50 @@ def too_many_unscored_reason(
     return (
         f"{len(unscored)}/{universe_size} universe members ({share:.1%}) have no FUNDAMENTAL "
         f"score at all, over the {max_share:.0%} limit: asset_ids {sorted(unscored)}"
+    )
+
+
+def unpriced_assets(
+    conn: Database, asset_ids: list[int], cycle_date: str, engine_version: str
+) -> list[int]:
+    """Universe members with no usable close on the cycle date's latest session (T-153 part 3c).
+
+    Eligibility is C11 printed p.36 applied by analogy (index addition -> selection): a member is
+    usable on cycle date D only if its line has a close on the market's **latest NYSE session on
+    or before D** (``kg_schema.trading_calendar.last_session_on_or_before``), in the cycle's own
+    ``price_observation`` engine version and with a non-NULL close. A holiday therefore does not
+    exclude a name (its session is the earlier one), but a one-day hole does. The price vetoes
+    keep their own 7-day window (``MAX_OBSERVATION_AGE_DAYS``): a deliberately different rule,
+    declared in ``docs/model_fixes.md``."""
+    session = last_session_on_or_before(date.fromisoformat(cycle_date)).isoformat()
+    rows = conn.execute(
+        "SELECT asset_id FROM price_observation WHERE engine_version = ? AND obs_date = ? "
+        "AND close IS NOT NULL",
+        (engine_version, session),
+    ).fetchall()
+    priced = {int(r["asset_id"]) for r in rows}
+    return [a for a in asset_ids if a not in priced]
+
+
+def too_many_unrankable_reason(
+    unscored: list[int], unpriced: list[int], universe_size: int, max_share: float
+) -> str | None:
+    """``None`` when the union of the unscored and the unpriced members is within *max_share*;
+    otherwise the refusal message ``TooManyUnscored`` should carry (T-153 part 3c, D2).
+
+    One coverage rule, both gaps counted once per asset (an asset that is both counts once), the
+    two lists named separately so an operator sees which gap to fix."""
+    both = set(unscored) | set(unpriced)
+    if universe_size == 0 or not both:
+        return None
+    share = len(both) / universe_size
+    if share <= max_share:
+        return None
+    return (
+        f"{len(both)}/{universe_size} universe members ({share:.1%}) are unrankable, over the "
+        f"{max_share:.0%} limit: {len(unscored)} unscored (no FUNDAMENTAL score at all) "
+        f"asset_ids {sorted(unscored)}; {len(unpriced)} unpriced (no close on the session) "
+        f"asset_ids {sorted(unpriced)}"
     )
 
 
