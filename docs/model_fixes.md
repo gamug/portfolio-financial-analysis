@@ -9004,3 +9004,398 @@ no table or column changes (contract stays 16). Tests: `tests/test_leaver_profil
 `tests/test_build_company_profile.py`, `tests/test_leaver_company_types.py`,
 `tests/test_leaver_sic_check.py`, `tests/test_verify_pilot_t153d.py`, `tests/test_company_profile.py`,
 `tests/test_db.py`.
+
+## T-071 part 2b — the VALORIZATION score (stream A, Work item 8 step 2)
+
+*(The plan is `/workspaces/thesis/handoff/T071c_plan.md`; the measurement is
+`scripts/verify_t071c.py` with its outputs under `/workspaces/thesis/scratch/t071c/out/`.)*
+
+### D6 — REIT capex completeness, and the D-14 table re-measured
+
+`Statements._capex_reit` (`src/fundamental_agent/statements.py`) sums APP-04b's four parts under
+MET-08 (c). Two things were missing, both found re-measuring D-14 (T-071 part 2a) and ruled by
+reviewer A on 2026-10-15. **No rule changed for any other filer**; the shared caption fallback's
+"one caption, one line" rule (`_label_fallback_row`) is untouched.
+
+**The real-estate acquisition part, by the FASB 2026 calculation tree.** The pinned zip
+(`docs/checklist_sec/sec_xcheck/fasb_2026_dl/x/us-gaap-2026/`) makes `PaymentsToAcquireRealEstate`
+the **parent** of `PaymentsToAcquireCommercialRealEstate` and of `PaymentsForCapitalImprovements`:
+
+| file | parent | child | weight |
+|---|---|---|---|
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireRealEstate` | `us-gaap_PaymentsToAcquireCommercialRealEstate` | 1.0 |
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireRealEstate` | `us-gaap_PaymentsForCapitalImprovements` | 1.0 |
+| `stm/us-gaap-stm-scf-indir-cal-2026.xml` | `us-gaap_PaymentsToAcquireInvestments` | `us-gaap_PaymentsToAcquireRealEstateHeldForInvestment` | 1.0 |
+| `stm/us-gaap-stm-scf-dbo-cal-2026.xml` | `us-gaap_PaymentsForProceedsFromRealEstateHeldforinvestment` | `us-gaap_PaymentsToAcquireRealEstateHeldForInvestment` | 1.0 |
+
+So: a filed **parent** is used **alone** -- APP-04b's own sentence, capital improvements are inside it
+-- and a filed child beside it is flagged `capital_improvements_overlap_not_added`; when the parent
+is **not** filed, the filed children are **added**, because siblings in a calculation sum to the
+parent and are therefore explicitly disjoint (MET-08 (b)), flagged `reit_sibling_sum`.
+`PaymentsToAcquireRealEstateHeldForInvestment` is **not** a child of the parent (its own parents are
+`PaymentsToAcquireInvestments` and `PaymentsForProceedsFromRealEstateHeldforinvestment`, two other
+trees), so it stays an independent component -- which is why UDR keeps
+`PaymentsForCapitalImprovements` beside it (`out/d6_sibling_arcs.txt`).
+
+**Declared inference.** APP-04b names `PaymentsToAcquireRealEstate` "such as" an acquisition line,
+and its reason (`PaymentsForCapitalImprovements` is contained in it) is **containment**. The
+calculation tree shows containment holds between the parent and its children, **not between
+siblings** -- so the two children are added together when the parent is absent. This is an inference
+from the tree, with the arcs above as its reference.
+
+**The REIT extension sum** (`_reit_extension_capex`, ruling of 2026-10-15). FRT files its capex as
+two filer extensions -- `frt_CapitalExpendituresDevelopmentRedevelopment` ("Capital expenditures -
+development and redevelopment") and `frt_CapitalExpendituresOther` ("Capital expenditures - other")
+-- and the shared caption fallback refuses **both** (two matches). Inside the REIT composite the
+opposite of "one caption, one line" holds: APP-04b's capex is the sum of the components the filer
+presents, so every captioned line is summed that is
+
+* a **company extension** (never a `us-gaap`/`dei` concept -- those stay with the concept map, so
+  VTR's "Other capital expenditures" = `PaymentsToAcquireOtherProductiveAssets` is not taken);
+* on the face of this cash-flow statement and not captioned as proceeds, a sale, a disposition or a
+  gain (`_NOT_A_CAPEX_PAYMENT_RE`);
+* **presented as an outflow**: `preferred_sign = -1` (the negated label the investing outflows
+  carry). This refuses CPT's `cpt_AccrualAssociatedWithConstructionAndCapitalExpenditures`
+  (`+1`, a non-cash accrual, caption "Accrual associated with construction and capital expenditures")
+  without a new caption word;
+* **cash, not a mirror**: neither the concept's local name nor its caption names accrual, accrued,
+  unpaid, remaining, payable or "at period end" (`_NOT_AN_EXTENSION_CAPEX_RE`). This refuses PSA's
+  three `*RemainingUnpaidAtPeriodEnd` / `*RemainingAtPeriodEnd` lines, whose **captions are identical
+  to their cash counterparts** ("Capital expenditures for property enhancements", "…energy
+  efficiencies (…)", "…to maintain real estate facilities") -- the concept name is the filer's own
+  wording and is declared the discriminator;
+
+and only when no already-taken `us-gaap` line **is their total** (`_extension_is_a_total`:
+`abs(taken - ext_sum) <= dq01_tolerance(taken, parts + 1)`, or the sum plus another taken line),
+which flags `reit_extension_total_present` instead of adding the parts. DQ-01's tolerance moved to
+`src/fundamental_agent/dq01.py` (a leaf) so the resolver can use it without the cycle
+`statements -> quality -> metrics -> cashflow -> statements`; `quality` and `fidelity` re-export it.
+
+Flags: `reit_extension_sum`, `caption_fallback` and (from the resolution) `extension_concept`.
+
+**Measured reach (the store's 1,703 REIT filing columns, `out/d6_extension_reach.txt`,
+`out/d6_extension_columns.txt`).** The extension path changes **211 columns across 5 companies --
+ESS, FRT, PSA, VMRK, WY** (CPT is gone via the outflow test, PSA's mirrors via the name test;
+`reit_extension_total_present` never fired). The manual look
+(`out/d6_investing_section.txt`) puts **every** taken line between the operating total and the
+investing total of its own statement -- the investing section -- for all five. The parent/sibling
+rule changes **112 columns across 7 companies -- BXP, DOC, HST, O, UDR, VTR, WELL**.
+
+**Per filing, the resolver basis the engine reads** (`out/d6_report.txt`; a 10-K's own fiscal year,
+a 10-Q's own year-to-date column):
+
+| company | filing | capex before | capex after | terms after |
+|---|---|---|---|---|
+| FRT | 10-K 2025-12-31 FY | 735,274,000 | 1,026,612,000 | `frt_CapitalExpendituresDevelopmentRedevelopment + frt_CapitalExpendituresOther + PaymentsToAcquireRealEstate` |
+| FRT | 10-Q 2026-06-30 YTD | 85,397,000 | **220,417,000** | same |
+| VTR | 10-K 2025-12-31 FY | 2,574,521,000 | 2,574,521,000 | `PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| VTR | 10-Q 2026-06-30 YTD | 149,676,000 | 2,598,479,000 | `PaymentsToAcquireCommercialRealEstate + PaymentsToDevelopRealEstateAssets` |
+| BXP | 10-K 2025-12-31 FY | 216,687,000 | 272,551,000 | `PaymentsForCapitalImprovements + PaymentsToAcquireCommercialRealEstate` |
+| HST | 10-K 2025-12-31 FY | 282,000,000 | 284,000,000 | same |
+| O | 10-K 2025-12-31 FY | 131,800,000 | 4,779,673,000 | same |
+| WELL | 10-K 2025-12-31 FY | 1,050,263,000 | 1,050,263,000 | `PaymentsForCapitalImprovements` |
+| DOC | 10-K 2025-12-31 FY | 763,656,000 | 763,656,000 | `PaymentsToDevelopRealEstateAssets` |
+| UDR | 10-K 2025-12-31 FY | 296,552,000 | 296,552,000 | `PaymentsForCapitalImprovements + PaymentsToDevelopRealEstateAssets` |
+| UDR | 10-Q 2026-06-30 YTD | 106,378,000 | 210,562,000 | `PaymentsForCapitalImprovements + PaymentsToAcquireRealEstateHeldForInvestment + PaymentsToDevelopRealEstateAssets` |
+| ESS | 10-K 2025-12-31 FY | 893,539,000 | 1,033,887,000 | `ess_RevenueGeneratingCapitalExpenditures + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| VMRK | 10-K 2025-12-31 FY | 773,402,000 | 1,115,442,000 | `eqr_PaymentsForCapitalExpendituresToRealEstate + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+| WY | 10-K 2025-12-31 FY | 51,000,000 | 474,000,000 | `PaymentsForCapitalImprovements + wy_PaymentsForCapitalExpendituresOfPropertyPlantAndEquipment` |
+| PSA | 10-K 2025-12-31 FY | 1,256,322,000 | 1,545,700,000 | `psa_CapitalExpendituresForEnergyEfficiencies + psa_CapitalExpendituresForPropertyEnhancements + psa_CapitalExpendituresToMaintainRealEstateFacilities + PaymentsToAcquireRealEstate + PaymentsToDevelopRealEstateAssets` |
+
+**VTR's TTM.** Its 10-K files `PaymentsToAcquireRealEstate` and its 10-Qs
+`PaymentsToAcquireCommercialRealEstate`, both captioned "Net investment in real estate property" --
+one economic line. The TTM identity (`FY(prior 10-K) - YTD(last year) + YTD(this year)`) therefore
+combines the same line across the two elements: 2,574,521,000 - 1,086,265,000 + 2,598,479,000 =
+**4,086,735,000** (2,598,659,000 before the fix, whose YTD terms were development only).
+
+**Engine version: unchanged (`metrics-v7`)** -- T-151 part 2's precedent (no bump while it is not in
+production); the recompute deletes and rewrites the `metrics-v7` rows. **Files:**
+`src/fundamental_agent/statements.py` (`_capex_reit`, `_reit_components`, `_reit_extension_capex`,
+`_extension_is_a_total`, `_NOT_A_CAPEX_PAYMENT_RE`, `_NOT_AN_EXTENSION_CAPEX_RE`),
+`src/fundamental_agent/dq01.py` (new leaf),
+`src/fundamental_agent/quality.py` / `fidelity.py` (re-export). Tests:
+`tests/test_capex_resolution.py` (the parent/sibling rule, the extension sum, the outflow and mirror
+refusals, the no-total check, and the non-REIT one-line rule).
+
+### D1 — the value inputs, stored per filing (`fundamental_agent/value_inputs.py`)
+
+VALORIZATION v2 prices its measures on the **analysis date** (MKT-01), so it needs each filing's
+numerators and its enterprise-value bridge independently of any price. `value_inputs.write` stores a
+``rule_input`` row on every filing (10-K and 10-Q) -- the same pseudo-group as D-13's cash-coverage
+input, so no metric consumer, pillar member, applicability-matrix row or prompt ever reads it.
+
+**Every value is the one the filing's metric rows already carry**, read from the results just
+computed: ``profitability.return_on_assets``'s ``net_income_ttm`` (a quarter-times-four,
+``annualized_x4``, gives none), MD-01's persisted ``leverage.ebitda``, the MD-38 numerator (the new
+``md38_numerator`` input of ``valuation.enterprise_fcf_yield``, the value ``valuation._md38`` itself
+returned), ``leverage.debt_to_equity``'s ``equity`` (parent stockholders' equity at the filing's
+balance-sheet date, the value MD-10/MD-15 use) and ``valuation.enterprise_value``'s ``total_debt``,
+``nci``, ``cash`` and ``short_term_investments`` with their ``flag_*`` keys. A missing term is empty
+with its carrier metric's own ``provenance.empty_reason`` (MET-00).
+
+**Book equity's two declared differences from C4**: balance-sheet deferred taxes are **not** added,
+and preferred stock is **not** subtracted (the checklist leaves it pending, as in MD-35). Measured at
+2026-09-22 (`out/book_equity.json`): **34 of the 503 members** file a positive
+``us-gaap_PreferredStockValue``, and its median share of the parent equity the input carries is
+**7.23%** -- so not subtracting it overstates book equity by about that much for those 34.
+
+**The prompt hash is unchanged** (`out/d1_prompt_hash.txt`):
+``_prompt_version_hash("gpt-4o")`` is ``bf2bfb8acb53a6721fcb4426caf2f481151fb3a139faf495eb5b0deb5a12ce44``
+under master's code and under this branch; ``agents.flat_metrics`` carries the metric *values* only,
+and the rule input is not one of them (`tests/test_value_inputs.py` asserts the brief carries none of
+its keys). Engine version unchanged (``metrics-v7``); the recompute rewrites the rows.
+
+### D2 — VALORIZATION v2 (`cycle/scores/valorization.py`)
+
+``valorization.VERSION = "valorization-v2"``, recorded in ``cycle_run.params_json``
+(``valorization_version``) and on the rows (``model``). **Four measures**, each on D1's inputs and the
+market cap **on D** (``data.market_cap_estimates``, T-132):
+
+| measure | formula | source |
+|---|---|---|
+| earnings yield (E/P) | ``max(net income, 0) / market cap`` | MD-39, MET-05 (C4 p.13, p.18): the positive part, the negative-earnings dummy counted, never ranked |
+| book-to-market (B/M) | ``book equity / market cap`` | C4 p.2, p.13 ("BE/ME, the ratio of the book value of common equity to its market value"); C4 p.15 leaves a non-positive BE out, flagged ``book_equity_nonpositive`` |
+| EBITDA/EV | ``EBITDA / EV`` | C10 p.46; EV is MD-35's (market cap on D + the filing's bridge), EBITDA MD-01's |
+| enterprise FCF yield | ``MD-38 numerator / EV`` | MD-38, C10's EBIT form |
+
+The yields are the inverse of the multiples C4 and C10 use -- the same form C4 gives E/P and BE/ME.
+MET-09: a non-positive EV leaves the two EV measures out, flagged (a negative numerator with a
+positive denominator is a valid low value).
+
+**Applicability** is the matrix's cell for the measure's own metric
+(``MATRIX_METRIC``: E/P -> ``earnings_yield``, B/M -> ``market_capitalization``, EBITDA/EV ->
+``enterprise_value``, FCF -> ``enterprise_fcf_yield``) on the member's APP-00 profile, plus the
+regulated-utility overlay. So a financial firm is scored on E/P and B/M only (APP-02, C2 p.27), a
+REIT on E/P (ADJ, APP-04), B/M and EBITDA/EV (MD-38 leaves its FCF yield NA), and a regulated
+utility on E/P, B/M and EBITDA/EV (the user's decision, D-13). NA leaves the measure
+**not applicable**, never "missing"; ADJ keeps the value and records the rule; a member with no
+profile is never guessed (every measure applies). **B/M has no matrix row**: it reads
+``market_capitalization``'s cell -- A for every company type, ADJ for a multi-class one (MKT-03) -- a
+declared limitation, like ``ebitda``.
+
+**The data-quality gate** (``CARRIERS``): E/P <- ``profitability.return_on_assets``; B/M <-
+``leverage.debt_to_equity``; EBITDA/EV <- ``leverage.ebitda`` + ``valuation.enterprise_value``; FCF
+<- ``valuation.enterprise_fcf_yield`` + ``valuation.enterprise_value``. A quarantined carrier drops
+the measure (status ``quarantined``). The market cap **on D** is not a metric -- it is
+``data.market_cap_estimates`` -- so no stored-metric quarantine applies to it; a member without one
+is ``missing_input`` with the flag ``market_cap_missing``.
+
+**The score.** Each measure is winsorized at DQ-02's 0.5% per tail (D3) and ranked across the
+members that have it (``rank_pct``, higher is better). The raw score is 100 x the **equal-weight
+mean** of the present measures' percentiles -- no source gives weights between them (the 1/N
+argument, as T-141 did for the composite). **Coverage**: a score needs at least
+``min(2, the applicable count)`` present measures; otherwise ``raw_value`` is **NULL, never a neutral
+50**. The row is still written with its components (per measure: the value on D, the percentile, the
+status, the flags, the matrix cell and its rule; plus the applicable and present counts, the market
+cap and EV on D, the share date, the close date and the filing's accession). The blend already
+averages over the components it has (``_blended``), so an empty VALORIZATION **reweights** the
+asset's blend, as a missing SEMANTIC does today -- counted in the step's checkpoint
+(``empty``/``scored``) and declared here.
+
+**Removed**: the quality factor (ROE, ROIC, FCF margin, D/E), the size factor,
+``_leverage_for_ranking``, the ``inf`` substitution in ``orchestrator._valorization`` and the neutral
+50. **Unchanged**: the stored per-filing valuation metrics -- MKT-01: "Ratios stored per filing: D =
+the period end"; FUNDAMENTAL and the KG still read them, VALORIZATION no longer does. A financial
+firm is scored on the two equity multiples C2 p.27 names; **ROE is not added** (VALORIZATION is value
+only and ROE sits in FUNDAMENTAL's profitability pillar) -- declared.
+
+**Measured at 2026-09-22** (``out/``): 503 members, 481 scored (``coverage.json``); **22 empty**
+(4.4%), of which 4 have no market cap on D -- so the empty share **excluding** those is
+**18/503 = 3.58%**, under the plan's 5% stop. The reasons are one present measure only
+(``earnings_yield:missing_input`` 11, ``book_to_market:quarantined`` 9, ``book_to_market:missing_input``
+1, ``earnings_yield:quarantined`` 1). Old (v1) vs new (v2) at that date
+(``valorization_compare.json``): **Spearman 0.564** over the 481 both sides score; the **top-30
+overlap is 16**; the top-decile overlap 18 of 50. The **financial firms' tilt** (D6, reported not
+decided): 10.1% of the members, **24% of the top decile before -> 46% after**; their median rank
+135 -> 59. The top decile's sector mix moves from Financials 17 / IT 7 / Consumer Discretionary 7 to
+Financials 27 / Energy 5 / Consumer Discretionary 4.
+
+### D3 — DQ-02 in the normalization (`cycle/scores/normalize.py`)
+
+``_winsorize`` becomes the public ``winsorize``: it trims ``floor(0.005 x n)`` values per tail and
+returns the cohort untouched when ``n < 200`` -- the count is a **floor**, never ``max(1, ...)``, so
+a 21-name cohort is no longer winsorized at 5% per tail. The default fraction of
+``cross_sectional_z``/``normalized_scores`` becomes 0.005, so every score type they normalize
+(TECHNICAL, VALORIZATION, SEMANTIC, the sector momentum, FUNDAMENTAL) follows DQ-02, and
+VALORIZATION winsorizes each of its four measures with the same function before ranking them.
+
+**Measured at 2026-09-22** (``dq02.json``): VALORIZATION n = 481, **2 values trimmed per tail** (9 at
+2%), **0 members move by more than one point**, the largest move 0.13. **TASKS.md's estimate (at
+n = 495, 245 members move by more than a point) is not reproduced**: it was computed on the pilot's
+*v1* stored cross-sections, whose heavy tail the v2 measures do not have (each measure is a ratio on
+D1's inputs, winsorized before ranking). The copies hold **no** TECHNICAL component
+(``price_observation`` is at ``priceobs-v1``, whose rows carry no ``realized_vol_90d`` /
+``max_drawdown_90d`` -- the step scored 0 of 503), so the copies' TECHNICAL/SEMANTIC/FUNDAMENTAL
+winsorizing tables are empty; declared, and the copies' blend is FUNDAMENTAL + VALORIZATION on both
+sides (like with like).
+
+### D4 — N9: the ranking reads its own cycle's FUNDAMENTAL normalization (`cycle/orchestrator.py`)
+
+``_normalize`` writes FUNDAMENTAL's normalized score onto the shared filing snapshot row (an
+``UPDATE`` by id) and the contract keeps that declaration (the stored value is the last cycle's; the
+per-cycle value is ``v_cycle_ranking_component.component_value``). ``_rank`` no longer reads it back:
+it recomputes the same normalization with the same function, rows and weights
+(``_fundamental_normalization`` = ``data.latest_fundamental_rows`` + ``data.fundamental_value_under``
++ ``normalized_scores``). A run resumed at ``rank`` after another cycle date ran in between (``cycle
+backfill`` resumes from checkpoints) would otherwise blend the other date's value. No view change.
+
+Hermetic test: D1 runs uninterrupted (the baseline), D2 (a later date whose cohort has one more
+member, so its normalization differs) overwrites the shared rows, D1 is resumed at ``rank``, and its
+ranking equals the baseline. Verified to **fail against master's code**
+(``out/d4_control_fails_on_master.txt``).
+
+### D5 — the multi-class flag of the current members (`docs/multi_class_covers.csv`)
+
+The checklist's ``company_types.csv`` counted **every listed security** on the cover, so **75**
+current rows carried ``multi_class_listed = True`` (JPM, BAC, DUK, SO, NEE, T...). MKT-03's
+multi-class company has **more than one class of common stock outstanding**, listed or not
+("unlisted share class lines are included"); a registered note, debenture, preferred or depositary
+share is not a class (C6 p.9, C11). ``scripts/multi_class_covers.py`` stages each current member's
+newest 10-K cover into ``docs/multi_class_covers.csv`` (cik, ticker, accession, each class's member
+and count, ``n_common_classes``, ``multi_class``) -- the classes ``kg_schema.market_cap`` counts as
+``n_classes``, after its not-common-member exclusion. ``scripts/build_company_profile.py`` applies
+it; the column name is kept and **now means "more than one common class"** (the file's header says
+so). The leavers keep `T-153` part 3b's ``cover_classes`` (the same rule, from the cover page of the
+last 10-K on or before the exit).
+
+**Measured** (`out/d5_report.txt`, `out/d5_leavers.txt`): **94 of the 500 current rows change** --
+**62 True -> False** (each filing a single total count: JPM, BAC, DUK, SO, NEE, T, GS, MS, WFC, ORCL,
+TMUS, DLR, FRT, PSA, PLD and others) and **32 False -> True** (a second common class the table
+missed: ABNB, ACN, AOS, APP, CME, COIN, CVNA, DASH, DDOG, DELL, ECHO, EL, ERIE, EXPE, HOOD, HSY,
+IBKR, MA, META, NKE, PLTR, PSKY, RDDT, REGN, RL, STZ, TKO, TSN, UHS, UPS, V, WDAY). **No leaver flag
+changes** (the plan's stop condition). **Zero real disagreements** with the stored ``n_classes`` (493
+of the 494 staged CIKs have one; FDXF's market cap was missing). The MKT-03 ADJ flag therefore
+**appears on 32 rows and disappears from 62**, for each of the matrix's six ``multi_class`` metrics
+(``market_capitalization``, ``enterprise_value``, ``free_cash_flow_yield``,
+``sbc_adjusted_fcf_yield``, ``enterprise_fcf_yield``, ``earnings_yield``). **Declared gap**: 6
+current members have no cover in the store (BE, HONA, ILMN, P, TWLO, VYLR) and keep the table's or
+the joiner rule's value.
+
+**The D-14 table re-measured** (`out/d14_reits_v2.json`): the REITs vetoed by ``NEGATIVE_FCF`` at
+2026-09-22 are **ARE, CPT, DLR, FRT, IRM, O, VTR** (7, up from part 2a's 6): **O enters** (its FCF
+margin 0.6606 -> -0.3275) and **VTR was already firing** (-0.1238 -> -0.3548, deepening) -- it does
+not "enter". The user decides D-14 from this table after the PR.
+
+#### T-071 part 2b — fix round 1 (reviewer A, 2026-10-15)
+
+**F1 — B/M tests the book-equity sign before the gate.** DQ_NEG_EQUITY quarantines
+``leverage.debt_to_equity`` for the *sign* itself, and D-04 made that a record, never a
+data-quality problem -- so the members with equity <= 0 were labelled ``book_to_market
+"quarantined"``. ``_book_to_market`` now tests the sign first
+(``excluded_nonpositive_book_equity``, C4 p.15) and the gate after it. The gates that quarantine
+``leverage.debt_to_equity`` are: **DQ_NEG_EQUITY** (SOFT, ``_EQUITY_DENOMINATED`` -- the sign, which
+this test now precedes), **CON_01** (``Assets = Liabilities + StockholdersEquity``, BLOCK,
+``_CON01_METRICS``) and **CON_04** (``equity incl. NCI = StockholdersEquity + MinorityInterest``,
+DQ-01, ``_CON04_METRICS``) -- the latter two are the equity **value** and still drop B/M;
+``CON_08``, ``CON_19``, ``DQ_REVENUE_POS`` and ``DQ_MCAP_SCALE`` do not include D/E. Re-measured
+(``coverage.json``, ``scores_after.json``): **33** members are
+``excluded_nonpositive_book_equity`` (ABBV, AZO, BKNG, CAH, CCI, DELL, DPZ, DVA, FDXF, FICO, HCA,
+HLT, HONA, HPQ, IRM, IT, LOW, MAR, MAS, MCD, ...), **none** is ``quarantined``, and the empty
+reasons change from ``book_to_market:quarantined`` (9) to
+``book_to_market:excluded_nonpositive_book_equity`` (9).
+
+**F2 — DQ-02 on FUNDAMENTAL.** Measured with the cycle's own reader
+(``latest_fundamental_rows`` + ``fundamental_value_under`` under the cycle's weights,
+``dq02.json``): n = **503**, **2** values trimmed per tail (10 at 2%), **0** members move by more
+than one point, the largest move 0.156, and the **blended top 30 is identical** before -> after the
+winsorizing change alone (30/30 overlap; the other components are the stored run's and each asset's
+soft-veto penalty is held at what the stored blend implies). The PR's earlier sentence (the copies'
+FUNDAMENTAL table is empty) was wrong -- corrected.
+
+**F3 — the D-14 table is decision-ready** (``d14_reits_v2.json``). For every REIT vetoed by
+NEGATIVE_FCF at **2026-09-22 and at each quarter end** it now carries the operating cash flow, the
+capex split into APP-04b's four parts read from the terms the capex composite summed (its
+provenance's own columns, on the metric's basis -- TTM on a 10-Q: prior fiscal year - last year's
+YTD + this year's YTD; a first-quarter YTD column is keyed ``(Q1)`` in the facts, so both tags are
+tried), FCF and the acquisition share. The parts sum to the metric's capex on **every** row (0
+mismatches over the 15 dates). At 2026-09-22, capex (M) by part -- corporate / existing properties
+/ development / acquisitions -- and the acquisition share: ARE 0 / 0 / 1,739.2 / 0 (0%), CPT 0 / 0 /
+485.1 / 531.5 (52.3%), DLR 0 / 0 / 3,473.8 / 0 (0%), FRT 113.2 / 0 / 188.5 / 700.3 (69.9%), IRM
+2,146.3 / 0 / 0 / 0 (0%), **O 0 / 166.1 / 0 / 5,983.1 (97.3%)**, **VTR 0 / 0 / 304.9 / 3,781.8
+(92.5%)**. **O's and VTR's FCF is negative because of acquisitions**: O's operating cash flow
+4,166.2M against 5,983.1M of acquisitions (FCF -1,983.1M), VTR's 1,801.4M against 3,781.8M (FCF
+-2,285.3M) -- not development (O 0, VTR 304.9M) and not existing properties (O 166.1M, VTR 0).
+
+**F4 — coverage in the PR body** (``coverage.json``, report only; the ``leverage.ebitda`` classes below are the **stored ``empty_reason``**, not the cause: 48 of the 231 are financial firms, for which EBITDA is NA under APP-02, and MSFT's own D&A extension is counted ``da_absent``; `T-156` classifies the cause). At 2026-09-22, present/applicable
+per measure by company type: operating 381/394 E/P, 361/394 B/M, **203/394 EBITDA/EV**, **195/394
+enterprise FCF yield**; financial firms 51/51 E/P and 51/51 B/M (the two firm-value measures NA);
+REITs 26/28 E/P, 24/28 B/M, **5/28 EBITDA/EV**, FCF NA; regulated utilities 28/29, 28/29, 19/29,
+FCF NA; the one multi-sector holding 1/1, 1/1, 0/1, 0/1. **231** members' latest filings lack
+``leverage.ebitda``: ``da_absent`` 151 (MSFT, TSLA, LLY, BRK.B, AMD, JPM, XOM, JNJ, CSCO, CVX, BAC,
+GE, MS, PM, GS, CRWD, WFC, MRVL, C, IBM), ``da_refused:flag_depreciation_amortization_depreciation_only_not_da``
+68 (GOOGL, GOOG, AVGO, MRK, TXN, GILD, UNP, DHR, PH, PGR, SYK, MCK, VRT, GD, LITE, MRSH, INTU, SHW,
+CTAS, ECL), ``operating_income_absent`` 7 (KLAC, ADP, NKE, DVN, SWK, CLX, BXP) and
+``da_refused:flag_depreciation_amortization_da_element_nonproduction`` 5 (FOX, FOXA, CASY, NWS,
+NWSA). ``da_sum_refused_other_lines`` occurs 173 times in the store but on **none** of these 231
+filings.
+
+**F5 — financial firms rank among financial firms** (the user's D-07 sector-specific factor).
+**Declared departure from the Scope.** The checklist's Scope says "Ranking is across the whole universe, not
+within sectors" (VALORIZATION ranks every asset together), and reserves the question: "How financial firms are
+scored when most VALORIZATION factors are NA for them belongs with `T-071` (sector-specific factors)." F5 answers
+that reservation with cohort ranking, **decided by the user (D-07)**: the financial firms stay in the universe and
+are scored with sector-specific factors. The departure is declared here, once, as the Scope asks. Each
+measure is now ranked **within the member's cohort** on the date: a financial firm's E/P and B/M
+among the financial firms (C2 p.27 compares the equity multiples across financial service firms; C4
+p.3 has Fama and French exclude financial firms), every other member's measures across the rest.
+DQ-02's winsorizing is applied per cohort (at 51 financial members, none is trimmed). ``Member``
+gains a ``cohort`` field, the cycle sets it from the APP-00 profile's ``financial_firm``, and each
+measure's components (and the row's) record it. Re-measured (``valorization_compare.json``, old v1
+vs new v2): Spearman **0.511** (0.564 before F5), the top-decile overlap 15/50, the top-30 overlap
+**7**; **the financial firms' tilt: 24% of the top decile before -> 6% after** (46% before F5), and
+their median rank 135 -> **226** (59 before F5) -- ranking them among themselves removes the
+cross-sector bias that put 46% of the top decile in Financials. The blended top 30
+(``blend_before/after.json``) overlaps **15** (ADBE, ALL, BMY, CF, CINF, EOG, FSLR, INCY, INTU,
+LDOS, LULU, NEM, OXY, TPR, TROW); before-only 15, after-only 15 (BRK.B, BRO, COP, CTSH, CVX, DVN,
+EXE, FIS, HON, MKC, NXPI, PYPL, ROP, STZ, UHS).
+
+
+#### D-14 — REITs are exempt from `NEGATIVE_FCF` (decided by the user, 2026-10-15)
+
+**Who.** The APP-00 profile's **REIT overlay** on the cycle date (``profile_as_of``), never the GICS
+sector. **How.** The ``LIQUIDITY_DISTRESS`` / D-13 exemption pattern: a REIT is *evaluated and never
+hit*, so an open stint closes. Every other rule still applies to a REIT -- ``LEVERAGE_EXTREME``
+(including the negative-equity screen), the price vetoes and ``DATA_QUALITY``.
+
+**The sources, in order.**
+
+1. **APP-04b** (checklist v1.3; C1_Nareit_FFO_White_Paper_2018 pp.7-8): REIT capex includes
+   acquisitions and development -- "The total of capital" · "expenditures should be separately
+   presented for amounts being spent on corporate items, existing properties, development of new
+   properties, and acquisitions." -- and "FCF-based metrics are flagged as non-standard for REITs."
+2. **C6 p.10** (APP-04's source): "Equity REITs' financial viability is based on GAAP net income from
+   continuing operations, and/or Funds From Operations (FFO), if reported."
+3. **C5 p.54** (APP-04c's source): REITs are companies "where majority of the company's taxable
+   Income is paid out as a dividend" -- so growth capex is funded externally, D-13's argument (an
+   **inference**, declared as D-13's was).
+4. ``phase3_decisions.md``, D-14 (the checklist v1.3 decision record): "D-13's argument (negative free
+   cash flow as the normal state, funded externally) applies to REITs too, and APP-04b puts
+   acquisitions in REIT capex. To measure first: how many REITs ``NEGATIVE_FCF`` vetoes in the replay.
+   Then decide, with sources, as for D-13."
+5. **The measurement** (below).
+
+Every quote is copied verbatim and verified with ``scripts/sec_xcheck/quotecheck.py``'s method
+(``out/g1_quotecheck.txt``: 161 of 161 rule quotes and 28 of 28 Annex B quotes verified, 0 problems;
+APP-04's C6 p.10 row and APP-04c's C5 p.54 row are `OK`).
+
+**Declared: no replacement veto.** No loaded source gives a REIT cash-coverage threshold -- C13 is
+utilities only -- and a threshold is never invented (MET-00).
+
+**Measured** (``d14_reits_v2.json``, ``negfcf_before.json`` / ``negfcf_after.json``; the before side
+runs master's rule, which has no REIT exemption). At **2026-09-22** the acquisition share of capex is
+**O 97.3%, VTR 92.5%, FRT 69.9%, CPT 52.3%**; **ARE, DLR and IRM 0%** -- so the vetoes on O, VTR,
+FRT and CPT were dominated by buying properties (the F3 table). `NEGATIVE_FCF` hits before -> after
+by date: 2023-03-31 **33 -> 24**, 2023-06-30 29 -> 22, 2023-09-30 24 -> 17, 2023-12-31 23 -> 17,
+2024-03-31 21 -> 16, 2024-06-30 20 -> 15, 2024-09-30 25 -> 20, 2024-12-31 22 -> 16, 2025-03-31
+26 -> 18, 2025-06-30 29 -> 20, 2025-09-30 27 -> 19, 2025-12-31 21 -> 14, 2026-03-31 24 -> 17,
+2026-06-30 23 -> 17, **2026-09-22 25 -> 18**. The REITs leaving the veto per date are the REITs that
+were hit: 2023-03-31 ARE, CPT, DLR, EXR, FRT, O, PLD, VICI, WELL; 2023-06-30 ARE, CPT, DLR, DOC, O,
+PLD, WELL; 2023-09-30 ARE, DLR, FRT, IRM, O, PLD, WELL; 2023-12-31 ARE, DLR, IRM, O, PLD, WELL;
+2024-03-31 / 2024-06-30 / 2024-09-30 ARE, DLR, IRM, O, WELL; 2024-12-31 ARE, DLR, HST, IRM, VMRK,
+WELL; 2025-03-31 ARE, DLR, ESS, HST, IRM, PLD, VMRK, VTR; 2025-06-30 ARE, DLR, ESS, HST, IRM, O,
+PLD, VMRK, VTR; 2025-09-30 ARE, DLR, ESS, IRM, O, PLD, VMRK, VTR; 2025-12-31 ARE, DLR, ESS, FRT,
+IRM, O, VTR; 2026-03-31 ARE, CPT, DLR, FRT, IRM, O, VTR; 2026-06-30 and 2026-09-22 ARE, DLR, FRT,
+IRM, O, VTR. At 2026-09-22 the remaining **18** hits are all non-REIT (Industrials 4, Consumer
+Discretionary 3, IT 3, Health Care 2, Materials 2, Communication Services 1, Consumer Staples 1,
+Energy 1, Utilities 1 -- AES, not a regulated utility), and the 28 REIT members are all evaluated
+and never hit.

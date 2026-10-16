@@ -30,10 +30,11 @@ TYPES = {
     "multi_sector_holding": 1,
 }
 REITS = 31
-# the current members' rows still count every listed ticker (75: the table's 76 less TAP, which its
-# leaver row replaces) plus the leavers' common-equity classes (3: BIO, TAP, UA/UAA) -- a temporary
-# difference, stream A's to revisit in T-071 part 2b (docs/model_fixes.md)
-MULTI_CLASS = 78
+# T-071 part 2b (D5): MKT-03's "more than one class of common stock outstanding", read from the
+# current members' newest 10-K cover (45) and the leavers' last 10-K cover (3: BIO, TAP, UA/UAA).
+# The table's own column counted every listed security (notes and preferred series included), which
+# is why 75 current rows carried it before.
+MULTI_CLASS = 48
 # D-13's GICS proxy: Electric 15, Gas 1, Multi- 12, Water 1; no leaver is a utility
 REGULATED_UTILITIES = 29
 
@@ -48,7 +49,8 @@ def test_the_header_names_the_generator_and_the_source_sha256() -> None:
     assert any("docs/checklist_sec/company_types.csv" in line for line in header)
     assert any("docs/leaver_company_types.csv" in line for line in header)
     assert any("docs/new_member_company_types.csv" in line for line in header)
-    assert len([line for line in header if re.search(r"sha256 [0-9a-f]{64}", line)]) == 3
+    assert any("docs/multi_class_covers.csv" in line for line in header)
+    assert len([line for line in header if re.search(r"sha256 [0-9a-f]{64}", line)]) == 4
 
 
 def test_the_profile_is_the_checklists_type_table_with_the_added_columns() -> None:

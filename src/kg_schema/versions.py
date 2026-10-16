@@ -232,6 +232,29 @@ UTILITY_COVERAGE_AMBIGUOUS_FLAG: Final[str] = "flag_utility_cash_coverage_ambigu
 UTILITY_COVERAGE_THRESHOLD: Final[float] = 0.05
 
 
+# The D1 VALORIZATION value inputs (T-071 part 2b). Stored in ``fundamental_metrics`` under the same
+# ``rule_input`` pseudo-group as the D-13 input -- so no metric consumer, pillar member,
+# applicability-matrix row or prompt ever reads it -- and ``cycle``'s VALORIZATION v2 reads it.
+# Every value is one the filing's own metric rows already carry, on the ratios' basis (a 10-K's
+# fiscal year, a 10-Q's trailing twelve months), which is what lets the score price its measures on
+# the **analysis date** (MKT-01) instead of a period-end price.
+VALUE_INPUTS_METRIC: Final[str] = "value_inputs"
+# The keys of its ``inputs_json``.
+VALUE_INPUTS_NET_INCOME: Final[str] = "net_income_ttm"
+VALUE_INPUTS_EBITDA: Final[str] = "ebitda"
+VALUE_INPUTS_MD38: Final[str] = "md38_numerator"
+VALUE_INPUTS_BOOK_EQUITY: Final[str] = "book_equity"
+VALUE_INPUTS_TOTAL_DEBT: Final[str] = "total_debt"
+VALUE_INPUTS_NCI: Final[str] = "nci"
+VALUE_INPUTS_CASH: Final[str] = "cash"
+VALUE_INPUTS_STI: Final[str] = "short_term_investments"
+# input -> why it is empty (MET-00: never 0, never neutral; the reason is the carrier metric's own
+# ``provenance.empty_reason``).
+VALUE_INPUTS_MISSING: Final[str] = "missing"
+# The flags the EV-bridge terms carry (``flag_<item>_<flag>``), so D2 can record them.
+VALUE_INPUTS_FLAGS: Final[str] = "flags"
+
+
 # -- version constraints (T-093) -------------------------------------------------------------
 #
 # T-090's selection is exact: one version, or ``GROUP=VERSION`` pairs. A **constraint** also

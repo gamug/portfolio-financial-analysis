@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
-from portfolio_common.db import Database
+from portfolio_common.db import Database, Row
 
 from cycle import data, writers
 from cycle.config import CycleSettings
@@ -50,6 +49,8 @@ from cycle.state import (
 )
 from cycle.writers import OutOfOrderCycle, out_of_order_reason
 from kg_schema import availability, connect
+from kg_schema.applicability import applicability
+from kg_schema.company_profile import CompanyProfile
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from kg_schema.queries import (
     StaleAsOf,
@@ -224,6 +225,44 @@ def _t_minus_1(cycle_date: str) -> str:
     return (date.fromisoformat(cycle_date) - timedelta(days=1)).isoformat()
 
 
+def _value_applicability(
+    profile: CompanyProfile | None, negative_equity: bool
+) -> dict[str, tuple[str, str]]:
+    """Each VALORIZATION measure's applicability cell (D2) on the member's APP-00 profile.
+
+    The matrix's cell for the measure's own metric (``valorization.MATRIX_METRIC``); a member with
+    **no** profile is never guessed, so every measure applies; the regulated-utility overlay (D-13,
+    the user's decision) leaves the enterprise FCF yield not applicable."""
+    out: dict[str, tuple[str, str]] = {}
+    for measure, metric in valorization.MATRIX_METRIC.items():
+        if profile is None:
+            out[measure] = ("A", "")
+        else:
+            out[measure] = applicability(metric, profile, negative_equity=negative_equity)
+    if profile is not None and profile.regulated_utility:
+        out[valorization.ENTERPRISE_FCF_YIELD] = ("NA", "the user's decision (D-13)")
+    return out
+
+
+def _fundamental_normalization(
+    conn: Database, cycle_date: str, weights: Mapping[str, float]
+) -> tuple[list[Row], list[float]]:
+    """``(rows, normalized)`` for each asset's newest scored FUNDAMENTAL row usable on *cycle_date*.
+
+    T-073 (D4) decides a row's total under *weights* (:func:`data.fundamental_value_under`); this
+    normalizes those totals across the cohort. **One function for both the ``normalize`` writer and
+    the ``rank`` reader** (T-071 part 2b, D4/N9): the ranking must read *this* cycle's normalization,
+    not whatever the shared filing snapshot row's ``normalized_score`` holds -- a run resumed at
+    ``rank`` after another cycle date ran in between would otherwise blend the other date's value
+    (``cycle backfill`` resumes from checkpoints, so this happens). It is deterministic, so a fresh
+    run and a resumed one get the same numbers."""
+    rows = [r for r in data.latest_fundamental_rows(conn, cycle_date) if r["raw_value"] is not None]
+    if not rows:
+        return [], []
+    normalized = normalized_scores([data.fundamental_value_under(r, weights) for r in rows])
+    return rows, normalized
+
+
 def _blended(
     per_type: dict[str, dict[int, float | None]], weights: dict[str, float], asset_id: int
 ) -> tuple[float, dict[str, float | None]]:
@@ -316,6 +355,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "manifest": manifest,
             "manifest_tag": tag,
             "technical_version": technical.VERSION,
+            "valorization_version": valorization.VERSION,
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
@@ -405,31 +445,38 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         # -- valorization
         def _valorization() -> dict:
             mcap = data.market_cap_estimates(conn, cycle_date, list(asset_ids))
-            trailing_ni = data.latest_trailing_net_income(conn, cycle_date, versions)
-            rows = {}
+            caps = data.market_cap_details(conn, cycle_date, list(asset_ids))
+            rule_inputs = data.value_inputs(conn, cycle_date)
+            profiles = data.asset_profiles(conn, list(asset_ids), cycle_date)
+            members: dict[int, valorization.Member] = {}
             no_cap = 0
             negative_earnings = 0
             for a in asset_ids:
-                m = dict(metrics.get(a, {}))
-                quarantined = dq.quarantined.get(a, set())
-                mc = None if "valuation.market_capitalization" in quarantined else mcap.get(a)
-                if a in dq.negative_equity:
-                    # D/E is quarantined, but negative book equity is still the worst leverage
-                    # in the cohort, never a missing factor (C2, docs/model_fixes.md).
-                    m["leverage.debt_to_equity"] = float("inf")
-                ni = trailing_ni.get(a)
-                if ni is not None and mc and "profitability.return_on_assets" not in quarantined:
-                    # MET-05 (Fama and French): E(+)/P -- the positive part -- with the
-                    # negative-earnings dummy kept apart (counted below, not ranked): a loss
-                    # contributes 0, the lowest earnings yield, never a negative one.
-                    m["earnings_yield"] = max(ni, 0.0) / mc
-                    negative_earnings += ni < 0
-                if mc:
-                    m["neg_log_market_cap"] = -math.log(mc)
-                else:
-                    no_cap += 1  # T-132: a missing size factor, reported rather than guessed
-                rows[a] = m
-            scores = valorization.compute(rows)
+                cap = caps.get(a)
+                if mcap.get(a) is None:
+                    no_cap += 1  # T-132: a missing market cap, reported rather than guessed
+                rule = rule_inputs.get(a) or {}
+                inputs = rule.get("inputs") or {}
+                profile = profiles.get(a)
+                net_income = inputs.get("net_income_ttm")
+                if isinstance(net_income, (int, float)) and not isinstance(net_income, bool):
+                    negative_earnings += float(net_income) < 0.0
+                members[a] = valorization.Member(
+                    asset_id=a,
+                    market_cap=mcap.get(a),
+                    values=inputs,
+                    applicable=_value_applicability(profile, a in dq.negative_equity),
+                    quarantined=frozenset(dq.quarantined.get(a, set())),
+                    cohort=(
+                        valorization.FINANCIAL
+                        if profile is not None and profile.financial_firm
+                        else valorization.OTHER
+                    ),
+                    share_date=cap.share_as_of if cap is not None else None,
+                    close_date=cap.close_date if cap is not None else None,
+                    accession=rule.get("accession"),
+                )
+            scores = valorization.compute(members)
             writers.write_scores(
                 conn,
                 "VALORIZATION",
@@ -438,12 +485,12 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 {},
                 {s.asset_id: s.components for s in scores},
                 run_id=run_id,
+                model=valorization.VERSION,
             )
-            with_yield = sum(1 for r in rows.values() if r.get("earnings_yield") is not None)
             return {
-                "scored": len(scores),
+                "scored": sum(1 for s in scores if s.raw_value is not None),
+                "empty": sum(1 for s in scores if s.raw_value is None),
                 "market_cap_missing": no_cap,
-                "earnings_yield": with_yield,
                 "negative_earnings": negative_earnings,
             }
 
@@ -477,22 +524,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # FUNDAMENTAL is normalized against each asset's latest *public* filing snapshot
             # (T-106), and the value lands on that snapshot row alone -- by id, not on every
             # row of the asset that happens to share its raw score.
-            frows = [
-                r
-                for r in data.latest_fundamental_rows(conn, cycle_date)
-                if r["raw_value"] is not None
-            ]
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights
+            )
             if frows:
-                # T-073 (D4): a row is normalized on its total *under this cycle's weights* -- its
-                # own `raw_value` when those are the weights it was scored with, else the total
-                # recomputed from the pillar ratings the row stored. No LLM call, and the stored
-                # row is never rewritten.
-                fn = normalized_scores(
-                    [
-                        data.fundamental_value_under(r, settings.fundamental_pillar_weights)
-                        for r in frows
-                    ]
-                )
                 conn.executemany(
                     "UPDATE score_snapshot SET normalized_score = ? WHERE id = ?",
                     [(fn[i], int(frows[i]["id"])) for i in range(len(frows))],
@@ -609,11 +644,19 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             cutoff = _t_minus_1(cycle_date)
             hard = writers.hard_vetoed_as_of(conn, cutoff)
             soft = writers.active_soft_vetoes(conn, cutoff)
+            # N9 (T-071 part 2b, D4): read **this** cycle's FUNDAMENTAL normalization, recomputed
+            # from the rows, never the shared snapshot row's `normalized_score` -- a `rank` resumed
+            # after another cycle date ran in between would otherwise blend the other date's value.
+            # The `normalize` step still writes the column, for the contract (the stored value is
+            # the last cycle's; the per-cycle value is `v_cycle_ranking_component.component_value`).
+            frows, fn = _fundamental_normalization(
+                conn, cycle_date, settings.fundamental_pillar_weights
+            )
+            fundamental: dict[int, float | None] = {
+                int(frows[i]["asset_id"]): fn[i] for i in range(len(frows))
+            }
             per_type = {
-                "FUNDAMENTAL": {
-                    int(r["asset_id"]): r["normalized_score"]
-                    for r in data.latest_fundamental_rows(conn, cycle_date)
-                },
+                "FUNDAMENTAL": fundamental,
                 "TECHNICAL": _norm_map(conn, "TECHNICAL", cycle_date),
                 "VALORIZATION": _norm_map(conn, "VALORIZATION", cycle_date),
                 "SEMANTIC": _norm_map(conn, "SEMANTIC", cycle_date),

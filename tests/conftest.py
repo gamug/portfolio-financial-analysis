@@ -304,6 +304,49 @@ def memory_quant_db() -> Database:
     return _with_default_cik(conn)
 
 
+def seed_value_inputs(conn: Database, day: str = "2026-06-30") -> None:
+    """T-071 part 2b (D1/D2): a market cap on *day* and the VALORIZATION value inputs, so the
+    ``cycle_seed`` cohort has a **real** VALORIZATION score -- the four measures are priced on the
+    cycle date, so they need both the market cap and D1's rule input."""
+    pricing_db.ensure_schema(conn)
+    for aid in range(1, 6):
+        row = conn.execute("SELECT id FROM sec_filings WHERE asset_id = ?", (aid,)).fetchone()
+        fid = int(row["id"])
+        conn.execute(
+            "INSERT INTO filing_cover_shares (filing_id, class_member, value, as_of_date, "
+            "event_time, ingested_at) VALUES (?, '', 1000.0, '2026-06-20', '2026-06-20', 'now')",
+            (fid,),
+        )
+        prev = (date.fromisoformat(day) - timedelta(days=1)).isoformat()
+        for close_day in (prev, day):
+            conn.execute(
+                "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 10.0)",
+                (aid, close_day),
+            )
+        conn.execute(
+            "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
+            "inputs_json, computed_at, engine_version, event_time, available_at) VALUES "
+            "(?, 'rule_input', 'value_inputs', 1.0, 'usd', ?, '2026-06-01T00:00:00Z', "
+            "'metrics-v1', '2025-12-31', '2026-02-02')",
+            (
+                fid,
+                json.dumps(
+                    {
+                        "net_income_ttm": 900.0 - 100 * aid,
+                        "ebitda": 1200.0 - 100 * aid,
+                        "md38_numerator": 400.0 - 40 * aid,
+                        "book_equity": 5000.0 - 500 * aid,
+                        "total_debt": 1000.0,
+                        "nci": 0.0,
+                        "cash": 200.0,
+                        "short_term_investments": 50.0,
+                    }
+                ),
+            ),
+        )
+    conn.commit()
+
+
 def _seed_quarterly_caps(
     conn: Database, asset_id: int, days: list[str], *, enabled: bool = True
 ) -> None:

@@ -3,22 +3,37 @@
 from __future__ import annotations
 
 import statistics
+from typing import Final
+
+# DQ-02: winsorize 0.5% per tail -- ``floor(0.005 x n)`` values each side -- and nothing at all
+# when the cohort is smaller than :data:`MIN_FOR_WINSOR`. The count is a **floor**, never
+# ``max(1, ...)``: a 20-name cohort has no 0.5% tail to trim, and forcing one value per tail there
+# would winsorize 5% of it.
+DEFAULT_WINSOR: Final[float] = 0.005
+MIN_FOR_WINSOR: Final[int] = 200
 
 
-def _winsorize(values: list[float], frac: float) -> list[float]:
-    if frac <= 0 or len(values) < 5:  # noqa: PLR2004 - too few to trim meaningfully
+def winsorize(values: list[float], frac: float = DEFAULT_WINSOR) -> list[float]:
+    """DQ-02: trim ``floor(frac x n)`` values per tail, nothing when ``n < MIN_FOR_WINSOR``.
+
+    At n = 495 this trims two values per tail (``floor(0.005 x 495) = 2``); a cohort below
+    :data:`MIN_FOR_WINSOR` is returned untouched. Both score normalization (:func:`cross_sectional_z`)
+    and VALORIZATION's per-measure ranking (T-071 part 2b, D2) winsorize with this one function."""
+    if frac <= 0 or len(values) < MIN_FOR_WINSOR:
         return values
     ordered = sorted(values)
-    k = max(1, int(len(ordered) * frac))
+    k = int(len(ordered) * frac)
+    if k <= 0:
+        return values
     lo, hi = ordered[k], ordered[-1 - k]
     return [min(max(v, lo), hi) for v in values]
 
 
-def cross_sectional_z(values: list[float], *, winsor: float = 0.02) -> list[float]:
+def cross_sectional_z(values: list[float], *, winsor: float = DEFAULT_WINSOR) -> list[float]:
     """z-score *values* against their own cohort (winsorized). Zeros if degenerate."""
     if not values:
         return []
-    trimmed = _winsorize(values, winsor)
+    trimmed = winsorize(values, winsor)
     mean = statistics.fmean(trimmed)
     sd = statistics.pstdev(trimmed)
     if sd == 0:
@@ -31,7 +46,7 @@ def z_to_score(z: float) -> float:
     return max(0.0, min(100.0, 50.0 + 10.0 * z))
 
 
-def normalized_scores(raw: list[float], *, winsor: float = 0.02) -> list[float]:
+def normalized_scores(raw: list[float], *, winsor: float = DEFAULT_WINSOR) -> list[float]:
     return [z_to_score(z) for z in cross_sectional_z(raw, winsor=winsor)]
 
 

@@ -65,17 +65,35 @@ class _NegativeFcfRule:
     flow (MD-04: operating cash flow, CON-08, less capex, MET-08) over revenue (MD-27; the checklist
     leaves that measure's source pending). It was a plain :class:`_ThresholdRule` until T-071 part 2a.
 
-    A **regulated utility** is now *evaluated and never hit* (D-13): its free cash flow is negative
-    by construction for years -- the rate base grows faster than depreciation, capex is funded with
-    debt, and rate recovery lags the spend -- so the signal is not distress there (T-147's replay
-    vetoed 22 to 26 of the 31 utilities in every cycle). This is the ``LIQUIDITY_DISTRESS``
-    exemption pattern: the asset is evaluated, so a stint opened before the overlay applied closes,
-    but it is never hit. Its replacement test is :class:`_UtilityCashCoverageRule`."""
+    Two overlays are *evaluated and never hit*: a **regulated utility** (D-13) and a **REIT**
+    (D-14, the user's decision of 2026-10-15). Both keep the ``LIQUIDITY_DISTRESS`` exemption
+    pattern -- the asset is evaluated, so a stint opened before the overlay applied closes, but it
+    is never hit. **The profile is the APP-00 one** (``profile_as_of`` on the cycle date), never the
+    GICS sector. Every other rule still applies to a REIT: ``LEVERAGE_EXTREME`` (including the
+    negative-equity screen), the price vetoes and ``DATA_QUALITY``.
+
+    **D-14's sources, in order.** (1) **APP-04b** (checklist v1.3; C1 pp.7-8): REIT capex includes
+    acquisitions and development, and "FCF-based metrics are flagged as non-standard for REITs".
+    (2) **C6 p.10** (APP-04's source): "Equity REITs' financial viability is based on GAAP net
+    income from continuing operations, and/or Funds From Operations (FFO), if reported". (3) **C5
+    p.54** (APP-04c's source): REITs are companies "where majority of the company's taxable Income
+    is paid out as a dividend", so growth capex is funded externally -- D-13's argument, an
+    inference declared as D-13's was. (4) ``phase3_decisions.md``, D-14 (the checklist v1.3 decision
+    record): "D-13's argument (negative free cash flow as the normal state, funded
+    externally) applies to REITs too, and APP-04b puts acquisitions in REIT capex." (5) the
+    measurement (``docs/model_fixes.md`` "T-071 part 2b, D-14"): the REITs' acquisition share of
+    capex -- O 97.3%, VTR 92.5%, FRT 69.9%, CPT 52.3%; ARE, DLR and IRM 0% -- and the per-date
+    counts.
+
+    **Declared: no replacement veto.** No loaded source gives a REIT cash-coverage threshold (C13 is
+    utilities only), and a threshold is never invented (MET-00). A regulated utility's replacement
+    test is :class:`_UtilityCashCoverageRule`."""
 
     RULE_ID = "NEGATIVE_FCF"
     SEVERITY = "HARD"
     DESCRIPTION = (
-        "negative trailing-twelve-month free-cash-flow margin; not applied to a regulated utility"
+        "negative trailing-twelve-month free-cash-flow margin; not applied to a regulated utility "
+        "or a REIT"
     )
     metric: str = "cashflow.free_cash_flow_margin"
     op: str = "<"
@@ -87,7 +105,15 @@ class _NegativeFcfRule:
             "metric": self.metric,
             "op": self.op,
             "threshold": self.threshold,
-            "exempt": "the regulated-utility overlay (the APP-00 profile, D-13)",
+            "exempt": (
+                "the regulated-utility overlay (D-13) and the REIT overlay (D-14) -- the APP-00 "
+                "profile, never the GICS sector"
+            ),
+            "sources": (
+                "D-14 (phase3_decisions.md, the checklist v1.3 decision record): APP-04b (C1 "
+                "pp.7-8), C6 p.10, C5 p.54"
+            ),
+            "replacement": "none for a REIT (no source gives a threshold, MET-00)",
         }
 
     def evaluate(self, ctx: RuleContext) -> RuleResult:
@@ -95,9 +121,9 @@ class _NegativeFcfRule:
         evaluated = set()
         for aid, metrics in ctx.metrics.items():
             profile = ctx.profiles.get(aid)
-            if profile is not None and profile.regulated_utility:
+            if profile is not None and (profile.regulated_utility or profile.reit):
                 if metrics:
-                    evaluated.add(aid)  # never a hit: closes a stint opened before the overlay
+                    evaluated.add(aid)  # never a hit: closes a stint opened before the exemption
                 continue
             value = metrics.get(self.metric)
             if value is None:

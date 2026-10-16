@@ -448,8 +448,9 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`blended_score`** is 0-100 minus the active SOFT rules' `penalty_points` (15 each by default, 0 for the
   flag-only `BREAK_TREND_200`), so it can go below 0. With no components (all null) it is `0.0` minus that deduction. It is a weighted
   mean over the non-null components, i.e. weights renormalized (`effective_weight` above).
-- **`normalized_score`** is `50 + 10z` over the cohort (z against the 2%-winsorized mean and standard
-  deviation), clamped to [0, 100]; the same function for SECTOR. The cohort mean is near 50, not
+- **`normalized_score`** is `50 + 10z` over the cohort (z against the 0.5%-winsorized mean and standard
+  deviation), clamped to [0, 100]; the same function for SECTOR. DQ-02 (T-071 part 2b, D3): `winsorize`
+  trims `floor(0.005 × n)` values per tail and nothing when `n < 200`. The cohort mean is near 50, not
   exactly 50. FUNDAMENTAL's `normalized_score` is **rewritten by every cycle** (`T-106`), so the stored
   value is the last cycle's; the per-cycle value is `component_value`.
 - **SECTOR `raw_value`** is the asset's TECHNICAL raw score minus its sector's mean, in TECHNICAL
@@ -481,7 +482,7 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 |---|---|---|
 | `universe_membership` | S&P 500 membership history (**frozen** — superseded by `universe.db`) | `UNIQUE(asset_id, universe, valid_from)` |
 | `universe_coverage` | per-member core-data coverage for a dated universe (from `coverage`) | `UNIQUE(as_of, universe, symbol)` |
-| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)` |
+| `score_snapshot` | `ScoreSnapshot` types FUNDAMENTAL / VALORIZATION / TECHNICAL / SEMANTIC / SECTOR | `UNIQUE(asset_id, score_type, event_time)`; a VALORIZATION row's `inputs_json` carries the v2 components (per measure the value on D, the percentile, the status, the flags and the matrix cell, plus the applicable and present counts, the market cap and EV on D, the share and close dates and the filing's accession — T-071 part 2b) |
 | `rule_catalog` | veto rule definitions | `rule_id` PK |
 | `data_quality_issue` | Ring-1 `DQ_*` gate hits (T-040 / T-065): severity, `quarantined`, the gated value; written by `fundamental_agent`, read by `cycle` | `UNIQUE(filing_id, metric_group, metric_name, metric_engine_version, rule_id, gate_version)` |
 | `veto` | rule-hit stints (`raised_on`/`cleared_on`/`last_seen_on`, T-125), closed not deleted; at most one open stint per `(asset_id, rule_id)` (partial unique `WHERE cleared_on IS NULL`) | `UNIQUE(asset_id, rule_id, raised_on)` |

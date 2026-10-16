@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fundamental_agent import db
+from fundamental_agent.dq01 import dq01_tolerance as _dq01_tolerance
 from fundamental_agent.statements import (
     DA_SOURCED_CHILDREN,
     LONG_TERM_DEBT_CHILDREN,
@@ -72,17 +73,10 @@ def _kind_ok(tag: str, start: str | None, end: str) -> bool:
 
 
 def dq01_tolerance(value: float, n_terms: int = 1) -> float:
-    """DQ-01's threshold: ``max(L-10 rounding, 0.5% x |value|)``, the rounding term
-    ``0.5 x unit x n_terms`` (L-10; G5). The unit is inferred (L-10): USD 1 million when it divides
-    the value exactly, else USD 1 thousand, else USD 1. *n_terms* is the number of filed values
-    entering the comparison -- 1 for a single fact, the parts + 1 for a sourced sum against the
-    filer's own total."""
-    unit = 1.0
-    for candidate in (1_000_000.0, 1_000.0):
-        if value % candidate == 0.0:
-            unit = candidate
-            break
-    return max(0.5 * unit * n_terms, 0.005 * abs(value))
+    """DQ-01's threshold: ``max(L-10 rounding, 0.5% x |value|)`` -- defined in
+    :mod:`fundamental_agent.dq01` (T-071 part 2b, D6) and re-exported here for this module's
+    callers."""
+    return _dq01_tolerance(value, n_terms)
 
 
 def _iter_facts(

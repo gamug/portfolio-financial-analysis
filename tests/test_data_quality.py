@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from conftest import seed_value_inputs
 from portfolio_common.db import Database
 
 import kg_schema
@@ -440,23 +441,29 @@ def _valorization(conn: Database, asset_id: int, cycle_date: str) -> dict[str, A
     return dict(json.loads(row["inputs_json"]))
 
 
-def test_negative_equity_quarantine_keeps_leverage_the_worst_and_the_gate_does_not_veto(
+def test_negative_equity_quarantine_drops_book_to_market_and_the_gate_does_not_veto(
     cycle_seed: Database,
 ) -> None:
-    """D-04 (T-071 part 2a): a SOFT DQ_NEG_EQUITY on AAA (the seed's lowest D/E) reads D/E as NULL,
-    the leverage factor still ranks AAA worst (C2), and the gate raises no DATA_QUALITY veto. The
-    hand-written record carries no credit inputs, so LEVERAGE_EXTREME routes the name to SOFT
-    review (T-116) -- never a HARD veto."""
+    """D-04 (T-071 part 2a) with VALORIZATION v2 (part 2b): a SOFT DQ_NEG_EQUITY on AAA quarantines
+    D/E, which is book-to-market's carrier, so B/M drops (status ``quarantined``) while the other
+    three measures stay -- and the gate raises no DATA_QUALITY veto. The hand-written record carries
+    no credit inputs, so LEVERAGE_EXTREME routes the name to SOFT review (T-116) -- never a HARD
+    veto."""
     conn = cycle_seed
+    seed_value_inputs(conn, "2026-06-30")
     run_selection(_cycle_settings(), "2026-06-29", conn=conn)
-    before = _valorization(conn, 1, "2026-06-29")["quality"]
+    before = _valorization(conn, 1, "2026-06-29")["measures"]
+    assert before["book_to_market"]["status"] == "present"
     fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
     _issue(conn, fid, DTE, "DQ_NEG_EQUITY", "SOFT")
     _issue(conn, fid, ROE, "DQ_NEG_EQUITY", "SOFT")
 
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
-    after = _valorization(conn, 1, "2026-06-30")["quality"]
-    assert after < before
+    after = _valorization(conn, 1, "2026-06-30")["measures"]
+    assert after["book_to_market"]["status"] == "quarantined"
+    assert after["book_to_market"]["value"] is None
+    assert after["earnings_yield"]["status"] == "present"
+    assert after["ebitda_to_ev"]["status"] == "present"
     rules = {
         (r[0], r[1]) for r in conn.execute("SELECT rule_id, severity FROM veto WHERE asset_id = 1")
     }
@@ -464,17 +471,24 @@ def test_negative_equity_quarantine_keeps_leverage_the_worst_and_the_gate_does_n
     assert ("LEVERAGE_EXTREME", "HARD") not in rules
 
 
-def test_a_quarantined_metric_drops_out_of_the_score(cycle_seed: Database) -> None:
-    """AAA's value factor rests on its FCF yield alone in the seed; quarantined, it is gone."""
+def test_a_quarantined_metric_drops_the_measure_that_reads_it(cycle_seed: Database) -> None:
+    """D2's gate map: E/P reads ``profitability.return_on_assets``, so quarantining it drops E/P
+    while the other three measures stay -- the quarantine of a metric that carries no measure's
+    input (the old ``valuation.free_cash_flow_yield``) drops nothing."""
     conn = cycle_seed
+    seed_value_inputs(conn, "2026-06-30")
     run_selection(_cycle_settings(), "2026-06-29", conn=conn)
-    assert _valorization(conn, 1, "2026-06-29")["value"] is not None
+    assert _valorization(conn, 1, "2026-06-29")["measures"]["earnings_yield"]["status"] == "present"
     fid = int(conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()[0])
+    _issue(conn, fid, ("profitability", "return_on_assets"), "DQ_ROA", "HARD")
     _issue(conn, fid, FCF, "DQ_FCF_YIELD", "HARD")
 
     run_selection(_cycle_settings(), "2026-06-30", conn=conn)
-    assert _valorization(conn, 1, "2026-06-30")["value"] is None
-    assert _valorization(conn, 2, "2026-06-30")["value"] is not None
+    measures = _valorization(conn, 1, "2026-06-30")["measures"]
+    assert measures["earnings_yield"]["status"] == "quarantined"
+    assert measures["book_to_market"]["status"] == "present"
+    assert measures["enterprise_fcf_yield"]["status"] == "present"  # not its carrier any more
+    assert _valorization(conn, 2, "2026-06-30")["measures"]["earnings_yield"]["status"] == "present"
 
 
 def test_nee_s_real_10k_now_passes_the_revenue_gate(nee_10k: Any) -> None:

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import seed_value_inputs
 from portfolio_common.db import Database
 
 from cycle import orchestrator
@@ -54,6 +55,7 @@ def test_an_asset_missing_a_component_is_blended_at_one_half_each_and_the_view_a
     cycle_seed: Database,
 ) -> None:
     conn = cycle_seed
+    seed_value_inputs(conn, DAY)
     # EEE has no price observations, so it has no TECHNICAL score
     conn.execute("DELETE FROM price_observation WHERE asset_id = 5")
     conn.commit()

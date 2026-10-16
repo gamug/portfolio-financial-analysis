@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from portfolio_common.db import Database
@@ -18,7 +19,6 @@ from portfolio_common.db import Database
 from cycle import data
 from cycle.config import CycleSettings
 from cycle.orchestrator import run_selection
-from cycle.scores.normalize import rank_pct
 from fundamental_agent.metrics.profitability import compute as profitability_compute
 from fundamental_agent.statements import Statements
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, MetricVersions
@@ -120,11 +120,39 @@ def with_caps(with_prices: Database) -> Database:
     return conn
 
 
-def _pct(values: list[float]) -> list[float]:
-    return [p for p in rank_pct(list(values)) if p is not None]
+def _value_row(conn: Database, asset_id: int, **inputs: float | None) -> None:
+    """The D1 VALORIZATION value inputs (T-071 part 2b): v2 reads these, not the metric rows."""
+    fid = conn.execute("SELECT id FROM sec_filings WHERE asset_id = ?", (asset_id,)).fetchone()[
+        "id"
+    ]
+    conn.execute(
+        "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
+        "inputs_json, computed_at, engine_version, event_time, available_at) VALUES "
+        "(?, 'rule_input', 'value_inputs', ?, 'usd', ?, '2026-02-01T00:00:00Z', 'metrics-v1', "
+        "'2025-12-31', '2026-02-02')",
+        (fid, inputs.get("net_income_ttm"), json.dumps(inputs)),
+    )
 
 
-def _valorization(conn: Database) -> tuple[dict[str, int], dict[int, dict[str, float | None]]]:
+def _all_measures(conn: Database, net_incomes: dict[int, float]) -> None:
+    """Every asset's four measures present: the net income by asset, a flat EBITDA / MD-38 /
+    book equity and a flat EV bridge, so the coverage rule (min 2 present) is satisfied."""
+    for aid in range(1, 6):
+        _value_row(
+            conn,
+            aid,
+            net_income_ttm=net_incomes.get(aid),
+            ebitda=200.0,
+            md38_numerator=80.0,
+            book_equity=500.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        )
+    conn.commit()
+
+
+def _valorization(conn: Database) -> tuple[dict[str, Any], dict[int, dict[str, Any]]]:
     run_selection(CycleSettings(db_path=Path(":memory:"), top_n=3), CYCLE_DATE, conn=conn)
     step = conn.execute(
         "SELECT detail_json FROM cycle_checkpoint WHERE step = 'valorization'"
@@ -138,51 +166,52 @@ def _valorization(conn: Database) -> tuple[dict[str, int], dict[int, dict[str, f
     return json.loads(step["detail_json"]), scores
 
 
-def test_the_value_factor_ranks_the_positive_part_and_counts_the_loss(with_caps: Database) -> None:
-    """AAA..CCC earn 800, 500 and 200 on a cap of 10,000; DDD loses 300 (E(+)/P = 0, the lowest);
-    EEE has no trailing net income. The seeded free-cash-flow yields fall AAA > ... > EEE."""
+def test_the_positive_part_is_ranked_and_the_loss_is_counted(with_caps: Database) -> None:
+    """E/P = ``max(net income, 0) / market cap on D`` (MD-39, MET-05): AAA..CCC earn 800/500/200 on
+    a cap of 10,000; DDD loses 300, so its positive part is 0 -- the lowest, not a negative yield --
+    and EEE has no trailing net income (``missing_input``)."""
     conn = with_caps
-    for aid, ni in ((1, 800.0), (2, 500.0), (3, 200.0), (4, -300.0)):
-        _roa_row(conn, aid, {"net_income_ttm": ni})
+    _all_measures(conn, {1: 800.0, 2: 500.0, 3: 200.0, 4: -300.0})
     detail, scores = _valorization(conn)
-    assert detail["earnings_yield"] == 4 and detail["negative_earnings"] == 1
-    assert detail["market_cap_missing"] == 0
-    fcf = _pct([0.10 - 0.015 * i for i in range(1, 6)])
-    ey = rank_pct([0.08, 0.05, 0.02, 0.0, None])
-    expected = {i + 1: (fcf[i] + e) / 2 if (e := ey[i]) is not None else fcf[i] for i in range(5)}
-    got = {aid: c["value"] for aid, c in scores.items()}
-    assert got == pytest.approx(expected)
-    # the loss-maker's positive part is 0: the lowest earnings yield, so only half of its
-    # free-cash-flow rank survives -- and EEE, with no trailing net income, keeps that rank whole
-    assert ey[3] == 0.0 and got[4] == pytest.approx(fcf[3] / 2)
-    assert got[5] == pytest.approx(fcf[4])
+    assert detail["negative_earnings"] == 1 and detail["market_cap_missing"] == 0
+    assert detail["scored"] == 5 and detail["empty"] == 0
+    ey = {aid: c["measures"]["earnings_yield"] for aid, c in scores.items()}
+    assert ey[1]["value"] == pytest.approx(0.08)  # 800 / (1,000 shares x 10)
+    assert ey[4]["value"] == 0.0 and ey[4]["status"] == "present"  # the positive part
+    assert ey[5]["status"] == "missing_input"
+    assert ey[1]["percentile"] > ey[2]["percentile"] > ey[3]["percentile"] > ey[4]["percentile"]
 
 
-def test_without_a_trailing_net_income_the_value_factor_is_the_cash_flow_yield_alone(
-    with_caps: Database,
-) -> None:
-    """What every real cycle did before: no earnings yield for anyone."""
-    detail, scores = _valorization(with_caps)
-    assert detail["earnings_yield"] == 0 and detail["negative_earnings"] == 0
-    fcf = _pct([0.10 - 0.015 * i for i in range(1, 6)])
-    assert {a: c["value"] for a, c in scores.items()} == pytest.approx(
-        {i + 1: fcf[i] for i in range(5)}
-    )
+def test_without_a_net_income_the_other_three_measures_still_score(with_caps: Database) -> None:
+    """E/P is one of four: with no net income at all it is ``missing_input`` and the score is the
+    other three measures' equal-weight mean (the coverage rule needs min(2, 4) = 2)."""
+    conn = with_caps
+    _all_measures(conn, {})
+    detail, scores = _valorization(conn)
+    assert detail["negative_earnings"] == 0 and detail["scored"] == 5
+    for components in scores.values():
+        assert components["measures"]["earnings_yield"]["status"] == "missing_input"
+        assert components["measures"]["book_to_market"]["status"] == "present"
+        assert components["present"] == 3.0 and components["applicable"] == 4.0
 
 
-def test_a_name_with_no_market_cap_has_no_earnings_yield(with_prices: Database) -> None:
-    """No cover count or close: the cap is missing (T-132), so is the yield -- not zero."""
-    for aid in range(1, 6):
-        _roa_row(with_prices, aid, {"net_income_ttm": 100.0 * aid})
-    detail, _ = _valorization(with_prices)
-    assert detail["earnings_yield"] == 0 and detail["market_cap_missing"] == 5
+def test_a_name_with_no_market_cap_has_no_measure(with_prices: Database) -> None:
+    """No cover count or close: the market cap on D is missing (T-132), so every measure is
+    ``missing_input`` -- not zero -- and the score is empty (never a neutral 50)."""
+    conn = with_prices
+    _all_measures(conn, {aid: 100.0 * aid for aid in range(1, 6)})
+    detail, scores = _valorization(conn)
+    assert detail["market_cap_missing"] == 5 and detail["scored"] == 0 and detail["empty"] == 5
+    for components in scores.values():
+        assert all(m["status"] == "missing_input" for m in components["measures"].values())
+        assert "market_cap_missing" in components["measures"]["earnings_yield"]["flags"]
 
 
 def test_a_quarantined_return_on_assets_withholds_the_earnings_yield(with_caps: Database) -> None:
-    """The net income is an input of that metric's row: a data-quality gate that quarantines the
-    metric (a gate's verdict is not undone by reading its input elsewhere) drops the yield."""
+    """D2's gate map: E/P's carrier is ``profitability.return_on_assets``, so a gate that
+    quarantines it drops E/P (status ``quarantined``) while the other measures stay."""
     conn = with_caps
-    _roa_row(conn, 1, {"net_income_ttm": 800.0})
+    _all_measures(conn, {1: 800.0})
     fid = conn.execute("SELECT id FROM sec_filings WHERE asset_id = 1").fetchone()["id"]
     conn.execute(
         "INSERT INTO data_quality_issue (filing_id, asset_id, metric_group, metric_name, "
@@ -192,5 +221,7 @@ def test_a_quarantined_return_on_assets_withholds_the_earnings_yield(with_caps: 
         (fid, DATA_QUALITY_GATE_VERSION),
     )
     conn.commit()
-    detail, _ = _valorization(conn)
-    assert detail["earnings_yield"] == 0
+    _, scores = _valorization(conn)
+    assert scores[1]["measures"]["earnings_yield"]["status"] == "quarantined"
+    assert scores[1]["measures"]["earnings_yield"]["value"] is None
+    assert scores[1]["measures"]["book_to_market"]["status"] == "present"

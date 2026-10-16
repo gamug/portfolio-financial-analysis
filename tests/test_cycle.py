@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from conftest import cik_for
 from portfolio_common.db import Database
 
 import cycle.orchestrator as cycle_orchestrator
@@ -21,7 +22,15 @@ from cycle.rules import RuleContext, RuleResult, disabled_rule_ids, enabled_rule
 from cycle.rules.base import VetoHit
 from cycle.rules.builtin import _NegativeFcfRule, _UtilityCashCoverageRule
 from cycle.scores import sector, technical, valorization
-from cycle.scores.normalize import cross_sectional_z, rank_pct, z_to_score
+from cycle.scores.normalize import (
+    DEFAULT_WINSOR,
+    MIN_FOR_WINSOR,
+    cross_sectional_z,
+    normalized_scores,
+    rank_pct,
+    winsorize,
+    z_to_score,
+)
 from cycle.state import ManifestMismatch, _redact, checkpoint, open_cycle
 from cycle.writers import (
     OutOfOrderCycle,
@@ -31,7 +40,7 @@ from cycle.writers import (
     veto_out_of_order_reason,
     write_vetoes,
 )
-from kg_schema.company_profile import CompanyProfile
+from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.provenance import DirtyTree
 from kg_schema.queries import StaleAsOf, StaleGateVersion, VetoSchemaStale
 from kg_schema.versions import DATA_QUALITY_GATE_VERSION, VersionError
@@ -56,6 +65,33 @@ def test_rank_pct_handles_none_and_direction() -> None:
     assert desc[0] == 1.0 and desc[2] == 0.0
 
 
+# -- DQ-02 winsorizing (T-071 part 2b, D3) ----------------------------------
+
+
+def test_dq02_trims_floor_half_a_percent_per_tail_at_200_or_more() -> None:
+    """``floor(0.005 x n)`` values per tail: 1 at n = 200, 2 at n = 495, none below 200."""
+    assert MIN_FOR_WINSOR == 200
+    assert DEFAULT_WINSOR == 0.005
+    # n = 495: the two lowest and the two highest are trimmed (the 3rd smallest is the floor)
+    values = [float(i) for i in range(495)]
+    out = winsorize(values, DEFAULT_WINSOR)
+    assert out[0] == out[1] == 2.0  # the two lowest clamped to the 3rd smallest
+    assert out[-1] == out[-2] == 492.0  # the two highest clamped to the 3rd largest
+    assert winsorize(values, DEFAULT_WINSOR) != values
+    # n = 199: nothing is trimmed, whatever the fraction
+    assert winsorize([float(i) for i in range(199)], DEFAULT_WINSOR) == [
+        float(i) for i in range(199)
+    ]
+
+
+def test_dq02_below_200_is_the_identity_and_normalized_scores_uses_the_default() -> None:
+    """A 5-name cohort is untouched: ``normalized_scores``' default is DQ-02's 0.5%, not 2%."""
+    assert winsorize([1.0, 2.0, 3.0, 4.0, 5.0]) == [1.0, 2.0, 3.0, 4.0, 5.0]
+    raw = [float(i) for i in range(500)] + [1e6]
+    assert normalized_scores(raw) == normalized_scores(raw, winsor=0.005)
+    assert normalized_scores(raw) != normalized_scores(raw, winsor=0.02)
+
+
 # -- score modules ------------------------------------------------
 
 
@@ -75,49 +111,84 @@ def test_technical_prefers_momentum_and_low_vol() -> None:
         },
     }
     scores = {s.asset_id: s.raw_value for s in technical.compute(obs)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_prefers_cheap_and_profitable() -> None:
-    rows: dict[int, dict[str, float | None]] = {
-        1: {
-            "valuation.free_cash_flow_yield": 0.08,
-            "profitability.return_on_equity": 0.30,
-            "leverage.debt_to_equity": 0.4,
-            "earnings_yield": 0.07,
-        },
-        2: {
-            "valuation.free_cash_flow_yield": 0.01,
-            "profitability.return_on_equity": 0.02,
-            "leverage.debt_to_equity": 4.0,
-            "earnings_yield": 0.01,
-        },
+def _value_member(aid: int, **values: float) -> valorization.Member:
+    """A member with all four measures applicable and a market cap of 1,000 on D."""
+    return valorization.Member(
+        asset_id=aid,
+        market_cap=1000.0,
+        values=dict(values),
+        applicable={name: ("A", "") for name in valorization.MEASURES},
+    )
+
+
+def test_valorization_prefers_the_cheapest_and_the_strongest_on_every_measure() -> None:
+    """VALORIZATION v2 (T-071 part 2b): the four measures are priced on D and ranked across the
+    cohort -- E/P, B/M, EBITDA/EV and the enterprise FCF yield. Member 1 is cheapest on all four."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=10.0,
+            book_equity=50.0,
+            ebitda=20.0,
+            md38_numerator=8.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
+    scores = {s.asset_id: s.raw_value for s in valorization.compute(members)}
+    assert scores[1] is not None and scores[2] is not None
     assert scores[1] > scores[2]
 
 
-def test_valorization_negative_equity_leverage_ranks_worst_not_best() -> None:
-    """C2 (docs/model_fixes.md): a negative debt_to_equity (negative book
-    equity) must not be inverted into the BEST leverage percentile by
-    higher_is_better=False -- it should rank worst, same as very high
-    positive leverage would."""
-    rows: dict[int, dict[str, float | None]] = {
-        1: {  # negative equity, extreme leverage
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": -38.96,
-        },
-        2: {  # moderate positive leverage, otherwise identical quality inputs
-            "profitability.return_on_equity": 0.15,
-            "roic.return_on_invested_capital": 0.10,
-            "cashflow.free_cash_flow_margin": 0.10,
-            "leverage.debt_to_equity": 1.0,
-        },
+def test_valorization_leaves_a_nonpositive_book_equity_out_and_never_inverts_it() -> None:
+    """C4 p.15: negative-BE firms "we do not include them in the tests" -- B/M is left out and
+    flagged ``book_equity_nonpositive``, so a negative book equity can never rank as the cheapest
+    (the old ``_leverage_for_ranking`` inversion is gone)."""
+    members = {
+        1: _value_member(
+            1,
+            net_income_ttm=100.0,
+            book_equity=-500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
+        2: _value_member(
+            2,
+            net_income_ttm=100.0,
+            book_equity=500.0,
+            ebitda=200.0,
+            md38_numerator=80.0,
+            total_debt=100.0,
+            nci=0.0,
+            cash=50.0,
+        ),
     }
-    scores = {s.asset_id: s.raw_value for s in valorization.compute(rows)}
-    assert scores[1] < scores[2]
+    scores = {s.asset_id: s for s in valorization.compute(members)}
+    bm1 = scores[1].components["measures"]["book_to_market"]
+    assert bm1["value"] is None
+    assert bm1["status"] == valorization.EXCLUDED_EQUITY
+    assert "book_equity_nonpositive" in bm1["flags"]
+    # member 1 still scores on the other three measures; member 2's B/M is present
+    assert scores[1].raw_value is not None and scores[2].raw_value is not None
+    assert scores[2].components["measures"]["book_to_market"]["status"] == valorization.PRESENT
 
 
 def test_sector_roll_up_mean_and_deviation() -> None:
@@ -186,7 +257,7 @@ def _neg_equity_record(**over: float | None) -> dict[str, float | None]:
 
 
 def _test_profile(
-    *, financial_firm: bool = False, regulated_utility: bool = False
+    *, financial_firm: bool = False, regulated_utility: bool = False, reit: bool = False
 ) -> CompanyProfile:
     return CompanyProfile(
         cik="0000000001",
@@ -194,7 +265,7 @@ def _test_profile(
         company_name="Test Co",
         type="article_9" if financial_firm else "operating",
         financial_firm=financial_firm,
-        reit=False,
+        reit=reit,
         multi_class=False,
         regulated_utility=regulated_utility,
         sector=None,
@@ -422,6 +493,59 @@ def test_negative_fcf_exempts_a_regulated_utility_and_still_fires_otherwise() ->
     assert result.evaluated == frozenset({1, 2, 3})
 
 
+def test_the_reit_overlay_is_evaluated_and_never_hit() -> None:
+    """D-14 (the user's decision, 2026-10-15): a REIT is evaluated and never hit, so a stint opened
+    before the overlay closes; an operating company with the same margin is HARD. The profile is
+    the APP-00 one (the REIT overlay), never the GICS sector."""
+    ctx = RuleContext(
+        cycle_date="2026-09-22",
+        metrics={
+            1: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            2: {"cashflow.free_cash_flow_margin": -0.2},  # operating company: HARD
+            3: {"cashflow.free_cash_flow_margin": -0.2},  # REIT: exempt
+            4: {"cashflow.free_cash_flow_margin": 0.1},  # REIT, positive: evaluated, not hit
+        },
+        price_obs={},
+        last_fundamental={},
+        profiles={
+            1: _test_profile(reit=True),
+            2: _test_profile(),
+            3: _test_profile(reit=True),
+            4: _test_profile(reit=True),
+        },
+    )
+    result = _NegativeFcfRule().evaluate(ctx)
+    assert [h.asset_id for h in result.hits] == [2]
+    assert result.hits[0].severity == "HARD"
+    assert result.evaluated == frozenset({1, 2, 3, 4})
+
+
+def test_a_reit_whose_profile_interval_ends_is_evaluated_as_its_new_profile_says() -> None:
+    """D-14 keys on ``profile_as_of`` on the cycle date: a leaver REIT is exempt while its interval
+    holds and, once it has ended, is evaluated as an unknown profile -- an operating company -- and
+    hit like any other member."""
+    dre = profile_as_of("0000783280", "2022-06-30")  # Duke Realty, valid_to 2022-10-03
+    after = profile_as_of("0000783280", "2023-06-30")
+    assert dre is not None and dre.reit and after is None
+    metrics: dict[int, dict[str, float | None]] = {1: {"cashflow.free_cash_flow_margin": -0.2}}
+    ctx = RuleContext(
+        cycle_date="2022-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: dre},
+    )
+    assert _NegativeFcfRule().evaluate(ctx).hits == []
+    later = RuleContext(
+        cycle_date="2023-06-30",
+        metrics=metrics,
+        price_obs={},
+        last_fundamental={},
+        profiles={1: after},
+    )
+    assert [h.asset_id for h in _NegativeFcfRule().evaluate(later).hits] == [1]
+
+
 def test_utility_cash_coverage_fires_only_when_both_bounds_are_below_the_cutoff() -> None:
     """R2: HARD needs *both* the ambiguous-in and the ambiguous-as-working-capital bounds below 5%;
     a straddling pair or a missing bound is evaluated and never hit, and a utility with no rule
@@ -476,13 +600,31 @@ def test_selection_cycle_end_to_end(cycle_seed: Database) -> None:
     run_row = conn.execute("SELECT status FROM cycle_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run_row["status"] == "completed"
 
-    for stype in ("TECHNICAL", "VALORIZATION", "SECTOR"):
+    for stype in ("TECHNICAL", "SECTOR"):
         n = conn.execute(
             "SELECT COUNT(*) FROM score_snapshot WHERE score_type = ? AND event_time = '2026-06-30' "
             "AND normalized_score IS NOT NULL",
             (stype,),
         ).fetchone()[0]
         assert n == 5
+
+    # VALORIZATION v2 (T-071 part 2b): this cohort has no market cap and no D1 rule input, so every
+    # measure is `missing_input` and the raw score is empty -- never a neutral 50. The row is still
+    # written, with its components, so the coverage is visible, and the blend renormalizes over
+    # FUNDAMENTAL and TECHNICAL.
+    val = conn.execute(
+        "SELECT COUNT(*) AS n, SUM(raw_value IS NOT NULL) AS scored FROM score_snapshot "
+        "WHERE score_type = 'VALORIZATION' AND event_time = '2026-06-30'"
+    ).fetchone()
+    assert val["n"] == 5 and val["scored"] == 0
+    components = json.loads(
+        conn.execute(
+            "SELECT inputs_json FROM score_snapshot WHERE score_type = 'VALORIZATION' "
+            "AND asset_id = 1 AND event_time = '2026-06-30'"
+        ).fetchone()["inputs_json"]
+    )
+    assert components["applicable"] == 4.0 and components["present"] == 0.0
+    assert components["measures"]["earnings_yield"]["status"] == "missing_input"
 
     # one sector_aggregate_snapshot row per sector present in the cohort
     agg = conn.execute(
@@ -511,6 +653,102 @@ def test_cycle_resumes_without_duplicating(cycle_seed: Database) -> None:
     assert set(again.steps_skipped) >= {"technical", "valorization", "rank", "positions"}
     assert conn.execute("SELECT COUNT(*) FROM score_snapshot").fetchone()[0] == before
     assert conn.execute("SELECT COUNT(*) FROM portfolio_position").fetchone()[0] == 3
+
+
+# -- T-071 part 2b, D4 (N9): the ranking reads its own cycle's FUNDAMENTAL normalization ------
+
+D1, D2 = "2026-06-30", "2026-07-31"
+
+
+def _ranking(conn: Database, cycle_date: str = D1) -> list[tuple[str, int, float]]:
+    return [
+        (str(r["ticker"]), int(r["rank"]), float(r["blended_score"]))
+        for r in conn.execute(
+            "SELECT a.ticker, r.rank, r.blended_score FROM cycle_ranking r "
+            "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+            "WHERE cr.cycle_date = ? AND cr.cycle_type = 'SELECTION' ORDER BY r.rank",
+            (cycle_date,),
+        )
+    ]
+
+
+def _join_sixth_member(conn: Database, udb: Path) -> None:
+    """FFF joins the index on D2: a 10-K and a FUNDAMENTAL score **usable from 2026-07-15**, so D2's
+    cohort is six names (its normalization is not D1's) while D1, at 2026-06-30, still sees five."""
+    raw = sqlite3.connect(udb)
+    raw.execute(
+        "INSERT INTO universe_membership (symbol, security, gics_sector, gics_sub_industry, cik, "
+        "valid_from, valid_to, source) VALUES ('FFF', 'FFF Inc.', 'S1', 'SI0', ?, '2026-07-01', "
+        "NULL, 'test')",
+        (cik_for("FFF"),),
+    )
+    raw.commit()
+    raw.close()
+    conn.execute("INSERT INTO assets (id, ticker, sector_id) VALUES (6, 'FFF', 1)")
+    fid = conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+        "filing_date, available_at, retrieved_at) VALUES (6, '10-K', 2025, 'FY2025', '2025-12-31', "
+        "'2026-07-14', '2026-07-15', '2026-07-14T00:00:00Z') RETURNING id"
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, event_time, "
+        "computed_at, model, run_kind, filing_id, available_at) VALUES "
+        "(6, 'FUNDAMENTAL', 72.0, 72.0, '2025-12-31', '2026-07-14T00:00:00Z', 'seed', 'analysis', ?, "
+        "'2026-07-15')",
+        (fid,),
+    )
+    conn.commit()
+
+
+def test_rank_reads_its_own_cycles_fundamental_normalization(
+    cycle_seed: Database, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """N9 (T-071 part 2b, D4): a ``rank`` resumed after another cycle date ran in between must read
+    **D1's** FUNDAMENTAL normalization, not the value D2's ``normalize`` left on the shared filing
+    snapshot row (``cycle backfill`` resumes from checkpoints, so this happens).
+
+    1. D1 runs uninterrupted -- its ranking is the baseline; 2. D2 (a later date, one more universe
+    member, so its normalization differs) runs and overwrites the shared rows; 3. D1 is resumed at
+    ``rank``; 4. its ranking must equal the baseline. Fails on master, whose ``_rank`` reads
+    ``score_snapshot.normalized_score`` back off the shared row instead of recomputing it.
+    """
+    conn = cycle_seed
+    # 1: the uninterrupted D1 run -- the baseline.
+    run_selection(_settings(conn), D1, conn=conn)
+    baseline = _ranking(conn)
+    d1_run = conn.execute(
+        "SELECT id FROM cycle_run WHERE cycle_type = 'SELECTION' AND cycle_date = ?", (D1,)
+    ).fetchone()["id"]
+    before = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+
+    # 2: D2 (a MONITORING run, so it writes no book that D1's re-run would clash with) -- its
+    # `normalize` rewrites the shared FUNDAMENTAL rows with the six-name cohort's values.
+    _join_sixth_member(conn, tmp_path / "cycle_universe.db")
+    run_monitoring(_settings(conn), D2, conn=conn)
+    after = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot WHERE score_type = 'FUNDAMENTAL'"
+        )
+    }
+    assert any(before[a] != after[a] for a in before if a in after)  # D2 really moved them
+
+    # 3: resume D1 at `rank` -- what an interrupted `cycle backfill` leaves behind.
+    conn.execute(
+        "DELETE FROM cycle_checkpoint WHERE cycle_run_id = ? AND step IN ('rank', 'positions')",
+        (d1_run,),
+    )
+    conn.commit()
+    resumed = run_selection(_settings(conn), D1, conn=conn)
+    assert "rank" in resumed.steps_run
+
+    # 4: D1's own ranking, not D2's normalization.
+    assert _ranking(conn) == baseline
 
 
 # -- T-097: the out-of-order-cycle guard -------------------------

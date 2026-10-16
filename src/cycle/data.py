@@ -12,7 +12,7 @@ from portfolio_common.db import Database, Row, in_clause
 
 from kg_schema.company_profile import CompanyProfile, profile_as_of
 from kg_schema.env import universe_database_path
-from kg_schema.market_cap import market_caps_as_of
+from kg_schema.market_cap import MarketCap, market_caps_as_of
 from kg_schema.pillar_score import total_from_block, weights_differ
 from kg_schema.queries import connect_ro, members_asof, resolve_asset_ids
 from kg_schema.versions import (
@@ -23,6 +23,7 @@ from kg_schema.versions import (
     UTILITY_COVERAGE_BOUND_IN,
     UTILITY_COVERAGE_METRIC,
     UTILITY_COVERAGE_MISSING_BOUND_FLAG,
+    VALUE_INPUTS_METRIC,
     MetricVersions,
     resolve_metric_versions,
 )
@@ -173,6 +174,55 @@ def utility_cash_coverage(conn: Database, cycle_date: str) -> dict[int, dict[str
             "ambiguous_working_capital": bool(inputs.get(UTILITY_COVERAGE_AMBIGUOUS_FLAG)),
         }
     return out
+
+
+def value_inputs(conn: Database, cycle_date: str) -> dict[int, dict[str, Any]]:
+    """asset_id -> the D1 VALORIZATION value inputs of its newest filing *usable* on *cycle_date*
+    (the same filing :func:`latest_metrics` reads), read at the newest stored ``rule_input`` engine
+    version -- never a mix of versions.
+
+    A 10-K and a 10-Q both carry the input (the numerators are on the ratios' basis), so this keys
+    on the same "newest usable filing" as :func:`latest_metrics` -- unlike
+    :func:`utility_cash_coverage`, which is a 10-K's own three-year average. The stored
+    ``inputs_json`` is returned as it is, with the filing's accession; an asset whose newest filing
+    has no such row is simply absent (never guessed)."""
+    versions = resolve_metric_versions(conn, None, groups=(RULE_INPUT_GROUP,))
+    if not versions.by_group:
+        return {}
+    rows = conn.execute(
+        """
+        WITH known AS (
+            SELECT f.id, ROW_NUMBER() OVER (
+                PARTITION BY f.asset_id ORDER BY f.period_end DESC, f.available_at DESC, f.id DESC
+            ) AS rn
+            FROM sec_filings f
+            WHERE f.period_end IS NOT NULL AND f.available_at IS NOT NULL AND f.available_at <= ?
+        )
+        SELECT f.asset_id, f.accession_number, m.inputs_json
+        FROM fundamental_metrics m
+        JOIN sec_filings f ON f.id = m.filing_id
+        JOIN known k ON k.id = f.id AND k.rn = 1
+        WHERE m.metric_group = ? AND m.metric_name = ?
+          AND (m.metric_group || '/' || m.engine_version) IN (SELECT value FROM json_each(?))
+        """,
+        (cycle_date, RULE_INPUT_GROUP, VALUE_INPUTS_METRIC, versions.json_param()),
+    ).fetchall()
+    return {
+        int(r["asset_id"]): {
+            "inputs": _json_object(r["inputs_json"]),
+            "accession": r["accession_number"],
+        }
+        for r in rows
+    }
+
+
+def market_cap_details(
+    conn: Database, cycle_date: str, asset_ids: list[int]
+) -> dict[int, MarketCap]:
+    """Each asset's :class:`~kg_schema.market_cap.MarketCap` on *cycle_date* -- the audit trail
+    behind :func:`market_cap_estimates` (the share date, the close date, the class count), for
+    VALORIZATION v2's components. An asset the reader refuses to value is simply absent."""
+    return market_caps_as_of(conn, asset_ids, as_of=cycle_date).caps
 
 
 def latest_trailing_net_income(
