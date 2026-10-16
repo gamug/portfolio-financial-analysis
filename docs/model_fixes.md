@@ -9691,3 +9691,128 @@ two versions coexist. **One existing test updated, not weakened:**
 pre-m003 state on the `memory_db` fixture (whose `fundamental_metrics` was nullable until T-157), so
 it now builds the pre-m003 table explicitly -- the same assertion, on the only shape that admits a
 NULL, exactly as its own docstring says.
+
+## T-153 part 3c — an unpriced member is ineligible: the session rule
+
+**The rule (reviewer A, 2026-10-16).** C11, *S&P DJI Equity Indices Policies & Practices*
+(`docs/checklist_sec/sources_register.md`), printed **p.36**: "Suspended stocks are generally not
+added to indices at an upcoming rebalancing, even if otherwise eligible" — applied **by analogy**
+(an index addition → a selection). A `cycle` member is **usable on cycle date D only if its line has
+a close on the market's latest NYSE session on or before D**
+(`kg_schema.trading_calendar.last_session_on_or_before(D)`), in the run's own `price_observation`
+engine version (`priceobs-v2`) and with a non-NULL close. A holiday therefore does not exclude a
+name (its session is the earlier one); a one-day hole does. The session is found point-in-time:
+nothing dated after D is read.
+
+**The price vetoes keep their own 7-day window** (`MAX_OBSERVATION_AGE_DAYS`). That is a
+deliberately different rule: a veto reads "could not tell" from a stale observation, so a 7-day
+window is right for it, while eligibility must be a reading of the cycle date itself. The archive's
+**v1 and v2** `price_observation` rows are not duplicates: eligibility reads v2 only, as the cycle
+does.
+
+**The gap, and D5.** An unpriced member is marked in `cycle_ranking`'s `veto_rules_json` with
+`UNPRICED` and **no `veto` row is written** (a missing price is data, not a rule), and it is
+ineligible the same cycle (never through the T-1 lag) — the `UNSCORED` pattern (T-119). A held name
+that becomes unpriced is dropped from the target book; `sync_positions` / `sync_replay_positions`
+then close its stint (`valid_to = cycle_date`) and **write no close price at all** — the close is a
+stint boundary, and valuing it is T-100's delisting-return policy. On the available copies D5 has no
+real instance (SIVB, SBNY and FRC have no gateway prices, so they are never held; every leaver's
+series ends at its own last session), so a hermetic test covers it and R3 shows the replay over
+SIVB's halt with SIVB absent.
+
+**One coverage rule (D2).** `data.too_many_unrankable_reason` counts the **union** of the unscored
+and the unpriced, **once per asset**, against `unscored_max_share` (0.05), and the refusal names the
+two lists separately. `TooManyUnscored` keeps its name (the CLI, the orchestrator and the tests read
+it; no view or API carries it). The run reports the two gaps separately: the rank step's checkpoint,
+`CycleReport.unscored`/`unpriced` and a CLI line each.
+
+**The manifest marker (reviewer A, 2026-10-16).** The run records the rule it was built on:
+`manifest['eligibility'] = "session-close-v1"` (`cycle.orchestrator.ELIGIBILITY_MANIFEST`), beside
+T-116's `quality`. `check_manifest` therefore refuses to **resume or re-run** a run recorded under
+another eligibility (or none, before this part) and states the manifest field that differs — the run
+must be redone fresh or at another date, because its ranking would otherwise mix two eligibilities.
+`--allow-stale-prices` does **not** switch the rule off: past the observations every member is
+unpriced and the cohort refuses.
+
+**The contract does not bump.** `docs/kg_schema.md:349-354` ("Within one `contract_version` … a
+view's columns are **only added, at the end**; never renamed, removed or reordered") governs shape;
+`UNPRICED` is a new *value* inside the existing `veto_rules_json` column, like the value change the
+same section already records (`:344-346`), so `contract_version` stays 16 with no migration. The
+prose that reads the marker does change: `v_cycle_ranking_component`'s docstring, `docs/kg_schema.md`
+(the SOFT-penalty identity and the `vetoed` meaning), `docs/cycle.md`, `PLAN.md` and
+`tests/test_kg_view_contract.py` all name `UNPRICED` beside `UNSCORED` — a consumer that computed
+the SOFT penalty by excluding only `HARD` and `UNSCORED` would otherwise count the gap as a rule.
+
+**The permanent gaps (agreed 2026-10-16).** INFO and WRK (the two request lines Tiingo did not
+deliver), the failures' last days (SIVB 2023-03-10/13/14, SBNY 2023-03-13/14, FRC 2023-05-01/02/03),
+every delivered line's exit tail (its `missing_sessions`), and **VLTO's first two sessions
+(2023-10-02/03)** — a current member whose gateway series starts 2023-10-04. VLTO is a gap, not
+"days before it first traded": DHR's spin-off SPLIT ×1.128 has ex-date 2023-10-02 (the first day DHR
+traded without Veralto), and VLTO's first stored row carries 8.36M shares against 15.35M the next
+session. The rule: a name gets the "pre-trading" class only with a source for its first trading day
+(an exchange notice or the parent's 8-K in the local SEC cache), and no in-window case has one.
+
+**R1, amended (the coverage union).** On every weekly replay date 2022-01-03..2026-10-05, both
+filing windows (2021-01-01 and 2022-01-01) and both unpriced sides (before and after the Tiingo
+import), the union of "no 10-K/10-Q public yet" and the unpriced set, counted once per asset. WTW
+and BNY Mellon — the only two members whose older SEC submissions page is not cached, and the only
+two whose (i) membership changes between the bounds — are given both ways. Measured: **249 weekly
+replay dates (222 NYSE sessions), 595 members resolved, 0 missing**; the calendar's session and the
+price store's own latest session **agree on every replay date (0 differences)**; the **trigger** (a
+bound in [0.046, 0.054] **and** the bounds differ) is **empty** in all four combinations; the
+refusals are **57 dates** before the import (2022-01-03..2023-02-13, both windows) and **0**
+(2021-01-01) / **10** (2022-01-01, 2022-01-03..2022-03-07) after it — **no refusal changes from the
+session rule** (57 = 57; the unpriced sets before the import are identical under both rules).
+`docs/unpriced_members.json` carries it; the `(i)+0.046` sum is not reported (part 3a's correction A).
+
+**The exit list for T-100 (facts only; 3c decides nothing).** 35 zero-candle candidates → **31
+exits**, **4 "left the index, exit later"** (DISH 2023-06-16→2023-12-29, SEE 2023-12-15→2026-04-09,
+CMA 2024-06-21→2026-02-01, QRVO 2024-12-20→2026-10-05), **no boundary case**; 53 served lines kept
+trading, six with a 25-NSE since 2022 (DXC, ZION, VFC, CE, EMN, TAP — security not read); the archive
+holds 21 rows after a last membership session (BLDR, TAP, TTD, 7 each — its gateway series end at the
+last membership day); SBNY and FRC "filed with the FDIC"; SIVB's receivership source is its 8-K Item
+1.03 of 2023-03-10 (`0001193125-23-067777`); the terms accession is the target's **DEFM14A** (or its
+**SC 14D9** for a tender offer, else the **completion 8-K with Item 2.01** — forms match exactly, so
+an annual-meeting DEF 14A or an S-4 is never it). `docs/exit_list.json` carries every field, and the
+evaluation step will apply C11 pp.5-7 and 34-35: bankrupt or FDIC receivership, halted or delisted →
+zero unless OTC prices; an M&A cash deal → the lower of the close and the deal price; a stock deal →
+the deal ratio; a suspension → the last close carried.
+
+**R2. The behaviour.** On part 3b's copy at 2023-03-31 (the run that held CMA and DFS with
+`cost_basis NULL`), `cycle select` at the shipped 5% **refuses**: "3/32 universe members (9.4%) are
+unrankable … 1 unscored … asset_ids [1]; 3 unpriced … asset_ids [1, 3, 4]" — AVB is both and counts
+once. With the declared measurement setting (`unscored_max_share = 0.5`, a `CycleSettings` value,
+never an `--allow-*` flag): DFS (rank 1), CMA (rank 5) and AVB (`["UNSCORED","UNPRICED"]`) carry the
+marker with `vetoed = 1`, **no `veto` row named a marker**, and the 29-name book has **no position
+without a price** (0 NULL `cost_basis`; the "before" held 2).
+
+**R3. The replay.** `cycle backfill`'s four weekly dates 2023-03-03..2023-03-24 on the same copy
+(again with the declared setting): unpriced = AVB, CMA, DFS, SIVB on 03-03 and 03-10 and AVB, CMA,
+DFS on 03-17/24; **SIVB is never held**; every marker row carries no veto row; the rebalance closes
+29 stints at 2023-03-10 (`valid_to` set, the `cost_basis` it opened with, **no price written at the
+close**) and the 24 open stints have no NULL cost basis.
+
+**R4. Unchanged where every name is priced.** master and the branch each on a fresh copy at
+2026-08-24 (the first replay date after AVB's 2026-08-17 exit where all 25 cohort members have a
+close on the session): 24 selected, 25 ranking rows, **unpriced 0**, and the ranking (ticker, rank,
+blended score, vetoed, rules, selected, target weight) and the positions (ticker, weight, cost
+basis, interval) are **identical** between the two.
+
+**The measurement settings, declared.** On the scratch copies only: `fundamental_agent quality`
+(the DQ gate-version guard's own remedy, 139 dq-v3 rows → 29 dq-v4) and the reset a re-run needs —
+`DELETE FROM cycle_run WHERE id = 6` (1 row; cascades its checkpoints and ranking),
+`DELETE FROM portfolio_position` (29), `DELETE FROM veto` (32), `DELETE FROM cycle_run WHERE
+cycle_date > '2023-03-31'` (4) — plus `unscored_max_share = 0.5` for R2(d)/R3. No override flag was
+used anywhere.
+
+**Verification.** New tests: eligibility is session(D) (a Monday holiday uses the Friday close; D-1's
+close but not session(D)'s is unpriced; a NULL close and another engine version are unpriced); the
+vetoes keep their 7-day window; the one refusal counts once and names both lists; `_book_candidates`
+leaves an `UNPRICED` row out and never reads it as SOFT; the marker without a veto row; the refusal
+under `--allow-stale-prices`; the CLI's two lines; D5's replay close; the manifest carries the
+eligibility and a refusal names the differing field; the view contract's SOFT identity with an
+`UNPRICED` row. `verify_pilot`'s **T-153e** follows WI-18: it judges a stint only when its
+`opened_by_cycle` run's manifest names the session eligibility (production 0 judged / 11 legacy, the
+R2 and R3 copies 0 judged / 29 legacy, 0 problems), rejects a `veto` row named `UNSCORED`/`UNPRICED`,
+and rejects a selected row carrying either marker — calling `cycle.data.unpriced_assets` itself, so
+it cannot drift from the rule.
