@@ -9399,3 +9399,212 @@ IRM, O, VTR. At 2026-09-22 the remaining **18** hits are all non-REIT (Industria
 Discretionary 3, IT 3, Health Care 2, Materials 2, Communication Services 1, Consumer Staples 1,
 Energy 1, Utilities 1 -- AES, not a regulated utility), and the 28 REIT members are all evaluated
 and never hit.
+
+## T-156 — EBITDA coverage: what the rules allow us to recover (stream A, before the final pilot `T-143`)
+
+The user's principle (2026-10-16): **a case is recovered only where a checklist rule or a loaded source
+allows it**; everything else is not applied, and is declared with its cause. Phase 1 (measurement only)
+classified the empty `leverage.ebitda` on the SP500 members' newest usable filing at 2026-09-22
+(`/workspaces/thesis/scratch/t156/out/m1_classes.json`); phase 2 implements what the rules allow
+(E1-E3), declares the rest (E4-E5) and measures the effect (`scripts/verify_t156.py`).
+
+**The basis.** On a 10-Q `ebitda` = TTM operating income + TTM D&A (`leverage.compute`,
+`FilingContext.real_ttm`: `ytd` / `quarters` only), and the `net_debt_to_ebitda` row's provenance
+records both terms on the `ttm` basis (`provenance.ITEMS["net_debt_to_ebitda"]`); on a 10-K the same
+entries are the filing's own period column. The **term basis** is the cause of an empty ebitda;
+`inputs_json`'s `depreciation_amortization` / `operating_income` are the **period** inputs, a second
+column. At 2026-09-22 the 228 empty `ebitda` are, on the term basis, **D&A missing on 116** and
+**operating income missing on 85** (21 both); on the period-input basis 216 / 128. The 100-filing
+difference is entirely 10-Qs whose quarter cash-flow column carries no D&A while the year-to-date
+column (and the TTM) does — ADM's 10-Q 2026-06-30 files `DepreciationDepletionAndAmortization` at
+`2026-06-30 (YTD)` (TTM 1,189M) and no operating income at all, so its ebitda is empty on the
+operating-income term, not D&A. 48 of the empties are financial firms (APP-02, counted apart).
+
+**Phase 1's class table at 2026-09-22** (non-financial empties 180; per class the companies are in
+`out/m1_class_lists.txt`): `da_refused_depreciation_only` 60, `da_extension_only` 30 (7 of them
+`caption_and_other`: ACN, CSCO, FISV, ISRG, MAR, MSFT, PKG), `da_components_no_depreciation` 6,
+`da_absent` 5, `ttm_refused` 7, `ttm_term_absent` 4, `da_element_with_other` 2, `da_income_statement_only` 2;
+`oi_absent_presentation` 81, `oi_absent_other` 4. The trend across the quarter ends is flat on the
+term basis (D&A 101-116, operating income 77-85) while the period-input basis swings with the quarter
+(121 at 2023-03-31, 208 at 2023-09-30, ...).
+
+### E1 — D&A from the income statement when the cash-flow statement files none (applied)
+
+`statements._depreciation_amortization` reads the same us-gaap elements from the income statement when
+the cash-flow statement files **no** D&A fact at all, flagged `da_income_statement`. The source is
+B6's own text (`docs/checklist_sec/sec documentation/B6_FASB_GAAP_Taxonomy_element_definitions.md`,
+the pinned FASB 2026 taxonomy, sha256 of the zip `f4c8b8b5...`), whose definitions name no statement:
+`DepreciationDepletionAndAmortization` "The aggregate expense recognized in the current period that
+allocates the cost of tangible assets, intangible assets, or depleting assets to periods that benefit
+from use of the assets"; `Depreciation` "The amount of expense recognized in the current period that
+reflects the allocation of the cost of tangible assets over the assets' useful lives"; and
+`OtherDepreciationAndAmortization` / `AmortizationOfIntangibleAssets` likewise. The two statements are
+never mixed in one value: a cash-flow D&A fact in **any** column keeps today's behaviour.
+
+- **ID-12 confirmed.** The income-statement fact is read through `_read`, so the displayed value times
+  `preferred_sign` — the filed sign. On the 4,968 (filing, element, column) pairs filed on both
+  statements the agreement at DQ-01's tolerance is **4,595 (92.5%)** on the displayed value and
+  **4,968 (100%)** on the filed sign: **all 373 disagreements are pure sign flips** (0 magnitude
+  differences), the income-statement row carrying a negating label (FOX's FY2022-24 10-K: IS -363M
+  displayed, CF +363M; `out/p2_e1_id12.txt`).
+- **DB-wide reach:** 76 filings file income-statement D&A facts and no cash-flow D&A fact (28 with an
+  aggregate on the income statement, 6 children-only, 42 neither — a financing-cost or accretion
+  amortization only).
+- **At 2026-09-22:** DAL and UAL. DAL's 10-Q 2026-06-30 reads
+  `DepreciationDepletionAndAmortization` 1,291M (YTD) / 656M (Q2); the TTM D&A is
+  2,443 - 1,209 + 1,291 = **2,525M** and the TTM operating income 5,822 - 2,671 + 2,365 = **5,516M**,
+  so EBITDA **8,041M**. UAL: TTM D&A 2,939 - 1,461 + 1,518 = **2,996M**, TTM operating income
+  4,713 - 1,932 + 2,093 = **4,874M**, EBITDA **7,870M** (`out/p2_e1_dal_ual_ebitda.txt`).
+
+### E2 — the depreciation-only filers, through the existing sourced sum only (applied; recovers 0)
+
+N14/D7 stays: depreciation alone is never D&A. `statements._da_cross_statement_sum` forms the existing
+sourced sum when `Depreciation` is on the cash-flow statement, its D&A-nature amortization or
+depletion child is on the **income statement** (E1's reading), and the cash-flow statement's other
+D&A-named lines are the four `DA_SOURCED_CHILDREN` (condition (c), exactly as C1 states it today);
+flagged `da_sum_cross_statement`. No new condition and no relaxed condition; a refusal raises no flag.
+
+**It recovers 0 of the 60 + 7 at 2026-09-22** (`out/p2_e2_proper.txt`): 42 have an outside D&A-named
+cash-flow line and no income-statement amortization child; 8 a cash-flow child beside outside lines; 6
+outside lines and no child; 4 no income-statement child; 3 a cash-flow child beside outside lines; 3 a
+cash-flow child only; and 1 (SYK) has both, but is `ttm_refused` because its **prior-year 10-K** was
+itself depreciation-only — the cross-statement sum cannot reach a prior filing's column.
+
+### E3 — the company-extension caption fallback (ID-01, A1 5.6.1) (applied; recovers 14)
+
+`statements._da_caption_fallback` reads a **company extension** on the cash-flow statement as D&A when
+its own caption names exactly depreciation and amortization ("Depreciation and amortization", with
+case, punctuation, "&" for "and" and a trailing "expense" ignored) or equals the standard label of an
+aggregate D&A element the resolver accepts (`DepreciationDepletionAndAmortization` "Depreciation,
+Depletion and Amortization"; `DepreciationAndAmortization` "Depreciation, Depletion and Amortization,
+Nonproduction"; `DepreciationAmortizationAndAccretionNet` "Depreciation, Amortization and Accretion,
+Net" — `elts/us-gaap-lab-2026.xml`). The source is **ID-01** ("a company extension only through a
+documented fallback, and the value is flagged") with **A1 §5.6.1**: "filers should normally assign an
+appropriate label for a concept already defined in a standard taxonomy". Exactly one matching line, as
+the shared caption fallback requires; a negative value of an element ID-13 lists is rejected, never
+repaired (ID-11). Flags: `caption_fallback`, `extension_concept`, and `da_element_nonproduction` when
+the caption names `DepreciationAndAmortization`.
+
+**The 14 taken** (caption and the filing's YTD/FY values; `out/p2_e3_values.txt`): BALL 305M/324M,
+CRWD 116.8M/157.6M, CVNA 141M/138M, DLTR 313.1M/356.8M, FE 771M/592M, FRT 176.2M/199.8M, ODFL
+179.8M/184.0M, PM 970M/1,023M, SMCI 29.6M/41.3M/53.7M (FY), SPG 723.3M/1,030.4M, SYY
+873M/945M/976M (FY), UBER 359M/386M, UHS 300.3M/322.8M, URI 1,510M/1,615M — each captioned
+"Depreciation and amortization" ("... expense", "Depreciation & amortization").
+
+**The 16 declared** (their captions quote what the rule excludes; `out/p2_e3_values.txt`): ACN
+"Depreciation, amortization and other"; AMT "Depreciation, amortization and accretion"; CSCO
+"Depreciation, amortization, and other"; D "Depreciation and amortization (including nuclear fuel)";
+FANG "Depreciation, depletion, amortization and accretion"; GM "Depreciation, amortization, and
+impairment charges on Property, net" and "Depreciation and impairment of Equipment on operating
+leases, net"; ISRG "Amortization of intangible and other assets" and "Depreciation and loss on
+disposal of property, plant, and equipment"; MAR "Depreciation, amortization, and other (including
+depreciation and amortization classified in reimbursed expenses)"; MSFT "Depreciation, amortization,
+and other"; PCG "Depreciation, amortization, and decommissioning"; PKG "Depreciation, depletion, and
+amortization of intangibles"; RSG "Depreciation, depletion, amortization and accretion"; TSLA
+"Depreciation, amortization and impairment"; VEEV "Amortization of deferred costs"; and the three
+companion lines of CRWD, FISV and PEG (a deferred-cost or nuclear-fuel amortization) that name
+something else.
+
+### E4 — operating income from the FASB 2026 calculation identities: **not applied** (declared)
+
+The pinned calculation linkbase `stm/us-gaap-stm-soi-cal-2026.xml` states:
+1. `IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments`
+   = `OperatingIncomeLoss` (w=1.0, order 10) + `NonoperatingIncomeExpense` (1.0, 20) −
+   `InterestAndDebtExpense` (−1.0, 30);
+2. `IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest` =
+   the above + `IncomeLossFromEquityMethodInvestments` (1.0, 20);
+3. `OperatingIncomeLoss` = `GrossProfit` (1.0, 10) − `OperatingExpenses` (−1.0, 20) +
+   `GovernmentAssistanceOperatingIncome` (1.0, 30) + `OtherOperatingIncomeExpenseNet` (1.0, 40).
+
+**The fidelity check (DQ-01's tolerance; `out/p2_fidelity.json`) decides against using them:**
+- identity 1 has **0** checkable (filing, column) pairs in the whole database — no filing files
+  `OperatingIncomeLoss` with all three of its terms — so its fidelity cannot be measured at all;
+- identity 2 has 157 pairs and agrees on **114 (72.6%)**; the **43 disagreements sit on 19 filings**
+  (Materials 30 pairs, Energy 13), and **30 of the 43 are exactly `pretax_B = pretax_A −
+  equity_method`** (filing 5388 FY2024: `pa` 1,918M, `eqm` 217M, `pb` 1,701M) — a systematic sign
+  pattern by element, not an isolated defect;
+- identity 3 has 3,955 pairs and agrees on **3,689 (93.3%)** on `GrossProfit − OperatingExpenses`
+  alone; its two remaining children are optional only if a map says so, and **no existing map defines
+  them** (T-151's `OPTIONAL` / `ITEMS` name neither), while treating an absent term as 0 is what
+  **MET-00** forbids.
+
+**Decision:** the identities are **not used**. ID-02b allows a component map only where a source states
+the identity, and DQ-01 is the test of whether the data follows it; identity 2's systematic sign
+pattern and identity 3's undefined optional children fail it. The four companies the identities would
+have recovered (DD, OXY and Q through identity 2, GPC through identity 3) stay empty and are declared
+with this evidence. Every metric that reads `operating_income` (operating margin, NOPAT, ROIC, the
+MD-38 numerator, interest coverage and operating-income growth) is therefore unchanged by T-156.
+
+### E5 — the declared remainder, each with its cause
+
+| class (2026-09-22) | n | rule that stops it | evidence |
+|---|---|---|---|
+| `da_refused_depreciation_only` (after E2) | 60 | N14/D7: `Depreciation` alone is not D&A; reading it would change N14/D7 and ID-02b | the filing files `us-gaap_Depreciation` and no aggregate (`out/m1_rows.csv`) |
+| `ttm_refused` | 7 | as above: the prior fiscal year's 10-K was itself depreciation-only | `flow_flags = ["depreciation_only_not_da"]` (EME, HRL, MRSH, NDSN, SYK, TSN, TXN) |
+| `caption_and_other` | 7 | E3's caption rule excludes a caption that adds anything | "…and other" quoted above (ACN, CSCO, FISV, ISRG, MAR, MSFT, PKG) |
+| `da_element_with_other` | 2 | MD-01 is D&A; no rule allows a wider or differently scoped element | AEP `us-gaap_UtilitiesOperatingExpenseDepreciationAndAmortization` ("Amount of operating expense for depreciation and amortization of regulated operation"), IP `us-gaap_CostDepreciationAmortizationAndDepletion` |
+| `da_components_no_depreciation` | 6 | ID-02b: a partial total is never the total, and C1's condition (a) requires `Depreciation` | AMD/MRVL `OtherDepreciationAndAmortization` + `AmortizationOfIntangibleAssets`; IR, MRNA, WDAY, WELL |
+| `ttm_term_absent` | 4 | a store gap, not a rule gap: the TTM's term is not in the database | LHX (the prior-year YTD comparative), SKYD (the FY2025 10-K); DOC and VTR follow the components class (`out/m2_ttm_missing_filing.txt`) |
+| operating income after E4 | 85 | no sourced identity the data follows (E4 above) | `out/p2_fidelity.json` |
+| `da_absent` | 5 | no D&A fact to read | ABNB, DPZ, ERIE, MAS, PEP |
+| `financial_firm_na` | 48 | APP-02: EBITDA-based metrics are not applicable to financial firms | counted apart, never a gap |
+
+### The research record (source audit, 2026-10-16)
+
+No primary source gives a method for filers with no operating-income subtotal: SEC C&DI 103.01–103.02,
+Release 33-8176, S-X 5-03, Compustat's public pages and S&P Ratings' 2013 proposal were audited on
+2026-10-16 and none states one — which is why E4 is declared rather than inferred. **Damodaran's
+"Variables used in Datasets" page** (https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datacurrent.html,
+"Estimated by adding depreciation and amortization back to operating income (EBIT)") confirms MD-01's
+arithmetic; it is recorded here as a **candidate source for the second author**, because MD-01 is
+marked "Inference" in the frozen checklist (`docs/checklist_sec/checklist_v1.3.md` line 369, C10 p.50)
+and the frozen file is not edited.
+
+### The measurement (`scripts/verify_t156.py`, `out/p2_*.json`)
+
+The copies: `/workspaces/thesis/scratch/t156/p2_before.db` (a copy of `t071c/after.db`, `metrics-v7`
+rows) and `p2_after.db` (the same copy recomputed with this branch). **The copy's
+`fundamental_metrics` carries the pre-migration unique key `(filing_id, metric_group, metric_name)`
+and `schema_version` is empty**, so a recompute under a *new* engine version writes nothing —
+`INSERT OR IGNORE` collides with the older version's rows and the run reports 0 rows. The old
+version's rows are therefore deleted from `p2_after.db` first (the copy only, never a production or
+t071c file); the recompute then writes **328,315 `metrics-v8` rows for 9,372 filings in 13m05s**
+(`out/p2_recompute.log`), and the gates re-run clean (`out/p2_quality_after.log`, 0 new issue rows).
+`p2_before.db` keeps its `metrics-v7` rows, so each side reads its own version.
+
+**Recoveries at 2026-09-22** (`out/p2_recoveries.json`): **15 filings recovered, 0 lost** — E1's 2
+(DAL 8,041M EBITDA, UAL 7,870M) and E3's 13 (CRWD 158.0M, CVNA 2,509M, DLTR 2,893M, FE 3,739M,
+FRT 1,030M, ODFL 1,817M, PM 18,108M, SMCI 2,824M, SPG 5,151M, SYY 4,071M, UBER 7,474M, UHS 2,700M,
+URI 7,386M). BALL's caption is taken by E3 (its TTM D&A 641M forms) but its `ebitda` stays empty
+because **its operating income is missing too** — an E4 case, declared. The empty `leverage.ebitda`
+at 2026-09-22 falls 228 → **213**; every other class is unchanged, so E2's recovery is 0 exactly as
+the class table says.
+
+**Metric coverage before → after at 2026-09-22** (`out/p2_metrics.json`): `leverage.ebitda` 272 → 287
+(+15), `leverage.net_debt_to_ebitda` 227 → 240 (+13), `valuation.enterprise_fcf_yield` 210 → 221
+(+11); **`leverage.interest_coverage` 244, `profitability.operating_margin` 372, `roic.nopat` 368,
+`roic.return_on_invested_capital` 310 and `growth.operating_income_growth` 353 are unchanged** —
+E4 is not applied, so nothing that reads `operating_income` moves. VALORIZATION's EBITDA/EV is
+present for operating 203 → **214** of 394, regulated utility 19 → 20 of 29, REIT 5 → 6 of 28 (the
+enterprise FCF yield 195 → 205 operating). **The D-04 screen's evaluated count is 394 → 394**; its
+outcome changes for one negative-equity filing (hits 36 → 35, SOFT 5 → 4) — a filing that had no
+corroborating leverage metric now has one.
+
+**VALORIZATION v2 old vs new** (`out/p2_valorization.json`): 481 paired members, **Spearman 0.9963**,
+**top-30 overlap 30/30**, 230 members move by more than one point, the empty count 22 → 21, scored
+481 → 482.
+
+**The vetoes by sector** (`out/p2_metrics.json`): `LEVERAGE_EXTREME` 394 evaluated / 36 → 35 hits
+(31 HARD both sides); `NEGATIVE_FCF` 433/18, `UTILITY_CASH_COVERAGE` 29/0, `LIQUIDITY_DISTRESS`
+470/1, `DATA_QUALITY` 500/3, `EARNINGS_MISSING` 503/0 — all unchanged; `PRICE_CRASH`,
+`BREAK_TREND_200`, `VOLATILITY_SHOCK` and `CRASH_Z_SCORE` evaluate 0 filings because this copy's
+`price_observation` rows carry no drawdown/volatility fields (a property of the t071c copy, declared,
+not a T-156 effect).
+
+**The prompt hash** (`out/p2_prompt_hash.json`): 15 filings' scored metric inputs change (the
+recovered ones), and the prompt **template**'s hash `fce4a688dd30f09a989decb10e28d3b3964c3bcf9ea0f0715ffed7ac4c4fd385`
+is unchanged — no prompt or skill file is touched by T-156, and T-100 re-scores every filing, so
+there is no LLM cost here.
+
+**The engine version** follows T-151's convention: `metrics-v7` → **`metrics-v8`** (a resolution
+change), recorded in `db.METRICS_ENGINE_VERSION` with the same version-bump tests updated.
