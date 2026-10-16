@@ -39,6 +39,10 @@ def _row(concept: str, label: str, val: float | None = None, column: str = FY) -
     }
 
 
+def _cash(*rows: dict[str, Any]) -> Statements:
+    return _stmts(cash=list(rows))
+
+
 def _stmts(
     income: list[dict[str, Any]] | None = None,
     cash: list[dict[str, Any]] | None = None,
@@ -134,6 +138,126 @@ def test_e2_a_cash_flow_amortization_child_keeps_the_cash_flow_sum() -> None:
     assert res.flags == ("da_sourced_sum",) and "da_sum_cross_statement" not in res.flags
 
 
+# -- E3: the company-extension caption fallback --------------------------------------------------
+
+
+def test_e3_an_extension_captioned_depreciation_and_amortization_is_taken() -> None:
+    """BALL's shape: ``ball_DepreciationAndAmortizationForSegment`` captioned "Depreciation and
+    amortization" -- the plain pair, ID-01's documented fallback -- flagged."""
+    stmts = _cash(
+        _row(
+            "ball_DepreciationAndAmortizationForSegment",
+            "Depreciation and amortization",
+            324_000_000.0,
+            YTD,
+        )
+    )
+    res = stmts.resolve("depreciation_amortization", YTD)
+    assert res.value == 324_000_000.0 and res.how == "label_fallback"
+    assert set(res.flags) == {
+        "caption_fallback",
+        "da_element_nonproduction",
+        "label_match",
+        "extension_concept",
+    }
+
+
+def test_e3_a_caption_equal_to_a_standard_label_is_taken() -> None:
+    """The standard label of ``DepreciationDepletionAndAmortization`` ("Depreciation, Depletion and
+    Amortization") is accepted, without the nonproduction flag."""
+    stmts = _cash(
+        _row(
+            "x_DepreciationDepletionAndAmortization",
+            "Depreciation, Depletion and Amortization",
+            9.0,
+        )
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value == 9.0 and "caption_fallback" in res.flags
+    assert "da_element_nonproduction" not in res.flags
+
+
+def test_e3_a_caption_that_adds_anything_is_declared() -> None:
+    """MSFT's "Depreciation, amortization, and other" adds "and other": not read (E3's ruling)."""
+    stmts = _cash(
+        _row(
+            "msft_DepreciationAmortizationAndOther",
+            "Depreciation, amortization, and other",
+            38_534.0,
+        )
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value is None and "caption_fallback" not in res.flags
+
+
+def test_e3_an_impairment_or_accretion_caption_is_declared() -> None:
+    for label in (
+        "Depreciation, amortization and impairment",
+        "Depreciation, amortization and accretion",
+    ):
+        stmts = _cash(_row("x_DepreciationAmortizationAndImpairment", label, 1.0))
+        assert stmts.resolve("depreciation_amortization", FY).value is None
+
+
+def test_e3_several_matching_captions_are_declined() -> None:
+    """The shared fallback requires exactly one matching line: two are declined (the plan's stop is
+    reported by the measurement)."""
+    stmts = _cash(
+        _row("x_DepreciationAndAmortizationA", "Depreciation and amortization", 1.0),
+        _row("x_DepreciationAndAmortizationB", "Depreciation and amortization", 2.0),
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value is None and "caption_fallback" not in res.flags
+
+
+def test_e3_a_negative_extension_value_is_rejected_not_repaired() -> None:
+    """ID-13 / ID-11: a negative value of a caption-matched line is rejected, never made positive."""
+    stmts = _cash(
+        {
+            "concept": "x_DepreciationAndAmortization",
+            "label": "Depreciation and amortization",
+            "abstract": False,
+            "dimension": False,
+            "preferred_sign": 1,
+            FY: -5.0,
+        }
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value is None and "wrong_sign_rejected" in res.flags
+
+
+def test_e3_the_caption_fallback_never_displaces_a_filed_aggregate() -> None:
+    stmts = _cash(
+        _row(G + "DepreciationDepletionAndAmortization", "Depreciation and amortization", 900.0),
+        _row("x_DepreciationAndAmortization", "Depreciation and amortization", 1.0),
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value == 900.0 and res.how == "concept"
+
+
+def test_e3_the_flag_reaches_the_metric_inputs() -> None:
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [_row(G + "OperatingIncomeLoss", "Operating income", 2.0, FY)],
+            "balance_sheet": [
+                _row(G + "Assets", "Total assets", 10.0, "2025-12-31"),
+                _row(G + "StockholdersEquity", "Total equity", 5.0, "2025-12-31"),
+                _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", 1.0, "2025-12-31"),
+                _row(G + "LongTermDebtNoncurrent", "Long-term debt", 2.0, "2025-12-31"),
+            ],
+            "cash_flow": [
+                _row("x_DepreciationAndAmortization", "Depreciation and amortization", 3.0, FY),
+                _row(G + "NetIncomeLoss", "Net income", 1.0, FY),
+            ],
+            "corrections": [],
+        }
+    )
+    ebitda = next(r for r in leverage.compute(stmts, FY) if r.name == "ebitda")
+    assert ebitda.value == 5.0
+    assert ebitda.inputs["flag_depreciation_amortization_caption_fallback"] == 1.0
+    assert ebitda.inputs["flag_depreciation_amortization_extension_concept"] == 1.0
+
+
 # -- E1: D&A from the income statement when the cash-flow statement has none ---------------------
 
 
@@ -219,6 +343,23 @@ def test_e1_a_negative_income_statement_aggregate_is_rejected_not_repaired() -> 
     res = stmts.resolve("depreciation_amortization", FY)
     assert res.value is None
     assert "wrong_sign_rejected" in res.flags
+
+
+def test_e1_a_negated_income_statement_d_a_is_read_on_the_filed_sign() -> None:
+    """ID-12: the income-statement row carries a negating label (``preferred_sign`` -1), so the
+    displayed -363M is the filed +363M and E1 reads the positive D&A (FOX's shape)."""
+    row = {
+        "concept": G + "DepreciationDepletionAndAmortization",
+        "label": "Depreciation and amortization",
+        "abstract": False,
+        "dimension": False,
+        "preferred_sign": -1,
+        FY: -363_000_000.0,
+    }
+    stmts = _stmts(income=[row], cash=[_row(G + "NetIncomeLoss", "Net income", 1.0, FY)])
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value == 363_000_000.0
+    assert res.flags == ("da_income_statement",)
 
 
 def test_e1_the_flag_reaches_the_metric_inputs() -> None:
