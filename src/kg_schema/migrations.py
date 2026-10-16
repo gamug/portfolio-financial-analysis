@@ -95,6 +95,26 @@ def _has_unique_key(db: Database, table: str) -> bool:
     return False
 
 
+def target_unique_key(table: str) -> tuple[str, ...] | None:
+    """The append-only ``UNIQUE`` key *table* is rebuilt to (m002 / m003; SPEC §5), or ``None`` when
+    no rebuilding migration owns it.
+
+    The public reader the agents' own DDL and write paths assert against (T-157), so a fresh
+    database's key and the migrations' target cannot drift apart."""
+    return _UNIQUE_KEYS.get(table)
+
+
+def at_target_unique_key(db: Database, table: str) -> bool:
+    """Whether *table* carries :func:`target_unique_key`'s key -- T-154's guard, read for one table.
+
+    ``True`` when the table does not exist, and when no rebuilding migration owns it (there is no
+    target to miss). ``False`` is the state T-157 refuses to write to: the table exists with an
+    older, narrower key, where ``INSERT OR IGNORE`` would drop a new version's row in silence."""
+    if table not in _UNIQUE_KEYS or not _table_exists(db, table):
+        return True
+    return _has_unique_key(db, table)
+
+
 def _m002_at_target_shape(db: Database) -> bool:
     """m002's target: ``financial_facts`` keyed by ``filing_version``."""
     if not _table_exists(db, "financial_facts"):

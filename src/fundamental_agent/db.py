@@ -22,7 +22,7 @@ import kg_schema
 from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
-from kg_schema import identity, ticker_history
+from kg_schema import identity, migrations, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
@@ -208,6 +208,11 @@ WHEN NEW.accession_number IS NOT NULL AND EXISTS (
 )
 BEGIN SELECT RAISE(ABORT, 'sec_filings: accession_number already used by another filing of this asset'); END;
 
+-- T-157: `financial_facts` and `fundamental_metrics` are append-only **per version**, and the key
+-- SPEC §5 declares (m002's `filing_version`, m003's `engine_version`) is the shape a fresh database
+-- is born with -- so a new version's rows coexist from the first run, never only after a manual
+-- `migrate`. An older database keeps its narrower key and is rebuilt by m002 / m003 (T-154's guards
+-- unchanged); writing one is refused by `_require_target_key` below, never silently ignored.
 CREATE TABLE IF NOT EXISTS financial_facts (
     id               INTEGER PRIMARY KEY,
     filing_id        INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
@@ -217,19 +222,29 @@ CREATE TABLE IF NOT EXISTS financial_facts (
     label            TEXT,
     period_key       TEXT NOT NULL,
     value            REAL,
-    UNIQUE (filing_id, statement, concept, period_key)
+    filing_version   TEXT NOT NULL DEFAULT 'pre-v1',
+    event_time       TEXT NOT NULL DEFAULT '',
+    ingested_at      TEXT,
+    run_id           INTEGER,
+    correction_rule  TEXT,
+    preferred_sign   REAL,
+    UNIQUE (filing_id, statement, concept, period_key, filing_version)
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_metrics (
-    id          INTEGER PRIMARY KEY,
-    filing_id   INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
+    id           INTEGER PRIMARY KEY,
+    filing_id    INTEGER NOT NULL REFERENCES sec_filings(id) ON DELETE CASCADE,
     metric_group TEXT NOT NULL,
-    metric_name TEXT NOT NULL,
-    value       REAL,
-    unit        TEXT,
-    inputs_json TEXT,
-    computed_at TEXT NOT NULL,
-    UNIQUE (filing_id, metric_group, metric_name)
+    metric_name  TEXT NOT NULL,
+    value        REAL,
+    unit         TEXT,
+    inputs_json  TEXT,
+    computed_at  TEXT NOT NULL,
+    engine_version TEXT NOT NULL DEFAULT 'pre-v1',
+    event_time   TEXT NOT NULL DEFAULT '',
+    run_id       INTEGER,
+    available_at TEXT,
+    UNIQUE (filing_id, metric_group, metric_name, engine_version)
 );
 
 CREATE TABLE IF NOT EXISTS fundamental_snapshot (
@@ -290,6 +305,33 @@ _COUNTER_UPDATE_SQL = {
 
 def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
+
+
+class LegacyAppendOnlyKey(RuntimeError):
+    """A write to an append-only table whose ``UNIQUE`` key is still the pre-migration one.
+
+    ``financial_facts`` and ``fundamental_metrics`` are append-only **per version** (SPEC §5; m002
+    and m003): their key carries ``filing_version`` / ``engine_version``, so a new version's rows
+    coexist with the older ones. A database that predates the rebuild carries the narrower key,
+    where the ``INSERT OR IGNORE`` of a new version's row is dropped **in silence**. T-157 refuses
+    the write instead, naming the migration that rebuilds the table."""
+
+
+def _require_target_key(conn: Database, table: str) -> None:
+    """Refuse to write an append-only table whose key is not the migrations' target (T-157).
+
+    A database :func:`ensure_schema` created is born at the target shape (:data:`SCHEMA` declares it);
+    one created before T-157, or by an older release, is upgraded by
+    ``python -m fundamental_agent migrate`` (m002 / m003 rebuild the table)."""
+    wanted = migrations.target_unique_key(table)
+    if wanted is None or migrations.at_target_unique_key(conn, table):
+        return
+    raise LegacyAppendOnlyKey(
+        f"{table} carries its pre-migration UNIQUE key, narrower than ({', '.join(wanted)}): a row "
+        "of a new version would be dropped in silence by INSERT OR IGNORE. Run `python -m "
+        "fundamental_agent migrate` to rebuild it (m002/m003), or start from a database "
+        "`fundamental_agent run` created."
+    )
 
 
 def ensure_schema(conn: Database) -> None:
@@ -522,14 +564,17 @@ def append_financial_facts(  # noqa: PLR0913 - keyword-only provenance fields
 ) -> int:
     """Append facts for *filing_id* -- never delete. Re-runs of the same
     *filing_version* collide on the unique key and are ignored; a restatement under
-    a new *filing_version* coexists (post-``migrate``; pre-``migrate`` the older
-    unique key still wins, which is the documented limitation).
+    a new *filing_version* coexists. The key is the one SPEC §5 declares (m002's
+    ``filing_version``): a database born by :func:`ensure_schema` has it, and one that
+    still carries the pre-migration key is refused (:class:`LegacyAppendOnlyKey`,
+    T-157) rather than silently dropping the new version's rows.
 
     T-118: a *fact* carrying ``correction_rule`` (set by
     :func:`fundamental_agent.statements.iter_facts` from the gateway's own
     ``data["corrections"]``) is persisted with that rule id in the like-named
     column, so a value the gateway derived rather than returned as filed never
     lands in ``financial_facts`` indistinguishable from a real filed fact."""
+    _require_target_key(conn, "financial_facts")
     columns = conn.table_columns("financial_facts")
     has_versioned = "filing_version" in columns
     has_correction = "correction_rule" in columns
@@ -1243,7 +1288,11 @@ def record_metrics(  # noqa: PLR0913 - keyword-only provenance fields
 ) -> None:
     """Append computed metrics -- one immutable row per
     ``(filing_id, group, name, engine_version)``. Recomputing with the same
-    *engine_version* is a no-op; a new version writes a parallel row."""
+    *engine_version* is a no-op; a new version writes a parallel row. The key is the one
+    SPEC §5 declares (m003's ``engine_version``): a database born by :func:`ensure_schema` has it, and
+    one that still carries the pre-migration key is refused (:class:`LegacyAppendOnlyKey`, T-157)
+    rather than silently dropping the new version's rows."""
+    _require_target_key(conn, "fundamental_metrics")
     now = _now()
     available_at = filing_available_at(conn, filing_id)
     has_versioned = "engine_version" in conn.table_columns("fundamental_metrics")

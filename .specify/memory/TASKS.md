@@ -544,7 +544,31 @@ the final pilot, `T-143`.
       the migrations' target shapes (the pre-m002/m003 keys, no `ux_quant_portfolio_book`), so D2 does
       not stamp it and `migrate` still replays m002/m003/m007/m014 there — no value is lost, and
       T-143/T-100 must run `python -m fundamental_agent migrate` once on the fresh database before any
-      data.
+      data. **Correction (T-157, 2026-10-16; reviewer A reversed the limitation):** the agents' DDL now
+      declares the target keys, so a fresh database is born at them and the `migrate`-first consequence is
+      retired — see the `T-157` entry below.
+- [ ] **T-157** *(T-154 follow-up; stream A; branch `fix/fresh-db-metrics-key`.)* A fresh database is born
+      at the append-only key SPEC §5 declares. `fundamental_agent.db.SCHEMA` (the DDL `fundamental_agent
+      run` creates its tables with, through `ensure_schema` and **without** a manual `migrate`) declared
+      the pre-migration keys — `fundamental_metrics UNIQUE (filing_id, metric_group, metric_name)` and
+      `financial_facts UNIQUE (filing_id, statement, concept, period_key)` — while m003/m002 declare
+      `(…, engine_version)` and `(…, filing_version)`. Both tables are append-only per version with
+      `INSERT OR IGNORE`, so a new engine version's (or a new filing version's) row collided with the
+      older one and was **dropped in silence**; it bit on T-156 (the t071c copy's pre-m003 key made a
+      `metrics-v8` recompute write 0 rows until the old version's rows were deleted). **The fix:** the
+      agent's DDL declares m002's/m003's target shape directly (the version column in the key and in the
+      table), so `_m002_at_target_shape`/`_m003_at_target_shape` see a fresh database (T-154's guards
+      unchanged; an old-key database is still upgraded by `migrate`); `kg_schema.migrations.
+      target_unique_key` / `at_target_unique_key` are the public readers, asserted equal to the DDL's key
+      by a test so the two cannot drift; and `record_metrics` / `append_financial_facts` raise
+      `fundamental_agent.db.LegacyAppendOnlyKey` (naming `migrate`) when the table's key is not the
+      target, so a write is never silently ignored. Every other table the run path creates was checked
+      and is listed in `docs/model_fixes.md` "T-157" (`sec_filings`, `fundamental_snapshot` and the four
+      key-less tables are not the same pattern; `quant_portfolio`'s m007 is a missing index, not a
+      narrower key). One existing test updated, not weakened
+      (`tests/test_metric_versions.py::test_versions_with_a_null_engine_version_are_ignored` now builds
+      the pre-m003 table explicitly); `tests/test_fresh_db_key.py` adds 7. SPEC FR-011 and §5 (1.25.0);
+      T-154's declared limitation and the stamp note corrected.
 - [x] **T-071** *(**DONE 2026-10-16** — part 1 PR #156, part 2a PR #167, part 2b PR #169, D-14 closed by the user 2026-10-15. The entry moved to `CHANGELOG.md`.)*
 - [ ] **T-072** *(**Absorbed by `T-151` 2026-10-08 — implement there, not here.**)* Persist EBITDA in `fundamental_metrics`
       (`metrics/leverage.py`/`statements.py`) as operating income + D&A. →

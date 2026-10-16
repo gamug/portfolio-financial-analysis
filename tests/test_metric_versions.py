@@ -224,22 +224,37 @@ def test_an_empty_selection_reads_nothing_rather_than_everything(memory_db: Data
     assert _read(memory_db, MetricVersions({})) == {}
 
 
-def test_versions_with_a_null_engine_version_are_ignored(memory_db: Database) -> None:
-    """Only an un-migrated database can hold one (migrating makes the column NOT NULL): such a
-    row predates versioning and cannot be selected by version, so it is not listed."""
-    memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
-    memory_db.execute(
-        "INSERT INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, period_end, "
-        "filing_date, available_at, retrieved_at) VALUES (1, 1, '10-K', 2025, 'FY2025', "
-        "'2025-12-31', '2026-02-20', '2026-02-23', '2026-01-01T00:00:00Z')"
+def test_versions_with_a_null_engine_version_are_ignored() -> None:
+    """Only an un-migrated database can hold one (m003 makes the column NOT NULL): such a
+    row predates versioning and cannot be selected by version, so it is not listed.
+
+    T-157: the agent's own DDL now declares m003's target shape, so the pre-m003 table -- the only
+    shape that admits a NULL -- is built explicitly here."""
+    raw = sqlite3.connect(":memory:")
+    raw.row_factory = sqlite3.Row
+    raw.executescript(
+        """
+        CREATE TABLE fundamental_metrics (
+            id INTEGER PRIMARY KEY,
+            filing_id INTEGER NOT NULL,
+            metric_group TEXT NOT NULL,
+            metric_name TEXT NOT NULL,
+            value REAL,
+            unit TEXT,
+            inputs_json TEXT,
+            computed_at TEXT NOT NULL,
+            engine_version TEXT,
+            event_time TEXT,
+            run_id INTEGER,
+            available_at TEXT
+        );
+        INSERT INTO fundamental_metrics
+            (filing_id, metric_group, metric_name, value, unit, computed_at, engine_version,
+             available_at)
+        VALUES (1, 'leverage', 'debt_to_equity', 9.0, 'x', '2026-01-01T00:00:00Z', NULL, NULL);
+        """
     )
-    memory_db.execute(
-        "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
-        "computed_at, engine_version, available_at) VALUES (1, 'leverage', 'debt_to_equity', "
-        "9.0, 'x', '2026-01-01T00:00:00Z', NULL, '2026-02-23')"
-    )
-    memory_db.commit()
-    assert queries.metric_versions_present(memory_db) == {}
+    assert queries.metric_versions_present(Database(raw)) == {}
 
 
 def test_a_database_without_the_table_has_no_versions() -> None:
