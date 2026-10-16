@@ -1476,6 +1476,9 @@ class Statements:
         result = self._da_sourced_sum(spec, column)
         if result[0] is not None:
             return result
+        cross = self._da_cross_statement_sum(spec, column)
+        if cross[0] is not None:
+            return cross
         if not self._da_filed_on_statement("cash_flow"):
             income_spec = replace(spec, statements=_INCOME)
             value, concept, how = self._component_row(income_spec, column)
@@ -1534,6 +1537,41 @@ class Statements:
             return None, None, None
         filed = {c: self._concept_value(spec, column, c) for c in children}
         self._flag("da_sourced_sum")
+        return (
+            sum(v for v in filed.values() if v is not None),
+            " + ".join(sorted(c for c, v in filed.items() if v is not None)),
+            "map",
+        )
+
+    def _da_cross_statement_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """E2 (T-156): the sourced D&A sum with its amortization term read on the income statement.
+
+        N14/D7 stays -- depreciation alone is never D&A -- so the sum is formed only when a
+        D&A-nature amortization or depletion child is filed (condition (b), read on the income
+        statement: E1's reading) and the cash-flow statement's other D&A-named lines are the four
+        children (condition (c), exactly as :meth:`_da_sourced_sum` states it). ``Depreciation``
+        itself stays the cash-flow statement's row. Flagged ``da_sum_cross_statement``; each term
+        keeps its filed sign (ID-12). A refusal here raises no flag: the filing is simply not
+        recovered."""
+        depreciation = self._concept_value(spec, column, G + "Depreciation")
+        if depreciation is None:
+            return None, None, None
+        income_spec = replace(spec, statements=_INCOME)
+        amortization = [
+            c
+            for c in DA_SOURCED_CHILDREN
+            if c != G + "Depreciation" and self._concept_value(income_spec, column, c) is not None
+        ]
+        if not amortization:
+            return None, None, None
+        if self.da_lines_outside_sourced(spec):
+            return None, None, None
+        filed: dict[str, float | None] = {G + "Depreciation": depreciation}
+        for child in amortization:
+            filed[child] = self._concept_value(income_spec, column, child)
+        self._flag("da_sum_cross_statement")
         return (
             sum(v for v in filed.values() if v is not None),
             " + ".join(sorted(c for c, v in filed.items() if v is not None)),

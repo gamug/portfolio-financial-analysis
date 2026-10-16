@@ -54,6 +54,86 @@ def _stmts(
     )
 
 
+# -- E2: the depreciation-only filers' cross-statement sum ---------------------------------------
+
+
+def test_e2_depreciation_on_the_cash_flow_and_an_amortization_child_on_the_income_statement() -> (
+    None
+):
+    """SYK's shape: ``Depreciation`` on the cash-flow statement, ``AmortizationOfIntangibleAssets``
+    on the income statement, no other D&A-named cash-flow line: the existing sourced sum forms
+    across the two statements, flagged ``da_sum_cross_statement``."""
+    stmts = _stmts(
+        income=[
+            _row(
+                G + "AmortizationOfIntangibleAssets",
+                "Amortization of intangible assets",
+                355_000_000.0,
+                YTD,
+            )
+        ],
+        cash=[_row(G + "Depreciation", "Depreciation", 241_000_000.0, YTD)],
+    )
+    res = stmts.resolve("depreciation_amortization", YTD)
+    assert res.value == 596_000_000.0
+    assert res.flags == ("da_sum_cross_statement",) and res.how == "map"
+
+
+def test_e2_an_outside_cash_flow_line_refuses_the_cross_statement_sum() -> None:
+    """Condition (c) as the code states it: an ``AmortizationOfFinancingCosts`` on the cash-flow
+    statement refuses the sum (no flag raised: the filing is simply not recovered)."""
+    stmts = _stmts(
+        income=[
+            _row(
+                G + "AmortizationOfIntangibleAssets",
+                "Amortization of intangible assets",
+                355_000_000.0,
+                YTD,
+            )
+        ],
+        cash=[
+            _row(G + "Depreciation", "Depreciation", 241_000_000.0, YTD),
+            _row(
+                G + "AmortizationOfFinancingCosts", "Amortization of loan fees", 12_000_000.0, YTD
+            ),
+        ],
+    )
+    res = stmts.resolve("depreciation_amortization", YTD)
+    assert res.value is None and "da_sum_cross_statement" not in res.flags
+
+
+def test_e2_depreciation_alone_stays_refused() -> None:
+    """N14/D7 unchanged: with no amortization child anywhere the sum is not formed."""
+    stmts = _stmts(
+        income=[_row(G + "OperatingIncomeLoss", "Operating income", 1.0, YTD)],
+        cash=[_row(G + "Depreciation", "Depreciation", 241_000_000.0, YTD)],
+    )
+    res = stmts.resolve("depreciation_amortization", YTD)
+    assert res.value is None and res.flags == ("depreciation_only_not_da",)
+
+
+def test_e2_a_cash_flow_amortization_child_keeps_the_cash_flow_sum() -> None:
+    """When both children are on the cash-flow statement the existing sum wins (no cross-statement
+    flag): E2 never displaces the cash-flow resolution."""
+    stmts = _stmts(
+        income=[
+            _row(G + "AmortizationOfIntangibleAssets", "Amortization of intangibles", 1.0, YTD)
+        ],
+        cash=[
+            _row(G + "Depreciation", "Depreciation", 241_000_000.0, YTD),
+            _row(
+                G + "AmortizationOfIntangibleAssets",
+                "Amortization of intangible assets",
+                355_000_000.0,
+                YTD,
+            ),
+        ],
+    )
+    res = stmts.resolve("depreciation_amortization", YTD)
+    assert res.value == 596_000_000.0
+    assert res.flags == ("da_sourced_sum",) and "da_sum_cross_statement" not in res.flags
+
+
 # -- E1: D&A from the income statement when the cash-flow statement has none ---------------------
 
 
