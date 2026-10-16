@@ -446,6 +446,50 @@ def cross_checks(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def members_only_on_non_replay_dates(universe: str, replay: list[str]) -> list[dict[str, Any]]:
+    """The members a replay date never holds: present on some calendar day, on no replay date.
+
+    These are the ones dac2c01's every-calendar-day count (597) had and the replay-date count
+    (595) does not; naming them shows the drop is not a lost member.
+    """
+    with contextlib.closing(connect_ro(universe)) as univ:
+        on_replay: set[tuple[str, str | None]] = set()
+        for d in replay:
+            on_replay.update((m.symbol, m.cik) for m in members_asof(univ, d))
+        every_day: set[tuple[str, str | None]] = set()
+        day = date.fromisoformat(FIRST)
+        while day <= date.fromisoformat(LAST):
+            every_day.update((m.symbol, m.cik) for m in members_asof(univ, day.isoformat()))
+            day += timedelta(days=1)
+        out = []
+        for sym, cik in sorted(every_day - on_replay):
+            stints = [
+                {
+                    "valid_from": str(r["valid_from"]),
+                    "valid_to": str(r["valid_to"]) if r["valid_to"] else None,
+                }
+                for r in univ.execute(
+                    "SELECT valid_from, valid_to FROM universe_membership "
+                    "WHERE symbol = ? AND cik = ?",
+                    (sym, cik),
+                )
+            ]
+            out.append(
+                {
+                    "symbol": sym,
+                    "cik": cik,
+                    "stints": stints,
+                    "replay_dates_in_its_stints": sum(
+                        1
+                        for s in stints
+                        for d in replay
+                        if s["valid_from"] <= d and (s["valid_to"] is None or d <= s["valid_to"])
+                    ),
+                }
+            )
+    return out
+
+
 def sections(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """The trigger, the refusals under both rules, and the refusal comparison."""
     out: dict[str, Any] = {
@@ -562,6 +606,7 @@ def measure(
         "member_gaps": state.member_gaps,
         "members_resolved": len(mapping),
         "members_missing": sorted(missing),
+        "members_only_on_non_replay_dates": members_only_on_non_replay_dates(universe, replay),
         "session_comparison": session_comparison(rows, universe, obs, mapping),
         "cross_checks": cross_checks(rows),
         "rows": rows,

@@ -32,17 +32,30 @@ WINDOW = ("2022-01-03", "2026-10-05")
 COLUMNS = ("accessionNumber", "form", "filingDate", "reportDate", "primaryDocument", "items")
 # the failures: classed from the trading halt while members, never from a filing (brief section 4)
 FAILURES = {
-    "SIVB": "failure (FDIC receivership 2023-03-10; halted while a member)",
-    "SBNY": "failure (FDIC receivership 2023-03-12; halted while a member)",
-    "FRC": "failure (FDIC receivership 2023-05-01; halted while a member)",
+    "SIVB": (
+        "failure (halted while a member; the 8-K Item 1.03 of 2023-03-10 records the receivership)"
+    ),
+    "SBNY": (
+        "failure (halted while a member; filed with the FDIC, no SEC filing; the manifest's "
+        "last real close 2023-03-10, 2023-03-13/14 trimmed)"
+    ),
+    "FRC": (
+        "failure (halted while a member; filed with the FDIC, no SEC filing; the manifest's "
+        "last real close 2023-04-28, 2023-05-01/02/03 trimmed)"
+    ),
 }
+# the receivership's own source: a cached filing, or none at all (filed with the FDIC)
+RECEIVERSHIP = {"SIVB": "0001193125-23-067777"}
 FDIC = {"SBNY", "FRC"}  # filed with the FDIC, not the SEC: no exit filing on EDGAR
+TERMS_ORDER = ("DEFM14A", "SC 14D9", "completion 8-K Item 2.01")
+CLUSTER_DAYS = 183  # six months: two DEFM14As this close are one revised deal (WBD 2026)
 SPECIAL = {
     "DISCK": "other (a share class of WBD's CIK, converted into WBD at the 2022-04-08 deal)",
     "INFO": "acquisition (IHS Markit by S&P Global)",
     "WRK": "acquisition (Westrock into Smurfit Westrock)",
 }
 EXIT_LATER_GAP = 5  # more than this many sessions after the last membership session: exit later
+GRACE_DAYS = 10  # a completion 8-K is filed a few days after the last membership day
 BOUNDARY_GAP = (2, 5)  # inclusive: reported, not classified
 HALT_NOTE = {
     "SIVB": "its only 2.01 8-K reports a bond-portfolio sale, and its 3.01 comes after the halt",
@@ -90,6 +103,40 @@ def with_items(
 def earliest(rows: list[dict[str, Any]], forms: set[str], since: str = "2022-01-01") -> dict | None:
     hits = [r for r in rows if r["form"] in forms and r["filingDate"] >= since]
     return min(hits, key=lambda r: (r["filingDate"], r["accessionNumber"])) if hits else None
+
+
+def terms_accession(rows: list[dict[str, Any]], until: str) -> tuple[str, str]:
+    """The filing that states the deal's terms, and its source (brief section 4).
+
+    In this order: (a) the target's **DEFM14A** -- exactly one for the line's period, the
+    DEFM14As within ``CLUSTER_DAYS`` of the latest one (two of those is one revised deal, and
+    the completion 8-K wins); (b) for a tender offer, the target's **SC 14D9**; (c) else the
+    **completion 8-K with Item 2.01**. Forms are matched exactly, never by prefix: a DEF 14A
+    (an annual-meeting proxy) and an S-4 are not a merger proxy.
+    """
+    period = [r for r in rows if r["filingDate"] <= until]
+    defm = [r for r in period if r["form"] == "DEFM14A"]
+    if defm:
+        last = max(str(r["filingDate"]) for r in defm)
+        cluster = [
+            r
+            for r in defm
+            if (date.fromisoformat(last) - date.fromisoformat(str(r["filingDate"]))).days
+            < CLUSTER_DAYS
+        ]
+        if len(cluster) == 1:
+            return str(cluster[0]["accessionNumber"]), "DEFM14A"
+    elif any(r["form"] == "SC 14D9" for r in period):
+        sc = [r for r in period if r["form"] == "SC 14D9"]
+        best = max(sc, key=lambda r: (r["filingDate"], r["accessionNumber"]))
+        return str(best["accessionNumber"]), "SC 14D9"
+    comp = [
+        r for r in period if r["form"] == "8-K" and "2.01" in str(r.get("items") or "").split(",")
+    ]
+    if comp:
+        best = max(comp, key=lambda r: (r["filingDate"], r["accessionNumber"]))
+        return str(best["accessionNumber"]), "completion 8-K Item 2.01"
+    return "not cached", "not cached"
 
 
 def latest(rows: list[dict[str, Any]], forms: set[str]) -> dict | None:
@@ -153,17 +200,15 @@ def classify_candidates(
         # special case (DISCK) and a failure are classed from their own halt/exit instead, so
         # their first such 8-K is the one that belongs to them (WBD's 2026 filing is not DISCK's).
         event = with_items(rows, {"2.01", "3.01"}, latest=not (ask in failures or ask in special))
-        if ask in failures or ask in special:
-            # its own deal, not a later filing on the same CIK (WBD's 2026 accession is not DISCK's)
-            own = [
-                r
-                for r in rows
-                if r["form"] in ("DEFM14A", "DEF 14A", "S-4")
-                and (last_member is None or r["filingDate"] <= last_member)
-            ]
-            terms = max(own, key=lambda r: (r["filingDate"], r["accessionNumber"])) if own else None
+        event_date = str(event["reportDate"]) if event and event.get("reportDate") else None
+        # the line's own period: its exit (or its last membership day) plus a short grace, so a
+        # later filing on the same CIK (WBD's 2026 accession is not DISCK's) cannot leak in
+        base = max([d for d in (last_member, event_date) if d] or [WINDOW[1]])
+        until = (date.fromisoformat(base) + timedelta(days=GRACE_DAYS)).isoformat()
+        if ask in failures:
+            terms_accession_value, terms_source = "failure: no deal terms", "failure"
         else:
-            terms = latest(rows, {"DEFM14A", "DEF 14A", "S-4"})
+            terms_accession_value, terms_source = terms_accession(rows, until)
         record: dict[str, Any] = {
             "line": ask,
             "cik": cik,
@@ -178,11 +223,8 @@ def classify_candidates(
             "cause": failures.get(ask)
             or special.get(ask)
             or ("acquisition" if completion else "other (no completion 8-K with Item 2.01)"),
-            "terms_accession": (
-                "filed with the FDIC"
-                if ask in fdic
-                else (terms or event or completion or {}).get("accessionNumber") or "not cached"
-            ),
+            "terms_accession": terms_accession_value,
+            "terms_source": terms_source,
             "event_8k": None
             if event is None
             else {
@@ -199,6 +241,8 @@ def classify_candidates(
             "tiingo_missing_sessions": (man or {}).get("missing_sessions", []),
             "tiingo_trimmed_rows": (man or {}).get("trimmed_rows", []),
             "halt_note": HALT_NOTE.get(ask),
+            "receivership_source": RECEIVERSHIP.get(ask)
+            or ("none cached: filed with the FDIC" if ask in fdic else None),
         }
         if ask in failures or ask in special:
             # a failure is classed from the halt while a member, never from a filing (its 3.01 can

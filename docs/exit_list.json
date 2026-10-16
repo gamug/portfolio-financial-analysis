@@ -64,11 +64,13 @@
    "last_membership_session": "2022-02-14",
    "last_trade_date": "2022-02-11",
    "line": "XLNX",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "XLNX"
    ],
-   "terms_accession": "0000743988-21-000026",
+   "terms_accession": "0001104659-21-032782",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2022-02-14"
    ],
@@ -100,10 +102,12 @@
    "last_membership_session": "2022-03-01",
    "last_trade_date": "no price held",
    "line": "INFO",
+   "receivership_source": null,
    "symbols": [
     "INFO"
    ],
-   "terms_accession": "0001193125-21-094552",
+   "terms_accession": "0001193125-21-014742",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -127,11 +131,13 @@
    "last_membership_session": "2022-04-01",
    "last_trade_date": "2022-04-01",
    "line": "PBCT",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "PBCT"
    ],
-   "terms_accession": "0001193125-21-335295",
+   "terms_accession": "0001193125-21-129023",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -155,10 +161,12 @@
    "last_membership_session": "2022-04-08",
    "last_trade_date": "2022-04-08",
    "line": "DISCK",
+   "receivership_source": null,
    "symbols": [
     "DISCK"
    ],
-   "terms_accession": "0001206774-22-000691",
+   "terms_accession": "0001193125-22-103051",
+   "terms_source": "completion 8-K Item 2.01",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -182,11 +190,13 @@
    "last_membership_session": "2022-06-07",
    "last_trade_date": "2022-06-07",
    "line": "CERN",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 1,
    "symbols": [
     "CERN"
    ],
-   "terms_accession": "0000804753-22-000017",
+   "terms_accession": "0001193125-22-012548",
+   "terms_source": "SC 14D9",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -210,11 +220,13 @@
    "last_membership_session": "2022-09-30",
    "last_trade_date": "2022-09-29",
    "line": "CTXS",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "CTXS"
    ],
    "terms_accession": "0001193125-22-077283",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2022-09-30"
    ],
@@ -246,11 +258,13 @@
    "last_membership_session": "2022-09-30",
    "last_trade_date": "2022-09-30",
    "line": "DRE",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "DRE"
    ],
    "terms_accession": "0001104659-22-085227",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -274,11 +288,13 @@
    "last_membership_session": "2022-10-11",
    "last_trade_date": "2022-10-11",
    "line": "NLSN",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "NLSN"
    ],
    "terms_accession": "0001193125-22-190511",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -302,11 +318,13 @@
    "last_membership_session": "2022-10-31",
    "last_trade_date": "2022-10-27",
    "line": "TWTR",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "TWTR"
    ],
    "terms_accession": "0001193125-22-202163",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2022-10-28",
     "2022-10-31"
@@ -339,17 +357,19 @@
    "last_membership_session": "2022-12-21",
    "last_trade_date": "2022-12-21",
    "line": "ABMD",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 1,
    "symbols": [
     "ABMD"
    ],
-   "terms_accession": "0001193125-22-183958",
+   "terms_accession": "0001193125-22-285225",
+   "terms_source": "SC 14D9",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
   {
    "25-NSE": null,
-   "cause": "failure (FDIC receivership 2023-03-12; halted while a member)",
+   "cause": "failure (halted while a member; filed with the FDIC, no SEC filing; the manifest's last real close 2023-03-10, 2023-03-13/14 trimmed)",
    "cik": "0001288784",
    "completion_8k_2.01": null,
    "event_8k": null,
@@ -359,10 +379,12 @@
    "last_membership_session": "2023-03-14",
    "last_trade_date": "2023-03-10",
    "line": "SBNY",
+   "receivership_source": "none cached: filed with the FDIC",
    "symbols": [
     "SBNY"
    ],
-   "terms_accession": "filed with the FDIC",
+   "terms_accession": "failure: no deal terms",
+   "terms_source": "failure",
    "tiingo_missing_sessions": [
     "2023-03-13",
     "2023-03-14"
@@ -382,7 +404,7 @@
   },
   {
    "25-NSE": "2023-05-02",
-   "cause": "failure (FDIC receivership 2023-03-10; halted while a member)",
+   "cause": "failure (halted while a member; the 8-K Item 1.03 of 2023-03-10 records the receivership)",
    "cik": "0000719739",
    "completion_8k_2.01": {
     "accession": "0001193125-23-070254",
@@ -400,10 +422,12 @@
    "last_membership_session": "2023-03-14",
    "last_trade_date": "2023-03-09",
    "line": "SIVB",
+   "receivership_source": "0001193125-23-067777",
    "symbols": [
     "SIVB"
    ],
-   "terms_accession": "0001193125-22-064940",
+   "terms_accession": "failure: no deal terms",
+   "terms_source": "failure",
    "tiingo_missing_sessions": [
     "2023-03-10",
     "2023-03-13",
@@ -429,7 +453,7 @@
   },
   {
    "25-NSE": null,
-   "cause": "failure (FDIC receivership 2023-05-01; halted while a member)",
+   "cause": "failure (halted while a member; filed with the FDIC, no SEC filing; the manifest's last real close 2023-04-28, 2023-05-01/02/03 trimmed)",
    "cik": "0001132979",
    "completion_8k_2.01": null,
    "event_8k": null,
@@ -439,10 +463,12 @@
    "last_membership_session": "2023-05-03",
    "last_trade_date": "2023-04-28",
    "line": "FRC",
+   "receivership_source": "none cached: filed with the FDIC",
    "symbols": [
     "FRC"
    ],
-   "terms_accession": "filed with the FDIC",
+   "terms_accession": "failure: no deal terms",
+   "terms_source": "failure",
    "tiingo_missing_sessions": [
     "2023-05-01",
     "2023-05-02",
@@ -486,11 +512,13 @@
    "last_membership_session": "2023-10-17",
    "last_trade_date": "2023-10-12",
    "line": "ATVI",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "ATVI"
    ],
-   "terms_accession": "0001308179-23-000834",
+   "terms_accession": "0001104659-22-036155",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2023-10-13",
     "2023-10-16",
@@ -524,11 +552,13 @@
    "last_membership_session": "2024-05-07",
    "last_trade_date": "2024-05-02",
    "line": "PXD",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "PXD"
    ],
    "terms_accession": "0001193125-24-003822",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2024-05-03",
     "2024-05-06",
@@ -562,10 +592,12 @@
    "last_membership_session": "2024-07-05",
    "last_trade_date": "no price held",
    "line": "WRK",
+   "receivership_source": null,
    "symbols": [
     "WRK"
    ],
    "terms_accession": "0001104659-24-053001",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -589,11 +621,13 @@
    "last_membership_session": "2024-11-25",
    "last_trade_date": "2024-11-21",
    "line": "MRO",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "MRO"
    ],
    "terms_accession": "0001104659-24-083181",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2024-11-22",
     "2024-11-25"
@@ -626,11 +660,13 @@
    "last_membership_session": "2024-12-20",
    "last_trade_date": "2024-12-17",
    "line": "CTLT",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "CTLT"
    ],
    "terms_accession": "0001193125-24-095515",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2024-12-18",
     "2024-12-19",
@@ -664,11 +700,13 @@
    "last_membership_session": "2025-05-16",
    "last_trade_date": "2025-05-16",
    "line": "DFS",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "DFS"
    ],
    "terms_accession": "0001193125-25-002190",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -692,11 +730,13 @@
    "last_membership_session": "2025-07-08",
    "last_trade_date": "2025-07-01",
    "line": "JNPR",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "JNPR"
    ],
-   "terms_accession": "0001104659-25-035489",
+   "terms_accession": "0001193125-24-046175",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2025-07-02",
     "2025-07-03",
@@ -731,11 +771,13 @@
    "last_membership_session": "2025-07-17",
    "last_trade_date": "2025-07-16",
    "line": "ANSS",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "ANSS"
    ],
-   "terms_accession": "0001104659-25-041176",
+   "terms_accession": "0001140361-24-020334",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2025-07-17"
    ],
@@ -767,11 +809,13 @@
    "last_membership_session": "2025-07-22",
    "last_trade_date": "2025-07-17",
    "line": "HES",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "HES"
    ],
-   "terms_accession": "0001193125-25-073397",
+   "terms_accession": "0001193125-24-118240",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2025-07-18",
     "2025-07-21",
@@ -805,11 +849,13 @@
    "last_membership_session": "2025-08-27",
    "last_trade_date": "2025-08-27",
    "line": "WBA",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 1,
    "symbols": [
     "WBA"
    ],
    "terms_accession": "0001193125-25-137049",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -833,11 +879,13 @@
    "last_membership_session": "2025-11-26",
    "last_trade_date": "2025-11-26",
    "line": "IPG",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "IPG"
    ],
    "terms_accession": "0001193125-25-017296",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -861,11 +909,13 @@
    "last_membership_session": "2025-12-10",
    "last_trade_date": "2025-12-10",
    "line": "K",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 1,
    "symbols": [
     "K"
    ],
    "terms_accession": "0001193125-24-226970",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -889,12 +939,14 @@
    "last_membership_session": "2026-02-06",
    "last_trade_date": "2026-02-03",
    "line": "DAY",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "CDAY",
     "DAY"
    ],
    "terms_accession": "0001140361-25-036413",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2026-02-04",
     "2026-02-05",
@@ -922,11 +974,13 @@
    "last_membership_session": "2026-04-08",
    "last_trade_date": "2026-04-06",
    "line": "HOLX",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "HOLX"
    ],
    "terms_accession": "0001140361-25-046571",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2026-04-07",
     "2026-04-08"
@@ -959,11 +1013,13 @@
    "last_membership_session": "2026-05-06",
    "last_trade_date": "2026-05-06",
    "line": "CTRA",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 1,
    "symbols": [
     "CTRA"
    ],
    "terms_accession": "0001104659-26-036887",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -987,11 +1043,13 @@
    "last_membership_session": "2026-08-04",
    "last_trade_date": "2026-08-04",
    "line": "EA",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "EA"
    ],
    "terms_accession": "0001140361-25-042872",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -1015,11 +1073,13 @@
    "last_membership_session": "2026-08-17",
    "last_trade_date": "2026-08-14",
    "line": "AVB",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "AVB"
    ],
    "terms_accession": "0001104659-26-083113",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [
     "2026-08-17"
    ],
@@ -1051,12 +1111,14 @@
    "last_membership_session": "2026-10-05",
    "last_trade_date": "2026-10-05",
    "line": "WBD",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 0,
    "symbols": [
     "DISCA",
     "WBD"
    ],
-   "terms_accession": "0001437107-26-000046",
+   "terms_accession": "0001193125-26-415055",
+   "terms_source": "completion 8-K Item 2.01",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   }
@@ -1083,11 +1145,13 @@
    "last_membership_session": "2023-06-16",
    "last_trade_date": "2023-06-16",
    "line": "DISH",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 135,
    "symbols": [
     "DISH"
    ],
-   "terms_accession": "0001104659-23-033915",
+   "terms_accession": "0001104659-24-000088",
+   "terms_source": "completion 8-K Item 2.01",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -1111,11 +1175,13 @@
    "last_membership_session": "2023-12-15",
    "last_trade_date": "2023-12-15",
    "line": "SEE",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 578,
    "symbols": [
     "SEE"
    ],
    "terms_accession": "0001193125-26-021072",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -1139,11 +1205,13 @@
    "last_membership_session": "2024-06-21",
    "last_trade_date": "2024-06-21",
    "line": "CMA",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 403,
    "symbols": [
     "CMA"
    ],
    "terms_accession": "0001193125-25-297173",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   },
@@ -1167,11 +1235,13 @@
    "last_membership_session": "2024-12-20",
    "last_trade_date": "2024-12-20",
    "line": "QRVO",
+   "receivership_source": null,
    "sessions_from_last_membership_session_to_event": 446,
    "symbols": [
     "QRVO"
    ],
-   "terms_accession": "0001193125-26-285512",
+   "terms_accession": "0001104659-25-124244",
+   "terms_source": "DEFM14A",
    "tiingo_missing_sessions": [],
    "tiingo_trimmed_rows": []
   }
