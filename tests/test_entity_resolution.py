@@ -163,7 +163,10 @@ def test_connect_ro_reads_through_a_live_writers_wal(tmp_path: Path) -> None:
     `Database.attach(read_only=True)`, which needed portfolio-common v1.2.2 to
     stop rejecting this exact shape) -- so this proves SQLite's own WAL
     handling covers a live writer here too, rather than assuming it from the
-    absence of a preflight check."""
+    absence of a preflight check. Proves two things, not just one: the read
+    doesn't raise/block, *and* it sees the writer's latest committed row
+    rather than a stale snapshot -- the property `news_watermark()` (same
+    module) actually depends on when it decides whether to re-run."""
     path = tmp_path / "urls_live.db"
     _build_news_db(path)
 
@@ -186,6 +189,10 @@ def test_connect_ro_reads_through_a_live_writers_wal(tmp_path: Path) -> None:
             # by _build_news_db -- a real read through the module under test,
             # not just a successful connect.
             assert len(article_ids_for_ticker(reader, "AAA")) == 12
+            # Not just "doesn't block" -- the reader's snapshot must include the
+            # writer's just-committed row (ticker ZZZ, inserted above after the
+            # WAL was already non-empty), not a frozen view from before it.
+            assert article_ids_for_ticker(reader, "ZZZ") == [999]
         finally:
             reader.close()
     finally:
