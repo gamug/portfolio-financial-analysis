@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from entity_resolution import pipeline
 from entity_resolution.config import Settings
 from entity_resolution.cooccurrence import build_edges
 from entity_resolution.denylist import is_denied
+from entity_resolution.news_db import article_ids_for_ticker
 from entity_resolution.normalize import canonical
 from entity_resolution.pipeline import RunParams
 from kg_schema import connect_ro
@@ -88,10 +90,14 @@ def _build_news_db(path: Path) -> None:
 
 
 @pytest.fixture
-def news_db(tmp_path: Path) -> Database:
+def news_db(tmp_path: Path) -> Iterator[Database]:
     path = tmp_path / "urls_sample.db"
     _build_news_db(path)
-    return connect_ro(path)
+    db = connect_ro(path)
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 # -- normalize -------------------------------------------------------------
@@ -147,6 +153,43 @@ def test_accessor_never_touches_articles_or_body_text(news_db: Database) -> None
     assert "articles" not in joined
     assert "body_text" not in joined
     assert "discovered_urls" in joined and "article_entities" in joined
+
+
+def test_connect_ro_reads_through_a_live_writers_wal(tmp_path: Path) -> None:
+    """This repo is a third reader of the real `urls.db`, alongside
+    portfolio-data-mining's collector (the writer) and portfolio-nlp's
+    attach_source(). `kg_schema.connect_ro` -> `Database.connect(read_only=True)`
+    is a bare `mode=ro` open with no portfolio-common preflight (unlike
+    `Database.attach(read_only=True)`, which needed portfolio-common v1.2.2 to
+    stop rejecting this exact shape) -- so this proves SQLite's own WAL
+    handling covers a live writer here too, rather than assuming it from the
+    absence of a preflight check."""
+    path = tmp_path / "urls_live.db"
+    _build_news_db(path)
+
+    holder = sqlite3.connect(path)
+    assert holder.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    holder.execute("PRAGMA wal_autocheckpoint=0")
+    holder.execute(
+        "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, "
+        "discovered_at) VALUES (999, 'http://x/999', 'x.com', 'ZZZ', 'ZZZ', 'test', "
+        "'2026-01-01T00:00:00')"
+    )
+    holder.commit()
+    try:
+        assert Path(f"{path}-wal").stat().st_size > 0
+        assert Path(f"{path}-shm").exists()
+
+        reader = connect_ro(path)
+        try:
+            # the 4 AAA/"Jane Roe" + 4 AAA/"Jim Cramer" + 4 AAA/"Bob" rows seeded
+            # by _build_news_db -- a real read through the module under test,
+            # not just a successful connect.
+            assert len(article_ids_for_ticker(reader, "AAA")) == 12
+        finally:
+            reader.close()
+    finally:
+        holder.close()
 
 
 # -- writer ---------------------------------------------------------
