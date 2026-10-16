@@ -1824,6 +1824,8 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
         },
         # the Ring-1 gate version it read quarantines under (T-065/T-116; current = T-150's bump)
         "quality": DATA_QUALITY_GATE_VERSION,
+        # the eligibility rule the run was built on (T-153 part 3c): C11 printed p.36 by analogy
+        "eligibility": cycle_orchestrator.ELIGIBILITY_MANIFEST,
     }
 
 
@@ -2190,3 +2192,19 @@ def test_a_held_name_that_becomes_unpriced_closes_its_replay_stint(cycle_seed: D
         "SELECT p.cost_basis FROM portfolio_position_replay p WHERE p.valid_from = '2026-07-01'"
     ):
         assert row["cost_basis"] is not None
+
+
+def test_a_manifest_refusal_names_the_field_that_differs(cycle_seed: Database) -> None:
+    """T-153 part 3c's decision 1b: the refusal names the manifest field, not just the tag."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    # a run recorded before part 3c: its manifest has no `eligibility`, and its tag is not this
+    # code's -- exactly what a pre-3c database holds, so it cannot be re-run under the new rule
+    conn.execute(
+        "UPDATE cycle_run SET params_json = json_remove("
+        "json_set(params_json, '$.manifest_tag', 'pre-3c'), '$.manifest.eligibility') "
+        "WHERE cycle_type = 'SELECTION' AND cycle_date = '2026-06-30'"
+    )
+    conn.commit()
+    with pytest.raises(ManifestMismatch, match=r"manifest field that differs: eligibility"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)

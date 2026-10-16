@@ -7,6 +7,7 @@ on a name with D-1's close but not session(D)'s fails it.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -28,10 +29,12 @@ CREATE TABLE price_observation (
     obs_time TEXT, event_time TEXT, computed_at TEXT, engine_version TEXT NOT NULL);
 CREATE TABLE portfolio_position (
     id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-    weight REAL, cost_basis REAL);
+    weight REAL, cost_basis REAL, opened_by_cycle INTEGER);
 CREATE TABLE portfolio_position_replay (
     id INTEGER PRIMARY KEY, asset_id INTEGER NOT NULL, valid_from TEXT NOT NULL, valid_to TEXT,
-    weight REAL, cost_basis REAL);
+    weight REAL, cost_basis REAL, opened_by_cycle INTEGER);
+CREATE TABLE cycle_run (
+    id INTEGER PRIMARY KEY, cycle_type TEXT, cycle_date TEXT, params_json TEXT);
 CREATE TABLE cycle_ranking (
     id INTEGER PRIMARY KEY, cycle_run_id INTEGER NOT NULL, asset_id INTEGER NOT NULL, rank INTEGER,
     blended_score REAL, components_json TEXT, vetoed INTEGER NOT NULL DEFAULT 0,
@@ -47,6 +50,7 @@ def _db(
     close_on_session: bool = True,
     veto_marker: str | None = None,
     selected_marker: str | None = None,
+    eligibility: str | None = "session-close-v1",
 ) -> str:
     path = tmp_path / "t153e.db"
     conn = sqlite3.connect(path)
@@ -63,9 +67,19 @@ def _db(
             "INSERT INTO price_observation (asset_id, obs_date, close, engine_version) "
             "VALUES (1, '2026-06-29', 10.0, 'priceobs-v2'), (2, '2026-06-30', 20.0, 'priceobs-v2')"
         )
-    conn.execute("INSERT INTO portfolio_position (asset_id, valid_from) VALUES (1, '2026-06-30')")
+    # the run that opened the stints: WI-18's pattern reads its own manifest (T-153 part 3c)
     conn.execute(
-        "INSERT INTO portfolio_position_replay (asset_id, valid_from) VALUES (2, '2026-06-30')"
+        "INSERT INTO cycle_run (id, cycle_type, cycle_date, params_json) VALUES "
+        "(7, 'SELECTION', '2026-06-30', ?)",
+        (json.dumps({"manifest": ({"eligibility": eligibility} if eligibility else {})}),),
+    )
+    conn.execute(
+        "INSERT INTO portfolio_position (asset_id, valid_from, opened_by_cycle) "
+        "VALUES (1, '2026-06-30', 7)"
+    )
+    conn.execute(
+        "INSERT INTO portfolio_position_replay (asset_id, valid_from, opened_by_cycle) "
+        "VALUES (2, '2026-06-30', 7)"
     )
     if veto_marker:
         conn.execute(
@@ -85,28 +99,37 @@ def _db(
 
 
 def test_a_priced_stint_passes(tmp_path: Path) -> None:
-    stints, marked, problems = verify.unpriced_position_problems(_db(tmp_path))
-    assert (stints, marked, problems) == (2, 0, [])
+    judged, legacy, marked, problems = verify.unpriced_position_problems(_db(tmp_path))
+    assert (judged, legacy, marked, problems) == (2, 0, 0, [])
 
 
 def test_a_stint_opening_on_d_minus_one_but_not_the_session_fails(tmp_path: Path) -> None:
     """The reviewer's case: D-1's close is not a close on session(D)."""
-    stints, _marked, problems = verify.unpriced_position_problems(
+    judged, _legacy, _marked, problems = verify.unpriced_position_problems(
         _db(tmp_path, close_on_session=False)
     )
-    assert stints == 2
+    assert judged == 2
     assert problems == ["AAA opens a stint on 2026-06-30 unpriced"]
 
 
+def test_a_stint_from_a_run_that_predates_the_rule_is_not_judged(tmp_path: Path) -> None:
+    """WI-18's pattern: its own run's manifest names another eligibility, so it is reported,
+    never failed -- even when today's rule would call it unpriced."""
+    judged, legacy, _marked, problems = verify.unpriced_position_problems(
+        _db(tmp_path, close_on_session=False, eligibility=None)
+    )
+    assert (judged, legacy, problems) == (0, 2, [])
+
+
 def test_a_veto_row_named_a_marker_fails(tmp_path: Path) -> None:
-    _stints, _marked, problems = verify.unpriced_position_problems(
+    _judged, _legacy, _marked, problems = verify.unpriced_position_problems(
         _db(tmp_path, veto_marker="UNPRICED")
     )
     assert problems == ["a veto row is named UNPRICED: a data gap is never a veto"]
 
 
 def test_a_selected_row_carrying_a_marker_fails(tmp_path: Path) -> None:
-    _stints, marked, problems = verify.unpriced_position_problems(
+    _judged, _legacy, marked, problems = verify.unpriced_position_problems(
         _db(tmp_path, selected_marker="UNSCORED")
     )
     assert marked == 1

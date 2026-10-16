@@ -69,6 +69,14 @@ from kg_schema.versions import (
 
 FundamentalHook = Callable[[Database, list[int], str], None]
 
+#: The eligibility rule a run was built on, recorded in its manifest (T-153 part 3c). C11 printed
+#: p.36 applied by analogy (index addition -> selection): a member is usable on cycle date D only
+#: with a close on the market's latest NYSE session on or before D, in the cycle's own
+#: ``price_observation`` engine version. The price vetoes keep their own 7-day window.
+#: A run recorded before this value cannot be resumed under the new rule: the ranking would mix
+#: two eligibilities, so ``check_manifest`` refuses it -- redo it fresh, or at another date.
+ELIGIBILITY_MANIFEST = "session-close-v1"
+
 log = logging.getLogger(__name__)
 
 _SELECTION_STEPS = (
@@ -311,9 +319,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         "consumer": "cycle",
         "metrics": versions.manifest(),
         "quality": DATA_QUALITY_GATE_VERSION,
+        "eligibility": ELIGIBILITY_MANIFEST,
     }
     tag = manifest_tag(manifest)
-    check_manifest(conn, cycle_type, cycle_date, tag)
+    check_manifest(conn, cycle_type, cycle_date, tag, manifest)
     # T-141: params_json.score_weights is written once, by the first attempt; every ranking of
     # this run must use those weights, so refuse a resume under others (any cycle type).
     check_score_weights(conn, cycle_type, cycle_date, settings.score_weights)
