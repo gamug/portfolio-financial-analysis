@@ -692,6 +692,24 @@ full-year column, a declared structural case, not a gateway defect and not `T-14
 unscored list is unchanged on the member basis** (23 of 500, 4.6%, at 2026-09-22; 503 members are 500
 CIKs, the share-class pairs sharing one).
 
+## Work item 8 — `T-156` (closed task) — EBITDA coverage: what the rules allow us to recover (stream A, step 3c) — DONE 2026-10-16
+
+Moved verbatim from `TASKS.md` when the task closed (PR #170); the rest of Work item 8
+(`T-141`, `T-077`, `T-070`, `T-147`, `T-149`, `T-148`, `T-150`, `T-151`, `T-076`, `T-073`, `T-074`, `T-071`,
+`T-155`) stays there, with `T-153` next. Ordered by work item number.
+
+- [x] **T-156** EBITDA coverage: what the rules allow us to recover (stream A, the user's decision of 2026-10-15; before the final pilot `T-143`). Phase 1 measured the 228 empty `leverage.ebitda` on the SP500 members' newest usable filings at 2026-09-22 (`out/m1_classes.json`, term basis: D&A missing on 116, operating income on 85, 48 financial firms NA under APP-02) and asked which part a loaded source would recover. The user's principle: **a case is recovered only where a checklist rule or a loaded source allows it**; everything else is not applied and is declared with its cause. Phase 2 implements E1 (D&A from the income statement when the cash-flow statement files none, `da_income_statement`, B6's statement-agnostic definitions, ID-12's filed sign), E2 (the depreciation-only filers' cross-statement sourced sum, `da_sum_cross_statement`; N14/D7 stays), E3 (the company-extension caption fallback equal to the standard label of an accepted D&A element, `caption_fallback`, ID-01 / A1 5.6.1) and **not** E4 (the FASB 2026 `soi` calculation identities fail DQ-01: identity 1 has no checkable filing, identity 2 disagrees on 43 pairs over 19 filings, identity 3's optional children are defined by no map -- ID-02b, MET-00); engine `metrics-v8`. The measurements, the declared remainder per class and the sources are in `docs/model_fixes.md` "T-156"; `scripts/verify_t156.py` is the measurement. → `PLAN.md` Work item 8, step 3c.
+
+**Closed 2026-10-16 — PR #170** (reviewed and approved). Declared items that stay open: the whole
+`E5` remainder in `docs/model_fixes.md` "T-156" — `da_refused_depreciation_only` 60 and `ttm_refused` 7
+(N14/D7), `caption_and_other` 7, `da_element_with_other` 2 (AEP, IP), `da_components_no_depreciation` 6,
+`ttm_term_absent` 4 (LHX/SKYD a store gap for T-100's fresh ingestion; DOC/VTR follow the components
+class), the operating income left after E4 (85, with DD/OXY/Q/GPC named), and `da_absent` 5; plus the
+copy's `price_observation` carrying no drawdown/volatility fields (the four price vetoes evaluate 0
+filings on it) and the pre-migration `fundamental_metrics` key that made the recompute write nothing
+until the old version's rows were deleted — the latter is a latent bug on `master`, taken up as
+`T-157` (`fix/fresh-db-metrics-key`).
+
 ## Work item 10 — P0: the `portfolio-data-mining` corporate-actions gateway as `quant`'s only source (this repo) — DONE
 
 Added 2026-09-20, after PR #45 moved the endpoint's *implementation* to
