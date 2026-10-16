@@ -35,6 +35,8 @@ from cycle import data
 from cycle.config import CycleSettings
 from cycle.db import ensure_schema
 from cycle.orchestrator import run_monitoring
+from cycle.rules import RuleContext
+from cycle.rules.builtin import _NegativeFcfRule
 from cycle.scores import valorization
 from cycle.scores.normalize import normalized_scores
 from fundamental_agent import db as agent_db
@@ -898,10 +900,31 @@ def _reit_capex_row(conn: Any, spec: Any, aid: int, ticker: str, date: str) -> d
         str(filing["period_end"]),
     )
     stmts.reit = bool(profile and profile.reit)
-    # the terms the composite summed, per column the TTM used (its provenance's own columns)
+    # the terms the composite summed, per column the TTM used (its provenance's own columns).
+    # A **10-K** records no TTM columns and no per-column value: its own fiscal year is resolved
+    # (the basis its metrics use), from the same terms the provenance names.
     columns = capex_item.get("columns") or []
+    if not columns:
+        column = f"{filing['period_end']} (FY)"
+        parts, concepts = _parts_of_column(conn, spec, stmts, column)
+        total = sum(parts.values())
+        ocf_value = stmts.resolve("operating_cash_flow", column).value
+        capex_value = stmts.resolve("capital_expenditure", column).value
+        return {
+            "ticker": ticker,
+            "period_end": str(filing["period_end"]),
+            "basis": "fiscal_year",
+            "method": None,
+            "operating_cash_flow": ocf_value,
+            "capex": capex_value,
+            "capex_parts": parts,
+            "capex_total_from_parts": total,
+            "acquisition_share": (parts["acquisitions"] / total) if total else None,
+            "free_cash_flow": _difference(ocf_value, capex_value),
+            "terms": concepts,
+        }
     per_column: dict[str, dict[str, float]] = {}
-    concepts: dict[str, str | None] = {}
+    concepts_by_column: dict[str, str | None] = {}
     for label, raw_column, accession in columns:
         # the provenance's fiscal-year column carries the bare period end; the facts key it "(FY)"
         column = (
@@ -917,7 +940,7 @@ def _reit_capex_row(conn: Any, spec: Any, aid: int, ticker: str, date: str) -> d
         if row is not None and int(row["id"]) != int(filing["id"]):
             source = agent_db.statements_from_facts(conn, int(row["id"]))
             source.reit = stmts.reit
-        per_column[label], concepts[label] = _parts_of_column(conn, spec, source, column)
+        per_column[label], concepts_by_column[label] = _parts_of_column(conn, spec, source, column)
     parts = dict.fromkeys(PARTS, 0.0)
     if capex_item.get("basis") == "ttm" and {"prior_fiscal_year", "prior_ytd", "ytd"} <= set(
         per_column
@@ -928,15 +951,13 @@ def _reit_capex_row(conn: Any, spec: Any, aid: int, ticker: str, date: str) -> d
                 - per_column["prior_ytd"][part]
                 + per_column["ytd"][part]
             )
-    else:  # a 10-K: its own fiscal year
-        own = per_column.get("fiscal_year") or next(
-            iter(per_column.values()), dict.fromkeys(PARTS, 0.0)
-        )
+    else:  # a 10-Q whose TTM used another column set: its own year-to-date
+        own = per_column.get("ytd") or next(iter(per_column.values()), dict.fromkeys(PARTS, 0.0))
         parts = dict(own)
     total = sum(parts.values())
     return {
         "ticker": ticker,
-        "form": str(filing["period_end"]),
+        "period_end": str(filing["period_end"]),
         "basis": capex_item.get("basis"),
         "method": capex_item.get("method"),
         "operating_cash_flow": ocf_item.get("value"),
@@ -945,8 +966,47 @@ def _reit_capex_row(conn: Any, spec: Any, aid: int, ticker: str, date: str) -> d
         "capex_total_from_parts": total,
         "acquisition_share": (parts["acquisitions"] / total) if total else None,
         "free_cash_flow": _difference(ocf_item.get("value"), capex_item.get("value")),
-        "terms": concepts,
+        "terms": concepts_by_column,
     }
+
+
+def cmd_negative_fcf(args: argparse.Namespace) -> None:
+    """G1: NEGATIVE_FCF's hits by sector at each date, and the REITs the exemption takes out. Run
+    once per side (the before side under master's code, whose rule has no REIT exemption)."""
+    payload: dict[str, Any] = {"side": args.side, "dates": {}}
+    for date in args.dates:
+        snap = Snapshot(args.db, date)
+        ctx = RuleContext(
+            cycle_date=date,
+            metrics={a: snap.metrics.get(a, {}) for a in snap.asset_ids},
+            price_obs={},
+            last_fundamental={},
+            profiles=snap.profiles,
+        )
+        result = _NegativeFcfRule().evaluate(ctx)
+        hits = sorted(h.asset_id for h in result.hits)
+        by_sector: dict[str, list[str]] = {}
+        reits: list[str] = []
+        for aid in hits:
+            ticker = snap.ticker.get(aid) or ""
+            sector = snap.sector.get(aid) or "(none)"
+            by_sector.setdefault(sector, []).append(ticker)
+            profile = snap.profiles.get(aid)
+            if profile is not None and profile.reit:
+                reits.append(ticker)
+        payload["dates"][date] = {
+            "hits": len(hits),
+            "evaluated": len(result.evaluated),
+            "members": len(snap.asset_ids),
+            "by_sector": {k: sorted(v) for k, v in sorted(by_sector.items())},
+            "reit_hits": sorted(reits),
+            "reit_members": sorted(
+                snap.ticker.get(a, "") or ""
+                for a in snap.asset_ids
+                if (p := snap.profiles.get(a)) is not None and p.reit
+            ),
+        }
+    _write(args.out, payload)
 
 
 def _difference(left: Any, right: Any) -> float | None:
@@ -1050,6 +1110,12 @@ def _subcommands(sub: Any) -> None:
     p.add_argument("--side", default="after")
     p.add_argument("--tickers", default="FRT,VTR,BXP,HST,O,WELL,DOC,UDR,CPT,ESS,VMRK,WY,PSA")
     p.set_defaults(func=cmd_reit_capex)
+
+    p = sub.add_parser("negative-fcf")
+    _common(p)
+    p.add_argument("--side", required=True)
+    p.add_argument("--dates", default=",".join(DATES), type=lambda s: s.split(","))
+    p.set_defaults(func=cmd_negative_fcf)
 
     p = sub.add_parser("d14")
     _common(p)
