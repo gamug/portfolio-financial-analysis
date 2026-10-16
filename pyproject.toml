@@ -68,7 +68,12 @@ packages = [
 # engine contract. For local work against a checkout next to this repo,
 # override with an editable path source:
 #   portfolio-common = { path = "../portfolio-common", editable = true }
-portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.1" }
+# v1.2.2 fixes Database.attach(read_only=True) raising for as long as a
+# writer has a WAL database open -- doesn't affect this repo's own urls.db
+# read path (kg_schema.connect_ro -> Database.connect(read_only=True), a
+# plain mode=ro open, not attach()), but taken anyway: additive, no
+# signature changes, keeps every repo on the same baseline.
+portfolio-common = { git = "https://github.com/gamug/portfolio-common", tag = "v1.2.2" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "scripts"]  # `scripts/sec_xcheck` is imported by tests/test_sec_xcheck_*.py
