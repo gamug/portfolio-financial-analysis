@@ -2177,7 +2177,8 @@ approval.
      and the configured, possibly NULL, ones on MONITORING runs; `scheme_id` is the position-weighting rule
      (`score_proportional`, `score_tilt`), not the blend (a blend is identified by its `cycle_run`; its
      configured weights are `v_weight_component`); no component means all components null; `vetoed` is true
-     only for a HARD veto (with the T-1 lag) or `UNSCORED`, and a SOFT veto only lowers `blended_score`; the
+     only for a HARD veto (with the T-1 lag), `UNSCORED` or `UNPRICED`, and a SOFT veto only lowers
+     `blended_score`; the
      timezones of the `*_at` columns (`computed_at` is ISO 8601 UTC, written with `+00:00`); the forensic-flag
      keys (the four booleans; the codes are the keys that are `true`).
    - A marker migration that bumps `schema_version`, since view changes are not migrations and the knowledge

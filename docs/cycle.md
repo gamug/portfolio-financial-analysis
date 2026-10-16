@@ -497,8 +497,12 @@ normalize → sector → veto → rank → [positions]   (positions is SELECTION
   with no FUNDAMENTAL score at all (not merely a stale one) is marked `vetoed` with an
   `"UNSCORED"` `veto_rules` entry immediately, this same cycle — not through the T-1 lag, and
   not a SOFT veto/`veto` table row (T-119, PR #78 review); it still appears in `cycle_ranking`,
-  just excluded from `positions`. More than `unscored_max_share` of the universe unscored —
-  including 100% (PR #99 review) — refuses the whole run (`TooManyUnscored`) instead.
+  just excluded from `positions`. A member with no close on the cycle date's own session — the
+  latest NYSE session on or before it, `trading_calendar.last_session_on_or_before` — is marked
+  the same way with an `"UNPRICED"` entry (T-153 part 3c, C11 printed p.36 by analogy), never a
+  `veto` row; the price vetoes keep their own 7-day window. More than `unscored_max_share` of the
+  universe unscored or unpriced — counted once per asset, the two lists named separately, including
+  100% (PR #99 review) — refuses the whole run (`TooManyUnscored`) instead.
 - **positions** (`select` and `backfill`) — build `BookCandidate`s from the ranked cohort — ticker,
   sector **name** (`data.active_universe` returns it), `realized_vol_90d`, and the veto status at the T-1
   cutoff read from the rank rows' own `veto_rules` (HARD-vetoed names are passed in, marked, so a HARD
