@@ -484,6 +484,21 @@ def import_tiingo(  # noqa: PLR0913 - the two paths, the date and the two test s
                     "last_date": line.last_date,
                 }
             )
+        # The record carries the counts the writes produced, not the plan (rule 4), and the
+        # gateway-only list with them (A2).
+        conn.execute(
+            "UPDATE pricing_run SET params_json = ? WHERE id = ?",
+            (
+                json.dumps(
+                    report.params(
+                        data_file=data_file, manifest=manifest, analysis_date=analysis_date
+                    ),
+                    sort_keys=True,
+                ),
+                run_id,
+            ),
+        )
+        conn.commit()
         pricing_db.update_run_plan(
             conn, run_id, universe_size=len(lines), planned_units=report.lines_imported
         )
