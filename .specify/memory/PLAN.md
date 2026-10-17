@@ -2304,9 +2304,16 @@ sees the writer's just-committed row.
   "currently `v1.2.2`" — constitution AI behavior #11 reconciliation for
   this item. (Work item 1's own closed record is left untouched per its
   "do not re-open" note; this is the new, separately-scoped item it asked
-  for.) Both architecture artifacts (Portfolio Thesis + Portfolio Financial
-  Analysis) still need a pass to confirm they don't name a stale
-  `portfolio-common` version — not yet done from this session.
+  for.)
+- ✅ Both architecture artifacts updated: the Portfolio Financial Analysis
+  artifact's hero dek, "What it does today" `kg_schema` bullet, SVG
+  `aria-label`/node tooltip, and "Other useful details" bullet now say
+  `v1.2.2`, plus a new footer changelog entry; the Portfolio Thesis
+  system-wide overview's build-state table and this repo's row description
+  likewise updated, plus its own footer changelog entry. Neither pass touched
+  `portfolio-knowledge-graph`'s row/pin — that repo's `portfolio-common`
+  version has not been checked from this session and the Thesis artifact
+  says so rather than asserting it.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 

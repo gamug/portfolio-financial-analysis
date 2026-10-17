@@ -171,15 +171,16 @@ def test_connect_ro_reads_through_a_live_writers_wal(tmp_path: Path) -> None:
     _build_news_db(path)
 
     holder = sqlite3.connect(path)
-    assert holder.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
-    holder.execute("PRAGMA wal_autocheckpoint=0")
-    holder.execute(
-        "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, "
-        "discovered_at) VALUES (999, 'http://x/999', 'x.com', 'ZZZ', 'ZZZ', 'test', "
-        "'2026-01-01T00:00:00')"
-    )
-    holder.commit()
     try:
+        assert holder.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+        holder.execute("PRAGMA wal_autocheckpoint=0")
+        holder.execute(
+            "INSERT INTO discovered_urls (id, url, domain, company, ticker, source, "
+            "discovered_at) VALUES (999, 'http://x/999', 'x.com', 'ZZZ', 'ZZZ', 'test', "
+            "'2026-01-01T00:00:00')"
+        )
+        holder.commit()
+
         assert Path(f"{path}-wal").stat().st_size > 0
         assert Path(f"{path}-shm").exists()
 
