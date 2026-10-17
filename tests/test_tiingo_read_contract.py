@@ -9,11 +9,13 @@ NULL rows stored before the import existed stay visible.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from portfolio_common.db import Database
 
+from fundamental_agent.db import ensure_schema as ensure_fundamental_schema
 from kg_schema import queries
 from kg_schema.db import connect
 from pricing_agent.db import ensure_schema
@@ -23,6 +25,7 @@ from pricing_agent.db import ensure_schema
 def db(tmp_path: Path) -> Database:
     conn = connect(tmp_path / "financial.db")
     ensure_schema(conn)  # creates `assets` and the shared DDL, as any collector's start-up does
+    ensure_fundamental_schema(conn)  # sec_filings / fundamental_metrics, for the two score tests
     conn.execute(
         "INSERT INTO assets (id, ticker, cik) VALUES (1, 'WBD', '0001437107'), "
         "(2, 'AAPL', '0000320193')"
@@ -111,9 +114,10 @@ def test_the_positions_view_nulls_a_tiingo_cost_basis_and_keeps_the_weight(db: D
     ]
 
 
-def test_the_corporate_action_view_keeps_the_imports_rows_and_their_source(db: Database) -> None:
-    """The declared boundary: a dividend amount and a split ratio are neither a price nor a value
-    computed from one, so the view keeps them -- with their vendor readable."""
+def test_the_corporate_action_view_does_not_return_the_imports_rows(db: Database) -> None:
+    """Reviewer B's fix 2: the section 4 rule names a dividend value, so the licence's
+    "never a value" applies here too. ``quant`` reads the table, not this view, so returns
+    do not change."""
     db.execute(
         "INSERT INTO corporate_action (asset_id, action_type, ex_date, value, source, "
         "engine_version, ingested_at) VALUES (1, 'DIVIDEND', '2026-09-01', 0.25, 'tiingo', "
@@ -124,10 +128,7 @@ def test_the_corporate_action_view_keeps_the_imports_rows_and_their_source(db: D
     rows = db.execute(
         "SELECT ex_date, source, engine_version FROM v_corporate_action ORDER BY ex_date"
     ).fetchall()
-    assert [(r["source"], r["engine_version"]) for r in rows] == [
-        ("tiingo", "corpact-tiingo-v1"),
-        ("pricing-gateway", "corpact-v1"),
-    ]
+    assert [(r["ex_date"], r["source"]) for r in rows] == [("2026-09-02", "pricing-gateway")]
 
 
 def test_the_line_marker_is_the_one_way_to_name_the_imported_lines(db: Database) -> None:
@@ -136,3 +137,117 @@ def test_the_line_marker_is_the_one_way_to_name_the_imported_lines(db: Database)
     _price(db, 2, "2026-09-01", source="yfinance")
     assert queries.tiingo_asset_ids(db) == [1]
     assert queries.tiingo_asset_ids(connect(":memory:")) == []  # no table yet: a fresh database
+
+
+# -- review B's fix 1: the two places that publish a value computed from the close ---------------
+
+VALUATION_METRICS = (
+    "market_capitalization",
+    "enterprise_value",
+    "free_cash_flow_yield",
+    "sbc_adjusted_fcf_yield",
+    "enterprise_fcf_yield",
+)
+
+
+def _filing(conn: Database, asset_id: int) -> None:
+    """A filing of its own id, dated -- the FUNDAMENTAL rows' `available_at` comes from it."""
+    conn.execute(
+        "INSERT OR IGNORE INTO sec_filings (id, asset_id, form, fiscal_year, fiscal_period, filing_date, "
+        "retrieved_at, available_at) VALUES (?, ?, '10-K', 2026, 'FY', '2026-02-01', 'now', "
+        "'2026-02-02')",
+        (asset_id, asset_id),
+    )
+    conn.commit()
+
+
+def _metric(conn: Database, asset_id: int, group: str, name: str, value: float) -> None:
+    _filing(conn, asset_id)
+    conn.execute(
+        "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, unit, value, "
+        "engine_version, computed_at, event_time, available_at) VALUES (?, ?, ?, 'usd', ?, "
+        "'metrics-v1', 'now', '2026-01-31', '2026-02-02')",
+        (asset_id, group, name, value),
+    )
+    conn.commit()
+
+
+def test_the_metric_view_nulls_the_five_valuation_values_of_an_imported_line(db: Database) -> None:
+    """A market cap is the public cover count times the close: cap / count gives the close back."""
+    _price(db, 1, "2026-09-01", source="tiingo")
+    _price(db, 2, "2026-09-01", source="yfinance")
+    for asset_id in (1, 2):
+        for name in VALUATION_METRICS:
+            _metric(db, asset_id, "valuation", name, 1_000.0)
+        _metric(db, asset_id, "profitability", "net_margin", 0.25)
+    rows = db.execute(
+        "SELECT ticker, metric_group, metric_name, value FROM v_fundamental_metric "
+        "WHERE metric_group IN ('valuation', 'profitability') ORDER BY ticker, metric_name"
+    ).fetchall()
+    imported = {(r["metric_name"], r["value"]) for r in rows if r["ticker"] == "WBD"}
+    gateway = {(r["metric_name"], r["value"]) for r in rows if r["ticker"] == "AAPL"}
+    assert len(imported) == len(gateway) == 6  # the rows stay, only the values move
+    assert {name for name, value in imported if value is None} == set(VALUATION_METRICS)
+    assert dict(imported)["net_margin"] == 0.25  # another group is untouched
+    assert {value for name, value in gateway if name in VALUATION_METRICS} == {1_000.0}
+
+
+def _score(conn: Database, asset_id: int, score_type: str, inputs: dict | None) -> None:
+    """One score row; a FUNDAMENTAL row carries its filing's `available_at` (T-107's trigger)."""
+    filing_id = asset_id if score_type == "FUNDAMENTAL" else None
+    available = "2026-02-02" if score_type == "FUNDAMENTAL" else "2026-09-01"
+    conn.execute(
+        "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
+        "event_time, computed_at, model, inputs_json, filing_id, available_at) VALUES (?, ?, 42.0, "
+        "42.0, '2026-09-01', 'now', 'test', ?, ?, ?)",
+        (
+            asset_id,
+            score_type,
+            None if inputs is None else json.dumps(inputs),
+            filing_id,
+            available,
+        ),
+    )
+    conn.commit()
+
+
+def test_the_score_block_hides_the_imports_cap_and_valuation_keys(db: Database) -> None:
+    """Rule 3 keeps scores: raw_value, normalized_score and the rows stay. What goes is what a
+    close can be recovered from -- a VALORIZATION block wholesale (it is built on the cap) and a
+    FUNDAMENTAL block's five valuation keys (its pillars and other metrics stay)."""
+    _price(db, 1, "2026-09-01", source="tiingo")
+    _price(db, 2, "2026-09-01", source="yfinance")
+    fundamental = {
+        "valuation.market_capitalization": 2.7e12,
+        "valuation.free_cash_flow_yield": 0.031,
+        "profitability.net_margin": 0.25,
+        "pillars": {"profitability": {"rating": 62}},
+    }
+    for asset_id in (1, 2):
+        _filing(db, asset_id)
+        _score(db, asset_id, "VALORIZATION", {"quality": 50.0, "size": 50.0, "value": 60.0})
+        _score(db, asset_id, "FUNDAMENTAL", fundamental)
+    rows = db.execute(
+        "SELECT ticker, score_type, raw_value, normalized_score, inputs_json FROM v_score_snapshot "
+        "ORDER BY ticker, score_type"
+    ).fetchall()
+    by_ticker: dict[str, dict[str, dict]] = {}
+    for row in rows:
+        by_ticker.setdefault(row["ticker"], {})[row["score_type"]] = {
+            "raw": row["raw_value"],
+            "norm": row["normalized_score"],
+            "inputs": None if row["inputs_json"] is None else json.loads(row["inputs_json"]),
+        }
+    assert set(by_ticker["WBD"]) == {"VALORIZATION", "FUNDAMENTAL"}  # the rows stay
+    assert by_ticker["WBD"]["VALORIZATION"]["inputs"] is None
+    assert by_ticker["WBD"]["VALORIZATION"]["raw"] == 42.0  # the score itself stays
+    assert by_ticker["WBD"]["FUNDAMENTAL"]["inputs"] == {
+        "profitability.net_margin": 0.25,
+        "pillars": {"profitability": {"rating": 62}},
+    }
+    assert by_ticker["AAPL"]["VALORIZATION"]["inputs"] == {
+        "quality": 50.0,
+        "size": 50.0,
+        "value": 60.0,
+    }
+    assert by_ticker["AAPL"]["FUNDAMENTAL"]["inputs"] == fundamental

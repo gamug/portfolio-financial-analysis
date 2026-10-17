@@ -114,17 +114,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_analysis_date_argument(import_cmd)
 
-    remove_cmd = sub.add_parser(
-        "remove-tiingo",
-        help="delete every row the Tiingo import created (rule 5 / D9); prints what remains",
-    )
-    remove_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
-    remove_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
-    remove_cmd.add_argument(
-        "--dry-run", action="store_true", help="report the rows that would be deleted; delete none"
-    )
-    add_analysis_date_argument(remove_cmd)
-
     add_coverage_parser(sub)
     return parser
 
@@ -181,23 +170,6 @@ def _run_import(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_remove(args: argparse.Namespace) -> int:
-    """``remove-tiingo``: the deleted counts and the postcondition (D9)."""
-    settings = _settings_from_args(args)
-    analysis_date = resolve_analysis_date(args.analysis_date)
-    report = tiingo.remove_tiingo(settings, analysis_date=analysis_date, dry_run=args.dry_run)
-    verb = "would delete" if args.dry_run else "deleted"
-    print(
-        f"remove-tiingo {verb} {report.price_rows} price rows, {report.observation_rows} price "
-        f"observations, {report.return_rows} return rows and {report.action_rows} corporate actions"
-    )
-    print(
-        "remove-tiingo remaining: "
-        + ", ".join(f"{name}={count}" for name, count in sorted(report.remaining.items()))
-    )
-    return 0
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -210,8 +182,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command == "import-tiingo":
         return _run_import(args)
-    if args.command == "remove-tiingo":
-        return _run_remove(args)
     if args.observations and not args.store_daily:
         parser.error(
             "--observations needs --store-daily: price_observation rows are per-day "

@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 
 from portfolio_common.db import Database
-from verify_pilot import tiingo_import_problems
+from verify_pilot import tiingo_import_problems, tiingo_marked_counts
 
 from kg_schema.db import connect
 from pricing_agent.db import ensure_schema
@@ -171,3 +171,22 @@ def test_a_removal_that_deleted_every_row_is_reported_not_judged(tmp_path: Path)
     _rows, reason, problems = tiingo_import_problems(path)
     assert problems == []
     assert reason is not None and "no Tiingo-sourced price row" in reason
+
+
+def test_the_marked_row_counts_are_zero_on_a_database_without_the_import(tmp_path: Path) -> None:
+    """Reviewer B's fix 4 / R6: rule 5's check is that a database holds none of the import's rows
+    in any table -- not a deletion command's own "remaining: 0"."""
+    path, conn = _db(tmp_path)
+    conn.execute(
+        "INSERT INTO price_daily (asset_id, date, close, source) "
+        "VALUES (2, '2026-09-01', 200.0, 'yfinance')"
+    )
+    conn.commit()
+    assert tiingo_marked_counts(path) == {
+        "price_daily": 0,
+        "price_observation": 0,
+        "quant_return_daily": 0,
+        "corporate_action": 0,
+    }
+    _tiingo_bar(conn)
+    assert tiingo_marked_counts(path)["price_daily"] == 1

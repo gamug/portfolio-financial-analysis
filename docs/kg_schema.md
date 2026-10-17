@@ -533,8 +533,10 @@ from one, do not return them:
 | `v_price_observation` | row filter, `COALESCE(p.source, '') <> 'tiingo'` -- the column was already published, so no shape change |
 | `v_quant_return_daily` | row filter on the new `vendor` column, appended at the end (the contract's versioning rule) |
 | `v_portfolio_position` | `cost_basis` (a close) NULLed for such a line; the row and its weight stay |
-| `v_corporate_action` | keeps the imported rows: a dividend amount and a split ratio are neither a price nor a value computed from one |
-| `v_score_snapshot`, `v_cycle_ranking`, the weight and quant views | unchanged -- the rule keeps scores, rankings, position weights and returns built from them |
+| `v_corporate_action` | row filter: a dividend value is named by the licence's "-- never a value" rule, and `quant` reads the table, not the view, so returns do not change |
+| `v_fundamental_metric` | `value` NULLed for the five `valuation` metrics (`market_capitalization`, `enterprise_value`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`, `enterprise_fcf_yield`) on such a line; the row stays -- a cap is the public cover count times the close |
+| `v_score_snapshot` | a VALORIZATION row's `inputs_json` is NULL (the block is built on the cap); a FUNDAMENTAL row's has the five `valuation.*` keys removed (`json_remove`, fixed literal paths) with its pillars and other metrics kept |
+| `v_cycle_ranking`, the weight and quant views | unchanged -- the rule keeps scores, rankings, position weights and returns built from them; TECHNICAL's stored components stay too (no price is recoverable from them) |
 
 A NULL mark (every row stored before the import existed) stays visible. Marker migration `m017`
 raises the floor to **contract 17**; `tests/test_kg_view_contract.py` pins the column lists and

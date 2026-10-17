@@ -64,7 +64,9 @@ class _TiingoStitchRefused(RuntimeError):
 
     Writing the fetched window over those rows would flip their ``source`` a date at a time -- a
     stitched series from two vendors, which rule 2 forbids. The line is refused and recorded; the
-    operator removes its imported rows (``pricing_agent remove-tiingo``) first."""
+    operator takes D9's route (delete the private file and every copy, discard the database, rebuild
+    without the import, re-run) rather than deleting rows in place, because the import's rows also
+    reach the valuation metrics, the score blocks and the positions' cost bases."""
 
 
 @dataclass
@@ -280,9 +282,6 @@ def _run_task(engine: _Engine, task: _Task) -> None:
         # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
         # import's. `--observations` derives analytics over whatever is stored, so its rows are
         # written from exactly the normal path (the same function, the same engine version).
-        # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
-        # import's. `--observations` derives analytics over whatever is stored, so its rows are
-        # written from exactly the normal path (the same function, the same engine version).
         if params.observations:
             _derive_observations(engine, task)
         report.skipped += 1
@@ -326,8 +325,9 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     if candles and db.has_tiingo_candles(conn, task.asset_id):
         raise _TiingoStitchRefused(
             f"{task.ticker} holds imported rows (source='tiingo') and the gateway now serves it: "
-            "storing this window would stitch two vendors into one series. Remove the line's "
-            "imported rows (pricing_agent remove-tiingo) and re-fetch it whole"
+            "storing this window would stitch two vendors into one series. T-153 part 3d's D9 "
+            "applies: delete the private file and its copies, discard the database, rebuild "
+            "without the import and re-run"
         )
     # What reaches price_daily: the fetched window, or the full history if it had to be re-fetched.
     # Decided before any write, so a refused series leaves the ticker untouched.

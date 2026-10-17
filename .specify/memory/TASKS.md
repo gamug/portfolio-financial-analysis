@@ -1015,6 +1015,22 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       quant steps: an unexplained SPLIT row refuses the market cap (and the import). **The machine
       (the user's decision, 2026-10-16):** the pilot (T-143) and this task run on the Windows + WSL2
       machine, so the Tiingo file stays where it is, with no copy.
+      **Two measured stops before the cycle and quant steps (reviewer B, 2026-10-17; measured on
+      part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` leaves the database
+      with **106 SPLIT rows**, of which **36 are not in the tracked list** (34 assets,
+      2019-02-07..2024-06-25): until those are cited, **those 34 assets' market caps refuse** (part
+      3d's guard), and the cycle's VALORIZATION and quant's cap weights treat them as missing.
+      Exactly one of the 36 falls inside 2022+ and is absent from production: **ILMN 2024-06-25,
+      1.028** (its GRAIL spin-off). Complete the list from this run's output before the cycle step,
+      as the paragraph above says. (b) `quant build-returns` builds only the members of the
+      universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`): a leaver's
+      return rows exist only for a `date_to` inside its own membership, so building to a later date
+      gives it none. Part 3d's R3 (a run to 2024-06-21) left **16 of the 32** imported lines without
+      any `quant_return_daily` row (ABMD, ATVI, CERN, CTXS, DISCK, DISH, DRE, FRC, NLSN, PBCT, PXD,
+      SBNY, SEE, SIVB, TWTR, XLNX) -- the other 16 have them, stopping at that date. This is not
+      part 3d's bug, and the benchmark panel is the index's business, so this task must **not**
+      widen it: it is a stop to record and decide here (a per-line return series for the backtest
+      vs the index panel as today).
       **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
       ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
       statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the

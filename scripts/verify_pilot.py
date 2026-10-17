@@ -32,6 +32,7 @@ from kg_schema.queries import (
     members_over_range,
     resolve_asset_ids,
     tiingo_asset_ids,
+    tiingo_marked_rows,
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
@@ -609,6 +610,19 @@ def queries_tiingo_asset_ids(conn: Any) -> list[int]:
     Called on the connection the check already holds, so the check and T-100 read the same
     reader rather than a second copy of the rule."""
     return tiingo_asset_ids(conn)
+
+
+def tiingo_marked_counts(fin_db_path: str) -> dict[str, int]:
+    """How many rows of each marked table a database holds (D9's check, 0 everywhere).
+
+    Rule 5 says the file and every row built from it are deleted; D9's procedure discards the
+    database and rebuilds without the import, so this is the check that a database carries none of
+    them -- the removed ``remove-tiingo`` could only ever have reported a false all-clear."""
+    conn = connect_ro(fin_db_path)
+    try:
+        return tiingo_marked_rows(conn)
+    finally:
+        conn.close()
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -1594,18 +1608,23 @@ def main() -> int:  # noqa: C901, PLR0915
         if bad:
             report("T-153f", "FAIL", "; ".join(bad[:6]))
             return
+        marked = [
+            f"{name}={count}" for name, count in sorted(tiingo_marked_counts(args.db).items())
+        ]
+        counts = ", ".join(marked)
         if rows == 0 or not_judged:
             report(
                 "T-153f",
                 "PASS",
-                f"not judged ({'; '.join(not_judged) if not_judged else 'no import'})",
+                f"not judged ({'; '.join(not_judged) if not_judged else 'no import'}); "
+                f"marked rows: {counts}",
             )
             return
         report(
             "T-153f",
             "PASS",
-            f"{rows} imported line(s): no filtered view returns one, no line mixes vendors, and "
-            "the run record's counts equal the database's",
+            f"{rows} imported line(s) (marked rows: {counts}): no filtered view returns one, no "
+            "line mixes vendors, and the run record's counts equal the database's",
         )
 
     check("T-153f", t153f)

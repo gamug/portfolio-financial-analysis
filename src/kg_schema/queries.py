@@ -372,6 +372,34 @@ def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -
         return []
 
 
+#: The tables the private import marks, and the statement that counts one of them. A static
+#: dict of literal SQL: no identifier is ever interpolated (constitution Code & Git #10).
+TIINGO_MARKED_SQL: dict[str, str] = {
+    "price_daily": "SELECT COUNT(*) AS n FROM price_daily WHERE source = 'tiingo'",
+    "price_observation": "SELECT COUNT(*) AS n FROM price_observation WHERE source = 'tiingo'",
+    "quant_return_daily": "SELECT COUNT(*) AS n FROM quant_return_daily WHERE vendor = 'tiingo'",
+    "corporate_action": "SELECT COUNT(*) AS n FROM corporate_action WHERE source = 'tiingo'",
+}
+
+
+def tiingo_marked_rows(db: Database) -> dict[str, int]:
+    """How many rows of each marked table the private import wrote (T-153 part 3d, D9/R6).
+
+    Rule 5 says the file and every row built from it are deleted, and D9's procedure is to discard
+    the database and rebuild without the import -- so this is the *check* that a database holds
+    none of them (0 in every table), not a postcondition of a deletion command. A table that does
+    not exist yet counts 0."""
+    out: dict[str, int] = {}
+    for name, sql in TIINGO_MARKED_SQL.items():
+        try:
+            row = db.execute(sql).fetchone()
+        except DatabaseError:  # a partial database
+            out[name] = 0
+            continue
+        out[name] = int(row["n"]) if row is not None else 0
+    return out
+
+
 def tiingo_asset_ids(db: Database) -> list[int]:
     """The assets whose prices came from the private Tiingo import (T-153 part 3d, D8).
 

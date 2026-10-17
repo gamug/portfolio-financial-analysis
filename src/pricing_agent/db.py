@@ -324,7 +324,8 @@ WHERE price_observation.close IS NOT excluded.close
    OR price_observation.vol_5d IS NOT excluded.vol_5d
    OR price_observation.mu_60d_base IS NOT excluded.mu_60d_base
    OR price_observation.vol_60d_base IS NOT excluded.vol_60d_base
-   OR price_observation.source IS NOT excluded.source
+   OR (price_observation.source IS NOT excluded.source
+       AND (price_observation.source = 'tiingo' OR excluded.source = 'tiingo'))
 """
 
 
@@ -543,16 +544,6 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
 
 # -- the private Tiingo import's writes (T-153 part 3d) -------------------------------------
 #
-# A static dict of fully written statements (constitution Code & Git #10: no identifier is ever
-# interpolated). ``delete_tiingo_rows`` takes one of these keys, never a table name from a caller.
-
-_DELETE_TIINGO_SQL: dict[str, str] = {
-    "price_daily": "DELETE FROM price_daily WHERE source = ?",
-    "price_observation": "DELETE FROM price_observation WHERE source = ?",
-    "quant_return_daily": "DELETE FROM quant_return_daily WHERE vendor = ?",
-    "corporate_action": "DELETE FROM corporate_action WHERE source = ?",
-}
-
 # The import writes only a row it already owns: an existing row is rewritten when a value differs
 # (so a second run on the same file writes nothing), and never when its source is another vendor
 # -- rule 2 skips a partly served line before this runs, and this is the backstop.
@@ -639,16 +630,6 @@ def insert_tiingo_actions(
     conn.commit()
     _ = run_id  # the actions are keyed by engine, not by run; kept for the call's symmetry
     return inserted[0], inserted[1]
-
-
-def delete_tiingo_rows(conn: Database, table: str) -> int:
-    """Delete the Tiingo-sourced rows of one table (D9); returns the rows deleted."""
-    sql = _DELETE_TIINGO_SQL.get(table)
-    if sql is None:
-        raise ValueError(f"not a table the removal touches: {table}")
-    cur = conn.execute(sql, ("tiingo",))
-    conn.commit()
-    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
 
 def has_gateway_candles(conn: Database, asset_id: int) -> bool:

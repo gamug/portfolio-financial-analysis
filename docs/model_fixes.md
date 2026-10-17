@@ -9870,16 +9870,25 @@ write path, recorded `stage='tiingo_stitch'`, and `pricing_agent pending`'s `_re
 like T-131's `split_jump`: the step would write nothing again. No `--allow-*` override exists for
 either (reviewer A, 2026-10-17, on the 2026-10-15 decision; T-131(c) is the precedent).
 
-**The read contract (rule 3, reviewer A's D4/D5).** The data is never redistributed, so the views
-that expose a daily price or a value computed from one drop the imported rows, per row:
-`v_price_observation` (its `source` was already published), `v_quant_return_daily` (a new
-nullable `vendor`, appended at the end of the view; `source` keeps its engine name), and
-`v_portfolio_position` **NULLs `cost_basis`** for such a line while keeping the row and its weight.
-Every filter reads `COALESCE(<mark>, '') <> 'tiingo'`, so the NULL marks on rows stored before the
-import stay visible. `v_corporate_action` keeps the imported rows (a dividend amount and a split
-ratio are neither a price nor a value from one), and `v_score_snapshot` / `v_cycle_ranking` keep
-theirs (the rule keeps scores and rankings). Marker migration `m017` raises the floor to contract
-17. `pricing_agent` writes `price_observation.source` from the bar of the same `obs_date`; the
+**The read contract (rule 3, reviewer A's D4/D5; fix round 1's items 1-2).** The data is never
+redistributed, so a view that exposes a daily price, **or a value computed from one**, does not
+return an imported row — and a value computed from a close is not only a close: a market cap is the
+cover-page count times the close, and the count is public, so cap / count gives the close back. The
+per-row marks are `price_daily.source`, `price_observation.source`, `quant_return_daily.vendor`
+(`corporate_action.source` for the actions), and the one predicate everywhere is "the line has a
+`price_daily` row with `source = 'tiingo'`":
+
+| view | treatment |
+|---|---|
+| `v_price_observation`, `v_quant_return_daily` | row filter, `COALESCE(<mark>, '') <> 'tiingo'` (the NULL marks on rows stored before the import stay visible) |
+| `v_portfolio_position` | `cost_basis` NULLed; the row and its weight kept |
+| `v_corporate_action` | **row filter** (fix 2): a dividend value is named by rule 3's section 4 list, and `quant` reads the table, not the view, so returns do not change |
+| `v_fundamental_metric` | **`value` NULLed for the five `valuation` metrics** (fix 1) — `market_capitalization`, `enterprise_value`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`, `enterprise_fcf_yield`; the row stays |
+| `v_score_snapshot` | **a VALORIZATION row's `inputs_json` is NULL** (the whole block is built on the cap); **a FUNDAMENTAL row's has the five `valuation.*` keys removed** (`json_remove`, fixed literal paths) with its pillars and other metrics kept |
+| `v_quant_return_daily` | `vendor` is a new nullable column, appended at the end; `source` keeps its engine name |
+| scores, `raw_value`, ranks, weights, `v_cycle_ranking`, `v_quant_*` | unchanged: the rule keeps them. TECHNICAL's stored components stay too, declared: they come from prices, but no price can be recovered from a normalized momentum/volatility/drawdown score |
+
+Marker migration `m017` raises the floor to contract 17. `pricing_agent` writes `price_observation.source` from the bar of the same `obs_date`; the
 first run after this change also stamps the rows stored before it, which is the invariant being
 established (a one-off rewrite of that derived series). `kg_schema.queries.tiingo_asset_ids` is
 the one way to name the imported lines (D8), and `verify_pilot`'s **T-153f** check asserts the
@@ -9888,7 +9897,12 @@ three properties on any database.
 **The derived rows (D3).** `--observations` derives from the asset's **whole stored** history, so
 a line the gateway cannot serve still gets its series — the fetch is empty, and that path now
 derives too (before it returned early, which would have left every imported line unpriced for
-part 3c's eligibility). `quant build-returns` folds the imported dividends through the normal
+part 3c's eligibility). The marker is written per row from the bar's own source, and the upsert's
+rewrite condition is narrowed to a mark that actually moves between `'tiingo'` and a non-Tiingo
+value: the stored rows predating the import are NULL and a gateway candle says `'yfinance'`, so a
+bare marker comparison would rewrite (and re-stamp) every stored row on the next run over unchanged
+bars, against T-131's rule (fix round 1, item 3). `quant build-returns` folds the imported
+dividends through the normal
 path; the rows are marked `vendor='tiingo'` per row, and `quant` reads the import's action engine
 after the gateway's (`_ACTION_ENGINE_PRIORITY` is now `kg_schema.corporate_actions.
 READABLE_ENGINES`), so the gateway wins when a line comes back.
@@ -9947,22 +9961,37 @@ quant steps — otherwise the guard refuses caps wholesale.
   gateway-actions backfill and `build-returns`, **22,032** `quant_return_daily` rows for them,
   **all `vendor='tiingo'`**. CMA over 2019-01-02..2024-06-21: 1,377 rows; total-return ratio
   −0.105655 against the price ratio −0.314597 — **TR/price = 0.335842**, i.e. **+20.89 pp** of the
-  span came from dividends.
+  span came from dividends (DFS 1.260301, AVB 2.154941). Two measured limits, both for T-100's
+  entry (fix round 1, item 7): the copy's `backfill-actions --from 2019-01-02` leaves **106 SPLIT
+  rows**, **36 of them not in the tracked list** (34 assets, 2019-02-07..2024-06-25, one inside
+  2022+: **ILMN 2024-06-25, 1.028**), so those 34 assets' caps refuse until they are cited; and
+  the 22,032 rows are **16 of the 32 lines** only, because `build-returns` builds the members of
+  the universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`), so the
+  other 16 have none — a leaver-line property that affects the gateway-served leavers too, and
+  T-100's to decide, not this task's to widen.
 - **R4, the views** (counts only): `v_price_observation` returns **0** of the 43,039
-  (`v_quant_return_daily` 0 of the 22,032); `v_corporate_action` keeps its 443 imported rows with
-  their `source`; `v_portfolio_position` returns **0** rows with a non-NULL `cost_basis` for an
-  imported line; `v_score_snapshot` and `v_cycle_ranking` are unchanged.
+  (`v_quant_return_daily` 0 of the 22,032); `v_corporate_action` returns **0** of its 443 imported
+  rows (443 → 0); `v_fundamental_metric` returns the five valuation metrics' rows with a NULL
+  `value` and every other value intact; `v_score_snapshot` returns a VALORIZATION row's
+  `inputs_json` NULL and a FUNDAMENTAL row's without the five valuation keys, with `raw_value`,
+  `normalized_score` and every other key intact; `v_portfolio_position` returns **0** rows with a
+  non-NULL `cost_basis` for an imported line.
 - **R5, the cycle** (`cycle select 2023-03-31`, on a copy of part 3c's R2 copy with the 33 lines'
   identity synced onto it — declared): with the import the **shipped 5% run succeeds** — 29 of 30
   names, one shortfall, `1 unscored (ineligible): AVB` — and **DFS rank 1 (62.3851, weight
   0.03704) and CMA rank 17 (51.4132, weight 0.02922) are eligible and held**, where part 3c had
   both `UNPRICED` with a NULL cost basis; the T-1 HARD set is still {LW, PLD}, no marker row is
   selected, 0 veto rows are named a marker, and the 29 positions have **0** NULL cost bases.
-- **R6, the removal**: `remove-tiingo` deleted 44,989 price rows, 44,989 observations, 443
-  corporate actions and 0 return rows (that copy has none), with
-  `remaining: corporate_action=0, price_daily=0, price_observation=0, quant_return_daily=0`; the
-  same date then refuses exactly as part 3c did ("3/32 universe members (9.4%) are unrankable …
-  3 unpriced … asset_ids [1, 3, 4]").
+- **R6, the "without" side**: rule 5's removal is D9's route — delete the private file and every
+  copy, discard the database, rebuild without the import (a fresh run, which is T-100's own
+  situation), and declare the gap under PER-11. There is **no in-place deletion command**: an
+  earlier draft's `remove-tiingo` could only ever report a false all-clear, because the import's
+  rows also reach the valuation metrics, the score blocks, the positions' cost bases and quant's
+  books (fix round 1, item 4). The measured "without" state is **part 3c's R2 copy**: verify_pilot's
+  T-153f reports `marked rows: corporate_action=0, price_daily=0, price_observation=0,
+  quant_return_daily=0` there, and its `cycle select 2023-03-31` refuses exactly as part 3c's does
+  ("3/32 universe members (9.4%) are unrankable … 1 unscored … asset_ids [1]; 3 unpriced …
+  asset_ids [1, 3, 4]").
 - **R7, the coverage union again**: `scripts/unpriced_members.py` re-run reproduces part 3c's R1 —
   249 weekly replay dates (222 NYSE sessions), 595 members resolved, 0 missing, the calendar and
   the store agree on every date, the trigger is empty in all four combinations, the refusals are 0
@@ -9971,7 +10000,8 @@ quant steps — otherwise the guard refuses caps wholesale.
   days, INFO and WRK, and VLTO, which is a current member's gateway gap).
 
 **Declared limitations.** The licence is unconfirmed, so the whole import is removable by one
-command and its rows are marked per row; the 2019–2021 events reach the list only through T-100's
+pass — delete the file and every copy, discard the database, rebuild (D9) — and its rows are
+marked per row; the 2019–2021 events reach the list only through T-100's
 `backfill-actions --from 2019-01-02`; `v_orchestrator_step.output_tail` is free text (a step that
 printed a price would be a bug, not a filter); the VALORIZATION block inside `v_score_snapshot` /
 `v_cycle_ranking` still carries the market cap on D, because the rule keeps scores and the block is

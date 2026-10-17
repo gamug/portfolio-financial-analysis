@@ -18,8 +18,11 @@ The rules (the brief's §1, decided 2026-10-15; the read contract is D5's):
 3. **The data is never redistributed.** Rows carry ``source='tiingo'`` per row; every ``v_*``
    view that exposes a close or a value computed from one filters on it (D4/D5).
 4. **The run record counts the lines and rows from Tiingo** (the import's own ``pricing_run``).
-5. **If Tiingo says no**, :func:`remove_tiingo` deletes the file's rows; the run is redone without
-   them and the gap is declared under PER-11.
+5. **If Tiingo says no**, the file and every copy are deleted and the database is discarded and
+   rebuilt without the import (D9: the import's rows reach the valuation metrics, the score blocks,
+   the positions' cost bases and quant's books, so no in-place deletion is honest); the gap is
+   declared under PER-11, and `quant` and `cycle` are re-run. `kg_schema.queries.tiingo_marked_rows`
+   reports what a database holds (0 in every table on a rebuilt one).
 
 Nothing in this module prints a price, a volume or a dividend value: the report carries counts,
 dates and hashes only.
@@ -35,7 +38,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from portfolio_common.db import Database, DatabaseError
+from portfolio_common.db import Database
 
 import kg_schema
 from kg_schema import corporate_actions, provenance
@@ -58,9 +61,8 @@ TIINGO_SOURCE = corporate_actions.TIINGO_SOURCE
 #: when a line comes back; ``quant.db._ACTION_ENGINE_PRIORITY`` reads it after them.
 TIINGO_CORPACT_ENGINE = corporate_actions.TIINGO_ENGINE
 
-#: The report's ``kind`` on the import's own ``pricing_run`` row (D7), and the removal's.
+#: The report's ``kind`` on the import's own ``pricing_run`` row (D7).
 IMPORT_RUN_KIND = "tiingo-import"
-REMOVAL_RUN_KIND = "tiingo-removal"
 
 _DIVIDEND_COLUMN = "divCash"
 _SPLIT_COLUMN = "splitFactor"
@@ -629,98 +631,3 @@ def _line_rows(line: TiingoLine) -> tuple[list[Candle], list[tuple[str, str, flo
         if bar.split_factor != 1.0:
             actions.append(("SPLIT", bar.date, bar.split_factor))
     return candles, actions
-
-
-# -- the removal (rule 5 / D9) ----------------------------------------------
-
-
-@dataclass
-class RemovalReport:
-    """What one removal deleted (counts only)."""
-
-    run_id: int
-    price_rows: int
-    observation_rows: int
-    return_rows: int
-    action_rows: int
-    remaining: dict[str, int] = field(default_factory=dict)
-
-    def params(self) -> dict[str, object]:
-        return {
-            "kind": REMOVAL_RUN_KIND,
-            "price_rows": self.price_rows,
-            "observation_rows": self.observation_rows,
-            "return_rows": self.return_rows,
-            "action_rows": self.action_rows,
-            "remaining": self.remaining,
-        }
-
-
-_REMAINING_SQL: dict[str, str] = {
-    "price_daily": "SELECT COUNT(*) AS n FROM price_daily WHERE source = ?",
-    "price_observation": "SELECT COUNT(*) AS n FROM price_observation WHERE source = ?",
-    "quant_return_daily": "SELECT COUNT(*) AS n FROM quant_return_daily WHERE vendor = ?",
-    "corporate_action": "SELECT COUNT(*) AS n FROM corporate_action WHERE source = ?",
-}
-
-
-def remaining_tiingo_rows(conn: Database) -> dict[str, int]:
-    """The postcondition of the removal: Tiingo-marked rows left anywhere (D9).
-
-    ``price_daily``/``corporate_action`` by ``source``, ``price_observation`` by its own row
-    marker (D4) and ``quant_return_daily`` by its marker column (D4). A missing table counts 0 --
-    a fresh database has nothing to remove.
-    """
-    out: dict[str, int] = {}
-    for name, sql in _REMAINING_SQL.items():  # a static dict: no identifier is interpolated
-        try:
-            row = conn.execute(sql, (TIINGO_SOURCE,)).fetchone()
-        except DatabaseError:  # a partial database (no such table/column yet)
-            out[name] = 0
-            continue
-        out[name] = int(row["n"]) if row is not None else 0
-    return out
-
-
-def remove_tiingo(
-    settings: Settings, *, analysis_date: str, dry_run: bool = False, conn: Database | None = None
-) -> RemovalReport:
-    """Delete every row the import created (rule 5 / D9), then report what remains.
-
-    Ordered price-derived series first, then the actions, then the import's own run row. The
-    derived scores, rankings and positions are *not* touched: rule 5 redos the run without the
-    import, and on a fresh database that is a fresh run.
-    """
-    owns = conn is None
-    conn = conn or kg_schema.connect(settings.db_path)
-    try:
-        report = RemovalReport(
-            run_id=0, price_rows=0, observation_rows=0, return_rows=0, action_rows=0
-        )
-        if dry_run:
-            report.remaining = remaining_tiingo_rows(conn)
-            return report
-        run_id = pricing_db.start_run(
-            conn,
-            params_json=json.dumps({"kind": REMOVAL_RUN_KIND}, sort_keys=True),
-            as_of=analysis_date,
-            code_version=provenance.code_version(),
-        )
-        report.run_id = run_id
-        report.observation_rows = pricing_db.delete_tiingo_rows(conn, "price_observation")
-        report.return_rows = pricing_db.delete_tiingo_rows(conn, "quant_return_daily")
-        report.price_rows = pricing_db.delete_tiingo_rows(conn, "price_daily")
-        report.action_rows = pricing_db.delete_tiingo_rows(conn, "corporate_action")
-        report.remaining = remaining_tiingo_rows(conn)
-        conn.execute(
-            "UPDATE pricing_run SET params_json = ? WHERE id = ?",
-            (json.dumps(report.params(), sort_keys=True), run_id),
-        )
-        conn.commit()
-        pricing_db.update_run_plan(conn, run_id, universe_size=0, planned_units=1)
-        pricing_db.bump_run_counter(conn, run_id, "completed_units")
-        pricing_db.finish_run(conn, run_id, status="completed")
-        return report
-    finally:
-        if owns:
-            conn.close()

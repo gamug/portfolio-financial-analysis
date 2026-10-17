@@ -178,7 +178,6 @@ never committed; this package never calls Tiingo and needs no key):
 ```bash
 uv run python -m pricing_agent import-tiingo [--file PATH] [--manifest PATH] [--db ...]
     [--universe-db ...] [--analysis-date D] [--dry-run]
-uv run python -m pricing_agent remove-tiingo [--db ...] [--dry-run]
 ```
 
 It refuses, before writing anything, a path inside a git work tree, a file whose sha256 differs
@@ -193,8 +192,11 @@ line's dividends/splits in `corporate_action` under the engine `corpact-tiingo-v
 the import writes nothing for it and names it with its stored count in its own `pricing_run`
 (`lines_gateway_only`). The reverse -- the gateway later serving a line that holds imported rows --
 is refused at the write path (`pricing_run_error.stage = 'tiingo_stitch'`), and `pending` treats
-that refusal like `split_jump`. There is no `--allow-*` override for either; the operator runs
-`remove-tiingo` for the line first.
+that refusal like `split_jump`. There is no `--allow-*` override for either, and no in-place
+deletion command: if Tiingo says no (or a line changes hands), delete the private file and every
+copy, discard the database and rebuild without the import (D9), then `quant` and `cycle` are re-run.
+`kg_schema.queries.tiingo_marked_rows` reports what a database holds (0 in every table on a
+rebuilt one).
 
 `--observations` derives from the asset's whole stored history, so an imported line gets its
 `price_observation` rows through the same path as any other member -- including when the gateway
