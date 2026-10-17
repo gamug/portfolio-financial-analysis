@@ -2272,9 +2272,13 @@ with and without the settings; `docs/api.md` documents both settings.
 stale-WAL preflight to reject only an orphaned WAL (non-empty `-wal`, no
 `-shm`), not a live writer's WAL — the production concurrency bug that
 blocked `portfolio-nlp`'s `attach_source()` while `portfolio-data-mining`'s
-collector held `urls.db` open. `T-159`: re-pin this repo too, for baseline
+collector held `urls.db` open. This item re-pins this repo too, for baseline
 consistency across every `portfolio-common` consumer, even though the fix
-doesn't touch a code path this repo uses.
+doesn't touch a code path this repo uses. Not given its own `T-###`: a
+two-line dependency re-pin with no code/contract change doesn't carry the
+weight the `T-###` convention is for elsewhere in this file (see `T-157`'s
+`TASKS.md` entry for what that weight looks like) — this Work item entry is
+the complete record on its own.
 
 **This repo's own `urls.db` read path was never affected either way.**
 `entity_resolution/news_db.py`, opened via `kg_schema.connect_ro` ->
