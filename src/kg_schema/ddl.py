@@ -440,6 +440,10 @@ CREATE TABLE IF NOT EXISTS quant_return_daily (
     source           TEXT NOT NULL,               -- 'quant-tr-v1'
     engine_version   TEXT NOT NULL,               -- 'qret-v2' (was 'qret-v1')
     computed_at      TEXT NOT NULL,
+    -- T-153 part 3d (D4): the vendor of the close this row's return was built from, when that
+    -- close came from somewhere other than the gateway ('tiingo'). NULL on every row written
+    -- before the import existed -- the gateway is the default and stays implicit.
+    vendor           TEXT,
     UNIQUE (asset_id, obs_date, engine_version)
 );
 CREATE INDEX IF NOT EXISTS ix_qret_asset_date ON quant_return_daily (asset_id, obs_date);
@@ -689,6 +693,12 @@ REQUIRED_COLUMNS: dict[str, dict[str, str]] = {
         "event_time": "TEXT",
         "ingested_at": "TEXT",
         "run_id": "INTEGER",
+    },
+    # T-153 part 3d (D4): the vendor of the close a return row was built from ('tiingo'), so
+    # `v_quant_return_daily` can drop the rows that must not be redistributed. NULL = the
+    # gateway, the implicit default of every row written before the import existed.
+    "quant_return_daily": {
+        "vendor": "TEXT",
     },
     # Run-log tables (agent-owned; entries are skipped where the table is absent).
     # `analysis_date` provenance + the code tag that produced the run, so

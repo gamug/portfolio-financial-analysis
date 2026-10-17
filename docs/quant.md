@@ -646,3 +646,16 @@ end before the newest member bar, a default objective has no non-live book with 
 [last session, D], a book `evaluate` would score lags behind its newest forward return, or the
 pricing gateway lists a dividend/split `corporate_action` lacks (one GET per member). Books with no
 positions are "unscorable" and members the gateway cannot serve are "unavailable": listed, not pending.
+
+## The private import's corporate actions and returns (T-153 part 3d)
+
+`corporate_action` has two writers now: `quant backfill-actions` (the pricing gateway) and
+`pricing_agent import-tiingo` (the private file, under the engine `corpact-tiingo-v1`). quant reads
+both, the gateway's engines first (`kg_schema.corporate_actions.READABLE_ENGINES` is
+`_ACTION_ENGINE_PRIORITY`), so a line the gateway serves again switches to it as a whole rather
+than mixing two vendors' rows; `has_gateway_actions` counts either, since its real question is
+whether `build-returns` has anything to fold in. `quant_return_daily` gains a nullable `vendor`
+column naming the origin of the close a row was built from, and `v_quant_return_daily` does not
+return the `'tiingo'` rows (see `docs/kg_schema.md`). `build-returns` still refuses without a clean
+covering `backfill-actions` run -- for a window that starts in 2019 that means
+`quant backfill-actions --from 2019-01-02`, its default being 2022-01-01.

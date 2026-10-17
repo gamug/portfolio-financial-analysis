@@ -646,7 +646,8 @@ def test_10k_market_cap_resolves_from_prior_10q_cover_count_in_fresh_run(
     conn = sqlite3.connect(settings.db_path)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS price_daily ("
-        "id INTEGER PRIMARY KEY, asset_id INTEGER, date TEXT, close REAL, UNIQUE(asset_id, date))"
+        "id INTEGER PRIMARY KEY, asset_id INTEGER, date TEXT, close REAL, source TEXT, "
+        "UNIQUE(asset_id, date))"
     )
     conn.execute("INSERT INTO price_daily (asset_id, date, close) VALUES (1, '2023-12-31', 25.0)")
     conn.commit()

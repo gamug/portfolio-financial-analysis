@@ -293,8 +293,8 @@ INSERT INTO price_observation
     (asset_id, obs_date, close, prev_close, log_return, true_range, atr_14,
      realized_vol_21d, realized_vol_90d, max_drawdown_90d, momentum_21d, momentum_63d,
      momentum_252d, dollar_volume, sma_200, ret_5d, vol_5d, mu_60d_base, vol_60d_base,
-     event_time, computed_at, engine_version, run_id, run_kind)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     source, event_time, computed_at, engine_version, run_id, run_kind)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     close = excluded.close, prev_close = excluded.prev_close,
     log_return = excluded.log_return, true_range = excluded.true_range,
@@ -305,6 +305,7 @@ ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     momentum_252d = excluded.momentum_252d, dollar_volume = excluded.dollar_volume,
     sma_200 = excluded.sma_200, ret_5d = excluded.ret_5d, vol_5d = excluded.vol_5d,
     mu_60d_base = excluded.mu_60d_base, vol_60d_base = excluded.vol_60d_base,
+    source = excluded.source,
     computed_at = excluded.computed_at, run_id = excluded.run_id, run_kind = excluded.run_kind
 WHERE price_observation.close IS NOT excluded.close
    OR price_observation.prev_close IS NOT excluded.prev_close
@@ -323,6 +324,8 @@ WHERE price_observation.close IS NOT excluded.close
    OR price_observation.vol_5d IS NOT excluded.vol_5d
    OR price_observation.mu_60d_base IS NOT excluded.mu_60d_base
    OR price_observation.vol_60d_base IS NOT excluded.vol_60d_base
+   OR (price_observation.source IS NOT excluded.source
+       AND (price_observation.source = 'tiingo' OR excluded.source = 'tiingo'))
 """
 
 
@@ -363,6 +366,7 @@ def upsert_price_observations(
             o.vol_5d,
             o.mu_60d_base,
             o.vol_60d_base,
+            o.source,
             o.obs_date,
             now,
             engine_version,
@@ -536,3 +540,111 @@ def finish_run(conn: Database, run_id: int, *, status: str) -> None:
         (_now(), status, run_id),
     )
     conn.commit()
+
+
+# -- the private Tiingo import's writes (T-153 part 3d) -------------------------------------
+#
+# The import writes only a row it already owns: an existing row is rewritten when a value differs
+# (so a second run on the same file writes nothing), and never when its source is another vendor
+# -- rule 2 skips a partly served line before this runs, and this is the backstop.
+_UPSERT_TIINGO_PRICE_SQL = """
+INSERT INTO price_daily
+    (asset_id, date, open, high, low, close, volume, source, event_time, ingested_at, run_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (asset_id, date) DO UPDATE SET
+    open = excluded.open, high = excluded.high, low = excluded.low,
+    close = excluded.close, volume = excluded.volume, source = excluded.source,
+    event_time = excluded.event_time, ingested_at = excluded.ingested_at, run_id = excluded.run_id
+WHERE price_daily.source = excluded.source
+  AND (price_daily.open IS NOT excluded.open
+    OR price_daily.high IS NOT excluded.high
+    OR price_daily.low IS NOT excluded.low
+    OR price_daily.close IS NOT excluded.close
+    OR price_daily.volume IS NOT excluded.volume)
+"""
+
+# Dividends and splits from the file, append-only on the shared key (NR-007). ``INSERT OR IGNORE``
+# keeps the gateway's row when one exists for the same (asset, type, ex_date, engine) -- the
+# engine is the import's own, so a gateway row is never in its way.
+_INSERT_TIINGO_ACTION_SQL = """
+INSERT OR IGNORE INTO corporate_action
+    (asset_id, action_type, ex_date, value, currency, source, engine_version, ingested_at)
+VALUES (?, ?, ?, ?, 'USD', ?, ?, ?)
+"""
+
+_TIINGO_ACTION_TYPES = {"DIVIDEND": 0, "SPLIT": 1}
+
+
+def upsert_tiingo_prices(
+    conn: Database, asset_id: int, candles: Iterable[Candle], *, run_id: int | None = None
+) -> int:
+    """Write the import's bars for one line; returns the rows actually inserted or rewritten.
+
+    A second run on the same file returns 0: the conflict update's ``WHERE`` fires only when a
+    value differs, and only on a row the import owns (``source = 'tiingo'``)."""
+    now = _now()
+    written = 0
+    for candle in candles:
+        cur = conn.execute(
+            _UPSERT_TIINGO_PRICE_SQL,
+            (
+                asset_id,
+                candle.date,
+                candle.open,
+                candle.high,
+                candle.low,
+                candle.close,
+                candle.volume,
+                candle.source,
+                candle.date,
+                now,
+                run_id,
+            ),
+        )
+        written += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    conn.commit()
+    return written
+
+
+def insert_tiingo_actions(
+    conn: Database,
+    asset_id: int,
+    actions: Iterable[tuple[str, str, float]],
+    *,
+    engine_version: str,
+    run_id: int | None = None,
+) -> tuple[int, int]:
+    """Write one line's dividends and splits; returns ``(dividends, splits)`` inserted (D6)."""
+    inserted = [0, 0]
+    now = _now()
+    for action_type, ex_date, value in actions:
+        index = _TIINGO_ACTION_TYPES.get(action_type)
+        if index is None:
+            raise ValueError(f"not a corporate action type: {action_type}")
+        cur = conn.execute(
+            _INSERT_TIINGO_ACTION_SQL,
+            (asset_id, action_type, ex_date, value, "tiingo", engine_version, now),
+        )
+        if cur.rowcount and cur.rowcount > 0:
+            inserted[index] += 1
+    conn.commit()
+    _ = run_id  # the actions are keyed by engine, not by run; kept for the call's symmetry
+    return inserted[0], inserted[1]
+
+
+def has_gateway_candles(conn: Database, asset_id: int) -> bool:
+    """True when the line has any stored bar the gateway served (rule 2 / A1)."""
+    row = conn.execute(
+        "SELECT 1 FROM price_daily WHERE asset_id = ? AND COALESCE(source, '') <> 'tiingo' LIMIT 1",
+        (asset_id,),
+    ).fetchone()
+    return row is not None
+
+
+def has_tiingo_candles(conn: Database, asset_id: int) -> bool:
+    """True when the line holds any row the import wrote (rule 2 / A1)."""
+    row = conn.execute(
+        "SELECT 1 FROM price_daily WHERE asset_id = ? AND source = 'tiingo' LIMIT 1",
+        (asset_id,),
+    ).fetchone()
+    return row is not None

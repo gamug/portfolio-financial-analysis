@@ -59,6 +59,16 @@ class _SplitJumpRefused(RuntimeError):
     """A series with a split-shaped close jump this run could not explain (T-131)."""
 
 
+class _TiingoStitchRefused(RuntimeError):
+    """The gateway now serves a line that holds Tiingo rows (T-153 part 3d, rule 2 / A1).
+
+    Writing the fetched window over those rows would flip their ``source`` a date at a time -- a
+    stitched series from two vendors, which rule 2 forbids. The line is refused and recorded; the
+    operator takes D9's route (delete the private file and every copy, discard the database, rebuild
+    without the import, re-run) rather than deleting rows in place, because the import's rows also
+    reach the valuation metrics, the score blocks and the positions' cost bases."""
+
+
 @dataclass
 class RunParams:
     start_date: str = DEFAULT_START_DATE
@@ -269,6 +279,11 @@ def _run_task(engine: _Engine, task: _Task) -> None:
         return
 
     if prices.is_empty:
+        # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
+        # import's. `--observations` derives analytics over whatever is stored, so its rows are
+        # written from exactly the normal path (the same function, the same engine version).
+        if params.observations:
+            _derive_observations(engine, task)
         report.skipped += 1
         db.bump_run_counter(conn, report.run_id, "skipped_units")
         db.record_error(
@@ -280,6 +295,12 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 
     try:
         _store(engine, task, prices)
+    except _TiingoStitchRefused as exc:  # nothing was written for this ticker (A1)
+        report.failed += 1
+        report.errors.append(f"{task.ticker}: {exc}")
+        db.bump_run_counter(conn, report.run_id, "failed_units")
+        db.record_error(conn, report.run_id, RunError(task.ticker, None, "tiingo_stitch", str(exc)))
+        return
     except _SplitJumpRefused as exc:  # nothing was written for this ticker
         report.failed += 1
         report.errors.append(f"{task.ticker}: {exc}")
@@ -297,6 +318,17 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
 
     # No lookahead: drop any candle dated after the analysis date.
     candles = [c for c in prices.candles if c.date <= end]
+    # Rule 2 (T-153 part 3d, A1): one vendor per line, never stitched. The gateway now serving a
+    # line the import priced would overwrite its rows' ``source`` date by date. Refuse the
+    # ticker, write nothing for it, and record it -- the T-131 refusal's pattern, with no
+    # ``--allow-*`` override.
+    if candles and db.has_tiingo_candles(conn, task.asset_id):
+        raise _TiingoStitchRefused(
+            f"{task.ticker} holds imported rows (source='tiingo') and the gateway now serves it: "
+            "storing this window would stitch two vendors into one series. T-153 part 3d's D9 "
+            "applies: delete the private file and its copies, discard the database, rebuild "
+            "without the import and re-run"
+        )
     # What reaches price_daily: the fetched window, or the full history if it had to be re-fetched.
     # Decided before any write, so a refused series leaves the ticker untouched.
     to_store = _reconcile_history(engine, task, candles) if params.store_daily else candles
@@ -327,15 +359,25 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     if params.store_daily:
         db.replace_daily_prices(conn, task.asset_id, to_store, run_id=run_id)
     if params.observations:
-        # From the asset's whole stored history, not this run's window: a 252-day momentum needs
-        # 252 earlier bars, and a refresh over a few weeks left those fields NULL (T-131).
-        history = db.load_daily_candles(conn, task.asset_id, end=end)
-        db.upsert_price_observations(
-            conn,
-            task.asset_id,
-            build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
-            run_id=run_id,
-        )
+        _derive_observations(engine, task, end=end)
+
+
+def _derive_observations(engine: _Engine, task: _Task, *, end: str | None = None) -> int:
+    """Derive the asset's `price_observation` series from its *whole stored* history (T-131).
+
+    The one path observations are written by: a member with bars writes them whether the bars
+    arrived from the gateway's fetch or from the private import (T-153 part 3d, D3)."""
+    conn = engine.conn
+    last = end or task.end
+    history = db.load_daily_candles(conn, task.asset_id, end=last)
+    if not history:
+        return 0
+    return db.upsert_price_observations(
+        conn,
+        task.asset_id,
+        build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
+        run_id=engine.report.run_id,
+    )
 
 
 def _reconcile_history(engine: _Engine, task: _Task, fetched: list[Candle]) -> list[Candle]:

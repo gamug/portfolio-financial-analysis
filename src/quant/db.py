@@ -18,6 +18,7 @@ import numpy.typing as npt
 from portfolio_common.db import Database, DatabaseError, Row, in_clause
 
 import kg_schema
+from kg_schema import corporate_actions
 from kg_schema.env import universe_database_path
 
 # T-125: hard_vetoed_as_of moved to kg_schema.queries (the one shared point-in-time veto
@@ -203,20 +204,25 @@ def load_daily_closes(
     ]
 
 
-# The gateway is the only corporate-actions source (T-085), so only its engines are
-# read; if a newer gateway engine ever coexists with an older one for the same asset +
-# action_type, the newer wins outright. Rows written before T-085 under the
-# XBRL-derived engines ('corpact-v0-approx', 'corpact-v1-derived') stay in the
-# append-only table as history but are deliberately NOT in this tuple -- they are
-# never read. Deliberately NOT ``v_corporate_action``'s per-(asset, action_type,
-# ex_date) "most recently ingested" resolution either: two engines' ex-dates rarely
-# collide, so that view would return BOTH engines' rows side by side.
-_ACTION_ENGINE_PRIORITY = ("corpact-v2", "corpact-v1")
+# The corporate-actions sources quant reads, newest first. The gateway's engines come first
+# (T-085: the gateway is the only source for the gateway-served lines); the private Tiingo
+# import's build (T-153 part 3d, D6) is read last, so a line the gateway serves again switches
+# to it as a whole rather than mixing two vendors' action rows. If a newer engine of one source
+# coexists with an older one for the same asset + action_type, the newer wins outright. Rows
+# written before T-085 under the XBRL-derived engines ('corpact-v0-approx',
+# 'corpact-v1-derived') stay in the append-only table as history but are deliberately NOT in
+# this tuple -- they are never read. Deliberately NOT ``v_corporate_action``'s
+# per-(asset, action_type, ex_date) "most recently ingested" resolution either: two engines'
+# ex-dates rarely collide, so that view would return BOTH engines' rows side by side.
+_ACTION_ENGINE_PRIORITY = corporate_actions.READABLE_ENGINES
 
 
 def has_gateway_actions(conn: Database, engines: Sequence[str] | None = None) -> bool:
-    """True when ``corporate_action`` holds at least one row from a gateway engine
-    (*engines*, default ``_ACTION_ENGINE_PRIORITY``)."""
+    """True when ``corporate_action`` holds at least one row from a source quant reads
+    (*engines*, default ``_ACTION_ENGINE_PRIORITY``: the gateway's engines, then the private
+    import's Tiingo build). T-153 part 3d: the import's engine counts, so a database holding
+    only imported actions is not mistaken for one with none -- the guard's real question is
+    whether ``build-returns`` has anything to fold in."""
     engines = tuple(engines or _ACTION_ENGINE_PRIORITY)
     marks = ", ".join("?" for _ in engines)
     row = conn.execute(
@@ -285,13 +291,15 @@ class ReturnRow:
 _UPSERT_RETURN_SQL = """
 INSERT INTO quant_return_daily
     (asset_id, obs_date, close_split_adj, adj_close, tr_index, cash_dividend,
-     split_factor, price_log_return, tr_log_return, source, engine_version, computed_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?)
+     split_factor, price_log_return, tr_log_return, source, engine_version, computed_at,
+     vendor)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'quant-tr-v1', ?, ?, ?)
 ON CONFLICT (asset_id, obs_date, engine_version) DO UPDATE SET
     close_split_adj = excluded.close_split_adj, adj_close = excluded.adj_close,
     tr_index = excluded.tr_index, cash_dividend = excluded.cash_dividend,
     split_factor = excluded.split_factor, price_log_return = excluded.price_log_return,
-    tr_log_return = excluded.tr_log_return, computed_at = excluded.computed_at
+    tr_log_return = excluded.tr_log_return, computed_at = excluded.computed_at,
+    vendor = excluded.vendor
 WHERE quant_return_daily.close_split_adj IS NOT excluded.close_split_adj
    OR quant_return_daily.adj_close IS NOT excluded.adj_close
    OR quant_return_daily.tr_index IS NOT excluded.tr_index
@@ -299,11 +307,33 @@ WHERE quant_return_daily.close_split_adj IS NOT excluded.close_split_adj
    OR quant_return_daily.split_factor IS NOT excluded.split_factor
    OR quant_return_daily.price_log_return IS NOT excluded.price_log_return
    OR quant_return_daily.tr_log_return IS NOT excluded.tr_log_return
+   OR quant_return_daily.vendor IS NOT excluded.vendor
 """
 
 
+def line_vendor(conn: Database, asset_id: int) -> str | None:
+    """The vendor of the line's stored bars, when it is not the gateway (T-153 part 3d, D4).
+
+    Rule 2 makes this per *line*, not per day: a line's bars are either all the private import's
+    (``'tiingo'``) or none of them are, so one literal marks every one of its return rows."""
+    try:
+        row = conn.execute(
+            "SELECT DISTINCT source FROM price_daily WHERE asset_id = ? AND source IS NOT NULL",
+            (asset_id,),
+        ).fetchall()
+    except DatabaseError:
+        return None
+    sources = {str(r["source"]) for r in row}
+    return corporate_actions.TIINGO_SOURCE if sources == {corporate_actions.TIINGO_SOURCE} else None
+
+
 def upsert_return_daily(
-    conn: Database, asset_id: int, rows: Iterable[ReturnRow], *, engine_version: str
+    conn: Database,
+    asset_id: int,
+    rows: Iterable[ReturnRow],
+    *,
+    engine_version: str,
+    vendor: str | None = None,
 ) -> int:
     """Insert each day, or rewrite it when its values changed (T-131); a no-op when identical.
 
@@ -311,7 +341,8 @@ def upsert_return_daily(
     corrected bar or a re-adjusted history (a split the gateway applied after the first build)
     has to reach it. ``INSERT OR IGNORE`` froze the first build for good: the 2026-09-29 partial
     session stayed in the benchmark and risk model, and a split-shaped jump could only be undone
-    by bumping the engine version. Returns the rows inserted or changed."""
+    by bumping the engine version. *vendor* marks the row when its close came from the private
+    import rather than the gateway (T-153 part 3d, D4). Returns the rows inserted or changed."""
     now = _now()
     changed = 0
     for r in rows:
@@ -329,6 +360,7 @@ def upsert_return_daily(
                 r.tr_log_return,
                 engine_version,
                 now,
+                vendor,
             ),
         )
         changed += cur.rowcount

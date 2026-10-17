@@ -13,7 +13,7 @@ from portfolio_common.db import Database
 
 import kg_schema
 from fundamental_agent import db as fundamental_db
-from kg_schema import _availability, _identity
+from kg_schema import _availability, _identity, migrations
 from kg_schema.ddl import (
     ALLOWED_CYCLE_TYPES,
     M014_TABLE_REBUILD_STATEMENTS,
@@ -901,7 +901,7 @@ def test_m015_is_a_marker_that_replays_over_orchestrator_rows() -> None:
     assert db.execute("SELECT COUNT(*) FROM orchestrator_step").fetchone()[0] == 1
     after_ddl = {t: db.relation_ddl(t) for t in ("orchestrator_run", "orchestrator_step")}
     assert after_ddl == before_ddl
-    assert current_version(db) == 16
+    assert current_version(db) == max(v for v, _, _ in migrations.MIGRATIONS)
 
 
 def test_unresolved_run_references_flags_orchestrator_steps() -> None:

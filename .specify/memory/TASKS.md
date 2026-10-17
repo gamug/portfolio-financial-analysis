@@ -848,7 +848,39 @@ the final pilot, `T-143`.
           **Tiingo-dependent** (one of the 33 deliverable lines) or **permanent** (INFO, WRK, a
           failure's last days) — **feeds the PER-11 declaration**; the full unscored share is measured
           in `T-100`'s own run. Brief `/workspaces/thesis/handoff/T-153p3c_task.md`.
-          Next: part 3d (the Tiingo import), brief `/workspaces/thesis/handoff/T-153p3d_task.md`.
+          Still open in this entry, per the paragraphs above: the replay's figures — vetoes by
+          sector, financial firms, utilities and the D-13 three-year average — run again **on the
+          historical universe** before they go into the thesis; **SBNY's and FRC's** index weight
+          (measured with part 3b's price fallback, no substitute source invented), which with the
+          whole unscored share — measured in `T-100`'s own run — feeds the PER-11 declaration; and
+          the licence: Tiingo's written answer is still pending, the free tier being
+          internal-use-only.
+        - **Part 3d — done 2026-10-17, PR #174.** The 33 delivered lines the gateway cannot serve
+          are imported from the private file `portfolio-data-mining` fetched (never committed;
+          refused inside a git work tree and on a sha256 mismatch) by `pricing_agent import-tiingo`:
+          `price_daily` rows with `source='tiingo'`, and each line's dividends and splits under its
+          own action engine, the dividend as `divCash / split_cum`. **One vendor per line, no
+          exception:** a line with any stored gateway bar is gateway-only — the import writes nothing
+          for it and names it with its stored count in its own `pricing_run` (`lines_gateway_only`),
+          which on a copy of production is WBD (1,189 gateway rows) and is empty on a fresh database,
+          where WBD is all-Tiingo; the reverse — the gateway later serving a line that holds imported
+          rows — is refused per line (`stage='tiingo_stitch'`, which `pending` treats like
+          `split_jump`). **The read contract:** `v_price_observation` and `v_quant_return_daily` drop
+          the imported rows; `v_portfolio_position`'s `cost_basis`, the five `valuation` metrics in
+          `v_fundamental_metric` and the VALORIZATION `inputs_json` / a FUNDAMENTAL row's five
+          valuation keys in `v_score_snapshot` are NULLed or removed; `v_corporate_action` is
+          filtered; contract **17** (`m017`) records it. Scores, ranks, weights and the returns built
+          from them stay, and TECHNICAL's components stay (declared). **A3:** the valuation group is
+          withheld from the model (`TIINGO_CLOSE`) for such a line. **D10:** the recorded SPLIT events
+          (production 69 rows over 58 assets, the archive the same, the manifest 1) are classed and
+          cited in `src/kg_schema/data/corporate_action_events.csv`, a spin-off's factor applies only
+          while the close is on the pre-event basis (`ex_date > close_date`), and an unlisted SPLIT
+          row refuses the market cap and stops the import. **D9:** if Tiingo says no, the file and
+          every copy are deleted and the database is discarded and rebuilt without the import — no
+          in-place deletion command. verify_pilot's **T-153f** check asserts that no filtered view
+          returns an imported row, that no line mixes vendors and that the run record's counts equal
+          the database's. SPEC **1.27.0**. Brief
+          `/workspaces/thesis/handoff/T-153p3d_task.md`.
         - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
           before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
 
@@ -992,6 +1024,47 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       left the index and exited later (DISH, SEE, CMA, QRVO) and the failures **SIVB, SBNY and FRC**;
       the valuation this step will apply is the note in `docs/model_fixes.md`'s T-153 part 3c entry
       (C11 pp.5-7 and 34-35). How each counts is decided here, not in `T-153`.
+      **The private Tiingo lines (T-153 part 3d).** Every evaluation result is reported **twice, with
+      and without the Tiingo lines**, and the run record gives both: `kg_schema.queries.tiingo_asset_ids`
+      names them (the line's own `price_daily.source = 'tiingo'`), `pricing_agent import-tiingo` loads
+      them from `/workspaces/thesis/data/private/tiingo/` and records the lines, rows, dividends, splits
+      and the file's sha256 on its own `pricing_run`, and `verify_pilot`'s T-153f check asserts that no
+      filtered view returns one, that no line mixes vendors and that the record equals the database.
+      **A line the gateway forgets stops this task (reviewer A, 2026-10-15).** Before its fetch, re-run
+      the measurement of `docs/leaver_price_coverage_2019.json` (the script beside it,
+      `scripts/leaver_price_coverage_2019.py`) over every line `members_over_range` returns, current
+      members included. A line **less covered than that committed baseline** (ignoring days before the
+      stock first traded) **stops the run and goes to reviewer A** -- nothing switches to Tiingo
+      silently, and the decision at the stop is reviewer A's. The **first remedy** to bring there is the
+      gateway archive (part 3a's R4 copy): a forgotten line whose archived gateway rows cover its whole
+      span is **seeded from them, as gateway rows**, clipped to the line's last membership day; a line
+      the archive covers only in part is Tiingo whole, as WBD is. Both copies of the archive --
+      `/workspaces/thesis/data/archive/t153c_r4_gateway_2026-10-14/financial.db` and the user's Mac copy,
+      sha256 `6bddc77c3d69f428313af52ad99cf05c23a38cfcba6d1544c49e0dcf9383cd6a` -- are **kept until this
+      task is done, opened read-only only, and never modified**. Run `quant backfill-actions --from
+      2019-01-02` (its default starts at 2022-01-01) and complete
+      `src/kg_schema/data/corporate_action_events.csv` from that run's output **before** the cycle and
+      quant steps: an unexplained SPLIT row refuses the market cap (and the import). **The machine
+      (the user's decision, 2026-10-16):** the pilot (T-143) and this task run on the Windows + WSL2
+      machine, so the Tiingo file stays where it is, with no copy.
+      **Two measured stops before the cycle and quant steps (reviewer B, 2026-10-17; measured on
+      part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` leaves the database
+      with **106 SPLIT rows**, of which **36 are not in the tracked list** (34 assets,
+      2019-02-07..2024-06-25): until those are cited, **those 34 assets' market caps refuse** (part
+      3d's guard), and the cycle's VALORIZATION and quant's cap weights treat them as missing.
+      Exactly one of the 36 falls inside 2022+ and is absent from production: **ILMN 2024-06-25,
+      1.028** (its GRAIL spin-off). Complete the list from this run's output before the cycle step,
+      as the paragraph above says: **every row -- the 69 now committed and every new one -- quotes
+      the sentence that states the completed event and its ratio**, from the same filing or one
+      filing per event; the classes and the values stay as the vendors recorded them. (b) `quant build-returns` builds only the members of the
+      universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`): a leaver's
+      return rows exist only for a `date_to` inside its own membership, so building to a later date
+      gives it none. Part 3d's R3 (a run to 2024-06-21) left **16 of the 32** imported lines without
+      any `quant_return_daily` row (ABMD, ATVI, CERN, CTXS, DISCK, DISH, DRE, FRC, NLSN, PBCT, PXD,
+      SBNY, SEE, SIVB, TWTR, XLNX) -- the other 16 have them, stopping at that date. This is not
+      part 3d's bug, and the benchmark panel is the index's business, so this task must **not**
+      widen it: it is a stop to record and decide here (a per-line return series for the backtest
+      vs the index panel as today).
       **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
       ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
       statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the

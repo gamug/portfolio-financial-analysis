@@ -56,8 +56,8 @@ def test_the_fixture_is_a_version_10_database(memory_db: Database) -> None:
 
 def test_m011_adds_the_columns_keeps_the_rows_and_leaves_them_null(memory_db: Database) -> None:
     conn = _version_10_database(memory_db)
-    assert migrations.apply_migrations(conn) == [11, 12, 13, 14, 15, 16]
-    assert queries.current_version(conn) == 16
+    assert migrations.apply_migrations(conn) == [11, 12, 13, 14, 15, 16, 17]
+    assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     assert set(NEW_PRICE_COLUMNS) <= set(conn.table_columns("price_observation"))
     assert set(NEW_VETO_COLUMNS) <= set(conn.table_columns("veto"))
     obs = conn.execute("SELECT * FROM price_observation").fetchone()
@@ -70,7 +70,7 @@ def test_m011_adds_the_columns_keeps_the_rows_and_leaves_them_null(memory_db: Da
 
 def test_m011_is_idempotent(memory_db: Database) -> None:
     conn = _version_10_database(memory_db)
-    assert migrations.apply_migrations(conn) == [11, 12, 13, 14, 15, 16]
+    assert migrations.apply_migrations(conn) == [11, 12, 13, 14, 15, 16, 17]
     assert migrations.apply_migrations(conn) == []
     migrations._m011_temporal_vetoes(conn)  # running its body again changes nothing either
     assert [c for c in conn.table_columns("veto") if c == "expires_on"] == ["expires_on"]
@@ -92,7 +92,7 @@ def test_the_views_gain_the_new_columns_at_the_end_after_the_migration(
     assert after["v_veto"][: len(before["v_veto"])] == before["v_veto"]
     assert after["v_veto"][-1] == "expires_on"
     assert "expiry_history_json" not in after["v_veto"]  # bookkeeping, not contract
-    assert queries.current_version(conn) == 16
+    assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     row = conn.execute("SELECT expires_on FROM v_veto").fetchone()
     assert row["expires_on"] is None
     assert conn.execute("SELECT sma_200 FROM v_price_observation").fetchone()["sma_200"] is None
@@ -108,4 +108,4 @@ def test_a_fresh_database_has_the_columns_without_a_migration(memory_db: Databas
 def test_the_required_columns_name_exactly_what_m011_adds() -> None:
     assert tuple(REQUIRED_COLUMNS["price_observation"]) == NEW_PRICE_COLUMNS
     assert tuple(REQUIRED_COLUMNS["veto"]) == NEW_VETO_COLUMNS
-    assert max(v for v, _, _ in migrations.MIGRATIONS) == 16
+    assert max(v for v, _, _ in migrations.MIGRATIONS) == 17

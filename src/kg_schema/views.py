@@ -23,7 +23,12 @@ Quant optimization       v_quant_risk_model, v_quant_portfolio, v_quant_position
 
 Projection semantics
 --------------------
-``v_score_snapshot``      one row per (asset, score_type, event_time). ``event_time`` is
+``v_score_snapshot``      one row per (asset, score_type, event_time). **T-153 part 3d:** for a
+                          line the private import priced, a VALORIZATION row's ``inputs_json`` is
+                          NULL (the whole block is built on the market cap) and a FUNDAMENTAL
+                          row's has the five valuation keys removed (its pillars and every other
+                          metric stay). ``raw_value``, ``normalized_score``, ranks and weights are
+                          untouched: the rule keeps scores. ``event_time`` is
                           the filing period-end for FUNDAMENTAL, the cycle date for
                           TECHNICAL / VALORIZATION, and the article-day for SEMANTIC.
                           ``available_at`` is when the row became usable -- the column an
@@ -40,6 +45,9 @@ Projection semantics
                           newest per metric group by explicit version order, never by
                           ``computed_at``); a filing not recomputed under it has no current
                           row. At most one current version per metric group (T-144).
+                          **T-153 part 3d:** ``value`` is NULL for the five ``valuation`` metrics
+                          of a line the private import priced (the row stays) -- a market cap is
+                          the public cover count times the close.
 ``v_universe_membership``  one row per membership stint; ``valid_to IS NULL`` = current.
                           FROZEN: the agents no longer write ``universe_membership``
                           (the universe is read point-in-time from ``universe.db``).
@@ -87,7 +95,11 @@ Projection semantics
                           price analytics only (raw OHLCV stays in ``price_daily``).
                           ``sma_200`` .. ``vol_60d_base`` (T-070, appended) exist from
                           ``priceobs-v2`` and are NULL on a ``priceobs-v1`` row and until their
-                          window is full.
+                          window is full. **T-153 part 3d:** rows whose bar came from the private
+                          Tiingo import (``source='tiingo'``) are **not returned** -- the view is
+                          a price series and the data is never redistributed. An older NULL
+                          ``source`` (every row stored before the import existed) stays
+                          visible: the filter is ``COALESCE(source,'') <> 'tiingo'``.
 ``v_sec_filing``          one row per EDGAR filing (form, fiscal_period, accession,
                           period_end) -- the filing-level parent of ``v_sec_filing_section``.
 ``v_sec_filing_section``   narrative filing text; one row per (filing, section, ordinal).
@@ -107,7 +119,10 @@ Projection semantics
 ``v_rule_catalog``        one row per veto rule (the rule catalog as data). ``params_json``
                           is kept verbatim; ``param_metric`` / ``param_operator`` /
                           ``param_threshold`` unpack the threshold-rule shape when present.
-``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open.
+``v_portfolio_position``   position stints; ``valid_to IS NULL`` = open. **T-153 part 3d:**
+                          ``cost_basis`` is the close the position opened at, so it is NULLed
+                          when that line's prices came from the private Tiingo import; the row
+                          (and its weight) stays.
 ``v_shared_executive_edge``pair-level aggregate of ``shared_executive_edge`` person rows;
                           ``computed_at`` / ``run_id`` are those of the build that wrote them.
 ``v_cycle_ranking``        one row per (``cycle_run``, asset) of EVERY cycle run, whatever its
@@ -137,9 +152,17 @@ Projection semantics
                           ``v_score_snapshot``.
 ``v_corporate_action``    one row per (asset, action_type, ex_date) at the latest
                           ``engine_version``. Dividends (cash/share) and splits (ratio).
+                          **T-153 part 3d:** the private import's rows are **not returned**
+                          (``COALESCE(source,'') <> 'tiingo'``) -- the section 4 rule names a
+                          dividend value, so the licence's "-- never a value" applies here too.
+                          ``quant`` reads the table, not this view, so returns do not change.
 ``v_quant_return_daily``  the quant/ total-return daily series; latest ``engine_version``
                           per (asset, obs_date). ``tr_log_return`` is the optimizer input.
-                          Empty until ``quant build-returns`` has run.
+                          Empty until ``quant build-returns`` has run. **T-153 part 3d:** the
+                          ``vendor`` column (appended) names the origin of the close the row was
+                          built from, and rows whose close came from the private Tiingo import
+                          are **not returned** -- a level series reveals the close as much as
+                          the close does.
 ``v_risk_free_rate``      risk-free curve points; latest ``engine_version`` per (curve, date).
 ``v_benchmark_series``    benchmark index levels / returns; latest ``engine_version`` per
                           (benchmark, obs_date).
@@ -199,7 +222,24 @@ VIEWS: dict[str, str] = {
     "v_score_snapshot": """
         CREATE VIEW v_score_snapshot AS
         SELECT s.id, a.ticker, s.asset_id, s.score_type, s.raw_value, s.normalized_score,
-               s.event_time, s.computed_at, s.model, s.inputs_json, s.filing_id,
+               s.event_time, s.computed_at, s.model,
+               CASE
+                   WHEN s.score_type = 'VALORIZATION'
+                        AND EXISTS (SELECT 1 FROM price_daily pd
+                                    WHERE pd.asset_id = s.asset_id AND pd.source = 'tiingo')
+                       THEN NULL
+                   WHEN s.score_type = 'FUNDAMENTAL'
+                        AND EXISTS (SELECT 1 FROM price_daily pd
+                                    WHERE pd.asset_id = s.asset_id AND pd.source = 'tiingo')
+                       THEN json_remove(
+                           s.inputs_json,
+                           '$."valuation.market_capitalization"',
+                           '$."valuation.enterprise_value"',
+                           '$."valuation.free_cash_flow_yield"',
+                           '$."valuation.sbc_adjusted_fcf_yield"',
+                           '$."valuation.enterprise_fcf_yield"')
+                   ELSE s.inputs_json END AS inputs_json,
+               s.filing_id,
                s.rating, s.narrative, s.strengths_json, s.risks_json,
                s.run_id, s.run_kind,
                CASE WHEN s.score_type IN ('TECHNICAL', 'VALORIZATION', 'SECTOR')
@@ -244,7 +284,17 @@ VIEWS: dict[str, str] = {
                                       AND v2.engine_version > v.engine_version)))))
         )
         SELECT a.ticker, f.asset_id, m.filing_id, m.metric_group, m.metric_name,
-               m.metric_group || '.' || m.metric_name AS metric_id, m.unit, m.value,
+               m.metric_group || '.' || m.metric_name AS metric_id, m.unit,
+               -- T-153 part 3d: a market cap is the (public) cover count times the close, so a
+               -- valuation value is the close in another form -- NULLed for a line the private
+               -- import priced, from the same per-line predicate the positions view uses.
+               CASE WHEN m.metric_group = 'valuation'
+                         AND m.metric_name IN ('market_capitalization', 'enterprise_value',
+                                               'free_cash_flow_yield', 'sbc_adjusted_fcf_yield',
+                                               'enterprise_fcf_yield')
+                         AND EXISTS (SELECT 1 FROM price_daily pd
+                                     WHERE pd.asset_id = f.asset_id AND pd.source = 'tiingo')
+                       THEN NULL ELSE m.value END AS value,
                m.engine_version,
                CASE WHEN cv.engine_version IS NULL THEN 0 ELSE 1 END AS is_current,
                m.event_time, m.available_at, m.run_id
@@ -342,6 +392,7 @@ VIEWS: dict[str, str] = {
             WHERE p2.asset_id = p.asset_id AND p2.obs_date = p.obs_date
             ORDER BY p2.computed_at DESC, p2.id DESC LIMIT 1
         )
+          AND COALESCE(p.source, '') <> 'tiingo'
     """,
     "v_sec_filing": """
         CREATE VIEW v_sec_filing AS
@@ -396,7 +447,12 @@ VIEWS: dict[str, str] = {
     "v_portfolio_position": """
         CREATE VIEW v_portfolio_position AS
         SELECT p.id, a.ticker, p.asset_id, p.valid_from, p.valid_to, p.weight,
-               p.cost_basis, p.opened_by_cycle, p.run_id
+               CASE WHEN EXISTS (
+                        SELECT 1 FROM price_daily pd
+                        WHERE pd.asset_id = p.asset_id AND pd.source = 'tiingo'
+                   )
+                    THEN NULL ELSE p.cost_basis END AS cost_basis,
+               p.opened_by_cycle, p.run_id
         FROM portfolio_position p JOIN assets a ON a.id = p.asset_id
     """,
     "v_shared_executive_edge": """
@@ -468,18 +524,21 @@ VIEWS: dict[str, str] = {
               AND c2.ex_date = c.ex_date
             ORDER BY c2.ingested_at DESC, c2.id DESC LIMIT 1
         )
+          AND COALESCE(c.source, '') <> 'tiingo'
     """,
     "v_quant_return_daily": """
         CREATE VIEW v_quant_return_daily AS
         SELECT q.id, a.ticker, q.asset_id, q.obs_date, q.close_split_adj, q.adj_close,
                q.tr_index, q.cash_dividend, q.split_factor, q.price_log_return,
-               q.tr_log_return, q.source, q.engine_version, q.computed_at
+               q.tr_log_return, q.source, q.engine_version, q.computed_at,
+               q.vendor
         FROM quant_return_daily q JOIN assets a ON a.id = q.asset_id
         WHERE q.engine_version = (
             SELECT q2.engine_version FROM quant_return_daily q2
             WHERE q2.asset_id = q.asset_id AND q2.obs_date = q.obs_date
             ORDER BY q2.computed_at DESC, q2.id DESC LIMIT 1
         )
+          AND COALESCE(q.vendor, '') <> 'tiingo'
     """,
     "v_risk_free_rate": """
         CREATE VIEW v_risk_free_rate AS

@@ -520,3 +520,33 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`Database` is not a `sqlite3.Connection` subclass** (composition, not
   inheritance) — a connection-specific escape hatch (`set_trace_callback`,
   etc.) goes through `db.raw`, not `db` directly.
+
+## The private import's rows and the price views (T-153 part 3d)
+
+`pricing_agent import-tiingo` writes rows the data may not redistribute, marked per row
+(`price_daily.source`, `price_observation.source`, `corporate_action.source`,
+`quant_return_daily.vendor` = `'tiingo'`). The views that expose a daily price, or a value computed
+from one, do not return them:
+
+| View | Treatment |
+|---|---|
+| `v_price_observation` | row filter, `COALESCE(p.source, '') <> 'tiingo'` -- the column was already published, so no shape change |
+| `v_quant_return_daily` | row filter on the new `vendor` column, appended at the end (the contract's versioning rule) |
+| `v_portfolio_position` | `cost_basis` (a close) NULLed for such a line; the row and its weight stay |
+| `v_corporate_action` | row filter: a dividend value is named by the licence's "-- never a value" rule, and `quant` reads the table, not the view, so returns do not change |
+| `v_fundamental_metric` | `value` NULLed for the five `valuation` metrics (`market_capitalization`, `enterprise_value`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`, `enterprise_fcf_yield`) on such a line; the row stays -- a cap is the public cover count times the close |
+| `v_score_snapshot` | a VALORIZATION row's `inputs_json` is NULL (the block is built on the cap); a FUNDAMENTAL row's has the five `valuation.*` keys removed (`json_remove`, fixed literal paths) with its pillars and other metrics kept |
+| `v_cycle_ranking`, the weight and quant views | unchanged -- the rule keeps scores, rankings, position weights and returns built from them; TECHNICAL's stored components stay too (no price is recoverable from them) |
+
+A NULL mark (every row stored before the import existed) stays visible. Marker migration `m017`
+raises the floor to **contract 17**; `tests/test_kg_view_contract.py` pins the column lists and
+`tests/test_tiingo_read_contract.py` asserts each row of the table above.
+
+**The predicate's base table is `pricing_agent`'s, not `kg_schema`'s.** The three views that
+diagnose a line as the import's (`v_portfolio_position`, `v_score_snapshot`, `v_fundamental_metric`)
+read `price_daily`, and `ensure_views` **drops a view whose base table is absent** by design. So on a
+database where `pricing_agent` never ran, those three views do not exist: the read routers and
+`/contract/database` report a missing view (that is what those routes are for), never a `500`. The
+predicate has to be the stored bars themselves --
+`price_observation` would be a wrong test, because a line the import priced has no observation row
+until `--observations` runs for it.

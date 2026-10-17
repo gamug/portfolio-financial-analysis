@@ -168,3 +168,36 @@ says yes when a member has no `price_daily` bar at S and the gateway has any can
 bar lacks its `priceobs-v2` observation, when `has_pre_split_rows` holds, or when S is not final
 (the run would refuse it). A member the gateway has no candle for, and one whose latest
 `pricing_run_error` is a `split_jump` refusal, are listed in the evidence and do not count.
+
+## The private Tiingo import (T-153 part 3d)
+
+`pricing_agent import-tiingo` loads the 33 leaver lines the gateway cannot serve from the private
+file `portfolio-data-mining` fetched (`/workspaces/thesis/data/private/tiingo/`, git-ignored and
+never committed; this package never calls Tiingo and needs no key):
+
+```bash
+uv run python -m pricing_agent import-tiingo [--file PATH] [--manifest PATH] [--db ...]
+    [--universe-db ...] [--analysis-date D] [--dry-run]
+```
+
+It refuses, before writing anything, a path inside a git work tree, a file whose sha256 differs
+from the manifest's, a line the manifest does not list, a line whose CIK has no `assets` row (run
+an ingestion step first so the line's identity exists), a row after the line's last membership day
+or after `--analysis-date`, and a SPLIT row the tracked event list does not explain. What it writes
+carries `source = 'tiingo'` per row: `price_daily` (the file's split-adjusted columns) and the
+line's dividends/splits in `corporate_action` under the engine `corpact-tiingo-v1`, the dividend as
+`divCash / split_cum(ex_date)`. A second run on the same file writes nothing.
+
+**One vendor per line, both directions.** A line with any stored non-Tiingo bar is gateway-only:
+the import writes nothing for it and names it with its stored count in its own `pricing_run`
+(`lines_gateway_only`). The reverse -- the gateway later serving a line that holds imported rows --
+is refused at the write path (`pricing_run_error.stage = 'tiingo_stitch'`), and `pending` treats
+that refusal like `split_jump`. There is no `--allow-*` override for either, and no in-place
+deletion command: if Tiingo says no (or a line changes hands), delete the private file and every
+copy, discard the database and rebuild without the import (D9), then `quant` and `cycle` are re-run.
+`kg_schema.queries.tiingo_marked_rows` reports what a database holds (0 in every table on a
+rebuilt one).
+
+`--observations` derives from the asset's whole stored history, so an imported line gets its
+`price_observation` rows through the same path as any other member -- including when the gateway
+serves the ticker nothing at all.
