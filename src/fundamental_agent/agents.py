@@ -39,6 +39,7 @@ from fundamental_agent.skills import (
     load_skill,
 )
 from fundamental_agent.statements import Statements
+from kg_schema import corporate_actions
 from kg_schema.company_profile import profile_as_of
 from kg_schema.market_cap import MarketCap
 
@@ -157,6 +158,48 @@ def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str,
         for issue in quality.evaluate(filing)
         if issue.severity == "HARD" and issue.value is not None
     }
+
+
+#: The withheld-map key's reason for a valuation value built on the private import's close
+#: (T-153 part 3d, A3). Read by nothing but the prompt, like every other entry in the map.
+TIINGO_CLOSE_REASON = "TIINGO_CLOSE"
+
+
+def tiingo_withheld_metrics(
+    ctx: FilingContext, results: list[tuple[str, MetricResult]]
+) -> dict[tuple[str, str], str]:
+    """``{(group, metric): reason}`` for the valuation group when the private import priced the line.
+
+    The licence behind the Tiingo file is internal-use-only, and a valuation value (a market cap,
+    an enterprise value, a yield over either) is the close in another form: D4's rule is per row,
+    so the *close's own* ``price_daily.source`` decides -- not a list of asset ids, and not
+    ``ctx.market_cap`` read directly (the model never sees it; it reads these metrics). Every
+    valuation-group metric **with a value** is withheld, so the brief and every specialist print
+    ``name: withheld (TIINGO_CLOSE)`` instead of the value, exactly as T-076 D5's quarantined
+    metrics do. The stored metrics are untouched: ``cycle``'s VALORIZATION and the cap readers
+    still read them. This map is built separately from :func:`withheld_metrics` and merged after
+    it, so which metrics the HARD DQ rules withhold does not change.
+    """
+    if not _close_is_from_tiingo(ctx):
+        return {}
+    return {
+        (group, result.name): TIINGO_CLOSE_REASON
+        for group, result in results
+        if group == valuation_metrics.GROUP and result.value is not None
+    }
+
+
+def _close_is_from_tiingo(ctx: FilingContext) -> bool:
+    """True when the filing's close -- the market cap's and ``ctx.price``'s -- is the import's.
+
+    Both come from the same ``price_daily`` row family: the market cap's reader records its
+    close's source, and the period-end close carries its own."""
+    if ctx.market_cap is not None and ctx.market_cap.close_source == _TIINGO_VENDOR:
+        return True
+    return ctx.price is not None and ctx.price.source == _TIINGO_VENDOR
+
+
+_TIINGO_VENDOR = corporate_actions.TIINGO_SOURCE
 
 
 def _generated_definitions(group: str) -> str:
@@ -467,7 +510,18 @@ class FundamentalAnalyst:
                 pillars=verdict.pillars,
             )
         by_group = _group(computed)
+        # T-153 part 3d (A3): the private import's valuation values are withheld from the model
+        # too. The map is built separately and merged after the DQ map, and a key the HARD DQ
+        # rules already withhold keeps their own reason -- so which metrics they withhold, and
+        # why, is unchanged.
         withheld = withheld_metrics(computed)
+        withheld.update(
+            {
+                key: reason
+                for key, reason in tiingo_withheld_metrics(ctx, computed).items()
+                if key not in withheld
+            }
+        )
         orchestrator = Agent(
             model=self._model,
             system_prompt=MASTER_PROMPT,

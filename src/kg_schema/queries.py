@@ -350,11 +350,14 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
 
 
 def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -> list[Row]:
-    """Each asset's last stored close on or before *as_of* and on or after *floor*."""
+    """Each asset's last stored close on or before *as_of* and on or after *floor*.
+
+    Carries the bar's ``source``, so a reader can tell a gateway close from the private Tiingo
+    import's (T-153 part 3d, A3)."""
     try:
         return db.execute(
             """
-            SELECT p.asset_id, p.date, p.close
+            SELECT p.asset_id, p.date, p.close, p.source
             FROM price_daily p
             JOIN (
                 SELECT asset_id, MAX(date) AS d FROM price_daily

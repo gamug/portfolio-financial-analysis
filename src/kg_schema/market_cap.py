@@ -62,6 +62,10 @@ class MarketCap:
     close_date: str
     n_classes: int  # non-total classes summed into share_count; 0 for one class or a filed total
     split_factor: float
+    # The vendor of the close the cap used (T-153 part 3d, A3): ``'tiingo'`` when it came from the
+    # private import. ``cycle``'s and quant's readers do not change; the fundamental agent's
+    # narrative withholds the valuation group for such a filing.
+    close_source: str | None = None
     cik: str | None = None  # the issuer: two listings of one company share it (GOOG/GOOGL)
     incomplete_classes: bool = False
     n_excluded: int = 0
@@ -264,7 +268,7 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
     factor: float,
     close: float,
     ticker_to_asset: dict[str, int],
-    closes: dict[int, tuple[str, float]],
+    closes: dict[int, tuple[str, float, str | None]],
     splits: dict[int, list[tuple[str, float]]],
     basis_end: dict[int, str],
 ) -> tuple[float | None, bool]:
@@ -345,7 +349,7 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))
     floor = (date.fromisoformat(as_of) - timedelta(days=max_price_age_days)).isoformat()
     closes = {
-        int(r["asset_id"]): (str(r["date"]), float(r["close"]))
+        int(r["asset_id"]): (str(r["date"]), float(r["close"]), r["source"])
         for r in queries.last_closes(db, all_needed_assets, as_of=as_of, floor=floor)
     }
     basis_end = queries.last_price_dates(db, all_needed_assets)
@@ -363,7 +367,7 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
         if aid not in closes:
             result.missing[aid] = NO_RECENT_PRICE
             continue
-        close_date, close = closes[aid]
+        close_date, close, close_source = closes[aid]
         factor = _factor(splits.get(aid, []), after=count.as_of_date, through=basis_end.get(aid))
         shares = count.value * factor
         cik_norm = str(count.cik).zfill(10) if count.cik else ""
@@ -390,6 +394,7 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             close_date=close_date,
             n_classes=count.n_classes,
             split_factor=factor,
+            close_source=None if close_source is None else str(close_source),
             cik=count.cik,
             incomplete_classes=incomplete,
             n_excluded=count.n_excluded,
