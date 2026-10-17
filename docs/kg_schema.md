@@ -541,3 +541,12 @@ from one, do not return them:
 A NULL mark (every row stored before the import existed) stays visible. Marker migration `m017`
 raises the floor to **contract 17**; `tests/test_kg_view_contract.py` pins the column lists and
 `tests/test_tiingo_read_contract.py` asserts each row of the table above.
+
+**The predicate's base table is `pricing_agent`'s, not `kg_schema`'s.** The three views that
+diagnose a line as the import's (`v_portfolio_position`, `v_score_snapshot`, `v_fundamental_metric`)
+read `price_daily`, and `ensure_views` **drops a view whose base table is absent** by design. So on a
+database where `pricing_agent` never ran, those three views do not exist: the read routers and
+`/contract/database` report a missing view (that is what those routes are for), never a `500`. The
+predicate has to be the stored bars themselves --
+`price_observation` would be a wrong test, because a line the import priced has no observation row
+until `--observations` runs for it.

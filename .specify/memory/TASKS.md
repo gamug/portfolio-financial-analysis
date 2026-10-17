@@ -1022,7 +1022,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       3d's guard), and the cycle's VALORIZATION and quant's cap weights treat them as missing.
       Exactly one of the 36 falls inside 2022+ and is absent from production: **ILMN 2024-06-25,
       1.028** (its GRAIL spin-off). Complete the list from this run's output before the cycle step,
-      as the paragraph above says. (b) `quant build-returns` builds only the members of the
+      as the paragraph above says: **every row -- the 69 now committed and every new one -- quotes
+      the sentence that states the completed event and its ratio**, from the same filing or one
+      filing per event; the classes and the values stay as the vendors recorded them. (b) `quant build-returns` builds only the members of the
       universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`): a leaver's
       return rows exist only for a `date_to` inside its own membership, so building to a later date
       gives it none. Part 3d's R3 (a run to 2024-06-21) left **16 of the 32** imported lines without
