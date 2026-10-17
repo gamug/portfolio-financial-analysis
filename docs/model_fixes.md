@@ -9843,3 +9843,136 @@ eligibility and a refusal names the differing field; the view contract's SOFT id
 R2 and R3 copies 0 judged / 29 legacy, 0 problems), rejects a `veto` row named `UNSCORED`/`UNPRICED`,
 and rejects a selected row carrying either marker — calling `cycle.data.unpriced_assets` itself, so
 it cannot drift from the rule.
+
+## T-153 part 3d — the private Tiingo import: one vendor per line, and what the spins are
+
+**The input (rule 1).** 33 lines that left the index between 2022 and 2026 have no gateway candle
+(measured: `docs/leaver_price_coverage_2019.json`), so the data-mining repo fetched them once from
+Tiingo into a private file (`/workspaces/thesis/data/private/tiingo/`, licence UNCONFIRMED and
+internal-use-only). `pricing_agent import-tiingo` loads it: it refuses a path inside a git work
+tree, a file whose sha256 differs from the manifest's, a line the manifest does not list, a line
+whose CIK has no `assets` row, a row after the line's last membership day or after
+`--analysis-date`, and a SPLIT row the tracked event list does not explain. It writes
+`price_daily` with `source='tiingo'` (the file's *split-adjusted* columns: the manifest's own
+`checks.convention` matches `adj_close` against the gateway to ≤ 7e-06, and `adj_volume` keeps
+`close × volume` on one basis) and the line's dividends/splits into `corporate_action` under its
+own engine `corpact-tiingo-v1`, the dividend as `divCash / split_cum(ex_date)` — the manifest's
+`checks.dividend` proves the gateway's stored dividend is the split-adjusted one
+(`max_abs_diff_adjusted` 0.0 against `max_abs_diff_raw` 0.615 on the AAPL control). A second run on
+the same file writes 0 rows.
+
+**One vendor per line, both directions (rule 2).** A line with any stored non-Tiingo bar is
+gateway-only: the import writes nothing for it, for the whole line, and names it with its stored
+count in its own `pricing_run.params_json` (`lines_gateway_only` / `lines_gateway_only_count` —
+never a `pricing_run_error`, because `pending` reads only the latest error row per ticker). The
+reverse — the gateway later serving a line that holds imported rows — is refused per line at the
+write path, recorded `stage='tiingo_stitch'`, and `pricing_agent pending`'s `_refused` treats it
+like T-131's `split_jump`: the step would write nothing again. No `--allow-*` override exists for
+either (reviewer A, 2026-10-17, on the 2026-10-15 decision; T-131(c) is the precedent).
+
+**The read contract (rule 3, reviewer A's D4/D5).** The data is never redistributed, so the views
+that expose a daily price or a value computed from one drop the imported rows, per row:
+`v_price_observation` (its `source` was already published), `v_quant_return_daily` (a new
+nullable `vendor`, appended at the end of the view; `source` keeps its engine name), and
+`v_portfolio_position` **NULLs `cost_basis`** for such a line while keeping the row and its weight.
+Every filter reads `COALESCE(<mark>, '') <> 'tiingo'`, so the NULL marks on rows stored before the
+import stay visible. `v_corporate_action` keeps the imported rows (a dividend amount and a split
+ratio are neither a price nor a value from one), and `v_score_snapshot` / `v_cycle_ranking` keep
+theirs (the rule keeps scores and rankings). Marker migration `m017` raises the floor to contract
+17. `pricing_agent` writes `price_observation.source` from the bar of the same `obs_date`; the
+first run after this change also stamps the rows stored before it, which is the invariant being
+established (a one-off rewrite of that derived series). `kg_schema.queries.tiingo_asset_ids` is
+the one way to name the imported lines (D8), and `verify_pilot`'s **T-153f** check asserts the
+three properties on any database.
+
+**The derived rows (D3).** `--observations` derives from the asset's **whole stored** history, so
+a line the gateway cannot serve still gets its series — the fetch is empty, and that path now
+derives too (before it returned early, which would have left every imported line unpriced for
+part 3c's eligibility). `quant build-returns` folds the imported dividends through the normal
+path; the rows are marked `vendor='tiingo'` per row, and `quant` reads the import's action engine
+after the gateway's (`_ACTION_ENGINE_PRIORITY` is now `kg_schema.corporate_actions.
+READABLE_ENGINES`), so the gateway wins when a line comes back.
+
+**The valuation group is withheld from the model (A3, reviewer A, 2026-10-17).** A valuation
+value is the close in another form, so for a filing whose close is the import's
+(`ClosePrice.source` / `MarketCap.close_source`, both from the bar's own `price_daily.source`) the
+brief and every specialist print `name: withheld (TIINGO_CLOSE)` for each valuation metric that
+has a value — the shape T-076 D5's quarantined map uses. It is built separately and merged after
+`withheld_metrics()`; a key the HARD DQ rules already withhold keeps their reason, so **which**
+metrics they withhold does not change, and the fallback gets the same merged map (its FCF-yield
+nudge already leaves the score, so no score moves — asserted). The stored valuation metrics are
+unchanged: `cycle`'s VALORIZATION and the market-cap readers keep reading them. Only the imported
+lines' narratives lose their valuation reading (the 33 lines, and only when their close came from
+the import).
+
+**D10 — a spin-off recorded as a split, and the market cap (reviewer A, 2026-10-16).** Both
+vendors record a spin-off as a split factor, which keeps the price series continuous and is right
+for returns. `market_cap` put the recorded count on the price's basis by every factor dated after
+the count, whichever close it was paired with: correct for a true split (the count really does
+change) and **overstated by the factor for a spin-off** (the parent's count does not change) until
+a newer filing's count arrives — DHR +12.8%, DD +139%. A spin-off factor now applies **only while
+the close it is paired with is on the pre-event basis** (`ex_date > close_date`, and no later than
+the newest stored bar), in `market_caps_as_of` and in `_class_by_class_val`; splits and reverse
+splits are unchanged, and `MarketCap` records `split_factor` and `spinoff_factor` separately.
+Basis: checklist v1.3 **MKT-02** (BLOCK) and C11 printed pp.27 and 29 (a split adjusts shares and
+price by the ratio; a spin-off adjusts the parent's price by the distribution).
+
+The class comes from a tracked, cited list — `src/kg_schema/data/corporate_action_events.csv`, one
+row per event, each citing the company's own filing (an 8-K, the Form 10 distribution terms, or
+the 10-Q/10-K note that states the ratio) — read by `kg_schema.corporate_actions`. **The counts
+the list must cover today** (measured read-only, 2026-10-17): **production 69** SPLIT rows over 58
+assets, **the gateway archive 69** (the same rows), and **the Tiingo manifest 1** (K, 2023-10-02,
+1.065) → **69 listed events**: 44 splits, 2 reverse splits (AMCR's 1-for-5, DD's 1-for-3) and 23
+spin-offs (including K's and HON's 2026-06-29 0.9535, which is the Aerospace Technologies spin-off
+and not, as a ratio's shape might suggest, an error). A SPLIT row the list does not explain
+**refuses the cap** (`missing` reason `unclassified_corporate_action`) and **stops the import**;
+nothing is classed by a ratio's shape and there is no default class. 2019–2021 events reach the
+list through `quant backfill-actions --from 2019-01-02`, which T-100 must run (its `--from`
+defaults to 2022-01-01), and the list is completed from that run's output before the cycle and
+quant steps — otherwise the guard refuses caps wholesale.
+
+**R1–R7 (real data, copies under `/tmp/t153f/`; originals read-only).**
+
+- **R1, the import** (a copy of the gateway archive, 591 assets): **32 of 33 lines imported**
+  (WBD gateway-only), **43,039 price rows, 442 dividends, 1 split**, 2019-01-02..2026-10-05,
+  sha256 `d6ef4052…` — per line, the rows, dividends, splits and first/last dates equal the
+  manifest's **for all 32** (0 mismatches; the manifest's 44,989 rows minus WBD's 1,950 are
+  exactly the 43,039 written). A second run writes **0** rows.
+- **R2, the vendor rule**: on the copy as it is, `lines_gateway_only_count` = 1 with
+  `{ticker: WBD, cik: 0001437107, asset_id: 484, stored_rows: 1189}` and WBD's 1,189 rows all
+  `yfinance`; on a copy with WBD's 1,189 gateway rows deleted, **33 of 33 imported, 44,989 rows**
+  and an **empty** list with count 0 — WBD's 1,950 rows all `tiingo`.
+- **R3, the derived rows**: **43,039** `price_observation` rows for the 32 lines, **all
+  `source='tiingo'`, all `priceobs-v2`** (0 assets with bars and no observation); after the
+  gateway-actions backfill and `build-returns`, **22,032** `quant_return_daily` rows for them,
+  **all `vendor='tiingo'`**. CMA over 2019-01-02..2024-06-21: 1,377 rows; total-return ratio
+  −0.105655 against the price ratio −0.314597 — **TR/price = 0.335842**, i.e. **+20.89 pp** of the
+  span came from dividends.
+- **R4, the views** (counts only): `v_price_observation` returns **0** of the 43,039
+  (`v_quant_return_daily` 0 of the 22,032); `v_corporate_action` keeps its 443 imported rows with
+  their `source`; `v_portfolio_position` returns **0** rows with a non-NULL `cost_basis` for an
+  imported line; `v_score_snapshot` and `v_cycle_ranking` are unchanged.
+- **R5, the cycle** (`cycle select 2023-03-31`, on a copy of part 3c's R2 copy with the 33 lines'
+  identity synced onto it — declared): with the import the **shipped 5% run succeeds** — 29 of 30
+  names, one shortfall, `1 unscored (ineligible): AVB` — and **DFS rank 1 (62.3851, weight
+  0.03704) and CMA rank 17 (51.4132, weight 0.02922) are eligible and held**, where part 3c had
+  both `UNPRICED` with a NULL cost basis; the T-1 HARD set is still {LW, PLD}, no marker row is
+  selected, 0 veto rows are named a marker, and the 29 positions have **0** NULL cost bases.
+- **R6, the removal**: `remove-tiingo` deleted 44,989 price rows, 44,989 observations, 443
+  corporate actions and 0 return rows (that copy has none), with
+  `remaining: corporate_action=0, price_daily=0, price_observation=0, quant_return_daily=0`; the
+  same date then refuses exactly as part 3c did ("3/32 universe members (9.4%) are unrankable …
+  3 unpriced … asset_ids [1, 3, 4]").
+- **R7, the coverage union again**: `scripts/unpriced_members.py` re-run reproduces part 3c's R1 —
+  249 weekly replay dates (222 NYSE sessions), 595 members resolved, 0 missing, the calendar and
+  the store agree on every date, the trigger is empty in all four combinations, the refusals are 0
+  (2021-01-01) and 10 (2022-01-01, 2022-01-03..2022-03-07) — **no refusal changes**, and the
+  unpriced set that remains is the permanent one (the exit tails JNPR/HES/AVB, the failures' last
+  days, INFO and WRK, and VLTO, which is a current member's gateway gap).
+
+**Declared limitations.** The licence is unconfirmed, so the whole import is removable by one
+command and its rows are marked per row; the 2019–2021 events reach the list only through T-100's
+`backfill-actions --from 2019-01-02`; `v_orchestrator_step.output_tail` is free text (a step that
+printed a price would be a bug, not a filter); the VALORIZATION block inside `v_score_snapshot` /
+`v_cycle_ranking` still carries the market cap on D, because the rule keeps scores and the block is
+their audit trail.

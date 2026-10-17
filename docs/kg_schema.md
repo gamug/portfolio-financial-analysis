@@ -520,3 +520,22 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
 - **`Database` is not a `sqlite3.Connection` subclass** (composition, not
   inheritance) — a connection-specific escape hatch (`set_trace_callback`,
   etc.) goes through `db.raw`, not `db` directly.
+
+## The private import's rows and the price views (T-153 part 3d)
+
+`pricing_agent import-tiingo` writes rows the data may not redistribute, marked per row
+(`price_daily.source`, `price_observation.source`, `corporate_action.source`,
+`quant_return_daily.vendor` = `'tiingo'`). The views that expose a daily price, or a value computed
+from one, do not return them:
+
+| View | Treatment |
+|---|---|
+| `v_price_observation` | row filter, `COALESCE(p.source, '') <> 'tiingo'` -- the column was already published, so no shape change |
+| `v_quant_return_daily` | row filter on the new `vendor` column, appended at the end (the contract's versioning rule) |
+| `v_portfolio_position` | `cost_basis` (a close) NULLed for such a line; the row and its weight stay |
+| `v_corporate_action` | keeps the imported rows: a dividend amount and a split ratio are neither a price nor a value computed from one |
+| `v_score_snapshot`, `v_cycle_ranking`, the weight and quant views | unchanged -- the rule keeps scores, rankings, position weights and returns built from them |
+
+A NULL mark (every row stored before the import existed) stays visible. Marker migration `m017`
+raises the floor to **contract 17**; `tests/test_kg_view_contract.py` pins the column lists and
+`tests/test_tiingo_read_contract.py` asserts each row of the table above.

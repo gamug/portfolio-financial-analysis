@@ -992,6 +992,29 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       left the index and exited later (DISH, SEE, CMA, QRVO) and the failures **SIVB, SBNY and FRC**;
       the valuation this step will apply is the note in `docs/model_fixes.md`'s T-153 part 3c entry
       (C11 pp.5-7 and 34-35). How each counts is decided here, not in `T-153`.
+      **The private Tiingo lines (T-153 part 3d).** Every evaluation result is reported **twice, with
+      and without the Tiingo lines**, and the run record gives both: `kg_schema.queries.tiingo_asset_ids`
+      names them (the line's own `price_daily.source = 'tiingo'`), `pricing_agent import-tiingo` loads
+      them from `/workspaces/thesis/data/private/tiingo/` and records the lines, rows, dividends, splits
+      and the file's sha256 on its own `pricing_run`, and `verify_pilot`'s T-153f check asserts that no
+      filtered view returns one, that no line mixes vendors and that the record equals the database.
+      **A line the gateway forgets stops this task (reviewer A, 2026-10-15).** Before its fetch, re-run
+      the measurement of `docs/leaver_price_coverage_2019.json` (the script beside it,
+      `scripts/leaver_price_coverage_2019.py`) over every line `members_over_range` returns, current
+      members included. A line **less covered than that committed baseline** (ignoring days before the
+      stock first traded) **stops the run and goes to reviewer A** -- nothing switches to Tiingo
+      silently, and the decision at the stop is reviewer A's. The **first remedy** to bring there is the
+      gateway archive (part 3a's R4 copy): a forgotten line whose archived gateway rows cover its whole
+      span is **seeded from them, as gateway rows**, clipped to the line's last membership day; a line
+      the archive covers only in part is Tiingo whole, as WBD is. Both copies of the archive --
+      `/workspaces/thesis/data/archive/t153c_r4_gateway_2026-10-14/financial.db` and the user's Mac copy,
+      sha256 `6bddc77c3d69f428313af52ad99cf05c23a38cfcba6d1544c49e0dcf9383cd6a` -- are **kept until this
+      task is done, opened read-only only, and never modified**. Run `quant backfill-actions --from
+      2019-01-02` (its default starts at 2022-01-01) and complete
+      `src/kg_schema/data/corporate_action_events.csv` from that run's output **before** the cycle and
+      quant steps: an unexplained SPLIT row refuses the market cap (and the import). **The machine
+      (the user's decision, 2026-10-16):** the pilot (T-143) and this task run on the Windows + WSL2
+      machine, so the Tiingo file stays where it is, with no copy.
       **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
       ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
       statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the
