@@ -848,7 +848,39 @@ the final pilot, `T-143`.
           **Tiingo-dependent** (one of the 33 deliverable lines) or **permanent** (INFO, WRK, a
           failure's last days) — **feeds the PER-11 declaration**; the full unscored share is measured
           in `T-100`'s own run. Brief `/workspaces/thesis/handoff/T-153p3c_task.md`.
-          Next: part 3d (the Tiingo import), brief `/workspaces/thesis/handoff/T-153p3d_task.md`.
+          Still open in this entry, per the paragraphs above: the replay's figures — vetoes by
+          sector, financial firms, utilities and the D-13 three-year average — run again **on the
+          historical universe** before they go into the thesis; **SBNY's and FRC's** index weight
+          (measured with part 3b's price fallback, no substitute source invented), which with the
+          whole unscored share — measured in `T-100`'s own run — feeds the PER-11 declaration; and
+          the licence: Tiingo's written answer is still pending, the free tier being
+          internal-use-only.
+        - **Part 3d — done 2026-10-17, PR #174.** The 33 delivered lines the gateway cannot serve
+          are imported from the private file `portfolio-data-mining` fetched (never committed;
+          refused inside a git work tree and on a sha256 mismatch) by `pricing_agent import-tiingo`:
+          `price_daily` rows with `source='tiingo'`, and each line's dividends and splits under its
+          own action engine, the dividend as `divCash / split_cum`. **One vendor per line, no
+          exception:** a line with any stored gateway bar is gateway-only — the import writes nothing
+          for it and names it with its stored count in its own `pricing_run` (`lines_gateway_only`),
+          which on a copy of production is WBD (1,189 gateway rows) and is empty on a fresh database,
+          where WBD is all-Tiingo; the reverse — the gateway later serving a line that holds imported
+          rows — is refused per line (`stage='tiingo_stitch'`, which `pending` treats like
+          `split_jump`). **The read contract:** `v_price_observation` and `v_quant_return_daily` drop
+          the imported rows; `v_portfolio_position`'s `cost_basis`, the five `valuation` metrics in
+          `v_fundamental_metric` and the VALORIZATION `inputs_json` / a FUNDAMENTAL row's five
+          valuation keys in `v_score_snapshot` are NULLed or removed; `v_corporate_action` is
+          filtered; contract **17** (`m017`) records it. Scores, ranks, weights and the returns built
+          from them stay, and TECHNICAL's components stay (declared). **A3:** the valuation group is
+          withheld from the model (`TIINGO_CLOSE`) for such a line. **D10:** the recorded SPLIT events
+          (production 69 rows over 58 assets, the archive the same, the manifest 1) are classed and
+          cited in `src/kg_schema/data/corporate_action_events.csv`, a spin-off's factor applies only
+          while the close is on the pre-event basis (`ex_date > close_date`), and an unlisted SPLIT
+          row refuses the market cap and stops the import. **D9:** if Tiingo says no, the file and
+          every copy are deleted and the database is discarded and rebuilt without the import — no
+          in-place deletion command. verify_pilot's **T-153f** check asserts that no filtered view
+          returns an imported row, that no line mixes vendors and that the run record's counts equal
+          the database's. SPEC **1.27.0**. Brief
+          `/workspaces/thesis/handoff/T-153p3d_task.md`.
         - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
           before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
 
