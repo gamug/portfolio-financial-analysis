@@ -369,6 +369,22 @@ def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -
         return []
 
 
+def tiingo_asset_ids(db: Database) -> list[int]:
+    """The assets whose prices came from the private Tiingo import (T-153 part 3d, D8).
+
+    The one way to name the imported lines on a database: rule 2's own per-line marker, the
+    ``source`` of the line's stored bars. T-100 reports every evaluation result twice around
+    this list, and ``verify_pilot``'s T-153f check reads it. Empty when nothing was imported
+    (or when the table does not exist yet -- a fresh database)."""
+    try:
+        rows = db.execute(
+            "SELECT DISTINCT asset_id FROM price_daily WHERE source = 'tiingo' ORDER BY asset_id"
+        ).fetchall()
+    except DatabaseError:
+        return []
+    return [int(r["asset_id"]) for r in rows]
+
+
 def last_price_dates(db: Database, asset_ids: list[int]) -> dict[int, str]:
     """The newest stored bar per asset: the date the gateway's split adjustment is current to."""
     try:

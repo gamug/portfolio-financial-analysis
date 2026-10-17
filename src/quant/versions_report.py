@@ -106,7 +106,7 @@ def versions_report(conn: Database, settings: QuantSettings) -> str:
             conn,
             "corpact",
             "--corpact-version, build-returns",
-            "per asset, the newest gateway engine it has",
+            "per asset, the newest engine quant reads it has (the gateway's, then the private import's)",
             None,
         ),
     ]

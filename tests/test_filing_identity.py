@@ -226,7 +226,7 @@ def test_the_migration_installs_the_triggers_on_a_clean_database(memory_db: Data
     identity.drop_triggers(memory_db)
     memory_db.execute("DELETE FROM schema_version WHERE version >= 12")
     memory_db.commit()
-    assert migrations.apply_migrations(memory_db) == [12, 13, 14, 15, 16]
+    assert migrations.apply_migrations(memory_db) == [12, 13, 14, 15, 16, 17]
     names = {r[0] for r in memory_db.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
     assert {
         "trg_sf_cik_insert",
