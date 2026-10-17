@@ -59,6 +59,14 @@ class _SplitJumpRefused(RuntimeError):
     """A series with a split-shaped close jump this run could not explain (T-131)."""
 
 
+class _TiingoStitchRefused(RuntimeError):
+    """The gateway now serves a line that holds Tiingo rows (T-153 part 3d, rule 2 / A1).
+
+    Writing the fetched window over those rows would flip their ``source`` a date at a time -- a
+    stitched series from two vendors, which rule 2 forbids. The line is refused and recorded; the
+    operator removes its imported rows (``pricing_agent remove-tiingo``) first."""
+
+
 @dataclass
 class RunParams:
     start_date: str = DEFAULT_START_DATE
@@ -280,6 +288,12 @@ def _run_task(engine: _Engine, task: _Task) -> None:
 
     try:
         _store(engine, task, prices)
+    except _TiingoStitchRefused as exc:  # nothing was written for this ticker (A1)
+        report.failed += 1
+        report.errors.append(f"{task.ticker}: {exc}")
+        db.bump_run_counter(conn, report.run_id, "failed_units")
+        db.record_error(conn, report.run_id, RunError(task.ticker, None, "tiingo_stitch", str(exc)))
+        return
     except _SplitJumpRefused as exc:  # nothing was written for this ticker
         report.failed += 1
         report.errors.append(f"{task.ticker}: {exc}")
@@ -297,6 +311,16 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
 
     # No lookahead: drop any candle dated after the analysis date.
     candles = [c for c in prices.candles if c.date <= end]
+    # Rule 2 (T-153 part 3d, A1): one vendor per line, never stitched. The gateway now serving a
+    # line the import priced would overwrite its rows' ``source`` date by date. Refuse the
+    # ticker, write nothing for it, and record it -- the T-131 refusal's pattern, with no
+    # ``--allow-*`` override.
+    if candles and db.has_tiingo_candles(conn, task.asset_id):
+        raise _TiingoStitchRefused(
+            f"{task.ticker} holds imported rows (source='tiingo') and the gateway now serves it: "
+            "storing this window would stitch two vendors into one series. Remove the line's "
+            "imported rows (pricing_agent remove-tiingo) and re-fetch it whole"
+        )
     # What reaches price_daily: the fetched window, or the full history if it had to be re-fetched.
     # Decided before any write, so a refused series leaves the ticker untouched.
     to_store = _reconcile_history(engine, task, candles) if params.store_daily else candles
