@@ -69,6 +69,14 @@ from kg_schema.versions import (
 
 FundamentalHook = Callable[[Database, list[int], str], None]
 
+#: The eligibility rule a run was built on, recorded in its manifest (T-153 part 3c). C11 printed
+#: p.36 applied by analogy (index addition -> selection): a member is usable on cycle date D only
+#: with a close on the market's latest NYSE session on or before D, in the cycle's own
+#: ``price_observation`` engine version. The price vetoes keep their own 7-day window.
+#: A run recorded before this value cannot be resumed under the new rule: the ranking would mix
+#: two eligibilities, so ``check_manifest`` refuses it -- redo it fresh, or at another date.
+ELIGIBILITY_MANIFEST = "session-close-v1"
+
 log = logging.getLogger(__name__)
 
 _SELECTION_STEPS = (
@@ -116,6 +124,11 @@ class CycleReport:
     # Their tickers, so the CLI can name them without a separate cycle_ranking query
     # (PR #99 review).
     unscored_tickers: list[str] = field(default_factory=list)
+    # Universe members with no usable close on the cycle date's latest session (T-153 part 3c):
+    # ineligible for selection, marked in cycle_ranking, never a count of HARD/SOFT vetoes.
+    unpriced: int = 0
+    # Their tickers, read back from cycle_ranking like the unscored ones (PR #99 review).
+    unpriced_tickers: list[str] = field(default_factory=list)
     # The book `positions` built (T-136): its caps, relaxations, shortfall and pin notes, and each
     # held name's ``(ticker, sector, weight)`` in rank order. None on a MONITORING run, or when a
     # resume skipped the step.
@@ -134,16 +147,17 @@ def _book_candidates(
     price_obs: Mapping[int, Mapping[str, float | None]],
 ) -> list[BookCandidate]:
     """The ranked cohort as ``build_book`` input. HARD-vetoed names (at the T-1 cutoff) are passed
-    in, marked, so a HARD pin is refused with its reason; UNSCORED names are ineligible and left
-    out (a pin on one is refused as "not among the candidates")."""
+    in, marked, so a HARD pin is refused with its reason; UNSCORED and UNPRICED names are
+    ineligible and left out (a pin on one is refused as "not among the candidates"). A data-gap
+    marker is never a SOFT veto, so it takes no penalty off the blended score."""
     cands: list[BookCandidate] = []
     for r in rows:
         aid = int(r["asset_id"])
         rules = r["veto_rules"]
         veto: VetoStatus = "HARD" if "HARD" in rules else "none"
-        if veto == "none" and "UNSCORED" in rules:
+        if veto == "none" and ("UNSCORED" in rules or "UNPRICED" in rules):
             continue
-        if veto == "none" and any(rule not in ("HARD", "UNSCORED") for rule in rules):
+        if veto == "none" and any(rule not in ("HARD", "UNSCORED", "UNPRICED") for rule in rules):
             veto = "SOFT"
         cands.append(
             BookCandidate(
@@ -305,9 +319,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         "consumer": "cycle",
         "metrics": versions.manifest(),
         "quality": DATA_QUALITY_GATE_VERSION,
+        "eligibility": ELIGIBILITY_MANIFEST,
     }
     tag = manifest_tag(manifest)
-    check_manifest(conn, cycle_type, cycle_date, tag)
+    check_manifest(conn, cycle_type, cycle_date, tag, manifest)
     # T-141: params_json.score_weights is written once, by the first attempt; every ranking of
     # this run must use those weights, so refuse a resume under others (any cycle type).
     check_score_weights(conn, cycle_type, cycle_date, settings.score_weights)
@@ -667,11 +682,17 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # universe missing entirely refuses the run outright rather than build a portfolio
             # blind on most of it.
             unscored = data.unscored_assets(asset_ids, per_type["FUNDAMENTAL"])
-            unscored_reason = data.too_many_unscored_reason(
-                unscored, len(asset_ids), settings.unscored_max_share
+            # T-153 part 3c (D1): a member with no close on the cycle date's latest NYSE session
+            # (C11 printed p.36 by analogy) is ineligible the same way -- a data gap, never a
+            # veto -- and both gaps share one coverage refusal, counted once per asset (D2).
+            unpriced = data.unpriced_assets(
+                conn, asset_ids, cycle_date, settings.observation_engine_version
             )
-            if unscored_reason is not None:
-                raise data.TooManyUnscored(unscored_reason)  # noqa: TRY301
+            unrankable_reason = data.too_many_unrankable_reason(
+                unscored, unpriced, len(asset_ids), settings.unscored_max_share
+            )
+            if unrankable_reason is not None:
+                raise data.TooManyUnscored(unrankable_reason)  # noqa: TRY301
             # each SOFT rule's own points (BREAK_TREND_200 is flag-only: 0), else the run's default
             default = settings.soft_veto_penalty
             points = soft_penalties(default)
@@ -683,7 +704,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):
-                ineligible = a in unscored
+                ineligible = a in unscored or a in unpriced
                 ranked.append(
                     {
                         "asset_id": a,
@@ -693,28 +714,42 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                         "vetoed": a in hard or ineligible,
                         "veto_rules": soft.get(a, [])
                         + (["HARD"] if a in hard else [])
-                        + (["UNSCORED"] if ineligible else []),
+                        + (["UNSCORED"] if a in unscored else [])
+                        + (["UNPRICED"] if a in unpriced else []),
                         "selected": False,
                         "target_weight": None,
                     }
                 )
             ranked_cache["rows"] = ranked
             writers.write_ranking(conn, run_id, ranked)
-            return {"ranked": len(ranked), "hard_vetoed": len(hard), "unscored": len(unscored)}
+            return {
+                "ranked": len(ranked),
+                "hard_vetoed": len(hard),
+                "unscored": len(unscored),
+                "unpriced": len(unpriced),
+            }
 
         _do("rank", _rank)
+
         # Read back from cycle_ranking, not the `unscored` local above -- it only exists when
         # `rank` actually ran this call; a resumed run that skips an already-`done` `rank` step
         # (T-097's own resume contract) would otherwise leave `report.unscored` at its default 0
         # even though the persisted ranking has UNSCORED rows (PR #99 review).
-        unscored_rows = conn.execute(
-            "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
-            "json_each(r.veto_rules_json) je "
-            "WHERE r.cycle_run_id = ? AND je.value = 'UNSCORED' ORDER BY a.ticker",
-            (run_id,),
-        ).fetchall()
-        report.unscored = len(unscored_rows)
-        report.unscored_tickers = [str(row["ticker"]) for row in unscored_rows]
+        def _gap_rows(marker: str) -> list[str]:
+            return [
+                str(row["ticker"])
+                for row in conn.execute(
+                    "SELECT a.ticker FROM cycle_ranking r JOIN assets a ON a.id = r.asset_id, "
+                    "json_each(r.veto_rules_json) je "
+                    "WHERE r.cycle_run_id = ? AND je.value = ? ORDER BY a.ticker",
+                    (run_id, marker),
+                ).fetchall()
+            ]
+
+        report.unscored_tickers = _gap_rows("UNSCORED")
+        report.unscored = len(report.unscored_tickers)
+        report.unpriced_tickers = _gap_rows("UNPRICED")
+        report.unpriced = len(report.unpriced_tickers)
 
         # -- positions (SELECTION only)
         if "positions" in steps:

@@ -55,7 +55,7 @@ def seed_cohort(
             "'2026-02-02')",
             (i, 100 - 3 * i, 100 - 3 * i, fid),
         )
-        for d in range(120):
+        for d in range(280):  # through 2026-10: eligibility is the cycle date's own session
             day = (start + timedelta(days=d)).isoformat()
             conn.execute(
                 "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, "

@@ -120,7 +120,8 @@ Projection semantics
                           the sum of the row's non-null components' weights), so that
                           sum(effective_weight * component_value) - the SOFT-veto penalty =
                           ``blended_score`` (T-144). The penalty is the sum, over the row's SOFT
-                          rules (``veto_rules_json`` entries other than HARD / UNSCORED), of each
+                          rules (``veto_rules_json`` entries other than HARD / UNSCORED /
+                          UNPRICED), of each
                           rule's ``penalty_points`` (``v_rule_catalog.params_json``; the run's
                           ``soft_veto_penalty`` where a rule declares none): 15 for most, 0 for the
                           flag-only ``BREAK_TREND_200`` (T-070), not 15 x their count.

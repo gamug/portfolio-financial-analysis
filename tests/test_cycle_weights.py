@@ -56,8 +56,12 @@ def test_an_asset_missing_a_component_is_blended_at_one_half_each_and_the_view_a
 ) -> None:
     conn = cycle_seed
     seed_value_inputs(conn, DAY)
-    # EEE has no price observations, so it has no TECHNICAL score
-    conn.execute("DELETE FROM price_observation WHERE asset_id = 5")
+    # EEE keeps its close (eligibility, T-153 part 3c) but loses both signals TECHNICAL reads,
+    # so it has no TECHNICAL score without becoming an unpriced member
+    conn.execute(
+        "UPDATE price_observation SET realized_vol_90d = NULL, max_drawdown_90d = NULL "
+        "WHERE asset_id = 5"
+    )
     conn.commit()
     orchestrator.run_monitoring(_settings(), DAY, conn=conn)
 

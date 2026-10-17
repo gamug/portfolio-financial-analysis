@@ -825,12 +825,22 @@ the final pilot, `T-143`.
           disagreements (FRC, MOH, PBCT) and changes no label. `T-100` points `KG_UNIVERSE_DB` at
           `universe_history_gics.db`. verify_pilot's **T-153d** check (every line `members_over_range`
           returns: each stored filing's period ends are covered by its profile); SPEC 1.22.0.
-        - **Part 3c (decided by reviewer A, 2026-10-15): an unpriced member is ineligible on a cycle
-          date.** "Unpriced" means no usable price observation under `MAX_OBSERVATION_AGE_DAYS`, so a
-          holiday or a one-day gap does not exclude a name. It is recorded as a **data gap like
-          `UNSCORED`** — marked in `cycle_ranking` with the rule named and **no `veto` row written**, so
-          the backtest credits no rule — and it counts **with** the unscored ones against `cycle`'s
-          `unscored_max_share` (0.05), the run's record reporting unscored and unpriced **separately**.
+        - **Part 3c — done 2026-10-17, PR #173.** A member is usable on cycle date D only with a
+          **non-NULL `priceobs-v2` close on `trading_calendar.last_session_on_or_before(D)`** — C11
+          printed p.36 ("Suspended stocks are generally not added to indices at an upcoming
+          rebalancing") applied by analogy, index addition → selection; reviewer A, 2026-10-16. It
+          replaces `MAX_OBSERVATION_AGE_DAYS` for **eligibility only**: the price vetoes keep their
+          7-day window (declared in `docs/model_fixes.md`). An unpriced member is a **data gap like
+          `UNSCORED`** — a marker in `cycle_ranking`'s `veto_rules_json` with **no `veto` row**, so
+          the backtest credits no rule — and it counts **once per asset, together with the unscored
+          ones**, against `cycle`'s `unscored_max_share` (0.05), in **one refusal** that names the two
+          lists separately (the run's record reports them separately too). The run records the rule it
+          was built on, `manifest['eligibility'] = "session-close-v1"`, so **no pre-3c run is resumed
+          or re-run** under the new code: it must be redone fresh or at another date.
+          verify_pilot's **T-153e** check follows WI-18 (it judges a stint only when its opening run's
+          manifest names the rule, and calls `data.unpriced_assets` itself); SPEC **1.26.0**. **R1:**
+          249 weekly replay dates (222 NYSE sessions), **no refusal changes from the rule**, and the 11
+          line-sessions newly unpriced after the Tiingo import.
           Found on part 3b's R4 copy: `cycle select` on 2023-03-31 held **CMA (3.4%) and DFS (3.9%)**
           with no price data at all (`cost_basis` NULL), because a member with a FUNDAMENTAL score is
           eligible and the price vetoes read a missing observation as "could not tell". Its
@@ -838,6 +848,7 @@ the final pilot, `T-143`.
           **Tiingo-dependent** (one of the 33 deliverable lines) or **permanent** (INFO, WRK, a
           failure's last days) — **feeds the PER-11 declaration**; the full unscored share is measured
           in `T-100`'s own run. Brief `/workspaces/thesis/handoff/T-153p3c_task.md`.
+          Next: part 3d (the Tiingo import), brief `/workspaces/thesis/handoff/T-153p3d_task.md`.
         - Resolved by `T-155` (PR #165): row `0002041610` ← `0000813828` -- the file's SKYD interval
           before 2025-08-07 belongs to Paramount Global, a CIK succession, not a rename.
 
@@ -977,7 +988,10 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       Blackstone/TPG, 2026-04-07); **ABMD** $380.00 cash + a CVR of up to $35.00 (8-K 2022-11-01
       `0001193125-22-274497`). **ANSS is the declared exception**: its last real trade (374.30, 2025-07-16)
       is **5.01% below** the deal value ($197.00 cash + 0.3450 SNPS = 394.06) and it is kept **as traded**.
-      How each counts is decided here, not in `T-153`.
+      `T-153` part 3c's **exit list** (`docs/exit_list.json`) settles the lines: **31 exits**, 4 that
+      left the index and exited later (DISH, SEE, CMA, QRVO) and the failures **SIVB, SBNY and FRC**;
+      the valuation this step will apply is the note in `docs/model_fixes.md`'s T-153 part 3c entry
+      (C11 pp.5-7 and 34-35). How each counts is decided here, not in `T-153`.
       **The replay's first date is measured in this run, not declared (reviewer A, 2026-10-14).** After the
       ingestion steps and before the replay, one read-only step computes -- from the **stored** pillar
       statuses (`score_snapshot[FUNDAMENTAL].inputs_json`'s `pillars`/`coverage`, code only, no LLM) -- the

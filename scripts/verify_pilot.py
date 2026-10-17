@@ -19,6 +19,9 @@ from datetime import date, timedelta
 from typing import Any
 
 from api import orchestrator
+from cycle.config import CycleSettings
+from cycle.data import unpriced_assets
+from cycle.orchestrator import ELIGIBILITY_MANIFEST
 from kg_schema.company_profile import profile_as_of
 from kg_schema.db import connect_ro
 from kg_schema.env import universe_database_path
@@ -326,6 +329,85 @@ def _early_rows(fin: Any) -> list[str]:
             f"{early_filings['n']} filings before {FILINGS_SINCE} (first {early_filings['d']})"
         )
     return problems
+
+
+def _stint_judged(conn: Any, opened_by_cycle: Any) -> bool:
+    """Was this stint opened by a run whose manifest names the session eligibility (T-153 part 3c)?
+
+    WI-18's pattern (this file, the book checks): judge a row against its own run's record, and
+    report a row that predates the rule separately instead of failing it -- a pre-3c run (or one
+    with no record at all) was built under a different eligibility, so its stint is not evidence
+    about this rule.
+    """
+    if opened_by_cycle is None:
+        return False
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE id = ?", (int(opened_by_cycle),)
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return False
+    try:
+        manifest = json.loads(row["params_json"]).get("manifest") or {}
+    except (TypeError, ValueError):
+        return False
+    return manifest.get("eligibility") == ELIGIBILITY_MANIFEST
+
+
+def unpriced_position_problems(fin_db_path: str) -> tuple[int, int, int, list[str]]:
+    """The T-153e check: a stint's cycle date must be priced, and a data-gap marker is never a veto.
+
+    "Priced" is ``cycle.data.unpriced_assets`` itself -- C11 printed p.36 applied by analogy (index
+    addition -> selection): a close on the market's latest NYSE session on or before the cycle date,
+    at the cycle's own ``observation_engine_version``. The check calls that function, so it can
+    never disagree with the rule the cycle applies (a second query, or a 7-day window, would).
+
+    (a) a ``portfolio_position`` / ``portfolio_position_replay`` stint opened by a run whose
+    manifest names the session eligibility does not open on a cycle date its asset is unpriced for;
+    a stint from an older run is reported ``legacy``, never failed (WI-18's pattern); (b) no
+    ``veto`` row is named ``UNSCORED`` or ``UNPRICED`` (a missing score or price is a data gap, not
+    a rule); (c) no ranking row carrying either marker is ``selected``. Returns
+    ``(judged, legacy, marked_rows, problems)``.
+    """
+    version = str(CycleSettings.model_fields["observation_engine_version"].default)
+    problems: list[str] = []
+    judged = legacy = marked = 0
+    conn = connect_ro(fin_db_path)
+    try:
+        for query in (
+            "SELECT asset_id, valid_from, opened_by_cycle FROM portfolio_position "
+            "ORDER BY valid_from",
+            "SELECT asset_id, valid_from, opened_by_cycle FROM portfolio_position_replay "
+            "ORDER BY valid_from",
+        ):
+            for r in conn.execute(query):
+                aid, day = int(r["asset_id"]), str(r["valid_from"])
+                if not _stint_judged(conn, r["opened_by_cycle"]):
+                    legacy += 1
+                    continue
+                judged += 1
+                if not unpriced_assets(conn, [aid], day, version):
+                    continue
+                row = conn.execute("SELECT ticker FROM assets WHERE id = ?", (aid,)).fetchone()
+                problems.append(f"{row['ticker'] if row else aid} opens a stint on {day} unpriced")
+        for r in conn.execute(
+            "SELECT DISTINCT rule_id FROM veto WHERE rule_id IN ('UNSCORED', 'UNPRICED')"
+        ):
+            problems.append(f"a veto row is named {r['rule_id']}: a data gap is never a veto")
+        for r in conn.execute(
+            "SELECT a.ticker, je.value AS marker FROM cycle_ranking cr JOIN assets a "
+            "ON a.id = cr.asset_id, json_each(cr.veto_rules_json) je "
+            "WHERE cr.selected = 1 AND je.value IN ('UNSCORED', 'UNPRICED')"
+        ):
+            problems.append(f"{r['ticker']} is selected with the {r['marker']} marker")
+        marked += int(
+            conn.execute(
+                "SELECT COUNT(*) FROM cycle_ranking cr, json_each(cr.veto_rules_json) je "
+                "WHERE je.value IN ('UNSCORED', 'UNPRICED')"
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    return judged, legacy, marked, problems
 
 
 def leaver_profile_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list[str]]:
@@ -1334,6 +1416,34 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153d", t153d)
+
+    def t153e() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        judged = legacy = marked = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_judged, n_legacy, n_marked, problems = unpriced_position_problems(path)
+            judged = max(judged, n_judged)
+            legacy = max(legacy, n_legacy)
+            marked = max(marked, n_marked)
+            bad += [f"{prefix}{m}" for m in problems]
+        report(
+            "T-153e",
+            "FAIL" if bad else "PASS",
+            f"{judged} stints judged, {legacy} not judged (predates T-153e), {marked} ranking "
+            "rows carrying a data-gap marker; "
+            + (
+                "; ".join(bad[:6])
+                if bad
+                else "every judged stint's cycle date has a close on its own session, no veto row "
+                "is named a marker, no marker is selected"
+            ),
+        )
+
+    check("T-153e", t153e)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

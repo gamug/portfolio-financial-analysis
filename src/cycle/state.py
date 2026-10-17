@@ -40,13 +40,32 @@ class ManifestMismatch(RuntimeError):
     """A ``cycle_run`` for this (type, date) exists, built on different input versions."""
 
 
-def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -> None:
+def _manifest_fields(recorded: object, current: object) -> list[str]:
+    """The manifest keys a run's record and this run's disagree on (T-153 part 3c, decision 1b)."""
+    if not isinstance(recorded, dict) or not isinstance(current, dict):
+        return []
+    return [
+        key for key in sorted(set(recorded) | set(current)) if recorded.get(key) != current.get(key)
+    ]
+
+
+def check_manifest(
+    conn: Database,
+    cycle_type: str,
+    cycle_date: str,
+    tag: str,
+    manifest: dict[str, Any] | None = None,
+) -> None:
     """Refuse to resume an existing ``(cycle_type, cycle_date)`` run under a different manifest.
 
     ``cycle_run`` is unique per (type, date) and its outputs are keyed by date, so a second
     run over other input versions cannot sit beside the first (unlike ``quant``'s books) --
     resuming it would mix the two. A run recorded before T-090 has no manifest and is left
-    alone. Call this *before* :func:`open_cycle`, which flips an existing run to ``running``."""
+    alone. Call this *before* :func:`open_cycle`, which flips an existing run to ``running``.
+
+    *manifest*, when given, lets the refusal name the field that differs: T-153 part 3c adds
+    ``eligibility`` to the manifest, and a pre-3c run cannot be re-run under the new rule (its
+    ranking would mix two eligibilities) -- it must be redone fresh or at another date."""
     row = conn.execute(
         "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
         (cycle_type, cycle_date),
@@ -58,10 +77,19 @@ def check_manifest(conn: Database, cycle_type: str, cycle_date: str, tag: str) -
     except (TypeError, ValueError):
         return
     if recorded is not None and recorded != tag:
+        fields = _manifest_fields(json.loads(row["params_json"]).get("manifest"), manifest)
+        named = (
+            f"the manifest field{'s' if len(fields) != 1 else ''} that differ"
+            f"{'s' if len(fields) == 1 else ''}: {', '.join(fields)}; "
+            if fields
+            else ""
+        )
         raise ManifestMismatch(
             f"the {cycle_type} run for {cycle_date} was built on manifest {recorded}; this run "
-            f"resolves manifest {tag}. Resuming would mix inputs -- choose the recorded "
-            f"--metrics-version, or a different date"
+            f"resolves manifest {tag}. Resuming would mix inputs -- {named}a run whose manifest "
+            f"names another eligibility (or none, before T-153 part 3c) cannot be re-run: redo it "
+            f"fresh or at another date; any other difference needs the recorded input versions "
+            f"(--metrics-version)"
         )
 
 

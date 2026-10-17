@@ -393,7 +393,8 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   so the row's effective weights sum to 1 (NULL when that sum is 0). The identity, for a row with
   at least one component:
   `blended_score = sum(effective_weight * component_value) - sum(penalty_points of the row's SOFT rules)`,
-  where the SOFT rules are the `veto_rules_json` entries other than `HARD` and `UNSCORED`, and a rule's
+  where the SOFT rules are the `veto_rules_json` entries other than `HARD`, `UNSCORED` and
+`UNPRICED`, and a rule's
   `penalty_points` is `v_rule_catalog.params_json` `$.penalty_points` (T-070): the points an active stint
   of that rule takes off the score. It is the run's `soft_veto_penalty` (`v_weight_scheme.soft_veto_penalty`,
   15 by default) for every SOFT rule except **`BREAK_TREND_200`, which declares 0** (flag-only: its stints
@@ -465,8 +466,8 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   are `v_weight_component`.
 - **No component** means all components are null (`blended_score` 0.0 before the penalty). Such a
   ranking row has no `v_cycle_ranking_component` rows.
-- **`vetoed`** is true only for a HARD veto (with the T-1 lag) or `UNSCORED`; a SOFT veto only lowers
-  `blended_score`.
+- **`vetoed`** is true only for a HARD veto (with the T-1 lag), `UNSCORED` or `UNPRICED`; a SOFT veto
+  only lowers `blended_score`. All three are ineligible; only the HARD one is a rule.
 - **Timestamps.** Every `*_at` timestamp that a view exposes (`computed_at`, `detected_at`,
   `cleared_at`, `retrieved_at`, `started_at`, `finished_at`, `ingested_at`, `created_at`) is ISO 8601
   UTC written with a `+00:00` offset (`2026-10-04T18:28:56+00:00`). `event_time`, `available_at`,

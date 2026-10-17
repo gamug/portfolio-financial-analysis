@@ -333,8 +333,14 @@ def _undo_run(args: argparse.Namespace) -> int:
 
 
 def _print_unscored(r: CycleReport) -> None:
+    """The two data gaps are reported separately (T-153 part 3c, D6)."""
     if r.unscored:
         print(f"  {r.unscored} unscored (ineligible): {', '.join(r.unscored_tickers)}")
+    if r.unpriced:
+        print(
+            f"  {r.unpriced} unpriced (ineligible, no close on the session): "
+            f"{', '.join(r.unpriced_tickers)}"
+        )
 
 
 def _book_line(book: BookResult) -> str:

@@ -898,7 +898,7 @@ def _rank(  # noqa: PLR0913, PLR0917 - one ranking row, every column a test may 
             rank,
             blended,
             json.dumps(components),
-            int(bool(veto_rules and "HARD" in veto_rules)),
+            int(bool(veto_rules and ({"HARD", "UNSCORED", "UNPRICED"} & set(veto_rules)))),
             json.dumps(veto_rules or []),
         ),
     )
@@ -956,15 +956,18 @@ def test_effective_weights_renormalize_over_the_non_null_components(conn: Databa
 def test_blended_score_identity_holds_with_soft_vetoes(conn: Database) -> None:
     """sum(effective weight * component) - soft_veto_penalty * (SOFT vetoes) = blended_score."""
     _cycle(conn, 1, "2026-03-02", "completed", WEIGHTS, soft_veto_penalty=12.5)
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (4, 'DDD')")
     cases: dict[int, tuple[dict[str, float | None], list[str]]] = {  # asset -> (comps, vetoes)
         1: ({"FUNDAMENTAL": 80.0, "TECHNICAL": 40.0, "VALORIZATION": 55.0}, []),
         2: ({"FUNDAMENTAL": 70.0, "TECHNICAL": None, "VALORIZATION": 20.0}, ["LEV_SOFT"]),
         3: ({"FUNDAMENTAL": 30.0, "TECHNICAL": 90.0}, ["A", "B", "HARD", "UNSCORED"]),
+        # a data-gap marker is not a SOFT rule: it takes no penalty off the blend (T-153 part 3c)
+        4: ({"FUNDAMENTAL": 20.0, "TECHNICAL": 10.0}, ["UNPRICED"]),
     }
     for rank, (asset, (comps, rules)) in enumerate(cases.items(), start=1):
         num = sum(WEIGHTS[k] * v for k, v in comps.items() if v is not None)
         den = sum(WEIGHTS[k] for k, v in comps.items() if v is not None)
-        soft = [r for r in rules if r not in ("HARD", "UNSCORED")]
+        soft = [r for r in rules if r not in ("HARD", "UNSCORED", "UNPRICED")]
         _rank(conn, 1, asset, rank, num / den - 12.5 * len(soft), comps, rules)
     conn.commit()
     penalty = conn.execute("SELECT soft_veto_penalty FROM v_weight_scheme").fetchone()[0]
@@ -978,7 +981,9 @@ def test_blended_score_identity_holds_with_soft_vetoes(conn: Database) -> None:
             (r["asset_id"],),
         ).fetchall()
         assert sum(p["effective_weight"] for p in parts) == pytest.approx(1.0)
-        soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
+        soft = [
+            x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED", "UNPRICED")
+        ]
         got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty * len(soft)
         assert got == pytest.approx(r["blended_score"], abs=1e-9)
 
@@ -1013,7 +1018,9 @@ def test_blended_score_identity_uses_each_soft_rules_penalty_points(conn: Databa
             "WHERE cycle_run_id = 1 AND asset_id = ?",
             (r["asset_id"],),
         ).fetchall()
-        soft = [x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED")]
+        soft = [
+            x for x in json.loads(r["veto_rules_json"]) if x not in ("HARD", "UNSCORED", "UNPRICED")
+        ]
         penalty = sum(p if (p := points.get(x)) is not None else default for x in soft)
         got = sum(p["effective_weight"] * p["component_value"] for p in parts) - penalty
         assert got == pytest.approx(r["blended_score"], abs=1e-9)

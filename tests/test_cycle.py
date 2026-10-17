@@ -10,6 +10,7 @@ import pytest
 from conftest import cik_for
 from portfolio_common.db import Database
 
+import cycle.data as cycle_data
 import cycle.orchestrator as cycle_orchestrator
 import kg_schema
 from cycle.cli import _print_unscored, build_parser
@@ -20,7 +21,7 @@ from cycle.orchestrator import CycleReport, run_monitoring, run_replay, run_sele
 from cycle.replay import out_of_order_replay_reason, reset_replay_range
 from cycle.rules import RuleContext, RuleResult, disabled_rule_ids, enabled_rules, seed_catalog
 from cycle.rules.base import VetoHit
-from cycle.rules.builtin import _NegativeFcfRule, _UtilityCashCoverageRule
+from cycle.rules.builtin import _fresh, _NegativeFcfRule, _UtilityCashCoverageRule
 from cycle.scores import sector, technical, valorization
 from cycle.scores.normalize import (
     DEFAULT_WINSOR,
@@ -696,6 +697,15 @@ def _join_sixth_member(conn: Database, udb: Path) -> None:
         "(6, 'FUNDAMENTAL', 72.0, 72.0, '2025-12-31', '2026-07-14T00:00:00Z', 'seed', 'analysis', ?, "
         "'2026-07-15')",
         (fid,),
+    )
+    # a close on every session the cohort's own (T-153 part 3c): the sixth member is eligible
+    # from its first session, so it is not an unpriced gap that would refuse the run
+    conn.execute(
+        "INSERT INTO price_observation (asset_id, obs_date, close, atr_14, realized_vol_90d, "
+        "max_drawdown_90d, momentum_63d, momentum_21d, event_time, computed_at, engine_version) "
+        "SELECT 6, obs_date, close, atr_14, realized_vol_90d, max_drawdown_90d, momentum_63d, "
+        "momentum_21d, event_time, computed_at, engine_version FROM price_observation "
+        "WHERE asset_id = 1"
     )
     conn.commit()
 
@@ -1814,6 +1824,8 @@ def test_a_cycle_records_the_metric_versions_it_read(cycle_seed: Database) -> No
         },
         # the Ring-1 gate version it read quarantines under (T-065/T-116; current = T-150's bump)
         "quality": DATA_QUALITY_GATE_VERSION,
+        # the eligibility rule the run was built on (T-153 part 3c): C11 printed p.36 by analogy
+        "eligibility": cycle_orchestrator.ELIGIBILITY_MANIFEST,
     }
 
 
@@ -2007,3 +2019,192 @@ def test_interrupted_data_read_marks_cycle_failed(
     finally:
         conn.close()
         fresh.close()
+
+
+# -- T-153 part 3c: an unpriced member is ineligible (the session rule) ------------------------
+
+
+def _obs_row(conn: Database, asset: int, day: str, close: float | None = 100.0) -> None:
+    conn.execute(
+        "INSERT INTO price_observation (asset_id, obs_date, close, event_time, computed_at, "
+        "engine_version) VALUES (?, ?, ?, ?, '2026-01-01T00:00:00Z', 'priceobs-v2')",
+        (asset, day, close, day),
+    )
+    conn.commit()
+
+
+def test_eligibility_is_a_close_on_the_cycle_dates_own_session(memory_db: Database) -> None:
+    """C11 printed p.36 by analogy: a member is usable only with a close on session(D).
+
+    A holiday does not exclude a name (its session is the earlier one); a one-day hole does.
+    """
+    conn = memory_db
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA'), (2, 'BBB')")
+    # AAA: the Friday close, asked for on MLK Monday 2026-01-19 (a market holiday)
+    _obs_row(conn, 1, "2026-01-16")
+    # BBB: D-1's close only (Thursday 2026-07-02), asked for on Monday 2026-07-06
+    _obs_row(conn, 2, "2026-07-02")
+    assert cycle_data.unpriced_assets(conn, [1], "2026-01-19", "priceobs-v2") == []
+    assert cycle_data.unpriced_assets(conn, [2], "2026-07-06", "priceobs-v2") == [2]
+    assert cycle_data.unpriced_assets(conn, [1, 2], "2026-07-06", "priceobs-v2") == [1, 2]
+    # a NULL close is not a close, and another engine version is not the cycle's
+    _obs_row(conn, 1, "2026-07-06", close=None)
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-06", "priceobs-v2") == [1]
+    conn.execute("UPDATE price_observation SET engine_version = 'priceobs-v1' WHERE asset_id = 1")
+    conn.commit()
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-06", "priceobs-v2") == [1]
+
+
+def test_the_price_vetoes_keep_their_own_seven_day_window(memory_db: Database) -> None:
+    """The two rules are deliberately different: the vetoes still read a 7-day-old close."""
+    conn = memory_db
+    conn.execute("INSERT INTO assets (id, ticker) VALUES (1, 'AAA')")
+    _obs_row(conn, 1, "2026-06-30")
+    assert cycle_data.unpriced_assets(conn, [1], "2026-07-07", "priceobs-v2") == [
+        1
+    ]  # not session(D)
+    obs = cycle_data.latest_price_observation(conn, "2026-07-07", "priceobs-v2")
+    ctx = RuleContext(
+        cycle_date="2026-07-07",
+        metrics={1: {}},
+        price_obs=obs,
+        last_fundamental={},
+        data_quality={},
+        sectors={1: None},
+        negative_equity={},
+        profiles={},
+        utility_cash_coverage={},
+    )
+    assert _fresh(ctx, obs[1]) is True  # exactly 7 days: the vetoes still evaluate it
+
+
+def test_the_two_gaps_share_one_refusal_counted_once() -> None:
+    """D2: one coverage rule; an asset that is both counts once; both lists are named."""
+    reason = cycle_data.too_many_unrankable_reason([1, 2], [2, 3], 40, 0.05)
+    assert reason is not None
+    assert "3/40" in reason  # {1, 2} | {2, 3} = 3, not 4
+    assert "2 unscored" in reason and "2 unpriced" in reason
+    assert cycle_data.too_many_unrankable_reason([1], [2], 100, 0.05) is None  # 2% is fine
+    assert cycle_data.too_many_unrankable_reason([1, 2], [2, 3], 100, 0.05) is None  # 3% too
+    assert cycle_data.too_many_unrankable_reason([], [], 100, 0.05) is None
+
+
+def test_book_candidates_leave_out_unpriced_and_never_call_it_soft() -> None:
+    """An unpriced row is ineligible like an unscored one: no SOFT penalty, no candidate."""
+    rows = [
+        {"asset_id": 1, "veto_rules": ["UNPRICED"], "blended_score": 60.0},
+        {"asset_id": 2, "veto_rules": ["UNPRICED", "BREAK_TREND_200"], "blended_score": 59.0},
+        {"asset_id": 3, "veto_rules": ["BREAK_TREND_200"], "blended_score": 58.0},
+        {"asset_id": 4, "veto_rules": [], "blended_score": 57.0},
+    ]
+    cands = cycle_orchestrator._book_candidates(rows, {i: f"A{i}" for i in range(1, 5)}, {}, {})
+    assert [c.asset_id for c in cands] == [3, 4]
+    assert cands[0].veto == "SOFT" and cands[1].veto == "none"
+
+
+def test_an_unpriced_member_is_ineligible_and_marked_without_a_veto_row(
+    cycle_seed: Database,
+) -> None:
+    """The whole path: ineligible this cycle, marked UNPRICED, no veto row, never selected."""
+    conn = cycle_seed
+    conn.execute("DELETE FROM price_observation WHERE asset_id = 5 AND obs_date = '2026-06-30'")
+    conn.commit()
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    report = run_selection(settings, "2026-06-30", conn=conn)
+
+    assert report.unpriced == 1 and report.unpriced_tickers == ["EEE"]
+    row = conn.execute(
+        "SELECT vetoed, selected, veto_rules_json FROM v_cycle_ranking WHERE ticker = 'EEE'"
+    ).fetchone()
+    assert row["vetoed"] == 1 and row["selected"] == 0
+    assert json.loads(row["veto_rules_json"]) == ["UNPRICED"]
+    # a data gap is never a veto row: EEE's rows, if any, are catalog rules, never a marker
+    rule_ids = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM veto WHERE asset_id = 5")}
+    assert "UNSCORED" not in rule_ids and "UNPRICED" not in rule_ids
+    catalog = {r["rule_id"] for r in conn.execute("SELECT rule_id FROM rule_catalog")}
+    assert rule_ids <= catalog
+    detail = json.loads(
+        conn.execute(
+            "SELECT detail_json FROM cycle_checkpoint WHERE cycle_run_id = ? AND step = 'rank'",
+            (report.cycle_run_id,),
+        ).fetchone()["detail_json"]
+    )
+    assert detail["unpriced"] == 1 and detail["unscored"] == 0
+
+
+def test_allow_stale_prices_does_not_switch_the_rule_off(cycle_seed: Database) -> None:
+    """A run past the observations leaves every member unpriced, and the flag does not exempt
+    them: the cohort refuses (D4)."""
+    conn = cycle_seed
+    settings = _settings(conn).model_copy(
+        update={"unscored_max_share": 0.05, "allow_stale_prices": True}
+    )
+    with pytest.raises(TooManyUnscored, match=r"5/5.*100\.0%.*5 unpriced"):
+        run_monitoring(settings, "2026-12-31", conn=conn)
+
+
+def test_the_cli_prints_the_two_gaps_separately(capsys: pytest.CaptureFixture[str]) -> None:
+    _print_unscored(
+        CycleReport(
+            1,
+            "SELECTION",
+            "2026-06-30",
+            unscored=1,
+            unscored_tickers=["AAA"],
+            unpriced=2,
+            unpriced_tickers=["BBB", "CCC"],
+        )
+    )
+    out = capsys.readouterr().out
+    assert "1 unscored (ineligible): AAA" in out
+    assert "2 unpriced (ineligible, no close on the session): BBB, CCC" in out
+
+
+def test_a_held_name_that_becomes_unpriced_closes_its_replay_stint(cycle_seed: Database) -> None:
+    """D5: the target book drops it, sync_replay_positions closes the stint at the cycle date,
+    and no price is invented for the close."""
+    conn = cycle_seed
+    settings = _settings(conn).model_copy(update={"unscored_max_share": 0.5})
+    run_replay(settings, "2026-06-30", conn=conn)
+    held = [
+        str(r["ticker"])
+        for r in conn.execute(
+            "SELECT a.ticker FROM portfolio_position_replay p JOIN assets a ON a.id = p.asset_id "
+            "WHERE p.valid_to IS NULL ORDER BY a.ticker"
+        )
+    ]
+    assert held, "the first replay date must hold a book"
+    victim = conn.execute("SELECT id FROM assets WHERE ticker = ?", (held[0],)).fetchone()["id"]
+    conn.execute(
+        "DELETE FROM price_observation WHERE asset_id = ? AND obs_date = '2026-07-01'", (victim,)
+    )
+    conn.commit()
+    report = run_replay(settings, "2026-07-01", conn=conn)
+    assert held[0] in report.unpriced_tickers
+    stint = conn.execute(
+        "SELECT valid_from, valid_to, cost_basis FROM portfolio_position_replay "
+        "WHERE asset_id = ? ORDER BY id DESC LIMIT 1",
+        (victim,),
+    ).fetchone()
+    assert (stint["valid_from"], stint["valid_to"]) == ("2026-06-30", "2026-07-01")
+    # every newly opened stint has a real close, never a carried or zero price
+    for row in conn.execute(
+        "SELECT p.cost_basis FROM portfolio_position_replay p WHERE p.valid_from = '2026-07-01'"
+    ):
+        assert row["cost_basis"] is not None
+
+
+def test_a_manifest_refusal_names_the_field_that_differs(cycle_seed: Database) -> None:
+    """T-153 part 3c's decision 1b: the refusal names the manifest field, not just the tag."""
+    conn = cycle_seed
+    run_selection(_settings(conn), "2026-06-30", conn=conn)
+    # a run recorded before part 3c: its manifest has no `eligibility`, and its tag is not this
+    # code's -- exactly what a pre-3c database holds, so it cannot be re-run under the new rule
+    conn.execute(
+        "UPDATE cycle_run SET params_json = json_remove("
+        "json_set(params_json, '$.manifest_tag', 'pre-3c'), '$.manifest.eligibility') "
+        "WHERE cycle_type = 'SELECTION' AND cycle_date = '2026-06-30'"
+    )
+    conn.commit()
+    with pytest.raises(ManifestMismatch, match=r"manifest field that differs: eligibility"):
+        run_selection(_settings(conn), "2026-06-30", conn=conn)
