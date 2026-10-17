@@ -399,6 +399,9 @@ class ImportReport:
             "last_date": self.last_date,
             "lines_gateway_only": [line.record() for line in self.gateway_only],
             "lines_gateway_only_count": len(self.gateway_only),
+            # per line: rows written, dividends, splits, first and last date -- counts, ids and
+            # dates only, the evidence R1 reports (never a value).
+            "per_line": self.per_line,
         }
 
 

@@ -277,6 +277,14 @@ def _run_task(engine: _Engine, task: _Task) -> None:
         return
 
     if prices.is_empty:
+        # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
+        # import's. `--observations` derives analytics over whatever is stored, so its rows are
+        # written from exactly the normal path (the same function, the same engine version).
+        # T-153 part 3d (D3): a line the gateway cannot serve may still hold bars -- the private
+        # import's. `--observations` derives analytics over whatever is stored, so its rows are
+        # written from exactly the normal path (the same function, the same engine version).
+        if params.observations:
+            _derive_observations(engine, task)
         report.skipped += 1
         db.bump_run_counter(conn, report.run_id, "skipped_units")
         db.record_error(
@@ -351,15 +359,25 @@ def _store(engine: _Engine, task: _Task, prices: DailyPrices) -> None:
     if params.store_daily:
         db.replace_daily_prices(conn, task.asset_id, to_store, run_id=run_id)
     if params.observations:
-        # From the asset's whole stored history, not this run's window: a 252-day momentum needs
-        # 252 earlier bars, and a refresh over a few weeks left those fields NULL (T-131).
-        history = db.load_daily_candles(conn, task.asset_id, end=end)
-        db.upsert_price_observations(
-            conn,
-            task.asset_id,
-            build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
-            run_id=run_id,
-        )
+        _derive_observations(engine, task, end=end)
+
+
+def _derive_observations(engine: _Engine, task: _Task, *, end: str | None = None) -> int:
+    """Derive the asset's `price_observation` series from its *whole stored* history (T-131).
+
+    The one path observations are written by: a member with bars writes them whether the bars
+    arrived from the gateway's fetch or from the private import (T-153 part 3d, D3)."""
+    conn = engine.conn
+    last = end or task.end
+    history = db.load_daily_candles(conn, task.asset_id, end=last)
+    if not history:
+        return 0
+    return db.upsert_price_observations(
+        conn,
+        task.asset_id,
+        build_observations(history, engine_version=db.PRICE_OBSERVATION_ENGINE_VERSION),
+        run_id=engine.report.run_id,
+    )
 
 
 def _reconcile_history(engine: _Engine, task: _Task, fetched: list[Candle]) -> list[Candle]:

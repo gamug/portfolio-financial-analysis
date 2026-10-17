@@ -509,7 +509,7 @@ _MIXED_VENDOR_SQL: dict[str, str] = {
 }
 
 
-def tiingo_import_problems(  # noqa: C901 - one check's own sequence of assertions
+def tiingo_import_problems(  # noqa: C901, PLR0912 - one check's own sequence of assertions
     fin_db_path: str,
 ) -> tuple[int, str | None, list[str]]:
     """The T-153f check: the import's rows never leave through a view, no line mixes vendors, and
@@ -539,47 +539,68 @@ def tiingo_import_problems(  # noqa: C901 - one check's own sequence of assertio
             count = int(row["n"]) if row is not None else 0
             if count:
                 problems.append(f"{count} line(s) mix the gateway's and the import's {name} rows")
-        record = _import_run(conn)
-        if record is None:
+        imports, removals = _import_runs(conn)
+        if not imports:
             problems.append("Tiingo rows are stored but no import run records them")
             return imported, None, problems
-        if record.get("kind") == "tiingo-removal":
-            return imported, "the newest import-related run is a removal", problems
-        for key, table in (
-            ("price_rows", "price_daily"),
-            ("dividend_rows", "corporate_action"),
+        expected = {
+            key: sum(int(run.get(key, 0)) for run in imports)
+            - sum(int(run.get(key, 0)) for run in removals)
+            for key in ("price_rows", "dividend_rows", "split_rows")
+        }
+        for key, action_type in (
+            ("price_rows", None),
+            ("dividend_rows", "DIVIDEND"),
+            ("split_rows", "SPLIT"),
         ):
-            got = conn.execute(
-                f"SELECT COUNT(*) AS n FROM {table} WHERE source = 'tiingo'"  # noqa: S608
-            ).fetchone()
+            if action_type is None:
+                got = conn.execute(
+                    "SELECT COUNT(*) AS n FROM price_daily WHERE source = 'tiingo'"
+                ).fetchone()
+            else:
+                got = conn.execute(
+                    "SELECT COUNT(*) AS n FROM corporate_action "
+                    "WHERE source = 'tiingo' AND action_type = ?",
+                    (action_type,),
+                ).fetchone()
             stored = int(got["n"]) if got is not None else 0
-            if int(record.get(key, -1)) != stored:
+            if expected[key] != stored:
                 problems.append(
-                    f"the run record says {record.get(key)} {key}, the database holds {stored}"
+                    f"the import runs account for {expected[key]} {key}, the database holds {stored}"
                 )
-        if not record.get("file_sha256"):
-            problems.append("the run record carries no file sha256")
+        if not any(run.get("file_sha256") for run in imports):
+            problems.append("no import run records a file sha256")
         return imported, None, problems
     finally:
         conn.close()
 
 
-def _import_run(conn: Any) -> dict[str, Any] | None:
-    """The newest ``pricing_run`` whose params name a Tiingo import or removal, if any."""
+def _import_runs(conn: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Every ``pricing_run`` whose params name a Tiingo import or removal, in run order.
+
+    The counts are summed rather than read from the newest run: an idempotent re-run writes no
+    rows and records zero, and a removal records the rows it deleted -- so imports minus removals
+    is what the database must hold."""
+    imports: list[dict[str, Any]] = []
+    removals: list[dict[str, Any]] = []
     try:
         rows = conn.execute(
-            "SELECT params_json FROM pricing_run WHERE params_json IS NOT NULL ORDER BY id DESC"
+            "SELECT params_json FROM pricing_run WHERE params_json IS NOT NULL ORDER BY id"
         ).fetchall()
     except sqlite3.OperationalError:
-        return None
+        return [], []
     for row in rows:
         try:
             params = json.loads(row["params_json"])
         except (TypeError, ValueError):
             continue
-        if isinstance(params, dict) and params.get("kind") in ("tiingo-import", "tiingo-removal"):
-            return params
-    return None
+        if not isinstance(params, dict):
+            continue
+        if params.get("kind") == "tiingo-import":
+            imports.append(params)
+        elif params.get("kind") == "tiingo-removal":
+            removals.append(params)
+    return imports, removals
 
 
 def queries_tiingo_asset_ids(conn: Any) -> list[int]:

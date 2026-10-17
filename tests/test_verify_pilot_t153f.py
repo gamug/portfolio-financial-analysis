@@ -39,6 +39,7 @@ def _import_run(conn: Database, *, kind: str = "tiingo-import", price_rows: int 
                     "file_sha256": "a" * 64,
                     "price_rows": price_rows,
                     "dividend_rows": 0,
+                    "split_rows": 0,
                 }
             ),
         ),
@@ -147,16 +148,26 @@ def test_a_run_record_that_disagrees_with_the_database_fails(tmp_path: Path) -> 
     _tiingo_bar(conn)
     _import_run(conn, price_rows=99)
     _rows, _reason, problems = tiingo_import_problems(path)
-    assert any("the run record says 99 price_rows, the database holds 1" in p for p in problems), (
-        problems
-    )
+    assert any(
+        "the import runs account for 99 price_rows, the database holds 1" in p for p in problems
+    ), problems
 
 
-def test_a_removal_after_the_import_is_not_judged(tmp_path: Path) -> None:
+def test_a_re_run_that_wrote_nothing_does_not_break_the_record_check(tmp_path: Path) -> None:
+    """An idempotent re-run records zero rows; the counts are summed over the runs, so the
+    database still agrees with what the imports account for."""
     path, conn = _db(tmp_path)
     _tiingo_bar(conn)
     _import_run(conn, price_rows=1)
-    _import_run(conn, kind="tiingo-removal", price_rows=0)
+    _import_run(conn, price_rows=0)  # the second run wrote nothing
+    _rows, reason, problems = tiingo_import_problems(path)
+    assert (reason, problems) == (None, [])
+
+
+def test_a_removal_that_deleted_every_row_is_reported_not_judged(tmp_path: Path) -> None:
+    path, conn = _db(tmp_path)
+    _import_run(conn, price_rows=1)
+    _import_run(conn, kind="tiingo-removal", price_rows=1)  # nothing left in the database
     _rows, reason, problems = tiingo_import_problems(path)
     assert problems == []
-    assert reason is not None and "removal" in reason
+    assert reason is not None and "no Tiingo-sourced price row" in reason
