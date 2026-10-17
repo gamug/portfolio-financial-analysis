@@ -31,6 +31,7 @@ from kg_schema.queries import (
     members_asof,
     members_over_range,
     resolve_asset_ids,
+    tiingo_asset_ids,
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
@@ -477,6 +478,116 @@ def scope_problems(fin_db_path: str, universe_path: str) -> tuple[int, int, list
         end = max([*dates, date.today().isoformat()])
         leavers, scope = _outside_scope(fin, universe, end)
         return len(dates), leavers, [*problems, *scope, *_early_rows(fin)]
+
+
+# -- T-153 part 3d: the private import's rows, and the views that must not return them ---------
+
+#: The views that must not return a Tiingo-sourced row, and the statement that counts one. Each
+#: reads the view the read contract publishes (never a base table), so a filter that regressed
+#: fails here. A static dict: no identifier is interpolated (Code & Git #10).
+_TIINGO_VIEW_SQL: dict[str, str] = {
+    "v_price_observation": "SELECT COUNT(*) AS n FROM v_price_observation WHERE source = 'tiingo'",
+    "v_quant_return_daily": "SELECT COUNT(*) AS n FROM v_quant_return_daily WHERE vendor = 'tiingo'",
+    "v_portfolio_position": (
+        "SELECT COUNT(*) AS n FROM v_portfolio_position p JOIN price_daily pd "
+        "ON pd.asset_id = p.asset_id AND pd.source = 'tiingo' WHERE p.cost_basis IS NOT NULL"
+    ),
+}
+
+#: A line's rows must all come from one vendor (rule 2). ``tiingo`` vs everything else.
+_MIXED_VENDOR_SQL: dict[str, str] = {
+    "price_daily": (
+        "SELECT COUNT(*) AS n FROM (SELECT asset_id FROM price_daily GROUP BY asset_id "
+        "HAVING COUNT(DISTINCT CASE WHEN COALESCE(source, '') = 'tiingo' THEN 'tiingo' "
+        "ELSE 'gateway' END) > 1)"
+    ),
+    "corporate_action": (
+        "SELECT COUNT(*) AS n FROM (SELECT asset_id, action_type FROM corporate_action "
+        "GROUP BY asset_id, action_type HAVING COUNT(DISTINCT CASE WHEN COALESCE(source, '') = "
+        "'tiingo' THEN 'tiingo' ELSE 'gateway' END) > 1)"
+    ),
+}
+
+
+def tiingo_import_problems(  # noqa: C901 - one check's own sequence of assertions
+    fin_db_path: str,
+) -> tuple[int, str | None, list[str]]:
+    """The T-153f check: the import's rows never leave through a view, no line mixes vendors, and
+    the run record equals the database.
+
+    Returns ``(tiingo_rows, not_judged_reason, problems)``. ``not_judged_reason`` is set when the
+    database holds no Tiingo row at all (the pilot, production) or when the newest import-related
+    run is a removal -- the check says so rather than passing silently. Every count it compares is
+    read from the database the import wrote, never from a second copy of the rule.
+    """
+    problems: list[str] = []
+    conn = connect_ro(fin_db_path)
+    try:
+        try:
+            imported = len(queries_tiingo_asset_ids(conn))
+        except sqlite3.OperationalError:
+            return 0, "the database has no price_daily table yet", []
+        if imported == 0:
+            return 0, "no Tiingo-sourced price row is stored", []
+        for name, sql in _TIINGO_VIEW_SQL.items():
+            row = conn.execute(sql).fetchone()
+            count = int(row["n"]) if row is not None else 0
+            if count:
+                problems.append(f"{name} returns {count} Tiingo-sourced row(s)")
+        for name, sql in _MIXED_VENDOR_SQL.items():
+            row = conn.execute(sql).fetchone()
+            count = int(row["n"]) if row is not None else 0
+            if count:
+                problems.append(f"{count} line(s) mix the gateway's and the import's {name} rows")
+        record = _import_run(conn)
+        if record is None:
+            problems.append("Tiingo rows are stored but no import run records them")
+            return imported, None, problems
+        if record.get("kind") == "tiingo-removal":
+            return imported, "the newest import-related run is a removal", problems
+        for key, table in (
+            ("price_rows", "price_daily"),
+            ("dividend_rows", "corporate_action"),
+        ):
+            got = conn.execute(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE source = 'tiingo'"  # noqa: S608
+            ).fetchone()
+            stored = int(got["n"]) if got is not None else 0
+            if int(record.get(key, -1)) != stored:
+                problems.append(
+                    f"the run record says {record.get(key)} {key}, the database holds {stored}"
+                )
+        if not record.get("file_sha256"):
+            problems.append("the run record carries no file sha256")
+        return imported, None, problems
+    finally:
+        conn.close()
+
+
+def _import_run(conn: Any) -> dict[str, Any] | None:
+    """The newest ``pricing_run`` whose params name a Tiingo import or removal, if any."""
+    try:
+        rows = conn.execute(
+            "SELECT params_json FROM pricing_run WHERE params_json IS NOT NULL ORDER BY id DESC"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    for row in rows:
+        try:
+            params = json.loads(row["params_json"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(params, dict) and params.get("kind") in ("tiingo-import", "tiingo-removal"):
+            return params
+    return None
+
+
+def queries_tiingo_asset_ids(conn: Any) -> list[int]:
+    """``kg_schema.queries.tiingo_asset_ids`` -- D8's one way to name the imported lines.
+
+    Called on the connection the check already holds, so the check and T-100 read the same
+    reader rather than a second copy of the rule."""
+    return tiingo_asset_ids(conn)
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -1444,6 +1555,39 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153e", t153e)
+
+    def t153f() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        rows = 0
+        not_judged: list[str] = []
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_rows, reason, problems = tiingo_import_problems(path)
+            rows = max(rows, n_rows)
+            if reason:
+                not_judged.append(f"{prefix}{reason}")
+            bad += [f"{prefix}{m}" for m in problems]
+        if bad:
+            report("T-153f", "FAIL", "; ".join(bad[:6]))
+            return
+        if rows == 0 or not_judged:
+            report(
+                "T-153f",
+                "PASS",
+                f"not judged ({'; '.join(not_judged) if not_judged else 'no import'})",
+            )
+            return
+        report(
+            "T-153f",
+            "PASS",
+            f"{rows} imported line(s): no filtered view returns one, no line mixes vendors, and "
+            "the run record's counts equal the database's",
+        )
+
+    check("T-153f", t153f)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

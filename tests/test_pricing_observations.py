@@ -204,3 +204,49 @@ def test_the_v2_fields_are_written_and_a_rerun_touches_nothing(
     db.upsert_price_observations(conn, aid, obs)
     again = conn.execute("SELECT computed_at FROM price_observation WHERE id = ?", (row["id"],))
     assert again.fetchone()[0] == stamp  # unchanged inputs: the row is not rewritten
+
+
+# -- T-153 part 3d (D4): the source marker a view filters on ---------------------------------
+
+
+def test_the_source_column_is_the_bars_own(memory_pricing_db: Database) -> None:
+    """`price_observation.source` names the vendor of the bar the day is derived from, so
+    `v_price_observation` can drop the private import's rows per row."""
+    conn = memory_pricing_db
+    conn.execute("INSERT INTO assets (ticker) VALUES ('AAPL')")
+    conn.commit()
+    aid = conn.execute("SELECT id FROM assets WHERE ticker = 'AAPL'").fetchone()[0]
+
+    def rows_for(source: str) -> list[Candle]:
+        return [
+            Candle(
+                date=f"2026-09-0{i}",
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.0 + i,
+                volume=1_000.0,
+                source=source,
+            )
+            for i in (1, 2, 3)
+        ]
+
+    db.upsert_price_observations(
+        conn, aid, build_observations(rows_for("tiingo"), engine_version="v1"), engine_version="v1"
+    )
+    marked = {r[0] for r in conn.execute("SELECT DISTINCT source FROM price_observation")}
+    assert marked == {"tiingo"}
+    assert conn.execute("SELECT COUNT(*) FROM v_price_observation").fetchone()[0] == 0
+
+    # the same bars from the gateway rewrite the marker (a collision whose marker differs is a
+    # rewrite, T-131's rule); the values are identical, so only the marker moves
+    db.upsert_price_observations(
+        conn,
+        aid,
+        build_observations(rows_for("yfinance"), engine_version="v1"),
+        engine_version="v1",
+    )
+    assert {r[0] for r in conn.execute("SELECT DISTINCT source FROM price_observation")} == {
+        "yfinance"
+    }
+    assert conn.execute("SELECT COUNT(*) FROM v_price_observation").fetchone()[0] == 3
