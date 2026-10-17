@@ -119,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete every row the Tiingo import created (rule 5 / D9); prints what remains",
     )
     remove_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    remove_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
     remove_cmd.add_argument(
         "--dry-run", action="store_true", help="report the rows that would be deleted; delete none"
     )
