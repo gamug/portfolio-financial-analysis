@@ -2309,11 +2309,13 @@ sees the writer's just-committed row.
   artifact's hero dek, "What it does today" `kg_schema` bullet, SVG
   `aria-label`/node tooltip, and "Other useful details" bullet now say
   `v1.2.2`, plus a new footer changelog entry; the Portfolio Thesis
-  system-wide overview's build-state table and this repo's row description
-  likewise updated, plus its own footer changelog entry. Neither pass touched
-  `portfolio-knowledge-graph`'s row/pin — that repo's `portfolio-common`
-  version has not been checked from this session and the Thesis artifact
-  says so rather than asserting it.
+  system-wide overview's build-state table, this repo's row description, and
+  (round 6 of this PR's review) its hero statline pill — previously the one
+  undated version pill on that page, contradicting the build-state table two
+  sections below it — all updated, plus its own footer changelog entry.
+  Neither pass touched `portfolio-knowledge-graph`'s row/pin — that repo's
+  `portfolio-common` version has not been checked from this session and both
+  artifacts say so rather than asserting it.
 
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
