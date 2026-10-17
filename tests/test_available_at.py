@@ -16,7 +16,7 @@ from cycle.orchestrator import run_selection
 from fundamental_agent import db
 from fundamental_agent.db import FilingKey, FilingMeta, SnapshotRow
 from fundamental_agent.metrics.base import MetricResult
-from kg_schema import apply_migrations, availability, queries
+from kg_schema import apply_migrations, availability, migrations, queries
 from kg_schema.availability import AvailabilityMissing
 from kg_schema.market_cap import market_caps_as_of
 
@@ -202,8 +202,8 @@ def test_m008_backfills_every_row_and_restores_the_guards(scored: tuple[Database
         "fundamental_metrics": 1,
         "score_snapshot": 1,
     }
-    assert apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14, 15, 16]
-    assert queries.current_version(conn) == 16
+    assert apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     assert {v for _, v in _available(conn)} == {"2026-02-23"}
     assert availability.missing(conn) == {}
     triggers = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}

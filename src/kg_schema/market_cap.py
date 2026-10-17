@@ -25,7 +25,7 @@ modelled).
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from statistics import median
@@ -33,7 +33,7 @@ from typing import Any
 
 from portfolio_common.db import Database
 
-from . import availability, queries
+from . import availability, corporate_actions, queries
 
 #: Newest cover count a cap may rest on: a quarter plus the filing lag plus slack. The normal worst
 #: case is a count dated at one filing, still the latest one just before the next is available.
@@ -45,6 +45,9 @@ DEFAULT_CORPACT_ENGINE = "corpact-v1"
 NO_COVER_SHARES = "no_cover_shares"
 STALE_SHARES = "stale_shares"
 NO_RECENT_PRICE = "no_recent_price"
+#: A recorded SPLIT row the tracked event list cannot explain (T-153 part 3d, D10): the cap is
+#: refused rather than computed with a factor whose class nobody stated (MKT-02).
+UNCLASSIFIED_ACTION = "unclassified_corporate_action"
 
 
 @dataclass(frozen=True)
@@ -62,6 +65,13 @@ class MarketCap:
     close_date: str
     n_classes: int  # non-total classes summed into share_count; 0 for one class or a filed total
     split_factor: float
+    # The spin-off factor (T-153 part 3d, D10): the ratio the recorded event adjusts the price
+    # by, applied only while the close is on the pre-event basis. 1.0 when none applies.
+    spinoff_factor: float = 1.0
+    # The vendor of the close the cap used (T-153 part 3d, A3): ``'tiingo'`` when it came from the
+    # private import. ``cycle``'s and quant's readers do not change; the fundamental agent's
+    # narrative withholds the valuation group for such a filing.
+    close_source: str | None = None
     cik: str | None = None  # the issuer: two listings of one company share it (GOOG/GOOGL)
     incomplete_classes: bool = False
     n_excluded: int = 0
@@ -240,11 +250,53 @@ def _latest(counts: list[_Count]) -> _Count:
     return max(counts, key=lambda c: (c.as_of_date, c.available_at, c.filing_id))
 
 
+def _action_factors(
+    db: Database,
+    asset_ids: list[int],
+    engine_versions: Sequence[str],
+    events: tuple[corporate_actions.CorporateActionEvent, ...],
+) -> dict[int, _ActionFactors]:
+    """Each asset's recorded SPLIT rows, partitioned by the event list's class (T-153 part 3d, D10).
+
+    A split or reverse split multiplies the count for a cap dated on either side of the event;
+    a spin-off multiplies it **only** while the close it is paired with is still on the pre-event
+    basis (the vendor adjusts the price series, the count does not change). A row the list does
+    not explain is kept apart, and the caller refuses the cap rather than apply a guess."""
+    out: dict[int, _ActionFactors] = defaultdict(_ActionFactors)
+    for r in queries.split_rows_from(db, asset_ids, engine_versions=engine_versions):
+        value = float(r["value"])
+        if value <= 0:
+            continue
+        asset_id = int(r["asset_id"])
+        ex_date = str(r["ex_date"])
+        event = corporate_actions.explained(
+            events, cik=str(r["cik"] or ""), ex_date=ex_date, value=value
+        )
+        if event is None:
+            out[asset_id].unexplained.append((ex_date, value))
+        elif event.event_class == corporate_actions.SPINOFF:
+            out[asset_id].spinoffs.append((ex_date, value))
+        else:
+            out[asset_id].splits.append((ex_date, value))
+    return out
+
+
+@dataclass
+class _ActionFactors:
+    """One asset's recorded action factors, by class (and the ones the list cannot explain)."""
+
+    splits: list[tuple[str, float]] = field(default_factory=list)
+    spinoffs: list[tuple[str, float]] = field(default_factory=list)
+    unexplained: list[tuple[str, float]] = field(default_factory=list)
+
+
 def _split_factors(
-    db: Database, asset_ids: list[int], engine_version: str
+    db: Database, asset_ids: list[int], engine_version: Sequence[str] | str
 ) -> dict[int, list[tuple[str, float]]]:
+    """Every recorded split factor per asset (kept for readers that want the raw list)."""
+    engines = (engine_version,) if isinstance(engine_version, str) else tuple(engine_version)
     out: dict[int, list[tuple[str, float]]] = defaultdict(list)
-    for r in queries.split_rows(db, asset_ids, engine_version=engine_version):
+    for r in queries.split_rows_from(db, asset_ids, engine_versions=engines):
         if float(r["value"]) > 0:
             out[int(r["asset_id"])].append((str(r["ex_date"]), float(r["value"])))
     return out
@@ -264,11 +316,14 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
     factor: float,
     close: float,
     ticker_to_asset: dict[str, int],
-    closes: dict[int, tuple[str, float]],
-    splits: dict[int, list[tuple[str, float]]],
+    closes: dict[int, tuple[str, float, str | None]],
+    actions: dict[int, _ActionFactors],
     basis_end: dict[int, str],
 ) -> tuple[float | None, bool]:
-    """Value a CIK in CLASS_LISTING class by class (MKT-03)."""
+    """Value a CIK in CLASS_LISTING class by class (MKT-03).
+
+    Each class's own factors apply (T-153 part 3d, D10): its splits after the count's date, its
+    spin-offs while its close is on the pre-event basis."""
     cik_norm = str(count.cik).zfill(10) if count.cik else ""
     class_map = CLASS_LISTING.get(cik_norm, {})
     conv_map = CLASS_CONVERSION.get(cik_norm, {})
@@ -289,12 +344,18 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
             if class_aid is None or class_aid not in closes:
                 return None, False
             c_close = closes[class_aid][1]
+            c_factors = actions.get(class_aid, _ActionFactors())
             c_fac = _factor(
-                splits.get(class_aid, []),
+                c_factors.splits,
                 after=count.as_of_date,
                 through=basis_end.get(class_aid),
             )
-            total_val += val * c_fac * c_close
+            c_spinoff = _factor(
+                c_factors.spinoffs,
+                after=closes[class_aid][0],
+                through=basis_end.get(class_aid),
+            )
+            total_val += val * c_fac * c_spinoff * c_close
         elif member in conv_map:
             total_val += val * conv_map[member] * factor * close
         else:
@@ -345,11 +406,19 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
     counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))
     floor = (date.fromisoformat(as_of) - timedelta(days=max_price_age_days)).isoformat()
     closes = {
-        int(r["asset_id"]): (str(r["date"]), float(r["close"]))
+        int(r["asset_id"]): (str(r["date"]), float(r["close"]), r["source"])
         for r in queries.last_closes(db, all_needed_assets, as_of=as_of, floor=floor)
     }
     basis_end = queries.last_price_dates(db, all_needed_assets)
-    splits = _split_factors(db, all_needed_assets, corpact_engine_version)
+    engines = (
+        (corpact_engine_version,)
+        if isinstance(corpact_engine_version, str)
+        else tuple(corpact_engine_version)
+    )
+    engine_versions = tuple(dict.fromkeys((*engines, *corporate_actions.READABLE_ENGINES)))
+    actions = _action_factors(
+        db, all_needed_assets, engine_versions, corporate_actions.read_events()
+    )
 
     for aid in wanted:
         if aid not in counts:
@@ -363,13 +432,20 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
         if aid not in closes:
             result.missing[aid] = NO_RECENT_PRICE
             continue
-        close_date, close = closes[aid]
-        factor = _factor(splits.get(aid, []), after=count.as_of_date, through=basis_end.get(aid))
-        shares = count.value * factor
+        close_date, close, close_source = closes[aid]
+        factors = actions.get(aid, _ActionFactors())
+        if factors.unexplained:
+            # MKT-02: the count and the price must be on one basis, and only the event list says
+            # which basis a recorded factor puts the count on. Never a guessed class.
+            result.missing[aid] = UNCLASSIFIED_ACTION
+            continue
+        factor = _factor(factors.splits, after=count.as_of_date, through=basis_end.get(aid))
+        spinoff_factor = _factor(factors.spinoffs, after=close_date, through=basis_end.get(aid))
+        shares = count.value * factor * spinoff_factor
         cik_norm = str(count.cik).zfill(10) if count.cik else ""
         if cik_norm in CLASS_LISTING:
             val, incomplete = _class_by_class_val(
-                count, factor, close, ticker_to_asset, closes, splits, basis_end
+                count, factor, close, ticker_to_asset, closes, actions, basis_end
             )
             if val is None:
                 result.missing[aid] = NO_RECENT_PRICE
@@ -390,6 +466,8 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             close_date=close_date,
             n_classes=count.n_classes,
             split_factor=factor,
+            spinoff_factor=spinoff_factor,
+            close_source=None if close_source is None else str(close_source),
             cik=count.cik,
             incomplete_classes=incomplete,
             n_excluded=count.n_excluded,

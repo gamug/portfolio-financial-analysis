@@ -251,8 +251,20 @@ def test_cycle_and_quant_read_the_same_caps(seeded: Database) -> None:
 
 
 def _cap(asset_id: int, value: float, cik: str | None) -> MarketCap:
+    # by keyword: the provenance fields keep growing as readers record more of their inputs
     return MarketCap(
-        asset_id, value, 1.0, 1.0, "2026-01-01", 1, 1, value, "2026-01-02", 0, 1.0, cik
+        asset_id=asset_id,
+        value=value,
+        shares=1.0,
+        share_count=1.0,
+        share_as_of="2026-01-01",
+        share_age_days=1,
+        filing_id=1,
+        close=value,
+        close_date="2026-01-02",
+        n_classes=0,
+        split_factor=1.0,
+        cik=cik,
     )
 
 

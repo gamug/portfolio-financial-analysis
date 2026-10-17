@@ -45,14 +45,18 @@ def _named(items: list[str]) -> str:
 
 
 def _refused(conn: Database, ticker: str) -> bool:
-    """The member's latest recorded pricing error is a ``split_jump`` refusal (T-131)."""
+    """The member's latest recorded pricing error is a refusal the step would repeat (T-131).
+
+    ``split_jump`` (a series the gateway still returns unadjusted) and, from T-153 part 3d's rule
+    2, ``tiingo_stitch`` (a line the gateway now serves but that holds imported rows): in both the
+    step would write nothing again, so the member is listed and does not count as pending."""
     if not conn.relation_exists("pricing_run_error"):
         return False
     row = conn.execute(
         "SELECT stage FROM pricing_run_error WHERE ticker = ? ORDER BY id DESC LIMIT 1",
         (ticker,),
     ).fetchone()
-    return row is not None and row["stage"] == "split_jump"
+    return row is not None and row["stage"] in ("split_jump", "tiingo_stitch")
 
 
 @dataclass

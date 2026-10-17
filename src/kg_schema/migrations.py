@@ -972,6 +972,19 @@ def _m016_ticker_history(db: Database) -> None:
     has the table."""
 
 
+# -- m017: marker for the Tiingo read-contract change (T-153 part 3d) ----------
+
+
+def _m017_tiingo_read_contract(db: Database) -> None:
+    """No structural change: ``quant_return_daily.vendor`` comes from ``REQUIRED_COLUMNS`` on
+    every ``ensure``, and the three view filters come from ``views.py`` on every ``ensure``, so a
+    fresh database already has them. This only raises the floor to 17 -- the knowledge-graph repo
+    asserts it to know the price views drop the private import's rows (m010/m015/m016's pattern).
+    The filters and the NULLing are value changes inside the existing column lists; only
+    ``vendor`` is appended, at the end, as the contract's versioning rule allows."""
+    _ = db
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -1043,6 +1056,12 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         16,
         "marker: the as-of ticker history -- ticker_history and v_ticker_history (T-153 part 2)",
         _m016_ticker_history,
+    ),
+    (
+        17,
+        "marker: the Tiingo read contract -- v_* price views drop the private import's rows, "
+        "quant_return_daily.vendor (T-153 part 3d)",
+        _m017_tiingo_read_contract,
     ),
 ]
 

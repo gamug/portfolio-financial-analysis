@@ -14,12 +14,13 @@ import pytest
 from conftest import seed_cover_shares
 from portfolio_common.db import Database
 
-from kg_schema import queries
+from kg_schema import corporate_actions, queries
 from kg_schema.availability import AvailabilityMissing
 from kg_schema.market_cap import (
     NO_COVER_SHARES,
     NO_RECENT_PRICE,
     STALE_SHARES,
+    UNCLASSIFIED_ACTION,
     ShareCount,
     cover_total,
     market_caps_as_of,
@@ -44,9 +45,67 @@ def _split(
     )
 
 
+#: The synthetic events the split tests register: (CIK, ex_date) -> (ratio, class). The
+#: reader is CIK-keyed (a CIK's two share classes share one event), so a fixture asset needs
+#: its CIK and every synthetic SPLIT row its event, exactly as production's list does.
+SYNTHETIC_EVENTS: dict[tuple[str, str], tuple[float, str]] = {
+    ("0000000001", "2026-08-15"): (2.0, corporate_actions.SPLIT),
+    ("0000000001", "2026-07-01"): (2.0, corporate_actions.SPLIT),
+    ("0000000001", "2026-10-05"): (2.0, corporate_actions.SPLIT),
+    ("0000000001", "2026-08-10"): (2.0, corporate_actions.SPLIT),
+    ("0000000001", "2026-09-10"): (3.0, corporate_actions.SPLIT),
+    # T-153 part 3d (D10): the real events, at their own CIKs and ratios.
+    ("0000313616", "2023-10-02"): (1.128, corporate_actions.SPINOFF),  # DHR / Veralto
+    ("0000055067", "2023-10-02"): (1.065, corporate_actions.SPINOFF),  # K / WK Kellogg
+    ("0001666700", "2025-11-03"): (2.39, corporate_actions.SPINOFF),  # DD / Qnity
+    ("0001045810", "2024-06-10"): (10.0, corporate_actions.SPLIT),  # NVDA, a true split
+    ("0001666700", "2026-06-24"): (1 / 3, corporate_actions.REVERSE_SPLIT),  # DD, 1-for-3
+}
+
+#: The assets the D10 tests use, with the CIK each event list row is keyed by.
+D10_ASSETS = {
+    101: ("DHR", "0000313616"),
+    102: ("K", "0000055067"),
+    103: ("DD", "0001666700"),
+    104: ("NVDA", "0001045810"),
+}
+
+DHR, K_TICKER, DD, NVDA = 101, 102, 103, 104
+
+PG_CIK = "0000000001"
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Register the fixtures' synthetic events, so the reader explains them (T-153 part 3d)."""
+    events = tuple(
+        corporate_actions.CorporateActionEvent(
+            cik=cik,
+            ticker="PG",
+            ex_date=ex_date,
+            value=value,
+            event_class=event_class,
+            evidence_form="10-Q",
+            evidence_url="https://www.sec.gov/Archives/edgar/data/1/x.htm",
+            evidence_date="2026-08-01",
+            evidence_quote="the Company effected a stock split",
+            rules="MKT-02;C11",
+        )
+        for (cik, ex_date), (value, event_class) in SYNTHETIC_EVENTS.items()
+    )
+    monkeypatch.setattr(corporate_actions, "read_events", lambda path=None: events)
+
+
 @pytest.fixture
 def conn(memory_quant_db: Database) -> Database:
-    memory_quant_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'PG'), (2, 'GOOGL')")
+    memory_quant_db.execute(
+        "INSERT INTO assets (id, ticker, cik) VALUES (1, 'PG', ?), (2, 'GOOGL', ?)",
+        (PG_CIK, "0001652044"),
+    )
+    for asset_id, (ticker, cik) in D10_ASSETS.items():
+        memory_quant_db.execute(
+            "INSERT INTO assets (id, ticker, cik) VALUES (?, ?, ?)", (asset_id, ticker, cik)
+        )
     return memory_quant_db
 
 
@@ -404,3 +463,95 @@ def test_a_database_without_the_tables_values_nothing() -> None:
     assert queries.last_closes(Database(raw), [1], as_of=AS_OF, floor="2026-01-01") == []
     assert queries.last_price_dates(Database(raw), [1]) == {}
     assert queries.split_rows(Database(raw), [1], engine_version="corpact-v1") == []
+
+
+# -- T-153 part 3d (D10): the spin-off factor's date, and the guard ---------------------------
+
+
+def test_a_spinoff_factor_applies_only_while_the_close_is_before_the_ex_date(
+    conn: Database,
+) -> None:
+    """DHR / Veralto, 1.128 on 2023-10-02. Both vendors adjust the price *series* for a spin-off
+    (it stays continuous) while the parent's share count does not change, so the recorded factor
+    belongs on the count only while the close it is paired with is still pre-event.
+
+    Master multiplies the count by 1.128 whichever close it pairs with: 12.8% too high on the
+    after-date case below.
+    """
+    _split(conn, DHR, "2023-10-02", 1.128)
+    # A count filed before the event, and a close *after* it: the close is raw, so no factor.
+    seed_cover_shares(conn, DHR, 100.0, as_of_date="2023-08-01", filing_date="2023-08-03")
+    _price(conn, DHR, "2023-10-04", 1_000.0)
+    cap = market_caps_as_of(conn, [DHR], as_of="2023-10-04").caps[DHR]
+    assert (cap.split_factor, cap.spinoff_factor) == (1.0, 1.0)
+    assert cap.value == pytest.approx(100.0 * 1_000.0)  # the filed count x the raw close
+    # A close *before* it: the stored close is the vendor's adjusted one (raw / 1.128), and the
+    # factor puts the count back on the raw basis -- the same cap as the filed count x raw.
+    _price(conn, DHR, "2023-09-29", 1_000.0 / 1.128)
+    _res = market_caps_as_of(conn, [DHR], as_of="2023-09-29")
+    before = _res.caps[DHR]
+    assert before.spinoff_factor == pytest.approx(1.128)
+    assert before.value == pytest.approx(100.0 * 1_000.0)
+
+
+def test_a_spinoff_after_a_newer_count_is_applied_the_same_way(conn: Database) -> None:
+    """DD / Qnity, 2.39 on 2025-11-03: the after-date case is the one the ruling measured
+    (+139% until a newer filing's count arrives)."""
+    _split(conn, DD, "2025-11-03", 2.39)
+    seed_cover_shares(conn, DD, 50.0, as_of_date="2025-08-01", filing_date="2025-08-05")
+    _price(conn, DD, "2025-11-05", 200.0)
+    cap = market_caps_as_of(conn, [DD], as_of="2025-11-05").caps[DD]
+    assert cap.spinoff_factor == 1.0
+    assert cap.value == pytest.approx(50.0 * 200.0)
+    _price(conn, DD, "2025-10-31", 200.0 / 2.39)
+    _res = market_caps_as_of(conn, [DD], as_of="2025-10-31")
+    assert _res.missing == {}, _res.missing
+    before = _res.caps[DD]
+    assert before.spinoff_factor == pytest.approx(2.39)
+    assert before.value == pytest.approx(50.0 * 200.0)
+
+
+def test_a_true_split_still_applies_on_both_sides_and_a_reverse_split_divides(
+    conn: Database,
+) -> None:
+    """NVDA 10-for-1 (2024-06-10) and DD's 1-for-3 (2026-06-24): neither is a distribution, so
+    the count is put on the price's basis whichever side of the event the close falls."""
+    _split(conn, NVDA, "2024-06-10", 10.0)
+    seed_cover_shares(conn, NVDA, 10.0, as_of_date="2024-05-31", filing_date="2024-05-31")
+    _price(conn, NVDA, "2024-06-11", 12.0)
+    forward = market_caps_as_of(conn, [NVDA], as_of="2024-06-11").caps[NVDA]
+    assert (forward.split_factor, forward.spinoff_factor) == (10.0, 1.0)
+    assert forward.value == pytest.approx(10.0 * 10.0 * 12.0)
+
+    _split(conn, K_TICKER, "2023-10-02", 1.065)  # K / WK Kellogg, a spin-off recorded as a split
+    seed_cover_shares(conn, K_TICKER, 300.0, as_of_date="2023-08-01", filing_date="2023-08-03")
+    _price(conn, K_TICKER, "2023-10-03", 40.0)
+    after = market_caps_as_of(conn, [K_TICKER], as_of="2023-10-03").caps[K_TICKER]
+    assert (after.split_factor, after.spinoff_factor) == (1.0, 1.0)
+    assert after.value == pytest.approx(300.0 * 40.0)
+
+    _split(conn, DD, "2026-06-24", 1 / 3)
+    seed_cover_shares(conn, DD, 300.0, as_of_date="2026-06-01", filing_date="2026-06-01")
+    _price(conn, DD, "2026-06-25", 40.0)
+    reverse = market_caps_as_of(conn, [DD], as_of="2026-06-25").caps[DD]
+    assert reverse.split_factor == pytest.approx(1 / 3)
+    assert reverse.value == pytest.approx(100.0 * 40.0)
+
+
+def test_a_split_row_the_event_list_does_not_explain_refuses_the_cap(conn: Database) -> None:
+    """D10's guard: a factor whose class nobody stated is never applied on a guess (MKT-02)."""
+    seed_cover_shares(conn, 1, 100.0, as_of_date="2026-07-31")
+    _price(conn, 1, AS_OF, 50.0)
+    _split(conn, 1, "2026-08-20", 1.5)  # not in SYNTHETIC_EVENTS
+    res = market_caps_as_of(conn, [1], as_of=AS_OF)
+    assert res.missing == {1: UNCLASSIFIED_ACTION}
+    assert res.caps == {}
+
+
+def test_a_recorded_factor_that_drifted_from_the_list_is_unexplained(conn: Database) -> None:
+    """The list carries the vendor's own ratio: a row whose ratio no longer matches is not
+    explained by it, and refuses the cap the same way."""
+    seed_cover_shares(conn, 1, 100.0, as_of_date="2026-07-31")
+    _price(conn, 1, AS_OF, 50.0)
+    _split(conn, 1, "2026-08-15", 2.5)  # the list says 2.0
+    assert market_caps_as_of(conn, [1], as_of=AS_OF).missing == {1: UNCLASSIFIED_ACTION}

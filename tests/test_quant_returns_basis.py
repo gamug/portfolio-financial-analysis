@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 from portfolio_common.db import Database
 
+from kg_schema.db import connect
+from pricing_agent.db import ensure_schema
 from quant.config import QuantSettings
+from quant.db import line_vendor, upsert_return_daily
 from quant.returns import _snap_to_calendar, build_total_return_series, run_build_returns
 
 
@@ -80,3 +83,45 @@ def test_run_build_returns_end_to_end(
     # re-run is a no-op
     again = run_build_returns(settings, date_from="2024-01-01", date_to="2025-12-31", conn=conn)
     assert again.rows_written == 0
+
+
+# -- T-153 part 3d (D4/D6): the vendor marker and the import's dividends -----------------------
+
+
+def test_an_imported_lines_return_rows_are_marked_and_its_dividends_fold_in(
+    tmp_path: Path,
+) -> None:
+    """D6: the import's dividend reaches the total return through the normal path, and D4 marks
+    the row by its line's own price_daily source so `v_quant_return_daily` can drop it."""
+    conn = connect(tmp_path / "financial.db")
+    ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO assets (id, ticker, cik) VALUES (1, 'K', '0000055067'), "
+        "(2, 'AAPL', '0000320193')"
+    )
+    # line 1's bars are the import's; line 2's the gateway's
+    conn.execute(
+        "INSERT INTO price_daily (asset_id, date, close, source) VALUES "
+        "(1, '2026-09-01', 100.0, 'tiingo'), (1, '2026-09-02', 101.0, 'tiingo'), "
+        "(2, '2026-09-01', 100.0, 'yfinance'), (2, '2026-09-02', 101.0, 'yfinance')"
+    )
+    conn.commit()
+    assert line_vendor(conn, 1) == "tiingo" and line_vendor(conn, 2) is None
+
+    rows = build_total_return_series(
+        [("2026-09-01", 100.0), ("2026-09-02", 101.0)], {"2026-09-02": 0.5}, {}
+    )
+    assert rows[1].tr_log_return == pytest.approx(math.log((101.0 + 0.5) / 100.0))
+    upsert_return_daily(conn, 1, rows, engine_version="qret-v2", vendor=line_vendor(conn, 1))
+    upsert_return_daily(conn, 2, rows, engine_version="qret-v2", vendor=line_vendor(conn, 2))
+    marked = {
+        int(r[0]): r[1]
+        for r in conn.execute(
+            "SELECT DISTINCT asset_id, vendor FROM quant_return_daily ORDER BY asset_id"
+        )
+    }
+    assert marked == {1: "tiingo", 2: None}
+    # the view drops the import's rows and keeps the gateway's
+    assert [
+        int(r[0]) for r in conn.execute("SELECT DISTINCT asset_id FROM v_quant_return_daily")
+    ] == [2]

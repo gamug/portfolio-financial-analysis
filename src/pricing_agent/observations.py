@@ -59,6 +59,9 @@ class Observation:
     vol_5d: float | None = None
     mu_60d_base: float | None = None
     vol_60d_base: float | None = None
+    # The vendor of the bar this day is derived from (T-153 part 3d, D4): written to
+    # ``price_observation.source`` so a view can filter the Tiingo rows per row.
+    source: str | None = None
 
 
 def true_range(high: float, low: float, prev_close: float | None) -> float:
@@ -172,6 +175,7 @@ def build_observations(candles: list[Candle], *, engine_version: str) -> list[Ob
                 vol_5d=recent_stats[1] if recent_stats is not None else None,
                 mu_60d_base=base_stats[0] if base_stats is not None else None,
                 vol_60d_base=base_stats[1] if base_stats is not None else None,
+                source=c.source,
             )
         )
     return out

@@ -1,0 +1,2317 @@
+{
+ "archive_db": "/workspaces/thesis/data/archive/t153c_r4_gateway_2026-10-14/financial.db",
+ "archive_sha256": "6bddc77c3d69f428313af52ad99cf05c23a38cfcba6d1544c49e0dcf9383cd6a",
+ "calendar": "kg_schema.trading_calendar (NYSE sessions)",
+ "companies": 86,
+ "control": {
+  "expected_days": 30,
+  "priced_days": 30,
+  "range": "2026-09-01..2026-10-13",
+  "ticker": "AAPL"
+ },
+ "detail": [
+  {
+   "archive": {
+    "days": 779,
+    "first": "2019-01-02",
+    "last": "2022-02-02"
+   },
+   "ask_for": "GAP",
+   "cik": "0000039911",
+   "company": "Gap",
+   "expected_days": 779,
+   "gateway": {
+    "days": 779,
+    "first": "2019-01-02",
+    "last": "2022-02-02"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-02-02",
+   "status": "full",
+   "symbols": [
+    "GPS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "XLNX",
+   "cik": "0000743988",
+   "company": "Xilinx",
+   "expected_days": 787,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-02-14",
+   "status": "zero",
+   "symbols": [
+    "XLNX"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "INFO",
+   "cik": "0001598014",
+   "company": "IHS Markit",
+   "expected_days": 797,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-03-01",
+   "status": "zero",
+   "symbols": [
+    "INFO"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "PBCT",
+   "cik": "0001378946",
+   "company": "People's United Financial",
+   "expected_days": 820,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-04-03",
+   "status": "zero",
+   "symbols": [
+    "PBCT"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "DISCK",
+   "cik": "0001437107",
+   "company": "Discovery, Inc.",
+   "expected_days": 825,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-04-10",
+   "status": "zero",
+   "symbols": [
+    "DISCK"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "CERN",
+   "cik": "0000804753",
+   "company": "Cerner",
+   "expected_days": 865,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-06-07",
+   "status": "zero",
+   "symbols": [
+    "CERN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "ask_for": "IPGP",
+   "cik": "0001111928",
+   "company": "IPG Photonics",
+   "expected_days": 873,
+   "gateway": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-06-20",
+   "status": "full",
+   "symbols": [
+    "IPGP"
+   ]
+  },
+  {
+   "archive": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "ask_for": "UA",
+   "cik": "0001336917",
+   "company": "Under Armour(Class C)",
+   "expected_days": 873,
+   "gateway": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-06-20",
+   "status": "full",
+   "symbols": [
+    "UA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "ask_for": "UAA",
+   "cik": "0001336917",
+   "company": "Under Armour(Class A)",
+   "expected_days": 873,
+   "gateway": {
+    "days": 873,
+    "first": "2019-01-02",
+    "last": "2022-06-17"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-06-20",
+   "status": "full",
+   "symbols": [
+    "UAA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 935,
+    "first": "2019-01-02",
+    "last": "2022-09-16"
+   },
+   "ask_for": "PENN",
+   "cik": "0000921738",
+   "company": "Penn Entertainment",
+   "expected_days": 935,
+   "gateway": {
+    "days": 935,
+    "first": "2019-01-02",
+    "last": "2022-09-16"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-09-18",
+   "status": "full",
+   "symbols": [
+    "PENN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 935,
+    "first": "2019-01-02",
+    "last": "2022-09-16"
+   },
+   "ask_for": "PVH",
+   "cik": "0000078239",
+   "company": "PVH",
+   "expected_days": 935,
+   "gateway": {
+    "days": 935,
+    "first": "2019-01-02",
+    "last": "2022-09-16"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-09-18",
+   "status": "full",
+   "symbols": [
+    "PVH"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "CTXS",
+   "cik": "0000877890",
+   "company": "Citrix Systems",
+   "expected_days": 945,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-10-02",
+   "status": "zero",
+   "symbols": [
+    "CTXS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "DRE",
+   "cik": "0000783280",
+   "company": "Duke Realty",
+   "expected_days": 945,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-10-02",
+   "status": "zero",
+   "symbols": [
+    "DRE"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "NLSN",
+   "cik": "0001492633",
+   "company": "Nielsen Holdings",
+   "expected_days": 952,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-10-11",
+   "status": "zero",
+   "symbols": [
+    "NLSN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "TWTR",
+   "cik": "0001418091",
+   "company": "Twitter",
+   "expected_days": 966,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-10-31",
+   "status": "zero",
+   "symbols": [
+    "TWTR"
+   ]
+  },
+  {
+   "archive": {
+    "days": 999,
+    "first": "2019-01-02",
+    "last": "2022-12-16"
+   },
+   "ask_for": "FBIN",
+   "cik": "0001519751",
+   "company": "Fortune Brands Home & Security",
+   "expected_days": 999,
+   "gateway": {
+    "days": 999,
+    "first": "2019-01-02",
+    "last": "2022-12-16"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-12-18",
+   "status": "full",
+   "symbols": [
+    "FBHS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 6,
+    "first": "2022-12-09",
+    "last": "2022-12-16"
+   },
+   "ask_for": "MBC",
+   "cik": "0001941365",
+   "company": "MasterBrand",
+   "expected_days": 999,
+   "gateway": {
+    "days": 6,
+    "first": "2022-12-09",
+    "last": "2022-12-16"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-12-18",
+   "status": "partial",
+   "symbols": [
+    "MBC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "ABMD",
+   "cik": "0000815094",
+   "company": "Abiomed",
+   "expected_days": 1002,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2022-12-21",
+   "status": "zero",
+   "symbols": [
+    "ABMD"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1010,
+    "first": "2019-01-02",
+    "last": "2023-01-04"
+   },
+   "ask_for": "VNO",
+   "cik": "0000899689",
+   "company": "Vornado Realty Trust",
+   "expected_days": 1010,
+   "gateway": {
+    "days": 1010,
+    "first": "2019-01-02",
+    "last": "2023-01-04"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-01-04",
+   "status": "full",
+   "symbols": [
+    "VNO"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "SBNY",
+   "cik": "0001288784",
+   "company": "Signature Bank",
+   "expected_days": 1057,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-03-14",
+   "status": "zero",
+   "symbols": [
+    "SBNY"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "SIVB",
+   "cik": "0000719739",
+   "company": "SVB Financial Group",
+   "expected_days": 1057,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-03-14",
+   "status": "zero",
+   "symbols": [
+    "SIVB"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1060,
+    "first": "2019-01-02",
+    "last": "2023-03-17"
+   },
+   "ask_for": "LUMN",
+   "cik": "0000018926",
+   "company": "Lumen Technologies",
+   "expected_days": 1060,
+   "gateway": {
+    "days": 1060,
+    "first": "2019-01-02",
+    "last": "2023-03-17"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-03-19",
+   "status": "full",
+   "symbols": [
+    "LUMN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "FRC",
+   "cik": "0001132979",
+   "company": "First Republic Bank",
+   "expected_days": 1092,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-05-03",
+   "status": "zero",
+   "symbols": [
+    "FRC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "DISH",
+   "cik": "0001001082",
+   "company": "Dish Network",
+   "expected_days": 1123,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-06-19",
+   "status": "zero",
+   "symbols": [
+    "DISH"
+   ]
+  },
+  {
+   "archive": {
+    "days": 12,
+    "first": "2023-06-16",
+    "last": "2023-07-05"
+   },
+   "ask_for": "FTRE",
+   "cik": "0001965040",
+   "company": "Fortrea Holdings",
+   "expected_days": 1134,
+   "gateway": {
+    "days": 12,
+    "first": "2023-06-16",
+    "last": "2023-07-05"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-07-05",
+   "status": "partial",
+   "symbols": [
+    "FTRE"
+   ]
+  },
+  {
+   "archive": {
+    "days": 5,
+    "first": "2023-06-28",
+    "last": "2023-07-05"
+   },
+   "ask_for": "PHIN",
+   "cik": "0001968915",
+   "company": "PHINIA",
+   "expected_days": 1134,
+   "gateway": {
+    "days": 5,
+    "first": "2023-06-28",
+    "last": "2023-07-05"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-07-05",
+   "status": "partial",
+   "symbols": [
+    "PHIN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1170,
+    "first": "2019-01-02",
+    "last": "2023-08-24"
+   },
+   "ask_for": "AAP",
+   "cik": "0001158449",
+   "company": "Advance Auto Parts",
+   "expected_days": 1170,
+   "gateway": {
+    "days": 1170,
+    "first": "2019-01-02",
+    "last": "2023-08-24"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-08-24",
+   "status": "full",
+   "symbols": [
+    "AAP"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1185,
+    "first": "2019-01-02",
+    "last": "2023-09-15"
+   },
+   "ask_for": "LNC",
+   "cik": "0000059558",
+   "company": "Lincoln National Corporation",
+   "expected_days": 1185,
+   "gateway": {
+    "days": 1185,
+    "first": "2019-01-02",
+    "last": "2023-09-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-09-17",
+   "status": "full",
+   "symbols": [
+    "LNC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1185,
+    "first": "2019-01-02",
+    "last": "2023-09-15"
+   },
+   "ask_for": "NWL",
+   "cik": "0000814453",
+   "company": "Newell Brands",
+   "expected_days": 1185,
+   "gateway": {
+    "days": 1185,
+    "first": "2019-01-02",
+    "last": "2023-09-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-09-17",
+   "status": "full",
+   "symbols": [
+    "NWL"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1196,
+    "first": "2019-01-02",
+    "last": "2023-10-02"
+   },
+   "ask_for": "DXC",
+   "cik": "0001688568",
+   "company": "DXC Technology",
+   "expected_days": 1196,
+   "gateway": {
+    "days": 1196,
+    "first": "2019-01-02",
+    "last": "2023-10-02"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-10-02",
+   "status": "full",
+   "symbols": [
+    "DXC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "ATVI",
+   "cik": "0000718877",
+   "company": "Activision Blizzard",
+   "expected_days": 1207,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-10-17",
+   "status": "zero",
+   "symbols": [
+    "ATVI"
+   ]
+  },
+  {
+   "archive": {
+    "days": 611,
+    "first": "2021-05-14",
+    "last": "2023-10-17"
+   },
+   "ask_for": "OGN",
+   "cik": "0001821825",
+   "company": "Organon & Co.",
+   "expected_days": 1207,
+   "gateway": {
+    "days": 611,
+    "first": "2021-05-14",
+    "last": "2023-10-17"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-10-17",
+   "status": "partial",
+   "symbols": [
+    "OGN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1249,
+    "first": "2019-01-02",
+    "last": "2023-12-15"
+   },
+   "ask_for": "ALK",
+   "cik": "0000766421",
+   "company": "Alaska Air Group",
+   "expected_days": 1249,
+   "gateway": {
+    "days": 1249,
+    "first": "2019-01-02",
+    "last": "2023-12-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-12-17",
+   "status": "full",
+   "symbols": [
+    "ALK"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1249,
+    "first": "2019-01-02",
+    "last": "2023-12-15"
+   },
+   "ask_for": "SEDG",
+   "cik": "0001419612",
+   "company": "SolarEdge",
+   "expected_days": 1249,
+   "gateway": {
+    "days": 1249,
+    "first": "2019-01-02",
+    "last": "2023-12-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-12-17",
+   "status": "full",
+   "symbols": [
+    "SEDG"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "SEE",
+   "cik": "0001012100",
+   "company": "Sealed Air",
+   "expected_days": 1249,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2023-12-17",
+   "status": "zero",
+   "symbols": [
+    "SEE"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1310,
+    "first": "2019-01-02",
+    "last": "2024-03-15"
+   },
+   "ask_for": "WHR",
+   "cik": "0000106640",
+   "company": "Whirlpool Corporation",
+   "expected_days": 1310,
+   "gateway": {
+    "days": 1310,
+    "first": "2019-01-02",
+    "last": "2024-03-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-03-17",
+   "status": "full",
+   "symbols": [
+    "WHR"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1310,
+    "first": "2019-01-02",
+    "last": "2024-03-15"
+   },
+   "ask_for": "ZION",
+   "cik": "0000109380",
+   "company": "Zions Bancorporation",
+   "expected_days": 1310,
+   "gateway": {
+    "days": 1310,
+    "first": "2019-01-02",
+    "last": "2024-03-15"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-03-17",
+   "status": "full",
+   "symbols": [
+    "ZION"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1321,
+    "first": "2019-01-02",
+    "last": "2024-04-02"
+   },
+   "ask_for": "VFC",
+   "cik": "0000103379",
+   "company": "VF Corporation",
+   "expected_days": 1321,
+   "gateway": {
+    "days": 1321,
+    "first": "2019-01-02",
+    "last": "2024-04-02"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-04-02",
+   "status": "full",
+   "symbols": [
+    "VFC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1321,
+    "first": "2019-01-02",
+    "last": "2024-04-02"
+   },
+   "ask_for": "XRAY",
+   "cik": "0000818479",
+   "company": "Dentsply Sirona",
+   "expected_days": 1321,
+   "gateway": {
+    "days": 1321,
+    "first": "2019-01-02",
+    "last": "2024-04-02"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-04-02",
+   "status": "full",
+   "symbols": [
+    "XRAY"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "PXD",
+   "cik": "0001038357",
+   "company": "Pioneer Natural Resources",
+   "expected_days": 1346,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-05-07",
+   "status": "zero",
+   "symbols": [
+    "PXD"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "CMA",
+   "cik": "0000028412",
+   "company": "Comerica",
+   "expected_days": 1377,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-06-23",
+   "status": "zero",
+   "symbols": [
+    "CMA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1377,
+    "first": "2019-01-02",
+    "last": "2024-06-21"
+   },
+   "ask_for": "RHI",
+   "cik": "0000315213",
+   "company": "Robert Half",
+   "expected_days": 1377,
+   "gateway": {
+    "days": 1377,
+    "first": "2019-01-02",
+    "last": "2024-06-21"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-06-23",
+   "status": "full",
+   "symbols": [
+    "RHI"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "WRK",
+   "cik": "0001732845",
+   "company": "WestRock",
+   "expected_days": 1386,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-07-07",
+   "status": "zero",
+   "symbols": [
+    "WRK"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "ask_for": "AAL",
+   "cik": "0000006201",
+   "company": "American Airlines Group",
+   "expected_days": 1440,
+   "gateway": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-09-22",
+   "status": "full",
+   "symbols": [
+    "AAL"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "ask_for": "BIO",
+   "cik": "0000012208",
+   "company": "Bio-Rad Laboratories",
+   "expected_days": 1440,
+   "gateway": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-09-22",
+   "status": "full",
+   "symbols": [
+    "BIO"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "ask_for": "ETSY",
+   "cik": "0001370637",
+   "company": "Etsy",
+   "expected_days": 1440,
+   "gateway": {
+    "days": 1440,
+    "first": "2019-01-02",
+    "last": "2024-09-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-09-22",
+   "status": "full",
+   "symbols": [
+    "ETSY"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1446,
+    "first": "2019-01-02",
+    "last": "2024-09-30"
+   },
+   "ask_for": "BBWI",
+   "cik": "0000701985",
+   "company": "Bath & Body Works, Inc.",
+   "expected_days": 1446,
+   "gateway": {
+    "days": 1446,
+    "first": "2019-01-02",
+    "last": "2024-09-30"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-09-30",
+   "status": "full",
+   "symbols": [
+    "BBWI"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "MRO",
+   "cik": "0000101778",
+   "company": "Marathon Oil",
+   "expected_days": 1486,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-11-25",
+   "status": "zero",
+   "symbols": [
+    "MRO"
+   ]
+  },
+  {
+   "archive": {
+    "days": 63,
+    "first": "2024-09-24",
+    "last": "2024-12-20"
+   },
+   "ask_for": "AMTM",
+   "cik": "0002011286",
+   "company": "Amentum",
+   "expected_days": 1504,
+   "gateway": {
+    "days": 63,
+    "first": "2024-09-24",
+    "last": "2024-12-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-12-22",
+   "status": "partial",
+   "symbols": [
+    "AMTM"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "CTLT",
+   "cik": "0001596783",
+   "company": "Catalent",
+   "expected_days": 1504,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-12-22",
+   "status": "zero",
+   "symbols": [
+    "CTLT"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "QRVO",
+   "cik": "0001604778",
+   "company": "Qorvo",
+   "expected_days": 1504,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2024-12-22",
+   "status": "zero",
+   "symbols": [
+    "QRVO"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "ask_for": "BWA",
+   "cik": "0000908255",
+   "company": "BorgWarner",
+   "expected_days": 1564,
+   "gateway": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-03-23",
+   "status": "full",
+   "symbols": [
+    "BWA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "ask_for": "CE",
+   "cik": "0001306830",
+   "company": "Celanese",
+   "expected_days": 1564,
+   "gateway": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-03-23",
+   "status": "full",
+   "symbols": [
+    "CE"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "ask_for": "FMC",
+   "cik": "0000037785",
+   "company": "FMC Corporation",
+   "expected_days": 1564,
+   "gateway": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-03-23",
+   "status": "full",
+   "symbols": [
+    "FMC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "ask_for": "TFX",
+   "cik": "0000096943",
+   "company": "Teleflex",
+   "expected_days": 1564,
+   "gateway": {
+    "days": 1564,
+    "first": "2019-01-02",
+    "last": "2025-03-21"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-03-23",
+   "status": "full",
+   "symbols": [
+    "TFX"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "DFS",
+   "cik": "0001393612",
+   "company": "Discover Financial",
+   "expected_days": 1603,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-05-18",
+   "status": "zero",
+   "symbols": [
+    "DFS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "JNPR",
+   "cik": "0001043604",
+   "company": "Juniper Networks",
+   "expected_days": 1637,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-07-08",
+   "status": "zero",
+   "symbols": [
+    "JNPR"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "ANSS",
+   "cik": "0001013462",
+   "company": "Ansys",
+   "expected_days": 1644,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-07-17",
+   "status": "zero",
+   "symbols": [
+    "ANSS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "HES",
+   "cik": "0000004447",
+   "company": "Hess Corporation",
+   "expected_days": 1647,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-07-22",
+   "status": "zero",
+   "symbols": [
+    "HES"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "WBA",
+   "cik": "0001618921",
+   "company": "Walgreens Boots Alliance",
+   "expected_days": 1673,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-08-27",
+   "status": "zero",
+   "symbols": [
+    "WBA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "ask_for": "CZR",
+   "cik": "0001590895",
+   "company": "Caesars Entertainment",
+   "expected_days": 1689,
+   "gateway": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-09-21",
+   "status": "full",
+   "symbols": [
+    "CZR"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "ask_for": "ENPH",
+   "cik": "0001463101",
+   "company": "Enphase Energy",
+   "expected_days": 1689,
+   "gateway": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-09-21",
+   "status": "full",
+   "symbols": [
+    "ENPH"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "ask_for": "MKTX",
+   "cik": "0001278021",
+   "company": "MarketAxess",
+   "expected_days": 1689,
+   "gateway": {
+    "days": 1689,
+    "first": "2019-01-02",
+    "last": "2025-09-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-09-21",
+   "status": "full",
+   "symbols": [
+    "MKTX"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1718,
+    "first": "2019-01-02",
+    "last": "2025-10-30"
+   },
+   "ask_for": "KMX",
+   "cik": "0001170010",
+   "company": "CarMax",
+   "expected_days": 1718,
+   "gateway": {
+    "days": 1718,
+    "first": "2019-01-02",
+    "last": "2025-10-30"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-10-30",
+   "status": "full",
+   "symbols": [
+    "KMX"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1720,
+    "first": "2019-01-02",
+    "last": "2025-11-03"
+   },
+   "ask_for": "EMN",
+   "cik": "0000915389",
+   "company": "Eastman Chemical Co.",
+   "expected_days": 1720,
+   "gateway": {
+    "days": 1720,
+    "first": "2019-01-02",
+    "last": "2025-11-03"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-11-03",
+   "status": "full",
+   "symbols": [
+    "EMN"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "IPG",
+   "cik": "0000051644",
+   "company": "Interpublic Group",
+   "expected_days": 1737,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-11-27",
+   "status": "zero",
+   "symbols": [
+    "IPG"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "K",
+   "cik": "0000055067",
+   "company": "Kellanova",
+   "expected_days": 1746,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-12-10",
+   "status": "zero",
+   "symbols": [
+    "K"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1753,
+    "first": "2019-01-02",
+    "last": "2025-12-19"
+   },
+   "ask_for": "LKQ",
+   "cik": "0001065696",
+   "company": "LKQ Corporation",
+   "expected_days": 1753,
+   "gateway": {
+    "days": 1753,
+    "first": "2019-01-02",
+    "last": "2025-12-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-12-21",
+   "status": "full",
+   "symbols": [
+    "LKQ"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1753,
+    "first": "2019-01-02",
+    "last": "2025-12-19"
+   },
+   "ask_for": "MHK",
+   "cik": "0000851968",
+   "company": "Mohawk Industries",
+   "expected_days": 1753,
+   "gateway": {
+    "days": 1753,
+    "first": "2019-01-02",
+    "last": "2025-12-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-12-21",
+   "status": "full",
+   "symbols": [
+    "MHK"
+   ]
+  },
+  {
+   "archive": {
+    "days": 44,
+    "first": "2025-10-20",
+    "last": "2025-12-19"
+   },
+   "ask_for": "SOLS",
+   "cik": "0002064953",
+   "company": "Solstice Advanced Materials",
+   "expected_days": 1753,
+   "gateway": {
+    "days": 44,
+    "first": "2025-10-20",
+    "last": "2025-12-19"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2025-12-21",
+   "status": "partial",
+   "symbols": [
+    "SOLS"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "DAY",
+   "cik": "0001725057",
+   "company": "Ceridian",
+   "expected_days": 1785,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-02-08",
+   "status": "zero",
+   "symbols": [
+    "CDAY",
+    "DAY"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "ask_for": "LW",
+   "cik": "0001679273",
+   "company": "Lamb Weston",
+   "expected_days": 1814,
+   "gateway": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-03-22",
+   "status": "full",
+   "symbols": [
+    "LW"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "ask_for": "MOH",
+   "cik": "0001179929",
+   "company": "Molina Healthcare",
+   "expected_days": 1814,
+   "gateway": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-03-22",
+   "status": "full",
+   "symbols": [
+    "MOH"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "ask_for": "MTCH",
+   "cik": "0000891103",
+   "company": "Match Group",
+   "expected_days": 1814,
+   "gateway": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-03-22",
+   "status": "full",
+   "symbols": [
+    "MTCH"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "ask_for": "PAYC",
+   "cik": "0001590955",
+   "company": "Paycom",
+   "expected_days": 1814,
+   "gateway": {
+    "days": 1814,
+    "first": "2019-01-02",
+    "last": "2026-03-20"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-03-22",
+   "status": "full",
+   "symbols": [
+    "PAYC"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "HOLX",
+   "cik": "0000859737",
+   "company": "Hologic",
+   "expected_days": 1826,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-04-08",
+   "status": "zero",
+   "symbols": [
+    "HOLX"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "CTRA",
+   "cik": "0000858470",
+   "company": "Coterra Energy",
+   "expected_days": 1846,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-05-06",
+   "status": "zero",
+   "symbols": [
+    "CTRA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1863,
+    "first": "2019-01-02",
+    "last": "2026-06-01"
+   },
+   "ask_for": "EPAM",
+   "cik": "0001352010",
+   "company": "EPAM Systems",
+   "expected_days": 1863,
+   "gateway": {
+    "days": 1863,
+    "first": "2019-01-02",
+    "last": "2026-06-01"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-06-01",
+   "status": "full",
+   "symbols": [
+    "EPAM"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1876,
+    "first": "2019-01-02",
+    "last": "2026-06-18"
+   },
+   "ask_for": "CPB",
+   "cik": "0000016732",
+   "company": "Campbell's",
+   "expected_days": 1876,
+   "gateway": {
+    "days": 1876,
+    "first": "2019-01-02",
+    "last": "2026-06-18"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-06-21",
+   "status": "full",
+   "symbols": [
+    "CPB"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1876,
+    "first": "2019-01-02",
+    "last": "2026-06-18"
+   },
+   "ask_for": "POOL",
+   "cik": "0000945841",
+   "company": "Pool Corporation",
+   "expected_days": 1876,
+   "gateway": {
+    "days": 1876,
+    "first": "2019-01-02",
+    "last": "2026-06-18"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-06-21",
+   "status": "full",
+   "symbols": [
+    "POOL"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1882,
+    "first": "2019-01-02",
+    "last": "2026-06-29"
+   },
+   "ask_for": "CAG",
+   "cik": "0000023217",
+   "company": "Conagra Brands",
+   "expected_days": 1882,
+   "gateway": {
+    "days": 1882,
+    "first": "2019-01-02",
+    "last": "2026-06-29"
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-06-29",
+   "status": "full",
+   "symbols": [
+    "CAG"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "EA",
+   "cik": "0000712515",
+   "company": "Electronic Arts",
+   "expected_days": 1907,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-08-04",
+   "status": "zero",
+   "symbols": [
+    "EA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "ask_for": "AVB",
+   "cik": "0000915912",
+   "company": "AvalonBay Communities",
+   "expected_days": 1916,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "range": "2019-01-02..2026-08-17",
+   "status": "zero",
+   "symbols": [
+    "AVB"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "ask_for": "BLDR",
+   "cik": "0001316835",
+   "company": "Builders FirstSource",
+   "expected_days": 1939,
+   "gateway": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "production": {
+    "days": 1182,
+    "first": "2022-01-03",
+    "last": "2026-09-18"
+   },
+   "range": "2019-01-02..2026-09-20",
+   "status": "full",
+   "symbols": [
+    "BLDR"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "ask_for": "TAP",
+   "cik": "0000024545",
+   "company": "Molson Coors",
+   "expected_days": 1939,
+   "gateway": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "production": {
+    "days": 1182,
+    "first": "2022-01-03",
+    "last": "2026-09-18"
+   },
+   "range": "2019-01-02..2026-09-20",
+   "status": "full",
+   "symbols": [
+    "TAP"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "ask_for": "TTD",
+   "cik": "0001671933",
+   "company": "The Trade Desk",
+   "expected_days": 1939,
+   "gateway": {
+    "days": 1939,
+    "first": "2019-01-02",
+    "last": "2026-09-18"
+   },
+   "production": {
+    "days": 1182,
+    "first": "2022-01-03",
+    "last": "2026-09-18"
+   },
+   "range": "2019-01-02..2026-09-20",
+   "status": "full",
+   "symbols": [
+    "TTD"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1851,
+    "first": "2019-05-24",
+    "last": "2026-10-05"
+   },
+   "ask_for": "CTVA",
+   "cik": "0001755672",
+   "company": "Corteva",
+   "expected_days": 1950,
+   "gateway": {
+    "days": 1851,
+    "first": "2019-05-24",
+    "last": "2026-10-05"
+   },
+   "production": {
+    "days": 1189,
+    "first": "2022-01-03",
+    "last": "2026-09-29"
+   },
+   "range": "2019-01-02..2026-10-05",
+   "status": "partial",
+   "symbols": [
+    "CTVA"
+   ]
+  },
+  {
+   "archive": {
+    "days": 1189,
+    "first": "2022-01-03",
+    "last": "2026-09-29"
+   },
+   "ask_for": "WBD",
+   "cik": "0001437107",
+   "company": "Discovery, Inc.",
+   "expected_days": 1950,
+   "gateway": {
+    "days": 0,
+    "first": null,
+    "last": null
+   },
+   "production": {
+    "days": 1189,
+    "first": "2022-01-03",
+    "last": "2026-09-29"
+   },
+   "range": "2019-01-02..2026-10-05",
+   "status": "zero",
+   "symbols": [
+    "DISCA",
+    "WBD"
+   ]
+  }
+ ],
+ "gateway": "http://host.docker.internal:8000/pricing",
+ "lines": 88,
+ "measured_at": "2026-10-17T13:26:47+00:00",
+ "production_db": "/workspaces/thesis/data/financial.db",
+ "production_sha1": "5c5c0642619bcc2f80aa72f13599bf824f676675",
+ "range_start": "2019-01-02",
+ "totals": {
+  "full": 46,
+  "partial": 7,
+  "zero": 35
+ },
+ "universe_db": "/workspaces/thesis/data/universe_history_gics.db",
+ "universe_sha1": "db5b16290b03a191b55215e8b98fc893a93f0e5b"
+}

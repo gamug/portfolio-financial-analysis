@@ -80,7 +80,7 @@ def filed(memory_db: Database) -> Database:
             "VALUES (?, 'FUNDAMENTAL', ?, ?, ?, 'now', 'seed', 'analysis', ?, ?)",
             (aid, float(fid), float(fid), pe, fid, AVAILABLE[fid]),
         )
-    conn.execute("CREATE TABLE price_daily (asset_id INTEGER, date TEXT, close REAL)")
+    conn.execute("CREATE TABLE price_daily (asset_id INTEGER, date TEXT, close REAL, source TEXT)")
     day = date(2024, 12, 1)
     while day <= date(2027, 4, 30):
         for aid in (1, 2):

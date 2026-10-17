@@ -12,6 +12,7 @@ from fundamental_agent import agents
 from fundamental_agent.agents import FundamentalAnalyst, _prompt_version_hash
 from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult
+from fundamental_agent.pricing import ClosePrice
 from fundamental_agent.skills import GROUP_METRICS
 from fundamental_agent.statements import Statements
 
@@ -188,4 +189,123 @@ def test_an_empty_value_keeps_its_own_reason_when_a_gate_would_quarantine_it() -
     assert agents.withheld_metrics(results) == {}
     assert agents._metric_lines("profitability", [results[0][1]], {}) == [
         "return_on_equity: empty (not_applicable)"
+    ]
+
+
+# -- T-153 part 3d, A3: the private import's valuation values never reach the model -------------
+
+
+def _valuation_results() -> list[tuple[str, MetricResult]]:
+    """The valuation group as ``_compute_all`` emits it, plus one empty and one other group."""
+    return [
+        ("valuation", MetricResult("market_capitalization", 2_700_000_000_000.0, "usd", {})),
+        ("valuation", MetricResult("enterprise_value", 2_800_000_000_000.0, "usd", {})),
+        ("valuation", MetricResult("free_cash_flow_yield", 0.031, "ratio", {})),
+        ("valuation", MetricResult("sbc_adjusted_fcf_yield", 0.028, "ratio", {})),
+        ("valuation", MetricResult("enterprise_fcf_yield", 0.024, "ratio", {})),
+        (
+            "valuation",
+            MetricResult(
+                "market_capitalization_empty",
+                None,
+                "usd",
+                {"provenance": {"empty_reason": "missing_input"}},
+            ),
+        ),
+        ("profitability", MetricResult("net_margin", 0.25, "ratio", {})),
+    ]
+
+
+def _tiingo_ctx(aapl_10k: Statements, *, source: str) -> agents.FilingContext:
+    return agents.FilingContext(
+        "AAPL",
+        "Apple",
+        "10-K",
+        "FY2023",
+        aapl_10k,
+        "2023-09-30 (FY)",
+        None,
+        price=ClosePrice(date="2023-09-29", close=171.21, source=source),
+    )
+
+
+def test_a_tiingo_close_withholds_every_valuation_value_from_the_prompt(
+    aapl_10k: Statements,
+) -> None:
+    """A3: the brief and every specialist print `withheld (TIINGO_CLOSE)` -- never a value."""
+    ctx = _tiingo_ctx(aapl_10k, source="tiingo")
+    computed = _valuation_results()
+    by_group = agents._group(computed)
+    withheld = agents.withheld_metrics(computed)
+    withheld.update(agents.tiingo_withheld_metrics(ctx, computed))
+
+    valuation = agents._metric_lines("valuation", by_group["valuation"], withheld)
+    brief = agents._brief(ctx, by_group, withheld)
+    for prompt in (brief, "\n".join(valuation)):
+        assert "withheld (TIINGO_CLOSE)" in prompt
+        for value in ("2700000000000", "2800000000000", "0.031", "0.028", "0.024"):
+            assert value not in prompt, (value, prompt)
+    # every present valuation metric is withheld; an empty one keeps its own reason
+    assert valuation[:5] == [
+        "market_capitalization: withheld (TIINGO_CLOSE)",
+        "enterprise_value: withheld (TIINGO_CLOSE)",
+        "free_cash_flow_yield: withheld (TIINGO_CLOSE)",
+        "sbc_adjusted_fcf_yield: withheld (TIINGO_CLOSE)",
+        "enterprise_fcf_yield: withheld (TIINGO_CLOSE)",
+    ]
+    assert "market_capitalization_empty: empty (missing_input)" in valuation
+    assert "net_margin: 0.25" in brief  # a non-valuation metric is untouched
+
+
+def test_the_gateway_close_withholds_nothing_and_a_tiingo_close_changes_no_score(
+    aapl_10k: Statements,
+) -> None:
+    """A3: the map is per row and the fallback's score is unmoved by it (the valuation nudge
+    leaves the score -- valuation is no pillar)."""
+    computed = _valuation_results()
+    gateway = _tiingo_ctx(aapl_10k, source="yfinance")
+    assert agents.tiingo_withheld_metrics(gateway, computed) == {}
+
+    tiingo = _tiingo_ctx(aapl_10k, source="tiingo")
+    mapped = agents.tiingo_withheld_metrics(tiingo, computed)
+    assert set(mapped) == {
+        ("valuation", "market_capitalization"),
+        ("valuation", "enterprise_value"),
+        ("valuation", "free_cash_flow_yield"),
+        ("valuation", "sbc_adjusted_fcf_yield"),
+        ("valuation", "enterprise_fcf_yield"),
+    }
+    statuses = _all_present()
+    flat: dict[str, float | None] = {
+        "valuation.free_cash_flow_yield": 0.031,
+        "profitability.net_margin": 0.25,
+    }
+    without = agents._fallback_synthesis(flat, statuses, {})
+    with_tiingo = agents._fallback_synthesis(flat, statuses, mapped)
+    assert with_tiingo.assessment.score == without.assessment.score
+    assert with_tiingo.pillars == without.pillars
+
+
+def test_the_tiingo_map_never_changes_which_metrics_the_hard_rules_withhold() -> None:
+    """A3's stop-and-ask condition: the DQ map is built first and the Tiingo map is merged after,
+    so a key the rules already withhold stays withheld and no new key appears from them."""
+    rule = MetricResult("net_margin", 6.0, "ratio", {"revenue": 100.0, "net_income": 6.0})
+    results = [("profitability", rule)]
+    assert agents.withheld_metrics(results) == {("profitability", "net_margin"): "DQ_MARGIN"}
+    merged = agents.withheld_metrics(results)
+    merged.update(
+        {
+            key: reason
+            for key, reason in {
+                ("profitability", "net_margin"): agents.TIINGO_CLOSE_REASON,
+                ("valuation", "market_capitalization"): agents.TIINGO_CLOSE_REASON,
+            }.items()
+            if key not in merged
+        }
+    )
+    # the overlap keeps the rule's own reason; the new key is added
+    assert merged[("profitability", "net_margin")] == "DQ_MARGIN"
+    assert merged[("valuation", "market_capitalization")] == agents.TIINGO_CLOSE_REASON
+    assert agents._metric_lines("profitability", [rule], merged) == [
+        "net_margin: withheld (DQ_MARGIN)"
     ]

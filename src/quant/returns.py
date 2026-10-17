@@ -25,6 +25,7 @@ from quant.config import QuantSettings
 from quant.db import (
     ReturnRow,
     ensure_schema,
+    line_vendor,
     load_actions,
     load_assets,
     load_daily_closes,
@@ -180,7 +181,11 @@ def run_build_returns(
                 if dividends:
                     report.assets_with_dividends += 1
                 report.rows_written += upsert_return_daily(
-                    conn, asset_id, rows, engine_version=settings.return_engine_version
+                    conn,
+                    asset_id,
+                    rows,
+                    engine_version=settings.return_engine_version,
+                    vendor=line_vendor(conn, asset_id),
                 )
             finish_run(conn, run_id)
         except BaseException as exc:  # an interrupt too: never leave 'running'

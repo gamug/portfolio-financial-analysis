@@ -24,6 +24,10 @@ class ClosePrice:
 
     date: str  # ISO date of the close actually used
     close: float
+    # The vendor of the bar the close came from (T-153 part 3d, A3): 'tiingo' when the private
+    # import priced the line, else the gateway's own label (or NULL on a row stored before the
+    # import existed). The valuation group is withheld from the model for the imported lines.
+    source: str | None = None
 
 
 def close_on_or_before(
@@ -42,7 +46,7 @@ def close_on_or_before(
     try:
         row = conn.execute(
             """
-            SELECT date, close
+            SELECT date, close, source
             FROM price_daily
             WHERE asset_id = ? AND date <= ? AND date >= ? AND close IS NOT NULL
             ORDER BY date DESC
@@ -54,7 +58,7 @@ def close_on_or_before(
         return None  # price_daily not created -- pricing collector never ran
     if row is None:
         return None
-    return ClosePrice(date=str(row[0]), close=float(row[1]))
+    return ClosePrice(date=str(row[0]), close=float(row[1]), source=row[2])
 
 
 def _iso_days_before(iso_date: str, days: int) -> str:
