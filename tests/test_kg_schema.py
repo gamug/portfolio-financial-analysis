@@ -11,6 +11,7 @@ import kg_schema
 from fundamental_agent.sections import _SPECS, canonical_item_label
 from kg_schema import migrations, queries
 from kg_schema.env import database_path
+from kg_schema.views import ensure_views
 
 # Pre-kg_schema table shapes, as the two agents shipped them originally.
 _LEGACY_SQL = """
@@ -468,6 +469,17 @@ def test_m006_renames_quantitative_score_type_to_valorization() -> None:
 
 
 def test_views_select_cleanly(migrated_db: Database) -> None:
+    # T-153 part 3d: the price views also read `price_daily` (the per-line "is this line the
+    # private import's" predicate), which is the *pricing agent's* table, not kg_schema's. This
+    # legacy fixture has no pricing tables, and `ensure_views` drops a view whose base table is
+    # absent by design -- so the base table is declared here and the views rebuilt.
+    migrated_db.execute(
+        "CREATE TABLE IF NOT EXISTS price_daily (id INTEGER PRIMARY KEY, asset_id INTEGER, "
+        "date TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, source TEXT, "
+        "event_time TEXT, ingested_at TEXT, run_id INTEGER)"
+    )
+    migrated_db.commit()
+    ensure_views(migrated_db)
     for name in (
         "v_score_snapshot",
         "v_universe_membership",
