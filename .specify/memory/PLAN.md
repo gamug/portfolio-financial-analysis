@@ -2266,6 +2266,57 @@ work item starts). Read endpoints are untouched.
 **Acceptance criteria**: FR-015's acceptance column, as tests (`T-146`); the read endpoints behave identically
 with and without the settings; `docs/api.md` documents both settings.
 
+## Work item 21 — Upstream: `portfolio-common` patch re-pin `v1.2.1` → `v1.2.2` (external, P2) — DONE 2026-10-16
+
+**Why**: `portfolio-common` `v1.2.2` narrows `Database.attach(read_only=True)`'s
+stale-WAL preflight to reject only an orphaned WAL (non-empty `-wal`, no
+`-shm`), not a live writer's WAL — the production concurrency bug that
+blocked `portfolio-nlp`'s `attach_source()` while `portfolio-data-mining`'s
+collector held `urls.db` open. This item re-pins this repo too, for baseline
+consistency across every `portfolio-common` consumer, even though the fix
+doesn't touch a code path this repo uses. Not given its own `T-###`: a
+two-line dependency re-pin with no code/contract change doesn't carry the
+weight the `T-###` convention is for elsewhere in this file (see `T-157`'s
+`TASKS.md` entry for what that weight looks like) — this Work item entry is
+the complete record on its own.
+
+**This repo's own `urls.db` read path was never affected either way.**
+`entity_resolution/news_db.py`, opened via `kg_schema.connect_ro` ->
+`Database.connect(read_only=True)`, is a bare `mode=ro` open, not
+`Database.attach()` — the buggy preflight only ever lived inside `attach()`.
+Demonstrated, not just reasoned about:
+`tests/test_entity_resolution.py::test_connect_ro_reads_through_a_live_writers_wal`
+holds a real writer open on a WAL-mode `urls.db` and asserts a read through
+`entity_resolution.news_db.article_ids_for_ticker` both doesn't block and
+sees the writer's just-committed row.
+
+**Acceptance criteria** (all verified met, PR #172):
+
+- ✅ `pyproject.toml`'s `portfolio-common` source pins `tag = "v1.2.2"`;
+  `uv.lock` diff scoped to exactly the `portfolio-common` version/source
+  lines.
+- ✅ `uv run pytest` (2652 passed); `ruff check`/`format --check`; `mypy` —
+  all green except pre-existing Windows-local-only failures (`fcntl`,
+  `os.symlink` privilege, `cp1252` fixture decoding), confirmed identical
+  against the old `v1.2.1` pin via `git stash`.
+- ✅ `SPEC.md` NR-004, the storage/upstream-library bullets, and
+  `constitution.md`'s storage clause updated from "currently `v1.2.1`" to
+  "currently `v1.2.2`" — constitution AI behavior #11 reconciliation for
+  this item. (Work item 1's own closed record is left untouched per its
+  "do not re-open" note; this is the new, separately-scoped item it asked
+  for.)
+- ✅ Both architecture artifacts updated: the Portfolio Financial Analysis
+  artifact's hero dek, "What it does today" `kg_schema` bullet, SVG
+  `aria-label`/node tooltip, and "Other useful details" bullet now say
+  `v1.2.2`, plus a new footer changelog entry; the Portfolio Thesis
+  system-wide overview's build-state table, this repo's row description, and
+  (round 6 of this PR's review) its hero statline pill — previously the one
+  undated version pill on that page, contradicting the build-state table two
+  sections below it — all updated, plus its own footer changelog entry.
+  Neither pass touched `portfolio-knowledge-graph`'s row/pin — that repo's
+  `portfolio-common` version has not been checked from this session and both
+  artifacts say so rather than asserting it.
+
 ## Work item 12 — Final: full-universe production run (runs last of all)
 
 **Why**: every other work item either changes code or validates it on a **small
