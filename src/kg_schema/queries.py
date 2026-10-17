@@ -47,7 +47,7 @@ Business logic that consumes these queries' results
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -403,18 +403,27 @@ def last_price_dates(db: Database, asset_ids: list[int]) -> dict[int, str]:
 
 def split_rows(db: Database, asset_ids: list[int], *, engine_version: str) -> list[Row]:
     """The recorded splits (ex-date, ratio) of one corporate-action engine build."""
+    return split_rows_from(db, asset_ids, engine_versions=(engine_version,))
+
+
+def split_rows_from(
+    db: Database, asset_ids: list[int], *, engine_versions: Sequence[str]
+) -> list[Row]:
+    """The recorded splits of one or more engine builds, with the issuer's CIK (T-153 part 3d).
+
+    The CIK is what the tracked event list keys an event by (a CIK's two share classes share one
+    event); a database whose ``assets`` table has no row for the asset reports a blank CIK, and
+    the row is then unclassifiable -- refused, never guessed. Only placeholders are interpolated
+    (one per engine), never an identifier (constitution Code & Git #10)."""
+    engines = tuple(dict.fromkeys(engine_versions))
+    if not engines:
+        return []
+    marks = ", ".join("?" for _ in engines)
+    sql = f"SELECT DISTINCT c.asset_id, c.ex_date, c.value, a.cik FROM corporate_action c JOIN assets a ON a.id = c.asset_id WHERE c.asset_id IN (SELECT value FROM json_each(?)) AND c.action_type = 'SPLIT' AND c.engine_version IN ({marks}) ORDER BY c.asset_id, c.ex_date"  # noqa: S608
     try:
-        return db.execute(
-            "SELECT DISTINCT asset_id, ex_date, value FROM corporate_action "
-            "WHERE asset_id IN (SELECT value FROM json_each(?)) "
-            "AND action_type = 'SPLIT' AND engine_version = ? ORDER BY asset_id, ex_date",
-            (json.dumps(sorted(set(asset_ids))), engine_version),
-        ).fetchall()
+        return db.execute(sql, (json.dumps(sorted(set(asset_ids))), *engines)).fetchall()
     except DatabaseError:
         return []
-
-
-# -- data-coverage report -----------------------------------------------------
 
 
 def metric_versions_present(conn: Database) -> dict[str, list[str]]:

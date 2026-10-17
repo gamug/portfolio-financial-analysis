@@ -38,7 +38,7 @@ from pathlib import Path
 from portfolio_common.db import Database, DatabaseError
 
 import kg_schema
-from kg_schema import provenance
+from kg_schema import corporate_actions, provenance
 from kg_schema.queries import WINDOW_START, connect_ro, members_over_range, resolve_asset_ids
 from pricing_agent import db as pricing_db
 from pricing_agent.config import Settings
@@ -51,12 +51,12 @@ DEFAULT_MANIFEST_FILE = "leaver_prices.manifest.json"
 
 #: The vendor marker (D1/D4/D6): one literal, written to every row the import creates and read by
 #: every view filter and by the removal procedure.
-TIINGO_SOURCE = "tiingo"
+TIINGO_SOURCE = corporate_actions.TIINGO_SOURCE
 
 #: The corporate-action engine the Tiingo rows are written under (D6). A distinct build, so the
 #: gateway's own engines (``corpact-v1``/``corpact-v2``) keep their meaning and the gateway wins
 #: when a line comes back; ``quant.db._ACTION_ENGINE_PRIORITY`` reads it after them.
-TIINGO_CORPACT_ENGINE = "corpact-tiingo-v1"
+TIINGO_CORPACT_ENGINE = corporate_actions.TIINGO_ENGINE
 
 #: The report's ``kind`` on the import's own ``pricing_run`` row (D7), and the removal's.
 IMPORT_RUN_KIND = "tiingo-import"
@@ -99,6 +99,18 @@ class TiingoLineHasNoAsset(TiingoImportError):
             f"line's identity exists): {_shown(keys)}"
         )
         self.keys = keys
+
+
+class TiingoSplitNotClassified(TiingoImportError):
+    """A SPLIT row the tracked event list does not explain (T-153 part 3d, D10; MKT-02)."""
+
+    def __init__(self, detail: list[str]) -> None:
+        super().__init__(
+            f"{len(detail)} imported SPLIT row(s) the tracked event list does not explain "
+            f"({corporate_actions.EVENTS_CSV.name}); class nothing by a ratio's shape, and use no "
+            f"default class -- source the event first: {_shown(detail)}"
+        )
+        self.detail = detail
 
 
 class TiingoRowAfterMembership(TiingoImportError):
@@ -414,6 +426,7 @@ def import_tiingo(  # noqa: PLR0913 - the two paths, the date and the two test s
         pricing_db.ensure_schema(conn)
         assets = _resolve_lines(conn, lines)
         _check_dates(conn, settings, lines, analysis_date)
+        _check_split_events(conn, lines, assets)
 
         gateway_only: list[GatewayOnlyLine] = []
         to_import: list[tuple[TiingoLine, int]] = []
@@ -527,6 +540,38 @@ def _check_dates(
         raise TiingoRowAfterMembership(sorted(late))
     if future:
         raise TiingoRowAfterAnalysisDate(sorted(future))
+
+
+def _check_split_events(
+    conn: Database, lines: dict[tuple[str, str], TiingoLine], assets: dict[tuple[str, str], int]
+) -> None:
+    """Every SPLIT row the import brings must be explained by the tracked event list (D10).
+
+    A row the list does not explain stops the import: the cap reader refuses an unexplained
+    factor rather than applying a guess (MKT-02), so importing one would leave the line
+    unvaluable with no one told."""
+    events = corporate_actions.read_events()
+    unexplained: list[str] = []
+    for key, line in lines.items():
+        cik = _raw_cik(conn, assets[key])
+        for bar in line.bars:
+            if bar.split_factor == 1.0:
+                continue
+            if (
+                corporate_actions.explained(
+                    events, cik=cik, ex_date=bar.date, value=bar.split_factor
+                )
+                is None
+            ):
+                unexplained.append(f"{line.ask} {bar.date} {bar.split_factor}")
+    if unexplained:
+        raise TiingoSplitNotClassified(sorted(unexplained))
+
+
+def _raw_cik(conn: Database, asset_id: int) -> str:
+    """The asset's stored CIK, exactly as the event list keys it."""
+    row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
+    return str(row["cik"]) if row is not None and row["cik"] else ""
 
 
 def _line_rows(line: TiingoLine) -> tuple[list[Candle], list[tuple[str, str, float]]]:
