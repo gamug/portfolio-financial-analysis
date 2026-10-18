@@ -8,6 +8,10 @@ Read-only (``mode=ro``): the pilot's part A and ``T-100`` run it as a gate after
 (``kg_schema.market_cap``) and stops the Tiingo import, so the list
 (``src/kg_schema/data/corporate_action_events.csv``) must cover every row. Prints counts, tickers
 and dates only; exits 1 when any row is unexplained, 0 when the list explains them all.
+
+**Fail closed** (reviewer B, fix round 2): only a database with no ``corporate_action`` table is
+empty (nothing to explain); any other read error propagates and the script exits non-zero, so the
+gate can never PASS without having read the table.
 """
 
 from __future__ import annotations
@@ -37,14 +41,14 @@ def unexplained_split_rows(
 ) -> list[dict[str, Any]]:
     """Every SPLIT row of ``db_path`` the event list cannot explain (read-only).
 
-    A database without a ``corporate_action`` table has no rows to explain. A row whose asset has
-    no ``assets`` row reports a blank CIK and is unexplained, never guessed (MKT-02)."""
+    Fail closed: only a database with no ``corporate_action`` table returns empty; any other read
+    error propagates. A row whose asset has no ``assets`` row reports a blank CIK and is
+    unexplained, never guessed (MKT-02)."""
     listed = events if events is not None else read_events()
     with contextlib.closing(connect_ro(db_path)) as db:
-        try:
-            rows = db.execute(_SPLIT_ROWS_SQL).fetchall()
-        except DatabaseError:
+        if not db.relation_exists("corporate_action"):
             return []
+        rows = db.execute(_SPLIT_ROWS_SQL).fetchall()
     out: list[dict[str, Any]] = []
     for r in rows:
         cik = str(r["cik"] or "")
@@ -67,7 +71,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", required=True, help="a KG_FINANCIAL_DB to inspect, read-only")
     args = parser.parse_args(argv)
-    rows = unexplained_split_rows(args.db)
+    try:
+        rows = unexplained_split_rows(args.db)
+    except DatabaseError as exc:
+        # Fail closed: a database the gate could not read is not an all-clear.
+        print(f"error: cannot read SPLIT rows from {args.db}: {exc}", file=sys.stderr)
+        return 1
     print(f"unexplained SPLIT rows: {len(rows)}")
     for r in rows:
         print(f"  {r['ticker']} {r['ex_date']}")

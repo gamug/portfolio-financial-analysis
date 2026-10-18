@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 import unexplained_split_rows as script
 
 
@@ -46,3 +47,21 @@ def test_a_database_without_the_table_has_nothing_to_explain(tmp_path: Path) -> 
     sqlite3.connect(empty).close()
     assert script.unexplained_split_rows(empty) == []
     assert script.main(["--db", str(empty)]) == 0
+
+
+def test_another_read_error_fails_closed(tmp_path: Path) -> None:
+    """Only a missing ``corporate_action`` table is empty; a database the gate cannot read (here a
+    missing ``assets`` table) exits non-zero, never a silent all-clear (fix round 2)."""
+    broken = tmp_path / "broken.db"
+    raw = sqlite3.connect(broken)
+    raw.executescript(
+        "CREATE TABLE corporate_action (id INTEGER PRIMARY KEY, asset_id INTEGER, action_type TEXT,"
+        " ex_date TEXT, value REAL, engine_version TEXT);"
+        "INSERT INTO corporate_action (asset_id, action_type, ex_date, value, engine_version)"
+        " VALUES (1, 'SPLIT', '2030-01-01', 1.5, 'corpact-v1');"
+    )
+    raw.commit()
+    raw.close()
+    with pytest.raises(sqlite3.Error):
+        script.unexplained_split_rows(broken)
+    assert script.main(["--db", str(broken)]) == 1

@@ -671,12 +671,18 @@ def metrics_only_problems(fin_db_path: str) -> tuple[int, list[str]]:
         conn.close()
     return len(runs), problems
 
+
 def unexplained_split_row_problems(fin_db_path: str) -> list[str]:
     """T-153g: the ``ticker ex_date`` of every recorded SPLIT row the tracked list cannot explain.
 
-    One line per row, so a FAIL names the row it refuses (``scripts/unexplained_split_rows.py``
-    holds the query; this is the check's own wording)."""
-    return [f"{row['ticker']} {row['ex_date']}" for row in unexplained_split_rows(fin_db_path)]
+    One line per row, so a FAIL names the row it refuses. Fail closed (fix round 2): a database the
+    gate cannot read is reported as a problem, never a silent all-clear
+    (``scripts/unexplained_split_rows.py`` holds the query; this is the check's own wording)."""
+    try:
+        rows = unexplained_split_rows(fin_db_path)
+    except sqlite3.Error as exc:
+        return [f"unreadable database ({exc})"]
+    return [f"{row['ticker']} {row['ex_date']}" for row in rows]
 
 
 def main() -> int:  # noqa: C901, PLR0915
