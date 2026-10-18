@@ -36,6 +36,7 @@ from kg_schema.queries import (
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
+from kg_schema.versions import RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
@@ -623,6 +624,50 @@ def tiingo_marked_counts(fin_db_path: str) -> dict[str, int]:
         return tiingo_marked_rows(conn)
     finally:
         conn.close()
+
+
+def metrics_only_problems(fin_db_path: str) -> tuple[int, list[str]]:
+    """T-143 part A, P1: the two invariants a **metrics-only** run's filings must satisfy.
+
+    A run whose ``analysis_run.params_json`` records ``metrics_only`` writes no FUNDAMENTAL
+    ``score_snapshot`` row, and every filing it wrote carries its ``value_inputs`` rule input -- the
+    run's own done predicate (``fundamental_agent.db.metrics_only_accessions``), which a kill before
+    ``value_inputs.write`` would leave unsatisfied. Returns ``(metrics_only_runs, problems)``; a
+    database with no metrics-only run (production, or a scored ``T-100`` database) has none."""
+    conn = connect_ro(fin_db_path)
+    try:
+        if not conn.relation_exists("analysis_run"):
+            return 0, []
+        runs: list[int] = []
+        for r in conn.execute("SELECT id, params_json FROM analysis_run"):
+            try:
+                params = json.loads(r["params_json"] or "{}")
+            except ValueError:
+                continue
+            if isinstance(params, dict) and params.get("metrics_only") is True:
+                runs.append(int(r["id"]))
+        if not runs:
+            return 0, []
+        problems: list[str] = []
+        for run_id in runs:
+            scored = conn.execute(
+                "SELECT COUNT(*) AS n FROM score_snapshot "
+                "WHERE score_type = 'FUNDAMENTAL' AND run_id = ?",
+                (run_id,),
+            ).fetchone()["n"]
+            if scored:
+                problems.append(f"run {run_id}: {scored} FUNDAMENTAL score_snapshot row(s)")
+            undone = conn.execute(
+                "SELECT COUNT(*) AS n FROM sec_filings f WHERE f.run_id = ? AND NOT EXISTS ("
+                "SELECT 1 FROM fundamental_metrics m WHERE m.filing_id = f.id "
+                "AND m.metric_group = ? AND m.metric_name = ?)",
+                (run_id, RULE_INPUT_GROUP, VALUE_INPUTS_METRIC),
+            ).fetchone()["n"]
+            if undone:
+                problems.append(f"run {run_id}: {undone} filing(s) without a value_inputs row")
+    finally:
+        conn.close()
+    return len(runs), problems
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -1628,6 +1673,29 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-153f", t153f)
+
+    def t143a() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        runs = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_runs, problems = metrics_only_problems(path)
+            runs = max(runs, n_runs)
+            bad += [f"{prefix}{problem}" for problem in problems]
+        if bad:
+            report("T-143a", "FAIL", "; ".join(bad[:6]))
+            return
+        report(
+            "T-143a",
+            "PASS",
+            f"{runs} metrics-only run(s): no FUNDAMENTAL row and every filing done "
+            "(its value_inputs row present)",
+        )
+
+    check("T-143a", t143a)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

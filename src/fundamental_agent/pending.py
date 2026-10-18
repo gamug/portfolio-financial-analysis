@@ -5,7 +5,9 @@ touched, and no ``LLM_*`` variable is needed) and no write. It answers with one 
 ``pending: yes|no <evidence>``, and the orchestrator runs ``run`` only on a yes.
 
 Pending iff an original 10-K/10-Q filed on or before the analysis date has no FUNDAMENTAL
-``score_snapshot`` and is not excused. Three sources of such a filing, cheapest first:
+``score_snapshot`` and is not excused. A filing a **metrics-only** run completed (T-143
+part A, P1) is excused too: it has metrics and rule inputs but no FUNDAMENTAL row by design,
+and its writing run recorded ``metrics_only``. Three sources of such a filing, cheapest first:
 
 1. **Stored but unscored** -- a ``sec_filings`` row with no snapshot (the LLM call failed after
    the facts were stored, or the run was killed). DB only.
@@ -47,7 +49,7 @@ from portfolio_common.db import Database, DatabaseError
 
 from fundamental_agent import pipeline
 from fundamental_agent.config import DEFAULT_EDGAR_BASE_URL
-from fundamental_agent.db import completed_accessions
+from fundamental_agent.db import completed_accessions, metrics_only_accessions
 from fundamental_agent.edgar_client import EdgarClient, EdgarError, EdgarNotFoundError
 from fundamental_agent.failures import classify
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR
@@ -427,6 +429,20 @@ class _Lister:
             self._sorter.add(ref.accession_number, f"{m.symbol} {form}")
 
 
+def _done_accessions(conn: Database) -> set[str]:
+    """Accessions this check treats as done: scored, or a completed metrics-only run (P1).
+
+    A metrics-only filing has no FUNDAMENTAL ``score_snapshot``, so ``completed_accessions`` never
+    names it; :func:`fundamental_agent.db.metrics_only_accessions` adds those whose writing run
+    recorded ``metrics_only`` and whose ``value_inputs`` row proves the sequence finished. A normal
+    run still treats them as pending (its own skip sets stay FUNDAMENTAL-keyed), so part B scores
+    them."""
+    done = completed_accessions(conn)
+    if conn.relation_exists("analysis_run") and conn.relation_exists("fundamental_metrics"):
+        done |= metrics_only_accessions(conn)
+    return done
+
+
 def check(
     conn: Database,
     universe: Database,
@@ -460,7 +476,7 @@ def check(
     )
     sorter = _Sorter(
         verdict,
-        completed_accessions(conn),
+        _done_accessions(conn),
         _Judge(conn, universe, analysis_date, errors, plan.windows),
     )
     _database_clauses(conn, analysis_date, plan, errors, sorter)

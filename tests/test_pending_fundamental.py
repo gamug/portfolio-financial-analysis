@@ -703,3 +703,71 @@ def test_a_filing_after_the_exit_does_not_make_the_leaver_pending(tmp_path: Path
     _store_unscored(db_path, asset_id, "0000000001-22-000002", "2022-09-01")
     line = pending.pending_line(db_path, udb, D, edgar=FakeEdgar())  # type: ignore[arg-type]
     assert line.startswith("pending: no")
+
+
+# -- T-143 part A, P1: a metrics-only filing is done -------------------------------------------
+
+
+def _store_metrics_only_filing(  # noqa: PLR0913 - one filing row, every column a test may pin
+    fx: Fixture, ticker: str, accession: str, filed: str, run_id: int, *, value_inputs: bool
+) -> None:
+    """A filing stored by a metrics-only run, with (or without) its ``value_inputs`` row."""
+    fx.conn.execute(
+        "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, filing_date, "
+        "accession_number, period_end, retrieved_at, cik, available_at, run_id) "
+        "VALUES (?, '10-Q', ?, ?, ?, ?, ?, 'now', ?, ?, ?)",
+        (
+            fx.ids[ticker],
+            int(filed[:4]),
+            f"{filed[:4]}Q9",
+            filed,
+            accession,
+            _period_for(filed),
+            cik_for(ticker),
+            available_from(filed),
+            run_id,
+        ),
+    )
+    if value_inputs:
+        filing_id = int(fx.conn.execute("SELECT MAX(id) FROM sec_filings").fetchone()[0])
+        fx.conn.execute(
+            "INSERT INTO fundamental_metrics (filing_id, metric_group, metric_name, value, unit, "
+            "inputs_json, computed_at, run_id, available_at) "
+            "VALUES (?, 'rule_input', 'value_inputs', 1.0, 'usd', '{}', 'now', ?, ?)",
+            (filing_id, run_id, available_from(filed)),
+        )
+    fx.conn.commit()
+
+
+def test_a_completed_metrics_only_filing_is_not_pending(fx: Fixture) -> None:
+    """T-143 part A, P1: metrics and no FUNDAMENTAL row, written by a metrics-only run, is done."""
+    run = fx.new_run(params={"metrics_only": True})
+    _store_metrics_only_filing(
+        fx, "AAA", "0000000001-26-000050", "2026-06-01", run, value_inputs=True
+    )
+    line = fx.line(FakeEdgar())
+    assert line.startswith("pending: no")
+    assert "0000000001-26-000050" not in line
+
+
+def test_a_metrics_only_filing_stopped_before_value_inputs_is_pending(fx: Fixture) -> None:
+    """Reviewer B, item 2: without its value_inputs row the sequence did not finish -- pending."""
+    run = fx.new_run(params={"metrics_only": True})
+    _store_metrics_only_filing(
+        fx, "AAA", "0000000001-26-000051", "2026-06-01", run, value_inputs=False
+    )
+    line = fx.line(FakeEdgar())
+    assert line.startswith("pending: yes")
+    assert "0000000001-26-000051" in line
+
+
+def test_a_normal_runs_unscored_filing_is_still_pending(fx: Fixture) -> None:
+    """Reviewer A: the metrics-only excuse is only for a metrics-only run; a normal run's filing
+    with metrics and no score is pending, so part B scores it."""
+    run = fx.new_run(params={"metrics_only": False})
+    _store_metrics_only_filing(
+        fx, "AAA", "0000000001-26-000052", "2026-06-01", run, value_inputs=True
+    )
+    line = fx.line(FakeEdgar())
+    assert line.startswith("pending: yes")
+    assert "0000000001-26-000052" in line

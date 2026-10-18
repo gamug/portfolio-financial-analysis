@@ -70,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also fetch each filing's primary document and extract MD&A / risk-factor text",
     )
     run_cmd.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="compute and store the facts, metrics, data-quality gates and rule inputs, but "
+        "write no FUNDAMENTAL score and call no model (T-143 part A, P1)",
+    )
+    run_cmd.add_argument(
         "--allow-dirty",
         action="store_true",
         help="override the clean-tree guard (T-114) and write this run's code_version even "
@@ -278,7 +284,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
         return _run_card(args)
     if args.command == "fidelity":
         return _run_fidelity(args)
-    settings = Settings.load()
+    settings = Settings.load(metrics_only=args.metrics_only)
     updates: dict[str, object] = {}
     if args.db:
         updates["db_path"] = Path(args.db)
@@ -299,6 +305,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
         refresh_universe=args.refresh_universe,
         sections=args.sections,
         analysis_date=resolve_analysis_date(args.analysis_date),
+        metrics_only=args.metrics_only,
     )
     report = run(settings, params)
 
