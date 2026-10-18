@@ -16,7 +16,7 @@ import pytest
 from conftest import write_universe_db
 from test_pipeline import _FakeEdgar
 
-from fundamental_agent import agents, cli, db, pipeline, value_inputs
+from fundamental_agent import agents, cli, db, pipeline, utility_coverage, value_inputs
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, ensure_schema
 from fundamental_agent.metrics.base import MetricResult
@@ -51,10 +51,10 @@ def _params(metrics_only: bool) -> RunParams:
     )
 
 
-def _rows(db_path: Path, sql: str) -> list[tuple[object, ...]]:
+def _rows(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> list[tuple[object, ...]]:
     conn = sqlite3.connect(db_path)
     try:
-        return conn.execute(sql).fetchall()
+        return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
 
@@ -74,6 +74,11 @@ _DQI_ROWS = (
     "d.quarantined, d.value, d.gate_version FROM data_quality_issue d "
     "JOIN sec_filings f ON f.id = d.filing_id "
     "ORDER BY f.accession_number, d.metric_group, d.metric_name, d.rule_id"
+)
+_RULE_INPUT_BY_NAME = (
+    "SELECT f.accession_number, m.metric_group, m.metric_name, m.value, m.unit, m.inputs_json "
+    "FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id "
+    "WHERE m.metric_group = 'rule_input' AND m.metric_name = ? ORDER BY f.accession_number"
 )
 
 
@@ -184,8 +189,12 @@ def test_metrics_only_and_a_normal_run_write_identical_rows(
 
     assert _rows(only / "kg.db", _METRIC_ROWS) == _rows(normal / "kg.db", _METRIC_ROWS)
     assert _rows(only / "kg.db", _DQI_ROWS) == _rows(normal / "kg.db", _DQI_ROWS)
-    # the metrics-only run stored rule inputs (value_inputs, utility_coverage) too
-    assert _count(only / "kg.db", "fundamental_metrics WHERE metric_group = 'rule_input'") > 0
+    # the two rule inputs are written by name -- value_inputs on every filing, utility_coverage on
+    # a 10-K (the fixture) -- and their rows are identical between the two paths
+    for name in (value_inputs.NAME, utility_coverage.NAME):
+        only_rows = _rows(only / "kg.db", _RULE_INPUT_BY_NAME, (name,))
+        assert only_rows, f"{name} missing from the metrics-only run"
+        assert only_rows == _rows(normal / "kg.db", _RULE_INPUT_BY_NAME, (name,))
     assert _count(only / "kg.db", "score_snapshot WHERE score_type = 'FUNDAMENTAL'") == 0
     assert _count(normal / "kg.db", "score_snapshot WHERE score_type = 'FUNDAMENTAL'") == 1
 

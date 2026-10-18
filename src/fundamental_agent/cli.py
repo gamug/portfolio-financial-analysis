@@ -90,6 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pending_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
     pending_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    pending_cmd.add_argument(
+        "--metrics-only",
+        action="store_true",
+        help="treat a filing a metrics-only run completed as done (T-143 part A, P1); plain "
+        "pending leaves it pending (no FUNDAMENTAL row) so the orchestrator still runs it",
+    )
     add_analysis_date_argument(pending_cmd)
 
     quality_cmd = sub.add_parser(
@@ -275,6 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
             resolve_db_path(args.db),
             Path(universe_database_path(args.universe_db)).expanduser(),
             resolve_analysis_date(args.analysis_date),
+            metrics_only=args.metrics_only,
         )
     if args.command == "quality":
         return _run_quality(args)

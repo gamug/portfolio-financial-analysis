@@ -138,10 +138,18 @@ class Fixture:
         )
         self.conn.commit()
 
-    def line(self, edgar: FakeEdgar | None = None, date: str = D) -> str:
+    def line(
+        self, edgar: FakeEdgar | None = None, date: str = D, *, metrics_only: bool = False
+    ) -> str:
         self.conn.close()
         edgar = edgar or FakeEdgar()
-        return pending.pending_line(self.db, self.udb, date, edgar=edgar)  # type: ignore[arg-type]
+        return pending.pending_line(
+            self.db,
+            self.udb,
+            date,
+            edgar=edgar,  # type: ignore[arg-type]  # FakeEdgar stands in for EdgarClient
+            metrics_only=metrics_only,
+        )
 
 
 def _period_for(filed: str) -> str:
@@ -705,7 +713,7 @@ def test_a_filing_after_the_exit_does_not_make_the_leaver_pending(tmp_path: Path
     assert line.startswith("pending: no")
 
 
-# -- T-143 part A, P1: a metrics-only filing is done -------------------------------------------
+# -- T-143 part A, P1: only --metrics-only excuses a metrics-only filing ---------------------------
 
 
 def _store_metrics_only_filing(  # noqa: PLR0913 - one filing row, every column a test may pin
@@ -739,35 +747,50 @@ def _store_metrics_only_filing(  # noqa: PLR0913 - one filing row, every column 
     fx.conn.commit()
 
 
-def test_a_completed_metrics_only_filing_is_not_pending(fx: Fixture) -> None:
-    """T-143 part A, P1: metrics and no FUNDAMENTAL row, written by a metrics-only run, is done."""
+def test_a_metrics_only_filing_is_pending_by_default(fx: Fixture) -> None:
+    """Reviewer B, item 1: plain ``pending`` keeps master's meaning -- a metrics-only filing
+    (metrics and no FUNDAMENTAL row) is pending, so the orchestrator still runs ``run`` for it and
+    part B scores it."""
     run = fx.new_run(params={"metrics_only": True})
     _store_metrics_only_filing(
         fx, "AAA", "0000000001-26-000050", "2026-06-01", run, value_inputs=True
     )
     line = fx.line(FakeEdgar())
-    assert line.startswith("pending: no")
-    assert "0000000001-26-000050" not in line
+    assert line.startswith("pending: yes")
+    assert "0000000001-26-000050" in line
+
+
+def test_a_completed_metrics_only_filing_is_done_only_under_the_flag(fx: Fixture) -> None:
+    """``pending --metrics-only`` treats a completed metrics-only filing as done; plain ``pending``
+    leaves it pending, so the two modes differ on the same database."""
+    run = fx.new_run(params={"metrics_only": True})
+    _store_metrics_only_filing(
+        fx, "AAA", "0000000001-26-000050", "2026-06-01", run, value_inputs=True
+    )
+    plain = fx.line(FakeEdgar())
+    flagged = fx.line(FakeEdgar(), metrics_only=True)
+    assert plain.startswith("pending: yes")
+    assert flagged.startswith("pending: no")
+    assert "0000000001-26-000050" not in flagged
 
 
 def test_a_metrics_only_filing_stopped_before_value_inputs_is_pending(fx: Fixture) -> None:
-    """Reviewer B, item 2: without its value_inputs row the sequence did not finish -- pending."""
+    """Reviewer B, item 2: without its value_inputs row the sequence did not finish -- pending even
+    under ``--metrics-only``."""
     run = fx.new_run(params={"metrics_only": True})
     _store_metrics_only_filing(
         fx, "AAA", "0000000001-26-000051", "2026-06-01", run, value_inputs=False
     )
-    line = fx.line(FakeEdgar())
+    line = fx.line(FakeEdgar(), metrics_only=True)
     assert line.startswith("pending: yes")
     assert "0000000001-26-000051" in line
 
 
 def test_a_normal_runs_unscored_filing_is_still_pending(fx: Fixture) -> None:
-    """Reviewer A: the metrics-only excuse is only for a metrics-only run; a normal run's filing
-    with metrics and no score is pending, so part B scores it."""
+    """A normal run's filing with metrics and no score is pending in both modes."""
     run = fx.new_run(params={"metrics_only": False})
     _store_metrics_only_filing(
         fx, "AAA", "0000000001-26-000052", "2026-06-01", run, value_inputs=True
     )
-    line = fx.line(FakeEdgar())
-    assert line.startswith("pending: yes")
-    assert "0000000001-26-000052" in line
+    assert fx.line(FakeEdgar()).startswith("pending: yes")
+    assert fx.line(FakeEdgar(), metrics_only=True).startswith("pending: yes")

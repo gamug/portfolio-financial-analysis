@@ -6,8 +6,10 @@ touched, and no ``LLM_*`` variable is needed) and no write. It answers with one 
 
 Pending iff an original 10-K/10-Q filed on or before the analysis date has no FUNDAMENTAL
 ``score_snapshot`` and is not excused. A filing a **metrics-only** run completed (T-143
-part A, P1) is excused too: it has metrics and rule inputs but no FUNDAMENTAL row by design,
-and its writing run recorded ``metrics_only``. Three sources of such a filing, cheapest first:
+part A, P1) is excused only under ``--metrics-only``: it has metrics and rule inputs but no
+FUNDAMENTAL row by design, and its writing run recorded ``metrics_only``. Plain ``pending``
+keeps master's meaning -- such a filing is pending (no FUNDAMENTAL row), so the orchestrator
+still runs ``run`` for it and part B scores it. Three sources of such a filing, cheapest first:
 
 1. **Stored but unscored** -- a ``sec_filings`` row with no snapshot (the LLM call failed after
    the facts were stored, or the run was killed). DB only.
@@ -429,16 +431,21 @@ class _Lister:
             self._sorter.add(ref.accession_number, f"{m.symbol} {form}")
 
 
-def _done_accessions(conn: Database) -> set[str]:
-    """Accessions this check treats as done: scored, or a completed metrics-only run (P1).
+def _done_accessions(conn: Database, *, metrics_only: bool) -> set[str]:
+    """Accessions this check treats as done: scored, plus -- only under ``--metrics-only`` -- a
+    completed metrics-only run (P1).
 
     A metrics-only filing has no FUNDAMENTAL ``score_snapshot``, so ``completed_accessions`` never
     names it; :func:`fundamental_agent.db.metrics_only_accessions` adds those whose writing run
-    recorded ``metrics_only`` and whose ``value_inputs`` row proves the sequence finished. A normal
-    run still treats them as pending (its own skip sets stay FUNDAMENTAL-keyed), so part B scores
-    them."""
+    recorded ``metrics_only`` and whose ``value_inputs`` row proves the sequence finished. Plain
+    ``pending`` (``metrics_only=False``) leaves them pending, exactly as on master, so the
+    orchestrator still runs ``run`` for them and a normal run scores them (part B)."""
     done = completed_accessions(conn)
-    if conn.relation_exists("analysis_run") and conn.relation_exists("fundamental_metrics"):
+    if (
+        metrics_only
+        and conn.relation_exists("analysis_run")
+        and conn.relation_exists("fundamental_metrics")
+    ):
         done |= metrics_only_accessions(conn)
     return done
 
@@ -449,9 +456,11 @@ def check(
     analysis_date: str,
     *,
     edgar: EdgarClient | None,
+    metrics_only: bool = False,
 ) -> tuple[Verdict, int]:
     """The verdict and the member count. *edgar* is only used for clause 3 (and may be
-    ``None`` in tests that stop before it)."""
+    ``None`` in tests that stop before it). *metrics_only* excuses the filings a metrics-only run
+    completed (T-143 part A, P1); the default keeps the scored run's meaning."""
     verdict = Verdict()
     window = members_over_range(universe, conn, WINDOW_START, analysis_date)
     members = [w.member for w in window]
@@ -476,7 +485,7 @@ def check(
     )
     sorter = _Sorter(
         verdict,
-        _done_accessions(conn),
+        _done_accessions(conn, metrics_only=metrics_only),
         _Judge(conn, universe, analysis_date, errors, plan.windows),
     )
     _database_clauses(conn, analysis_date, plan, errors, sorter)
@@ -509,9 +518,15 @@ def _canonical_members(
 
 
 def pending_line(
-    db_path: Path, universe_db_path: Path, analysis_date: str, *, edgar: EdgarClient | None = None
+    db_path: Path,
+    universe_db_path: Path,
+    analysis_date: str,
+    *,
+    edgar: EdgarClient | None = None,
+    metrics_only: bool = False,
 ) -> str:
-    """The single ``pending: yes|no <evidence>`` line."""
+    """The single ``pending: yes|no <evidence>`` line. *metrics_only* excuses a metrics-only run's
+    completed filings (T-143 part A, P1); plain ``pending`` treats them as pending, as on master."""
     if not Path(db_path).exists():
         return f"pending: yes {db_path} does not exist (fresh database)"
     conn = connect_ro(db_path)
@@ -520,7 +535,9 @@ def pending_line(
     client = edgar or EdgarClient(os.environ.get("EDGAR_BASE_URL", DEFAULT_EDGAR_BASE_URL))
     try:
         try:
-            verdict, n = check(conn, universe, analysis_date, edgar=client)
+            verdict, n = check(
+                conn, universe, analysis_date, edgar=client, metrics_only=metrics_only
+            )
         except DatabaseError as exc:  # a partial schema is a P2 doubt
             return f"pending: yes cannot read the database ({exc})"
         return f"pending: {'yes' if verdict.is_pending else 'no'} {verdict.evidence(n)}"
@@ -531,7 +548,9 @@ def pending_line(
         conn.close()
 
 
-def run_pending(db_path: Path, universe_db_path: Path, analysis_date: str) -> int:
+def run_pending(
+    db_path: Path, universe_db_path: Path, analysis_date: str, *, metrics_only: bool = False
+) -> int:
     load_dotenv(override=False)  # the step reads the same .env (Settings.load)
-    print(pending_line(db_path, universe_db_path, analysis_date))
+    print(pending_line(db_path, universe_db_path, analysis_date, metrics_only=metrics_only))
     return 0
