@@ -1057,18 +1057,33 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (the user's decision, 2026-10-16):** the pilot (T-143) and this task run on the Windows + WSL2
       machine, so the Tiingo file stays where it is, with no copy.
       **Two measured stops before the cycle and quant steps (reviewer B, 2026-10-17; measured on
-      part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` leaves the database
+      part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` left the database
       with **106 SPLIT rows**, of which **36 were not in the tracked list** (34 assets,
       2019-02-07..2024-06-25): **the 36 are now cited** in the 2019–2024 list (including DD
       2019-06-03, the one `reverse_split_spinoff` row) and **`scripts/unexplained_split_rows.py` is
-      the gate** (verify_pilot's T-153g; 0 unexplained on part 3d's archive copy), so those 34
-      assets' market caps no longer refuse (part 3d's guard) and the cycle's VALORIZATION and
-      quant's cap weights no longer treat them as missing.
-      Exactly one of the 36 falls inside 2022+ and is absent from production: **ILMN 2024-06-25,
-      1.028** (its GRAIL spin-off). Complete the list from this run's output before the cycle step,
-      as the paragraph above says: **every row -- the 69 now committed and every new one -- quotes
-      the sentence that states the completed event and its ratio**, from the same filing or one
-      filing per event; the classes and the values stay as the vendors recorded them. (b) `quant build-returns` builds only the members of the
+      the gate** (verify_pilot's T-153g). **T-143 part A item 9 (PR #177)** then made
+      `quant backfill-actions` (and `quant pending`) select the **historical** universe
+      (`members_over_range`, as `pricing_agent`/`fundamental_agent` do), which adds **8 SPLIT rows**
+      for the leaver lines (7 newly cited, including MTCH 2020-07-01 under the new combined class
+      `split_spinoff`), so that archive copy now holds **114 SPLIT rows = 113 distinct
+      `(CIK, ex_date)` events** — **GOOG and GOOGL are one 2022-07-18 event with two class rows** —
+      of which **113 are explained by the 112 event rows** in
+      `src/kg_schema/data/corporate_action_events.csv` and **exactly one is not: `CTVA 2026-10-01`**
+      (6.665; the follow-up below). So those 34 assets' market caps no longer refuse (part 3d's
+      guard) and the cycle's VALORIZATION and quant's cap weights no longer treat them as missing.
+      Exactly one of the original 36 falls inside 2022+ and is absent from production: **ILMN
+      2024-06-25, 1.028** (its GRAIL spin-off). Complete the list from the run's output before the
+      cycle step, as the paragraph above says: **every row quotes the sentence that states the
+      completed event and its ratio**, from the same filing or one filing per event; the classes and
+      the values stay as the vendors recorded them.
+      **CTVA follow-up (reviewer B, 2026-10-18).** Cite **CTVA 2026-10-01** from Corteva's Q3 2026
+      10-Q, or the first filing that states the completion and the ratio together, **before T-100**;
+      no filing yet does (the 1-for-1 ratio is only in Vylor's information statement
+      `0001193125-26-396054` Ex. 99.1; the completion 8-K `0001755672-26-000028` has no ratio), so
+      every CTVA cap is refused meanwhile — the one row `scripts/unexplained_split_rows.py` reports.
+      **Vylor is the accounting successor** (completion 8-K, Item 9.01); Corteva's filings after the
+      spin present **New Corteva on a carve-out basis**, and T-100 handles the break in CTVA's
+      fundamentals. (b) `quant build-returns` builds only the members of the
       universe **on its `date_to`** (`quant/db.py`'s `load_assets` reads `members_asof`): a leaver's
       return rows exist only for a `date_to` inside its own membership, so building to a later date
       gives it none. Part 3d's R3 (a run to 2024-06-21) left **16 of the 32** imported lines without
