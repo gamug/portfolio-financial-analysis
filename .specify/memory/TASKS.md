@@ -20,7 +20,7 @@ defects) is done 2026-09-30; Work item 17 (`T-131`–`T-133`) is closed 2026-10-
 weight heuristic, `T-134`–`T-139`) is closed 2026-10-05; Work item 19 (local follow-ups, `T-144`, `T-152`, `T-142`, `T-145`, `T-083`) is closed 2026-10-12.
 
 **Order (user, 2026-10-05, Work item 8's part re-set 2026-10-07, `T-144`/`T-152` moved first 2026-10-09; scope:
-finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next)) → **`T-153`** (historical universe) →
+finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → **`T-153`** (historical universe) →
 **Work item 19** (done 2026-10-12) → Work item 2 (orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the
 full-universe run, last of all, on a *fresh* `financial.db` (see `T-100`'s own entry). Work item 20
 (run-endpoint access control; the repo is not a production version yet) and Work item 4 (SEMANTIC; depends on
@@ -30,7 +30,7 @@ prerequisites of it. Work item 3 stays superseded by `T-077` (do not implement).
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next)), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -182,7 +182,7 @@ knowledge graph.
 ## Work item 8 — P1: methodological redesign (supersedes Work item 3)
 
 **Order (user, 2026-10-07; re-set 2026-10-08 after `T-147`'s audit and `phase3_decisions.md`):** `T-141` → `T-077` →
-`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next).
+`T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`).
 - **Why:** `T-077` (the Carhart estimator over prices and Kenneth French factors) and `T-070` (the price-based
   technical score) read no SEC statement data, so they run while the user builds the SEC data-treatment checklist
   (`T-147`'s input). The audit (`T-147`) then sorts the defects into four tasks, in the order of their dependencies:
@@ -949,6 +949,12 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       merged change). It measures `T-140`'s acceptance and doubles as `T-014`'s check (one orchestrator
       run, through both HTTP and the CLI wrapper, runs everything on a fresh database). If it fails, fix
       and re-run before `T-100`. → `PLAN.md` Work item 12.
+      **Split by the user, 2026-10-16 (plan `/workspaces/thesis/handoff/T143a_plan.md`):** the pilot is two
+      parts. **Part A** is metrics and rules only -- no LLM, a fresh database, the whole historical universe
+      (about 586 lines), checked against sources outside our code. Its P1 prerequisite,
+      `fundamental_agent run --metrics-only`, is **done 2026-10-18** (PR #176, this entry's status commit).
+      **Part B** comes later: the LLM on a few companies, then the orchestrator end to end (it still closes
+      `T-014`). `T-100` still waits for both.
       **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
       SEC, with network allowed, beside the offline `verify_pilot.py` (built on the tracked `scripts/sec_xcheck/` that `T-147`
       delivers: `itemcheck.py`, `signcheck.py`, `precedence.py` with `--db`, and `audit_sec_checklist.py fetch` for the SEC cache). **FAIL** on any value mismatch, on any
@@ -1076,7 +1082,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
-2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
+2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
 `T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3

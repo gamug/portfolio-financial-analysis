@@ -19,9 +19,11 @@ from fundamental_agent import db, quality, utility_coverage, value_inputs
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
     UNSCORED_MODEL_LABEL,
+    AnalysisResult,
     FilingContext,
     FundamentalAnalyst,
     build_model,
+    compute_metrics,
 )
 from fundamental_agent.config import Settings
 from fundamental_agent.db import FilingKey, FilingMeta, RunError, SnapshotRow
@@ -77,6 +79,9 @@ class RunParams:
     refresh_universe: bool = False  # accepted for back-compat; no longer meaningful
     sections: bool = False  # also extract narrative filing text (MD&A, risk factors)
     analysis_date: str = field(default_factory=rundate.today)
+    # T-143 part A, P1: compute the facts, metrics, gates and rule inputs but write no
+    # FUNDAMENTAL score -- no model is built and none is called.
+    metrics_only: bool = False
 
     def resolved_until(self) -> int:
         cap = int(self.analysis_date[:4])
@@ -140,7 +145,9 @@ class _Engine:
 
     conn: Database
     edgar: EdgarClient
-    analyst: FundamentalAnalyst
+    # None in metrics-only mode (T-143 part A, P1): the metrics come from
+    # ``agents.compute_metrics`` and no model is built.
+    analyst: FundamentalAnalyst | None
     params: RunParams
     report: RunReport
     completed: set[_Unit]
@@ -184,7 +191,15 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         reits = {int(a["id"]): db.is_equity_reit(conn, int(a["id"])) for a in assets}
         tasks = _plan(assets, params, chains, reits=reits, until=_exit_by_ticker(window))
         completed: set[_Unit] = set() if params.fresh else db.completed_units(conn)
-        accessions: set[str] = set() if params.fresh else db.completed_accessions(conn)
+        if params.fresh:
+            accessions: set[str] = set()
+        else:
+            accessions = db.completed_accessions(conn)
+            if params.metrics_only:
+                # T-143 part A, P1: a metrics-only filing has no FUNDAMENTAL row, so the
+                # FUNDAMENTAL-keyed set above never names it. Add the metrics-only done-set
+                # (``db.metrics_only_accessions``) so a re-run or a resume re-fetches nothing.
+                accessions |= db.metrics_only_accessions(conn)
 
         # T-114: refuse before any run row exists when this run's own code_version() is dirty
         # (uncommitted changes) -- its results would come from code HEAD alone can't reproduce.
@@ -204,7 +219,11 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
 
         try:
-            analyst = FundamentalAnalyst(build_model(settings), settings.llm_model)
+            analyst = (
+                None
+                if params.metrics_only
+                else FundamentalAnalyst(build_model(settings), settings.llm_model)
+            )
             with EdgarClient(settings.edgar_base_url) as edgar:
                 engine = _Engine(
                     conn, edgar, analyst, params, report, completed, completed_accessions=accessions
@@ -1006,17 +1025,27 @@ def _analyze_one(
         market_cap_missing=market_cap_missing,
     )
 
-    result = engine.analyst.analyze(ctx)
-    db.stamp_ytd(result.metrics, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
+    analyst = engine.analyst
+    scoring_model = ""  # only read when there is a score, i.e. the analyst branch below
+    if engine.params.metrics_only or analyst is None:
+        # T-143 part A, P1: compute the metrics without the analyst and write no score. The
+        # identical write sequence below runs for both paths, from the same computed results.
+        result: AnalysisResult | None = None
+        computed = compute_metrics(ctx)
+    else:
+        result = analyst.analyze(ctx)
+        computed = result.metrics
+        scoring_model = analyst.model_name
+    db.stamp_ytd(computed, ttm)  # PER-05: this 10-Q's year-to-date, for a later Q4
     db.record_metrics(
-        engine.conn, filing_id, result.metrics, event_time=target.period.date, run_id=run_id
+        engine.conn, filing_id, computed, event_time=target.period.date, run_id=run_id
     )
     # T-071 part 2a (D-13): the regulated-utility cash-coverage rule input, on a 10-K only. A rule
     # input outside the metric dictionary and the prompt (a pseudo-group row).
     utility_coverage.write(engine.conn, filing_id, task.asset_id, stmts)
     # T-071 part 2b (D1): the VALORIZATION value inputs, on every filing. Same kind of row: read
     # from the results just recorded, so every value is the one its metric row carries.
-    value_inputs.write(engine.conn, filing_id, result.metrics)
+    value_inputs.write(engine.conn, filing_id, computed)
     # Ring-1 data-quality gates (T-065) over what was just stored, so every newly analysed
     # filing is gated; `python -m fundamental_agent quality` backfills older ones.
     quality.gate_version(engine.conn, db.METRICS_ENGINE_VERSION, filing_id=filing_id, run_id=run_id)
@@ -1030,6 +1059,11 @@ def _analyze_one(
         run_id=run_id,
     )
 
+    if result is None:
+        # T-143 part A, P1: metrics-only writes everything but the FUNDAMENTAL score -- no
+        # score_snapshot row, not even the fallback (the gate/rule-input writes above stand).
+        return
+
     assessment = result.assessment
     # T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
     # production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
@@ -1040,7 +1074,7 @@ def _analyze_one(
     elif result.used_fallback:
         model = FALLBACK_MODEL_LABEL
     else:
-        model = engine.analyst.model_name
+        model = scoring_model
     db.insert_snapshot(
         engine.conn,
         SnapshotRow(
@@ -1074,6 +1108,7 @@ def _params_dict(params: RunParams) -> _Payload:
         "limit": params.limit,
         "tickers": list(params.tickers) if params.tickers else None,
         "fresh": params.fresh,
+        "metrics_only": params.metrics_only,
     }
 
 

@@ -26,6 +26,7 @@ from kg_schema import identity, migrations, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
+from kg_schema.versions import RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
 
 # Candidate XBRL scale/decimals-tagging defects: a filer (or, per SEC OSD staff
 # guidance, the tagging tool it used) reports a share count off by an exact
@@ -1459,6 +1460,39 @@ def completed_accessions(conn: Database) -> set[str]:
         """
     )
     return {str(r["accession"]) for r in rows}
+
+
+def metrics_only_accessions(conn: Database) -> set[str]:
+    """Accessions whose filing a **metrics-only** run completed (T-143 part A, P1).
+
+    ``completed_accessions`` is keyed on the FUNDAMENTAL ``score_snapshot`` a scored run writes,
+    so it never names a metrics-only filing. A filing counts as done here only when its own
+    writing run recorded ``metrics_only`` **and** its ``value_inputs`` rule input exists: that row
+    is written after ``record_metrics`` and ``utility_coverage.write`` (``pipeline._analyze_one``),
+    so a filing killed before the sequence finished (facts and metrics stored, its ``value_inputs``
+    row not) is not done and a later metrics-only run resumes it (reviewer B, 2026-10-18). A normal
+    run ignores this set -- its skip sets stay FUNDAMENTAL-keyed -- so it still scores every such
+    filing."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT f.accession_number AS accession, r.params_json AS params
+        FROM sec_filings f
+        JOIN analysis_run r ON r.id = f.run_id
+        JOIN fundamental_metrics m
+            ON m.filing_id = f.id AND m.metric_group = ? AND m.metric_name = ?
+        WHERE f.accession_number IS NOT NULL
+        """,
+        (RULE_INPUT_GROUP, VALUE_INPUTS_METRIC),
+    ).fetchall()
+    out: set[str] = set()
+    for row in rows:
+        try:
+            params = json.loads(row["params"] or "{}")
+        except ValueError:
+            continue
+        if isinstance(params, dict) and params.get("metrics_only") is True:
+            out.add(str(row["accession"]))
+    return out
 
 
 def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = None) -> None:

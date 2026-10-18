@@ -34,11 +34,24 @@ class Settings(BaseModel):
     allow_dirty: bool = False
 
     @classmethod
-    def load(cls, env_file: str | os.PathLike[str] | None = None) -> Settings:
-        """Load settings from the environment, populating it from ``.env`` first."""
+    def load(
+        cls,
+        env_file: str | os.PathLike[str] | None = None,
+        *,
+        metrics_only: bool = False,
+    ) -> Settings:
+        """Load settings from the environment, populating it from ``.env`` first.
+
+        ``metrics_only`` (T-143 part A, P1): ``fundamental_agent run --metrics-only`` builds no
+        model, so the three LLM variables are neither required nor read -- the fields are left
+        empty, and a caller that tried to build a model from them would fail loudly."""
         load_dotenv(env_file, override=False)
         db_path = database_path()
-        missing = [name for name in _REQUIRED_LLM_VARS if not os.environ.get(name)]
+        missing = (
+            []
+            if metrics_only
+            else [name for name in _REQUIRED_LLM_VARS if not os.environ.get(name)]
+        )
         if db_path is None:
             missing.insert(0, DB_ENV_VAR)
         if missing or db_path is None:
@@ -46,8 +59,8 @@ class Settings(BaseModel):
         return cls(
             db_path=Path(db_path).expanduser(),
             universe_db_path=Path(universe_database_path()).expanduser(),
-            llm_api_key=os.environ["LLM_API_KEY"],
-            llm_model=os.environ["LLM_MODEL"],
-            llm_url=os.environ["LLM_URL"],
+            llm_api_key="" if metrics_only else os.environ["LLM_API_KEY"],
+            llm_model="" if metrics_only else os.environ["LLM_MODEL"],
+            llm_url="" if metrics_only else os.environ["LLM_URL"],
             edgar_base_url=os.environ.get("EDGAR_BASE_URL", DEFAULT_EDGAR_BASE_URL),
         )

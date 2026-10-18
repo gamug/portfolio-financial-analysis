@@ -482,6 +482,45 @@ def _prompt_version_hash(model_name: str) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def compute_metrics(ctx: FilingContext) -> list[tuple[str, MetricResult]]:
+    """Every computed metric for one filing, **without any model** (T-143 part A, P1).
+
+    The one place the metric groups are computed: ``FundamentalAnalyst.analyze`` calls it (through
+    :meth:`FundamentalAnalyst._compute_all`) for a scored run, and
+    ``fundamental_agent run --metrics-only`` calls it directly, so a metrics-only filing's rows are
+    exactly a scored filing's."""
+    out: list[tuple[str, MetricResult]] = []
+    for group in _ALL_GROUPS:
+        for result in compute_group(
+            group, ctx.stmts, ctx.period_key, ctx.prior_key, _group_ttm(group, ctx)
+        ):
+            out.append((group, result))
+    if ctx.price is not None or ctx.market_cap is not None or ctx.market_cap_missing is not None:
+        ttm_val = _group_ttm(valuation_metrics.GROUP, ctx)
+        for result in valuation_metrics.compute(
+            ctx.stmts,
+            ctx.period_key,
+            ctx.price,
+            ctx.share_scale_factors,
+            ttm_val,
+            cik=ctx.cik,
+            market_cap=ctx.market_cap,
+            market_cap_missing=ctx.market_cap_missing,
+        ):
+            out.append((valuation_metrics.GROUP, result))
+
+    _flag_annualization(out, ctx.ttm_flows)
+    # T-071 part 1 (P4): the applicability matrix, in this one place -- after the groups and
+    # before `provenance.attach`, so the empty reason reads the NA cell. A filing with no CIK at
+    # all (a hermetic fixture) carries no profile: the layer is skipped, never guessed.
+    if ctx.cik:
+        apply_applicability(out, profile_as_of(ctx.cik, ctx.period_key[:10]))
+    # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
+    # method and columns come from the filing's own flows).
+    provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
+    return out
+
+
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
@@ -543,40 +582,8 @@ class FundamentalAnalyst:
         )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
-        out: list[tuple[str, MetricResult]] = []
-        for group in _ALL_GROUPS:
-            for result in compute_group(
-                group, ctx.stmts, ctx.period_key, ctx.prior_key, _group_ttm(group, ctx)
-            ):
-                out.append((group, result))
-        if (
-            ctx.price is not None
-            or ctx.market_cap is not None
-            or ctx.market_cap_missing is not None
-        ):
-            ttm_val = _group_ttm(valuation_metrics.GROUP, ctx)
-            for result in valuation_metrics.compute(
-                ctx.stmts,
-                ctx.period_key,
-                ctx.price,
-                ctx.share_scale_factors,
-                ttm_val,
-                cik=ctx.cik,
-                market_cap=ctx.market_cap,
-                market_cap_missing=ctx.market_cap_missing,
-            ):
-                out.append((valuation_metrics.GROUP, result))
-
-        _flag_annualization(out, ctx.ttm_flows)
-        # T-071 part 1 (P4): the applicability matrix, in this one place -- after the groups and
-        # before `provenance.attach`, so the empty reason reads the NA cell. A filing with no CIK at
-        # all (a hermetic fixture) carries no profile: the layer is skipped, never guessed.
-        if ctx.cik:
-            apply_applicability(out, profile_as_of(ctx.cik, ctx.period_key[:10]))
-        # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
-        # method and columns come from the filing's own flows).
-        provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)
-        return out
+        """:func:`compute_metrics`, kept as a method for the existing callers (T-143 part A, P1)."""
+        return compute_metrics(ctx)
 
     def _make_specialist(
         self,
