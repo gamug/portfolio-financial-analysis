@@ -232,7 +232,8 @@ class ActionSelection:
     ``unmatched`` is ``(ticker, reason)`` for a line with no ``assets`` row, or whose canonical
     symbol (``resolve_asset_ids`` keeps only the first line per symbol) or resolved asset id another
     line already took; ``empty_span`` names the lines whose last stored bar precedes ``--from``.
-    Neither is fetched: both are recorded on the run and listed by ``pending``, never dropped in
+    Neither is fetched: unmatched lines are recorded on the run (``lines_unmatched``) and listed by
+    ``pending``; empty-span lines are counted on the run (``lines_empty_span``); never dropped in
     silence (T-143 part A item 9)."""
 
     targets: list[ActionTarget]
