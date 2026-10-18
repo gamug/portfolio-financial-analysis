@@ -17,14 +17,16 @@ cheapest first (the gateway is read only when the others say no):
    ending before its newest forward return on or before D. "Would score" mirrors
    ``quant.evaluate``: every book with ``as_of`` <= D (the window starts at the earliest book)
    that holds open positions. A book without positions is *unscorable*: listed, not pending (P6).
-4. **Actions**: the pricing gateway lists a dividend or split (ex-date from ``DEFAULT_FROM`` to D)
-   that ``corporate_action`` lacks for the configured corporate-action engine. A member the
-   gateway cannot serve (``ActionsUnavailable``/``ActionsNotSupported``) is *unavailable*: the
-   backfill would write nothing for it either, so it is listed and does not count (P6). A
-   transport failure is not caught: the command exits non-zero and the orchestrator treats that
-   as pending.
+4. **Actions**: the pricing gateway lists a dividend or split (ex-date from ``DEFAULT_FROM`` to the
+   line's last stored bar) that ``corporate_action`` lacks for the configured corporate-action
+   engine. Selected over the **historical** universe (``members_over_range``, T-143 part A item 9):
+   the same lines and spans ``backfill-actions`` fetches, so a leaver's missing action is reported
+   rather than left to be fetched forever. A line the gateway cannot serve
+   (``ActionsUnavailable``/``ActionsNotSupported``) is *unavailable*: the backfill would write
+   nothing for it either, so it is listed and does not count (P6). A transport failure is not
+   caught: the command exits non-zero and the orchestrator treats that as pending.
 
-Clause 4 makes one GET per member -- about as many as a no-op ``backfill-actions``.
+Clause 4 makes one GET per line -- about as many as a no-op ``backfill-actions``.
 """
 
 from __future__ import annotations
@@ -39,7 +41,12 @@ from kg_schema.db import connect_ro
 from kg_schema.trading_calendar import last_session_on_or_before
 from quant.actions import DEFAULT_FROM, fetch_corporate_actions_gateway
 from quant.config import QuantSettings
-from quant.db import load_assets, load_book_weights, load_forward_simple_returns
+from quant.db import (
+    ActionTarget,
+    load_action_targets,
+    load_book_weights,
+    load_forward_simple_returns,
+)
 from quant.evaluate import LIVE_BOOK_KIND, PERF_ENGINE_VERSION
 from quant.pricing_client import ActionsNotSupported, ActionsUnavailable, QuantPricingClient
 
@@ -126,12 +133,13 @@ def _evaluate_lag(conn: Database, settings: QuantSettings, to: str) -> tuple[lis
 def _gateway_actions(
     conn: Database,
     settings: QuantSettings,
-    assets: list[tuple[int, str]],
+    targets: list[ActionTarget],
     to: str,
     client: QuantPricingClient,
 ) -> tuple[str | None, list[str]]:
     """``(reason, unavailable)``: the first dividend or split the gateway lists and the database
-    lacks, and the members the gateway cannot serve."""
+    lacks, and the lines the gateway cannot serve. Each line is read over its own span (its last
+    stored bar), the same span ``backfill-actions`` fetches."""
     stored: dict[int, set[tuple[str, str]]] = {}
     for r in conn.execute(
         "SELECT asset_id, action_type, ex_date FROM corporate_action "
@@ -140,17 +148,22 @@ def _gateway_actions(
     ):
         stored.setdefault(int(r["asset_id"]), set()).add((str(r["action_type"]), str(r["ex_date"])))
     unavailable: list[str] = []
-    for asset_id, ticker in assets:
+    for target in targets:
         try:
-            rows = fetch_corporate_actions_gateway(client, asset_id, ticker, DEFAULT_FROM, to)
+            rows = fetch_corporate_actions_gateway(
+                client, target.asset_id, target.ticker, target.start, target.end
+            )
         except (ActionsUnavailable, ActionsNotSupported):
-            unavailable.append(ticker)
+            unavailable.append(target.ticker)
             continue
         listed = {(r.action_type, r.ex_date) for r in rows}
-        new = sorted(listed - stored.get(asset_id, set()))
+        new = sorted(listed - stored.get(target.asset_id, set()))
         if new:
             kind, ex_date = new[0]
-            return f"{ticker} has {kind} {ex_date} at the gateway, not in corporate_action", []
+            return (
+                f"{target.ticker} has {kind} {ex_date} at the gateway, not in corporate_action",
+                [],
+            )
     return None, unavailable
 
 
@@ -165,25 +178,26 @@ def check(
         if not conn.relation_exists(table):
             return True, f"no {table} table (fresh database)"
     try:
-        assets = load_assets(
+        targets = load_action_targets(
             conn,
             universe=settings.universe,
-            as_of=analysis_date,
+            date_from=DEFAULT_FROM,
+            date_to=analysis_date,
             universe_db_path=settings.universe_db_path,
         )
     except RuntimeError as exc:  # no members, or none with an assets row yet
         return True, str(exc)
     session = last_session_on_or_before(date.fromisoformat(analysis_date)).isoformat()
 
-    reason = _returns_lag(conn, settings, [a for a, _ in assets], analysis_date) or _missing_books(
-        conn, settings, session, analysis_date
-    )
+    reason = _returns_lag(
+        conn, settings, [t.asset_id for t in targets], analysis_date
+    ) or _missing_books(conn, settings, session, analysis_date)
     if reason is not None:
         return True, reason
     lagging, unscorable = _evaluate_lag(conn, settings, analysis_date)
     if lagging:
         return True, f"evaluate lags for {len(lagging)} books ({_named(lagging)})"
-    reason, unavailable = _gateway_actions(conn, settings, assets, analysis_date, client)
+    reason, unavailable = _gateway_actions(conn, settings, targets, analysis_date, client)
     if reason is not None:
         return True, reason
 
@@ -195,7 +209,8 @@ def check(
     tail = f"; {'; '.join(extras)}" if extras else ""
     wanted = [o for o in settings.objectives if o != "frontier"]
     return False, (
-        f"returns, {len(wanted)} books and actions current at {session} ({len(assets)} members){tail}"
+        f"returns, {len(wanted)} books and actions current at {session} "
+        f"({len(targets)} members){tail}"
     )
 
 

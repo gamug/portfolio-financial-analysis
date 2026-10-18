@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import write_universe_db
 from portfolio_common.db import Database
 
 import quant.actions
@@ -161,6 +162,61 @@ def test_gateway_run_writes_corpact_v1_rows_and_completes(
 
     again = backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
     assert again.inserted == 0  # INSERT OR IGNORE on the versioned key
+
+
+def _split_gateway(
+    splits: dict[str, list[dict[str, Any]]],
+) -> tuple[QuantPricingClient, list[tuple[str, str, str]]]:
+    """A gateway client whose ``splits`` per ticker are returned; records ``(ticker, start, end)``."""
+    calls: list[tuple[str, str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ticker = request.url.path.split("/")[2]
+        start, end = request.url.params["start_date"], request.url.params["end_date"]
+        calls.append((ticker, start, end))
+        body: dict[str, Any] = {
+            "ticker": ticker,
+            "source": "yfinance",
+            "dividends": [],
+            "warning": None,
+            "splits": [] if start == "1900-01-01" else splits.get(ticker, []),
+        }
+        return httpx.Response(200, json=body)
+
+    http = httpx.Client(base_url="http://gateway.test", transport=httpx.MockTransport(handler))
+    return QuantPricingClient("http://gateway.test", max_retries=1, client=http), calls
+
+
+def test_a_leaver_is_fetched_over_its_last_stored_bar_not_only_its_membership_span(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """T-143 part A, item 9: ``backfill-actions`` selects the historical universe
+    (``members_over_range``), so a line that left before ``--to`` is fetched -- and over the span
+    its bars cover (its last stored bar), not only its membership span, because
+    ``market_cap._factor`` applies a split up to that bar."""
+    conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=False)
+    universe = write_universe_db(
+        tmp_path / "leaver.db", [("AS01", "2024-01-01", "2024-06-30"), ("AS02", "2024-01-01", None)]
+    )
+    last_bar = str(
+        conn.execute("SELECT MAX(date) FROM price_daily WHERE asset_id = 1").fetchone()[0]
+    )
+    client, calls = _split_gateway({"AS01": [{"date": "2024-09-01", "value": 2.0}]})
+
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+
+    assert report.assets_seen == 2  # the leaver and the current member
+    assert ("AS01", "2024-01-01", last_bar) in calls  # the leaver's last stored bar, not its exit
+    assert ("AS01", "2024-01-01", "2024-06-30") not in calls
+    splits = [
+        (str(r["ex_date"]), float(r["value"]))
+        for r in conn.execute(
+            "SELECT ex_date, value FROM corporate_action WHERE asset_id = 1 AND action_type = 'SPLIT'"
+        )
+    ]
+    assert splits == [("2024-09-01", 2.0)]  # fetched because the leaver is in the selection now
 
 
 def test_backfill_actions_refuses_a_dirty_code_version(

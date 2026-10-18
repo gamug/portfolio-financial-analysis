@@ -235,6 +235,32 @@ def test_a_dividend_the_gateway_lists_and_the_database_lacks_is_pending(fx: Fx) 
     assert pending_ and evidence == f"AAA has DIVIDEND {D} at the gateway, not in corporate_action"
 
 
+def test_pending_selects_the_historical_universe_so_a_leaver_is_checked(tmp_path: Path) -> None:
+    """T-143 part A, item 9: the actions check uses ``members_over_range``, the same selection and
+    span ``backfill-actions`` fetches, so a line that left before D is reported (not left pending
+    forever, and not missed)."""
+    f = Fx(tmp_path)
+    f.prices_and_returns(PRIOR, D)
+    f.books(D)
+    f.settings = f.settings.model_copy(
+        update={
+            "universe_db_path": write_universe_db(
+                tmp_path / "gone.db",
+                [("AAA", "2020-01-01", None), ("BBB", "2020-01-01", "2026-10-01")],
+            )
+        }
+    )
+    f.gateway.dividends["BBB"] = [RawAction(D, 0.5)]
+
+    pending_, evidence = f.check()
+    assert pending_
+    assert evidence == f"BBB has DIVIDEND {D} at the gateway, not in corporate_action"
+    assert ("BBB", "2022-01-01", D) in f.gateway.calls  # its span runs to its last stored bar
+
+    f.dividend("BBB", D)
+    assert f.check() == (False, f"returns, 4 books and actions current at {D} (2 members)")
+
+
 def test_no_lookahead_the_gateway_is_asked_only_up_to_the_date(tmp_path: Path) -> None:
     f = Fx(tmp_path)
     f.prices_and_returns(PRIOR, D)
