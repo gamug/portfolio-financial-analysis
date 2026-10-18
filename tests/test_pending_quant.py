@@ -6,8 +6,9 @@ import hashlib
 from pathlib import Path
 
 import pytest
-from conftest import cik_for, write_universe_db
+from conftest import cik_for, write_universe_db, write_universe_rows
 
+import quant.db
 from kg_schema import connect
 from pricing_agent import db as pricing_db
 from quant import cli, pending
@@ -259,6 +260,101 @@ def test_pending_selects_the_historical_universe_so_a_leaver_is_checked(tmp_path
 
     f.dividend("BBB", D)
     assert f.check() == (False, f"returns, 4 books and actions current at {D} (2 members)")
+
+
+def test_a_leavers_newer_bar_does_not_read_as_a_returns_lag(tmp_path: Path) -> None:
+    """Sourcery #6: the returns check reads the members on the date (build-returns' own panel), so
+    a leaver's bar newer than the members' newest return is not a lag."""
+    f = Fx(tmp_path)
+    f.prices_and_returns(PRIOR)  # bars and returns for both assets at PRIOR
+    f.conn.execute(
+        "INSERT INTO price_daily (asset_id, date, close) VALUES (?, ?, 1.0)", (f.ids["BBB"], D)
+    )  # the leaver's newer bar, with no return row
+    f.conn.commit()
+    f.books(D)
+    f.settings = f.settings.model_copy(
+        update={
+            "universe_db_path": write_universe_db(
+                tmp_path / "gone2.db",
+                [("AAA", "2020-01-01", None), ("BBB", "2020-01-01", "2026-10-01")],
+            )
+        }
+    )
+    pending_, evidence = f.check()
+    assert not pending_
+    assert evidence == f"returns, 4 books and actions current at {D} (2 members)"
+
+
+def test_pending_lists_an_unmatched_line(tmp_path: Path) -> None:
+    """Sourcery #2: a line with no ``assets`` row is listed as unmatched, not pending."""
+    f = Fx(tmp_path)
+    f.prices_and_returns(PRIOR, D)
+    f.books(D)
+    f.settings = f.settings.model_copy(
+        update={
+            "universe_db_path": write_universe_rows(
+                tmp_path / "u2.db",
+                [
+                    ("AAA", cik_for("AAA"), "2020-01-01", None),
+                    ("BBB", cik_for("BBB"), "2020-01-01", None),
+                    ("GHOST", cik_for("GHOST"), "2020-01-01", None),
+                ],
+            )
+        }
+    )
+    pending_, evidence = f.check()
+    assert not pending_
+    assert evidence == (
+        f"returns, 4 books and actions current at {D} (2 members); 1 unmatched (GHOST)"
+    )
+
+
+def test_pending_lists_a_line_whose_symbol_two_lines_share(tmp_path: Path) -> None:
+    """Sourcery #2: ``resolve_asset_ids`` keeps one line per symbol; the second is unmatched."""
+    f = Fx(tmp_path)
+    f.prices_and_returns(PRIOR, D)
+    f.books(D)
+    f.settings = f.settings.model_copy(
+        update={
+            "universe_db_path": write_universe_rows(
+                tmp_path / "u3.db",
+                [
+                    ("AAA", cik_for("AAA"), "2020-01-01", None),
+                    ("AAA", "0000000002", "2020-01-01", None),
+                    ("BBB", cik_for("BBB"), "2020-01-01", None),
+                ],
+            )
+        }
+    )
+    pending_, evidence = f.check()
+    assert not pending_
+    assert evidence.endswith("; 1 unmatched (AAA)")
+
+
+def test_pending_lists_a_line_sharing_an_asset_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sourcery #2: a line whose resolved asset id another line already took. The natural path
+    cannot produce this (``resolve_asset_ids`` dedups by symbol first), so the resolver is stubbed;
+    the line is listed, not fetched."""
+    f = Fx(tmp_path)
+    f.prices_and_returns(PRIOR, D)
+    f.books(D)
+    f.settings = f.settings.model_copy(
+        update={
+            "universe_db_path": write_universe_db(
+                tmp_path / "u4.db", [("AAA", "2020-01-01", None), ("BBB", "2020-01-01", None)]
+            )
+        }
+    )
+    monkeypatch.setattr(
+        quant.db,
+        "resolve_asset_ids",
+        lambda _db, members, *, as_of: ({symbol.upper(): 1 for symbol, _cik in members}, []),
+    )
+    pending_, evidence = f.check()
+    assert not pending_
+    assert "; 1 unmatched (BBB)" in evidence
 
 
 def test_no_lookahead_the_gateway_is_asked_only_up_to_the_date(tmp_path: Path) -> None:

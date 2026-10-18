@@ -531,6 +531,18 @@ def _print_actions_report(report: ActionsReport) -> None:
             f"written; first: {report.errors[0]}",
             file=sys.stderr,
         )
+    if report.unmatched:
+        shown = ", ".join(f"{ticker} ({reason})" for ticker, reason in report.unmatched)
+        print(
+            f"  {len(report.unmatched)} line(s) unmatched in the historical universe and not "
+            f"fetched: {shown}",
+            file=sys.stderr,
+        )
+    if report.empty_span:
+        print(
+            f"  {len(report.empty_span)} line(s) have no bar on or after --from and were skipped",
+            file=sys.stderr,
+        )
     if report.dirty_tree_bypassed is not None:
         print(
             f"  WARNING: --allow-dirty overrode the clean-tree guard "

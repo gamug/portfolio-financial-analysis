@@ -210,7 +210,11 @@ def members_over_range(
 
     ``window_from`` is clamped to *start* and ``window_to`` is ``None`` for a line still a
     member at *end* -- the caller bounds its fetch by the line's own span, so a company that
-    left gets nothing dated after its exit. Sorted by canonical symbol."""
+    left gets nothing dated after its exit. **Membership bounds the selection, not the fetch:**
+    a caller may fetch past the exit when what it reads is dated by a stored bar rather than the
+    membership (``quant backfill-actions`` fetches each line's actions to its last stored
+    ``price_daily`` bar, because ``kg_schema.market_cap`` applies a split up to that bar).
+    Sorted by canonical symbol."""
     _check_universe(universe)
     rows = universe_db.execute(
         """

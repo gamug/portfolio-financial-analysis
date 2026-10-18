@@ -23,7 +23,9 @@ cheapest first (the gateway is read only when the others say no):
    the same lines and spans ``backfill-actions`` fetches, so a leaver's missing action is reported
    rather than left to be fetched forever. A line the gateway cannot serve
    (``ActionsUnavailable``/``ActionsNotSupported``) is *unavailable*: the backfill would write
-   nothing for it either, so it is listed and does not count (P6). A transport failure is not
+   nothing for it either, so it is listed and does not count (P6). A line the historical selection
+   could not match to an ``assets`` row (or whose symbol or asset id another line shares) is
+   *unmatched*: listed the same way, never dropped in silence. A transport failure is not
    caught: the command exits non-zero and the orchestrator treats that as pending.
 
 Clause 4 makes one GET per line -- about as many as a no-op ``backfill-actions``.
@@ -44,6 +46,7 @@ from quant.config import QuantSettings
 from quant.db import (
     ActionTarget,
     load_action_targets,
+    load_assets,
     load_book_weights,
     load_forward_simple_returns,
 )
@@ -178,19 +181,29 @@ def check(
         if not conn.relation_exists(table):
             return True, f"no {table} table (fresh database)"
     try:
-        targets = load_action_targets(
+        selection = load_action_targets(
             conn,
             universe=settings.universe,
             date_from=DEFAULT_FROM,
             date_to=analysis_date,
             universe_db_path=settings.universe_db_path,
         )
+        # The returns check reads the members on the date -- build-returns' own panel
+        # (``load_assets(as_of=analysis_date)``); the actions check keeps the historical
+        # selection, so a leaver's newer bar cannot read as a returns lag (T-143 part A item 9).
+        members = load_assets(
+            conn,
+            universe=settings.universe,
+            as_of=analysis_date,
+            universe_db_path=settings.universe_db_path,
+        )
     except RuntimeError as exc:  # no members, or none with an assets row yet
         return True, str(exc)
+    targets = selection.targets
     session = last_session_on_or_before(date.fromisoformat(analysis_date)).isoformat()
 
     reason = _returns_lag(
-        conn, settings, [t.asset_id for t in targets], analysis_date
+        conn, settings, [asset_id for asset_id, _ticker in members], analysis_date
     ) or _missing_books(conn, settings, session, analysis_date)
     if reason is not None:
         return True, reason
@@ -204,6 +217,11 @@ def check(
     extras = []
     if unavailable:
         extras.append(f"{len(unavailable)} unavailable ({_named(unavailable)})")
+    if selection.unmatched:
+        extras.append(
+            f"{len(selection.unmatched)} unmatched "
+            f"({_named([ticker for ticker, _reason in selection.unmatched])})"
+        )
     if unscorable:
         extras.append(f"{len(unscorable)} unscorable ({_named(unscorable)})")
     tail = f"; {'; '.join(extras)}" if extras else ""

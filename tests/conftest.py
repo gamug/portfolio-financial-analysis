@@ -85,6 +85,24 @@ def write_universe_db(
     return path
 
 
+def write_universe_rows(path: Path, rows: Iterable[tuple[str, str, str, str | None]]) -> Path:
+    """Build a minimal ``universe.db`` from explicit ``(symbol, cik, valid_from, valid_to)`` rows.
+
+    ``write_universe_db`` derives the CIK from the symbol; this one lets two CIK lines share a
+    symbol (the T-143 part A item 9 ``shared symbol`` case)."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_UNIVERSE_DDL)
+    conn.executemany(
+        "INSERT INTO universe_membership "
+        "(symbol, security, gics_sector, gics_sub_industry, cik, valid_from, valid_to, source) "
+        "VALUES (?, ?, 'S1', 'SI0', ?, ?, ?, 'test')",
+        [(sym, f"{sym} Inc.", cik, vf, vt) for sym, cik, vf, vt in rows],
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
 # Tables the fundamental agent owns that quant reads but pricing_agent doesn't create.
 _QUANT_EXTRA_DDL = """
 CREATE TABLE IF NOT EXISTS sec_filings (

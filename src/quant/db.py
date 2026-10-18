@@ -102,6 +102,11 @@ class ActionsReport:
     inserted: int = 0
     errors: list[str] = field(default_factory=list)
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
+    #: Lines the historical selection set aside (T-143 part A item 9): ``(ticker, reason)`` from
+    #: :func:`load_action_targets`' ``unmatched``, and the lines whose last stored bar precedes
+    #: ``--from`` (nothing to fetch). Recorded on the run and printed, never dropped in silence.
+    unmatched: list[tuple[str, str]] = field(default_factory=list)
+    empty_span: list[str] = field(default_factory=list)
 
 
 def upsert_corporate_actions(
@@ -203,12 +208,36 @@ class ActionTarget:
     ``start`` is the run's ``--from``; ``end`` is the line's last stored ``price_daily`` bar (its
     membership exit when it has none), never past the run's ``--to``. ``kg_schema.market_cap``'s
     ``_factor`` applies a recorded split up to the last stored bar, so a split between a line's
-    index exit and its last bar still moves a cap and must be fetched (T-143 part A, item 9)."""
+    index exit and its last bar still moves a cap and must be fetched (T-143 part A, item 9).
+    ``is_current`` marks a line still a member at ``--to``: the probe prefers one, since a leaver's
+    ticker may no longer be served."""
 
     asset_id: int
     ticker: str
     start: str
     end: str
+    is_current: bool = False
+
+
+#: Why a line is in ``ActionSelection.unmatched`` (T-143 part A item 9).
+NO_ASSETS_ROW = "no assets row"
+SHARED_SYMBOL = "shared symbol"
+SHARED_ASSET_ID = "shared asset id"
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    """The historical selection's lines, and what it set aside.
+
+    ``unmatched`` is ``(ticker, reason)`` for a line with no ``assets`` row, or whose canonical
+    symbol (``resolve_asset_ids`` keeps only the first line per symbol) or resolved asset id another
+    line already took; ``empty_span`` names the lines whose last stored bar precedes ``--from``.
+    Neither is fetched: both are recorded on the run and listed by ``pending``, never dropped in
+    silence (T-143 part A item 9)."""
+
+    targets: list[ActionTarget]
+    unmatched: list[tuple[str, str]]
+    empty_span: list[str]
 
 
 def load_action_targets(
@@ -218,7 +247,7 @@ def load_action_targets(
     date_from: str,
     date_to: str,
     universe_db_path: str | Path | None = None,
-) -> list[ActionTarget]:
+) -> ActionSelection:
     """``backfill-actions``'/``pending``'s lines: the historical universe, each with its span.
 
     Every CIK line that was a member at any time in ``[WINDOW_START, date_to]``
@@ -228,7 +257,8 @@ def load_action_targets(
     fetched or cited (its cap could be off by the ratio, neither explained nor refused). The fetch
     ticker is the line's canonical symbol (a post-exit rename, FBHS -> FBIN, resolves to the one
     asset the whole line shares) and the span is ``[date_from, the line's last stored bar]``, not
-    only the membership span.
+    only the membership span. A line with no ``assets`` row, a symbol or asset id two lines share,
+    or a span that ends before *date_from*, is returned in ``ActionSelection`` instead of fetched.
 
     Raises ``RuntimeError`` when ``universe.db`` has no members in the window, or when none of
     them have an ``assets`` row yet (run ``pricing_agent`` / ``fundamental_agent`` first)."""
@@ -257,15 +287,34 @@ def load_action_targets(
             (date_to,),
         )
     }
-    out: list[ActionTarget] = []
+    targets: list[ActionTarget] = []
+    unmatched: list[tuple[str, str]] = []
+    empty_span: list[str] = []
+    seen_symbols: set[str] = set()
+    seen_assets: set[int] = set()
     for w in window:
-        asset_id = mapping.get(w.member.symbol.upper())
+        symbol = w.member.symbol
+        key = symbol.upper()
+        asset_id = mapping.get(key)
         if asset_id is None:
+            unmatched.append((symbol, NO_ASSETS_ROW))
             continue
-        end = last_bar.get(asset_id) or w.window_to or date_to
-        end = min(end, date_to)
-        out.append(ActionTarget(asset_id, w.member.symbol, date_from, end))
-    return sorted(out, key=lambda t: t.ticker)
+        if key in seen_symbols:
+            unmatched.append((symbol, SHARED_SYMBOL))
+            continue
+        if asset_id in seen_assets:
+            unmatched.append((symbol, SHARED_ASSET_ID))
+            continue
+        seen_symbols.add(key)
+        seen_assets.add(asset_id)
+        end = min(last_bar.get(asset_id) or w.window_to or date_to, date_to)
+        if end < date_from:
+            empty_span.append(symbol)
+            continue
+        targets.append(ActionTarget(asset_id, symbol, date_from, end, w.window_to is None))
+    return ActionSelection(
+        targets=sorted(targets, key=lambda t: t.ticker), unmatched=unmatched, empty_span=empty_span
+    )
 
 
 def load_daily_closes(
