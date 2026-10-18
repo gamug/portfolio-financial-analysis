@@ -18,6 +18,8 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
+from unexplained_split_rows import unexplained_split_rows
+
 from api import orchestrator
 from cycle.config import CycleSettings
 from cycle.data import unpriced_assets
@@ -1696,6 +1698,30 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-143a", t143a)
+
+    def t153g() -> None:
+        """T-153 part 3d (D10): every recorded SPLIT row is in the tracked event list.
+
+        An unexplained row refuses the market cap and stops the Tiingo import, so this is the gate
+        the pilot's part A and ``T-100`` run after their own ``backfill-actions --from 2019-01-02``."""
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        bad: list[str] = []
+        total = 0
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            rows = unexplained_split_rows(path)
+            total += len(rows)
+            bad += [f"{prefix}{r['ticker']} {r['ex_date']}" for r in rows]
+        report(
+            "T-153g",
+            "FAIL" if bad else "PASS",
+            f"{total} unexplained SPLIT row(s); "
+            + ("; ".join(bad[:6]) if bad else "every SPLIT row is in the tracked event list"),
+        )
+
+    check("T-153g", t153g)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

@@ -1055,9 +1055,12 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       machine, so the Tiingo file stays where it is, with no copy.
       **Two measured stops before the cycle and quant steps (reviewer B, 2026-10-17; measured on
       part 3d's archive copy).** (a) `quant backfill-actions --from 2019-01-02` leaves the database
-      with **106 SPLIT rows**, of which **36 are not in the tracked list** (34 assets,
-      2019-02-07..2024-06-25): until those are cited, **those 34 assets' market caps refuse** (part
-      3d's guard), and the cycle's VALORIZATION and quant's cap weights treat them as missing.
+      with **106 SPLIT rows**, of which **36 were not in the tracked list** (34 assets,
+      2019-02-07..2024-06-25): **the 36 are now cited** in the 2019–2024 list (including DD
+      2019-06-03, the one `reverse_split_spinoff` row) and **`scripts/unexplained_split_rows.py` is
+      the gate** (verify_pilot's T-153g; 0 unexplained on part 3d's archive copy), so those 34
+      assets' market caps no longer refuse (part 3d's guard) and the cycle's VALORIZATION and
+      quant's cap weights no longer treat them as missing.
       Exactly one of the 36 falls inside 2022+ and is absent from production: **ILMN 2024-06-25,
       1.028** (its GRAIL spin-off). Complete the list from this run's output before the cycle step,
       as the paragraph above says: **every row -- the 69 now committed and every new one -- quotes

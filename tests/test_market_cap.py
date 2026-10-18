@@ -17,6 +17,7 @@ from portfolio_common.db import Database
 from kg_schema import corporate_actions, queries
 from kg_schema.availability import AvailabilityMissing
 from kg_schema.market_cap import (
+    COMBINED_ACTION,
     NO_COVER_SHARES,
     NO_RECENT_PRICE,
     STALE_SHARES,
@@ -60,6 +61,8 @@ SYNTHETIC_EVENTS: dict[tuple[str, str], tuple[float, str]] = {
     ("0001666700", "2025-11-03"): (2.39, corporate_actions.SPINOFF),  # DD / Qnity
     ("0001045810", "2024-06-10"): (10.0, corporate_actions.SPLIT),  # NVDA, a true split
     ("0001666700", "2026-06-24"): (1 / 3, corporate_actions.REVERSE_SPLIT),  # DD, 1-for-3
+    # T-153 part 3d (D10, reviewer A 2026-10-18): a factor that folds two events into one ratio.
+    ("0000000001", "2026-09-01"): (0.5, corporate_actions.REVERSE_SPLIT_SPINOFF),
 }
 
 #: The assets the D10 tests use, with the CIK each event list row is keyed by.
@@ -555,3 +558,42 @@ def test_a_recorded_factor_that_drifted_from_the_list_is_unexplained(conn: Datab
     _price(conn, 1, AS_OF, 50.0)
     _split(conn, 1, "2026-08-15", 2.5)  # the list says 2.0
     assert market_caps_as_of(conn, [1], as_of=AS_OF).missing == {1: UNCLASSIFIED_ACTION}
+
+
+# -- T-153 part 3d (D10): a factor that folds two events, and the window it refuses -------------
+
+
+def test_a_reverse_split_spinoff_refuses_a_cap_in_the_split_window(conn: Database) -> None:
+    """DD 2019-06-03: the vendor's 0.4725 folds a 1-for-3 reverse split and the 1-for-3 Corteva
+    distribution, and no filing states the combined ratio. A count the split window would multiply
+    is refused, never valued from a decomposed guess (reviewer A 2026-10-18)."""
+    _split(conn, 1, "2026-09-01", 0.5)
+    seed_cover_shares(conn, 1, 100.0, as_of_date="2026-08-01", filing_date="2026-08-03")
+    _price(conn, 1, "2026-09-05", 50.0)
+    res = market_caps_as_of(conn, [1], as_of="2026-09-05")
+    assert res.missing == {1: COMBINED_ACTION}
+    assert res.caps == {}
+
+
+def test_a_reverse_split_spinoff_refuses_a_cap_in_the_spinoff_window(conn: Database) -> None:
+    """The union of the two windows: a count dated on/after the event but a close still on the
+    pre-event basis is the spin-off window, and is refused too."""
+    _split(conn, 1, "2026-09-01", 0.5)
+    seed_cover_shares(conn, 1, 100.0, as_of_date="2026-09-01", filing_date="2026-09-02")
+    _price(conn, 1, "2026-08-25", 50.0)
+    _price(conn, 1, "2026-09-10", 55.0)  # a later stored bar, so the event is within the bound
+    res = market_caps_as_of(conn, [1], as_of="2026-09-03")
+    assert res.missing == {1: COMBINED_ACTION}
+
+
+def test_a_reverse_split_spinoff_outside_both_windows_contributes_no_factor(conn: Database) -> None:
+    """Outside both windows the row is explained but applies nothing: the cap is the filed count
+    times the raw close, as if the row were not there."""
+    _split(conn, 1, "2026-09-01", 0.5)
+    seed_cover_shares(conn, 1, 100.0, as_of_date="2026-09-01", filing_date="2026-09-02")
+    _price(conn, 1, "2026-09-05", 50.0)
+    res = market_caps_as_of(conn, [1], as_of="2026-09-05")
+    assert res.missing == {}
+    cap = res.caps[1]
+    assert (cap.split_factor, cap.spinoff_factor) == (1.0, 1.0)
+    assert cap.value == pytest.approx(100.0 * 50.0)

@@ -48,6 +48,11 @@ NO_RECENT_PRICE = "no_recent_price"
 #: A recorded SPLIT row the tracked event list cannot explain (T-153 part 3d, D10): the cap is
 #: refused rather than computed with a factor whose class nobody stated (MKT-02).
 UNCLASSIFIED_ACTION = "unclassified_corporate_action"
+#: A recorded SPLIT row the list classes ``reverse_split_spinoff`` (T-153 part 3d, D10): the
+#: vendor folded two events into one factor that no filing states, so a cap the event would enter
+#: (the split window or the spin-off window) is refused rather than valued from a guess. A cap
+#: outside both windows is computed and the row contributes no factor.
+COMBINED_ACTION = "combined_corporate_action"
 
 
 @dataclass(frozen=True)
@@ -274,6 +279,8 @@ def _action_factors(
         )
         if event is None:
             out[asset_id].unexplained.append((ex_date, value))
+        elif event.event_class == corporate_actions.REVERSE_SPLIT_SPINOFF:
+            out[asset_id].combined.append((ex_date, value))
         elif event.event_class == corporate_actions.SPINOFF:
             out[asset_id].spinoffs.append((ex_date, value))
         else:
@@ -287,7 +294,29 @@ class _ActionFactors:
 
     splits: list[tuple[str, float]] = field(default_factory=list)
     spinoffs: list[tuple[str, float]] = field(default_factory=list)
+    #: Events the list classes ``reverse_split_spinoff``: never applied, they refuse a cap that
+    #: falls in either of their windows.
+    combined: list[tuple[str, float]] = field(default_factory=list)
     unexplained: list[tuple[str, float]] = field(default_factory=list)
+
+
+def _in_window(ex_date: str, start: str, through: str | None) -> bool:
+    """``start < ex_date`` and no later than the newest stored bar (``through``)."""
+    return ex_date > start and (through is None or ex_date <= through)
+
+
+def _combined_enters_window(
+    combined: list[tuple[str, float]], count_date: str, close_date: str, through: str | None
+) -> bool:
+    """Whether a ``reverse_split_spinoff`` event would enter the split **or** the spin-off window.
+
+    The union of the two windows already used in :func:`market_caps_as_of`: the split window (the
+    count's date) and the spin-off window (the close's date), both bounded by the newest stored
+    bar (T-153 part 3d, D10, reviewer A 2026-10-18)."""
+    return any(
+        _in_window(ex_date, count_date, through) or _in_window(ex_date, close_date, through)
+        for ex_date, _value in combined
+    )
 
 
 def _split_factors(
@@ -438,6 +467,14 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             # MKT-02: the count and the price must be on one basis, and only the event list says
             # which basis a recorded factor puts the count on. Never a guessed class.
             result.missing[aid] = UNCLASSIFIED_ACTION
+            continue
+        if _combined_enters_window(
+            factors.combined, count.as_of_date, close_date, basis_end.get(aid)
+        ):
+            # D10: the vendor folded two events into one ratio no filing states, so a cap it would
+            # enter is refused instead of valued from a decomposed guess; outside both windows the
+            # row contributes nothing.
+            result.missing[aid] = COMBINED_ACTION
             continue
         factor = _factor(factors.splits, after=count.as_of_date, through=basis_end.get(aid))
         spinoff_factor = _factor(factors.spinoffs, after=close_date, through=basis_end.get(aid))
