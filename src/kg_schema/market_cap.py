@@ -48,10 +48,11 @@ NO_RECENT_PRICE = "no_recent_price"
 #: A recorded SPLIT row the tracked event list cannot explain (T-153 part 3d, D10): the cap is
 #: refused rather than computed with a factor whose class nobody stated (MKT-02).
 UNCLASSIFIED_ACTION = "unclassified_corporate_action"
-#: A recorded SPLIT row the list classes ``reverse_split_spinoff`` (T-153 part 3d, D10): the
-#: vendor folded two events into one factor that no filing states, so a cap the event would enter
-#: (the split window or the spin-off window) is refused rather than valued from a guess. A cap
-#: outside both windows is computed and the row contributes no factor.
+#: A recorded SPLIT row the list classes as a combined class
+#: (:data:`kg_schema.corporate_actions.COMBINED_CLASSES`, T-153 part 3d, D10): the vendor folded
+#: two events into one factor that no filing states, so a cap the event would enter (the split
+#: window or the spin-off window) is refused rather than valued from a guess. A cap outside both
+#: windows is computed and the row contributes no factor.
 COMBINED_ACTION = "combined_corporate_action"
 
 
@@ -279,7 +280,7 @@ def _action_factors(
         )
         if event is None:
             out[asset_id].unexplained.append((ex_date, value))
-        elif event.event_class == corporate_actions.REVERSE_SPLIT_SPINOFF:
+        elif event.event_class in corporate_actions.COMBINED_CLASSES:
             out[asset_id].combined.append((ex_date, value))
         elif event.event_class == corporate_actions.SPINOFF:
             out[asset_id].spinoffs.append((ex_date, value))
@@ -294,8 +295,8 @@ class _ActionFactors:
 
     splits: list[tuple[str, float]] = field(default_factory=list)
     spinoffs: list[tuple[str, float]] = field(default_factory=list)
-    #: Events the list classes ``reverse_split_spinoff``: never applied, they refuse a cap that
-    #: falls in either of their windows.
+    #: Events the list classes as a combined class (``COMBINED_CLASSES``): never applied, they
+    #: refuse a cap that falls in either of their windows.
     combined: list[tuple[str, float]] = field(default_factory=list)
     unexplained: list[tuple[str, float]] = field(default_factory=list)
 
@@ -308,7 +309,7 @@ def _in_window(ex_date: str, start: str, through: str | None) -> bool:
 def _combined_enters_window(
     combined: list[tuple[str, float]], count_date: str, close_date: str, through: str | None
 ) -> bool:
-    """Whether a ``reverse_split_spinoff`` event would enter the split **or** the spin-off window.
+    """Whether an event of a combined class would enter the split **or** the spin-off window.
 
     The union of the two windows already used in :func:`market_caps_as_of`: the split window (the
     count's date) and the spin-off window (the close's date), both bounded by the newest stored
@@ -354,7 +355,7 @@ def _class_by_class_val(  # noqa: C901, PLR0913, PLR0917
     Each class's own factors apply (T-153 part 3d, D10): its splits after the count's date, its
     spin-offs while its close is on the pre-event basis. The same guard the parent's own row gets is
     applied to each **sibling class**: a class asset whose recorded SPLIT row the list cannot
-    explain, or whose ``reverse_split_spinoff`` event falls inside that class's own window (its own
+    explain, or whose combined-class event falls inside that class's own window (its own
     count date and close date), refuses the whole cap with the matching reason (reviewer B, fix
     round 1). Returns ``(value, incomplete, refusal_reason)``; ``(None, False, None)`` when a class
     close is missing."""

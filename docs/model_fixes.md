@@ -10071,26 +10071,52 @@ panel (`.db.load_assets`) is deliberately unchanged (T-100's stop).
 - The span end is the line's last stored bar, not its membership exit: `_factor` reads to that bar,
   so a split between the exit and the bar still moves a cap.
 - The run records `selection: "members_over_range"` in `quant_run.params_json`.
-- The 8 events are cited under the T-153 part 3d standard; the 6 with a single, stated event
-  (TTD: a 10-for-1 split; VFC, FMC, BBWI, FBIN, BWA: spin-offs) pass
-  `scripts/check_event_quotes.py`. **MTCH** (a combined separation + Class-M reclassification
-  (2.1584) + a $3.00 cash election) and **CTVA** (a litigated separation whose completion filings
-  state no distribution ratio) are stops for reviewer A, not guessed — recorded in
-  `/workspaces/thesis/scratch/t143a/PROGRESS.md`.
+- The 8 events are cited under the T-153 part 3d standard; all pass
+  `scripts/check_event_quotes.py`. Seven state one event: TTD a 10-for-1 split; VFC, FMC, BBWI,
+  FBIN and BWA spin-offs; **MTCH** a new **combined class `split_spinoff`** (reviewer A). The tracked
+  line is CIK `0000891103` (Old IAC, renamed "Match Group, Inc."), whose holders received, through a
+  series of steps, **one share of New IAC** and **2.1584** shares of Old IAC Class M common stock —
+  renamed "Common Stock". The $3.00 cash election went to **Old Match's** holders (CIK
+  `0001575189`), not to this line. `3.502 = 2.1584 × 1.622`, and **no filing states the 1.622**, so
+  the factor is never applied. Combined classes are now a shared set
+  (`kg_schema.corporate_actions.COMBINED_CLASSES`) that `market_cap` treats alike — the factor is
+  never applied and the refusal stays `combined_corporate_action`. **CTVA** is a declared limitation
+  (below), not guessed.
 
 ### Verification
 
-Real data, on a copy of `/tmp/split2019/archive.db` (sha256
-`6f9c0c3ecddc18ea33af70f659eb44de7a96031627ddd148b52d1d68fcf82681`, never modified):
+Real data, on a copy of `/tmp/split2019/archive.db` (original sha256
+`6f9c0c3ecddc18ea33af70f659eb44de7a96031627ddd148b52d1d68fcf82681`, unchanged; copy after the run
+`204d1f246056caebc2c7302fbf2ce1fb9de81bfcb46e8e1d47a01c9e36795559`, never the original):
 `quant backfill-actions --from 2019-01-02 --analysis-date 2026-10-17` fetched 591 of 591 lines and
 wrote **8 SPLIT + 594 DIVIDEND new rows** (corporate_action 12,473 → 13,075).
-`scripts/unexplained_split_rows.py` then reports **2** — MTCH, CTVA — exactly the two stops (the 6
-cited rows pass). The copy holds `filing_cover_shares` 0 and filings for only 2 of the 8 lines
-(TTD 10, CTVA 10), so the cap-level count is limited to what it holds: **10 leaver filings carry a
-factor that was never fetched before** (all CTVA's, `period_end < 2026-10-01` and the event at or
-before the line's last bar); the other six lines have no filings in the copy.
+
+`scripts/check_event_quotes.py` over the full list: **112 rows: 112 OK, 0 MISS**.
+`scripts/unexplained_split_rows.py --db <copy>`: **1 row, `CTVA 2026-10-01`** (exit 1) — the
+declared limitation, the only row the list cannot explain. Reconciled on the copy: **114 SPLIT
+rows** = **113 distinct (CIK, ex_date) events** + 1 (GOOG/GOOGL: one 2022-07-18 event, two class
+rows); the list holds **112 event rows**; 113 copy events − 112 list events = **CTVA**, the one
+unexplained. So 113 rows explained, 1 refused.
+
+**CTVA 2026-10-01 (6.665), declared limitation (reviewer A).** No filing yet states the completion
+and the 1-for-1 ratio together: the 1-for-1 is only in Vylor's information statement
+(`0001193125-26-396054`, Ex. 99.1); the completion 8-K `0001755672-26-000028` (main document and
+Ex. 99.4 pro forma) has no ratio. Every CTVA cap is therefore refused — the row is **unlisted**, so
+`market_cap` reports `UNCLASSIFIED_ACTION` (not the combined-class `COMBINED_CORPORATE_ACTION`) —
+until it is cited. The litigation does not change the completion: the 8-K `0001193125-26-419637`
+(report 2026-10-09) says "The Order does not affect the completion of the Separation". A follow-up
+cites CTVA from Corteva's Q3 2026 10-Q, or the first filing that states the completion and the ratio
+together, before T-100.
+
+The copy holds `filing_cover_shares` 0 and filings for only 2 of the 8 lines (TTD 10, CTVA 10), so
+the cap-level count is limited to what it holds: **10 leaver filings carry a factor that was never
+fetched before** (all CTVA's, `period_end < 2026-10-01` and the event at or before the line's last
+bar); the other six lines have no filings in the copy.
 
 ### Residual scope / deliberately deferred
 
-- MTCH and CTVA (reviewer-A stops, above) — no row written until A rules the class/citation.
+- **CTVA 2026-10-01**: a declared limitation — its cap is refused until the ratio is cited (the
+  follow-up above). Reviewer A's exception for the pilot (Step 3's gate and `verify_pilot`'s T-153g
+  expect exactly this one row; V1 reports CTVA's refused caps and its empty valuation metrics as the
+  exception, with the filing count).
 - `build-returns`' panel stays `members_asof(--to)`; widening it is T-100's stop.

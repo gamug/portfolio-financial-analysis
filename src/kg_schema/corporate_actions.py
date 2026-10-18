@@ -51,8 +51,16 @@ SPINOFF = "spinoff"
 #: (``market_cap.COMBINED_ACTION``) rather than valued from a decomposed guess (T-153 part 3d,
 #: D10, reviewer A 2026-10-18).
 REVERSE_SPLIT_SPINOFF = "reverse_split_spinoff"
+#: The mirror combined class (T-143 part A item 9): a split-like factor that folds a separation and
+#: a share reclassification (MTCH 2020-07-01, 3.502 = 2.1584 x 1.622; no filing states the 1.622).
+#: Treated exactly like :data:`REVERSE_SPLIT_SPINOFF` -- see :data:`COMBINED_CLASSES`.
+SPLIT_SPINOFF = "split_spinoff"
 
-EVENT_CLASSES = (SPLIT, REVERSE_SPLIT, SPINOFF, REVERSE_SPLIT_SPINOFF)
+#: The classes whose recorded factor folds more than one event, so no single filing states it. The
+#: factor is never applied; a cap the event would enter is refused (``market_cap.COMBINED_ACTION``).
+COMBINED_CLASSES = (REVERSE_SPLIT_SPINOFF, SPLIT_SPINOFF)
+
+EVENT_CLASSES = (SPLIT, REVERSE_SPLIT, SPINOFF, *COMBINED_CLASSES)
 
 
 @dataclass(frozen=True)
