@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""D10 window test: would a ``reverse_split_spinoff`` event refuse any cap part A computes?
+"""D10 window test: would a combined-class event refuse any cap part A computes?
 
     uv run python scripts/combined_event_window_test.py --db PATH
 
-Read-only (``mode=ro``). For every asset with a ``reverse_split_spinoff`` event in the tracked list
-and every one of its filings the database stores, this applies the **two windows**
+Read-only (``mode=ro``). For every asset with an event of a combined class
+(``kg_schema.corporate_actions.COMBINED_CLASSES``: ``reverse_split_spinoff``, ``split_spinoff``) in
+the tracked list and every one of its filings the database stores, this applies the **two windows**
 ``kg_schema.market_cap`` uses to a ``combined_corporate_action`` refusal:
 
 * the **split window**: ``ex_date > count_date`` and no later than the newest stored bar;
@@ -37,7 +38,7 @@ from typing import Any
 
 from portfolio_common.db import DatabaseError
 
-from kg_schema.corporate_actions import REVERSE_SPLIT_SPINOFF, CorporateActionEvent, read_events
+from kg_schema.corporate_actions import COMBINED_CLASSES, CorporateActionEvent, read_events
 from kg_schema.db import connect_ro
 
 # Static literal queries only: no identifier is interpolated (constitution Code & Git #10).
@@ -56,7 +57,7 @@ def window_test(
 ) -> list[dict[str, Any]]:
     """One row per (combined-event asset, stored filing): its dates and whether it would refuse."""
     listed = events if events is not None else read_events()
-    combined = [e for e in listed if e.event_class == REVERSE_SPLIT_SPINOFF]
+    combined = [e for e in listed if e.event_class in COMBINED_CLASSES]
     out: list[dict[str, Any]] = []
     with contextlib.closing(connect_ro(db_path)) as db:
         for event in combined:

@@ -24,7 +24,14 @@ from kg_schema.env import universe_database_path
 # T-125: hard_vetoed_as_of moved to kg_schema.queries (the one shared point-in-time veto
 # predicate `cycle` and `quant` both read) -- re-exported here (see __all__ below) since
 # quant.universe imports it from this module.
-from kg_schema.queries import connect_ro, hard_vetoed_as_of, members_asof, resolve_asset_ids
+from kg_schema.queries import (
+    WINDOW_START,
+    connect_ro,
+    hard_vetoed_as_of,
+    members_asof,
+    members_over_range,
+    resolve_asset_ids,
+)
 
 # hard_vetoed_as_of is otherwise unused in this module -- it is imported only to be
 # re-exported, since quant.universe imports it from quant.db (T-125).
@@ -95,6 +102,11 @@ class ActionsReport:
     inserted: int = 0
     errors: list[str] = field(default_factory=list)
     dirty_tree_bypassed: str | None = None  # T-114: why, if --allow-dirty overrode it
+    #: Lines the historical selection set aside (T-143 part A item 9): ``(ticker, reason)`` from
+    #: :func:`load_action_targets`' ``unmatched``, and the lines whose last stored bar precedes
+    #: ``--from`` (nothing to fetch). Recorded on the run and printed, never dropped in silence.
+    unmatched: list[tuple[str, str]] = field(default_factory=list)
+    empty_span: list[str] = field(default_factory=list)
 
 
 def upsert_corporate_actions(
@@ -187,6 +199,123 @@ def load_assets(
         for r in conn.execute("SELECT id, ticker FROM assets ORDER BY ticker")
         if int(r["id"]) in ids
     ]
+
+
+@dataclass(frozen=True)
+class ActionTarget:
+    """One line's corporate-action fetch: its canonical ticker and the span its bars cover.
+
+    ``start`` is the run's ``--from``; ``end`` is the line's last stored ``price_daily`` bar (its
+    membership exit when it has none), never past the run's ``--to``. ``kg_schema.market_cap``'s
+    ``_factor`` applies a recorded split up to the last stored bar, so a split between a line's
+    index exit and its last bar still moves a cap and must be fetched (T-143 part A, item 9).
+    ``is_current`` marks a line still a member at ``--to``: the probe prefers one, since a leaver's
+    ticker may no longer be served."""
+
+    asset_id: int
+    ticker: str
+    start: str
+    end: str
+    is_current: bool = False
+
+
+#: Why a line is in ``ActionSelection.unmatched`` (T-143 part A item 9).
+NO_ASSETS_ROW = "no assets row"
+SHARED_SYMBOL = "shared symbol"
+SHARED_ASSET_ID = "shared asset id"
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    """The historical selection's lines, and what it set aside.
+
+    ``unmatched`` is ``(ticker, reason)`` for a line with no ``assets`` row, or whose canonical
+    symbol (``resolve_asset_ids`` keeps only the first line per symbol) or resolved asset id another
+    line already took; ``empty_span`` names the lines whose last stored bar precedes ``--from``.
+    Neither is fetched: unmatched lines are recorded on the run (``lines_unmatched``) and listed by
+    ``pending``; empty-span lines are counted on the run (``lines_empty_span``); never dropped in
+    silence (T-143 part A item 9)."""
+
+    targets: list[ActionTarget]
+    unmatched: list[tuple[str, str]]
+    empty_span: list[str]
+
+
+def load_action_targets(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> ActionSelection:
+    """``backfill-actions``'/``pending``'s lines: the historical universe, each with its span.
+
+    Every CIK line that was a member at any time in ``[WINDOW_START, date_to]``
+    (:func:`kg_schema.queries.members_over_range`, T-153 part 3a), as ``pricing_agent`` and
+    ``fundamental_agent`` select -- current members and leavers. Before T-143 part A this command
+    selected :func:`load_assets`' ``members_asof(date_to)`` only, so a leaver's SPLIT row was never
+    fetched or cited (its cap could be off by the ratio, neither explained nor refused). The fetch
+    ticker is the line's canonical symbol (a post-exit rename, FBHS -> FBIN, resolves to the one
+    asset the whole line shares) and the span is ``[date_from, the line's last stored bar]``, not
+    only the membership span. A line with no ``assets`` row, a symbol or asset id two lines share,
+    or a span that ends before *date_from*, is returned in ``ActionSelection`` instead of fetched.
+
+    Raises ``RuntimeError`` when ``universe.db`` has no members in the window, or when none of
+    them have an ``assets`` row yet (run ``pricing_agent`` / ``fundamental_agent`` first)."""
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    uconn = connect_ro(upath)
+    try:
+        window = members_over_range(uconn, conn, WINDOW_START, date_to, universe=universe)
+    finally:
+        uconn.close()
+    if not window:
+        raise RuntimeError(
+            f"universe.db ({upath}) has no {universe} members in [{WINDOW_START}, {date_to}]"
+        )
+    mapping, _missing = resolve_asset_ids(
+        conn, [(w.member.symbol, w.member.cik) for w in window], as_of=date_to
+    )
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(window)} {universe} lines in [{WINDOW_START}, {date_to}] exist in "
+            f"assets yet -- run fundamental_agent / pricing_agent for this date first"
+        )
+    last_bar = {
+        int(r["asset_id"]): str(r["d"])
+        for r in conn.execute(
+            "SELECT asset_id, MAX(date) AS d FROM price_daily WHERE date <= ? GROUP BY asset_id",
+            (date_to,),
+        )
+    }
+    targets: list[ActionTarget] = []
+    unmatched: list[tuple[str, str]] = []
+    empty_span: list[str] = []
+    seen_symbols: set[str] = set()
+    seen_assets: set[int] = set()
+    for w in window:
+        symbol = w.member.symbol
+        key = symbol.upper()
+        asset_id = mapping.get(key)
+        if asset_id is None:
+            unmatched.append((symbol, NO_ASSETS_ROW))
+            continue
+        if key in seen_symbols:
+            unmatched.append((symbol, SHARED_SYMBOL))
+            continue
+        if asset_id in seen_assets:
+            unmatched.append((symbol, SHARED_ASSET_ID))
+            continue
+        seen_symbols.add(key)
+        seen_assets.add(asset_id)
+        end = min(last_bar.get(asset_id) or w.window_to or date_to, date_to)
+        if end < date_from:
+            empty_span.append(symbol)
+            continue
+        targets.append(ActionTarget(asset_id, symbol, date_from, end, w.window_to is None))
+    return ActionSelection(
+        targets=sorted(targets, key=lambda t: t.ticker), unmatched=unmatched, empty_span=empty_span
+    )
 
 
 def load_daily_closes(

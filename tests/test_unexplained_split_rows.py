@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 import unexplained_split_rows as script
 
+from kg_schema import corporate_actions
+
 
 def _db(path: Path) -> Path:
     raw = sqlite3.connect(path)
@@ -65,3 +67,13 @@ def test_another_read_error_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(sqlite3.Error):
         script.unexplained_split_rows(broken)
     assert script.main(["--db", str(broken)]) == 1
+
+
+def test_the_packaged_list_accepts_the_new_combined_class() -> None:
+    """T-143 part A item 9: ``split_spinoff`` joined the classes, and ``read_events`` accepts it —
+    the packaged list loads with the MTCH 2020-07-01 row."""
+    assert corporate_actions.SPLIT_SPINOFF in corporate_actions.COMBINED_CLASSES
+    events = corporate_actions.read_events()
+    mtch = [e for e in events if e.ticker == "MTCH" and e.ex_date == "2020-07-01"]
+    assert mtch and mtch[0].event_class == corporate_actions.SPLIT_SPINOFF
+    assert mtch[0].value == 3.502

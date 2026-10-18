@@ -18,14 +18,16 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import cik_for, write_universe_db, write_universe_rows
 from portfolio_common.db import Database
 
 import quant.actions
+import quant.db
 from kg_schema.provenance import DirtyTree
 from quant.actions import GatewayUnavailable, backfill_corporate_actions
 from quant.cli import _run_backfill_actions, build_parser
 from quant.config import QuantSettings
-from quant.db import ActionsReport, load_actions
+from quant.db import NO_ASSETS_ROW, SHARED_ASSET_ID, SHARED_SYMBOL, ActionsReport, load_actions
 from quant.pricing_client import QuantPricingClient
 
 _WINDOW = {"date_from": "2024-01-01", "date_to": "2024-12-31"}
@@ -161,6 +163,201 @@ def test_gateway_run_writes_corpact_v1_rows_and_completes(
 
     again = backfill_corporate_actions(_settings(), conn=conn, client=client, **_WINDOW)
     assert again.inserted == 0  # INSERT OR IGNORE on the versioned key
+
+
+def _split_gateway(
+    splits: dict[str, list[dict[str, Any]]],
+) -> tuple[QuantPricingClient, list[tuple[str, str, str]]]:
+    """A gateway client whose ``splits`` per ticker are returned; records ``(ticker, start, end)``."""
+    calls: list[tuple[str, str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ticker = request.url.path.split("/")[2]
+        start, end = request.url.params["start_date"], request.url.params["end_date"]
+        calls.append((ticker, start, end))
+        body: dict[str, Any] = {
+            "ticker": ticker,
+            "source": "yfinance",
+            "dividends": [],
+            "warning": None,
+            "splits": [] if start == "1900-01-01" else splits.get(ticker, []),
+        }
+        return httpx.Response(200, json=body)
+
+    http = httpx.Client(base_url="http://gateway.test", transport=httpx.MockTransport(handler))
+    return QuantPricingClient("http://gateway.test", max_retries=1, client=http), calls
+
+
+def test_a_leaver_is_fetched_over_its_last_stored_bar_not_only_its_membership_span(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """T-143 part A, item 9: ``backfill-actions`` selects the historical universe
+    (``members_over_range``), so a line that left before ``--to`` is fetched -- and over the span
+    its bars cover (its last stored bar), not only its membership span, because
+    ``market_cap._factor`` applies a split up to that bar."""
+    conn = quant_seed(memory_quant_db, n_assets=2, n_days=260, with_dividends=False)
+    universe = write_universe_db(
+        tmp_path / "leaver.db", [("AS01", "2024-01-01", "2024-06-30"), ("AS02", "2024-01-01", None)]
+    )
+    last_bar = str(
+        conn.execute("SELECT MAX(date) FROM price_daily WHERE asset_id = 1").fetchone()[0]
+    )
+    client, calls = _split_gateway({"AS01": [{"date": "2024-09-01", "value": 2.0}]})
+
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+
+    assert report.assets_seen == 2  # the leaver and the current member
+    assert ("AS01", "2024-01-01", last_bar) in calls  # the leaver's last stored bar, not its exit
+    assert ("AS01", "2024-01-01", "2024-06-30") not in calls
+    splits = [
+        (str(r["ex_date"]), float(r["value"]))
+        for r in conn.execute(
+            "SELECT ex_date, value FROM corporate_action WHERE asset_id = 1 AND action_type = 'SPLIT'"
+        )
+    ]
+    assert splits == [("2024-09-01", 2.0)]  # fetched because the leaver is in the selection now
+
+
+# -- T-143 part A item 9 (Sourcery #2/#4/#5): what the selection sets aside, and the probe ------
+
+
+def test_a_line_with_no_assets_row_is_unmatched_and_recorded(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """Sourcery #2: a universe line with no ``assets`` row is not fetched, and the run says so."""
+    conn = quant_seed(memory_quant_db, n_assets=1, n_days=30, with_dividends=False)
+    universe = write_universe_rows(
+        tmp_path / "u.db",
+        [
+            ("GHOST", cik_for("GHOST"), "2024-01-01", None),
+            ("AS01", cik_for("AS01"), "2024-01-01", None),
+        ],
+    )
+    client, _http, _seen = _gateway()
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+    assert report.unmatched == [("GHOST", NO_ASSETS_ROW)]
+    assert report.assets_seen == 1  # only AS01
+    _status, _error, params = _last_run(conn)
+    assert params["lines_unmatched"] == [{"ticker": "GHOST", "reason": NO_ASSETS_ROW}]
+
+
+def test_a_symbol_two_lines_share_is_unmatched(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """Sourcery #2: ``resolve_asset_ids`` keeps one line per symbol; the second is reported."""
+    conn = quant_seed(memory_quant_db, n_assets=1, n_days=30, with_dividends=False)
+    universe = write_universe_rows(
+        tmp_path / "u.db",
+        [
+            ("AS01", cik_for("AS01"), "2024-01-01", None),
+            ("AS01", "0000000002", "2024-01-01", None),  # a second CIK line, the same symbol
+        ],
+    )
+    client, _http, _seen = _gateway()
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+    assert report.unmatched == [("AS01", SHARED_SYMBOL)]
+    assert report.assets_seen == 1
+
+
+def test_two_symbols_resolving_to_one_asset_id_are_unmatched(
+    memory_quant_db: Database,
+    quant_seed: Callable[..., Database],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sourcery #2: two different symbols whose resolved asset id another line already took. The
+    natural path cannot produce this (``resolve_asset_ids`` dedups by symbol first), so the resolver
+    is stubbed; the guard keeps the second line out of the fetch."""
+    conn = quant_seed(memory_quant_db, n_assets=2, n_days=30, with_dividends=False)
+    universe = write_universe_db(
+        tmp_path / "u.db", [("AS01", "2024-01-01", None), ("AS02", "2024-01-01", None)]
+    )
+    monkeypatch.setattr(
+        quant.db, "resolve_asset_ids", lambda _db, _members, *, as_of: ({"AS01": 1, "AS02": 1}, [])
+    )
+    client, _http, _seen = _gateway()
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+    assert report.unmatched == [("AS02", SHARED_ASSET_ID)]
+    assert report.assets_seen == 1
+
+
+def test_the_probe_prefers_a_current_member_not_a_leaver_that_sorts_first(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """Sourcery #4: the probe gates the run, so it must not fail on a leaver's ticker the gateway no
+    longer serves while a current member is available."""
+    conn = quant_seed(memory_quant_db, n_assets=2, n_days=60, with_dividends=False)
+    universe = write_universe_rows(
+        tmp_path / "u.db",
+        [
+            ("AS01", cik_for("AS01"), "2024-01-01", "2024-02-15"),  # a leaver, alphabetically first
+            ("AS02", cik_for("AS02"), "2024-01-01", None),  # still a member at --to
+        ],
+    )
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ticker = request.url.path.split("/")[2]
+        start = request.url.params["start_date"]
+        calls.append((ticker, start))
+        body: dict[str, Any] = {
+            "ticker": ticker,
+            "source": "yfinance",
+            "dividends": [],
+            "splits": [],
+            "warning": None,
+        }
+        if start == "1900-01-01":  # the probe
+            if ticker == "AS01":
+                return httpx.Response(503)  # the leaver's ticker is no longer served
+            return httpx.Response(200, json=body)
+        return httpx.Response(
+            200, json={**body, "dividends": [{"date": "2024-02-01", "value": 0.5}]}
+        )
+
+    http = httpx.Client(base_url="http://gateway.test", transport=httpx.MockTransport(handler))
+    client = QuantPricingClient("http://gateway.test", max_retries=1, client=http)
+
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+    assert ("AS02", "1900-01-01") in calls  # the probe used the current member
+    assert ("AS01", "1900-01-01") not in calls
+    assert report.assets_seen == 2  # both lines were fetched; none was refused by the probe
+
+
+def test_a_line_whose_last_bar_precedes_from_makes_no_call_and_is_counted(
+    memory_quant_db: Database, quant_seed: Callable[..., Database], tmp_path: Path
+) -> None:
+    """Sourcery #5: a line whose stored span ends before ``--from`` has nothing to fetch."""
+    conn = quant_seed(memory_quant_db, n_assets=1, n_days=30, with_dividends=False)
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (99, 'OLD', ?)", (cik_for("OLD"),))
+    conn.execute("INSERT INTO price_daily (asset_id, date, close) VALUES (99, '2023-12-29', 10.0)")
+    conn.commit()
+    universe = write_universe_rows(
+        tmp_path / "u.db",
+        [
+            ("OLD", cik_for("OLD"), "2022-06-01", "2023-12-29"),  # left before --from
+            ("AS01", cik_for("AS01"), "2024-01-01", None),
+        ],
+    )
+    client, _http, seen = _gateway()
+    report = backfill_corporate_actions(
+        _settings(universe_db_path=universe), conn=conn, client=client, **_WINDOW
+    )
+    assert report.empty_span == ["OLD"]
+    assert not any("/pricing/OLD/" in path for path in seen)
+    assert report.assets_seen == 1
+    _status, _error, params = _last_run(conn)
+    assert params["lines_empty_span"] == 1
 
 
 def test_backfill_actions_refuses_a_dirty_code_version(

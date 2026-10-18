@@ -35,10 +35,11 @@ from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
 from quant.config import QuantSettings
 from quant.db import (
     ActionsReport,
+    ActionTarget,
     CorporateAction,
     ensure_schema,
     has_gateway_actions,
-    load_assets,
+    load_action_targets,
     upsert_corporate_actions,
 )
 from quant.pricing_client import (
@@ -121,48 +122,62 @@ def _run_params(
         "date_from": date_from,
         "date_to": date_to,
         "source": "gateway",
+        "selection": "members_over_range",
         "gateway_max_consecutive_failures": max_failures,
         "assets_seen": report.assets_seen,
         "assets_fetched": report.assets_fetched,
         "assets_errored": len(report.errors),
+        # T-143 part A item 9: what the historical selection set aside, never dropped in silence.
+        "lines_unmatched": [
+            {"ticker": ticker, "reason": reason} for ticker, reason in report.unmatched
+        ],
+        "lines_empty_span": len(report.empty_span),
         "errors": report.errors[:_MAX_ERROR_MESSAGES],
         "dirty_tree_bypassed": report.dirty_tree_bypassed,
     }
 
 
-def _fetch_all(  # noqa: PLR0913 - the run's identity + injected collaborators, all keyword-only
+def _probe_ticker(targets: list[ActionTarget]) -> str | None:
+    """The line whose ``probe`` gates the run: a current member when there is one (a leaver's
+    ticker may no longer be served), else the first target; ``None`` when there are no targets."""
+    for target in targets:
+        if target.is_current:
+            return target.ticker
+    return targets[0].ticker if targets else None
+
+
+def _fetch_all(
     conn: Database,
     client: QuantPricingClient,
     report: ActionsReport,
-    assets: list[tuple[int, str]],
+    targets: list[ActionTarget],
     *,
-    date_from: str,
-    date_to: str,
     max_failures: int,
 ) -> None:
-    """Fetch every asset's actions into ``corporate_action``. Raises
+    """Fetch every line's actions into ``corporate_action``, each over its own span. Raises
     :class:`GatewayUnavailable` when the probe fails or the breaker opens."""
-    if assets and not client.probe(assets[0][1]):
+    sample = _probe_ticker(targets)
+    if sample is not None and not client.probe(sample):
         raise GatewayUnavailable(
             f"the pricing gateway does not serve usable corporate actions (probe of "
-            f"{assets[0][1]} failed): route missing, gateway down, or yfinance failing upstream"
+            f"{sample} failed): route missing, gateway down, or yfinance failing upstream"
         )
     feed = _GatewayFeed(client, max_failures)
-    for asset_id, ticker in assets:
+    for target in targets:
         report.assets_seen += 1
         try:
-            rows = feed.fetch(asset_id, ticker, date_from, date_to)
+            rows = feed.fetch(target.asset_id, target.ticker, target.start, target.end)
         except (ActionsUnavailable, ActionsNotSupported) as exc:
-            report.errors.append(f"{ticker}: {exc}")
+            report.errors.append(f"{target.ticker}: {exc}")
             continue
         except GatewayError as exc:
-            report.errors.append(f"{ticker}: {exc}")
+            report.errors.append(f"{target.ticker}: {exc}")
             if feed.is_open:
                 raise GatewayUnavailable(
                     f"circuit breaker opened after {max_failures} consecutive gateway errors "
-                    f"(last: {ticker}); {len(assets) - report.assets_seen} of {len(assets)} "
-                    f"assets not fetched. Re-run when the gateway is back -- rows already "
-                    f"written are kept."
+                    f"(last: {target.ticker}); {len(targets) - report.assets_seen} of "
+                    f"{len(targets)} assets not fetched. Re-run when the gateway is back -- rows "
+                    f"already written are kept."
                 ) from exc
             continue
         report.assets_fetched += 1
@@ -192,13 +207,18 @@ def backfill_corporate_actions(
     conn = conn or connect(settings.db_path)
     try:
         ensure_schema(conn)
-        assets = load_assets(
+        selection = load_action_targets(
             conn,
             universe=settings.universe,
-            as_of=date_to,
+            date_from=date_from,
+            date_to=date_to,
             universe_db_path=settings.universe_db_path,
         )
-        report = ActionsReport(engine_version=settings.corpact_engine_version)
+        report = ActionsReport(
+            engine_version=settings.corpact_engine_version,
+            unmatched=selection.unmatched,
+            empty_span=selection.empty_span,
+        )
         max_failures = settings.gateway_max_consecutive_failures
         cv = code_version()
         dirty_reason = dirty_tree_reason(cv)
@@ -224,9 +244,7 @@ def backfill_corporate_actions(
                 conn,
                 client,
                 report,
-                assets,
-                date_from=date_from,
-                date_to=date_to,
+                selection.targets,
                 max_failures=max_failures,
             )
         except BaseException as exc:  # an interrupt too: never leave 'running'

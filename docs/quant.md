@@ -644,8 +644,9 @@ migration). What a consumer sees differently:
 (read-only, one line `pending: yes|no <evidence>`, imports only `kg_schema`). Yes when the returns
 end before the newest member bar, a default objective has no non-live book with `as_of` in
 [last session, D], a book `evaluate` would score lags behind its newest forward return, or the
-pricing gateway lists a dividend/split `corporate_action` lacks (one GET per member). Books with no
-positions are "unscorable" and members the gateway cannot serve are "unavailable": listed, not pending.
+pricing gateway lists a dividend/split `corporate_action` lacks (one GET per line). Books with no
+positions are "unscorable" and lines the gateway cannot serve are "unavailable": listed, not
+pending.
 
 ## The private import's corporate actions and returns (T-153 part 3d)
 
@@ -659,3 +660,13 @@ column naming the origin of the close a row was built from, and `v_quant_return_
 return the `'tiingo'` rows (see `docs/kg_schema.md`). `build-returns` still refuses without a clean
 covering `backfill-actions` run -- for a window that starts in 2019 that means
 `quant backfill-actions --from 2019-01-02`, its default being 2022-01-01.
+
+**The selection is the historical universe (T-143 part A item 9).** `backfill-actions` selects every
+CIK line that was a member at any time in `[2022-01-03, D]` (`kg_schema.queries.members_over_range`),
+current members and leavers -- the same set `pricing_agent` and `fundamental_agent` ingest -- and
+fetches each line over `[--from, the line's last stored bar]`, not only its membership span:
+`kg_schema.market_cap._factor` applies a recorded split up to the last stored bar, so a split
+between a line's index exit and that bar still moves a cap. `quant pending` reads the same lines and
+spans (a leaver's missing action is reported, not left pending forever). Before T-143 part A item 9
+the command used `members_asof(date_to)` only, so no leaver's SPLIT row was ever fetched or cited;
+`build-returns`' own panel (`.db.load_assets`) is deliberately unchanged.
