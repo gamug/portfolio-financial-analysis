@@ -10021,3 +10021,76 @@ marked per row; the 2019–2021 events reach the list only through T-100's
 printed a price would be a bug, not a filter); the VALORIZATION block inside `v_score_snapshot` /
 `v_cycle_ranking` still carries the market cap on D, because the rule keeps scores and the block is
 their audit trail.
+
+## T-143 part A item 9 — `backfill-actions` fetched only the current members, so a leaver's split never moved its cap
+
+**Status**: in review (branch `feat/backfill-actions-history`; T-143 part A, item 9).
+
+### Symptom
+
+`quant backfill-actions` selected the current members only
+(`quant.db.load_assets(as_of=--to)` → `kg_schema.queries.members_asof(--to)`).
+`pricing_agent` and `fundamental_agent` ingest every CIK line that was a member at any time in
+`[2022-01-03, D]` (`members_over_range`, T-153 part 3a) — a leaver's bars, filings and market cap
+exist — but its corporate actions were never fetched or cited. A leaver that split after a filing's
+count date therefore got a cap off by the ratio, neither explained (no event-list row) nor refused:
+`market_caps_as_of` refuses only a **recorded** SPLIT row the list cannot explain. Measured
+(reviewer A, 2026-10-18, read-only GETs to the gateway's actions route for the 53 gateway-served
+leaver lines, `2019-01-02 .. each line's exit`): **8 SPLIT entries** — VFC 2019-05-23 1.062,
+FMC 2019-03-04 1.153, MTCH 2020-07-01 3.502, TTD 2021-06-17 10.0, BBWI 2021-08-03 1.237,
+FBIN 2022-12-15 1.17, BWA 2023-07-05 1.136, CTVA 2026-10-01 6.665.
+
+### Root cause
+
+The selection (`members_asof(date_to)` instead of `members_over_range(WINDOW_START, date_to)`) and
+the fetch span (`[--from, --to]` for every selected asset, instead of `[--from, the line's last
+stored bar]` — the bound `kg_schema.market_cap`'s `_factor` applies a split to
+(`through=basis_end = last_price_dates`)).
+
+### Theoretical/technical reference
+
+The tracked event list's own rule (`src/kg_schema/data/corporate_action_events.csv` header; T-153
+part 3d D10): a recorded SPLIT row the list cannot explain refuses the cap rather than being
+applied on a guess, so every recorded row must be cited. C11's split/spin-off price-basis treatment
+as applied by `kg_schema.market_cap._factor`/`_action_factors` (a split multiplies the count; a
+spin-off multiplies it only while the close is on the pre-event basis). T-153 part 3a's one
+ingestion rule: every step covers every line in the window, leavers included.
+
+### Fix
+
+`quant.db.load_action_targets` selects every CIK line a member at any time in
+`[WINDOW_START, --to]` (`members_over_range`), resolves its canonical ticker (a post-exit rename,
+FBHS → FBIN, resolves to the one asset the whole line shares) and bounds the fetch at the line's
+last stored `price_daily` bar (its exit when it has none, never past `--to`).
+`quant.actions.backfill_corporate_actions` and `quant.pending._gateway_actions` both use it, so
+`pending` reports a leaver's missing action instead of leaving it pending forever. `build-returns`'
+panel (`.db.load_assets`) is deliberately unchanged (T-100's stop).
+
+### Design decisions
+
+- The span end is the line's last stored bar, not its membership exit: `_factor` reads to that bar,
+  so a split between the exit and the bar still moves a cap.
+- The run records `selection: "members_over_range"` in `quant_run.params_json`.
+- The 8 events are cited under the T-153 part 3d standard; the 6 with a single, stated event
+  (TTD: a 10-for-1 split; VFC, FMC, BBWI, FBIN, BWA: spin-offs) pass
+  `scripts/check_event_quotes.py`. **MTCH** (a combined separation + Class-M reclassification
+  (2.1584) + a $3.00 cash election) and **CTVA** (a litigated separation whose completion filings
+  state no distribution ratio) are stops for reviewer A, not guessed — recorded in
+  `/workspaces/thesis/scratch/t143a/PROGRESS.md`.
+
+### Verification
+
+Real data, on a copy of `/tmp/split2019/archive.db` (sha256
+`6f9c0c3ecddc18ea33af70f659eb44de7a96031627ddd148b52d1d68fcf82681`, never modified):
+`quant backfill-actions --from 2019-01-02 --analysis-date 2026-10-17` fetched 591 of 591 lines and
+wrote **8 SPLIT + 594 DIVIDEND new rows** (corporate_action 12,473 → 13,075).
+`scripts/unexplained_split_rows.py` then reports **2** — MTCH, CTVA — exactly the two stops (the 6
+cited rows pass). The copy holds `filing_cover_shares` 0 and filings for only 2 of the 8 lines
+(TTD 10, CTVA 10), so the cap-level count is limited to what it holds: **10 leaver filings carry a
+factor that was never fetched before** (all CTVA's, `period_end < 2026-10-01` and the event at or
+before the line's last bar); the other six lines have no filings in the copy.
+
+### Residual scope / deliberately deferred
+
+- MTCH and CTVA (reviewer-A stops, above) — no row written until A rules the class/citation.
+- `build-returns`' panel stays `members_asof(--to)`; widening it is T-100's stop.
