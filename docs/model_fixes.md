@@ -10024,7 +10024,7 @@ their audit trail.
 
 ## T-143 part A item 9 — `backfill-actions` fetched only the current members, so a leaver's split never moved its cap
 
-**Status**: in review (branch `feat/backfill-actions-history`; T-143 part A, item 9).
+**Status**: Fixed 2026-10-18 (branch `feat/backfill-actions-history`, PR #177, approved; T-143 part A item 9).
 
 ### Symptom
 
@@ -10034,8 +10034,8 @@ their audit trail.
 `[2022-01-03, D]` (`members_over_range`, T-153 part 3a) — a leaver's bars, filings and market cap
 exist — but its corporate actions were never fetched or cited. A leaver that split after a filing's
 count date therefore got a cap off by the ratio, neither explained (no event-list row) nor refused:
-`market_caps_as_of` refuses only a **recorded** SPLIT row the list cannot explain. Measured
-(reviewer A, 2026-10-18, read-only GETs to the gateway's actions route for the 53 gateway-served
+`market_caps_as_of` refuses only a **recorded** SPLIT row the list cannot explain. Measured (by the
+item 9 agent, 2026-10-18, read-only GETs to the gateway's actions route for the 53 gateway-served
 leaver lines, `2019-01-02 .. each line's exit`): **8 SPLIT entries** — VFC 2019-05-23 1.062,
 FMC 2019-03-04 1.153, MTCH 2020-07-01 3.502, TTD 2021-06-17 10.0, BBWI 2021-08-03 1.237,
 FBIN 2022-12-15 1.17, BWA 2023-07-05 1.136, CTVA 2026-10-01 6.665.
@@ -10071,6 +10071,19 @@ panel (`.db.load_assets`) is deliberately unchanged (T-100's stop).
 - The span end is the line's last stored bar, not its membership exit: `_factor` reads to that bar,
   so a split between the exit and the bar still moves a cap.
 - The run records `selection: "members_over_range"` in `quant_run.params_json`.
+- **Sourcery #2 (unmatched lines).** A line with no `assets` row, or whose symbol or resolved asset
+  id another line already took, goes to `ActionSelection.unmatched` with its reason (`no assets
+  row` / `shared symbol` / `shared asset id`) — not fetched, recorded on the run as
+  `lines_unmatched` (tickers and reasons) and printed, and listed by `pending`.
+- **Sourcery #4 (the probe).** `_probe_ticker` prefers a line still a member at `--to` (a leaver's
+  ticker may no longer be served), falling back to the first target only when none is.
+- **Sourcery #5 (empty span).** A line whose last stored bar precedes `--from` is skipped with no
+  request, counted as `lines_empty_span`.
+- **Sourcery #6 (the returns check).** `pending`'s returns lag reads the members on the date
+  (`load_assets(as_of=analysis_date)`, build-returns' own panel); the actions check keeps the
+  historical selection, so a leaver's newer bar cannot read as a lag.
+- **Sourcery #7.** `members_over_range`'s docstring now says membership bounds the selection, not
+  the fetch (`backfill-actions` fetches to the line's last stored bar).
 - The 8 events are cited under the T-153 part 3d standard; all pass
   `scripts/check_event_quotes.py`. Seven state one event: TTD a 10-for-1 split; VFC, FMC, BBWI,
   FBIN and BWA spin-offs; **MTCH** a new **combined class `split_spinoff`** (reviewer A). The tracked

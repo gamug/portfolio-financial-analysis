@@ -1076,7 +1076,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       cycle step, as the paragraph above says: **every row quotes the sentence that states the
       completed event and its ratio**, from the same filing or one filing per event; the classes and
       the values stay as the vendors recorded them.
-      **CTVA follow-up (reviewer B, 2026-10-18).** Cite **CTVA 2026-10-01** from Corteva's Q3 2026
+      **CTVA follow-up (reviewer A's ruling, 2026-10-18).** Cite **CTVA 2026-10-01** from Corteva's Q3 2026
       10-Q, or the first filing that states the completion and the ratio together, **before T-100**;
       no filing yet does (the 1-for-1 ratio is only in Vylor's information statement
       `0001193125-26-396054` Ex. 99.1; the completion 8-K `0001755672-26-000028` has no ratio), so
