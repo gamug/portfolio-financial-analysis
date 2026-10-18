@@ -44,8 +44,15 @@ REVERSE_SPLIT = "reverse_split"
 #: An event where the *price* changes and the count does not (a distribution of another
 #: company's shares to the parent's holders).
 SPINOFF = "spinoff"
+#: A recorded factor that a single class cannot describe: the vendor folded a reverse split and
+#: a spin-off into one ratio (DD 2019-06-03, 0.4725 = a 1-for-3 reverse split and the 1-for-3
+#: Corteva distribution). The recorded value is the vendor's own price adjustment, which no
+#: filing states, so it is never applied: a cap the event would enter is **refused**
+#: (``market_cap.COMBINED_ACTION``) rather than valued from a decomposed guess (T-153 part 3d,
+#: D10, reviewer A 2026-10-18).
+REVERSE_SPLIT_SPINOFF = "reverse_split_spinoff"
 
-EVENT_CLASSES = (SPLIT, REVERSE_SPLIT, SPINOFF)
+EVENT_CLASSES = (SPLIT, REVERSE_SPLIT, SPINOFF, REVERSE_SPLIT_SPINOFF)
 
 
 @dataclass(frozen=True)

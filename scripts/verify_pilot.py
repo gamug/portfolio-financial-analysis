@@ -18,6 +18,8 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
+from unexplained_split_rows import unexplained_split_rows
+
 from api import orchestrator
 from cycle.config import CycleSettings
 from cycle.data import unpriced_assets
@@ -668,6 +670,19 @@ def metrics_only_problems(fin_db_path: str) -> tuple[int, list[str]]:
     finally:
         conn.close()
     return len(runs), problems
+
+
+def unexplained_split_row_problems(fin_db_path: str) -> list[str]:
+    """T-153g: the ``ticker ex_date`` of every recorded SPLIT row the tracked list cannot explain.
+
+    One line per row, so a FAIL names the row it refuses. Fail closed (fix round 2): a database the
+    gate cannot read is reported as a problem, never a silent all-clear
+    (``scripts/unexplained_split_rows.py`` holds the query; this is the check's own wording)."""
+    try:
+        rows = unexplained_split_rows(fin_db_path)
+    except sqlite3.Error as exc:
+        return [f"unreadable database ({exc})"]
+    return [f"{row['ticker']} {row['ex_date']}" for row in rows]
 
 
 def main() -> int:  # noqa: C901, PLR0915
@@ -1696,6 +1711,30 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-143a", t143a)
+
+    def t153g() -> None:
+        """T-153 part 3d (D10): every recorded SPLIT row is in the tracked event list.
+
+        An unexplained row refuses the market cap and stops the Tiingo import, so this is the gate
+        the pilot's part A and ``T-100`` run after their own ``backfill-actions --from 2019-01-02``."""
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        bad: list[str] = []
+        total = 0
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            problems = unexplained_split_row_problems(path)
+            total += len(problems)
+            bad += [f"{prefix}{problem}" for problem in problems]
+        report(
+            "T-153g",
+            "FAIL" if bad else "PASS",
+            f"{total} unexplained SPLIT row(s); "
+            + ("; ".join(bad[:6]) if bad else "every SPLIT row is in the tracked event list"),
+        )
+
+    check("T-153g", t153g)
 
     fails = sum(1 for _, s, _ in RESULTS if s == "FAIL")
     print(

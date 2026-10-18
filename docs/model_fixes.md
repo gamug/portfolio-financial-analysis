@@ -9945,6 +9945,21 @@ list through `quant backfill-actions --from 2019-01-02`, which T-100 must run (i
 defaults to 2022-01-01), and the list is completed from that run's output before the cycle and
 quant steps — otherwise the guard refuses caps wholesale.
 
+**The combined event (reviewer A, 2026-10-18).** One recorded SPLIT row folds **two** events of
+different classes into one factor: DD's 2019-06-03 `0.4725` is a 1-for-3 reverse stock split and the
+1-for-3 Corteva distribution, and the vendor's single factor is their product
+(`0.4725 = (1/3) × 1.4175`); no filing states `1.4175`, so it is **never decomposed and never
+applied**. The list classes the row `reverse_split_spinoff` and cites both completed events from the
+company's own 8-K (one quote each, same filing). `kg_schema.market_cap` refuses a cap the event would
+enter — the union of the split window (the count's `as_of_date`) and the spin-off window (the close's
+date), both bounded by the newest stored bar — with the reason `combined_corporate_action`; a cap
+outside both windows is computed and the row contributes no factor. It is the only such row among the
+106 SPLIT rows (RTX 2020-04-03 folds two *same-class* spin-offs, Carrier and Otis, which one
+`spinoff` class already describes). The 36 new rows (34 assets, 2019-02-07..2024-06-25) are cited in
+the list; `scripts/unexplained_split_rows.py` is the gate (0 unexplained on the scratch copy) and
+verify_pilot's T-153g runs it. Basis: MKT-02 (BLOCK) and C11 pp.27, 29; the class comes from the
+filings, never the ratio's shape.
+
 **R1–R7 (real data, copies under `/tmp/t153f/`; originals read-only).**
 
 - **R1, the import** (a copy of the gateway archive, 591 assets): **32 of 33 lines imported**

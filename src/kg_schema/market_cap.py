@@ -48,6 +48,11 @@ NO_RECENT_PRICE = "no_recent_price"
 #: A recorded SPLIT row the tracked event list cannot explain (T-153 part 3d, D10): the cap is
 #: refused rather than computed with a factor whose class nobody stated (MKT-02).
 UNCLASSIFIED_ACTION = "unclassified_corporate_action"
+#: A recorded SPLIT row the list classes ``reverse_split_spinoff`` (T-153 part 3d, D10): the
+#: vendor folded two events into one factor that no filing states, so a cap the event would enter
+#: (the split window or the spin-off window) is refused rather than valued from a guess. A cap
+#: outside both windows is computed and the row contributes no factor.
+COMBINED_ACTION = "combined_corporate_action"
 
 
 @dataclass(frozen=True)
@@ -274,6 +279,8 @@ def _action_factors(
         )
         if event is None:
             out[asset_id].unexplained.append((ex_date, value))
+        elif event.event_class == corporate_actions.REVERSE_SPLIT_SPINOFF:
+            out[asset_id].combined.append((ex_date, value))
         elif event.event_class == corporate_actions.SPINOFF:
             out[asset_id].spinoffs.append((ex_date, value))
         else:
@@ -287,7 +294,29 @@ class _ActionFactors:
 
     splits: list[tuple[str, float]] = field(default_factory=list)
     spinoffs: list[tuple[str, float]] = field(default_factory=list)
+    #: Events the list classes ``reverse_split_spinoff``: never applied, they refuse a cap that
+    #: falls in either of their windows.
+    combined: list[tuple[str, float]] = field(default_factory=list)
     unexplained: list[tuple[str, float]] = field(default_factory=list)
+
+
+def _in_window(ex_date: str, start: str, through: str | None) -> bool:
+    """``start < ex_date`` and no later than the newest stored bar (``through``)."""
+    return ex_date > start and (through is None or ex_date <= through)
+
+
+def _combined_enters_window(
+    combined: list[tuple[str, float]], count_date: str, close_date: str, through: str | None
+) -> bool:
+    """Whether a ``reverse_split_spinoff`` event would enter the split **or** the spin-off window.
+
+    The union of the two windows already used in :func:`market_caps_as_of`: the split window (the
+    count's date) and the spin-off window (the close's date), both bounded by the newest stored
+    bar (T-153 part 3d, D10, reviewer A 2026-10-18)."""
+    return any(
+        _in_window(ex_date, count_date, through) or _in_window(ex_date, close_date, through)
+        for ex_date, _value in combined
+    )
 
 
 def _split_factors(
@@ -311,7 +340,7 @@ def _factor(splits: list[tuple[str, float]], *, after: str, through: str | None)
     return factor
 
 
-def _class_by_class_val(  # noqa: PLR0913, PLR0917
+def _class_by_class_val(  # noqa: C901, PLR0913, PLR0917
     count: _Count,
     factor: float,
     close: float,
@@ -319,11 +348,16 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
     closes: dict[int, tuple[str, float, str | None]],
     actions: dict[int, _ActionFactors],
     basis_end: dict[int, str],
-) -> tuple[float | None, bool]:
+) -> tuple[float | None, bool, str | None]:
     """Value a CIK in CLASS_LISTING class by class (MKT-03).
 
     Each class's own factors apply (T-153 part 3d, D10): its splits after the count's date, its
-    spin-offs while its close is on the pre-event basis."""
+    spin-offs while its close is on the pre-event basis. The same guard the parent's own row gets is
+    applied to each **sibling class**: a class asset whose recorded SPLIT row the list cannot
+    explain, or whose ``reverse_split_spinoff`` event falls inside that class's own window (its own
+    count date and close date), refuses the whole cap with the matching reason (reviewer B, fix
+    round 1). Returns ``(value, incomplete, refusal_reason)``; ``(None, False, None)`` when a class
+    close is missing."""
     cik_norm = str(count.cik).zfill(10) if count.cik else ""
     class_map = CLASS_LISTING.get(cik_norm, {})
     conv_map = CLASS_CONVERSION.get(cik_norm, {})
@@ -335,16 +369,23 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
             newest[e[0]] = e
     total_val = 0.0
     incomplete = False
-    for member, val, _as_of in newest.values():
+    for member, val, class_as_of in newest.values():
         if not member:
             continue
         if member in class_map:
             t = class_map[member]
             class_aid = ticker_to_asset.get(t.upper())
             if class_aid is None or class_aid not in closes:
-                return None, False
+                return None, False, None
             c_close = closes[class_aid][1]
+            c_close_date = closes[class_aid][0]
             c_factors = actions.get(class_aid, _ActionFactors())
+            if c_factors.unexplained:
+                return None, False, UNCLASSIFIED_ACTION
+            if _combined_enters_window(
+                c_factors.combined, class_as_of, c_close_date, basis_end.get(class_aid)
+            ):
+                return None, False, COMBINED_ACTION
             c_fac = _factor(
                 c_factors.splits,
                 after=count.as_of_date,
@@ -352,7 +393,7 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
             )
             c_spinoff = _factor(
                 c_factors.spinoffs,
-                after=closes[class_aid][0],
+                after=c_close_date,
                 through=basis_end.get(class_aid),
             )
             total_val += val * c_fac * c_spinoff * c_close
@@ -361,7 +402,7 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
         else:
             incomplete = True
             total_val += val * factor * close
-    return total_val, incomplete
+    return total_val, incomplete, None
 
 
 def _is_incomplete_classes(count: _Count) -> bool:
@@ -382,7 +423,7 @@ def _is_incomplete_classes(count: _Count) -> bool:
     return len(unconverted) > 1
 
 
-def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
+def market_caps_as_of(  # noqa: C901, PLR0913 - keyword-only knobs with defaults
     db: Database,
     asset_ids: list[int],
     *,
@@ -439,14 +480,25 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
             # which basis a recorded factor puts the count on. Never a guessed class.
             result.missing[aid] = UNCLASSIFIED_ACTION
             continue
+        if _combined_enters_window(
+            factors.combined, count.as_of_date, close_date, basis_end.get(aid)
+        ):
+            # D10: the vendor folded two events into one ratio no filing states, so a cap it would
+            # enter is refused instead of valued from a decomposed guess; outside both windows the
+            # row contributes nothing.
+            result.missing[aid] = COMBINED_ACTION
+            continue
         factor = _factor(factors.splits, after=count.as_of_date, through=basis_end.get(aid))
         spinoff_factor = _factor(factors.spinoffs, after=close_date, through=basis_end.get(aid))
         shares = count.value * factor * spinoff_factor
         cik_norm = str(count.cik).zfill(10) if count.cik else ""
         if cik_norm in CLASS_LISTING:
-            val, incomplete = _class_by_class_val(
+            val, incomplete, reason = _class_by_class_val(
                 count, factor, close, ticker_to_asset, closes, actions, basis_end
             )
+            if reason is not None:
+                result.missing[aid] = reason
+                continue
             if val is None:
                 result.missing[aid] = NO_RECENT_PRICE
                 continue
