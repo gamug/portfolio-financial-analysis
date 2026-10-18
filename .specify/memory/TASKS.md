@@ -953,6 +953,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       parts. **Part A** is metrics and rules only -- no LLM, a fresh database, the whole historical universe
       (about 586 lines), checked against sources outside our code. Its P1 prerequisite,
       `fundamental_agent run --metrics-only`, is **done 2026-10-18** (PR #176, this entry's status commit).
+      **The 2019-2024 SPLIT citations: done 2026-10-18, PR #175** (105 cited events, the DD
+      `reverse_split_spinoff` class, `scripts/unexplained_split_rows.py` as the gate, verify_pilot T-153g,
+      `scripts/check_event_quotes.py` 105 OK).
       **Part B** comes later: the LLM on a few companies, then the orchestrator end to end (it still closes
       `T-014`). `T-100` still waits for both.
       **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
