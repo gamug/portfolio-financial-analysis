@@ -63,6 +63,8 @@ SYNTHETIC_EVENTS: dict[tuple[str, str], tuple[float, str]] = {
     ("0001666700", "2026-06-24"): (1 / 3, corporate_actions.REVERSE_SPLIT),  # DD, 1-for-3
     # T-153 part 3d (D10, reviewer A 2026-10-18): a factor that folds two events into one ratio.
     ("0000000001", "2026-09-01"): (0.5, corporate_actions.REVERSE_SPLIT_SPINOFF),
+    # The same class on a dual-class filer's sibling class (Fox Corporation, CIK 0001754301).
+    ("0001754301", "2026-09-01"): (0.5, corporate_actions.REVERSE_SPLIT_SPINOFF),
 }
 
 #: The assets the D10 tests use, with the CIK each event list row is keyed by.
@@ -597,3 +599,47 @@ def test_a_reverse_split_spinoff_outside_both_windows_contributes_no_factor(conn
     cap = res.caps[1]
     assert (cap.split_factor, cap.spinoff_factor) == (1.0, 1.0)
     assert cap.value == pytest.approx(100.0 * 50.0)
+
+
+def _fox(conn: Database, *, as_of_date: str = "2026-07-31") -> int:
+    """Fox Corporation (CIK 0001754301): Class A (FOXA, id 11) and Class B (FOX, id 10)."""
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (10, 'FOX', '0001754301')")
+    conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (11, 'FOXA', '0001754301')")
+    fid = seed_cover_shares(
+        conn, 10, 200.0, as_of_date=as_of_date, class_member="us-gaap:CommonClassBMember"
+    )
+    seed_cover_shares(
+        conn,
+        10,
+        100.0,
+        as_of_date=as_of_date,
+        class_member="us-gaap:CommonClassAMember",
+        filing_id=fid,
+    )
+    return fid
+
+
+def test_an_unexplained_row_on_a_sibling_class_refuses_the_cap(conn: Database) -> None:
+    """A dual-class filer's class asset carries its own SPLIT rows (MKT-03): one the list cannot
+    explain refuses the whole cap, exactly as the parent's own row does (reviewer B, fix round 1)."""
+    _fox(conn)
+    _price(conn, 10, AS_OF, 25.0)
+    _price(conn, 11, AS_OF, 30.0)
+    _split(conn, 11, "2026-08-20", 1.5)  # FOXA, not in SYNTHETIC_EVENTS
+    res = market_caps_as_of(conn, [10], as_of=AS_OF)
+    assert res.missing == {10: UNCLASSIFIED_ACTION}
+    assert res.caps == {}
+
+
+def test_a_combined_event_on_a_sibling_class_inside_its_window_refuses_the_cap(
+    conn: Database,
+) -> None:
+    """FOXA's own reverse_split_spinoff event (2026-09-01) is inside its own window (its count date
+    2026-08-01, its close 2026-09-05): the whole cap is refused."""
+    _fox(conn, as_of_date="2026-08-01")
+    _price(conn, 10, "2026-09-05", 25.0)
+    _price(conn, 11, "2026-09-05", 30.0)
+    _split(conn, 11, "2026-09-01", 0.5)
+    res = market_caps_as_of(conn, [10], as_of="2026-09-05")
+    assert res.missing == {10: COMBINED_ACTION}
+    assert res.caps == {}

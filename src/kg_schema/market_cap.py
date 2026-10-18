@@ -340,7 +340,7 @@ def _factor(splits: list[tuple[str, float]], *, after: str, through: str | None)
     return factor
 
 
-def _class_by_class_val(  # noqa: PLR0913, PLR0917
+def _class_by_class_val(  # noqa: C901, PLR0913, PLR0917
     count: _Count,
     factor: float,
     close: float,
@@ -348,11 +348,16 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
     closes: dict[int, tuple[str, float, str | None]],
     actions: dict[int, _ActionFactors],
     basis_end: dict[int, str],
-) -> tuple[float | None, bool]:
+) -> tuple[float | None, bool, str | None]:
     """Value a CIK in CLASS_LISTING class by class (MKT-03).
 
     Each class's own factors apply (T-153 part 3d, D10): its splits after the count's date, its
-    spin-offs while its close is on the pre-event basis."""
+    spin-offs while its close is on the pre-event basis. The same guard the parent's own row gets is
+    applied to each **sibling class**: a class asset whose recorded SPLIT row the list cannot
+    explain, or whose ``reverse_split_spinoff`` event falls inside that class's own window (its own
+    count date and close date), refuses the whole cap with the matching reason (reviewer B, fix
+    round 1). Returns ``(value, incomplete, refusal_reason)``; ``(None, False, None)`` when a class
+    close is missing."""
     cik_norm = str(count.cik).zfill(10) if count.cik else ""
     class_map = CLASS_LISTING.get(cik_norm, {})
     conv_map = CLASS_CONVERSION.get(cik_norm, {})
@@ -364,16 +369,23 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
             newest[e[0]] = e
     total_val = 0.0
     incomplete = False
-    for member, val, _as_of in newest.values():
+    for member, val, class_as_of in newest.values():
         if not member:
             continue
         if member in class_map:
             t = class_map[member]
             class_aid = ticker_to_asset.get(t.upper())
             if class_aid is None or class_aid not in closes:
-                return None, False
+                return None, False, None
             c_close = closes[class_aid][1]
+            c_close_date = closes[class_aid][0]
             c_factors = actions.get(class_aid, _ActionFactors())
+            if c_factors.unexplained:
+                return None, False, UNCLASSIFIED_ACTION
+            if _combined_enters_window(
+                c_factors.combined, class_as_of, c_close_date, basis_end.get(class_aid)
+            ):
+                return None, False, COMBINED_ACTION
             c_fac = _factor(
                 c_factors.splits,
                 after=count.as_of_date,
@@ -381,7 +393,7 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
             )
             c_spinoff = _factor(
                 c_factors.spinoffs,
-                after=closes[class_aid][0],
+                after=c_close_date,
                 through=basis_end.get(class_aid),
             )
             total_val += val * c_fac * c_spinoff * c_close
@@ -390,7 +402,7 @@ def _class_by_class_val(  # noqa: PLR0913, PLR0917
         else:
             incomplete = True
             total_val += val * factor * close
-    return total_val, incomplete
+    return total_val, incomplete, None
 
 
 def _is_incomplete_classes(count: _Count) -> bool:
@@ -411,7 +423,7 @@ def _is_incomplete_classes(count: _Count) -> bool:
     return len(unconverted) > 1
 
 
-def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
+def market_caps_as_of(  # noqa: C901, PLR0913 - keyword-only knobs with defaults
     db: Database,
     asset_ids: list[int],
     *,
@@ -481,9 +493,12 @@ def market_caps_as_of(  # noqa: PLR0913 - keyword-only knobs with defaults
         shares = count.value * factor * spinoff_factor
         cik_norm = str(count.cik).zfill(10) if count.cik else ""
         if cik_norm in CLASS_LISTING:
-            val, incomplete = _class_by_class_val(
+            val, incomplete, reason = _class_by_class_val(
                 count, factor, close, ticker_to_asset, closes, actions, basis_end
             )
+            if reason is not None:
+                result.missing[aid] = reason
+                continue
             if val is None:
                 result.missing[aid] = NO_RECENT_PRICE
                 continue

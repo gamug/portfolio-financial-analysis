@@ -671,6 +671,13 @@ def metrics_only_problems(fin_db_path: str) -> tuple[int, list[str]]:
         conn.close()
     return len(runs), problems
 
+def unexplained_split_row_problems(fin_db_path: str) -> list[str]:
+    """T-153g: the ``ticker ex_date`` of every recorded SPLIT row the tracked list cannot explain.
+
+    One line per row, so a FAIL names the row it refuses (``scripts/unexplained_split_rows.py``
+    holds the query; this is the check's own wording)."""
+    return [f"{row['ticker']} {row['ex_date']}" for row in unexplained_split_rows(fin_db_path)]
+
 
 def main() -> int:  # noqa: C901, PLR0915
     ap = argparse.ArgumentParser()
@@ -1711,9 +1718,9 @@ def main() -> int:  # noqa: C901, PLR0915
         total = 0
         for label, path in paths:
             prefix = f"{label} " if len(paths) > 1 else ""
-            rows = unexplained_split_rows(path)
-            total += len(rows)
-            bad += [f"{prefix}{r['ticker']} {r['ex_date']}" for r in rows]
+            problems = unexplained_split_row_problems(path)
+            total += len(problems)
+            bad += [f"{prefix}{problem}" for problem in problems]
         report(
             "T-153g",
             "FAIL" if bad else "PASS",
