@@ -32,14 +32,14 @@ additive, backward-compatible upstream schema/API change first (Work items
 heuristic, closed 2026-10-05 — its plan stays below, its tasks are in `CHANGELOG.md`).
 
 **The order now (user, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first 2026-10-09;
-scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next)) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
+scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → **Work item 8** (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → **`T-153`** (historical universe) → **Work item 19** (local follow-ups before the
 final pilot: `T-083` → `T-142` → `T-145`) → **Work item 2** (the
 orchestrator) → **`T-143`, the final pilot** (Work item 12) → **`T-100`**, the full-universe production run,
 last of all, against a fresh `financial.db` (see `TASKS.md`'s own `T-100` entry). One task per PR throughout,
 each ending with its status commit after approval.
 
 **Two parallel streams (user, 2026-10-11).** Stream A, the metrics chain of Work item 8 (`T-148` part 2 →
-`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next)), and stream B (`T-142` → `T-145` → `T-083` →
+`T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)), and stream B (`T-142` → `T-145` → `T-083` →
 Work item 2: `T-011` → `T-012` → `T-013` → `T-017` → `T-019` → `T-014` → `T-015` → `T-016` → the code parts
 of `T-153`) run in parallel, one task per PR each. The orchestrator code does not depend on the metric
 fixes; only the final pilot run (`T-143`) does, and it runs after both streams. `T-153`'s replay re-run
@@ -2450,7 +2450,7 @@ this document.** Their internal sequencing:
   the user builds the SEC data-treatment checklist; `T-147` (the audit) and `T-148` (the fixes) precede the
   tasks that build on SEC-derived metrics. `T-100`'s dependency rule already covers both, as tasks added later.
 - Work item 8's order was re-set again on 2026-10-08 after `T-147`'s audit: `T-141` → `T-077` → `T-070` → `T-147` →
-  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (next) → `T-153` (`T-072` and `T-076`'s growth item are
+  `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`) → `T-153` (`T-072` and `T-076`'s growth item are
   absorbed by `T-151`; the rest of `T-076` runs after it). `T-100`'s dependency rule covers the new tasks as tasks added later.
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 
