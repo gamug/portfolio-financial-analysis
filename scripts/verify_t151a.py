@@ -555,6 +555,65 @@ def cmd_labels(args: argparse.Namespace) -> int:
 
 # -- 3.2' the filled sums against the filer's own total in SEC companyfacts -----------------------
 
+# ID-01 (checklist C13 p.25): a company-specific (extension) concept is read only through a
+# documented fallback, and the debt resolver has none, so such an element is **excluded** from the
+# sum. The filer's own total then exceeds our sum by exactly that element: the difference is the
+# declared exclusion, not a failure. Each entry is ``(ticker, element, why)``.
+_DECLARED_EXCLUSIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "CNP",
+        "cnp_TransitionAndSystemRestorationBondsLongTermDebtNoncurrent",
+        "ID-01 (C13 p.25): a company extension is read only through a documented fallback, and "
+        "the debt resolver has none, so the element is excluded from the long-term debt sum",
+    ),
+)
+
+
+def _declared_exclusion(
+    ticker: str, column: str, stmts: Any, diff: float, rounding: float
+) -> str | None:
+    """The declared exclusion that explains a difference, when there is one (ID-01, C13 p.25).
+
+    The excluded element must be filed on the case's own face and be worth exactly the
+    difference; then the difference is the exclusion the checklist declares, and the check lists
+    it as such instead of as an unexplained (or material) mismatch.
+
+    The element's name is compared without case: the filing writes it
+    ``cnp_TransitionAndSystemRestorationBondsLongTermDebtNonCurrent`` and the checklist writes it
+    ``...Noncurrent``.
+    """
+    if not ticker or stmts is None:
+        return None
+    spec = REGISTRY["long_term_debt"]
+    filed: dict[str, str] = {}
+    for row in stmts._rows_for(spec):
+        name = str(row.get("concept") or "")
+        if name:
+            filed.setdefault(name.lower(), name)
+    for holder, concept, why in _DECLARED_EXCLUSIONS:
+        if holder != ticker:
+            continue
+        name = filed.get(concept.lower())
+        if name is None:
+            continue
+        value = stmts._concept_value(spec, str(column), name)
+        if value is None or abs(diff - abs(value)) > rounding:
+            continue
+        return f"the declared exclusion {concept} ({why})"
+    return None
+
+
+def _case_exclusion(case: dict[str, Any], diff: float, rounding: float) -> str | None:
+    """The declared exclusion of a 3.2' case, if one explains its difference."""
+    return _declared_exclusion(
+        str(case.get("ticker") or ""),
+        str(case.get("column") or ""),
+        case.get("stmts"),
+        diff,
+        rounding,
+    )
+
+
 _COMPANYFACTS = cache_dir() / "companyfacts"
 # the parent concept(s) of each filled map, in the order the resolver reads them
 _CF_PARENTS = {
@@ -808,6 +867,8 @@ def _evaluate_cf_cases(
         covered += 1
         rounding = _agreement_rounding(case, total)
         diff = abs(case["value"] - total)
+        case["diff"] = diff
+        case["rounding"] = rounding
         if diff <= rounding:
             agree += 1
             continue
@@ -816,8 +877,8 @@ def _evaluate_cf_cases(
             for concept_st, value in _filed_short_term(case).items():
                 if abs(diff - value) <= rounding:
                     explained = f"the total exceeds the long-term sum by {concept_st}"
-        case["diff"] = diff
-        case["rounding"] = rounding
+        if explained is None:
+            explained = _case_exclusion(case, diff, rounding)
         case["explained"] = explained
         case["material"] = diff > max(rounding, quality.MATERIALITY * abs(total))
         disagreements.append(case)
@@ -1087,6 +1148,7 @@ def _face_cases(conn: Any) -> list[dict[str, Any]]:
                     "ticker": str(f["ticker"]),
                     "accession": str(f["accession_number"]),
                     "column": column,
+                    "stmts": stmts,
                     "total": total,
                     "sum": sum(parts.values()),
                     "max_child": max(parts.values()),
@@ -1100,11 +1162,19 @@ def _face_cases(conn: Any) -> list[dict[str, Any]]:
 
 def _classify(case: dict[str, Any]) -> str:
     """(a) the total excludes a child its caption names; (b) the total is smaller than a child;
-    (c) a partial breakdown; (d) other."""
+    (c) a partial breakdown; (d) other; (e) a declared exclusion (ID-01, C13 p.25).
+
+    (e) is the check's own declaration, not a defect: a company-specific element the resolver
+    excludes by rule (CNP's transition-and-system-restoration bonds), worth exactly the
+    difference between the filer's total and the sum of the children."""
     if case["total"] < case["max_child"]:
         return "b"
     if _EXCLUSION_RE.search(case["caption"]):
         return "a"
+    diff = abs(case["total"] - case["sum"])
+    rounding = quality.l10_rounding([case["total"], case["sum"]])
+    if _case_exclusion(case, diff, rounding):
+        return "e"
     if case["sum"] < case["total"] and case["outside"]:
         return "c"
     return "d"
@@ -1122,12 +1192,14 @@ def cmd_face_cases(args: argparse.Namespace) -> int:
         "b": "(b) the total is smaller than one of its own children",
         "c": "(c) a partial breakdown (other lines on the face are outside the tree)",
         "d": "(d) other",
+        "e": "(e) a declared exclusion (ID-01, C13 p.25): a company-specific element the "
+        "resolver excludes by rule",
     }
     lines = [
         f"T-151 part 1, 3.2'' the {len(cases)} face cases of 3.2, classified (report only), db={args.db}",
         "",
     ]
-    for key in ("a", "b", "c", "d"):
+    for key in ("a", "b", "c", "d", "e"):
         group = classes.get(key, [])
         companies = sorted({c["ticker"] for c in group})
         lines.append(f"{labels[key]}: {len(group)} filings, {len(companies)} companies")

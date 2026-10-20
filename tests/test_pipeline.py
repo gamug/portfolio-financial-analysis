@@ -6,11 +6,21 @@ import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from conftest import filed_after, write_universe_db
 from portfolio_common.db import Database
+from test_pipeline_multi_filing import (
+    _LISTED,
+    Q1_JUN,
+    Q2_OCT,
+    _Edgar,
+    _q1_payload,
+    _run,
+    _stz_q2_payload,
+)
+from test_pipeline_multi_filing import _settings as _stz_settings
 
 from fundamental_agent import cli as fundamental_cli
 from fundamental_agent import db, pipeline
@@ -675,3 +685,216 @@ def test_10k_market_cap_resolves_from_prior_10q_cover_count_in_fresh_run(
     ).fetchone()
     assert m_row is not None
     assert m_row[0] == pytest.approx(2_500_000_000.0)
+
+
+# -- P3 round 1 (reviewer A): items B and K -----------------------------------------------------
+
+
+class _FlakyEdgar(_Edgar):
+    """Fails the first *failures* calls of an accession, then serves it."""
+
+    def __init__(self, *args: Any, failures: dict[str, int], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.failures = dict(failures)
+
+    def financials(
+        self, ticker: str, form: str, year: int, accession_number: str | None = None
+    ) -> dict[str, Any]:
+        left = self.failures.get(accession_number or "", 0)
+        if left:
+            self.failures[accession_number or ""] = left - 1
+            self.financials_calls.append(accession_number)
+            raise EdgarError("/financials/1 failed after 3 attempts")
+        return cast("dict[str, Any]", super().financials(ticker, form, year, accession_number))
+
+
+class _TtmStubAnalyst(_StubAnalyst):
+    """Records, for every filing it analyses, the trailing-twelve-month flows it was given and
+    the filings already in the database."""
+
+    db_path: ClassVar[str] = ""
+    seen: ClassVar[list[tuple[str, dict[str, Any], list[str]]]] = []
+
+    def analyze(self, ctx: FilingContext) -> AnalysisResult:
+        conn = sqlite3.connect(_TtmStubAnalyst.db_path)
+        stored = [str(row[0]) for row in conn.execute("SELECT fiscal_period FROM sec_filings")]
+        conn.close()
+        _TtmStubAnalyst.seen.append((ctx.period_key, dict(ctx.ttm_flows or {}), stored))
+        return super().analyze(ctx)
+
+
+def _run_with(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    edgar: Any,
+    analyst: Any,
+) -> pipeline.RunReport:
+    monkeypatch.setattr(pipeline, "EdgarClient", edgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", analyst)
+    params = RunParams(forms=["10-Q"], since_year=2023, until_year=2023, analysis_date="2026-09-21")
+    return pipeline.run(_stz_settings(tmp_path), params)
+
+
+def test_a_service_failure_is_retried_in_place_before_the_next_filing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item B, after the review: a filing that fails for a **service** reason is retried right
+    away, before the company's next filing is analysed, so the next filing's TTM reads the
+    recovered one.
+
+    The append-only key cannot rewrite a filing's rows, so the later filings cannot be recomputed:
+    the recovery has to happen where it still has an effect, in place.
+    """
+    monkeypatch.setattr(pipeline, "RETRY_WAITS_SECONDS", (0.0, 0.0, 0.0))
+    edgar = _FlakyEdgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        failures={Q1_JUN.accession_number: 2},
+    )
+    _TtmStubAnalyst.db_path = str(tmp_path / "kg.db")
+    _TtmStubAnalyst.seen = []
+    _run_with(monkeypatch, tmp_path, edgar, _TtmStubAnalyst)
+    # Q1 fails twice, serves on the third try, and only then is Q2 fetched
+    assert edgar.financials_calls == [
+        Q1_JUN.accession_number,
+        Q1_JUN.accession_number,
+        Q1_JUN.accession_number,
+        Q2_OCT.accession_number,
+    ]
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    stored = [
+        row[0] for row in conn.execute("SELECT fiscal_period FROM sec_filings ORDER BY period_end")
+    ]
+    conn.close()
+    assert stored == ["2023Q1", "2023Q2"]
+    # the recovered filing was in the database when the next filing was analysed: the next
+    # filing's context (its TTM, its growth, its rule inputs) reads it
+    assert _TtmStubAnalyst.seen[0][2] == ["2023Q1"]  # Q1: only its own row
+    assert "2023Q1" in _TtmStubAnalyst.seen[1][2]  # Q2: the recovered Q1 is already stored
+    assert _TtmStubAnalyst.seen[1][1]  # Q2's trailing-twelve-month flows were computed
+
+
+def test_a_data_failure_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A filing that fails for a **data** reason fails the same way on every run: it is recorded
+    at once, and the run goes on."""
+    monkeypatch.setattr(pipeline, "RETRY_WAITS_SECONDS", (0.0, 0.0, 0.0))
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        raises={
+            Q1_JUN.accession_number: EdgarError(
+                "unsuccessful payload: {'success': False, 'error': \"Failed to extract "
+                "financials: 'NoneType' object has no attribute 'to_dataframe'\"}"
+            )
+        },
+    )
+    _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == [Q1_JUN.accession_number, Q2_OCT.accession_number]
+
+
+def test_a_code_error_is_recorded_without_a_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the **gateway's** failures are retried: a code error is ours, not the gateway's, and
+    is recorded at once (PR #178, review round 2)."""
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        raises={Q1_JUN.accession_number: KeyError("a code error")},
+    )
+    report = _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == [Q1_JUN.accession_number, Q2_OCT.accession_number]
+    assert report.failed == 1  # recorded at once, and the run went on to the next filing
+
+
+def test_a_filing_already_scored_is_not_fetched_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item B, the other side: a run with nothing to recover leaves the scored filings alone."""
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+    )
+    _run(monkeypatch, tmp_path, edgar)
+    edgar.financials_calls.clear()
+    _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == []
+
+
+def _drop_correction(accession: str) -> dict[str, Any]:
+    return {
+        "statement": "income_statement",
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "column": "2023-05-31 (Q1)",
+        "original": 4003533000.0,
+        "corrected": None,
+        "rule": "T-042",
+        "reason": "no_filed_nondimensional_fact",
+    }
+
+
+def test_every_gateway_correction_that_nulled_a_value_is_logged_keyed_by_accession(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item K: the run logs every gateway correction whose ``corrected`` is null -- the rows the
+    gateway dropped -- with the statement, the concept, the column, the original value and the
+    reason, keyed by the accession. A correction the gateway *changed* is not a drop."""
+    log = tmp_path / "out" / "gateway_drops.jsonl"
+    monkeypatch.setenv(pipeline.DROP_LOG_ENV, str(log))
+    payload = _q1_payload()
+    payload["corrections"] = [
+        _drop_correction(Q1_JUN.accession_number),
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_CostOfRevenue",
+            "column": "2023-05-31 (Q1)",
+            "original": 1.0,
+            "corrected": 2.0,
+            "rule": "T-041",
+            "reason": "reconciled",
+        },
+    ]
+    assert pipeline.log_gateway_drops(payload, Q1_JUN.accession_number) == 1
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        {
+            "accession": Q1_JUN.accession_number,
+            "statement": "income_statement",
+            "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "column": "2023-05-31 (Q1)",
+            "original": 4003533000.0,
+            "rule": "T-042",
+            "reason": "no_filed_nondimensional_fact",
+        }
+    ]
+
+
+def test_the_run_writes_the_drop_log_of_every_payload_it_fetches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item K, end to end: the log is written during the run, not by a separate pass."""
+    log = tmp_path / "out" / "gateway_drops.jsonl"
+    monkeypatch.setenv(pipeline.DROP_LOG_ENV, str(log))
+    payload = _q1_payload()
+    payload["corrections"] = [_drop_correction(Q1_JUN.accession_number)]
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: payload, Q2_OCT.accession_number: _stz_q2_payload()},
+    )
+    _run(monkeypatch, tmp_path, edgar)
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [row["accession"] for row in rows] == [Q1_JUN.accession_number]
+
+
+def test_an_empty_payload_is_named_as_an_empty_payload_not_as_a_missing_quarter() -> None:
+    """Item A: the gateway served ``success: true`` with no statements at all (AEP
+    0000004904-23-000072). The reason says so, so the classifier can call it a service failure
+    instead of a data failure about the filing's period."""
+    stmts = Statements.from_payload(
+        {"income_statement": [], "balance_sheet": [], "cash_flow": []},
+    )
+    assert stmts.is_empty
+    assert pipeline._resolve_target(stmts, _task("AAPL", "10-Q", 2024)) == (
+        "the gateway served an empty payload"
+    )

@@ -70,6 +70,35 @@ def test_the_label_and_succession_stages_are_not_data() -> None:
     assert classify("succession", "x") == "service"
 
 
+# -- P3 round 1 (reviewer A): the two service failures -------------------------------------------
+
+
+def test_an_empty_success_payload_is_a_service_failure_not_a_data_failure() -> None:
+    """AEP 0000004904-23-000072: the gateway returned ``success: true`` and empty statements,
+    and the same filing served in full minutes later. The service failed, not the filing, so the
+    filing must be retried instead of being excused as a known data failure."""
+    assert classify("period", "0000004904-23-000072: the gateway served an empty payload") == (
+        "service"
+    )
+
+
+def test_a_name_resolution_failure_inside_the_extraction_is_a_service_failure() -> None:
+    """ETR: "Failed to extract financials: [Errno -2] Name or service not known" is a transient
+    network fault in the gateway, not a property of the filing."""
+    message = (
+        "0001410578-24-000999: /financials/0002005951 -> unsuccessful payload: "
+        "{'success': False, 'error': 'Failed to extract financials: "
+        "[Errno -2] Name or service not known'}"
+    )
+    assert classify("process", message) == "service"
+
+
+def test_the_real_extraction_bug_is_still_a_data_failure() -> None:
+    """GEHC's "'NoneType' object has no attribute 'to_dataframe'" is the filer's own defect: the
+    same filing fails the same way on every run, so retrying it spends calls for nothing."""
+    assert classify("process", UNSUCCESSFUL_EXTRACTION) == "data"
+
+
 def test_every_production_known_failure_classifies_as_data() -> None:
     """The 22 rows of reviewer A's full run at 2fc9a4b (18 period, 4 process)."""
     with (FIXTURES / "t017_known_failures.csv").open(newline="") as handle:

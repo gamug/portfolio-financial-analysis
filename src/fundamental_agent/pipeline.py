@@ -7,9 +7,13 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
+import json
+import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -423,6 +427,60 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
         bar.close()
 
 
+#: Where the gateway's own corrections are logged (P3 round 1, item K). Every correction whose
+#: ``corrected`` is null is a row the gateway **dropped**: the log is what makes "the gateway dropped
+#: the row" measurable on the filings production never had. One JSON object per line, keyed by the
+#: accession.
+DROP_LOG_ENV = "KG_GATEWAY_DROP_LOG"
+DEFAULT_DROP_LOG = "out/gateway_drops.jsonl"
+
+
+def log_gateway_drops(payload: Mapping[str, Any], accession: str) -> int:
+    """Log every gateway correction that nulled a value (statement, concept, column, original, reason).
+
+    The gateway's payload carries its own ``corrections`` (T-118): each entry records a value it
+    changed. An entry with ``corrected`` null is a row the gateway **nulled** -- the filed value
+    is in ``original`` and the reason in ``reason`` (portfolio-data-mining 5c77262's
+    ``no_filed_nondimensional_fact``).
+
+    The ``original`` is an EDGAR value, and EDGAR values are what the log is for: the reader
+    matches it against the SEC's facts (item H's class (a)). No Tiingo value ever reaches this log
+    -- the log holds the gateway's own corrections, and the gateway serves no price.
+
+    The log is **appended**: a retry or a resume fetches the same payload again and writes the same
+    rows. The readers count the distinct ``(accession, concept, column, original)``.
+
+    Returns the number of corrections logged.
+    """
+    rows = [
+        c
+        for c in (payload.get("corrections") or [])
+        if isinstance(c, dict) and c.get("corrected") is None
+    ]
+    if not rows:
+        return 0
+    path = Path(os.environ.get(DROP_LOG_ENV, DEFAULT_DROP_LOG))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(
+                json.dumps(
+                    {
+                        "accession": accession,
+                        "statement": row.get("statement"),
+                        "concept": row.get("concept"),
+                        "column": row.get("column"),
+                        "original": row.get("original"),
+                        "rule": row.get("rule"),
+                        "reason": row.get("reason"),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    return len(rows)
+
+
 def _list_task_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
     try:
         refs = _list_filings(engine, task)
@@ -443,19 +501,86 @@ def _run_task(engine: _Engine, task: _YearTask) -> None:
         _run_filing(engine, task, ref)
 
 
+#: The waits between the retries of a **service** failure (T-017, PR #178 review round 1): the
+#: filing is retried in place, so the company's next filing reads the recovered one. 30 s, 1 min and
+#: 2 min -- three more tries, all well under the supervisor's 20-minute stall window.
+RETRY_WAITS_SECONDS: tuple[float, ...] = (30.0, 60.0, 120.0)
+
+
+#: The reason the resolvers give when the gateway served a payload with no statement row at all
+#: (item A). Such a payload is a **service** failure: the filing may serve a moment later.
+EMPTY_PAYLOAD_REASON = "the gateway served an empty payload"
+
+
+class _Unusable(Exception):
+    """The payload does not hold a period of its own (T-140), or its period is not the filing's.
+
+    The reason is recorded with the filing (never dropped silently). Only the **empty payload** is
+    retried in place (reviewer A, P3 round 1); every other reason is a property of the filing and
+    is recorded at once.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.retryable = reason == EMPTY_PAYLOAD_REASON
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Whether a raised failure is the **gateway's** (PR #178, review round 2).
+
+    Only an :class:`EdgarError` that classifies as a *service* failure is retried: the client
+    already wraps timeouts, DNS failures and connection resets into it, after its own retries, and
+    the classifier separates those from the gateway's own extraction defects (GEHC's
+    ``'NoneType' object has no attribute 'to_dataframe'``), which fail the same way on every run.
+
+    A code error -- a ``KeyError``, a ``TypeError``, a database error -- is ours, not the
+    gateway's: it is recorded at once. Retrying it would spend 3.5 minutes per filing and could
+    add hours to an overnight run.
+    """
+    return isinstance(exc, EdgarError) and classify("process", str(exc)) == "service"
+
+
 def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
-    try:
-        done, skipped = _process_filing(engine, task, ref)
-    except EdgarNotFoundError:
-        _count(engine, skipped=1)
+    """Analyse one filing, retrying it **in place** when the failure is about the service.
+
+    T-017 (PR #178, review round 1): a filing that fails for a **gateway** reason (an
+    :class:`EdgarError`: an outage, a name-resolution failure, a connection reset -- or an empty
+    payload) may serve a moment later, so it is retried right away, **before the company's next
+    filing is analysed** -- the next filing's growth, TTM and rule inputs then read the recovered
+    one. A filing that fails for a *data* reason fails the same way on every run, and a **code**
+    error is ours, not the gateway's: both are recorded at once, and the run goes on.
+
+    The waits (30 s, 1 min, 2 min) stay well under the supervisor's 20-minute stall window, even
+    for a year-task with three failing 10-Qs (3 x 3.5 min = 10.5 min).
+    """
+    attempt = 0
+    while True:
+        try:
+            done, skipped = _process_filing(engine, task, ref)
+        except EdgarNotFoundError:
+            _count(engine, skipped=1)
+            return
+        except FilingIdentityError as exc:  # another company's filing: never stored
+            _record_failure(engine, task, ref, exc, stage="identity")
+            return
+        except _Unusable as exc:  # the payload does not hold a period of its own
+            if exc.retryable and attempt < len(RETRY_WAITS_SECONDS):
+                time.sleep(RETRY_WAITS_SECONDS[attempt])
+                attempt += 1
+                continue
+            _record_unusable(engine, task, ref, exc.reason)
+            _count(engine, skipped=1)
+            return
+        except Exception as exc:  # one bad filing must not stop its siblings or the batch
+            if _is_retryable(exc) and attempt < len(RETRY_WAITS_SECONDS):
+                time.sleep(RETRY_WAITS_SECONDS[attempt])
+                attempt += 1
+                continue
+            _record_failure(engine, task, ref, exc)
+            return
+        _count(engine, completed=done, skipped=skipped)
         return
-    except FilingIdentityError as exc:  # another company's filing: never stored
-        _record_failure(engine, task, ref, exc, stage="identity")
-        return
-    except Exception as exc:  # one bad filing must not stop its siblings or the batch
-        _record_failure(engine, task, ref, exc)
-        return
-    _count(engine, completed=done, skipped=skipped)
 
 
 def _count(engine: _Engine, *, completed: int = 0, skipped: int = 0) -> None:
@@ -599,19 +724,18 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     payload = engine.edgar.financials(
         filer, task.form, task.year, accession_number=ref.accession_number
     )
+    log_gateway_drops(payload, ref.accession_number)
     stmts = Statements.from_payload(payload, reit=task.reit)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
     if isinstance(resolved, str):
         # T-140: a filing with no quarter (or year) of its own is never dropped silently
-        _record_unusable(engine, task, ref, resolved)
-        return 0, 1
+        raise _Unusable(resolved)
 
     mismatch = _period_end_mismatch(resolved, ref)
     if mismatch is not None:
-        _record_unusable(engine, task, ref, mismatch)  # ID-07 is a BLOCK: not stored, recorded
-        return 0, 1
+        raise _Unusable(mismatch)  # ID-07 is a BLOCK: not stored, recorded
 
     if resolved.label_override is not None:
         # C4 (T-151 part 1): not a failure -- the filing is stored with the corrected label; the
@@ -732,6 +856,8 @@ def _resolve_target(
     which a 52/53-week calendar shifts a quarter ahead. The year end is the balance sheet's own
     comparative column, else the asset's latest stored 10-K before the period (*fye_lookup*)."""
     if task.form == "10-K":
+        if stmts.is_empty:
+            return EMPTY_PAYLOAD_REASON
         period = stmts.latest_fy()
         if period is None:
             return f"the payload has no fiscal-year column (periods: {_columns(stmts)})"
@@ -745,6 +871,8 @@ def _resolve_quarter(
     stmts: Statements, fye_lookup: Callable[[str], date | None] | None
 ) -> _Target | str:
     """A 10-Q's own quarter as a :class:`_Target`, or why the payload has none."""
+    if stmts.is_empty:
+        return EMPTY_PAYLOAD_REASON
     quarters = stmts.quarter_periods()
     if not quarters:
         return (

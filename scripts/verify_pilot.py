@@ -14,8 +14,9 @@ import io
 import json
 import math
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date, timedelta
+from itertools import pairwise
 from typing import Any
 
 from unexplained_split_rows import unexplained_split_rows
@@ -38,7 +39,7 @@ from kg_schema.queries import (
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
-from kg_schema.versions import RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
+from kg_schema.versions import DATA_QUALITY_GATE_VERSION, RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
@@ -78,6 +79,146 @@ def check(task: str, fn: Callable[[], None]) -> None:
         fn()
     except sqlite3.Error as exc:
         report(task, "SKIP", f"not checkable on this database ({exc})")
+
+
+def gate_version_status(versions: Iterable[str]) -> str:
+    """``PASS`` when every data-quality gate version in the database is the current one.
+
+    The gate is append-only under :data:`kg_schema.versions.DATA_QUALITY_GATE_VERSION`, so a
+    database written by this code carries that version (P3 round 1, reviewer A: T-116 must allow
+    the current gate version, not only ``dq-v2``). A version from an older release is a real
+    finding: ``FAIL``.
+    """
+    return "PASS" if set(versions) <= {DATA_QUALITY_GATE_VERSION} else "FAIL"
+
+
+def stale_metric_filings(c: sqlite3.Connection) -> list[tuple[str, str, str, int, int]]:
+    """The filings whose metrics were written **before** an earlier filing's were (T-017).
+
+    A filing that fails for a service reason and is recovered later leaves the filings after it
+    computed without it: their metrics carry an earlier run's id than the recovered filing's. The
+    append-only key means the later filings cannot be rewritten (PR #178, review round 1), so the
+    run retries the filing **in place** instead, and this check names what is still stale.
+
+    ``min(fundamental_metrics.run_id)`` per filing is when its values were first written; a filing
+    is stale when that is earlier than the latest first-write of any earlier-period filing of the
+    same company. Returns ``(ticker, accession, fiscal period, its run, the earlier run)``.
+    """
+    rows = c.execute(
+        "SELECT f.asset_id, a.ticker, f.accession_number, f.fiscal_period, MIN(m.run_id) AS first_run "
+        "FROM sec_filings f JOIN assets a ON a.id = f.asset_id "
+        "JOIN fundamental_metrics m ON m.filing_id = f.id GROUP BY f.id "
+        "ORDER BY f.asset_id, f.period_end"
+    ).fetchall()
+    by_asset: dict[int, list[tuple[str, str, str, int]]] = {}
+    for asset_id, ticker, accession, fiscal_period, first_run in rows:
+        by_asset.setdefault(int(asset_id), []).append(
+            (str(ticker), str(accession), str(fiscal_period), int(first_run))
+        )
+    out: list[tuple[str, str, str, int, int]] = []
+    for filings in by_asset.values():
+        latest = filings[0][3]
+        for ticker, accession, fiscal_period, first_run in filings[1:]:
+            if first_run < latest:
+                out.append((ticker, accession, fiscal_period, first_run, latest))
+            latest = max(latest, first_run)
+    return out
+
+
+def missing_quarter_labels(c: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """The fiscal periods a company is missing, counted by their **fiscal label** (P3 round 1).
+
+    A fiscal year is the 10-K that closes it: the 10-Qs between two 10-Ks are that year's
+    quarters, and a label's quarter number (1-3) is the fiscal quarter. A missing label is a
+    missing period -- a 16/17-week fourth quarter (AZO, COST, DPZ, PEP) is not one, because its
+    fourth quarter *is* the FY 10-K, and the label counts it. A day threshold (110 days) has no
+    source: it called a 16/17-week quarter end a gap.
+
+    The company's first fiscal year is exempt (it may have joined the index mid-year), and the
+    10-Qs after the last 10-K belong to a fiscal year that has not closed yet.
+
+    Returns ``(ticker, fiscal year label, missing label)`` for every missing quarter.
+    """
+    rows = c.execute(
+        "SELECT f.asset_id, a.ticker, f.form, f.fiscal_period, f.period_end FROM sec_filings f "
+        "JOIN assets a ON a.id = f.asset_id WHERE f.form IN ('10-K','10-Q') "
+        "ORDER BY f.asset_id, f.period_end"
+    ).fetchall()
+    by_asset: dict[int, list[tuple[str, str, str, str]]] = {}
+    for asset_id, ticker, form, fiscal_period, period_end in rows:
+        by_asset.setdefault(int(asset_id), []).append(
+            (str(ticker), str(form), str(fiscal_period), str(period_end))
+        )
+    gaps: list[tuple[str, str, str, int, int]] = []
+    for filings in by_asset.values():
+        annuals = [f for f in filings if f[1] == "10-K"]
+        for index, annual in enumerate(annuals):
+            if index == 0:
+                continue  # the company's first fiscal year: it may have joined mid-year
+            previous_end = annuals[index - 1][3]
+            quarters = [f for f in filings if f[1] == "10-Q" and previous_end < f[3] < annual[3]]
+            present = {f[2].rsplit("Q", 1)[-1] for f in quarters}
+            for number in ("1", "2", "3"):
+                if number not in present:
+                    gaps.append(
+                        (
+                            filings[0][0],
+                            annual[2],
+                            f"Q{number}",
+                            int(previous_end[:4]),
+                            int(annual[3][:4]),
+                        )
+                    )
+    return gaps
+
+
+#: Two consecutive 10-Ks further apart than this mean a fiscal year without its 10-K: PER-08's
+#: year upper bound (52/53 weeks: 365 or 366 days, a 53-week year adds seven days).
+MAX_ANNUAL_GAP_DAYS = 371
+
+#: The declared transitions (PER-09): a 10-KT is never treated as a standard period, so the
+#: company's fiscal year changes and the 10-Ks around the transition are more than a year apart.
+#: Each entry is ``(ticker, the transition's accession, its period end, why)``.
+DECLARED_TRANSITIONS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "FERG",
+        "0002011641-26-000006",
+        "2025-12-31",
+        "PER-09: the 10-KT is declared, not fetched as a period",
+    ),
+)
+
+
+def missing_annual_filings(c: sqlite3.Connection) -> list[tuple[str, str, str, int]]:
+    """The fiscal years whose FY 10-K is missing (T-140).
+
+    A missing FY 10-K is invisible to the label count: its quarters merge into the next year, which
+    then holds Q1-Q3. Two consecutive 10-Ks more than 371 days apart (PER-08's year upper bound:
+    52/53 weeks) are that case -- unless the company changed its fiscal year, which PER-09 declares
+    (the 10-KT is not fetched as a period); those are listed in :data:`DECLARED_TRANSITIONS`.
+
+    Returns ``(ticker, the earlier 10-K's period end, the later one's, the days between)``.
+    """
+    rows = c.execute(
+        "SELECT f.asset_id, a.ticker, f.period_end FROM sec_filings f JOIN assets a ON a.id = f.asset_id "
+        "WHERE f.form = '10-K' ORDER BY f.asset_id, f.period_end"
+    ).fetchall()
+    by_asset: dict[int, list[tuple[str, str]]] = {}
+    for asset_id, ticker, period_end in rows:
+        by_asset.setdefault(int(asset_id), []).append((str(ticker), str(period_end)))
+    out: list[tuple[str, str, str, int]] = []
+    for filings in by_asset.values():
+        for earlier, later in pairwise(filings):
+            days = (date.fromisoformat(later[1]) - date.fromisoformat(earlier[1])).days
+            if days <= MAX_ANNUAL_GAP_DAYS:
+                continue
+            if any(
+                holder == earlier[0] and earlier[1] < transition_end <= later[1]
+                for holder, _accession, transition_end, _why in DECLARED_TRANSITIONS
+            ):
+                continue  # a declared fiscal-year change (PER-09)
+            out.append((earlier[0], earlier[1], later[1], days))
+    return out
 
 
 def members_asof_mismatches(fin_db_path: str, universe_path: str) -> tuple[int, list[str]]:
@@ -742,8 +883,15 @@ def main() -> int:  # noqa: C901, PLR0915
         v = dict(
             c.execute("SELECT gate_version, COUNT(*) FROM data_quality_issue GROUP BY 1").fetchall()
         )
-        status = "PASS" if set(v) <= {"dq-v2"} else "FAIL"
-        report("T-116", status, f"data-quality gate versions {v or '{} (no issues found)'}")
+        # The current gate version is the one this code writes (P3 round 1, reviewer A): a gate
+        # version from an older release is a real finding, the current one is not.
+        status = gate_version_status(v)
+        report(
+            "T-116",
+            status,
+            f"data-quality gate versions {v or '{} (no issues found)'} "
+            f"(current {DATA_QUALITY_GATE_VERSION})",
+        )
 
     def t113() -> None:
         rows = c.execute(
@@ -1069,33 +1217,56 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     def t140_quarters() -> None:
-        # Pilot F2: no filing silently dropped and no quarter label taken from a shifted fiscal
-        # calendar. Consecutive 10-K/10-Q period ends more than 110 days apart mean a missing filing
-        # (a quarter is 84-98 days, 52/53-week calendars included); a 10-Q labelled Q4 is impossible.
-        # A gap the run recorded a reason for (analysis_run_error for that ticker in that window --
-        # e.g. APO's Q1-2023, which the gateway returns without a quarter column, T-140) is not
-        # silent: WARN, to be explained in the report. An unrecorded gap is a FAIL.
-        gaps = c.execute(
-            "WITH s AS (SELECT a.ticker, f.period_end, LAG(f.period_end) OVER (PARTITION BY f.asset_id "
-            "ORDER BY f.period_end) prev FROM sec_filings f JOIN assets a ON a.id=f.asset_id "
-            "WHERE f.form IN ('10-K','10-Q')) SELECT ticker, prev, period_end, EXISTS (SELECT 1 "
-            "FROM analysis_run_error e WHERE e.ticker = s.ticker AND e.form IN ('10-K','10-Q') "
-            "AND substr(e.fiscal_period,1,4) BETWEEN substr(s.prev,1,4) AND substr(s.period_end,1,4)) "
-            "FROM s WHERE julianday(period_end) - julianday(prev) > 110 ORDER BY ticker, period_end"
-        ).fetchall()
+        # P3 round 1 (reviewer A): count the missing periods by their **fiscal label** -- the Q1-Q3
+        # 10-Qs plus the FY 10-K of a fiscal year -- and not by a day threshold. 110 days has no
+        # source, and a 16/17-week Q4 (AZO, COST, DPZ, PEP) is not a gap: its fourth quarter *is*
+        # the FY 10-K, and the label counts it.
+        gaps = missing_quarter_labels(c)
         q4 = c.execute(
             "SELECT a.ticker, f.period_end FROM sec_filings f JOIN assets a ON a.id=f.asset_id "
             "WHERE f.form='10-Q' AND f.fiscal_period LIKE '%Q4' ORDER BY 1, 2"
         ).fetchall()
-        silent = [f"{t} {p}->{e}" for t, p, e, rec in gaps if not rec]
-        recorded = [f"{t} {p}->{e}" for t, p, e, rec in gaps if rec]
-        status = "FAIL" if silent or q4 else ("WARN" if recorded else "PASS")
+        # A gap is *recorded* when the ticker has a 10-Q error **in that fiscal year** (the years
+        # between the previous 10-K's period end and this one's): an unrelated error elsewhere must
+        # not hide a silent gap (PR #178, review round 1).
+        error_years: dict[str, set[str]] = {}
+        for ticker, fiscal_period in c.execute(
+            "SELECT DISTINCT ticker, fiscal_period FROM analysis_run_error WHERE form = '10-Q'"
+        ):
+            error_years.setdefault(str(ticker), set()).add(str(fiscal_period))
+        silent: list[str] = []
+        recorded: list[str] = []
+        for ticker, year, label, first_year, last_year in gaps:
+            years = {str(y) for y in range(first_year, last_year + 1)}
+            if error_years.get(ticker, set()) & years:
+                recorded.append(f"{ticker} {year} {label}")
+            else:
+                silent.append(f"{ticker} {year} {label}")
+        # A fiscal year without its 10-K is invisible to the label count (its quarters merge into
+        # the next year): two consecutive 10-Ks more than 371 days apart say it is missing.
+        annuals = missing_annual_filings(c)
+        status = "FAIL" if silent or q4 or annuals else ("WARN" if recorded else "PASS")
         report(
             "T-140",
             status,
             f"quarters missing with no recorded reason: {silent or 'none'}; missing with a recorded "
             f"run error (explain in the report): {recorded or 'none'}; 10-Qs labelled Q4: "
-            f"{[f'{t} {e}' for t, e in q4] or 'none'}",
+            f"{[f'{t} {e}' for t, e in q4] or 'none'}; fiscal years with no 10-K: "
+            f"{[f'{t} {a}->{b} ({d} days)' for t, a, b, d in annuals] or 'none'}",
+        )
+
+    def t017_stale_metrics() -> None:
+        # PR #178 (review round 1): a filing whose metrics were written before an earlier filing's
+        # were was computed without that filing (ETR's eight filings were recovered in a later run).
+        # The append-only key cannot rewrite them, so the run retries a service failure **in place**
+        # instead; this check names what is still stale. WARN, with the full list.
+        # The check's id is not "T-017": that id is the cycle's incremental-run check below.
+        rows = stale_metric_filings(c)
+        report(
+            "stale-metrics",
+            "WARN" if rows else "PASS",
+            "filings whose metrics predate an earlier filing's: "
+            f"{[f'{t} {a} {p} (run {r} < {e})' for t, a, p, r, e in rows] or 'none'}",
         )
 
     def valuation_coverage() -> None:
@@ -1136,6 +1307,7 @@ def main() -> int:  # noqa: C901, PLR0915
         ("T-133", t133),
         ("T-140", t140_revenue),
         ("T-140", t140_quarters),
+        ("stale-metrics", t017_stale_metrics),
         ("valuation", valuation_coverage),
     ):
         check(task, fn)
