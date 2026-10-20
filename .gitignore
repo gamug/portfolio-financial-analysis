@@ -227,3 +227,6 @@ __marimo__/
 # dir, so it stays tracked.
 CLAUDE.md
 .claude/
+
+# the run's own logs (the gateway drop log, item K): written by the pipeline
+out/

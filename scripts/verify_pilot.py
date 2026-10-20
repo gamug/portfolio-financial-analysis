@@ -14,7 +14,7 @@ import io
 import json
 import math
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from typing import Any
 
@@ -38,7 +38,7 @@ from kg_schema.queries import (
     unresolved_run_references,
 )
 from kg_schema.ticker_history import read_history
-from kg_schema.versions import RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
+from kg_schema.versions import DATA_QUALITY_GATE_VERSION, RULE_INPUT_GROUP, VALUE_INPUTS_METRIC
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
@@ -78,6 +78,56 @@ def check(task: str, fn: Callable[[], None]) -> None:
         fn()
     except sqlite3.Error as exc:
         report(task, "SKIP", f"not checkable on this database ({exc})")
+
+
+def gate_version_status(versions: Iterable[str]) -> str:
+    """``PASS`` when every data-quality gate version in the database is the current one.
+
+    The gate is append-only under :data:`kg_schema.versions.DATA_QUALITY_GATE_VERSION`, so a
+    database written by this code carries that version (P3 round 1, reviewer A: T-116 must allow
+    the current gate version, not only ``dq-v2``). A version from an older release is a real
+    finding: ``FAIL``.
+    """
+    return "PASS" if set(versions) <= {DATA_QUALITY_GATE_VERSION} else "FAIL"
+
+
+def missing_quarter_labels(c: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """The fiscal periods a company is missing, counted by their **fiscal label** (P3 round 1).
+
+    A fiscal year is the 10-K that closes it: the 10-Qs between two 10-Ks are that year's
+    quarters, and a label's quarter number (1-3) is the fiscal quarter. A missing label is a
+    missing period -- a 16/17-week fourth quarter (AZO, COST, DPZ, PEP) is not one, because its
+    fourth quarter *is* the FY 10-K, and the label counts it. A day threshold (110 days) has no
+    source: it called a 16/17-week quarter end a gap.
+
+    The company's first fiscal year is exempt (it may have joined the index mid-year), and the
+    10-Qs after the last 10-K belong to a fiscal year that has not closed yet.
+
+    Returns ``(ticker, fiscal year label, missing label)`` for every missing quarter.
+    """
+    rows = c.execute(
+        "SELECT f.asset_id, a.ticker, f.form, f.fiscal_period, f.period_end FROM sec_filings f "
+        "JOIN assets a ON a.id = f.asset_id WHERE f.form IN ('10-K','10-Q') "
+        "ORDER BY f.asset_id, f.period_end"
+    ).fetchall()
+    by_asset: dict[int, list[tuple[str, str, str, str]]] = {}
+    for asset_id, ticker, form, fiscal_period, period_end in rows:
+        by_asset.setdefault(int(asset_id), []).append(
+            (str(ticker), str(form), str(fiscal_period), str(period_end))
+        )
+    gaps: list[tuple[str, str, str]] = []
+    for filings in by_asset.values():
+        annuals = [f for f in filings if f[1] == "10-K"]
+        for index, annual in enumerate(annuals):
+            if index == 0:
+                continue  # the company's first fiscal year: it may have joined mid-year
+            previous_end = annuals[index - 1][3]
+            quarters = [f for f in filings if f[1] == "10-Q" and previous_end < f[3] < annual[3]]
+            present = {f[2].rsplit("Q", 1)[-1] for f in quarters}
+            for number in ("1", "2", "3"):
+                if number not in present:
+                    gaps.append((filings[0][0], annual[2], f"Q{number}"))
+    return gaps
 
 
 def members_asof_mismatches(fin_db_path: str, universe_path: str) -> tuple[int, list[str]]:
@@ -742,8 +792,15 @@ def main() -> int:  # noqa: C901, PLR0915
         v = dict(
             c.execute("SELECT gate_version, COUNT(*) FROM data_quality_issue GROUP BY 1").fetchall()
         )
-        status = "PASS" if set(v) <= {"dq-v2"} else "FAIL"
-        report("T-116", status, f"data-quality gate versions {v or '{} (no issues found)'}")
+        # The current gate version is the one this code writes (P3 round 1, reviewer A): a gate
+        # version from an older release is a real finding, the current one is not.
+        status = gate_version_status(v)
+        report(
+            "T-116",
+            status,
+            f"data-quality gate versions {v or '{} (no issues found)'} "
+            f"(current {DATA_QUALITY_GATE_VERSION})",
+        )
 
     def t113() -> None:
         rows = c.execute(
@@ -1069,26 +1126,23 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     def t140_quarters() -> None:
-        # Pilot F2: no filing silently dropped and no quarter label taken from a shifted fiscal
-        # calendar. Consecutive 10-K/10-Q period ends more than 110 days apart mean a missing filing
-        # (a quarter is 84-98 days, 52/53-week calendars included); a 10-Q labelled Q4 is impossible.
-        # A gap the run recorded a reason for (analysis_run_error for that ticker in that window --
-        # e.g. APO's Q1-2023, which the gateway returns without a quarter column, T-140) is not
-        # silent: WARN, to be explained in the report. An unrecorded gap is a FAIL.
-        gaps = c.execute(
-            "WITH s AS (SELECT a.ticker, f.period_end, LAG(f.period_end) OVER (PARTITION BY f.asset_id "
-            "ORDER BY f.period_end) prev FROM sec_filings f JOIN assets a ON a.id=f.asset_id "
-            "WHERE f.form IN ('10-K','10-Q')) SELECT ticker, prev, period_end, EXISTS (SELECT 1 "
-            "FROM analysis_run_error e WHERE e.ticker = s.ticker AND e.form IN ('10-K','10-Q') "
-            "AND substr(e.fiscal_period,1,4) BETWEEN substr(s.prev,1,4) AND substr(s.period_end,1,4)) "
-            "FROM s WHERE julianday(period_end) - julianday(prev) > 110 ORDER BY ticker, period_end"
-        ).fetchall()
+        # P3 round 1 (reviewer A): count the missing periods by their **fiscal label** -- the Q1-Q3
+        # 10-Qs plus the FY 10-K of a fiscal year -- and not by a day threshold. 110 days has no
+        # source, and a 16/17-week Q4 (AZO, COST, DPZ, PEP) is not a gap: its fourth quarter *is*
+        # the FY 10-K, and the label counts it.
+        gaps = missing_quarter_labels(c)
         q4 = c.execute(
             "SELECT a.ticker, f.period_end FROM sec_filings f JOIN assets a ON a.id=f.asset_id "
             "WHERE f.form='10-Q' AND f.fiscal_period LIKE '%Q4' ORDER BY 1, 2"
         ).fetchall()
-        silent = [f"{t} {p}->{e}" for t, p, e, rec in gaps if not rec]
-        recorded = [f"{t} {p}->{e}" for t, p, e, rec in gaps if rec]
+        recorded_errors = {
+            str(r[0])
+            for r in c.execute(
+                "SELECT DISTINCT ticker FROM analysis_run_error WHERE form IN ('10-K','10-Q')"
+            )
+        }
+        silent = [f"{t} {year} {label}" for t, year, label in gaps if t not in recorded_errors]
+        recorded = [f"{t} {year} {label}" for t, year, label in gaps if t in recorded_errors]
         status = "FAIL" if silent or q4 else ("WARN" if recorded else "PASS")
         report(
             "T-140",

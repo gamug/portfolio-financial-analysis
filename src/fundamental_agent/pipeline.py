@@ -7,9 +7,12 @@ the last run stopped. Progress and ETA come from a ``tqdm`` bar.
 
 from __future__ import annotations
 
+import json
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from portfolio_common.db import Database, Row
@@ -153,6 +156,11 @@ class _Engine:
     completed: set[_Unit]
     # Accessions already scored: a resumed run skips their ``financials`` call.
     completed_accessions: set[str] = field(default_factory=set)
+    # Accessions this run must fetch and analyze again even though an earlier run scored them.
+    # A filing recovered by a retry changes the context its company's *later* filings read (their
+    # growth, TTM and rule inputs), so those later filings are recomputed with it
+    # (reviewer A, P3 round 1, 2026-10-20: ETR's eight filings recovered in run 4, 2023Q3-2025Q2).
+    recompute: set[str] = field(default_factory=set)
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
@@ -417,10 +425,83 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
             asset_filings.sort(
                 key=lambda pair: (pair[1].filing_date or "", pair[1].accession_number)
             )
-            for task, ref in asset_filings:
+            for index, (task, ref) in enumerate(asset_filings):
+                _mark_recompute(engine, asset_filings, index)
                 _run_filing(engine, task, ref)
     finally:
         bar.close()
+
+
+#: Where the gateway's own corrections are logged (P3 round 1, item K). Every correction whose
+#: ``corrected`` is null is a row the gateway **dropped**: the log is what makes "the gateway dropped
+#: the row" measurable on the filings production never had. One JSON object per line, keyed by the
+#: accession.
+DROP_LOG_ENV = "KG_GATEWAY_DROP_LOG"
+DEFAULT_DROP_LOG = "out/gateway_drops.jsonl"
+
+
+def log_gateway_drops(payload: Mapping[str, Any], accession: str) -> int:
+    """Log every gateway correction that nulled a value (statement, concept, column, original, reason).
+
+    The gateway's payload carries its own ``corrections`` (T-118): each entry records a value it
+    changed. An entry with ``corrected`` null is a row the gateway **nulled** -- the filed value
+    is in ``original`` and the reason in ``reason`` (portfolio-data-mining 5c77262's
+    ``no_filed_nondimensional_fact``). Nothing here is a price: the log holds the concept, the
+    column and the reason; the value stays out of it.
+
+    Returns the number of corrections logged.
+    """
+    rows = [
+        c
+        for c in (payload.get("corrections") or [])
+        if isinstance(c, dict) and c.get("corrected") is None
+    ]
+    if not rows:
+        return 0
+    path = Path(os.environ.get(DROP_LOG_ENV, DEFAULT_DROP_LOG))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(
+                json.dumps(
+                    {
+                        "accession": accession,
+                        "statement": row.get("statement"),
+                        "concept": row.get("concept"),
+                        "column": row.get("column"),
+                        "original": row.get("original"),
+                        "rule": row.get("rule"),
+                        "reason": row.get("reason"),
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    return len(rows)
+
+
+def _mark_recompute(
+    engine: _Engine, asset_filings: Sequence[tuple[_YearTask, FilingRef]], index: int
+) -> None:
+    """Mark the company's later filings for recomputation when an earlier one is re-fetched.
+
+    A filing this run fetches again (a retry that recovered it) changes the context its
+    company's *later* filings read -- their growth, their TTM and their rule inputs -- so those
+    later filings are fetched and analyzed again too. Without this, ETR's eight filings
+    recovered in run 4 left every later ETR filing computed without them (reviewer A,
+    P3 round 1, 2026-10-20).
+
+    "Later" is the order the gateway lists the filings in (by filing date): a filing is filed
+    after the period it reports, so the later filing is the one whose context the earlier one
+    feeds. Only the filings an earlier run already scored are marked -- the ones this run
+    fetches anyway are fetched again by definition.
+    """
+    ref = asset_filings[index][1]
+    if ref.accession_number in engine.completed_accessions:
+        return  # an earlier run already scored it: its context did not change
+    for _later_task, later_ref in asset_filings[index + 1 :]:
+        if later_ref.accession_number in engine.completed_accessions:
+            engine.recompute.add(later_ref.accession_number)
 
 
 def _list_task_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
@@ -590,7 +671,11 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
         return 0, 1  # no lookahead: this filing was filed after the analysis date (or the exit)
     if not ref.filing_date:
         return 0, 1  # T-107: an undated filing is never usable -- no metrics, no score
-    if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
+    if (
+        not engine.params.fresh
+        and ref.accession_number in engine.completed_accessions
+        and ref.accession_number not in engine.recompute
+    ):
         return 0, 1  # already ingested and scored by an earlier run
 
     filer = (
@@ -599,6 +684,7 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     payload = engine.edgar.financials(
         filer, task.form, task.year, accession_number=ref.accession_number
     )
+    log_gateway_drops(payload, ref.accession_number)
     stmts = Statements.from_payload(payload, reit=task.reit)
     meta = FilingMeta(filing_date=ref.filing_date, accession_number=ref.accession_number, cik=filer)
 
@@ -624,7 +710,11 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
             skipped += 1
             continue
         unit = (task.ticker, task.form, target.period.date)
-        if not engine.params.fresh and unit in engine.completed:
+        if (
+            not engine.params.fresh
+            and unit in engine.completed
+            and ref.accession_number not in engine.recompute
+        ):
             skipped += 1
             continue
         _analyze_one(engine, task, stmts, target, meta)
@@ -732,6 +822,8 @@ def _resolve_target(
     which a 52/53-week calendar shifts a quarter ahead. The year end is the balance sheet's own
     comparative column, else the asset's latest stored 10-K before the period (*fye_lookup*)."""
     if task.form == "10-K":
+        if stmts.is_empty:
+            return "the gateway served an empty payload"
         period = stmts.latest_fy()
         if period is None:
             return f"the payload has no fiscal-year column (periods: {_columns(stmts)})"
@@ -745,6 +837,8 @@ def _resolve_quarter(
     stmts: Statements, fye_lookup: Callable[[str], date | None] | None
 ) -> _Target | str:
     """A 10-Q's own quarter as a :class:`_Target`, or why the payload has none."""
+    if stmts.is_empty:
+        return "the gateway served an empty payload"
     quarters = stmts.quarter_periods()
     if not quarters:
         return (

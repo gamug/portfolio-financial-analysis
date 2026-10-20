@@ -11,6 +11,15 @@ from typing import Any, cast
 import pytest
 from conftest import filed_after, write_universe_db
 from portfolio_common.db import Database
+from test_pipeline_multi_filing import (
+    _LISTED,
+    Q1_JUN,
+    Q2_OCT,
+    _Edgar,
+    _q1_payload,
+    _run,
+    _stz_q2_payload,
+)
 
 from fundamental_agent import cli as fundamental_cli
 from fundamental_agent import db, pipeline
@@ -675,3 +684,120 @@ def test_10k_market_cap_resolves_from_prior_10q_cover_count_in_fresh_run(
     ).fetchone()
     assert m_row is not None
     assert m_row[0] == pytest.approx(2_500_000_000.0)
+
+
+# -- P3 round 1 (reviewer A): items B and K -----------------------------------------------------
+
+
+def test_a_recovered_filing_recomputes_the_companys_later_filings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item B: a retry that recovers a filing recomputes that company's later filings.
+
+    ETR's eight filings were recovered in run 4, but every later ETR filing had been scored
+    without them: the run skipped the accessions an earlier run had already stored, so the
+    recovered filing's context (growth, TTM, the rule inputs) never reached them.
+    """
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        raises={Q1_JUN.accession_number: EdgarError("the gateway is down")},
+    )
+    _run(monkeypatch, tmp_path, edgar)  # run 1: Q1 fails, Q2 is stored
+    edgar.raises = {}
+    edgar.financials_calls.clear()
+    _run(monkeypatch, tmp_path, edgar)  # run 2: Q1 is recovered
+    # the recovered Q1 and the later Q2 are both fetched and analyzed again
+    assert set(edgar.financials_calls) == {Q1_JUN.accession_number, Q2_OCT.accession_number}
+
+
+def test_a_filing_already_scored_is_not_fetched_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item B, the other side: a run with nothing to recover leaves the scored filings alone."""
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+    )
+    _run(monkeypatch, tmp_path, edgar)
+    edgar.financials_calls.clear()
+    _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == []
+
+
+def _drop_correction(accession: str) -> dict[str, Any]:
+    return {
+        "statement": "income_statement",
+        "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+        "column": "2023-05-31 (Q1)",
+        "original": 4003533000.0,
+        "corrected": None,
+        "rule": "T-042",
+        "reason": "no_filed_nondimensional_fact",
+    }
+
+
+def test_every_gateway_correction_that_nulled_a_value_is_logged_keyed_by_accession(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item K: the run logs every gateway correction whose ``corrected`` is null -- the rows the
+    gateway dropped -- with the statement, the concept, the column, the original value and the
+    reason, keyed by the accession. A correction the gateway *changed* is not a drop."""
+    log = tmp_path / "out" / "gateway_drops.jsonl"
+    monkeypatch.setenv(pipeline.DROP_LOG_ENV, str(log))
+    payload = _q1_payload()
+    payload["corrections"] = [
+        _drop_correction(Q1_JUN.accession_number),
+        {
+            "statement": "income_statement",
+            "concept": "us-gaap_CostOfRevenue",
+            "column": "2023-05-31 (Q1)",
+            "original": 1.0,
+            "corrected": 2.0,
+            "rule": "T-041",
+            "reason": "reconciled",
+        },
+    ]
+    assert pipeline.log_gateway_drops(payload, Q1_JUN.accession_number) == 1
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert rows == [
+        {
+            "accession": Q1_JUN.accession_number,
+            "statement": "income_statement",
+            "concept": "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
+            "column": "2023-05-31 (Q1)",
+            "original": 4003533000.0,
+            "rule": "T-042",
+            "reason": "no_filed_nondimensional_fact",
+        }
+    ]
+
+
+def test_the_run_writes_the_drop_log_of_every_payload_it_fetches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item K, end to end: the log is written during the run, not by a separate pass."""
+    log = tmp_path / "out" / "gateway_drops.jsonl"
+    monkeypatch.setenv(pipeline.DROP_LOG_ENV, str(log))
+    payload = _q1_payload()
+    payload["corrections"] = [_drop_correction(Q1_JUN.accession_number)]
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: payload, Q2_OCT.accession_number: _stz_q2_payload()},
+    )
+    _run(monkeypatch, tmp_path, edgar)
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    assert [row["accession"] for row in rows] == [Q1_JUN.accession_number]
+
+
+def test_an_empty_payload_is_named_as_an_empty_payload_not_as_a_missing_quarter() -> None:
+    """Item A: the gateway served ``success: true`` with no statements at all (AEP
+    0000004904-23-000072). The reason says so, so the classifier can call it a service failure
+    instead of a data failure about the filing's period."""
+    stmts = Statements.from_payload(
+        {"income_statement": [], "balance_sheet": [], "cash_flow": []},
+    )
+    assert stmts.is_empty
+    assert pipeline._resolve_target(stmts, _task("AAPL", "10-Q", 2024)) == (
+        "the gateway served an empty payload"
+    )

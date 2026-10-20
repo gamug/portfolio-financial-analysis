@@ -967,6 +967,17 @@ class Statements:
     def quarter_periods(self) -> list[Period]:
         return [p for p in self.periods if p.is_quarter]
 
+    @property
+    def is_empty(self) -> bool:
+        """Whether the payload carries **no statement row at all**.
+
+        A gateway payload that comes back with ``success: true`` and empty statements is a
+        **service** failure, not a property of the filing (reviewer A, P3 round 1, 2026-10-20:
+        AEP ``0000004904-23-000072``): the same filing served in full minutes later. The
+        resolvers name it, so the classifier can call it retryable.
+        """
+        return not any(self.raw.values())
+
     def instant_periods(self) -> list[Period]:
         return [p for p in self.periods if p.is_instant]
 

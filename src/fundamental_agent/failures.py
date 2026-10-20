@@ -24,11 +24,27 @@ DATA_STAGES: frozenset[str] = frozenset(
     }
 )
 
+# ``analysis_run_error.message`` substrings that are **service** failures: the failure is about the
+# service, not about the filing, so it may clear on its own and the filing must be retried
+# (reviewer A, P3 round 1, 2026-10-20).
+SERVICE_MESSAGE_MARKERS: tuple[str, ...] = (
+    # A gateway payload that came back with `success: true` and no statements at all (AEP
+    # 0000004904-23-000072): the filing may well serve, the service did not.
+    "the gateway served an empty payload",
+    # A name-resolution failure inside the gateway's extraction (ETR): a transient network fault,
+    # not a property of the filing.
+    "Name or service not known",
+    "Temporary failure in name resolution",
+    "Connection reset by peer",
+)
+
 # ``analysis_run_error.message`` substrings that are data failures (stage ``process``).
 DATA_MESSAGE_MARKERS: tuple[str, ...] = (
     # The gateway's own extraction failure, inside EdgarError's "unsuccessful payload" message
     # (edgar_client.py:205). Not the whole payload message: "No '10-K'/'10-Q' filing found" is
     # also an unsuccessful payload, but a filing that may appear later, so it stays "service".
+    # A transient extraction failure is caught by SERVICE_MESSAGE_MARKERS first, so the real
+    # extraction bugs (GEHC's "'NoneType' object has no attribute 'to_dataframe'") stay "data".
     "Failed to extract financials",
     "reconciliation failed",  # EdgarError, statements failed the gateway's reconciliation (:193)
     "refusing to overwrite",  # FilingLabelCollision (db.py:396-397)
@@ -41,9 +57,11 @@ DATA_MESSAGE_MARKERS: tuple[str, ...] = (
 
 def classify(stage: str | None, message: str | None) -> FailureClass:
     """``"data"`` when the failure is on the allowlist, else ``"service"``."""
+    text = message or ""
+    if any(marker in text for marker in SERVICE_MESSAGE_MARKERS):
+        return "service"
     if stage in DATA_STAGES:
         return "data"
-    text = message or ""
     if any(marker in text for marker in DATA_MESSAGE_MARKERS):
         return "data"
     return "service"
