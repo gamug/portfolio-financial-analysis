@@ -793,6 +793,21 @@ def test_a_data_failure_is_not_retried(tmp_path: Path, monkeypatch: pytest.Monke
     assert edgar.financials_calls == [Q1_JUN.accession_number, Q2_OCT.accession_number]
 
 
+def test_a_code_error_is_recorded_without_a_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the **gateway's** failures are retried: a code error is ours, not the gateway's, and
+    is recorded at once (PR #178, review round 2)."""
+    edgar = _Edgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        raises={Q1_JUN.accession_number: KeyError("a code error")},
+    )
+    report = _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == [Q1_JUN.accession_number, Q2_OCT.accession_number]
+    assert report.failed == 1  # recorded at once, and the run went on to the next filing
+
+
 def test_a_filing_already_scored_is_not_fetched_again(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

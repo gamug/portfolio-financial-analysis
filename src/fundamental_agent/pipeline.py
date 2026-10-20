@@ -507,32 +507,49 @@ def _run_task(engine: _Engine, task: _YearTask) -> None:
 RETRY_WAITS_SECONDS: tuple[float, ...] = (30.0, 60.0, 120.0)
 
 
+#: The reason the resolvers give when the gateway served a payload with no statement row at all
+#: (item A). Such a payload is a **service** failure: the filing may serve a moment later.
+EMPTY_PAYLOAD_REASON = "the gateway served an empty payload"
+
+
 class _Unusable(Exception):
     """The payload does not hold a period of its own (T-140), or its period is not the filing's.
 
-    The reason is recorded with the filing (never dropped silently); a *service* reason -- an empty
-    payload (reviewer A, P3 round 1) -- is retried in place, a data reason is not.
+    The reason is recorded with the filing (never dropped silently). Only the **empty payload** is
+    retried in place (reviewer A, P3 round 1); every other reason is a property of the filing and
+    is recorded at once.
     """
 
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
-        self.service = classify("period", reason) == "service"
+        self.retryable = reason == EMPTY_PAYLOAD_REASON
 
 
-def _is_service_failure(exc: Exception) -> bool:
-    """Whether a raised failure is about the service (T-017): it may clear on its own."""
-    return classify("process", str(exc)) == "service"
+def _is_retryable(exc: Exception) -> bool:
+    """Whether a raised failure is the **gateway's** (PR #178, review round 2).
+
+    Only an :class:`EdgarError` that classifies as a *service* failure is retried: the client
+    already wraps timeouts, DNS failures and connection resets into it, after its own retries, and
+    the classifier separates those from the gateway's own extraction defects (GEHC's
+    ``'NoneType' object has no attribute 'to_dataframe'``), which fail the same way on every run.
+
+    A code error -- a ``KeyError``, a ``TypeError``, a database error -- is ours, not the
+    gateway's: it is recorded at once. Retrying it would spend 3.5 minutes per filing and could
+    add hours to an overnight run.
+    """
+    return isinstance(exc, EdgarError) and classify("process", str(exc)) == "service"
 
 
 def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
     """Analyse one filing, retrying it **in place** when the failure is about the service.
 
-    T-017 (PR #178, review round 1): a filing that fails for a *service* reason (a gateway
-    outage, a name-resolution failure, an empty payload) may serve a moment later, so it is
-    retried right away, **before the company's next filing is analysed** -- the next filing's
-    growth, TTM and rule inputs then read the recovered one. A filing that fails for a *data*
-    reason fails the same way on every run: it is recorded at once, and the run goes on.
+    T-017 (PR #178, review round 1): a filing that fails for a **gateway** reason (an
+    :class:`EdgarError`: an outage, a name-resolution failure, a connection reset -- or an empty
+    payload) may serve a moment later, so it is retried right away, **before the company's next
+    filing is analysed** -- the next filing's growth, TTM and rule inputs then read the recovered
+    one. A filing that fails for a *data* reason fails the same way on every run, and a **code**
+    error is ours, not the gateway's: both are recorded at once, and the run goes on.
 
     The waits (30 s, 1 min, 2 min) stay well under the supervisor's 20-minute stall window, even
     for a year-task with three failing 10-Qs (3 x 3.5 min = 10.5 min).
@@ -548,7 +565,7 @@ def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
             _record_failure(engine, task, ref, exc, stage="identity")
             return
         except _Unusable as exc:  # the payload does not hold a period of its own
-            if exc.service and attempt < len(RETRY_WAITS_SECONDS):
+            if exc.retryable and attempt < len(RETRY_WAITS_SECONDS):
                 time.sleep(RETRY_WAITS_SECONDS[attempt])
                 attempt += 1
                 continue
@@ -556,7 +573,7 @@ def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
             _count(engine, skipped=1)
             return
         except Exception as exc:  # one bad filing must not stop its siblings or the batch
-            if _is_service_failure(exc) and attempt < len(RETRY_WAITS_SECONDS):
+            if _is_retryable(exc) and attempt < len(RETRY_WAITS_SECONDS):
                 time.sleep(RETRY_WAITS_SECONDS[attempt])
                 attempt += 1
                 continue
@@ -840,7 +857,7 @@ def _resolve_target(
     comparative column, else the asset's latest stored 10-K before the period (*fye_lookup*)."""
     if task.form == "10-K":
         if stmts.is_empty:
-            return "the gateway served an empty payload"
+            return EMPTY_PAYLOAD_REASON
         period = stmts.latest_fy()
         if period is None:
             return f"the payload has no fiscal-year column (periods: {_columns(stmts)})"
@@ -855,7 +872,7 @@ def _resolve_quarter(
 ) -> _Target | str:
     """A 10-Q's own quarter as a :class:`_Target`, or why the payload has none."""
     if stmts.is_empty:
-        return "the gateway served an empty payload"
+        return EMPTY_PAYLOAD_REASON
     quarters = stmts.quarter_periods()
     if not quarters:
         return (

@@ -242,12 +242,16 @@ def load_drop_log(path: str | None) -> dict[str, list[tuple[str, str, str, float
     part before the tag (``2023-09-30 (Q3)`` -> ``2023-09-30``).
 
     The log is appended on every fetch, so a retry or a resume repeats a row: exact duplicates
-    are collapsed here, and the readers count distinct ``(accession, concept, column, original)``.
+    are collapsed here, and the readers count the distinct
+    ``(accession, statement, concept, column, original)`` -- the statement is part of the key,
+    because the same concept, column and value dropped on **two** statements are two rows (PR
+    #178, review round 2: with the statement left out, only the first row in the log survived and
+    the class depended on the log's order).
     """
     if not path:
         return {}
     out: dict[str, list[tuple[str, str, str, float]]] = {}
-    seen: set[tuple[str, str, str, float]] = set()
+    seen: set[tuple[str, str, str, str, float]] = set()
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
             line = raw.strip()
@@ -262,11 +266,11 @@ def load_drop_log(path: str | None) -> dict[str, list[tuple[str, str, str, float
                 continue
             name = concept.split("_", 1)[1] if "_" in concept else concept
             column_date = column.split(" ", 1)[0]
-            key = (accession, name, column_date, float(original))
+            statement = str(row.get("statement") or "")
+            key = (accession, statement, name, column_date, float(original))
             if key in seen:
                 continue
             seen.add(key)
-            statement = str(row.get("statement") or "")
             out.setdefault(accession, []).append((statement, name, column_date, float(original)))
     return out
 

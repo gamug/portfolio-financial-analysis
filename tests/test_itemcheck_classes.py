@@ -180,6 +180,54 @@ def test_the_statement_is_what_keeps_the_cash_flow_cash_rows_out() -> None:
     assert cls == "FAIL_gateway_dropped"
 
 
+def test_the_same_drop_on_two_statements_keeps_both_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dedupe key carries the statement: the same concept, column and value dropped on the
+    cash-flow statement and on the balance sheet are two rows. With the statement left out, only
+    the first row in the log survived and the class depended on the log's order."""
+    path = tmp_path / "gateway_drops.jsonl"
+    monkeypatch.setenv(DROP_LOG_ENV, str(path))
+    row = {
+        "accession": "0001090872-22-000026",
+        "concept": "us-gaap_CashAndCashEquivalentsAtCarryingValue",
+        "column": "2022-10-31",
+        "original": 1_056_000_000.0,
+        "corrected": None,
+        "rule": "T-042",
+        "reason": "no_filed_nondimensional_fact",
+    }
+    with path.open("w", encoding="utf-8") as handle:
+        for statement in ("cash_flow", "balance_sheet"):
+            handle.write(json.dumps({**row, "statement": statement}) + "\n")
+    drops = load_drop_log(str(path))["0001090872-22-000026"]
+    assert len(drops) == 2
+    assert {statement for statement, _c, _d, _o in drops} == {"cash_flow", "balance_sheet"}
+    own = own_concepts()["cash"]
+    values = {1_056_000_000.0: {"CashAndCashEquivalentsAtCarryingValue"}}
+    # the cash-flow row comes first, but the balance-sheet drop survived: the item that reads the
+    # balance sheet is a failure for its own dropped row
+    cls, _ = classify(
+        None,
+        own,
+        values,
+        drops=drops,
+        period_end="2022-10-31",
+        statements=REGISTRY["cash"].statements,
+    )
+    assert cls == "FAIL_gateway_dropped"
+    # and the cash-flow item reads its own dropped row
+    cls, _ = classify(
+        None,
+        own,
+        values,
+        drops=drops,
+        period_end="2022-10-31",
+        statements=("cash_flow",),
+    )
+    assert cls == "FAIL_gateway_dropped"
+
+
 def test_a_value_stored_under_another_concept_is_a_warning_by_item() -> None:
     own = own_concepts()["revenue"]
     cls, extra = classify(

@@ -193,9 +193,9 @@ def missing_annual_filings(c: sqlite3.Connection) -> list[tuple[str, str, str, i
     """The fiscal years whose FY 10-K is missing (T-140).
 
     A missing FY 10-K is invisible to the label count: its quarters merge into the next year, which
-    then holds Q1-Q3. Two consecutive 10-Ks more than 380 days apart are that case -- unless the
-    company changed its fiscal year, which PER-09 declares (the 10-KT is not fetched as a period);
-    those are listed in :data:`DECLARED_TRANSITIONS`.
+    then holds Q1-Q3. Two consecutive 10-Ks more than 371 days apart (PER-08's year upper bound:
+    52/53 weeks) are that case -- unless the company changed its fiscal year, which PER-09 declares
+    (the 10-KT is not fetched as a period); those are listed in :data:`DECLARED_TRANSITIONS`.
 
     Returns ``(ticker, the earlier 10-K's period end, the later one's, the days between)``.
     """
@@ -1243,7 +1243,7 @@ def main() -> int:  # noqa: C901, PLR0915
             else:
                 silent.append(f"{ticker} {year} {label}")
         # A fiscal year without its 10-K is invisible to the label count (its quarters merge into
-        # the next year): two consecutive 10-Ks more than 380 days apart say it is missing.
+        # the next year): two consecutive 10-Ks more than 371 days apart say it is missing.
         annuals = missing_annual_filings(c)
         status = "FAIL" if silent or q4 or annuals else ("WARN" if recorded else "PASS")
         report(

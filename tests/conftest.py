@@ -7,7 +7,7 @@ import json
 import math
 import random
 import sqlite3
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -16,7 +16,7 @@ import pytest
 from french_support import copy_fixture
 from portfolio_common.db import Database
 
-from fundamental_agent import db
+from fundamental_agent import db, pipeline
 from fundamental_agent.statements import Statements
 from kg_schema import provenance
 from kg_schema.trading_calendar import available_from, is_trading_day
@@ -24,6 +24,20 @@ from pricing_agent import db as pricing_db
 from quant import db as quant_db
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_waits() -> Iterator[None]:
+    """The pipeline retries a **service** failure in place, waiting 30 s, 1 min and 2 min.
+
+    The hermetic suite must not wait for real (PR #178, review round 2: CI's pytest went from
+    2 m 38 s to 19 m 52 s, because the older tests raise service-class errors without patching
+    the waits). The waits are zero here; a test that exercises the retry sets them itself.
+    """
+    original = pipeline.RETRY_WAITS_SECONDS
+    pipeline.RETRY_WAITS_SECONDS = (0.0, 0.0, 0.0)
+    yield
+    pipeline.RETRY_WAITS_SECONDS = original
 
 
 @pytest.fixture(autouse=True, scope="session")
