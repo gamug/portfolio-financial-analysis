@@ -6,7 +6,7 @@ import json
 import sqlite3
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import pytest
 from conftest import filed_after, write_universe_db
@@ -20,6 +20,7 @@ from test_pipeline_multi_filing import (
     _run,
     _stz_q2_payload,
 )
+from test_pipeline_multi_filing import _settings as _stz_settings
 
 from fundamental_agent import cli as fundamental_cli
 from fundamental_agent import db, pipeline
@@ -689,26 +690,107 @@ def test_10k_market_cap_resolves_from_prior_10q_cover_count_in_fresh_run(
 # -- P3 round 1 (reviewer A): items B and K -----------------------------------------------------
 
 
-def test_a_recovered_filing_recomputes_the_companys_later_filings(
+class _FlakyEdgar(_Edgar):
+    """Fails the first *failures* calls of an accession, then serves it."""
+
+    def __init__(self, *args: Any, failures: dict[str, int], **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.failures = dict(failures)
+
+    def financials(
+        self, ticker: str, form: str, year: int, accession_number: str | None = None
+    ) -> dict[str, Any]:
+        left = self.failures.get(accession_number or "", 0)
+        if left:
+            self.failures[accession_number or ""] = left - 1
+            self.financials_calls.append(accession_number)
+            raise EdgarError("/financials/1 failed after 3 attempts")
+        return cast("dict[str, Any]", super().financials(ticker, form, year, accession_number))
+
+
+class _TtmStubAnalyst(_StubAnalyst):
+    """Records, for every filing it analyses, the trailing-twelve-month flows it was given and
+    the filings already in the database."""
+
+    db_path: ClassVar[str] = ""
+    seen: ClassVar[list[tuple[str, dict[str, Any], list[str]]]] = []
+
+    def analyze(self, ctx: FilingContext) -> AnalysisResult:
+        conn = sqlite3.connect(_TtmStubAnalyst.db_path)
+        stored = [str(row[0]) for row in conn.execute("SELECT fiscal_period FROM sec_filings")]
+        conn.close()
+        _TtmStubAnalyst.seen.append((ctx.period_key, dict(ctx.ttm_flows or {}), stored))
+        return super().analyze(ctx)
+
+
+def _run_with(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    edgar: Any,
+    analyst: Any,
+) -> pipeline.RunReport:
+    monkeypatch.setattr(pipeline, "EdgarClient", edgar)
+    monkeypatch.setattr(pipeline, "build_model", lambda _s: None)
+    monkeypatch.setattr(pipeline, "FundamentalAnalyst", analyst)
+    params = RunParams(forms=["10-Q"], since_year=2023, until_year=2023, analysis_date="2026-09-21")
+    return pipeline.run(_stz_settings(tmp_path), params)
+
+
+def test_a_service_failure_is_retried_in_place_before_the_next_filing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Item B: a retry that recovers a filing recomputes that company's later filings.
+    """Item B, after the review: a filing that fails for a **service** reason is retried right
+    away, before the company's next filing is analysed, so the next filing's TTM reads the
+    recovered one.
 
-    ETR's eight filings were recovered in run 4, but every later ETR filing had been scored
-    without them: the run skipped the accessions an earlier run had already stored, so the
-    recovered filing's context (growth, TTM, the rule inputs) never reached them.
+    The append-only key cannot rewrite a filing's rows, so the later filings cannot be recomputed:
+    the recovery has to happen where it still has an effect, in place.
     """
+    monkeypatch.setattr(pipeline, "RETRY_WAITS_SECONDS", (0.0, 0.0, 0.0))
+    edgar = _FlakyEdgar(
+        {("10-Q", 2023): _LISTED},
+        {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
+        failures={Q1_JUN.accession_number: 2},
+    )
+    _TtmStubAnalyst.db_path = str(tmp_path / "kg.db")
+    _TtmStubAnalyst.seen = []
+    _run_with(monkeypatch, tmp_path, edgar, _TtmStubAnalyst)
+    # Q1 fails twice, serves on the third try, and only then is Q2 fetched
+    assert edgar.financials_calls == [
+        Q1_JUN.accession_number,
+        Q1_JUN.accession_number,
+        Q1_JUN.accession_number,
+        Q2_OCT.accession_number,
+    ]
+    conn = sqlite3.connect(tmp_path / "kg.db")
+    stored = [
+        row[0] for row in conn.execute("SELECT fiscal_period FROM sec_filings ORDER BY period_end")
+    ]
+    conn.close()
+    assert stored == ["2023Q1", "2023Q2"]
+    # the recovered filing was in the database when the next filing was analysed: the next
+    # filing's context (its TTM, its growth, its rule inputs) reads it
+    assert _TtmStubAnalyst.seen[0][2] == ["2023Q1"]  # Q1: only its own row
+    assert "2023Q1" in _TtmStubAnalyst.seen[1][2]  # Q2: the recovered Q1 is already stored
+    assert _TtmStubAnalyst.seen[1][1]  # Q2's trailing-twelve-month flows were computed
+
+
+def test_a_data_failure_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A filing that fails for a **data** reason fails the same way on every run: it is recorded
+    at once, and the run goes on."""
+    monkeypatch.setattr(pipeline, "RETRY_WAITS_SECONDS", (0.0, 0.0, 0.0))
     edgar = _Edgar(
         {("10-Q", 2023): _LISTED},
         {Q1_JUN.accession_number: _q1_payload(), Q2_OCT.accession_number: _stz_q2_payload()},
-        raises={Q1_JUN.accession_number: EdgarError("the gateway is down")},
+        raises={
+            Q1_JUN.accession_number: EdgarError(
+                "unsuccessful payload: {'success': False, 'error': \"Failed to extract "
+                "financials: 'NoneType' object has no attribute 'to_dataframe'\"}"
+            )
+        },
     )
-    _run(monkeypatch, tmp_path, edgar)  # run 1: Q1 fails, Q2 is stored
-    edgar.raises = {}
-    edgar.financials_calls.clear()
-    _run(monkeypatch, tmp_path, edgar)  # run 2: Q1 is recovered
-    # the recovered Q1 and the later Q2 are both fetched and analyzed again
-    assert set(edgar.financials_calls) == {Q1_JUN.accession_number, Q2_OCT.accession_number}
+    _run(monkeypatch, tmp_path, edgar)
+    assert edgar.financials_calls == [Q1_JUN.accession_number, Q2_OCT.accession_number]
 
 
 def test_a_filing_already_scored_is_not_fetched_again(

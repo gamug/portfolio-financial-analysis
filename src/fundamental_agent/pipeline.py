@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -156,11 +157,6 @@ class _Engine:
     completed: set[_Unit]
     # Accessions already scored: a resumed run skips their ``financials`` call.
     completed_accessions: set[str] = field(default_factory=set)
-    # Accessions this run must fetch and analyze again even though an earlier run scored them.
-    # A filing recovered by a retry changes the context its company's *later* filings read (their
-    # growth, TTM and rule inputs), so those later filings are recomputed with it
-    # (reviewer A, P3 round 1, 2026-10-20: ETR's eight filings recovered in run 4, 2023Q3-2025Q2).
-    recompute: set[str] = field(default_factory=set)
 
 
 def run(settings: Settings, params: RunParams) -> RunReport:
@@ -425,8 +421,7 @@ def _drive(engine: _Engine, tasks: Sequence[_YearTask]) -> None:
             asset_filings.sort(
                 key=lambda pair: (pair[1].filing_date or "", pair[1].accession_number)
             )
-            for index, (task, ref) in enumerate(asset_filings):
-                _mark_recompute(engine, asset_filings, index)
+            for task, ref in asset_filings:
                 _run_filing(engine, task, ref)
     finally:
         bar.close()
@@ -446,8 +441,14 @@ def log_gateway_drops(payload: Mapping[str, Any], accession: str) -> int:
     The gateway's payload carries its own ``corrections`` (T-118): each entry records a value it
     changed. An entry with ``corrected`` null is a row the gateway **nulled** -- the filed value
     is in ``original`` and the reason in ``reason`` (portfolio-data-mining 5c77262's
-    ``no_filed_nondimensional_fact``). Nothing here is a price: the log holds the concept, the
-    column and the reason; the value stays out of it.
+    ``no_filed_nondimensional_fact``).
+
+    The ``original`` is an EDGAR value, and EDGAR values are what the log is for: the reader
+    matches it against the SEC's facts (item H's class (a)). No Tiingo value ever reaches this log
+    -- the log holds the gateway's own corrections, and the gateway serves no price.
+
+    The log is **appended**: a retry or a resume fetches the same payload again and writes the same
+    rows. The readers count the distinct ``(accession, concept, column, original)``.
 
     Returns the number of corrections logged.
     """
@@ -480,30 +481,6 @@ def log_gateway_drops(payload: Mapping[str, Any], accession: str) -> int:
     return len(rows)
 
 
-def _mark_recompute(
-    engine: _Engine, asset_filings: Sequence[tuple[_YearTask, FilingRef]], index: int
-) -> None:
-    """Mark the company's later filings for recomputation when an earlier one is re-fetched.
-
-    A filing this run fetches again (a retry that recovered it) changes the context its
-    company's *later* filings read -- their growth, their TTM and their rule inputs -- so those
-    later filings are fetched and analyzed again too. Without this, ETR's eight filings
-    recovered in run 4 left every later ETR filing computed without them (reviewer A,
-    P3 round 1, 2026-10-20).
-
-    "Later" is the order the gateway lists the filings in (by filing date): a filing is filed
-    after the period it reports, so the later filing is the one whose context the earlier one
-    feeds. Only the filings an earlier run already scored are marked -- the ones this run
-    fetches anyway are fetched again by definition.
-    """
-    ref = asset_filings[index][1]
-    if ref.accession_number in engine.completed_accessions:
-        return  # an earlier run already scored it: its context did not change
-    for _later_task, later_ref in asset_filings[index + 1 :]:
-        if later_ref.accession_number in engine.completed_accessions:
-            engine.recompute.add(later_ref.accession_number)
-
-
 def _list_task_filings(engine: _Engine, task: _YearTask) -> list[FilingRef]:
     try:
         refs = _list_filings(engine, task)
@@ -524,19 +501,69 @@ def _run_task(engine: _Engine, task: _YearTask) -> None:
         _run_filing(engine, task, ref)
 
 
+#: The waits between the retries of a **service** failure (T-017, PR #178 review round 1): the
+#: filing is retried in place, so the company's next filing reads the recovered one. 30 s, 1 min and
+#: 2 min -- three more tries, all well under the supervisor's 20-minute stall window.
+RETRY_WAITS_SECONDS: tuple[float, ...] = (30.0, 60.0, 120.0)
+
+
+class _Unusable(Exception):
+    """The payload does not hold a period of its own (T-140), or its period is not the filing's.
+
+    The reason is recorded with the filing (never dropped silently); a *service* reason -- an empty
+    payload (reviewer A, P3 round 1) -- is retried in place, a data reason is not.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.service = classify("period", reason) == "service"
+
+
+def _is_service_failure(exc: Exception) -> bool:
+    """Whether a raised failure is about the service (T-017): it may clear on its own."""
+    return classify("process", str(exc)) == "service"
+
+
 def _run_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> None:
-    try:
-        done, skipped = _process_filing(engine, task, ref)
-    except EdgarNotFoundError:
-        _count(engine, skipped=1)
+    """Analyse one filing, retrying it **in place** when the failure is about the service.
+
+    T-017 (PR #178, review round 1): a filing that fails for a *service* reason (a gateway
+    outage, a name-resolution failure, an empty payload) may serve a moment later, so it is
+    retried right away, **before the company's next filing is analysed** -- the next filing's
+    growth, TTM and rule inputs then read the recovered one. A filing that fails for a *data*
+    reason fails the same way on every run: it is recorded at once, and the run goes on.
+
+    The waits (30 s, 1 min, 2 min) stay well under the supervisor's 20-minute stall window, even
+    for a year-task with three failing 10-Qs (3 x 3.5 min = 10.5 min).
+    """
+    attempt = 0
+    while True:
+        try:
+            done, skipped = _process_filing(engine, task, ref)
+        except EdgarNotFoundError:
+            _count(engine, skipped=1)
+            return
+        except FilingIdentityError as exc:  # another company's filing: never stored
+            _record_failure(engine, task, ref, exc, stage="identity")
+            return
+        except _Unusable as exc:  # the payload does not hold a period of its own
+            if exc.service and attempt < len(RETRY_WAITS_SECONDS):
+                time.sleep(RETRY_WAITS_SECONDS[attempt])
+                attempt += 1
+                continue
+            _record_unusable(engine, task, ref, exc.reason)
+            _count(engine, skipped=1)
+            return
+        except Exception as exc:  # one bad filing must not stop its siblings or the batch
+            if _is_service_failure(exc) and attempt < len(RETRY_WAITS_SECONDS):
+                time.sleep(RETRY_WAITS_SECONDS[attempt])
+                attempt += 1
+                continue
+            _record_failure(engine, task, ref, exc)
+            return
+        _count(engine, completed=done, skipped=skipped)
         return
-    except FilingIdentityError as exc:  # another company's filing: never stored
-        _record_failure(engine, task, ref, exc, stage="identity")
-        return
-    except Exception as exc:  # one bad filing must not stop its siblings or the batch
-        _record_failure(engine, task, ref, exc)
-        return
-    _count(engine, completed=done, skipped=skipped)
 
 
 def _count(engine: _Engine, *, completed: int = 0, skipped: int = 0) -> None:
@@ -671,11 +698,7 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
         return 0, 1  # no lookahead: this filing was filed after the analysis date (or the exit)
     if not ref.filing_date:
         return 0, 1  # T-107: an undated filing is never usable -- no metrics, no score
-    if (
-        not engine.params.fresh
-        and ref.accession_number in engine.completed_accessions
-        and ref.accession_number not in engine.recompute
-    ):
+    if not engine.params.fresh and ref.accession_number in engine.completed_accessions:
         return 0, 1  # already ingested and scored by an earlier run
 
     filer = (
@@ -691,13 +714,11 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
     resolved = _resolve_target(stmts, task, _fye_lookup(engine, task))
     if isinstance(resolved, str):
         # T-140: a filing with no quarter (or year) of its own is never dropped silently
-        _record_unusable(engine, task, ref, resolved)
-        return 0, 1
+        raise _Unusable(resolved)
 
     mismatch = _period_end_mismatch(resolved, ref)
     if mismatch is not None:
-        _record_unusable(engine, task, ref, mismatch)  # ID-07 is a BLOCK: not stored, recorded
-        return 0, 1
+        raise _Unusable(mismatch)  # ID-07 is a BLOCK: not stored, recorded
 
     if resolved.label_override is not None:
         # C4 (T-151 part 1): not a failure -- the filing is stored with the corrected label; the
@@ -710,11 +731,7 @@ def _process_filing(engine: _Engine, task: _YearTask, ref: FilingRef) -> tuple[i
             skipped += 1
             continue
         unit = (task.ticker, task.form, target.period.date)
-        if (
-            not engine.params.fresh
-            and unit in engine.completed
-            and ref.accession_number not in engine.recompute
-        ):
+        if not engine.params.fresh and unit in engine.completed:
             skipped += 1
             continue
         _analyze_one(engine, task, stmts, target, meta)

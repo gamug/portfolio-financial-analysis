@@ -24,6 +24,7 @@ import collections
 import json
 import sys
 from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -115,11 +116,25 @@ def map_values(item: str, values: dict[float, set[str]]) -> list[float]:
     return totals
 
 
-def _classify_absent(  # noqa: C901 - one return per class, as the docstring says
+@dataclass(frozen=True)
+class _Drops:
+    """The run's drop log for one filing, and what the item reads.
+
+    *rows* are the rows the gateway nulled, as ``(statement, concept, the column's date, the
+    original value)``; *period_end* is the filing's own period end; *statements* are the item's own
+    statements (the LineItem's).
+    """
+
+    rows: tuple[tuple[str, str, str, float], ...] = ()
+    period_end: str | None = None
+    statements: tuple[str, ...] = ()
+
+
+def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docstring says
     own: set[str],
     values: dict[float, set[str]],
-    drops: dict[str, float] | None,
     stored_facts: dict[float, set[str]] | None,
+    drops: _Drops,
 ) -> tuple[str, Any]:
     """The class of a stored value that is **absent** (P3 round 1, reviewer A).
 
@@ -134,17 +149,32 @@ def _classify_absent(  # noqa: C901 - one return per class, as the docstring say
     * ``WARN_never_served`` -- the gateway never served the row (notes only): the pipeline reads
       the face statements, so this is by design.
 
-    *drops* maps a concept to the value the gateway nulled for this accession; *stored_facts* maps
-    a stored value to the concepts it is stored under.
+    *stored_facts* maps a stored value to the concepts it is stored under; *drops* is the run's
+    drop log for this accession (see :class:`_Drops`).
+
+    The dropped row must be one of the item's **own** concepts, in the filing's own period, on the
+    item's own statement, and worth what the SEC filed: the gateway's own concept and the SEC's
+    need not be the same one (PHM filed its revenue as ``us-gaap:Revenues``; the gateway dropped
+    the row it had tagged ``RevenueFromContractWithCustomerExcludingAssessedTax``).
+
+    The statement matters: every registry item reads one statement, and ``cash`` reads the balance
+    sheet, while the gateway drops the cash-flow
+    ``CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`` rows by design (PHM's four and
+    Agilent's six are all ``cash_flow``). Those must never be a failure for a balance-sheet item.
     """
     own_facts = {v: cs for v, cs in values.items() if own & cs}
     if not own_facts:
         return "none", None
-    if drops:
-        for value, concepts in own_facts.items():
-            for concept in sorted(concepts):
-                original = drops.get(concept)
-                if original is not None and match_value(original, value):
+    if drops.rows:
+        for statement, concept, column_date, original in drops.rows:
+            if concept not in own:
+                continue  # a row of a concept this item does not read
+            if drops.statements and statement not in drops.statements:
+                continue  # a row of another statement (the gateway drops cash-flow cash by design)
+            if drops.period_end is not None and column_date != drops.period_end:
+                continue  # a row of another period (a comparative, a year-to-date column)
+            for value, concepts in own_facts.items():
+                if match_value(original, value):
                     return "FAIL_gateway_dropped", sorted(concepts)[:3]
     if stored_facts:
         for value in own_facts:
@@ -163,14 +193,25 @@ def classify(  # noqa: PLR0911, PLR0913 - one return per class of the module doc
     values: dict[float, set[str]],
     mapped: Iterable[float] = (),
     *,
-    drops: dict[str, float] | None = None,
+    drops: list[tuple[str, str, str, float]] | None = None,
     stored_facts: dict[float, set[str]] | None = None,
+    period_end: str | None = None,
+    statements: Iterable[str] | None = None,
 ) -> tuple[str, Any]:
     """Class of one stored input against the SEC facts of its accession and period (see the module docstring).
     *mapped* are the values of the item's sourced map (:func:`map_values`).
     """
     if stored is None:
-        return _classify_absent(own, values, drops, stored_facts)
+        return _classify_absent(
+            own,
+            values,
+            stored_facts,
+            _Drops(
+                rows=tuple(drops or ()),
+                period_end=period_end,
+                statements=tuple(statements or ()),
+            ),
+        )
     hit = [cons for v, cons in values.items() if match_value(v, stored)]
     flip = [cons for v, cons in values.items() if match_value(v, -stored)]
     if any(own & cs for cs in hit):
@@ -186,19 +227,27 @@ def classify(  # noqa: PLR0911, PLR0913 - one return per class of the module doc
     return "NOT_IN_SEC(rebuilt/derived)", "derived"
 
 
-def load_drop_log(path: str | None) -> dict[str, dict[str, float]]:
-    """The run's gateway drop log (P3 round 1, item K): ``{accession: {concept: original value}}``.
+def load_drop_log(path: str | None) -> dict[str, list[tuple[str, str, str, float]]]:
+    """The run's gateway drop log (P3 round 1, item K):
+    ``{accession: [(statement, concept, date, value)]}``.
 
     One JSON object per line, written by ``fundamental_agent.pipeline.log_gateway_drops``: every
     gateway correction whose ``corrected`` is null -- a row the gateway dropped -- with the
     statement, the concept, the column, the original value and the reason.
 
-    The concept names lose their taxonomy prefix (``us-gaap_``, ``schw_``, ...), so they are the
-    names the SEC's facts carry (:func:`own_concepts` strips the prefix too).
+    **Every** row is kept: the gateway nulls the same concept in several columns (PHM's revenue in
+    four), and two different rows in one column (Agilent's beginning and ending cash). The concept
+    names lose their taxonomy prefix (``us-gaap_``, ``schw_``, ...), so they are the names the
+    SEC's facts carry (:func:`own_concepts` strips the prefix too), and the column's date is the
+    part before the tag (``2023-09-30 (Q3)`` -> ``2023-09-30``).
+
+    The log is appended on every fetch, so a retry or a resume repeats a row: exact duplicates
+    are collapsed here, and the readers count distinct ``(accession, concept, column, original)``.
     """
     if not path:
         return {}
-    out: dict[str, dict[str, float]] = {}
+    out: dict[str, list[tuple[str, str, str, float]]] = {}
+    seen: set[tuple[str, str, str, float]] = set()
     with open(path, encoding="utf-8") as handle:
         for raw in handle:
             line = raw.strip()
@@ -207,10 +256,18 @@ def load_drop_log(path: str | None) -> dict[str, dict[str, float]]:
             row = json.loads(line)
             accession = str(row.get("accession") or "")
             concept = str(row.get("concept") or "")
+            column = str(row.get("column") or "")
             original = row.get("original")
-            if accession and concept and isinstance(original, (int, float)):
-                name = concept.split("_", 1)[1] if "_" in concept else concept
-                out.setdefault(accession, {})[name] = float(original)
+            if not (accession and concept and isinstance(original, (int, float))):
+                continue
+            name = concept.split("_", 1)[1] if "_" in concept else concept
+            column_date = column.split(" ", 1)[0]
+            key = (accession, name, column_date, float(original))
+            if key in seen:
+                continue
+            seen.add(key)
+            statement = str(row.get("statement") or "")
+            out.setdefault(accession, []).append((statement, name, column_date, float(original)))
     return out
 
 
@@ -231,7 +288,7 @@ def run(
     conn: Any,
     client: SecClient,
     tickers: set[str] | None = None,
-    drops: dict[str, dict[str, float]] | None = None,
+    drops: dict[str, list[tuple[str, str, str, float]]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     own = own_concepts()
     drops = drops or {}
@@ -260,6 +317,8 @@ def run(
                     map_values(key, values),
                     drops=drops.get(str(f["accession_number"])),
                     stored_facts=stored_facts(conn, int(f["id"]), str(f["period_end"])),
+                    period_end=str(f["period_end"]),
+                    statements=REGISTRY[key].statements,
                 )
                 results[key][cls] += 1
                 if cls in ("FLIPPED", "OTHER_CONCEPT", "NOT_IN_SEC(rebuilt/derived)"):
