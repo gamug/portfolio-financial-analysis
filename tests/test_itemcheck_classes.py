@@ -16,11 +16,12 @@ item's own **statement** (the gateway drops the cash-flow cash rows by design).
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from sec_xcheck.itemcheck import classify, load_drop_log, own_concepts
+from sec_xcheck.itemcheck import classify, load_drop_log, own_concepts, stored_facts
 
 from fundamental_agent.pipeline import DROP_LOG_ENV, log_gateway_drops
 from fundamental_agent.statements import REGISTRY
@@ -40,13 +41,13 @@ def _payload(label: str) -> dict[str, Any]:
 
 def _log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str
-) -> dict[str, list[tuple[str, str, str, float]]]:
+) -> dict[str, list[tuple[str, str, str, str, float]]]:
     """The run's drop log for one payload: the writer writes it, the reader reads it back."""
     payload = _payload(label)
     path = tmp_path / "gateway_drops.jsonl"
     monkeypatch.setenv(DROP_LOG_ENV, str(path))
     assert log_gateway_drops(payload, payload["accession"]) == len(payload["corrections"])
-    return cast("dict[str, list[tuple[str, str, str, float]]]", load_drop_log(str(path)))
+    return cast("dict[str, list[tuple[str, str, str, str, float]]]", load_drop_log(str(path)))
 
 
 def test_the_drop_log_keeps_every_row_the_gateway_nulled(
@@ -55,8 +56,8 @@ def test_the_drop_log_keeps_every_row_the_gateway_nulled(
     """PHM's revenue row is nulled in four columns; only the last one survived the old reader."""
     drops = _log(tmp_path, monkeypatch, "PHM 10-Q 2023Q3")["0000822416-23-000042"]
     assert len(drops) == 8
-    assert [original for _s, _c, _d, original in drops if original == PHM_REVENUE] == [PHM_REVENUE]
-    assert {(statement, concept, date) for statement, concept, date, _o in drops} >= {
+    assert [o for _s, _c, _d, _t, o in drops if o == PHM_REVENUE] == [PHM_REVENUE]
+    assert {(statement, concept, date) for statement, concept, date, _t, _o in drops} >= {
         ("income_statement", REVENUE, "2023-09-30"),
         ("income_statement", REVENUE, "2022-09-30"),
     }
@@ -68,10 +69,10 @@ def test_two_rows_in_one_column_are_both_kept(
     """Agilent's cash row is nulled twice in the same column: the beginning balance
     (1,490,000,000) and the ending one (1,056,000,000)."""
     drops = _log(tmp_path, monkeypatch, "Agilent 10-K FY2022")["0001090872-22-000026"]
-    cash = [original for _s, concept, _d, original in drops if concept == CASH]
+    cash = [o for _s, concept, _d, _t, o in drops if concept == CASH]
     assert 1_490_000_000.0 in cash
     assert 1_056_000_000.0 in cash
-    assert sum(1 for _s, _c, date, _o in drops if date == "2022-10-31") == 3
+    assert len([1 for _s, _c, date, _t, _o in drops if date == "2022-10-31"]) == 3
 
 
 def test_the_same_row_twice_in_the_log_is_one_row(
@@ -158,7 +159,15 @@ def test_the_statement_is_what_keeps_the_cash_flow_cash_rows_out() -> None:
     item reads the balance sheet, and the gateway drops the cash-flow rows by design."""
     own = own_concepts()["cash"]
     assert "CashAndCashEquivalentsAtCarryingValue" in own
-    drops = [("cash_flow", "CashAndCashEquivalentsAtCarryingValue", "2022-10-31", 1_056_000_000.0)]
+    drops = [
+        (
+            "cash_flow",
+            "CashAndCashEquivalentsAtCarryingValue",
+            "2022-10-31",
+            "FY",
+            1_056_000_000.0,
+        )
+    ]
     cls, _ = classify(
         None,
         own,
@@ -202,7 +211,7 @@ def test_the_same_drop_on_two_statements_keeps_both_rows(
             handle.write(json.dumps({**row, "statement": statement}) + "\n")
     drops = load_drop_log(str(path))["0001090872-22-000026"]
     assert len(drops) == 2
-    assert {statement for statement, _c, _d, _o in drops} == {"cash_flow", "balance_sheet"}
+    assert {statement for statement, _c, _d, _t, _o in drops} == {"cash_flow", "balance_sheet"}
     own = own_concepts()["cash"]
     values = {1_056_000_000.0: {"CashAndCashEquivalentsAtCarryingValue"}}
     # the cash-flow row comes first, but the balance-sheet drop survived: the item that reads the
@@ -275,6 +284,145 @@ def test_the_drop_log_is_read_into_the_classifier_context(tmp_path: Path) -> Non
         encoding="utf-8",
     )
     assert load_drop_log(str(path)) == {
-        "0000016918-23-000103": [("income_statement", REVENUE, "2023-05-31", 4003533000.0)]
+        "0000016918-23-000103": [("income_statement", REVENUE, "2023-05-31", "Q1", 4003533000.0)]
     }
     assert load_drop_log(None) == {}
+
+
+# -- PR (the itemcheck, 5a-5d) -------------------------------------------------------------------
+
+
+def test_a_negative_dropped_original_matches_a_positive_sec_fact() -> None:
+    """5a: the gateway compares **magnitudes** (data-mining 5c77262, ``src/sec_edgar/agent.py``:
+    ``reconcile_with_filed_facts`` compares ``abs(abs(filed) - abs(rendered))``), so a negative
+    original against a positive SEC fact is the same value."""
+    own = own_concepts()["revenue"]
+    cls, _ = classify(
+        None,
+        own,
+        {4_003_533_000.0: {"Revenues"}},
+        drops=[
+            (
+                "income_statement",
+                REVENUE,
+                "2023-09-30",
+                "Q3",
+                -4_003_533_000.0,
+            )
+        ],
+        period_end="2023-09-30",
+        statements=REGISTRY["revenue"].statements,
+    )
+    assert cls == "FAIL_gateway_dropped"
+
+
+def test_a_negative_stored_fact_under_another_concept_is_the_other_concept() -> None:
+    """5b: the stored value is the value **as displayed** (db.py:73: the filed value times the
+    preferred sign), so a negative stored fact matches a positive SEC fact."""
+    own = own_concepts()["revenue"]
+    cls, extra = classify(
+        None,
+        own,
+        {100.0: {REVENUE}},
+        stored_facts={-100.0: {"InterestExpenseOperating"}},
+    )
+    assert cls == "WARN_other_concept"
+    assert extra == ["InterestExpenseOperating"]
+
+
+def test_a_prefixed_own_concept_stored_fact_is_never_another_concept() -> None:
+    """5c: the stored concepts lose their taxonomy prefix, the way ``own_concepts()`` strips it:
+    a value stored under one of the item's own concepts is not another concept."""
+    own = own_concepts()["revenue"]
+    assert REVENUE in own
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE financial_facts (filing_id INTEGER, concept TEXT, period_key TEXT, value REAL)"
+    )
+    conn.execute(
+        "INSERT INTO financial_facts VALUES (1, ?, '2023-09-30 (Q3)', 100.0)",
+        (f"us-gaap_{REVENUE}",),
+    )
+    conn.commit()
+    stored = stored_facts(conn, 1, "2023-09-30")
+    assert stored == {100.0: {REVENUE}}
+    cls, extra = classify(None, own, {100.0: {REVENUE}}, stored_facts=stored)
+    assert cls == "WARN_never_served"
+    assert extra == [REVENUE]
+    conn.close()
+
+
+def test_a_dropped_untagged_cash_flow_column_matches_a_167_day_sec_fact() -> None:
+    """5d: A's duration rule -- an untagged column matches any duration under PER-08's year
+    upper bound (a 24-week YTD column is 167 days), so the row is the gateway's drop."""
+    own = own_concepts()["operating_cash_flow"]
+    cls, _ = classify(
+        None,
+        own,
+        {1_234_000_000.0: {"NetCashProvidedByUsedInOperatingActivities"}},
+        drops=[
+            (
+                "cash_flow",
+                "NetCashProvidedByUsedInOperatingActivities",
+                "2023-09-30",
+                "",
+                1_234_000_000.0,
+            )
+        ],
+        period_end="2023-09-30",
+        statements=REGISTRY["operating_cash_flow"].statements,
+        sec_facts=[("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 167)],
+    )
+    assert cls == "FAIL_gateway_dropped"
+
+
+def test_a_dropped_untagged_column_does_not_match_a_year_long_sec_fact() -> None:
+    """5d: the rule has a bound -- a fact longer than PER-08's year (371 days) is not the dropped
+    column's own duration."""
+    own = own_concepts()["operating_cash_flow"]
+    cls, _ = classify(
+        None,
+        own,
+        {1_234_000_000.0: {"NetCashProvidedByUsedInOperatingActivities"}},
+        drops=[
+            (
+                "cash_flow",
+                "NetCashProvidedByUsedInOperatingActivities",
+                "2023-09-30",
+                "",
+                1_234_000_000.0,
+            )
+        ],
+        period_end="2023-09-30",
+        statements=REGISTRY["operating_cash_flow"].statements,
+        sec_facts=[("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 400)],
+    )
+    assert cls != "FAIL_gateway_dropped"
+
+
+def test_two_matching_facts_of_different_durations_are_ambiguous() -> None:
+    """A's rule: two matching facts of different durations are ambiguous -- counted, not
+    classified."""
+    own = own_concepts()["operating_cash_flow"]
+    cls, _ = classify(
+        None,
+        own,
+        {1_234_000_000.0: {"NetCashProvidedByUsedInOperatingActivities"}},
+        drops=[
+            (
+                "cash_flow",
+                "NetCashProvidedByUsedInOperatingActivities",
+                "2023-09-30",
+                "",
+                1_234_000_000.0,
+            )
+        ],
+        period_end="2023-09-30",
+        statements=REGISTRY["operating_cash_flow"].statements,
+        sec_facts=[
+            ("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 84),
+            ("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 167),
+        ],
+    )
+    assert cls != "FAIL_gateway_dropped"

@@ -25,6 +25,7 @@ import json
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,56 @@ def own_concepts() -> dict[str, set[str]]:
         }
         for name, item in REGISTRY.items()
     }
+
+
+#: The gateway's own period buckets (data-mining 5c77262, ``src/sec_edgar/agent.py``:67): a
+#: tagged column's duration. Q 80-100 days, YTD 175-285, FY 351 and more.
+_DURATION_BUCKETS = {"Q": (80, 100), "YTD": (175, 285), "FY": (351, 10**6)}
+#: PER-08's year upper bound (52/53 weeks): the longest duration an untagged column may hold.
+_MAX_UNTAGGED_DAYS = 371
+
+
+def duration_matches_drop(statement: str, tag: str | None, days: int | None) -> bool:
+    """Whether an SEC fact's duration is the dropped column's (A's duration rule).
+
+    * a **tagged** column: the gateway's own bucket for its tag (data-mining 5c77262,
+      ``src/sec_edgar/agent.py``:67 -- the tag is optional there, so an untagged column falls
+      through to the rule below);
+    * an **untagged** income or cash-flow column: any duration under PER-08's year upper bound
+      (a 24-week YTD column is 167 days and falls under it);
+    * a **balance-sheet** column: an instant.
+    """
+    if statement == "balance_sheet":
+        return days is None
+    if days is None:
+        return False
+    if tag:
+        low, high = _DURATION_BUCKETS["Q" if tag.startswith("Q") else tag]
+        return low <= days <= high
+    return 0 < days <= _MAX_UNTAGGED_DAYS
+
+
+def facts_with_durations(
+    docs: Iterable[dict[str, Any]], accn: str, end: str
+) -> list[tuple[str, float, int | None]]:
+    """The accession's facts at *end*, with their durations in days (``None`` for an instant).
+
+    The durations are what the drop match needs (A's duration rule): the itemcheck's own
+    :func:`facts_of` keeps only the facts of the form's length, and a dropped untagged column
+    must be matched against the facts of **any** duration under the rule.
+    """
+    out: list[tuple[str, float, int | None]] = []
+    for doc in docs:
+        for _tax, concept, fact in iter_us_gaap(doc):
+            if fact["accn"] != accn or fact["end"] != end:
+                continue
+            days: int | None = None
+            if fact.get("start"):
+                days = (
+                    date.fromisoformat(str(fact["end"])) - date.fromisoformat(str(fact["start"]))
+                ).days
+            out.append((concept, float(fact["val"]), days))
+    return out
 
 
 def facts_of(
@@ -121,11 +172,11 @@ class _Drops:
     """The run's drop log for one filing, and what the item reads.
 
     *rows* are the rows the gateway nulled, as ``(statement, concept, the column's date, the
-    original value)``; *period_end* is the filing's own period end; *statements* are the item's own
-    statements (the LineItem's).
+    column's tag, the original value)``; *period_end* is the filing's own period end;
+    *statements* are the item's own statements (the LineItem's).
     """
 
-    rows: tuple[tuple[str, str, str, float], ...] = ()
+    rows: tuple[tuple[str, str, str, str, float], ...] = ()
     period_end: str | None = None
     statements: tuple[str, ...] = ()
 
@@ -135,6 +186,7 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
     values: dict[float, set[str]],
     stored_facts: dict[float, set[str]] | None,
     drops: _Drops,
+    sec_facts: list[tuple[str, float, int | None]] | None = None,
 ) -> tuple[str, Any]:
     """The class of a stored value that is **absent** (P3 round 1, reviewer A).
 
@@ -166,20 +218,39 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
     if not own_facts:
         return "none", None
     if drops.rows:
-        for statement, concept, column_date, original in drops.rows:
+        for statement, concept, column_date, tag, original in drops.rows:
             if concept not in own:
                 continue  # a row of a concept this item does not read
             if drops.statements and statement not in drops.statements:
                 continue  # a row of another statement (the gateway drops cash-flow cash by design)
             if drops.period_end is not None and column_date != drops.period_end:
                 continue  # a row of another period (a comparative, a year-to-date column)
+            if sec_facts is not None:
+                # A's duration rule: the dropped column's own duration. Two matching facts of
+                # different durations are ambiguous -- counted, not classified.
+                matched = [
+                    (sec_concept, days)
+                    for sec_concept, value, days in sec_facts
+                    if sec_concept in own
+                    and duration_matches_drop(statement, tag, days)
+                    and match_value(abs(original), abs(value))
+                ]
+                if len({days for _concept, days in matched}) > 1:
+                    continue  # ambiguous: two facts of different durations
+                if matched:
+                    return "FAIL_gateway_dropped", sorted({c for c, _days in matched})[:3]
+                continue
             for value, concepts in own_facts.items():
-                if match_value(original, value):
+                # the gateway compares magnitudes (data-mining 5c77262, agent.py:
+                # ``reconcile_with_filed_facts`` compares ``abs(abs(filed) - abs(rendered))``)
+                if match_value(abs(original), abs(value)):
                     return "FAIL_gateway_dropped", sorted(concepts)[:3]
     if stored_facts:
         for value in own_facts:
             for stored_value, stored_concepts in stored_facts.items():
-                if not match_value(stored_value, value):
+                # the stored value is the value **as displayed** (db.py:73: the filed value times
+                # the preferred sign), so the comparison is on magnitudes
+                if not match_value(abs(stored_value), abs(value)):
                     continue
                 others = stored_concepts - own
                 if others:
@@ -193,10 +264,11 @@ def classify(  # noqa: PLR0911, PLR0913 - one return per class of the module doc
     values: dict[float, set[str]],
     mapped: Iterable[float] = (),
     *,
-    drops: list[tuple[str, str, str, float]] | None = None,
+    drops: list[tuple[str, str, str, str, float]] | None = None,
     stored_facts: dict[float, set[str]] | None = None,
     period_end: str | None = None,
     statements: Iterable[str] | None = None,
+    sec_facts: list[tuple[str, float, int | None]] | None = None,
 ) -> tuple[str, Any]:
     """Class of one stored input against the SEC facts of its accession and period (see the module docstring).
     *mapped* are the values of the item's sourced map (:func:`map_values`).
@@ -211,6 +283,7 @@ def classify(  # noqa: PLR0911, PLR0913 - one return per class of the module doc
                 period_end=period_end,
                 statements=tuple(statements or ()),
             ),
+            sec_facts,
         )
     hit = [cons for v, cons in values.items() if match_value(v, stored)]
     flip = [cons for v, cons in values.items() if match_value(v, -stored)]
@@ -265,18 +338,25 @@ def load_drop_log(path: str | None) -> dict[str, list[tuple[str, str, str, float
             if not (accession and concept and isinstance(original, (int, float))):
                 continue
             name = concept.split("_", 1)[1] if "_" in concept else concept
-            column_date = column.split(" ", 1)[0]
+            column_date, _, tag = column.partition(" ")
             statement = str(row.get("statement") or "")
             key = (accession, statement, name, column_date, float(original))
             if key in seen:
                 continue
             seen.add(key)
-            out.setdefault(accession, []).append((statement, name, column_date, float(original)))
+            out.setdefault(accession, []).append(
+                (statement, name, column_date, tag.strip("()"), float(original))
+            )
     return out
 
 
 def stored_facts(conn: Any, filing_id: int, period_end: str) -> dict[float, set[str]]:
-    """The filing's own stored facts at its period end: ``{value: {concepts}}``."""
+    """The filing's own stored facts at its period end: ``{value: {concepts}}``.
+
+    The concept names lose their taxonomy prefix (``us-gaap_``, ``schw_``, ...), the way
+    :func:`own_concepts` strips it: a value stored under one of the item's **own** concepts must
+    never be reported as another concept.
+    """
     out: dict[float, set[str]] = collections.defaultdict(set)
     for row in conn.execute(
         "SELECT concept, period_key, value FROM financial_facts WHERE filing_id = ? AND value IS NOT NULL",
@@ -284,7 +364,8 @@ def stored_facts(conn: Any, filing_id: int, period_end: str) -> dict[float, set[
     ):
         if str(row[1]).split(" ", 1)[0] != str(period_end):
             continue
-        out[float(row[2])].add(str(row[0]))
+        concept = str(row[0])
+        out[float(row[2])].add(concept.split("_", 1)[1] if "_" in concept else concept)
     return out
 
 
@@ -304,6 +385,13 @@ def run(
         docs = [d for c in cik_family(f["cik"]) if (d := client.get("companyfacts", c))]
         dur = facts_of(docs, f["accession_number"], f["period_end"], f["form"], instant=False)
         ins = facts_of(docs, f["accession_number"], f["period_end"], f["form"], instant=True)
+        # the durations, for the drop match (A's duration rule): only the filings with a dropped
+        # row need them
+        sec_facts = (
+            facts_with_durations(docs, f["accession_number"], f["period_end"])
+            if drops.get(str(f["accession_number"]))
+            else None
+        )
         for metric, keys in CHECK.items():
             row = conn.execute(
                 "SELECT inputs_json FROM fundamental_metrics WHERE filing_id = ? AND metric_name = ?",
@@ -323,6 +411,7 @@ def run(
                     stored_facts=stored_facts(conn, int(f["id"]), str(f["period_end"])),
                     period_end=str(f["period_end"]),
                     statements=REGISTRY[key].statements,
+                    sec_facts=sec_facts,
                 )
                 results[key][cls] += 1
                 if cls in ("FLIPPED", "OTHER_CONCEPT", "NOT_IN_SEC(rebuilt/derived)"):
