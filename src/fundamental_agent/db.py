@@ -109,7 +109,7 @@ _CROSS_ITEM_BAND = 1.25
 # income = domestic + foreign). The short-term investments the filing reports are no longer read
 # as 0 (the only defaulted input). Flags: ``cogs_excludes_da``, ``net_income_to_common``.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v9"
+METRICS_ENGINE_VERSION = "metrics-v10"
 
 
 @dataclass(frozen=True)
@@ -676,6 +676,54 @@ def insert_cover_shares(
     )
     conn.commit()
     return len(rows)
+
+
+#: T-159c: a cover count this many times its prior filing's count for the same share class is the
+#: signature of the x1,000 / x1/1,000 tagging defect (PKG, CMG, GDDY, V; `shares_jump.csv`). It is
+#: a stored flag only -- the MKT guard stays the value rule, so the market cap is unchanged.
+_COVER_SCALE_RATIO = 50.0
+
+
+def cover_share_scale_suspect(
+    conn: Database,
+    asset_id: int,
+    shares: Iterable[CoverShares],
+    *,
+    filing_id: int,
+    filing_date: str | None,
+) -> bool:
+    """Whether one of *shares* is >= 50x (or <= 1/50x) the same class's count in the company's
+    prior filing (T-159c). Point in time: only filings filed strictly before *filing_date* count.
+    A stored flag for the reader; it never changes a value (the MKT guard decides the cap)."""
+    entries = [entry for entry in shares if entry.value > 0]
+    if not entries or not filing_date:
+        return False
+    rows = conn.execute(
+        """
+        SELECT fcs.class_member, fcs.value
+        FROM filing_cover_shares fcs
+        JOIN sec_filings sf ON sf.id = fcs.filing_id
+        JOIN sec_filings cur ON cur.id = ?
+        WHERE sf.asset_id = ?
+          AND fcs.filing_id != ?
+          AND sf.filing_date IS NOT NULL
+          AND sf.filing_date < cur.filing_date
+          AND fcs.value > 0
+        ORDER BY sf.filing_date DESC, sf.period_end DESC, fcs.id DESC
+        """,
+        (filing_id, asset_id, filing_id),
+    ).fetchall()
+    prior: dict[str, float] = {}
+    for row in rows:
+        prior.setdefault(str(row["class_member"]), float(row["value"]))
+    for entry in entries:
+        anchor = prior.get(entry.class_member)
+        if anchor is None or anchor <= 0:
+            continue
+        ratio = entry.value / anchor
+        if ratio >= _COVER_SCALE_RATIO or ratio <= 1.0 / _COVER_SCALE_RATIO:
+            return True
+    return False
 
 
 def overlapping_history(

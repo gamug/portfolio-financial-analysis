@@ -75,6 +75,7 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     cik: str | None = None,
     market_cap: MarketCap | None = None,
     market_cap_missing: str | None = None,
+    cover_scale_suspect: bool = False,
 ) -> list[MetricResult]:
     """FCF-yield family for *period_key*, valued under MKT-01 to MKT-04 and PER-06."""
     _, fcfe = free_cash_flow(stmts, period_key)
@@ -131,7 +132,14 @@ def compute(  # noqa: PLR0913 - the filing, its price, and keyword-only audit in
     inputs.update(capital.combination_flags(cap, "current", income_filed=income_filed))
     capex_resolution = stmts.resolve("capital_expenditure", period_key)
     inputs.update(flag_inputs("capital_expenditure", capex_resolution.flags))
-    _market_cap_inputs(inputs, mc, price, period_key, share_scale_factors)
+    _market_cap_inputs(
+        inputs,
+        mc,
+        price,
+        period_key,
+        share_scale_factors,
+        cover_scale_suspect=cover_scale_suspect,
+    )
 
     # MD-38 (D8): (NOPAT - (capex - D&A + Δ non-cash working capital)) / EV.
     fcff_md38 = _md38(stmts, period_key, cap, annual, inputs)
@@ -181,12 +189,14 @@ _MarketCap = tuple[
 ]
 
 
-def _market_cap_inputs(
+def _market_cap_inputs(  # noqa: PLR0913 - the read's audit inputs and the two flags
     inputs: dict[str, float],
     mc: _MarketCap,
     price: ClosePrice | None,
     period_key: str,
     share_scale_factors: dict[str, float] | None,
+    *,
+    cover_scale_suspect: bool = False,
 ) -> None:
     """Record how the market cap was read (MKT-01 to MKT-04): the price offset, the share age, the
     split factor, the class count, and why it is missing or incomplete when it is."""
@@ -217,6 +227,10 @@ def _market_cap_inputs(
         inputs["cover_member_not_common_excluded"] = 1.0
     if share_scale_factors:
         inputs["share_scale_suspect"] = 1.0
+    if cover_scale_suspect:
+        # T-159c: a stored flag on the valuation rows; the MKT guard stays the value rule, so the
+        # market cap itself is unchanged.
+        inputs["flag_market_capitalization_cover_scale_suspect"] = 1.0
 
 
 def _md38(

@@ -30,11 +30,13 @@ from dataclasses import replace
 from typing import Any
 
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import Capital, Resolution, Statements
+from fundamental_agent.metrics.growth import LENDER_SUB_INDUSTRIES
+from fundamental_agent.statements import REGISTRY, Capital, Resolution, Statements
 
 # The fixed list of empty-reason codes (D14; G4's precedence is applied by :func:`_empty_reason`).
 MISSING_INPUT = "missing_input"
 NOT_APPLICABLE = "not_applicable"
+NOT_REPORTED = "not_reported"
 DENOMINATOR_NOT_POSITIVE = "denominator_not_positive"
 GROWTH_BASE_NOT_POSITIVE = "growth_base_not_positive"
 CAPTURE_FAILURE = "capture_failure"
@@ -43,6 +45,7 @@ PRIOR_YEAR_MISSING = "prior_year_missing"
 EMPTY_REASONS = (
     MISSING_INPUT,
     NOT_APPLICABLE,
+    NOT_REPORTED,
     DENOMINATOR_NOT_POSITIVE,
     GROWTH_BASE_NOT_POSITIVE,
     CAPTURE_FAILURE,
@@ -315,6 +318,7 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
     ("not_applicable", NOT_APPLICABLE),
     ("negative_equity", NOT_APPLICABLE),
     ("growth_base_not_positive", GROWTH_BASE_NOT_POSITIVE),
+    ("denominator_not_positive", DENOMINATOR_NOT_POSITIVE),
     ("denominator_negative", DENOMINATOR_NOT_POSITIVE),
     ("invested_capital_not_positive", DENOMINATOR_NOT_POSITIVE),
     ("capture_failure", CAPTURE_FAILURE),
@@ -397,6 +401,105 @@ def _bases(entry: str | tuple[str, ...]) -> tuple[str, ...]:
     return (entry,) if isinstance(entry, str) else entry
 
 
+def _item_concepts(item: str) -> tuple[str, ...]:
+    """Every registry concept that can stand for *item*: its own, the T-133 fallbacks, and
+    T-159a's substitutes (the totals, the component-family prefixes, the classes, the sums)."""
+    spec = REGISTRY[item]
+    concepts = [*spec.total_concepts, *spec.concepts, *spec.fallback_concepts]
+    substitute = spec.substitute
+    if substitute is not None:
+        concepts.extend(substitute.totals)
+        concepts.extend(substitute.families)
+        for members in substitute.classes:
+            concepts.extend(members)
+        for left, right in substitute.sums:
+            concepts.extend((left, right))
+    if item == "depreciation_amortization":
+        concepts.extend(("us-gaap_Depreciation", "us-gaap_AmortizationOfIntangibleAssets"))
+    return tuple(dict.fromkeys(concepts))
+
+
+def _item_reported_anywhere(stmts: Statements, item: str) -> bool:
+    """Whether the filing reports *item* in any period at all (cause 6's test).
+
+    A filing that reports an item on its year-to-date column only, or in a prior column, is not
+    "not reported": its empty value at the read column is a missing input, not a company that does
+    not report the item. The statements' rows and T-159c's filed facts are both checked."""
+    if stmts.is_empty:
+        return True  # no statement row at all is a source gap (cause 5), not "not reported"
+    if stmts.filed_facts_error and not stmts.filed_facts:
+        return True  # the gateway's filed-fact read failed: cannot tell, never guess
+    concepts = _item_concepts(item)
+    substitute = REGISTRY[item].substitute
+    prefixes = tuple(substitute.families) if substitute is not None else ()
+    for rows in stmts.raw.values():
+        for row in rows:
+            concept = str(row.get("concept") or "")
+            if not concept:
+                continue
+            if not (
+                concept in concepts
+                or any(concept.startswith(prefix) for prefix in prefixes)
+                or concept.replace(":", "_", 1) in concepts
+            ):
+                continue
+            if any(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for key, value in row.items()
+                if key[:4].isdigit()
+            ):
+                return True
+    for fact in stmts.filed_facts:
+        concept = fact.concept.replace(":", "_", 1)
+        if concept in concepts or any(concept.startswith(prefix) for prefix in prefixes):
+            return True
+    return False
+
+
+def _unclassified_balance_sheet(stmts: Statements) -> bool:
+    """Whether the filing has no current/noncurrent classification at all (MD-38/APP-09)."""
+    for concept in ("us-gaap_AssetsCurrent", "us-gaap_LiabilitiesCurrent"):
+        for row in stmts.raw.get("balance_sheet", []):
+            if row.get("concept") != concept or row.get("abstract") or row.get("dimension"):
+                continue
+            if any(
+                isinstance(value, (int, float)) and not isinstance(value, bool)
+                for key, value in row.items()
+                if key[:4].isdigit()
+            ):
+                return False
+    return True
+
+
+# The metrics whose receivables / current assets / current liabilities input is not applicable on
+# an unclassified balance sheet or for a bank: APP-09 (liquidity needs a classified balance sheet),
+# MD-38 (non-cash working capital), and APP-01 (an Article 9 filer has no current/noncurrent
+# classification and no receivables turnover).
+_NOT_APPLICABLE_ITEMS: dict[str, frozenset[str]] = {
+    "current_ratio": frozenset({"current_assets", "current_liabilities"}),
+    "quick_ratio": frozenset({"current_assets", "current_liabilities"}),
+    "cash_ratio": frozenset({"current_assets", "current_liabilities"}),
+    "receivables_turnover": frozenset({"receivables"}),
+    "enterprise_fcf_yield": frozenset(
+        {"current_assets", "current_liabilities", "cash", "short_term_debt"}
+    ),
+}
+
+
+def _not_applicable_here(metric: str, stmts: Statements, missing: list[str], *, bank: bool) -> bool:
+    """APP-09 / MD-38 / APP-01: an unclassified balance sheet (or a bank) makes these inputs not
+    applicable, not missing."""
+    wanted = _NOT_APPLICABLE_ITEMS.get(metric)
+    if not wanted or not missing or not all(item in wanted for item in missing):
+        return False
+    return bank or _unclassified_balance_sheet(stmts)
+
+
+def _is_bank(stmts: Statements) -> bool:
+    """The profile's bank/lender sub-industries (the same set PER-14 uses, T-147)."""
+    return stmts.sub_industry in LENDER_SUB_INDUSTRIES
+
+
 def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear pass
     stmts: Statements,
     period_key: str,
@@ -433,6 +536,7 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
             return reason
     # 2. a current-period numerator/denominator input that is not filed
     unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
+    missing: list[str] = []
     for item, entry in items.items():
         if item in optional:
             # J1: an alternative pair -- each member alone is optional, but all of them absent is a
@@ -442,7 +546,7 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                     _resolve(stmts, period_key, member, "period")[0].value is None
                     for member in group
                 ):
-                    return MISSING_INPUT
+                    missing.extend(member for member in group if member not in missing)
             continue
         for raw_basis in _bases(entry):
             basis = _prior_basis(stmts, period_key, raw_basis)
@@ -463,8 +567,12 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                 if flow is not None and flow.method not in ("ytd", "quarters"):
                     return PRIOR_YEAR_MISSING if flow.method == "x4" else CAPTURE_FAILURE
             resolution, _capital = _resolve(stmts, period_key, item, basis)
-            if resolution.value is None and _flag_reason(resolution.flags) is None:
-                return MISSING_INPUT
+            if (
+                resolution.value is None
+                and _flag_reason(resolution.flags) is None
+                and item not in missing
+            ):
+                missing.append(item)
     # 3. an input filed but refused, or a prior column that is absent
     for item, entry in items.items():
         for raw_basis in _bases(entry):
@@ -483,6 +591,13 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
             reason = _flag_reason([key])
             if reason in (CAPTURE_FAILURE, PRIOR_YEAR_MISSING):
                 return reason
+    if missing and _not_applicable_here(result.name, stmts, missing, bank=_is_bank(stmts)):
+        return NOT_APPLICABLE
+    # Cause 6 vs the earlier causes: an item the filing reports nowhere (not on any statement row
+    # or filed fact, in any period) is "not reported"; one it reports in another period (a YTD-only
+    # 10-Q, a prior column) stays a missing input.
+    if missing and not all(_item_reported_anywhere(stmts, item) for item in missing):
+        return NOT_REPORTED
     return MISSING_INPUT
 
 
@@ -546,6 +661,25 @@ def _flow_columns(flow: TTMFlow | None) -> dict[str, Any]:
     }
 
 
+def _item_bases(  # noqa: PLR0913, PLR0917 - the item's declared basis and its read context
+    stmts: Statements,
+    period_key: str,
+    metric: str,
+    item: str,
+    declared: str | tuple[str, ...],
+    ttm_flows: dict[str, TTMFlow] | None,
+) -> tuple[str, ...]:
+    """The bases an item was actually read on (G2).
+
+    T-159c: ``ebitda`` stores the trailing twelve months on a 10-Q (``leverage.compute`` reads the
+    TTM operating income and D&A), so its items are labelled ``ttm`` there -- before this they said
+    ``period`` while the value was the TTM. On a 10-K the declared ``period`` stands.
+    """
+    if metric == "ebitda" and ttm_flows is not None and _is_ten_q(stmts, period_key):
+        return ("ttm",)
+    return _bases(declared)
+
+
 def _item_provenance(
     stmts: Statements,
     period_key: str,
@@ -606,7 +740,7 @@ def build(
         "items": {
             item: [
                 _item_provenance(stmts, period_key, item, basis, ttm_flows)
-                for basis in ((bases,) if isinstance(bases, str) else bases)
+                for basis in _item_bases(stmts, period_key, result.name, item, bases, ttm_flows)
             ]
             for item, bases in items.items()
         },

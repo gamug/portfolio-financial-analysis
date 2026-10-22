@@ -419,6 +419,10 @@ _NCI_TREE: Final[tuple[str, ...]] = (
 _OCF: Final[str] = G + "NetCashProvidedByUsedInOperatingActivities"
 _OCF_CONT: Final[str] = G + "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"
 _OCF_DISC: Final[str] = G + "CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations"
+# T-159c (F8): the discontinued operating leg a filer may tag with the total-discontinued element
+# instead. Read only when its caption places the row in the operating block (MPC's "operating
+# activities - discontinued operations"), never a total that includes investing and financing.
+_OCF_DISC_ALT: Final[str] = G + "NetCashProvidedByUsedInDiscontinuedOperations"
 _ICF: Final[str] = G + "NetCashProvidedByUsedInInvestingActivities"
 _FCF: Final[str] = G + "NetCashProvidedByUsedInFinancingActivities"
 # DQ-01's "period's change in cash" (C3): the first filed of these three. CON-07's own identity
@@ -448,6 +452,7 @@ _CONCEPT_STATEMENT: Final[dict[str, str]] = {
     _OCF: "cash_flow",
     _OCF_CONT: "cash_flow",
     _OCF_DISC: "cash_flow",
+    _OCF_DISC_ALT: "cash_flow",
     _ICF: "cash_flow",
     _FCF: "cash_flow",
 }
@@ -840,6 +845,8 @@ class FilingFacts:
     # row stored without one (a database that predates m013, or a gateway row with no hint) has no
     # filed sign -- F2 treats that as missing data, not a value.
     signed: frozenset[tuple[str, str, str]] = frozenset()
+    # (statement, concept, column) -> the filing's own caption (T-159c: F8's operating-block test).
+    labels: Mapping[tuple[str, str, str], str] = field(default_factory=dict)
 
     def value(
         self, concept: str, column: str | None, *, any_statement: bool = False
@@ -861,6 +868,21 @@ class FilingFacts:
         if column is None:
             return False
         return (_CONCEPT_STATEMENT[concept], concept, column) in self.signed
+
+    def discontinued_operating(self, column: str | None) -> float | None:
+        """F8 (T-159c): ``NetCashProvidedByUsedInDiscontinuedOperations`` when its caption names
+        operating activities -- the discontinued operating leg of a filer that tags it with the
+        total-discontinued element. A caption naming investing or financing (or no operating
+        activity at all) is a total, never the operating leg, and is not read."""
+        if column is None:
+            return None
+        value = self.by_key.get(("cash_flow", _OCF_DISC_ALT), {}).get(column)
+        if value is None:
+            return None
+        label = self.labels.get(("cash_flow", _OCF_DISC_ALT, column), "").lower()
+        if "operating" not in label or "investing" in label or "financing" in label:
+            return None
+        return value
 
 
 _COLUMN_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:\s*\(([A-Za-z0-9]+)\))?$")
@@ -920,13 +942,13 @@ _FACTS_SQL: Final[dict[bool, str]] = {
     # `preferred_sign` (T-148/m013) may be absent on a database that predates it: a fixed pair of
     # literal statements, never SQL built from a variable (as `sec_xcheck.common._FACTS_SQL`).
     True: (
-        "SELECT filing_id, statement, concept, period_key, value, preferred_sign "
+        "SELECT filing_id, statement, concept, period_key, value, preferred_sign, label "
         "FROM financial_facts "
         "WHERE filing_id IN (SELECT value FROM json_each(?)) "
         "AND concept IN (SELECT value FROM json_each(?)) ORDER BY filing_id, id"
     ),
     False: (
-        "SELECT filing_id, statement, concept, period_key, value, NULL AS preferred_sign "
+        "SELECT filing_id, statement, concept, period_key, value, NULL AS preferred_sign, label "
         "FROM financial_facts "
         "WHERE filing_id IN (SELECT value FROM json_each(?)) "
         "AND concept IN (SELECT value FROM json_each(?)) ORDER BY filing_id, id"
@@ -958,6 +980,7 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
     }
     by_filing: dict[int, dict[tuple[str, str], dict[str, float]]] = {}
     signed_filing: dict[int, set[tuple[str, str, str]]] = {}
+    labels_filing: dict[int, dict[tuple[str, str, str], str]] = {}
     for row in conn.execute(_FACTS_SQL[_has_preferred_sign(conn)], (ids_json, concepts_json)):
         displayed = row["value"]
         if displayed is None:
@@ -974,6 +997,10 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
         columns.setdefault(column, value)
         if sign in (1, -1):
             signed_filing.setdefault(fid, set()).add((statement, concept, column))
+        if row["label"]:
+            labels_filing.setdefault(fid, {}).setdefault(
+                (statement, concept, column), str(row["label"])
+            )
     out: dict[int, FilingFacts] = {}
     for fid, by_key in by_filing.items():
         form, period_end = meta.get(fid, ("", ""))
@@ -986,6 +1013,7 @@ def load_facts(conn: Database, filing_ids: Iterable[int]) -> dict[int, FilingFac
             flow_column=_flow_column(keys, form, period_end),
             ytd_column=_ytd_column(keys, period_end),
             signed=frozenset(signed_filing.get(fid, ())),
+            labels=labels_filing.get(fid, {}),
         )
     return out
 
@@ -1057,11 +1085,17 @@ def identity_issues(
     the quarantined affected metrics of a DQ-01 rule at the material level (C5/C6)."""
     balance = {c: facts.value(c, facts.instant_column) for c in _BALANCE_CONCEPTS}
     flow = {c: facts.value(c, facts.flow_column) for c in _FLOW_CONCEPTS}
+    if flow.get(_OCF_DISC) is None:
+        # F8: the same leg tagged with the total-discontinued element, when its caption says it
+        # sits in the operating block (T-159c).
+        flow[_OCF_DISC] = facts.discontinued_operating(facts.flow_column)
     ytd = (
         {c: facts.value(c, facts.ytd_column) for c in _FLOW_CONCEPTS}
         if facts.ytd_column is not None
         else None
     )
+    if ytd is not None and ytd.get(_OCF_DISC) is None:
+        ytd[_OCF_DISC] = facts.discontinued_operating(facts.ytd_column)
     return _identity_issues_from_results(
         evaluate_identities(
             balance,

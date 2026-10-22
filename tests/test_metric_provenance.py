@@ -112,9 +112,24 @@ def test_an_empty_metric_carries_a_reason_from_the_fixed_list() -> None:
     assert "flag_return_on_equity_negative_equity" in block["flags"]
 
 
-def test_a_missing_input_reason_is_the_default() -> None:
-    # inventory_turnover with no cogs and no inventory: a plain missing input, no flag
+def test_a_not_reported_item_is_labelled_not_reported() -> None:
+    """T-159c: inventory_turnover with no cogs and no inventory anywhere in the filing is the
+    company not reporting the item (cause 6), not a plain missing input."""
     stmts = _payload(operating_income=None)
+    results = _attached(stmts, "efficiency", efficiency_compute(stmts, KEY))
+    turnover = next(r for r in results if r.name == "inventory_turnover")
+    assert turnover.value is None
+    assert turnover.inputs["provenance"]["empty_reason"] == provenance.NOT_REPORTED
+
+
+def test_an_item_reported_in_another_period_stays_missing_input() -> None:
+    """T-159c: an item the filing reports in another column (a YTD-only 10-Q, a prior column) is
+    not "not reported"; its absence at the read column is a missing input."""
+    stmts = _payload(operating_income=None)
+    stmts.raw["balance_sheet"].append(_row(G + "InventoryNet", "Inventory", **{"2023-12-31": 1.0}))
+    stmts.raw["income_statement"].append(
+        _row(G + "CostOfGoodsAndServicesSold", "Cost of sales", **{"2023-12-31 (FY)": 1.0})
+    )
     results = _attached(stmts, "efficiency", efficiency_compute(stmts, KEY))
     turnover = next(r for r in results if r.name == "inventory_turnover")
     assert turnover.value is None
@@ -226,6 +241,9 @@ def test_no_operating_income_with_a_refused_debt_is_missing_input_for_roic() -> 
         {
             "income_statement": [
                 _row(G + "NetIncomeLoss", "Net income", **{KEY: 80.0}),
+                # reported in the prior column only: the item is not "not reported", it is
+                # missing at the read column (T-159c's cause-6 test)
+                _row(G + "OperatingIncomeLoss", "Operating income", **{"2023-12-31 (FY)": 100.0}),
                 _row(
                     G
                     + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
@@ -587,16 +605,17 @@ def _j1_payload(
     )
 
 
-def test_j1_a_gross_margin_with_neither_cogs_nor_gross_profit_is_missing_input() -> None:
-    """J1: the gross margin's `cogs`/`gross_profit` is an alternative pair -- both absent is a
-    missing input, and the group's prior-debt refusal must not decide it."""
+def test_j1_a_gross_margin_with_neither_cogs_nor_gross_profit_is_not_reported() -> None:
+    """J1: the gross margin's `cogs`/`gross_profit` is an alternative pair -- both absent is the
+    company not reporting the item (T-159c's cause 6), and the group's prior-debt refusal must not
+    decide it."""
     stmts = _j1_payload()
     pairs = [("profitability", r) for r in profitability_compute(stmts, KEY)]
     provenance.attach(pairs, stmts, KEY)
     gross = next(r for _g, r in pairs if r.name == "gross_margin")
     assert gross.value is None
     assert any("prior_debt_capture_failure" in key for key in gross.inputs)
-    assert gross.inputs["provenance"]["empty_reason"] == provenance.MISSING_INPUT
+    assert gross.inputs["provenance"]["empty_reason"] == provenance.NOT_REPORTED
 
 
 def test_j1_a_gross_margin_with_one_of_the_pair_is_not_a_missing_input() -> None:

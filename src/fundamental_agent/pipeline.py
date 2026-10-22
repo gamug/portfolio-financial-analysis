@@ -875,6 +875,11 @@ def _resolve_quarter(
         return EMPTY_PAYLOAD_REASON
     quarters = stmts.quarter_periods()
     if not quarters:
+        # T-159c: a 16/24-week filer's untagged duration columns are its quarter columns (T-159b's
+        # F0 fix keeps them; the gateway tags none). The latest one is the filing's own period,
+        # exactly as the latest (Qx) column is for a tagged payload.
+        quarters = stmts.untagged_periods()
+    if not quarters:
         return (
             f"the payload has no quarter column of its own (periods: {_columns(stmts)}); "
             "the gateway returned only another period"
@@ -1147,6 +1152,13 @@ def _analyze_one(
         prior_key=target.prior.key if target.prior else None,
         price=close_on_or_before(engine.conn, task.asset_id, target.period.date),
         share_scale_factors=share_scale_factors,
+        cover_scale_suspect=db.cover_share_scale_suspect(
+            engine.conn,
+            task.asset_id,
+            stmts.cover_shares,
+            filing_id=filing_id,
+            filing_date=meta.filing_date,
+        ),
         ttm_flows=ttm,
         cik=_asset_cik(engine, task.asset_id),
         market_cap=market_cap_obj,

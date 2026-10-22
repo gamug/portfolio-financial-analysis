@@ -43,8 +43,10 @@ from kg_schema.versions import DATA_QUALITY_GATE_VERSION, RULE_INPUT_GROUP, VALU
 
 try:
     from fundamental_agent.db import METRICS_ENGINE_VERSION
+    from fundamental_agent.metrics.provenance import EMPTY_REASONS
 except ImportError:
     METRICS_ENGINE_VERSION = ""
+    EMPTY_REASONS = ()
 
 try:
     import verify_t138
@@ -811,6 +813,84 @@ def metrics_only_problems(fin_db_path: str) -> tuple[int, list[str]]:
     finally:
         conn.close()
     return len(runs), problems
+
+
+def t159c_problems(  # noqa: C901, PLR0912 - three independent scans over the stored rows
+    fin_db_path: str,
+) -> tuple[int, int, list[str]]:
+    """T-159c: the filed-fact fallback is labelled, every empty reason is from the fixed list,
+    and ``ebitda``'s provenance names the basis its value used (``ttm`` on a 10-Q).
+
+    Returns ``(filed_fact_items, not_reported_values, problems)``. A database with no
+    ``fundamental_metrics`` rows has nothing to judge and returns zeros."""
+    conn = connect_ro(fin_db_path)
+    problems: list[str] = []
+    fallback = 0
+    not_reported = 0
+    try:
+        if not conn.relation_exists("fundamental_metrics"):
+            return 0, 0, []
+        for row in conn.execute(
+            "SELECT filing_id, metric_name, inputs_json FROM fundamental_metrics "
+            'WHERE inputs_json LIKE \'%"how": "filed_fact"%\''
+        ):
+            try:
+                inputs = json.loads(row["inputs_json"] or "{}")
+            except ValueError:
+                problems.append(f"filing {row['filing_id']}: unreadable inputs_json")
+                continue
+            provenance = inputs.get("provenance") or {}
+            for item, entries in (provenance.get("items") or {}).items():
+                for entry in entries:
+                    if entry.get("how") != "filed_fact":
+                        continue
+                    fallback += 1
+                    if "filed_fact" not in (entry.get("flags") or []):
+                        problems.append(
+                            f"filing {row['filing_id']} {row['metric_name']} {item}: "
+                            "a filed fact without the filed_fact flag"
+                        )
+        for row in conn.execute(
+            "SELECT filing_id, metric_name, inputs_json FROM fundamental_metrics "
+            "WHERE value IS NULL AND inputs_json LIKE '%empty_reason%'"
+        ):
+            try:
+                inputs = json.loads(row["inputs_json"] or "{}")
+            except ValueError:
+                problems.append(f"filing {row['filing_id']}: unreadable inputs_json")
+                continue
+            reason = (inputs.get("provenance") or {}).get("empty_reason")
+            if reason == "not_reported":
+                not_reported += 1
+            elif reason is not None and reason not in EMPTY_REASONS:
+                problems.append(
+                    f"filing {row['filing_id']} {row['metric_name']}: empty_reason {reason!r}"
+                )
+        for row in conn.execute(
+            "SELECT filing_id, inputs_json FROM fundamental_metrics "
+            "WHERE metric_name = 'ebitda' AND value IS NOT NULL"
+        ):
+            try:
+                provenance = (json.loads(row["inputs_json"] or "{}")).get("provenance") or {}
+            except ValueError:
+                problems.append(f"filing {row['filing_id']}: unreadable inputs_json")
+                continue
+            period = str(provenance.get("period") or "")
+            tag = period.split("(", 1)[1].rstrip(")") if "(" in period else ""
+            expected = "ttm" if tag.startswith("Q") or tag == "YTD" else "period"
+            bases = {
+                str(entry.get("basis"))
+                for entries in (provenance.get("items") or {}).values()
+                for entry in entries
+            }
+            if bases != {expected}:
+                problems.append(
+                    f"filing {row['filing_id']} ebitda: basis {sorted(bases)} on {period} "
+                    f"(expected {expected})"
+                )
+    finally:
+        conn.close()
+    return fallback, not_reported, problems
 
 
 def unexplained_split_row_problems(fin_db_path: str) -> list[str]:
@@ -1883,6 +1963,30 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-143a", t143a)
+
+    def t159c() -> None:
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        fallback = not_reported = 0
+        bad: list[str] = []
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            n_fallback, n_not_reported, problems = t159c_problems(path)
+            fallback = max(fallback, n_fallback)
+            not_reported = max(not_reported, n_not_reported)
+            bad += [f"{prefix}{problem}" for problem in problems]
+        if bad:
+            report("T-159c", "FAIL", "; ".join(bad[:6]))
+            return
+        report(
+            "T-159c",
+            "PASS",
+            f"{fallback} filed-fact item(s), {not_reported} not_reported value(s): every "
+            "filed fact flagged, every empty reason from the fixed list, ebitda's basis is its value's",
+        )
+
+    check("T-159c", t159c)
 
     def t153g() -> None:
         """T-153 part 3d (D10): every recorded SPLIT row is in the tracked event list.
