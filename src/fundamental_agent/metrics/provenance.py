@@ -391,6 +391,11 @@ def _is_own_flag(key: str, result: MetricResult, items: tuple[str, ...]) -> bool
 
 
 def _flag_reason(flags: Any) -> str | None:
+    # T-159c: a filed fact refused by the A-E proof is a **reported** item the fallback could not
+    # prove; the empty reason stays missing_input, never capture_failure/not_reported. Its flags
+    # are not a capture failure the metric's formula refused.
+    if any(str(raised).startswith("filed_fact_refused") for raised in flags):
+        return None
     for flag, reason in _FLAG_REASONS:
         if any(flag in raised for raised in flags):
             return reason

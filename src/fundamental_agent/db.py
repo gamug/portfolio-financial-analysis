@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -678,10 +679,13 @@ def insert_cover_shares(
     return len(rows)
 
 
-#: T-159c: a cover count this many times its prior filing's count for the same share class is the
-#: signature of the x1,000 / x1/1,000 tagging defect (PKG, CMG, GDDY, V; `shares_jump.csv`). It is
-#: a stored flag only -- the MKT guard stays the value rule, so the market cap is unchanged.
-_COVER_SCALE_RATIO = 50.0
+#: T-159c round 2: the cover-count flag is only the x1,000 / x1/1,000 defect, and it is measured
+#: against the **median** of the class's counts in the company's up-to-4 prior filings (filed
+#: strictly before). Within 10 % of either factor. A stored flag only -- the MKT guard stays the
+#: value rule, so the market cap is unchanged.
+_COVER_SCALE_TOLERANCE = 0.10
+_COVER_SCALE_FACTORS = (1_000.0, 0.001)
+_COVER_PRIOR_FILINGS = 4
 
 
 def cover_share_scale_suspect(
@@ -692,15 +696,16 @@ def cover_share_scale_suspect(
     filing_id: int,
     filing_date: str | None,
 ) -> bool:
-    """Whether one of *shares* is >= 50x (or <= 1/50x) the same class's count in the company's
-    prior filing (T-159c). Point in time: only filings filed strictly before *filing_date* count.
-    A stored flag for the reader; it never changes a value (the MKT guard decides the cap)."""
+    """Whether one of *shares* is within 10 % of x1,000 (or x1/1,000) the same class's **median**
+    count in the company's up-to-4 prior filings (T-159c round 2). Point in time: only filings
+    filed strictly before *filing_date* count. A stored flag for the reader; it never changes a
+    value (the MKT guard decides the cap)."""
     entries = [entry for entry in shares if entry.value > 0]
     if not entries or not filing_date:
         return False
     rows = conn.execute(
         """
-        SELECT fcs.class_member, fcs.value
+        SELECT fcs.filing_id, fcs.class_member, fcs.value
         FROM filing_cover_shares fcs
         JOIN sec_filings sf ON sf.id = fcs.filing_id
         JOIN sec_filings cur ON cur.id = ?
@@ -713,15 +718,29 @@ def cover_share_scale_suspect(
         """,
         (filing_id, asset_id, filing_id),
     ).fetchall()
-    prior: dict[str, float] = {}
+    prior: dict[str, list[float]] = {}
+    seen: dict[str, set[int]] = {}
     for row in rows:
-        prior.setdefault(str(row["class_member"]), float(row["value"]))
-    for entry in entries:
-        anchor = prior.get(entry.class_member)
-        if anchor is None or anchor <= 0:
+        member = str(row["class_member"])
+        prior_filing = int(row["filing_id"])
+        if (
+            len(seen.setdefault(member, set())) >= _COVER_PRIOR_FILINGS
+            and prior_filing not in seen[member]
+        ):
             continue
-        ratio = entry.value / anchor
-        if ratio >= _COVER_SCALE_RATIO or ratio <= 1.0 / _COVER_SCALE_RATIO:
+        seen[member].add(prior_filing)
+        prior.setdefault(member, []).append(float(row["value"]))
+    for entry in entries:
+        values = prior.get(entry.class_member)
+        if not values:
+            continue
+        median = statistics.median(values)
+        if median <= 0:
+            continue
+        ratio = entry.value / median
+        if any(
+            abs(ratio / factor - 1.0) <= _COVER_SCALE_TOLERANCE for factor in _COVER_SCALE_FACTORS
+        ):
             return True
     return False
 

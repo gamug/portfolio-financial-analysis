@@ -50,6 +50,19 @@ def _row(concept: str, label: str, **periods: float) -> dict[str, Any]:
     }
 
 
+def _face(concept: str, label: str, **periods: float) -> dict[str, Any]:
+    """A face row with the item's value but a concept the resolver does not read (rule A)."""
+    return {
+        "concept": concept,
+        "label": label,
+        "standard_concept": None,
+        "abstract": False,
+        "dimension": False,
+        "preferred_sign": 1.0,
+        **periods,
+    }
+
+
 def _payload(
     *,
     income: list[dict[str, Any]] | None = None,
@@ -71,7 +84,10 @@ def _payload(
 
 def test_an_instant_filed_fact_fills_a_missing_balance_item() -> None:
     stmts = _payload(
-        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _face("x_LongTermDebt", "Long-term debt", **{INSTANT: 50.0}),
+        ],
         filed_facts=[
             _fact("LongTermDebt", 50.0, end=INSTANT),
             _fact("LongTermDebt", 50.0, end=INSTANT),  # the same fact filed twice
@@ -82,11 +98,15 @@ def test_an_instant_filed_fact_fills_a_missing_balance_item() -> None:
     assert resolution.concept == G + "LongTermDebt"
     assert resolution.how == "filed_fact"
     assert "filed_fact" in resolution.flags
+    assert "filed_fact_on_face" in resolution.flags
 
 
 def test_a_quarter_filed_fact_is_read_and_a_ytd_fact_is_never_the_quarter() -> None:
     stmts = _payload(
-        income=[_row("Revenues", "Revenue", **{Q3: 100.0, YTD: 300.0})],
+        income=[
+            _row("Revenues", "Revenue", **{Q3: 100.0, YTD: 300.0}),
+            _face("x_Interest", "Interest expense", **{Q3: 10.0, YTD: 30.0}),
+        ],
         filed_facts=[
             _fact("InterestExpense", 10.0, start="2024-07-01", end="2024-09-30"),  # 92 days
             _fact("InterestExpense", 30.0, start="2024-01-01", end="2024-09-30"),  # 274 days
@@ -111,7 +131,10 @@ def test_a_ytd_only_fact_does_not_fill_the_quarter() -> None:
 
 def test_a_10k_flow_reads_a_year_and_not_a_quarter() -> None:
     stmts = _payload(
-        income=[_row("Revenues", "Revenue", **{FY: 1_000.0})],
+        income=[
+            _row("Revenues", "Revenue", **{FY: 1_000.0}),
+            _face("x_Interest", "Interest expense", **{FY: 40.0}),
+        ],
         filed_facts=[
             _fact("InterestExpense", 40.0, start="2024-01-01", end="2024-12-31"),  # 365 days
             _fact("InterestExpense", 10.0, start="2024-10-01", end="2024-12-31"),  # 91 days
@@ -125,7 +148,10 @@ def test_a_10k_flow_reads_a_year_and_not_a_quarter() -> None:
 def test_an_untagged_duration_column_uses_a_fact_up_to_371_days() -> None:
     untagged = "2024-09-28"
     stmts = _payload(
-        income=[_row("Revenues", "Revenue", **{untagged: 100.0})],
+        income=[
+            _row("Revenues", "Revenue", **{untagged: 100.0}),
+            _face("x_Interest", "Interest expense", **{untagged: 10.0}),
+        ],
         filed_facts=[
             _fact("InterestExpense", 10.0, start="2024-06-08", end=untagged),  # 112 days
             _fact("InterestExpense", 99.0, start="2023-08-01", end=untagged),  # 424 days
@@ -201,7 +227,10 @@ def test_a_filed_facts_read_failure_leaves_the_item_empty_and_flags_it() -> None
 
 def test_a_substitute_total_is_read_from_the_filed_facts() -> None:
     stmts = _payload(
-        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _face("x_Receivables", "Receivables", **{INSTANT: 70.0}),
+        ],
         filed_facts=[_fact("AccountsReceivableNet", 70.0, end=INSTANT)],
     )
     resolution = stmts.resolve("receivables", FY)
@@ -212,7 +241,10 @@ def test_a_substitute_total_is_read_from_the_filed_facts() -> None:
 
 def test_a_sole_family_member_is_read_from_the_filed_facts() -> None:
     stmts = _payload(
-        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _face("x_Inventory", "Inventory", **{INSTANT: 30.0}),
+        ],
         filed_facts=[_fact("InventoryFinishedGoods", 30.0, end=INSTANT)],
     )
     assert stmts.resolve("inventory", FY).value == 30.0
@@ -231,7 +263,10 @@ def test_two_inventory_families_stay_empty() -> None:
 
 def test_the_disjoint_short_term_investment_classes_are_summed() -> None:
     stmts = _payload(
-        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _face("x_ShortTermInvestments", "Short-term investments", **{INSTANT: 15.0}),
+        ],
         filed_facts=[
             _fact("TradingSecurities", 10.0, end=INSTANT),
             _fact("HeldToMaturitySecuritiesCurrent", 5.0, end=INSTANT),
@@ -244,7 +279,10 @@ def test_the_disjoint_short_term_investment_classes_are_summed() -> None:
 
 def test_the_exact_da_sum_reads_only_when_both_parts_are_filed() -> None:
     both = _payload(
-        cash_flow=[_row("NetCashProvidedByUsedInOperatingActivities", "OCF", **{FY: 100.0})],
+        cash_flow=[
+            _row("NetCashProvidedByUsedInOperatingActivities", "OCF", **{FY: 100.0}),
+            _face("x_CashAddBack", "Other noncash item", **{FY: 15.0}),
+        ],
         filed_facts=[
             _fact("Depreciation", 10.0, start="2024-01-01", end="2024-12-31"),
             _fact("AmortizationOfIntangibleAssets", 5.0, start="2024-01-01", end="2024-12-31"),
@@ -329,6 +367,7 @@ def test_total_debt_uses_a_filed_fact_long_term_debt() -> None:
             _row("Assets", "Assets", **{INSTANT: 100.0}),
             _row("StockholdersEquity", "Equity", **{INSTANT: 50.0}),
             _row("CashAndCashEquivalentsAtCarryingValue", "Cash", **{INSTANT: 10.0}),
+            _face("x_LongTermDebt", "Long-term debt", **{INSTANT: 50.0}),
         ],
         filed_facts=[_fact("LongTermDebt", 50.0, end=INSTANT)],
     )
@@ -343,6 +382,7 @@ def test_a_short_term_fact_alone_is_not_total_debt() -> None:
             _row("Assets", "Assets", **{INSTANT: 100.0}),
             _row("StockholdersEquity", "Equity", **{INSTANT: 50.0}),
             _row("CashAndCashEquivalentsAtCarryingValue", "Cash", **{INSTANT: 10.0}),
+            _face("x_CommercialPaper", "Commercial paper", **{INSTANT: 10.0}),
         ],
         filed_facts=[_fact("CommercialPaper", 10.0, end=INSTANT)],
     )
@@ -353,6 +393,91 @@ def test_a_short_term_fact_alone_is_not_total_debt() -> None:
     resolution = stmts.total_debt(FY)
     assert resolution.value is None
     assert "short_term_debt_only" in resolution.flags
+
+
+def test_rule_b_calibration_keeps_a_value_the_statements_give_at_another_column() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("AccountsReceivableNetCurrent", "Receivables", **{"2023-12-31": 100.0}),
+        ],
+        filed_facts=[
+            _fact("AccountsReceivableNet", 100.0, end=INSTANT),
+            _fact("AccountsReceivableNet", 100.0, end="2023-12-31"),
+        ],
+    )
+    resolution = stmts.resolve("receivables", FY)
+    assert resolution.value == 100.0
+    assert "filed_fact_calibrated" in resolution.flags
+
+
+def test_rule_b_calibration_refuses_a_path_that_disagrees() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("AccountsReceivableNetCurrent", "Receivables", **{"2023-12-31": 100.0}),
+        ],
+        filed_facts=[
+            _fact("AccountsReceivableNet", 120.0, end=INSTANT),
+            _fact("AccountsReceivableNet", 120.0, end="2023-12-31"),
+        ],
+    )
+    resolution = stmts.resolve("receivables", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused" in resolution.flags
+    assert "filed_fact_refused_calibration" in resolution.flags
+
+
+def test_rule_a_refuses_a_fact_that_is_not_on_the_face() -> None:
+    stmts = _payload(
+        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        filed_facts=[_fact("LongTermDebt", 50.0, end=INSTANT)],
+    )
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused" in resolution.flags
+    assert "filed_fact_refused_not_on_face" in resolution.flags
+
+
+def test_rule_c_a_zero_filed_value_is_never_used() -> None:
+    stmts = _payload(
+        balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
+        filed_facts=[_fact("LongTermDebt", 0.0, end=INSTANT)],
+    )
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused_zero" in resolution.flags
+
+
+def test_rule_d_a_current_maturity_line_does_not_change_the_statement_short_term_debt() -> None:
+    """The long-term fact may fill ``long_term_debt``, but it must not set N4's
+    ``current_maturities_in_long_term`` and so remove/change the statement's short-term value."""
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("ShortTermBorrowings", "Short-term borrowings", **{INSTANT: 20.0}),
+            _face("x_LongTermDebt", "Long-term debt", **{INSTANT: 100.0}),
+        ],
+        filed_facts=[_fact("LongTermDebt", 100.0, end=INSTANT)],
+    )
+    assert stmts.resolve("short_term_debt", FY).value == 20.0
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value == 100.0
+    assert "includes_current_maturities" not in resolution.flags
+
+
+def test_rule_e_no_filed_debt_when_the_face_carries_other_debt_lines() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("SeniorNotes", "Senior notes", **{INSTANT: 50.0}),
+            _row("MortgagesPayable", "Mortgages payable", **{INSTANT: 100.0}),
+        ],
+        filed_facts=[_fact("LongTermDebt", 150.0, end=INSTANT)],
+    )
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused_other_debt_lines" in resolution.flags
 
 
 def test_the_net_proceeds_element_never_fills_capex() -> None:

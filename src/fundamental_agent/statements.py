@@ -1743,7 +1743,7 @@ class Statements:
 
     # -- the filed-fact fallback (T-159c) -----------------------------------------------------------
 
-    def _filed_fact_row(  # noqa: PLR0911 - one return per fallback kind
+    def _filed_fact_row(  # noqa: C901, PLR0911 - one return per fallback kind
         self, spec: LineItem, column: str, *, instant: bool
     ) -> tuple[float | None, str | None, str | None] | None:
         """The item's value from the filing's own ``filed_facts`` when the statements gave nothing.
@@ -1760,8 +1760,16 @@ class Statements:
             if self.filed_facts_error:
                 self._flag("filed_facts_unavailable")
             return None
+        if spec.name in _SHARE_ITEMS:
+            # The pipeline reads the cover count and the weighted diluted count elsewhere; a
+            # filed-fact share count is not this fallback's item (T-159c round 2).
+            return None
         period = self._filed_fact_period(column, instant=instant)
         if period is None:
+            return None
+        if spec.name == "long_term_debt" and "debt_sum_refused_other_lines" in self._flags:
+            # Rule E: the statements refused the sum because the face carries other debt lines.
+            self._filed_fact_refuse("other_debt_lines")
             return None
         if spec.name == "net_income":
             return self._net_income_filed_fact(spec, period)
@@ -1856,10 +1864,103 @@ class Statements:
         if value < 0 and concept in spec.nonnegative:
             self._flag("wrong_sign_rejected")
             return None, None
+        if value == 0.0:
+            # Rule C: a zero filed value is never the item.
+            self._filed_fact_refuse("zero")
+            return None, "zero"
         return value, None
 
     def _filed_fact_present(self, spec: LineItem, period: Period, concept: str) -> bool:
         return bool(self._filed_facts_for(spec, period, concept))
+
+    def _filed_fact_refuse(self, reason: str) -> None:
+        """Rule A-E: the value is not used; name the rule that refused it."""
+        self._flag("filed_fact_refused")
+        self._flag(f"filed_fact_refused_{reason}")
+
+    def _filed_fact_face_values(self, spec: LineItem, period: Period) -> set[int]:
+        """The item's own face statement's non-zero values at *period*, rounded to the dollar."""
+        out: set[int] = set()
+        for statement in spec.statements:
+            for row in self.raw.get(statement, []):
+                if row.get("abstract") or row.get("dimension"):
+                    continue
+                value = _numeric(row.get(period.key))
+                if value is not None and value != 0.0:
+                    out.add(round(abs(value)))
+        return out
+
+    def _filed_fact_statement_value(self, spec: LineItem, column: str) -> float | None:
+        """The **statements'** value of *item* at *column*, without the filed-fact fallback."""
+        outer_facts, outer_flags = self.filed_facts, self._flags
+        self.filed_facts, self._flags = (), []
+        try:
+            read = column
+            if spec.statements == _BALANCE:
+                instant = self._instant_for(column)
+                if instant is None:
+                    return None
+                read = instant
+            return self._resolve_column(spec, read)[0]
+        finally:
+            self.filed_facts, self._flags = outer_facts, outer_flags
+
+    def _filed_fact_path_value(self, spec: LineItem, period: Period, concept: str) -> float | None:
+        """The same filed path (one concept or a ``+``/``-`` sum) in *period*, without flags."""
+        outer_flags = self._flags
+        self._flags = []
+        try:
+            total = 0.0
+            sign = 1.0
+            for part in re.split(r" ([+-]) ", concept):
+                if part in "+-":
+                    sign = 1.0 if part == "+" else -1.0
+                    continue
+                value, _status = self._filed_fact_value(spec, period, part)
+                if value is None:
+                    return None
+                total += sign * value
+            return total
+        finally:
+            self._flags = outer_flags
+
+    def _filed_fact_proof(
+        self, spec: LineItem, period: Period, concept: str, value: float
+    ) -> str | None:
+        """Rule A/B: ``"on_face"``, ``"calibrated"``, or the refusal reason (``not_on_face`` /
+        ``calibration``). A candidate on the face needs no calibration; with at least one other
+        comparable column, the same filed path must agree within 0.5 % at every one."""
+        if value == 0.0:
+            return "zero"
+        balance = spec.statements == _BALANCE
+        compared = agreed = 0
+        for other in self.periods:
+            if other.is_instant != balance or other.key == period.key:
+                continue
+            statement_value = self._filed_fact_statement_value(spec, other.key)
+            if statement_value is None or statement_value == 0.0:
+                continue
+            path_value = self._filed_fact_path_value(spec, other, concept)
+            if path_value is None:
+                continue
+            compared += 1
+            if abs(path_value - statement_value) <= 0.005 * abs(statement_value):
+                agreed += 1
+        if compared:
+            return "calibrated" if agreed == compared else "calibration"
+        face = self._filed_fact_face_values(spec, period)
+        return "on_face" if round(abs(value)) in face else "not_on_face"
+
+    def _filed_fact_accept(
+        self, spec: LineItem, period: Period, concept: str, value: float
+    ) -> bool:
+        """Whether a filed candidate is proved to be the item; adds its proof/refusal flag."""
+        proof = self._filed_fact_proof(spec, period, concept, value)
+        if proof in ("on_face", "calibrated"):
+            self._flag(f"filed_fact_{proof}")
+            return True
+        self._filed_fact_refuse(proof or "not_on_face")
+        return False
 
     def _generic_filed_fact(  # noqa: C901, PLR0911, PLR0912 - the registry tiers, one pass
         self, spec: LineItem, period: Period
@@ -1873,7 +1974,7 @@ class Statements:
             value, status = self._filed_fact_value(spec, period, concept)
             if status == "ambiguous":
                 return None
-            if value is not None:
+            if value is not None and self._filed_fact_accept(spec, period, concept, value):
                 return value, concept, "filed_fact"
         substitute = spec.substitute
         if substitute is None:
@@ -1882,23 +1983,29 @@ class Statements:
             value, status = self._filed_fact_value(spec, period, concept)
             if status == "ambiguous":
                 return None
-            if value is not None:
+            if value is not None and self._filed_fact_accept(spec, period, concept, value):
                 return value, concept, "filed_fact"
         family = self._filed_fact_family(spec, period, substitute.families)
         if family is not None:
             concept, value = family
-            return value, concept, "filed_fact"
+            if self._filed_fact_accept(spec, period, concept, value):
+                return value, concept, "filed_fact"
         if substitute.classes:
             classes = self._filed_fact_classes(spec, period, substitute.classes)
             if classes is not None:
-                return classes
+                value, concept, _how = classes
+                if self._filed_fact_accept(spec, period, concept, value):
+                    return value, concept, "filed_fact"
         for left, right in substitute.sums:
             first, first_status = self._filed_fact_value(spec, period, left)
             second, second_status = self._filed_fact_value(spec, period, right)
             if first_status == "ambiguous" or second_status == "ambiguous":
                 return None
             if first is not None and second is not None:
-                return first + second, f"{left} + {right}", "filed_fact"
+                concept = f"{left} + {right}"
+                value = first + second
+                if self._filed_fact_accept(spec, period, concept, value):
+                    return value, concept, "filed_fact"
         return None
 
     def _filed_fact_family(  # noqa: C901 - one family's members, then the sole-member rule
@@ -1963,7 +2070,7 @@ class Statements:
             return None
         return total, " + ".join(sorted(used)), "filed_fact"
 
-    def _net_income_filed_fact(  # noqa: C901, PLR0911 - ID-03/CON-19 tiers
+    def _net_income_filed_fact(  # noqa: C901, PLR0911, PLR0912 - ID-03/CON-19 tiers
         self, spec: LineItem, period: Period
     ) -> tuple[float | None, str | None, str | None] | None:
         """Parent net income from the filed facts (ID-03, CON-19, N13).
@@ -1976,7 +2083,9 @@ class Statements:
         parent, status = self._filed_fact_value(spec, period, G + "NetIncomeLoss")
         if status == "ambiguous":
             return None
-        if parent is not None:
+        if parent is not None and self._filed_fact_accept(
+            spec, period, G + "NetIncomeLoss", parent
+        ):
             return parent, G + "NetIncomeLoss", "filed_fact"
         profit, status = self._filed_fact_value(spec, period, G + "ProfitLoss")
         if status == "ambiguous":
@@ -1984,13 +2093,18 @@ class Statements:
         if profit is not None:
             nci_total = G + "NetIncomeLossAttributableToNoncontrollingInterest"
             if not self._nci_income_filed_fact(spec, period):
-                self._flag("no_nci_income_filed")
-                return profit, G + "ProfitLoss", "filed_fact"
-            nci, nci_status = self._filed_fact_value(spec, period, nci_total)
-            if nci_status == "ambiguous":
-                return None
-            if nci is not None:
-                return profit - nci, f"{G}ProfitLoss - {nci_total}", "filed_fact"
+                if self._filed_fact_accept(spec, period, G + "ProfitLoss", profit):
+                    self._flag("no_nci_income_filed")
+                    return profit, G + "ProfitLoss", "filed_fact"
+            else:
+                nci, nci_status = self._filed_fact_value(spec, period, nci_total)
+                if nci_status == "ambiguous":
+                    return None
+                if nci is not None:
+                    concept = f"{G}ProfitLoss - {nci_total}"
+                    combined = profit - nci
+                    if self._filed_fact_accept(spec, period, concept, combined):
+                        return combined, concept, "filed_fact"
         for concept in NET_INCOME_SUBSTITUTES:
             value, status = self._filed_fact_value(spec, period, concept)
             if status == "ambiguous":
@@ -2002,8 +2116,9 @@ class Statements:
             ):
                 self._flag("net_income_to_common_refused_preferred_dividends")
                 return None
-            self._flag("net_income_to_common")
-            return value, concept, "filed_fact"
+            if self._filed_fact_accept(spec, period, concept, value):
+                self._flag("net_income_to_common")
+                return value, concept, "filed_fact"
         return None
 
     def _nci_income_filed_fact(self, spec: LineItem, period: Period) -> bool:
@@ -2034,7 +2149,7 @@ class Statements:
             value, status = self._filed_fact_value(spec, period, concept)
             if status == "ambiguous":
                 return None
-            if value is not None:
+            if value is not None and self._filed_fact_accept(spec, period, concept, value):
                 return value, concept, "filed_fact"
         cash = G + "Cash"
         equivalents = G + "CashEquivalentsAtCarryingValue"
@@ -2043,14 +2158,21 @@ class Statements:
         if cash_status == "ambiguous" or ce_status == "ambiguous":
             return None
         if cash_value is not None and ce_value is not None:
-            self._flag("cash_plus_cash_equivalents_map")
-            return cash_value + ce_value, f"{cash} + {equivalents}", "filed_fact"
-        if cash_value is not None and ce_value is None:
+            concept = f"{cash} + {equivalents}"
+            value = cash_value + ce_value
+            if self._filed_fact_accept(spec, period, concept, value):
+                self._flag("cash_plus_cash_equivalents_map")
+                return value, concept, "filed_fact"
+        if (
+            cash_value is not None
+            and ce_value is None
+            and self._filed_fact_accept(spec, period, cash, cash_value)
+        ):
             self._flag("cash_element_only")
             return cash_value, cash, "filed_fact"
         return None
 
-    def _short_term_debt_filed_fact(
+    def _short_term_debt_filed_fact(  # noqa: C901 - the map and N4
         self, spec: LineItem, period: Period
     ) -> tuple[float | None, str | None, str | None] | None:
         """The short-term debt map from the filed facts, with N4: current maturities are never
@@ -2066,25 +2188,26 @@ class Statements:
                 value, status = self._filed_fact_value(spec, period, concept)
                 if status == "ambiguous":
                     return None
-                if value is not None:
+                if value is not None and self._filed_fact_accept(spec, period, concept, value):
                     parts.append((value, concept))
                     break
         if parts:
-            return (
-                sum(value for value, _concept in parts),
-                " + ".join(concept for _value, concept in parts),
-                "filed_fact",
-            )
+            concept = " + ".join(concept for _value, concept in parts)
+            value = sum(value for value, _concept in parts)
+            if self._filed_fact_accept(spec, period, concept, value):
+                return value, concept, "filed_fact"
         if not in_long_term:
             value, status = self._filed_fact_value(spec, period, SHORT_TERM_DEBT_LAST)
             if status == "ambiguous":
                 return None
-            if value is not None:
+            if value is not None and self._filed_fact_accept(
+                spec, period, SHORT_TERM_DEBT_LAST, value
+            ):
                 self._flag("includes_leases")
                 return value, SHORT_TERM_DEBT_LAST, "filed_fact"
         return None
 
-    def _long_term_debt_filed_fact(  # noqa: C901, PLR0912 - the concepts then the components
+    def _long_term_debt_filed_fact(  # noqa: C901, PLR0911, PLR0912 - concepts then components
         self, spec: LineItem, period: Period
     ) -> tuple[float | None, str | None, str | None] | None:
         """Long-term debt from the filed facts: the registry's own concepts, then T-159a's
@@ -2095,14 +2218,24 @@ class Statements:
                 return None
             if value is None:
                 continue
-            if concept in INCLUDES_CURRENT_MATURITIES:
-                self._flag("includes_current_maturities")
-            if concept in (
+            includes_current = concept in INCLUDES_CURRENT_MATURITIES
+            if includes_current:
+                short = self._filed_fact_statement_value(REGISTRY["short_term_debt"], period.key)
+                if short is not None and short != 0.0:
+                    # Rule D: the statements already gave short-term debt. Keep the long-term
+                    # value, but do not let it set N4's ``current_maturities_in_long_term`` --
+                    # that would remove or change the statement's short-term value.
+                    includes_current = False
+            finance_leases = concept in (
                 G + "LongTermDebtAndCapitalLeaseObligations",
                 G + "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
-            ):
-                self._flag("includes_finance_leases")
-            return value, concept, "filed_fact"
+            )
+            if self._filed_fact_accept(spec, period, concept, value):
+                if includes_current:
+                    self._flag("includes_current_maturities")
+                if finance_leases:
+                    self._flag("includes_finance_leases")
+                return value, concept, "filed_fact"
         filed: dict[str, float] = {}
         blocked: set[str] = set()
         for component in LONG_TERM_DEBT_COMPONENTS:
@@ -2126,8 +2259,12 @@ class Statements:
                     blocked.update(self._component_descendants(child))
         if not filed:
             return None
+        concept = " + ".join(sorted(filed))
+        value = sum(filed.values())
+        if not self._filed_fact_accept(spec, period, concept, value):
+            return None
         self._flag("debt_sourced_sum")
-        return sum(filed.values()), " + ".join(sorted(filed)), "filed_fact"
+        return value, concept, "filed_fact"
 
     def _da_filed_fact(
         self, spec: LineItem, period: Period
@@ -2138,15 +2275,18 @@ class Statements:
             value, status = self._filed_fact_value(spec, period, concept)
             if status == "ambiguous":
                 return None
-            if value is not None:
+            if value is not None and self._filed_fact_accept(spec, period, concept, value):
                 return value, concept, "filed_fact"
         first, first_status = self._filed_fact_value(spec, period, DA_EXACT_SUM[0])
         second, second_status = self._filed_fact_value(spec, period, DA_EXACT_SUM[1])
         if first_status == "ambiguous" or second_status == "ambiguous":
             return None
         if first is not None and second is not None:
-            self._flag("da_sourced_map")
-            return first + second, f"{DA_EXACT_SUM[0]} + {DA_EXACT_SUM[1]}", "filed_fact"
+            concept = f"{DA_EXACT_SUM[0]} + {DA_EXACT_SUM[1]}"
+            value = first + second
+            if self._filed_fact_accept(spec, period, concept, value):
+                self._flag("da_sourced_map")
+                return value, concept, "filed_fact"
         return None
 
     def _sole_family_member(

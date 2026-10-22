@@ -6,7 +6,7 @@ from typing import Any
 
 from fundamental_agent.metrics import cagr, efficiency, liquidity, provenance, roic, valuation
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import FiledFact, Statements
 
 G = "us-gaap_"
 FY = "2024-12-31 (FY)"
@@ -179,6 +179,27 @@ def test_ebitda_provenance_stays_period_on_a_10k() -> None:
     block = provenance.build(stmts, FY, MetricResult("ebitda", 150.0, "usd", {}))
     assert [entry["basis"] for entry in block["items"]["operating_income"]] == ["period"]
     assert [entry["basis"] for entry in block["items"]["depreciation_amortization"]] == ["period"]
+
+
+def test_a_refused_filed_fact_stays_missing_input_not_not_reported() -> None:
+    stmts = _stmts(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 500.0}),
+            _row("StockholdersEquity", "Equity", **{INSTANT: 300.0}),
+        ],
+    )
+    stmts.filed_facts = (
+        FiledFact(
+            concept="us-gaap:LongTermDebt",
+            value=100.0,
+            unit="USD",
+            period_start=None,
+            period_end=INSTANT,
+        ),
+    )
+    block = provenance.build(stmts, FY, MetricResult("debt_to_assets", None, "x", {}))
+    assert block["empty_reason"] == provenance.MISSING_INPUT
+    assert "filed_fact_refused" in block["items"]["long_term_debt"][0]["flags"]
 
 
 def test_a_cover_scale_suspect_is_a_stored_flag_on_the_valuation_rows() -> None:
