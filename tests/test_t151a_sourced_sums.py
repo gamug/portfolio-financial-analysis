@@ -95,8 +95,11 @@ def test_c1_depreciation_plus_an_outside_amortization_is_not_d_and_a() -> None:
 
 
 def test_c1_depreciation_intangibles_and_an_extension_da_line_refuses_the_sum() -> None:
-    """Condition (c) "only lines": an extension D&A line beside the four refuses the sum
-    (``da_sum_refused_other_lines``) and D&A stays empty."""
+    """Condition (c) "only lines": an extension D&A line beside the four refuses the **sourced
+    sum** (``da_sum_refused_other_lines``). From T-159a the item is then read through the exact
+    two-part sum (``Depreciation`` + ``AmortizationOfIntangibleAssets``, flagged
+    ``da_sourced_map``): the two named parts are the D&A, whatever other amortization line the
+    filing presents."""
     stmts = _cashflow(
         _row(G + "Depreciation", "Depreciation", 401_000_000.0),
         _row(
@@ -107,11 +110,16 @@ def test_c1_depreciation_intangibles_and_an_extension_da_line_refuses_the_sum() 
         _row("x_AmortizationOfContentAssets", "Amortization of content assets", 100_000_000.0),
     )
     res = stmts.resolve("depreciation_amortization", FY)
-    assert res.value is None and "da_sum_refused_other_lines" in res.flags
+    assert "da_sum_refused_other_lines" in res.flags
+    assert res.value == 4_105_000_000.0
+    assert res.how == "sourced_map"
+    assert res.concept == f"{G}Depreciation + {G}AmortizationOfIntangibleAssets"
 
 
 def test_c1_a_filed_total_is_the_total_and_no_sum_is_attempted() -> None:
-    """Tier 1 is unchanged: a filed ``DepreciationDepletionAndAmortization`` wins outright."""
+    """Tier 1 is unchanged: a filed ``DepreciationDepletionAndAmortization`` wins outright (no
+    sourced sum is attempted). From T-159a rule 4 the separate ``AmortizationOfIntangibleAssets``
+    add-back line of the same statement is added to it."""
     stmts = _cashflow(
         _row(
             G + "DepreciationDepletionAndAmortization", "Depreciation and amortization", 9_000_000.0
@@ -122,8 +130,13 @@ def test_c1_a_filed_total_is_the_total_and_no_sum_is_attempted() -> None:
         ),
     )
     res = stmts.resolve("depreciation_amortization", FY)
-    assert res.value == 9_000_000.0 and res.how == "concept"
+    assert res.value == 109_000_000.0
+    assert (
+        res.concept
+        == f"{G}DepreciationDepletionAndAmortization + {G}AmortizationOfIntangibleAssets"
+    )
     assert "da_sourced_sum" not in res.flags
+    assert "da_plus_intangibles_row" in res.flags
 
 
 def test_c1_the_year_to_date_column_works_through_the_same_map() -> None:

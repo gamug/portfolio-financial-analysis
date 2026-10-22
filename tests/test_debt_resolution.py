@@ -356,8 +356,6 @@ def test_an_unread_debt_line_makes_a_missing_debt_a_capture_failure() -> None:
 @pytest.mark.parametrize(
     "concept",
     [
-        "LinesOfCreditCurrent",
-        "SeniorNotes",
         "MortgageLoansPayable",
     ],
 )
@@ -367,14 +365,72 @@ def test_a_debt_concept_by_any_of_its_names_outside_the_trees_is_still_a_debt_li
     """(**Replaced**: ``test_a_debt_concept_by_any_of_its_names_is_a_debt_line``, whose ``LineOfCredit``
     and ``ConvertibleDebtNoncurrent`` cases are now sourced children, T-151 part 1 C2.) The pattern
     for "a debt line is filed" is case-insensitive and reads the plural names too: a filer whose
-    only debt is a line of credit has debt the resolver did not find, not none. These three names
-    are no child of either sourced tree, so with no tree child filed the sum is not attempted and
-    the debt stays a capture failure."""
+    only debt is a line of credit has debt the resolver did not find, not none. This name is no
+    child of either sourced tree and no T-159a component, so with no tree child filed the sum is
+    not attempted and the debt stays a capture failure."""
     payload = copy.deepcopy(_payload(ALGN))
     template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
     _add(payload, "balance_sheet", template, concept=G + concept)
     stmts = Statements.from_payload(payload)
     assert stmts.total_debt(_key(stmts)).flags == ("capture_failure",)
+
+
+@pytest.mark.parametrize(
+    "concept",
+    [
+        "SeniorNotes",
+        "ConvertibleLongTermNotesPayable",
+        "LongTermNotesPayable",
+        "OtherLongTermDebtNoncurrent",
+    ],
+)
+def test_a_t159a_long_term_debt_component_is_read_by_the_sum(concept: str) -> None:
+    """T-159a: the long-term debt components enter the MET-07 / ID-02b sum (never a free
+    alternative): a filer whose only long-term debt line is its senior notes has long-term debt.
+    The sum is refused when another debt-named line is on the balance sheet (the "only lines"
+    condition), so the value is read alone here."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + concept)
+    stmts = Statements.from_payload(payload)
+    resolution = stmts.resolve("long_term_debt", _key(stmts))
+    assert resolution.value is not None
+    assert resolution.concept == G + concept
+    assert "debt_sourced_sum" in resolution.flags
+
+
+@pytest.mark.parametrize(
+    "concept",
+    [
+        "OtherShortTermBorrowings",
+        "ConvertibleDebtCurrent",
+        "ConvertibleNotesPayableCurrent",
+        "LinesOfCreditCurrent",
+    ],
+)
+def test_a_t159a_short_term_debt_line_is_read_by_the_map(concept: str) -> None:
+    """T-159a: the short-term debt lines a filer presents instead of a "short-term borrowings"
+    line are read by the MET-07 map -- only when the map's own ``borrowings`` term is not filed."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + concept)
+    stmts = Statements.from_payload(payload)
+    resolution = stmts.resolve("short_term_debt", _key(stmts))
+    assert resolution.value is not None
+    assert resolution.concept == G + concept
+
+
+def test_a_t159a_short_term_debt_line_never_displaces_the_maps_own_borrowings_term() -> None:
+    """MET-07: "CommercialPaper only when ShortTermBorrowings is absent". A filer that reports
+    short-term borrowings under one of the map's names keeps that value as the term's own line;
+    the filed children are added beside it (T-159a rule 3), never in place of it."""
+    payload = copy.deepcopy(_payload(ALGN))
+    template = _row(payload, "balance_sheet", G + "CashAndCashEquivalentsAtCarryingValue")
+    _add(payload, "balance_sheet", template, concept=G + "LinesOfCreditCurrent")
+    _add(payload, "balance_sheet", template, concept=G + "ShortTermBorrowings")
+    stmts = Statements.from_payload(payload)
+    resolution = stmts.resolve("short_term_debt", _key(stmts))
+    assert resolution.concept == f"{G}ShortTermBorrowings + {G}LinesOfCreditCurrent"
 
 
 @pytest.mark.parametrize("concept", ["LineOfCredit", "ConvertibleDebtNoncurrent"])

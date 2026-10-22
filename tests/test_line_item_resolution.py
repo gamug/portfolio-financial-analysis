@@ -456,16 +456,21 @@ def test_an_nci_income_filed_as_zero_makes_profit_loss_the_parent_s() -> None:
     assert stmts.get("net_income", key) == 4_614_000_000.0
 
 
-def test_net_income_is_never_the_available_to_common_line() -> None:
-    """N13: Waters' income statement files only "Net income" under
-    ``NetIncomeLossAvailableToCommonStockholdersBasic`` -- the line after preferred dividends, which
-    is not the parent's earnings. The item is empty and flagged, in each of the 83 production
-    filings (15 companies) that took that line."""
+def test_the_available_to_common_line_is_the_parent_net_income_without_a_preferred_dividend() -> (
+    None
+):
+    """N13, decided by T-159a: Waters' income statement files only "Net income" under
+    ``NetIncomeLossAvailableToCommonStockholdersBasic`` -- the line after preferred dividends. It is
+    the parent's earnings when no preferred dividend is filed for the period, which is Waters'
+    shape in each of the 83 production filings (15 companies) that took that line: the item is
+    that value, flagged ``net_income_to_common``."""
     for name in (WAT, WAT_21):
         stmts = _stmts(name)
         key = _latest(stmts, quarter=True)
         resolution = stmts.resolve("net_income", key)
-        assert resolution.value is None and resolution.flags == ("net_income_not_filed",)
+        assert resolution.value is not None
+        assert resolution.concept == "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic"
+        assert "net_income_to_common" in resolution.flags
         assert (
             stmts.get("net_income_to_common", key) is not None
         )  # the EPS cross-check still has it

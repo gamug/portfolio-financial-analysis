@@ -194,9 +194,11 @@ def test_slb_k3_cash_element_only_on_classified_balance_sheet() -> None:
     assert res.flags == ("cash_element_only",)
 
 
-def test_insurer_with_cash_and_unclassified_balance_sheet_stays_empty() -> None:
-    """An unclassified balance sheet (e.g. Article 7 insurer) filing us-gaap_Cash
-    alone without current_assets/current_liabilities stays empty (no guess)."""
+def test_the_bare_cash_line_is_the_cash_on_an_unclassified_balance_sheet() -> None:
+    """T-159a: the bare ``us-gaap_Cash`` line ("Amount of currency on hand as well as demand
+    deposits with banks or financial institutions", the FASB 2026 taxonomy) is the cash of a filer
+    that files no cash-equivalents fact -- read on an unclassified balance sheet too, flagged
+    ``cash_element_only`` (the reader must know the cash excludes the equivalents)."""
     payload = {
         "balance_sheet": [
             {
@@ -215,8 +217,36 @@ def test_insurer_with_cash_and_unclassified_balance_sheet_stays_empty() -> None:
     }
     stmts = Statements.from_payload(payload)
     res = stmts.resolve("cash", "2021-12-31")
-    assert res.value is None
-    assert res.flags == ()
+    assert res.value == 500_000_000.0
+    assert res.concept == "us-gaap_Cash"
+    assert res.how == "substitute"
+    assert res.flags == ("cash_element_only",)
+
+
+def test_the_bare_cash_line_is_refused_when_a_cash_equivalents_fact_is_filed() -> None:
+    """T-159a: the substitute is read only when no ``CashEquivalentsAtCarryingValue`` is filed --
+    with one, the cash and cash equivalents are the map's own read (ES map), never the bare line."""
+    payload = {
+        "balance_sheet": [
+            {
+                "concept": "us-gaap_Cash",
+                "label": "Cash",
+                "2021-12-31": 500_000_000.0,
+                "preferred_sign": 1.0,
+            },
+            {
+                "concept": "us-gaap_CashEquivalentsAtCarryingValue",
+                "label": "Cash equivalents",
+                "2021-12-31": 20_000_000.0,
+                "preferred_sign": 1.0,
+            },
+        ]
+    }
+    stmts = Statements.from_payload(payload)
+    res = stmts.resolve("cash", "2021-12-31")
+    assert res.value == 520_000_000.0
+    assert res.concept == "us-gaap_Cash + us-gaap_CashEquivalentsAtCarryingValue"
+    assert res.how == "map"
 
 
 def test_cash_flags_reach_liquidity_and_valuation_inputs() -> None:

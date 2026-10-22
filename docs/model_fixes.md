@@ -10180,3 +10180,266 @@ only by a new line that names the line it replaces.
 | 35 | 2026-10-22 | Rule 4 rests on the **face statement**, not the calculation tree: the taxonomy places `AmortizationOfIntangibleAssets` under `AdjustmentForAmortization` under DDA, so a filer presenting DDA and intangibles amortization as **sibling** add-back rows used DDA for a part. Supported by the sibling check (12 companies, T-159a), the "of which" guard and the income statements (CME, MSCI, VRSK carry both lines). Kept | B | FASB 2026 scf-indir cal | `f7_is_check.py` |
 | 36 | 2026-10-22 | **T-159a round 2 accepted** (head 7c2b2e3, CI green): HLT exception (D&A changed 36 → 33 filings), widest-first components with the descendant rule; `SeniorNotes` as a long-term component measured — 13 companies / 206 columns, only EQT also files a current line and its two are separate face rows → no double count; the empty-split moves explained (3 extra filings in the scratch DB, +102 values; cause 8's +67 is the scratch DB's missing corporate actions/prices, not T-159a) | B | measured | `b_review_v4/senior_notes.py` |
 | 37 | 2026-10-22 | **#181 round 2 verified** (head 43ba608): `v4_system.csv` f4bb3d18… equals B's fixed copy on every column (non-hit severity empty, as specified), 0 hit / 0 severity disagreements; the two independent scripts' sha256 match. Two text fixes left: the V1 row names the 7 FAILs exactly (T-108, T-111, WI-18 not built in part A; T-131 MRNA declared; T-140 = class (a) drops; the T-132 state; **T-153g CTVA 2026-10-01**, declared by A's ruling, TASKS:1136), and the decision log carries rows 1–37 | B | — | `p2b_v1_verify_pilot_final.log` |
+## T-159a — The registry substitutes: a line item the filing reports under **another standard concept**, and the total debt and the D&A stored too low
+
+**Status**: Fixed 2026-10-22 (branch `fix/t159a-registry-substitutes`, `T-159a`; the pilot's
+close-out PR records T-159 and the T-143 acceptance amendment in `TASKS.md`). Engine
+`metrics-v8` → **`metrics-v9`**.
+
+### Symptom
+
+Two measurements, both on the pilot database `pilot_a2` (read-only, sha256 `0b5bc086…4bd4c81`,
+unchanged):
+
+1. **27.1 % of the pilot's metric values are empty** (96,855 of 356,993) and **4.9 % of them
+   (17,363) are values the filing has and the run does not** (reviewer B's T-143 part A finding,
+   `/workspaces/thesis/handoff/T143a_empty_values_finding.md`). Every cause was measured: the
+   filing reports the item **under another standard concept** (F5a: 4,045 values in rows the
+   gateway already serves), or the item is a component of a family the filing presents in parts
+   (F5b, notes only), or the gateway never served the row (F1-F3), or a rule refused a value the
+   filing has (F4). In the same finding: **1,188 filings (93 companies) store a 0 for the
+   short-term investments they file** (`sti_zero.py`) — the only defaulted input.
+2. **The stored total debt is too low in 1,636 filings (111 companies)** and the stored D&A too
+   low in 73 (12 companies) (reviewer B's V5 reading, 25 10-Ks read by hand; the addendum of
+   2026-10-22). These values are **not empty**, so the empty-value finding did not see them: the
+   metrics that carry them are `debt_to_assets` (1,512 values), `debt_to_equity` (1,311),
+   `enterprise_value` (1,384), `net_debt_to_ebitda` (994) and `enterprise_fcf_yield` (820); the
+   leverage veto would change in 6 filings.
+
+### Root cause — verified against the code and the filings, not taken from the report
+
+1. `fundamental_agent.statements.REGISTRY` read **one concept set per line item** and nothing
+   else. A filer that tags its receivables `us-gaap:AccountsReceivableNet`, its cost of sales
+   `us-gaap:CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization` or its senior
+   notes `us-gaap:SeniorLongTermNotes` has **no concept the registry reads**, so the item stays
+   empty even though the filing holds the value: ID-02a's "narrowest matching definition" was
+   never given a second candidate to choose from. The same held for the short-term investments:
+   the item resolved to nothing and `capital.net_short_term_investments` substituted **0** — the
+   only defaulted input in the code (T-151 part 2, D6).
+2. `SHORT_TERM_DEBT_MAP` read the current maturities from `us-gaap:LongTermDebtCurrent` /
+   `us-gaap:OtherLongTermDebtCurrent` and the borrowings from
+   `us-gaap:ShortTermBorrowings` / `us-gaap:CommercialPaper` / `us-gaap:NotesPayableCurrent`
+   only. A filer that files the current maturities as
+   `us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent` ("Amount of long-term debt and lease
+   obligation, classified as current") or files a term **only as its calculation children**
+   (NEE's commercial paper 1,955M beside its other short-term debt 608M) has a balance sheet the
+   map does not read: the total debt was stored **without** those lines.
+3. The D&A resolver read the filed aggregate (`us-gaap:DepreciationDepletionAndAmortization`
+   and its two siblings) and never the **separate add-back line** the same reconciliation
+   presents beside it: BEN's 10-K files "Depreciation and other amortization" 125,300,000 **and**
+   "Amortization of intangible assets" 406,500,000 as two rows of the same parent
+   (`us-gaap:NetCashProvidedByUsedInOperatingActivities`), so the D&A was stored as 125,300,000 —
+   **76 % below** the filing's own total of 531,800,000.
+
+### Theoretical / technical reference
+
+The pinned FASB 2026 US GAAP Financial Reporting Taxonomy (`us-gaap-2026.zip`, sha256
+`f4c8b8b5697ba7d825a8614b159611cd25a46640e98a9737cda1e4a672bd4c81`; the element definitions and
+the calculation arcs quoted below are taken from it, `elts/us-gaap-doc-2026.xml` and
+`stm/us-gaap-stm-sfp-cls-cal-2026.xml` / `stm/us-gaap-stm-sfp-dbo-cal-2026.xml`):
+
+* **The totals.** `us-gaap:AccountsReceivableNet` — "Amount, after allowance for credit loss, of
+  right to consideration from customer for product sold and service rendered in normal course of
+  business."; `us-gaap:CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization` —
+  "Cost of product sold and service rendered, excluding depreciation, depletion, and
+  amortization."; `us-gaap:AccountsNotesAndLoansReceivableNetCurrent` — "Amount, after allowance
+  for credit loss, of accounts and financing receivables, classified as current. Includes, but is
+  not limited to, notes and loan receivable."; `us-gaap:AccountsAndOtherReceivablesNetCurrent` —
+  "Amount, after allowance, receivable from customers, clients, or other third-parties, and
+  receivables classified as other due within one year or the normal operating cycle, if longer.";
+  `us-gaap:InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings` — "Amount, after
+  deduction of valuation reserves, other allowances, and customer advances received on long-term
+  contracts or programs, of inventory expected to be converted to cash, sold or exchanged within
+  the normal operating cycle."; `us-gaap:RetailRelatedInventoryMerchandise` — "Carrying amount
+  as of the balance sheet date of merchandise inventory purchased by a retailer, wholesaler or
+  distributor and held for future sale."; `us-gaap:InterestExpenseOperating` and
+  `us-gaap:InterestExpenseBorrowings` (gross interest expense — never an
+  `InterestIncomeExpense…Net` element, which is a different quantity: net interest is not
+  interest expense); `us-gaap:MinorityInterestInOperatingPartnerships`;
+  `us-gaap:RedeemableNoncontrollingInterestEquityFairValue`;
+  `us-gaap:NetIncomeLossAvailableToCommonStockholdersBasic`; `us-gaap:Cash` — "Amount of currency
+  on hand as well as demand deposits with banks or financial institutions. Includes other kinds of
+  accounts that have the general characteristics of demand deposits." (the bare cash line, the
+  cash-equivalents element being the other part of the cash and cash equivalents).
+* **The classes (ASC 320).** `us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent` — "Amount
+  of investment in debt security measured at fair value with change in fair value recognized in
+  other comprehensive income (available-for-sale), classified as current.";
+  `us-gaap:TradingSecurities` — "…change in fair value recognized in net income (trading) and
+  investment in equity security measured at fair value with change in fair value recognized in net
+  income (FV-NI)."; `us-gaap:HeldToMaturitySecuritiesCurrent` — "Amount, before allowance for
+  credit loss, of investment in debt security measured at amortized cost (held-to-maturity),
+  classified as current."; `us-gaap:OtherShortTermInvestments` — "Amount of short-term
+  investments classified as other." The four classes are disjoint (ASC 320), so several filed
+  classes are **summed**, each counted once.
+* **The debt tree.** `DebtCurrent` = `ShortTermBorrowings` +
+  `LongTermDebtAndCapitalLeaseObligationsCurrent`; the latter = `LongTermDebtCurrent` +
+  `FinanceLeaseLiabilityCurrent`; `LongTermDebtCurrent` has 14 children (among them
+  `ConvertibleDebtCurrent`, `LinesOfCreditCurrent`, `OtherLongTermDebtCurrent`,
+  `NotesAndLoansPayableCurrent`); `ShortTermBorrowings` has 10 (among them `CommercialPaper`,
+  `OtherShortTermBorrowings`); `NotesAndLoansPayableCurrent` = `NotesPayableCurrent` +
+  `LoansPayableCurrent`; `NotesPayableCurrent` = `ConvertibleNotesPayableCurrent` +
+  `SeniorNotesCurrent` + `OtherNotesPayableCurrent`; the **sfp-cls** arc's `LongTermNotesAndLoans` →
+  `LongTermNotesPayable` → `SeniorLongTermNotes` + `ConvertibleLongTermNotesPayable` +
+  `MediumtermNotesNoncurrent` + `JuniorSubordinatedLongTermNotes` + `NotesPayableToBankNoncurrent` +
+  `OtherLongTermNotesPayable`; the **sfp-dbo** arc's `NotesPayable` → `SeniorNotes` →
+  `SeniorNotesCurrent` + `SeniorLongTermNotes`.
+  `us-gaap:SeniorNotes` — "Including the current and noncurrent portions, carrying value as of the
+  balance sheet date of Notes with the highest claim on the assets of the issuer in case of
+  bankruptcy or liquidation…"; `us-gaap:SeniorLongTermNotes` — "Carrying value as of the balance
+  sheet date of Notes with the highest claim on the assets of the issuer in case of bankruptcy or
+  liquidation (with maturities initially due after one year or beyond the operating cycle, if
+  longer), **excluding current portion**."; `us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent` — "Amount of long-term debt
+  and lease obligation, classified as current."; `us-gaap:ShortTermBorrowings` — "Reflects the
+  total carrying amount as of the balance sheet date of debt having initial terms less than one
+  year or the normal operating cycle, if longer."
+
+### Fix
+
+`fundamental_agent.statements` (the engine version `metrics-v8` → `metrics-v9`):
+
+1. **The substitutes** (`LineItem.substitute`): the item's total under another standard concept,
+   read **after** the item's own concepts (ID-02a precedence — an item that resolves today
+   resolves to the same value); the **sole** filed member of a component family (a component is
+   never the total: it is one only when it is all the filing has); the disjoint ASC 320 classes,
+   summed; and the exact two-part sums (`how = "sourced_map"`). Flags: `cogs_excludes_da` (on the
+   item and on every metric that reads it), `net_income_to_common`.
+2. **The short-term-investment zero** is gone: the filed classes replace it (the only defaulted
+   input).
+3. **The debt rules** (the addendum of 2026-10-22): the current maturities filed as
+   `LongTermDebtAndCapitalLeaseObligationsCurrent` are read (flagged `includes_finance_leases`);
+   a term filed only as its calculation children is their sum, each family once (flagged
+   `debt_components_sum`); the siblings of a component already read are added beside it; a child
+   is never added beside its parent; N4 unchanged.
+4. **The D&A of two face lines**: when the D&A is the filed aggregate and
+   `AmortizationOfIntangibleAssets` is a **separate row of the served cash-flow statement** in the
+   same column, the D&A is their sum (flagged `da_plus_intangibles_row`). A row that is a child of
+   the D&A row (an "of which" line) is not added. **HLT's exception** (reviewer B, 2026-10-22):
+   the rule does not apply when the income statement of the same column carries the cash-flow D&A
+   concept (or `Depreciation`) at the same value and no `AmortizationOfIntangibleAssets` line — the
+   D&A row is then the whole D&A expense and the other row lies outside it (HLT's "Amortization of
+   contract acquisition costs"), so adding it would overstate the D&A and the EBITDA. Measured on
+   every filing of the 13 companies, the exception excludes **only HLT's 8 columns**; BEN, BR, CME,
+   GE, HD, IEX, LHX, MRSH, MSCI, MTB, SWK and VRSK keep the sum (CME, MSCI and VRSK carry both
+   lines on the income statement, so they sum).
+5. `scripts/sec_xcheck/itemcheck.own_concepts` now reads the substitutes as the item's own
+   concepts (they are the item's total under another name), so the SEC cross-check classifies a
+   substitute-resolved value as `ok_own_concept` and not as `OTHER_CONCEPT`.
+
+### Design decisions
+
+- **The substitutes are a separate tier, not more `concepts`.** The item's own concepts stay what
+  the checklist's precedence reads, and the substitutes are read only when they found nothing —
+  which is what "an item that resolves today must resolve to the same value" requires.
+- **A component is the total only when it is alone.** XOM's two inventory components (20,078M
+  beside 4,018M) leave the inventory empty: a partial figure is worse than none.
+- **The available-to-common line is the parent's earnings only without a preferred dividend**
+  (N13, decided by the brief): the line is after the preferred dividends, so it is the same
+  quantity only when none is filed for the period; then it is flagged `net_income_to_common`.
+- **The "of which" D&A row is not added** — the code reads the row that is a child of the D&A row
+  out, and a dimensional "of which" line is never read at all.
+- **The debt sums keep their "only lines" condition**: a balance sheet with a debt-named line the
+  sum does not cover leaves the debt empty (`debt_sum_refused_other_lines`) rather than a value
+  that is too low.
+
+### Verification
+
+**The sample (the brief's §3 and the addendum's table), on a fresh scratch database** — a new
+`/tmp/t159a/scratch.db`, `fundamental_agent run --metrics-only --tickers …` through the shared
+EDGAR gateway (19 tickers, 352 filings analyzed, 0 failed, 17:33), compared with the same filings
+as stored in `pilot_a2`:
+
+| ticker | filing | item | before | after | concept |
+|---|---|---|---:|---:|---|
+| NUE | 10-Q 2025-10-04 | D&A | (empty) | (empty) | — the quarter's facts were not served (F3) |
+| SHW | 10-Q 2025-03-31 | D&A | (empty) | 160,900,000 | `Depreciation` + `AmortizationOfIntangibleAssets` |
+| DHR | 10-Q 2025-03-28 | D&A | (empty) | 591,000,000 | `Depreciation` + `AmortizationOfIntangibleAssets` |
+| BEN | 10-Q 2025-03-31 | receivables | (empty) | 1,453,200,000 | `AccountsReceivableNet` |
+| VMC | 10-Q 2022-03-31 | receivables | (empty) | 917,900,000 | `AccountsAndOtherReceivablesNetCurrent` |
+| L | 10-K 2022-12-31 | receivables | (empty) | 9,403,000,000 | `AccountsReceivableNet` |
+| EA | 10-Q 2024-06-30 | long-term debt | (empty) | 1,882,000,000 | `SeniorLongTermNotes` |
+| OMC | 10-Q 2022-09-30 | long-term debt | (empty) | 5,450,600,000 | `LongTermNotesPayable` |
+| CASY | 10-Q 2025-07-31 | COGS | (empty) | 3,454,660,000 | `CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization` (`cogs_excludes_da`) |
+| DXC | 10-Q 2023-06-30 | COGS | (empty) | 2,719,000,000 | `CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization` (`cogs_excludes_da`) |
+| BKNG | 10-Q 2023-03-31 | net income | (empty) | 266,000,000 | `NetIncomeLossAvailableToCommonStockholdersBasic` (`net_income_to_common`) |
+| XOM | 10-Q 2022-09-30 | inventory | (empty) | (empty) | two components: not the total |
+| AMCR | 10-K 2026-06-30 | total debt | 13,997,000,000 | 14,012,000,000 | the current maturities added |
+| HON | 10-K 2025-12-31 | total debt | 33,034,000,000 | 34,580,000,000 | the current maturities added |
+| PM | 10-K 2025-12-31 | total debt | 45,302,000,000 | 48,835,000,000 | the current maturities added |
+| HLT | 10-K 2025-12-31 | total debt | 12,338,000,000 | 12,363,000,000 | the current maturities added |
+| NEE | 10-K 2025-12-31 | total debt | 95,011,000,000 | 95,619,000,000 | the commercial paper's sibling added (`debt_components_sum`) |
+| CAH | 10-K 2022-06-30 | total debt | 4,735,000,000 | 5,315,000,000 | the current maturities added |
+| PCG | 10-K 2025-12-31 | total debt | 60,883,000,000 | 60,883,000,000 | unchanged (both terms already read) |
+| BEN | 10-K FY2025 | D&A | 125,300,000 | 531,800,000 | `DepreciationDepletionAndAmortization` + `AmortizationOfIntangibleAssets` (`da_plus_intangibles_row`) |
+
+**The empty split** (`scripts/pilot_a/evidence/empty_split.py`, the 19 tickers, `pilot_a2` against
+the scratch database, **on the same filing set** — the 349 filings both databases hold; the scratch
+database has three filings `pilot_a2` does not: DHR 0000313616-26-000199, NEE 0000753308-26-000081
+and PCG 0001004980-26-000055, 34 metric values each, and the denominator grows by their 102
+values):
+
+| | before | after |
+|---|---:|---:|
+| metric values | 12,230 | 12,230 |
+| empty | 3,847 (31.5 %) | 3,392 (27.7 %) |
+| 1. does not apply by rule | 845 | 845 |
+| 2. not defined mathematically | 108 | 111 |
+| 3. needs the prior year | 187 | 188 |
+| 4. **the SEC has the input, we do not** | 714 | **484** |
+| 5. the 10-Q quarter is filed year-to-date only | 159 | 159 |
+| 6. the company does not file the input | 1,717 | **1,470** |
+| 7. the SEC has no data for the filing | 22 | 15 |
+| 8. other | 95 | 120 |
+
+(The cause numbering is the `empty_split.py` script's own: 1 does not apply by rule, 2 not defined
+mathematically, 3 needs the prior year, 4 the SEC has the input, 5 the 10-Q quarter is filed
+year-to-date only, 6 the company does not file the input, 7 the SEC has no data, 8 other. The
+finding's v2 table numbers the same causes differently.)
+
+**The causes that rose, and why** (the values that moved into them):
+
+* **cause 2 (+3)**: three `net_income_growth` values — the *prior year's* net income now resolves
+  (the "available to common" substitute) and it is not positive, so the reason changes from
+  `missing_input` (cause 6) to `growth_base_not_positive` (cause 2).
+* **cause 3 (+1 net, +5 / −4)**: five values move in and four out — the recorded reason changes
+  from `missing_input` to `prior_year_missing`: the item itself is now read (or is known to be
+  absent) and what is missing is the prior-year column (two `inventory_turnover`, two
+  `enterprise_value`, one `net_debt_to_ebitda`).
+* **cause 6 (+38)**: thirty-two `return_on_invested_capital_effective_rate` and six
+  `inventory_turnover` values move **from cause 4**: the debt and the receivables now resolve, so
+  the only missing item left is the redeemable NCI (or the inventory), which the filing does not
+  report — cause 6, not cause 4.
+* **cause 8 (+25 net, +67 / −42)**: the 67 values that move in are the **price-dependent**
+  metrics (`market_capitalization`, `free_cash_flow_yield`, `sbc_adjusted_fcf_yield`,
+  `enterprise_fcf_yield`): the scratch database has no corporate actions imported, so its split
+  factor is 1.0 where `pilot_a2`'s is 0.2 (AMCR's 1-for-5 reverse split) and its market caps are
+  five times the pilot's, and EA's price bars are missing (18 market caps empty with
+  `no_recent_price`). The 42 that move out are the values the substitutes fill. **This is a
+  difference in the two databases' price and corporate-action data, not a T-159a effect** — the
+  market cap reads the cover count and the close, and T-159a changes neither.
+
+**The changed values** (the same comparison, filing by filing): the total debt changed in **176
+filings** — 119 of them in the addendum's understated-debt list (1,636), 19 in its F6c list (44)
+and 38 in the brief's own scope (the long-term debt components: `SeniorLongTermNotes` 19,
+`LongTermNotesPayable` 19); the D&A changed in **33 filings** — 9 in the addendum's F7 list (73)
+and 24 in the brief's exact-sum scope. **Every change is in one of those classes**: the
+receivables (93 filings), the cost of sales (26), the net income (19) and the cash (19) are the
+brief's substitutes; nothing else moved. (The D&A count is 36 less HLT's three: rule 4's HLT
+exception leaves HLT's D&A as the filing's own figure.)
+
+**The short-term-investment zero**, measured on the pilot's 1,070 filings that file a class: the
+item resolved in **38** (filing, period) columns before and in **2,143** after — the 2,105
+recovered values are the classes themselves (the 92 of them the sum of two disjoint classes).
+
+**The fidelity gate** on the scratch database (`fundamental_agent fidelity --companyfacts-dir …`):
+**every item 100 %**, 0 items below the 98 % gate, 0 mismatching (filing, item) pairs.
+
+### Residual scope, deliberately deferred
+
+- `us-gaap:SeniorLongTermNotes` is read as the child of the brief's `LongTermNotesPayable` component
+  (the sfp-cls arc) and of the brief's `SeniorNotes` component (the sfp-dbo arc): EA's senior
+  notes are filed under both elements and the gateway serves the noncurrent one. The components are
+  read widest first, so a child is never added beside its parent.
+- The inventory component families are read with their filed sign (the DQC_0015 list names
+  elements, and the families are the reviewer's construct).
+- The notes-only substitutes (F5b), the never-served rows (F1-F3) and the rule refusals (F4) are
+  T-159c's.

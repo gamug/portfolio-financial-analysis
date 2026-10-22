@@ -136,7 +136,8 @@ def _waters_q3() -> Statements:
 def test_a_10q_records_its_year_to_date_from_its_own_columns(memory_db: Database) -> None:
     """Waters' Q3 2023: revenue 711.692M in the quarter, 2,136.942M in the nine months. (Net income
     was this test's flow until T-148: Waters' income statement files only the "available to common"
-    line, which is not parent net income (ID-03), so its net income is empty.)"""
+    line. From T-159a that line is the parent net income again -- no preferred dividend is filed
+    for the period -- so the net income flow exists and is flagged ``net_income_to_common``.)"""
     memory_db.execute("INSERT INTO assets (id, ticker, cik) VALUES (1, 'WAT', '0001000697')")
     stmts = _waters_q3()
     task = _YearTask(1, "WAT", "Waters", "10-Q", 2023, "0001000697")
@@ -151,7 +152,9 @@ def test_a_10q_records_its_year_to_date_from_its_own_columns(memory_db: Database
         completed=set(),
     )
     flows = _ttm_flows(engine, task, stmts, target)
-    assert "net_income" not in flows
+    # T-159a: Waters' "available to common" line is its parent net income (no preferred dividend
+    # filed for the period), so the net income flow exists again.
+    assert "net_income" in flows
     assert flows["revenue"].ytd == 2_136_942_000.0
     results = [("profitability", MetricResult("return_on_assets", None, "r", {"revenue": 1.0}))]
     db.stamp_ytd(results, flows)
