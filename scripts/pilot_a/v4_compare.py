@@ -17,7 +17,8 @@ Three kinds of difference are reported, and only the first is a disagreement:
   rule's severity): a disagreement, opened with the inputs of both sides;
 * ``only_system`` / ``only_independent`` -- a row one side has and the other does not (the two
   sessions may cover different asset sets): reported with the counts, not as a disagreement;
-* ``severity`` -- the same verdict, a different severity string.
+* ``severity`` -- the same verdict and both sides hit, but a different severity string: a
+  disagreement (on a row that is not a hit there is no severity to compare).
 
 The system side's inputs are recomputed from the database when a disagreement is opened (the same
 readers, the same date), so the opened row shows the numbers the rule read.
@@ -119,7 +120,9 @@ def main() -> int:
         s_hit, i_hit = _flag(s, "hit"), _flag(i, "hit")
         s_sev, i_sev = _flag(s, "severity"), _flag(i, "severity")
         if s_eval == i_eval and s_hit == i_hit:
-            if s_sev != i_sev:
+            # a severity is compared only where there is one: on a hit.  A row that is not a hit
+            # carries no severity to compare (the independent side leaves it empty).
+            if s_hit == "1" and s_sev != i_sev:
                 severity_diffs.append(
                     {
                         "date": key[0],
@@ -127,6 +130,24 @@ def main() -> int:
                         "asset_id": key[2],
                         "system_severity": s_sev,
                         "independent_severity": i_sev,
+                    }
+                )
+                by_rule[key[1]] += 1
+                by_date[key[0]] += 1
+                disagreements.append(
+                    {
+                        "date": key[0],
+                        "rule_id": key[1],
+                        "asset_id": key[2],
+                        "ticker": _flag(s, "ticker") or _flag(i, "ticker"),
+                        "system_evaluated": s_eval,
+                        "system_hit": s_hit,
+                        "independent_evaluated": i_eval,
+                        "independent_hit": i_hit,
+                        "system_severity": s_sev,
+                        "independent_severity": i_sev,
+                        "difference": f"severity: system={s_sev} independent={i_sev}",
+                        "independent_inputs_json": _flag(i, "inputs_json"),
                     }
                 )
             continue

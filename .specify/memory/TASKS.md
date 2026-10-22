@@ -965,22 +965,29 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
       | the layer | the result |
       |---|---|
-      | **V1** (integrity) | `verify_pilot.py`: **7 FAIL**, all the class (a) gateway drops (the itemcheck's 58 FAIL rows) — **explained by a known defect**; the stale-metrics check **PASS**; the market cap across every corporate action: 70 of 72 events measured, **70 ok**, 0 refusals; **FISV's one missing observation session** (2025-11-12, the source's gap — 522 of 589 companies have it) and **MRNA's 2026-08-19 move** (×2.77 on a 46× volume, the gateway's candles are identical to the stored rows) are opened in `scripts/pilot_a/v1_open_items.py` |
+      | **V1** (integrity) | `verify_pilot.py` on the pilot database: **7 FAIL, 1 WARN** — the class (a) gateway drops (the itemcheck's 58 FAIL rows), T-140's 27 `DQ_REVENUE_POS` filings, the valuation filings with a stored price but no market cap (the known T-132 state), T-131's one split-shaped jump (MRNA), and the three checks that need what part A does not build (the bench, the risk model's perf versions, the books); the stale-metrics check **PASS**; the market cap across every corporate action: 70 of 72 events measured, **70 ok**, 0 refusals. **FISV 2025-11-12** is a **declared one-session source gap** — the first session after Fiserv's listing transfer NYSE → Nasdaq and its ticker FI → FISV on 2025-11-11 (Fiserv's FY2025 10-K); the other 588 companies have the session. **MRNA 2026-08-19 (×2.77) is a real move** (the melanoma vaccine trial result; the public close 62.96 → 174.38, the same as ours; the volume ×46 and no corporate action) — both opened in `scripts/pilot_a/v1_open_items.py` |
       | **V2** (the SEC cross-check) | `itemcheck.py`: **58 FAIL**, every one a class (a) gateway drop (**known defect**); `signcheck.py`: **0 FLIPPED**; `precedence.py`: the resolver is concept-first everywhere (**pass**); `fidelity --golden`: **0 items below the 98 % gate**, 32 mismatching (filing, item) pairs (the known fidelity defects) |
-      | **V3** (the metrics recomputed independently) | **pending** — the independent session's script (`scripts/pilot_a/independent_metrics.py`) and results are not in yet |
-      | **V4** (the rules recomputed independently) | the system side (`scripts/pilot_a/v4_system_side.py`, 80,490 rows over the 16 dates) against the independent side: **0 hit disagreements**; the differences are the `evaluated` flag's semantics (8,049 `EARNINGS_MISSING` — part A writes no FUNDAMENTAL score; 1 `NEGATIVE_FCF` — MPC's CON_08 quarantine) and the universe's scope (14,070 rows the cycle does not evaluate) |
-      | **V5** (the human-readable sample) | the 25 cards (`scripts/pilot_a/v5_cards.py`) with their values, accessions, EDGAR links and vetoes (PR #180); against the human reading of the 25 10-Ks: **181 match, 9 differ, 12 both empty, 23 card empty** (13 by rule, 10 known) — the 9 differences are reviewer B's F6a/F6c/F7 classes |
-      | **V6** (the earlier decisions' evidence) | every command of the plan's list run or **N/A with the table it needs** (`scripts/pilot_a/v6_sweep.py`): 25 run, 29 N/A; **no decision's evidence changes materially** (the D-13 check, the multi-class table and the D-14 table: **0 differing rows**) |
+      | **V3** (the metrics recomputed independently) | **done** — the independent session's own script (`scripts/pilot_a/independent_metrics.py`, from the metric dictionary and the checklist only): **356,957 of 356,993 rows agree**; the **36** are the FOX/NWS market cap (the second class's count and price are not recorded, MKT-03) — **declared**. V3 recomputes **from the recorded inputs**, so by construction it cannot see an input defect: **F6/F7 were found by V5** |
+      | **V4** (the rules recomputed independently) | the system side (`scripts/pilot_a/v4_system_side.py`, 80,490 rows over the 16 dates, 3,658 hits) against the independent side: **0 hit disagreements and 0 severity disagreements**; the differences are the `evaluated` flag's semantics (8,049 `EARNINGS_MISSING` — part A writes no FUNDAMENTAL score; **1 `NEGATIVE_FCF` — MPC, the new defect F8**: CON_08 reads the discontinued operating leg only under `CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations` and MPC files it as `NetCashProvidedByUsedInDiscontinuedOperations`, its identity holding — all 4 CON_08 filings of the pilot are this case, 12 quarantined metric rows → T-159c) and the universe's scope (14,070 rows the cycle does not evaluate — the 88 non-members per date) |
+      | **V5** (the human-readable sample) | the 25 cards (`scripts/pilot_a/v5_cards.py`) with their values, accessions, EDGAR links and vetoes (PR #180); against the human reading of the 25 10-Ks: **181 match, 9 differ, 12 both empty, 23 card empty** (13 by rule, 10 known). The 9 differences: **F6a ×4** (AMCR, HON, PM, HLT — the total debt too low), **F6c** (NEE — `OtherShortTermBorrowings` unread), **F7** (BEN — the D&A too low), a **company concept** (CRWD's D&A — declared), **APP-04b by rule** (VMRK's capex — the REIT composite) and **T-159a's rejected list by rule** (CINF's `NotesPayable`) |
+      | **V6** (the earlier decisions' evidence) | every command of the plan's list run or **N/A with the table it needs** (`scripts/pilot_a/v6_sweep.py`): 25 run, 29 N/A — 16 need the control database (a before/after pair of two code versions), 6 need the cycle's outputs (part A writes none → part B), and the three `verify_t155` commands need `docs/checklist_sec/succession_8ks.csv`, which is **git-excluded and not on this machine** → N/A until the file is supplied; **no decision's evidence changes materially** (the D-13 check, the multi-class table and the D-14 table: **0 differing rows**) |
 
       **The declared pilot finding that gates `T-100` (the user's decision, 2026-10-22 — finish the pilot
-      first, fix after):** `handoff/T143a_empty_values_finding.md` — the stored values are right (fidelity
-      ≥ 99.8 % on all 46 items), but **96,855 of 356,993 values (27.1 %) are empty** and **17,363
-      (4.9 %) are empty although the filing holds them** (F0 499, F1 9,810, F2 731, F3 332, F4 690, F5a
-      4,045, F5b 1,256); short-term investments' defaulted 0 is wrong in **1,188 filings**. It is a
-      **declared finding, not a V-layer FAIL** — and it becomes **`T-159`**, which blocks `T-100`.
+      first, fix after):** `handoff/T143a_empty_values_finding.md` (v3) — **the filed values the pipeline
+      reads are right** (fidelity ≥ 99.8 %), **but two stored totals are too low**: **F6** total debt in
+      **1,636 filings / 111 companies** (+44 filings F6c), median 5.5 % of the total; **F7** D&A in **73
+      filings / 12 companies** (finding v3 §1); and **F8** (V4): CON_08 reads the discontinued operating
+      leg only under `CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations`, so a filer that
+      reports it as `NetCashProvidedByUsedInDiscontinuedOperations` is quarantined without cause (all 4
+      CON_08 filings of the pilot: 12 quarantined metric rows). Further, **96,855 of 356,993 values
+      (27.1 %) are empty** and **17,363 (4.9 %) are empty although the filing holds them** (F0 499, F1
+      9,810, F2 731, F3 332, F4 690, F5a 4,045, F5b 1,256); short-term investments' defaulted 0 is wrong
+      in **1,188 filings**. It is a **declared finding, not a V-layer FAIL** — and it becomes **`T-159`**,
+      which blocks `T-100`.
       **The acceptance amendment (the finding's §6):** FAIL on an empty input whose filing's own XBRL
-      holds a non-dimensional fact of the item's own concept at the read column's period, and on a
-      defaulted 0 the filing contradicts; fidelity ≥ 98 % per item; after `T-159` only the listed,
+      holds a non-dimensional fact of the item's own concept at the read column's period, on a defaulted 0
+      the filing contradicts, **and on a stored total (debt, D&A) that omits a filed line its own
+      calculation tree places in it**; fidelity ≥ 98 % per item; after `T-159` only the listed,
       declared exceptions remain.
       **SEC cross-check (user, 2026-10-07, with `T-147`/`T-148`):** the pilot also runs a cross-check against the
       SEC, with network allowed, beside the offline `verify_pilot.py` (built on the tracked `scripts/sec_xcheck/` that `T-147`
@@ -992,12 +999,26 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       the stored values are empty although the filing holds them** (`handoff/T143a_empty_values_finding.md`:
       the evidence and the scripts in `handoff/pilot/b_review_p2b/`). Three parts, as the finding's §6:
       **(a)** the registry's **substitutes** (the item's total under another standard concept — F5a,
-      4,045 values) **and the short-term investments' defaulted 0** (1,188 wrong filings);
+      4,045 values) **and the short-term investments' defaulted 0** (1,188 wrong filings), **plus the
+      T-159a addendum** — the calculation-tree rules 1–4 for the two totals that are too low
+      (**F6** total debt in 1,636 filings / 111 companies + 44 F6c filings, median 5.5 %; **F7** D&A in
+      73 filings / 12 companies; `handoff/T159a_addendum_debt_da.md`) — with **rule 4's exception**: it
+      does **not** apply when the income statement carries the cash-flow D&A concept at the same value
+      and no `AmortizationOfIntangibleAssets` line (the D&A row is then the full expense); measured on
+      every filing of the 13 companies, only **HLT's 8 columns** ("contract acquisition costs");
       **(b)** the **gateway's `filed_facts` in the payload** (the untagged-column defect — F0, 499 values;
       in the data-mining repo, with a gateway redeploy);
       **(c)** the **filed-fact fallback** (F1, F2, F3, F5b — the filing's own XBRL holds the fact) and
       **F4 rule by rule** (the read column refused by a rule), with the labels of the finding's §5.4
-      and §5.6. After them the pilot is re-run on a fresh database (the finding's §6 step 4) and the
+      and §5.6, **plus**: **F8** (CON_08 must read the discontinued operating leg under
+      `NetCashProvidedByUsedInDiscontinuedOperations` as well — MPC files it that way and its identity
+      holds; 4 filings, 12 quarantined metric rows); the **EBITDA provenance basis label** (4,169 rows:
+      the inputs are labelled `period` while the value is the TTM); and a **stored flag on a cover count
+      ×1,000 or ×1/1,000 against the prior filing** (the MKT guard stays the value rule).
+      **Documentation follow-ups (no value change):** one line per metric in the dictionary's Annex B
+      naming its period basis, and the three stored metrics that are not in Annex B
+      (`return_on_invested_capital_effective_rate`, `utility_cash_coverage_3y`, `value_inputs`).
+      After them the pilot is re-run on a fresh database (the finding's §6 step 4) and the
       cause-7 empties must be only the named, declared exceptions.
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final

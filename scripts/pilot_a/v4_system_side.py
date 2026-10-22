@@ -176,7 +176,10 @@ def main() -> int:
                             ticker_of.get(asset_id, ""),
                             1 if is_evaluated else 0,
                             1 if hit is not None else 0,
-                            rule.SEVERITY,
+                            # the hit's own severity (T-116's LEVERAGE_EXTREME review hit is SOFT,
+                            # the rule's default is HARD); empty on a row that is not a hit --
+                            # the independent side's convention.
+                            "" if hit is None else hit.severity,
                             json.dumps(
                                 _inputs_for(
                                     ctx, asset_id, hit.evidence if hit else None, is_evaluated
