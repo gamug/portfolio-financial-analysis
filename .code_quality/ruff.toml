@@ -103,3 +103,7 @@ known-third-party = ["fastapi", "pydantic"]
 # B008: FastAPI's whole DI model is `param = Depends(...)` / `Query(...)` in the
 # signature default -- the function call there is the intended API, not a bug.
 "src/api/**" = ["B008"]
+# The pilot's evidence scripts (T-143 part A, the empty-value finding) are reviewer's working
+# scripts, collected verbatim: they read a database and print a table, and their style is the
+# reviewer's, not the repository's.
+"scripts/pilot_a/evidence/**" = ["ALL"]
