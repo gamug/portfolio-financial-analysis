@@ -165,6 +165,36 @@ def _primary_document_name(index: dict[str, Any]) -> str:
     return max(non_exhibit, key=lambda h: h[1])[0]
 
 
+def primary_document_url(
+    cik: str,
+    accession_number: str,
+    *,
+    form: str | None = None,
+    client: httpx.Client | None = None,
+) -> str:
+    """The filing's primary document's EDGAR URL (the filing's index is read; the document is not).
+
+    The company card prints it, so a person can open the 10-K and check every number with no
+    database (T-143 part A, V5). The same two steps :func:`fetch_primary_document` uses name the
+    document: the filing's ``-index.html`` document table first (it names the body by ``Type``),
+    then the ``index.json`` size heuristic.
+    """
+    owned = client is None
+    client = client or httpx.Client(base_url=_SEC_BASE, timeout=30.0, follow_redirects=True)
+    try:
+        cik_int = _archive_cik(accession_number, cik)
+        folder = f"/Archives/edgar/data/{cik_int}/{_accession_nodash(accession_number)}"
+        name = _primary_from_filing_index(client, cik_int, accession_number, form) if form else None
+        if name is None:
+            index = _get(client, f"{folder}/index.json").json()
+            name = _primary_document_name(index)
+        url = name if name.startswith("/Archives/") else f"{folder}/{name}"
+        return f"{_SEC_BASE}{url}"
+    finally:
+        if owned:
+            client.close()
+
+
 def fetch_primary_document(
     cik: str,
     accession_number: str,
