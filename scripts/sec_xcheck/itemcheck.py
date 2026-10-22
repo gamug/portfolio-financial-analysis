@@ -214,6 +214,12 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
     ``CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`` rows by design (PHM's four and
     Agilent's six are all ``cash_flow``). Those must never be a failure for a balance-sheet item.
 
+    **A's rule (reviewers A and B, 2026-10-22):** on the empty-input path a dropped column counts
+    only if it is **the column the stored input reads** -- the filing's own quarter column, the
+    untagged column for the 16/24-week filers, or FY for a 10-K. The pipeline reads
+    ``stmts.get(item, target.period.key)`` (pipeline.py:1061), so a dropped ``(YTD)`` column is not
+    that column and is skipped.
+
     The known exception: **YUM's 2025 Q2 revenue** (``0001041061-25-000057``). Its (Q2) row was
     served and dropped, so the quarter value is empty because of the drop; but the dropped value
     (1,932,000,000) is $1M from the SEC's Q2 ``Revenues`` (1,933,000,000, about 517 ppm), so the
@@ -231,6 +237,8 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
                 continue  # a row of another statement (the gateway drops cash-flow cash by design)
             if drops.period_end is not None and column_date != drops.period_end:
                 continue  # a row of another period (a comparative, a year-to-date column)
+            if sec_facts is not None and tag == "YTD":
+                continue  # A: not the column the stored (quarter) input reads
             if sec_facts is not None:
                 # A's duration rule: the dropped column's own duration. Two matching facts of
                 # different durations are ambiguous -- counted, not classified.
