@@ -1901,7 +1901,7 @@ class Statements:
                 return first + second, f"{left} + {right}", "filed_fact"
         return None
 
-    def _filed_fact_family(
+    def _filed_fact_family(  # noqa: C901 - one family's members, then the sole-member rule
         self, spec: LineItem, period: Period, families: tuple[str, ...]
     ) -> tuple[str, float] | None:
         """The sole filed member of the sole filled family, from the filed facts (T-159a)."""
@@ -1915,6 +1915,9 @@ class Statements:
                 ):
                     continue
                 if not self._filed_fact_matches(fact, period):
+                    continue
+                if fact.value < 0 and concept in spec.nonnegative:
+                    self._flag("wrong_sign_rejected")
                     continue
                 members.append((concept, fact.value))
             if not members:
