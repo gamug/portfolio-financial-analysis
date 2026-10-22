@@ -213,6 +213,12 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
     sheet, while the gateway drops the cash-flow
     ``CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents`` rows by design (PHM's four and
     Agilent's six are all ``cash_flow``). Those must never be a failure for a balance-sheet item.
+
+    The known exception: **YUM's 2025 Q2 revenue** (``0001041061-25-000057``). Its (Q2) row was
+    served and dropped, so the quarter value is empty because of the drop; but the dropped value
+    (1,932,000,000) is $1M from the SEC's Q2 ``Revenues`` (1,933,000,000, about 517 ppm), so the
+    itemcheck cannot attribute it, and it shows as ``WARN_never_served`` although the row was served
+    and dropped.
     """
     own_facts = {v: cs for v, cs in values.items() if own & cs}
     if not own_facts and sec_facts is None:
