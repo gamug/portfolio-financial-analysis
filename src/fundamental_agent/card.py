@@ -70,6 +70,11 @@ class Card:
     # The filing's own cover-page share counts (MKT-01): each class with its date. They are what
     # a person reads on the 10-K's cover, whatever the market cap ended up using.
     cover_shares: list[dict[str, Any]] = field(default_factory=list)
+    # The count the market cap rested on and the guard's verdict on this filing's cover count:
+    # which filing supplied the count, how old it was, and whether this filing's own cover count
+    # was the one used (PKG's FY2025 cover count is stored x1,000; the cap rested on the prior
+    # filing's count instead).
+    market_cap_count: dict[str, Any] = field(default_factory=dict)
 
 
 def _asset_row(conn: Any, cik: str) -> Any:
@@ -184,6 +189,74 @@ def _stored_fact(
     return None if value is None else float(value)
 
 
+#: A mapped item is a sum of at least this many concepts (a map of one is the fact itself).
+MIN_MAPPED_CONCEPTS = 1
+
+
+def _stored_sum(
+    conn: Any, filing_id: int, concept: str | None, period_key: str | None
+) -> float | None:
+    """The sum of a **mapped** item's concepts on the filing's own column.
+
+    A ``[map]`` resolution is a sum of several concepts (T-151's debt and D&A sums): the card
+    prints the sum of the filed values, which is what the metric recorded, rather than a dash.
+    """
+    if not concept or not period_key:
+        return None
+    parts = [part.strip() for part in concept.split("+") if part.strip()]
+    if len(parts) < MIN_MAPPED_CONCEPTS:
+        return None
+    values = [_stored_fact(conn, filing_id, part, period_key) for part in parts]
+    if any(value is None for value in values):
+        return None
+    return float(sum(value for value in values if value is not None))
+
+
+def _market_cap_count(
+    conn: Any, asset_id: int, cover_total: float | None, inputs: dict[str, Any] | None
+) -> dict[str, Any]:
+    """The count the market cap rested on and the guard's verdict on this filing's cover count.
+
+    The count is the one the stored ``market_capitalization`` metric used (the cap's own input ✓);
+    the filing it came from is the filing whose cover count it is ✓.  The verdict says whether
+    this filing's own cover count was the one used ✓ (PKG's FY2025 cover count is stored x1,000 ✓
+    and the cap rested on the prior filing's count ✓).
+    """
+    inputs = inputs or {}
+    used = inputs.get("shares")
+    age = inputs.get("share_age_days")
+    out: dict[str, Any] = {
+        "shares": used,
+        "share_age_days": age,
+        "filing_id": None,
+        "accession": None,
+        "verdict": "no market cap is stored for this filing",
+    }
+    if used is None:
+        return out
+    rows = conn.execute(
+        "SELECT sf.id, sf.accession_number, c.value, c.as_of_date FROM filing_cover_shares c "
+        "JOIN sec_filings sf ON sf.id = c.filing_id JOIN assets a ON a.id = sf.asset_id "
+        "WHERE a.id = ? AND c.class_member = '' ORDER BY c.as_of_date DESC",
+        (asset_id,),
+    ).fetchall()
+    for row in rows:
+        if abs(float(row["value"]) - float(used)) < 1.0:
+            out["filing_id"] = int(row["id"])
+            out["accession"] = str(row["accession_number"])
+            break
+    if cover_total is not None and abs(float(cover_total) - float(used)) < 1.0:
+        out["verdict"] = "this filing's own cover count is the one the cap rests on"
+    else:
+        out["verdict"] = (
+            f"this filing's own cover count ({cover_total if cover_total is not None else '-'}) "
+            f"was not used; the cap rests on {used}"
+            + (f" (filing {out['accession']})" if out["accession"] else "")
+            + (f", {age} days old" if age is not None else "")
+        )
+    return out
+
+
 def _line_items(
     metrics: list[dict[str, Any]],
     edgar_url: str | None = None,
@@ -259,12 +332,17 @@ def _fill_facts(seen: dict[tuple[str, str], dict[str, Any]], fact_value: Any) ->
     for row in seen.values():
         if row.get("value") is not None or row.get("basis") != "period":
             continue
-        if row.get("how") != "concept":
+        how = row.get("how")
+        if how not in ("concept", "map"):
             continue
         value = fact_value(row)
         if value is not None:
             row["value"] = value
-            row["value_source"] = "the filing's own stored fact"
+            row["value_source"] = (
+                "the filing's own stored fact"
+                if how == "concept"
+                else "the filing's own stored facts, summed"
+            )
 
 
 def _filing_edgar(
@@ -432,6 +510,7 @@ def build_card(  # noqa: PLR0913 - the card's inputs, one per decision
 
     accession = str(filing["accession_number"] or "")
     edgar = _filing_edgar(cik, accession, str(filing["form"]), with_document=with_edgar)
+    cover = _cover_shares(conn, int(filing["id"]), cik)
     return Card(
         ticker=str(asset["ticker"]),
         cik=cik,
@@ -458,14 +537,31 @@ def build_card(  # noqa: PLR0913 - the card's inputs, one per decision
             all_entries,
             edgar["edgar_document_url"] or edgar["edgar_folder"],
             is_annual=str(filing["form"]).upper() == "10-K",
-            fact_value=lambda row: _stored_fact(
-                conn, int(filing["id"]), row.get("concept"), (row.get("period") or "")
+            fact_value=lambda row: (
+                _stored_sum(conn, int(filing["id"]), row.get("concept"), (row.get("period") or ""))
+                if row.get("how") == "map"
+                else _stored_fact(
+                    conn, int(filing["id"]), row.get("concept"), (row.get("period") or "")
+                )
             ),
         ),
         metrics=metrics,
         empty=empty,
         vetoes=_vetoes(conn, asset_id, as_of) if with_vetoes else [],
-        cover_shares=_cover_shares(conn, int(filing["id"]), cik),
+        cover_shares=cover,
+        market_cap_count=_market_cap_count(
+            conn,
+            asset_id,
+            None if not cover else cover[0].get("total"),
+            next(
+                (
+                    metric.get("inputs")
+                    for metric in all_entries
+                    if metric["name"] == "market_capitalization"
+                ),
+                None,
+            ),
+        ),
     )
 
 
@@ -485,6 +581,19 @@ def _cover_lines(card: Card) -> list[str]:
             f"({first.get('classes') or 0} class(es), "
             f"{first.get('excluded_members') or 0} non-common member(s) excluded)"
         )
+    count = card.market_cap_count
+    if count.get("shares") is not None:
+        age = count.get("share_age_days")
+        lines.append(
+            f"  {'the count the cap used':<40}{count['shares']:>20,.0f}  "
+            + (
+                f"from filing {count['accession']}"
+                if count.get("accession")
+                else "from the fallback"
+            )
+            + (f", {age} days old" if age is not None else "")
+        )
+        lines.append(f"  the guard's verdict: {count.get('verdict') or '-'}")
     return lines
 
 

@@ -386,3 +386,116 @@ def test_h5_a_balance_sheet_item_is_compared_once_on_a_10q(
     assert re.search(r"^revenue\s+own\b", report, re.MULTILINE)
     assert re.search(r"^revenue\s+ytd\b", report, re.MULTILINE)
     assert mismatches == []
+
+
+def test_card_sums_a_mapped_item_concepts(memory_db: Database, aapl_10k: Statements) -> None:
+    """V5 (reviewer B's check): a line item resolved as a **sum** of concepts (``[map]``) prints the
+    sum of the filed values, not a dash."""
+    filing_id = _seed(memory_db, aapl_10k)
+    db.append_financial_facts(
+        memory_db,
+        filing_id,
+        [
+            {
+                "statement": "balance_sheet",
+                "concept": "us-gaap_LinesOfCreditCurrent",
+                "period_key": "2023-09-30",
+                "value": 800.0,
+            },
+            {
+                "statement": "balance_sheet",
+                "concept": "us-gaap_ShortTermBankLoansAndNotesPayable",
+                "period_key": "2023-09-30",
+                "value": 200.0,
+            },
+        ],
+    )
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "leverage",
+                MetricResult(
+                    "debt_to_equity",
+                    1.0,
+                    "ratio",
+                    {
+                        "provenance": {
+                            "accession": "0000320193-23-000106",
+                            "period": "2023-09-30 (FY)",
+                            "rule_ids": ["MD-15"],
+                            "items": {
+                                "short_term_debt": [
+                                    {
+                                        "basis": "period",
+                                        "concept": "us-gaap_LinesOfCreditCurrent + "
+                                        "us-gaap_ShortTermBankLoansAndNotesPayable",
+                                        "how": "map",
+                                        "flags": [],
+                                    }
+                                ]
+                            },
+                            "flags": [],
+                            "empty_reason": None,
+                        }
+                    },
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    row = next(item for item in card.line_items if item["item"] == "short_term_debt")
+    assert row["value"] == 1000.0  # the sum of the two filed values
+    assert row["value_source"] == "the filing's own stored facts, summed"
+    assert "1,000.00" in render(card)
+
+
+def test_card_prints_the_cover_classes_and_the_count_the_cap_used(
+    memory_db: Database, aapl_10k: Statements
+) -> None:
+    """V5 (reviewer B's check): the card prints each cover-page class with its date, the count the
+    market cap rested on, and the guard's verdict when the filing's own cover count is not the one
+    the cap rests on."""
+    filing_id = _seed(memory_db, aapl_10k)
+    memory_db.execute(
+        "INSERT INTO filing_cover_shares (filing_id, class_member, value, as_of_date, event_time, "
+        "ingested_at) VALUES (?, '', 1000.0, '2023-11-03', '2023-09-30', 'now')",
+        (filing_id,),
+    )
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "valuation",
+                MetricResult(
+                    "market_capitalization",
+                    1000.0,
+                    "usd",
+                    {
+                        "shares": 900.0,
+                        "share_age_days": 61,
+                        "provenance": {
+                            "accession": "0000320193-23-000106",
+                            "period": "2023-09-30 (FY)",
+                            "rule_ids": ["MD-34"],
+                            "items": {},
+                            "flags": [],
+                            "empty_reason": None,
+                        },
+                    },
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    assert card.cover_shares[0]["class_member"] == ""
+    assert card.cover_shares[0]["value"] == 1000.0
+    assert card.market_cap_count["shares"] == 900.0
+    assert card.market_cap_count["share_age_days"] == 61
+    assert "was not used" in card.market_cap_count["verdict"]
+    text = render(card)
+    assert "Cover-page shares" in text
+    assert "the count the cap used" in text
+    assert "the guard's verdict" in text
