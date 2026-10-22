@@ -10622,3 +10622,140 @@ time). All 3,144 tests pass; ruff, ruff format, mypy and pre-commit are green.
   (VNO 2021, VMRK 2022-2023, KKR, KR): cause 3/4 in the split, not F1.
 - **Prices/corporate actions** are not part of a metrics-only scratch run, so its market caps and
   valuation yields are empty (cause 8); the pilot re-run imports them.
+
+### T-159c round 2 — a filed value must be proved to be the item
+
+**This subsection supersedes the round-1 "use it" rule and its measured tables above; those
+round-1 numbers are kept only as the round-1 record.**
+
+Reviewer B ran the PR's resolver on all 10,189 pilot filings with the filing's own SEC facts
+standing in for `filed_facts` (`handoff/pilot/b_review_t159c/`, decisions rows 42–47). The first
+rule ("the item's own concept, one distinct value → use it") was not enough: note facts of the
+same concept are often a different quantity (VNO's debt-note `LongTermDebt` excludes the face's
+mortgages; MET's segment `OperatingIncomeLoss` is adjusted earnings; EMR/ICE's SBC is a sub-plan).
+Round 2 replaces it with rules **A–E**:
+
+* **A, on the face:** the value equals, in absolute value to the dollar, a non-zero value of a row
+  of the item's own face statement (`spec.statements`) at the read column — the balance sheet's
+  period-end instant for a balance item, the read column for a flow. The reader missed the line.
+* **B, calibrated:** when the filing gives the item a non-zero value at another column and the same
+  filed path (same concept, or same `+`/`-` sum) has a value there under the same period rules, the
+  two agree within 0.5 % at **every** such column, and there is at least one.
+* **C:** a zero filed value is never used.
+* **D:** no item value the statements gave is removed or changed. A long-term fact that includes
+  current maturities does not set N4's `current_maturities_in_long_term` when the statements gave
+  short-term debt; it may still fill `long_term_debt`. The statement's short-term value stands (PANW,
+  KVUE). Total debt follows its components; `none_filed`'s zero stands.
+* **E:** no filed long-term (or total) debt when the statements refused the sum because the face
+  carries other debt lines (`debt_sum_refused_other_lines`) — VNO, VMRK.
+
+A kept value carries `filed_fact_on_face` or `filed_fact_calibrated`; a refused one carries
+`filed_fact_refused` with `filed_fact_refused_not_on_face`, `_calibration`, `_zero`,
+`_includes_current_maturities` or `_other_debt_lines`. The empty reason stays `missing_input`
+(the filing reports the item; never `not_reported`), and a refused fact no longer becomes a
+`capture_failure` in provenance. `shares_outstanding` and `diluted_shares` are not read by this
+fallback (the pipeline reads the cover and weighted counts elsewhere).
+
+**Harness (B's acceptance, head `3c2c8d3`):**
+
+```
+filings 10189; values compared 315859; changed 5262
+  capital_expenditure          {'PASS B': 161, 'PASS A': 1}
+  cash                         {'PASS A': 31}
+  cogs                         {'PASS A': 11}
+  depreciation_amortization    {'PASS B': 1485, 'PASS A': 89}
+  equity_incl_nci              {'PASS A': 310}
+  income_tax                   {'PASS A': 1}
+  interest_expense             {'PASS A': 86}
+  long_term_debt               {'PASS A': 25}
+  net_income                   {'PASS A': 80}
+  net_income_to_common         {'PASS A': 1089}
+  pretax_income                {'PASS A': 188}
+  receivables                  {'PASS A': 33}
+  redeemable_nci               {'PASS A': 20}
+  short_term_debt              {'PASS A': 98}
+  short_term_investments       {'PASS A': 41}
+  stock_based_compensation     {'PASS B': 1374, 'PASS A': 49}
+  total_debt                   {'PASS total': 90}
+TOTAL {'PASS B': 3020, 'PASS A': 2152, 'PASS total': 90}
+B's expected keeps (non-total items) 5061; not kept by the new tree 0
+```
+
+**Cover-count flag (round 2)**: only the ×1,000 / ×1/1,000 defect, against the **median** of the
+class's counts in the company's up-to-4 prior filings (filed strictly before), within 10 %. On
+`pilot_a2` exactly **4**: CMG 10-Q 2022-03-31, PKG 10-Q 2023-03-31, PKG 10-Q 2024-03-31, PKG 10-K
+2025-12-31. V's 2024 class-B exchange (245.5M against 4.8M, 50.8×) and GDDY's class-B event are
+real share-class events, not the defect, and CMG's 2022-06-30 recovery is not flagged because the
+median of the prior four is the normal ~27.7M.
+
+**Fresh scratch database (`/tmp/t159c/scratch2.db`, head `3c2c8d3`)**: 18 tickers, `--metrics-only
+--since-year 2022`, 2026-10-22; 328 filings stored (JPM 10-Q 2024 0000019617-24-000611 is the
+gateway's recurring empty payload, not a T-159c failure), 0 failed. `pilot_subset.db` is pilot_a2
+restricted to the same 328 accessions, so the split is like for like:
+
+| non-price-dependent metrics | before | after |
+|---|---:|---:|
+| metric values | 11,256 | 11,460 |
+| empty | 3,909 | 3,920 |
+| 1 not applicable | 1,371 | 1,663 |
+| 2 not defined | 43 | 48 |
+| 3 prior year | 242 | 385 |
+| 4 SEC has, we do not | 293 | 203 |
+| 5 YTD only | 235 | 114 |
+| 6 not filed | 1,661 | 1,453 |
+| 7 no SEC data | 12 | 1 |
+| 8 other | 52 | 53 |
+
+| price-dependent metrics (no prices in the scratch DB) | before | after |
+|---|---:|---:|
+| metric values | 784 | 1,669 |
+| empty | 784 | 1,669 |
+| 1 not applicable | 361 | 361 |
+| 3 prior year | 98 | 148 |
+| 4 SEC has | 96 | 101 |
+| 5 YTD only | 27 | 24 |
+| 6 not filed | 155 | 283 |
+| 7 no SEC data | 4 | 8 |
+| 8 other | 43 | 744 |
+
+The non-price rise is **cause 1 +292** (receivables_turnover 151, current_ratio 80, cash_ratio 61:
+the new `not_applicable` labels for a bank/an unclassified balance sheet), **cause 3 +143** (the
+prior-year inputs of the FCF/turnover metrics: free_cash_flow_margin 26, free_cash_flow_conversion
+26, capex_intensity 26, operating_cash_flow_margin 25, net_debt_to_ebitda 7, inventory_turnover 7,
+return_on_assets 5, asset_turnover 5, receivables_turnover 5, return_on_invested_capital 5,
+return_on_equity 5) and **cause 2 +5** (effective_tax_rate +7, net_income_cagr +1, ROIC-effective
++1, with moves out). Cause 4 falls 293 → 203 because the unproved note facts are now refused;
+cause 6 falls 1,661 → 1,453 and cause 5 235 → 114. The price line's +885 is the scratch DB's
+missing prices/corporate actions, not T-159c.
+
+**Per company (round 2)** — proof or refusal reason:
+
+| ticker | filing | input | before | after | proof / refusal |
+|---|---|---|---:|---:|---|
+| VNO | 10-Q 2022-09-30 | long-term / total debt | empty | empty | `other_debt_lines` (E) |
+| VMRK | 10-K 2024-12-31 | long-term / total debt | empty | empty | `other_debt_lines` (E) |
+| PCAR | 10-Q 2022-09-30 | SBC | empty | empty | `not_on_face` (A) |
+| AZO | 10-K 2024-08-31 | interest expense | empty | empty | `not_on_face` (A) |
+| NUE | 10-Q 2025-10-04 | D&A | empty | empty | `not_on_face` (A) |
+| MPC | 10-K 2021-12-31 | CON-08 | 16 rows / 12 quarantined | 0 | F8 holds on all 4 filings |
+| JPM | 10-K 2021-12-31 | SBC | empty | empty | `not_on_face` (A) |
+| BAC | 10-K 2021-12-31 | total debt | 280,117M | 303,870M | no filed fact (T-159a's tree) |
+| AIG | 10-K 2021-12-31 | capex | empty | empty | `not_on_face` (A) |
+| MET | 10-K 2024-12-31 | operating income; receivables | empty | empty | `not_on_face` (A) |
+| SPG | 10-K 2025-12-31 | income tax | empty | empty | `not_on_face` (A) |
+| VICI | 10-Q 2026-03-31 | capex | empty | 628,000 | `filed_fact_on_face` |
+| NEE | 10-K 2021-12-31 | SBC | empty | empty | `not_on_face` (A) |
+| DUK | 10-K 2021-12-31 | SBC; inventory | empty | empty | `not_on_face` (A); inventory ambiguous |
+| KR | 10-K 2022-01-29 | long-term / total debt | empty | empty | `not_on_face` (A) |
+| COST | 10-K 2025-08-31 | pre-tax income | empty | 10,818,000,000 | `filed_fact_on_face` |
+| PEP | 10-Q 2025-09-06 | capex | empty | 992,000,000 | `filed_fact_calibrated` |
+| DPZ | 10-Q 2022-06-19 | D&A | empty | empty | `not_on_face` (A) |
+
+The 16/24-week filers are as the real gateway payload gives them: COST's pretax is on face, PEP's
+capex is calibrated, and KR/DPZ's note facts do not prove. Fidelity on the scratch DB: every item
+100 %, 0 below the 98 % gate, 0 mismatching (filing, item) pairs.
+
+**Tests**: `tests/test_t159c_filed_facts.py` now has one test per rule A, B (agree and disagree), C,
+D and E, each refusal flag and both proof flags; `tests/test_t159c_cover_scale.py` covers the ×1,000
+defect, its recovery filing and V's class event. The full suite is **3,155 passed**; ruff, ruff
+format, mypy and pre-commit are green. The engine stays `metrics-v10`.
