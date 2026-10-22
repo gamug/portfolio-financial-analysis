@@ -215,7 +215,7 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
     Agilent's six are all ``cash_flow``). Those must never be a failure for a balance-sheet item.
     """
     own_facts = {v: cs for v, cs in values.items() if own & cs}
-    if not own_facts:
+    if not own_facts and sec_facts is None:
         return "none", None
     if drops.rows:
         for statement, concept, column_date, tag, original in drops.rows:
@@ -245,6 +245,8 @@ def _classify_absent(  # noqa: C901, PLR0912 - one return per class, as the docs
                 # ``reconcile_with_filed_facts`` compares ``abs(abs(filed) - abs(rendered))``)
                 if match_value(abs(original), abs(value)):
                     return "FAIL_gateway_dropped", sorted(concepts)[:3]
+    if not own_facts:
+        return "none", None
     if stored_facts:
         for value in own_facts:
             for stored_value, stored_concepts in stored_facts.items():

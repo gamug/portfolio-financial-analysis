@@ -426,3 +426,43 @@ def test_two_matching_facts_of_different_durations_are_ambiguous() -> None:
         ],
     )
     assert cls != "FAIL_gateway_dropped"
+
+
+def test_a_dropped_ytd_row_is_a_failure_when_the_form_has_no_fact_of_that_length() -> None:
+    """5d, the gate (PR #179's review): the item's own facts come from the form's length, so a
+    10-Q's year-to-date cash-flow fact (167-273 days) is never among them. The drop match must
+    run before the "none" verdict, or the row is lost."""
+    own = own_concepts()["operating_cash_flow"]
+    cls, _ = classify(
+        None,
+        own,
+        {},  # no fact of the form's length
+        drops=[
+            (
+                "cash_flow",
+                "NetCashProvidedByUsedInOperatingActivities",
+                "2023-09-30",
+                "YTD",
+                1_234_000_000.0,
+            )
+        ],
+        period_end="2023-09-30",
+        statements=REGISTRY["operating_cash_flow"].statements,
+        sec_facts=[("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 182)],
+    )
+    assert cls == "FAIL_gateway_dropped"
+
+
+def test_an_item_with_no_fact_and_no_drop_is_still_none() -> None:
+    """The gate does not swallow the "none" verdict: without a drop there is nothing to classify."""
+    own = own_concepts()["operating_cash_flow"]
+    cls, _ = classify(
+        None,
+        own,
+        {},
+        drops=[],
+        period_end="2023-09-30",
+        statements=REGISTRY["operating_cash_flow"].statements,
+        sec_facts=[("NetCashProvidedByUsedInOperatingActivities", 1_234_000_000.0, 182)],
+    )
+    assert cls == "none"
