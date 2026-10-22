@@ -3328,6 +3328,9 @@ class Statements:
         )
         if value is None or concept is None:
             return None, None, None
+        if "filed_fact" in self._flags:
+            # T-159c: the map's value came from the filing's own filed facts, not the served rows.
+            return value, concept, "filed_fact"
         return value, concept, "map" if " + " in concept else "concept"
 
     def total_debt(self, period_key: str) -> Resolution:

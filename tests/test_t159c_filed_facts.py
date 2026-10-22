@@ -346,7 +346,10 @@ def test_a_short_term_fact_alone_is_not_total_debt() -> None:
         ],
         filed_facts=[_fact("CommercialPaper", 10.0, end=INSTANT)],
     )
-    assert stmts.resolve("short_term_debt", FY).value == 10.0
+    short = stmts.resolve("short_term_debt", FY)
+    assert short.value == 10.0
+    assert short.how == "filed_fact"
+    assert short.concept == G + "CommercialPaper"
     resolution = stmts.total_debt(FY)
     assert resolution.value is None
     assert "short_term_debt_only" in resolution.flags
