@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -221,6 +222,8 @@ RUNS: list[tuple[str, str, list[str]]] = [
             "{db}",
             "--out-txt",
             "{out}/p2b_v6_verify_t151a_validate-cf.txt",
+            "--out-json",
+            "{out}/p2b_v6_verify_t151a_validate-cf.json",
         ],
     ),
     (
@@ -283,6 +286,45 @@ RUNS: list[tuple[str, str, list[str]]] = [
             "{engine}",
             "--out",
             "{out}/p2b_v6_verify_t151b_roa.json",
+        ],
+    ),
+    (
+        "verify_t155/classify",
+        "the current members' CIK successions (APP-10b) -- the register's own classification",
+        [
+            "scripts/verify_t155.py",
+            "classify",
+            "--out",
+            "{out}/p2b_v6_verify_t155_classify",
+            "--cache",
+            "{cache}",
+            "--fetch",
+        ],
+    ),
+    (
+        "verify_t155/used",
+        "which of the register's successions the pipeline used",
+        [
+            "scripts/verify_t155.py",
+            "used",
+            "--out",
+            "{out}/p2b_v6_verify_t155_used",
+            "--cache",
+            "{cache}",
+            "--fetch",
+        ],
+    ),
+    (
+        "verify_t155/split",
+        "the successions' split between the members",
+        [
+            "scripts/verify_t155.py",
+            "split",
+            "--out",
+            "{out}/p2b_v6_verify_t155_split.json",
+            "--cache",
+            "{cache}",
+            "--fetch",
         ],
     ),
     (
@@ -499,25 +541,6 @@ NA: list[tuple[str, str, str, str]] = [
         "the before/after pair",
     ),
     (
-        "verify_t155/classify",
-        "the current members' CIK successions (APP-10b)",
-        "file",
-        "docs/checklist_sec/succession_8ks.csv is not in this checkout, and docs/checklist_sec/ is "
-        "read-only for this pilot (the file comes from A's copy)",
-    ),
-    (
-        "verify_t155/used",
-        "which successions the pipeline used",
-        "file",
-        "docs/checklist_sec/succession_8ks.csv is not in this checkout",
-    ),
-    (
-        "verify_t155/split",
-        "the successions' split between the members",
-        "file",
-        "docs/checklist_sec/succession_8ks.csv is not in this checkout",
-    ),
-    (
         "verify_t155/measure",
         "the affected members before vs after",
         "control",
@@ -585,9 +608,9 @@ def main() -> int:
     cfg = {
         "python": args.python,
         "timeout": args.timeout,
+        # the parent's environment (the proxies and the CA bundle) plus the pilot's own settings
         "env": {
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": str(Path.home()),
+            **os.environ,
             "PYTHONPATH": f"{repo / 'src'}",
             "SEC_USER_AGENT": "research@example.com",
             "SEC_XCHECK_CACHE": str(out_dir.parent / "sec_cache"),
@@ -599,7 +622,15 @@ def main() -> int:
     for ident, table, argv in RUNS:
         if only and ident not in only:
             continue
-        filled = [a.format(db=args.db, out=str(out_dir), engine=args.engine) for a in argv]
+        filled = [
+            a.format(
+                db=args.db,
+                out=str(out_dir),
+                engine=args.engine,
+                cache=str(out_dir.parent / "sec_cache"),
+            )
+            for a in argv
+        ]
         log = out_dir / (ident.replace("/", "_") + ".log")
         entry: dict[str, Any] = {"id": ident, "table": table, "status": "run"}
         entry.update(_run_one(filled, repo, log, cfg))
