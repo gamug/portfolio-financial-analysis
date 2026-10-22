@@ -10,7 +10,7 @@ import pytest
 from conftest import seed_filing
 from portfolio_common.db import Database
 
-from fundamental_agent import db
+from fundamental_agent import db, filing_text
 from fundamental_agent.card import build_card, render
 from fundamental_agent.fidelity import dq01_tolerance, run_fidelity
 from fundamental_agent.metrics.base import MetricResult
@@ -112,6 +112,141 @@ def test_card_uses_the_latest_filing_available_on_or_before_the_date(
 def test_card_refuses_an_unknown_cik(memory_db: Database) -> None:
     with pytest.raises(SystemExit):
         build_card(memory_db, "9999999999", "2024-12-31")
+
+
+def test_card_prints_the_value_of_every_line_item(
+    memory_db: Database, aapl_10k: Statements
+) -> None:
+    """V5: the card shows each line item's **value** (period / prior year / TTM as the metric
+    recorded it), so a person can check the number against the filing."""
+    filing_id = _seed(memory_db, aapl_10k)
+    provenance = {
+        **_PROVENANCE,
+        "items": {
+            "net_income": [
+                {"basis": "ttm", "concept": "us-gaap_NetIncomeLoss", "how": "concept", "flags": []}
+            ],
+            "equity": [
+                {
+                    "basis": "prior_year",
+                    "concept": "us-gaap_StockholdersEquity",
+                    "how": "concept",
+                    "flags": [],
+                    "source": "filing",
+                }
+            ],
+            "revenue": [
+                {"basis": "period", "concept": "us-gaap_Revenues", "how": "concept", "flags": []}
+            ],
+        },
+    }
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "profitability",
+                MetricResult(
+                    "return_on_equity",
+                    9.99,
+                    "ratio",
+                    {
+                        "net_income_ttm": 81_000_000.0,
+                        "prior_equity": 62_000_000.0,
+                        "revenue": 383_285_000_000.0,
+                        "provenance": provenance,
+                    },
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    values = {item["item"]: item["value"] for item in card.line_items}
+    assert values["net_income"] == 81_000_000.0
+    assert values["equity"] == 62_000_000.0
+    assert values["revenue"] == 383_285_000_000.0
+    text = render(card)
+    assert "81,000,000.00" in text
+    assert "383,285,000,000.00" in text
+
+
+def test_card_prints_the_accession_and_the_edgar_link(
+    memory_db: Database, aapl_10k: Statements, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """V5: every value carries the accession it was read from and the link to the filing's
+    document."""
+    filing_id = _seed(memory_db, aapl_10k)
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "profitability",
+                MetricResult(
+                    "return_on_equity",
+                    9.99,
+                    "ratio",
+                    {"provenance": _PROVENANCE},
+                ),
+            )
+        ],
+    )
+    # the filing's folder is deterministic and needs no network
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    assert card.filing["edgar_folder"] == (
+        "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106"
+    )
+    equity = next(item for item in card.line_items if item["item"] == "equity")
+    assert equity["accession"] == "0000320193-23-000106"
+    assert equity["edgar_url"] == card.filing["edgar_folder"]
+
+    # with the EDGAR helper the card names the primary document
+    monkeypatch.setattr(
+        filing_text,
+        "primary_document_url",
+        lambda cik, accession, *, form=None, client=None: (
+            "https://www.sec.gov/Archives/edgar/data/320193/000032019323000106/aapl-20230930.htm"
+        ),
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31", with_edgar=True)
+    assert card.filing["edgar_document_url"].endswith("aapl-20230930.htm")
+    equity = next(item for item in card.line_items if item["item"] == "equity")
+    assert equity["edgar_url"].endswith("aapl-20230930.htm")
+    assert "aapl-20230930.htm" in render(card)
+
+
+def test_card_prints_the_vetoes_that_apply_on_the_date(
+    memory_db: Database, aapl_10k: Statements
+) -> None:
+    """V5: the card shows the vetoes that apply on its date, evaluated as the cycle's veto step
+    evaluates them (the cycle's readers, the cycle's own rules)."""
+    filing_id = _seed(memory_db, aapl_10k)
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "leverage",
+                MetricResult(
+                    "debt_to_equity",
+                    5.0,
+                    "ratio",
+                    {"provenance": {"accession": "0000320193-23-000106", "items": {}}},
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    vetoes = {v["rule_id"]: v for v in card.vetoes}
+    assert "LEVERAGE_EXTREME" in vetoes
+    assert vetoes["LEVERAGE_EXTREME"]["severity"] == "HARD"
+    assert vetoes["LEVERAGE_EXTREME"]["evidence"]["value"] == 5.0
+    text = render(card)
+    assert "Vetoes on 2023-12-31" in text
+    assert "LEVERAGE_EXTREME" in text
+    # the vetoes can be left out
+    card = build_card(memory_db, "0000320193", "2023-12-31", with_vetoes=False)
+    assert card.vetoes == []
 
 
 def test_dq01_tolerance_infers_the_unit() -> None:
@@ -251,3 +386,116 @@ def test_h5_a_balance_sheet_item_is_compared_once_on_a_10q(
     assert re.search(r"^revenue\s+own\b", report, re.MULTILINE)
     assert re.search(r"^revenue\s+ytd\b", report, re.MULTILINE)
     assert mismatches == []
+
+
+def test_card_sums_a_mapped_item_concepts(memory_db: Database, aapl_10k: Statements) -> None:
+    """V5 (reviewer B's check): a line item resolved as a **sum** of concepts (``[map]``) prints the
+    sum of the filed values, not a dash."""
+    filing_id = _seed(memory_db, aapl_10k)
+    db.append_financial_facts(
+        memory_db,
+        filing_id,
+        [
+            {
+                "statement": "balance_sheet",
+                "concept": "us-gaap_LinesOfCreditCurrent",
+                "period_key": "2023-09-30",
+                "value": 800.0,
+            },
+            {
+                "statement": "balance_sheet",
+                "concept": "us-gaap_ShortTermBankLoansAndNotesPayable",
+                "period_key": "2023-09-30",
+                "value": 200.0,
+            },
+        ],
+    )
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "leverage",
+                MetricResult(
+                    "debt_to_equity",
+                    1.0,
+                    "ratio",
+                    {
+                        "provenance": {
+                            "accession": "0000320193-23-000106",
+                            "period": "2023-09-30 (FY)",
+                            "rule_ids": ["MD-15"],
+                            "items": {
+                                "short_term_debt": [
+                                    {
+                                        "basis": "period",
+                                        "concept": "us-gaap_LinesOfCreditCurrent + "
+                                        "us-gaap_ShortTermBankLoansAndNotesPayable",
+                                        "how": "map",
+                                        "flags": [],
+                                    }
+                                ]
+                            },
+                            "flags": [],
+                            "empty_reason": None,
+                        }
+                    },
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    row = next(item for item in card.line_items if item["item"] == "short_term_debt")
+    assert row["value"] == 1000.0  # the sum of the two filed values
+    assert row["value_source"] == "the filing's own stored facts, summed"
+    assert "1,000.00" in render(card)
+
+
+def test_card_prints_the_cover_classes_and_the_count_the_cap_used(
+    memory_db: Database, aapl_10k: Statements
+) -> None:
+    """V5 (reviewer B's check): the card prints each cover-page class with its date, the count the
+    market cap rested on, and the guard's verdict when the filing's own cover count is not the one
+    the cap rests on."""
+    filing_id = _seed(memory_db, aapl_10k)
+    memory_db.execute(
+        "INSERT INTO filing_cover_shares (filing_id, class_member, value, as_of_date, event_time, "
+        "ingested_at) VALUES (?, '', 1000.0, '2023-11-03', '2023-09-30', 'now')",
+        (filing_id,),
+    )
+    db.record_metrics(
+        memory_db,
+        filing_id,
+        [
+            (
+                "valuation",
+                MetricResult(
+                    "market_capitalization",
+                    1000.0,
+                    "usd",
+                    {
+                        "shares": 900.0,
+                        "share_age_days": 61,
+                        "provenance": {
+                            "accession": "0000320193-23-000106",
+                            "period": "2023-09-30 (FY)",
+                            "rule_ids": ["MD-34"],
+                            "items": {},
+                            "flags": [],
+                            "empty_reason": None,
+                        },
+                    },
+                ),
+            )
+        ],
+    )
+    card = build_card(memory_db, "0000320193", "2023-12-31")
+    assert card.cover_shares[0]["class_member"] == ""
+    assert card.cover_shares[0]["value"] == 1000.0
+    assert card.market_cap_count["shares"] == 900.0
+    assert card.market_cap_count["share_age_days"] == 61
+    assert "was not used" in card.market_cap_count["verdict"]
+    text = render(card)
+    assert "Cover-page shares" in text
+    assert "the count the cap used" in text
+    assert "the guard's verdict" in text

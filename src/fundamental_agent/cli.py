@@ -138,6 +138,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="the stored engine version to read (default: the current one)",
     )
     card_cmd.add_argument("--out", help="write the card to this file (default: stdout)")
+    card_cmd.add_argument(
+        "--edgar",
+        action="store_true",
+        help=(
+            "read the filing's index on EDGAR to name its primary document, so the card carries "
+            "the link to the document itself (V5); without it the card prints the filing's "
+            "folder, which needs no network"
+        ),
+    )
+    card_cmd.add_argument(
+        "--no-vetoes",
+        action="store_true",
+        help="do not evaluate the cycle's rules on the card's date (the vetoes section)",
+    )
 
     fidelity_cmd = sub.add_parser(
         "fidelity",
@@ -237,7 +251,14 @@ def _run_card(args: argparse.Namespace) -> int:
 
     conn = connect_ro(resolve_db_path(args.db))
     try:
-        card = build_card(conn, args.cik, args.date, metrics_version=args.metrics_version)
+        card = build_card(
+            conn,
+            args.cik,
+            args.date,
+            metrics_version=args.metrics_version,
+            with_edgar=bool(args.edgar),
+            with_vetoes=not args.no_vetoes,
+        )
     finally:
         conn.close()
     text = render(card)
