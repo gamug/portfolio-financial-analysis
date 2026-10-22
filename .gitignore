@@ -230,3 +230,7 @@ CLAUDE.md
 
 # the run's own logs (the gateway drop log, item K): written by the pipeline
 out/
+
+# the succession 8-K register (T-155's): the user's copy, never committed (the pilot's V6 runs
+# it from the working tree)
+docs/checklist_sec/succession_8ks.csv
