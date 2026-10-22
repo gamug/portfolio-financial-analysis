@@ -53,6 +53,36 @@ class Period:
 
 
 @dataclass(frozen=True)
+class Substitute:
+    """T-159a: the concepts that stand in for an item the filing reports under **another standard
+    concept**, and the rules under which they may be read.
+
+    The substitutes are read **only** when the item's own concepts found nothing (ID-02a
+    precedence: the narrowest matching definition wins, so a concept the registry already reads
+    always wins over a substitute and an item that resolves today resolves to the same value after
+    T-159a). Every element below is a us-gaap element the taxonomy defines as the item's total
+    (or, for a component, as a member of the item's family); the definition each one rests on is
+    quoted in ``docs/model_fixes.md`` (T-159a).
+
+    * ``totals`` -- the item's total under another standard concept, read in the declared order
+      (the first filed wins);
+    * ``families`` -- the component families: a component is accepted only when it is the **sole**
+      filed member of **one** family (ID-02b: a component is never the total; it is one only when
+      it is all the filing has). The names are concept **prefixes**, so a family covers its element
+      and its variants (``EnergyRelatedInventory`` covers ``...GasStoredUnderground``);
+    * ``classes`` -- the **disjoint** classes (ASC 320's short-term-investment classes): each class
+      contributes one member (its own total first) and the classes are summed;
+    * ``sums`` -- the exact two-part sums (ID-02b: a map with a source states the identity): both
+      parts must be filed for the period, or the item stays empty.
+    """
+
+    totals: tuple[str, ...] = ()
+    families: tuple[str, ...] = ()
+    classes: tuple[tuple[str, ...], ...] = ()
+    sums: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class LineItem:
     """How to find one economic quantity across possibly-inconsistent filings.
 
@@ -136,6 +166,10 @@ class LineItem:
     # (concept, flag): when the item resolves empty and that concept is filed (valued,
     # non-dimensional) in the column, raise the flag (T-148 step 2.1).
     unread_flags: tuple[tuple[str, str], ...] = ()
+    # T-159a: the substitute concepts -- the item's total under another standard concept, the
+    # component families, the disjoint classes and the exact sums. Read only when the item's own
+    # concepts found nothing; see :class:`Substitute`.
+    substitute: Substitute | None = None
 
 
 _INCOME = ("income_statement",)
@@ -154,13 +188,80 @@ G = "us-gaap_"
 # term they are a kind of when it is not filed; they are never added to it. ``DebtCurrent``
 # ("debt and lease obligation, classified as current") is the last resort and is flagged
 # "includes leases".
+# T-159a rule 1: the current maturities a filer files as the combined debt-and-lease element
+# (``LongTermDebtAndCapitalLeaseObligationsCurrent``: "Amount of long-term debt and lease
+# obligation, classified as current") are read after the two above, flagged
+# ``includes_finance_leases`` (the flag its non-current partner already carries).
 SHORT_TERM_DEBT_MAP: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("current_maturities", (G + "LongTermDebtCurrent", G + "OtherLongTermDebtCurrent")),
+    (
+        "current_maturities",
+        (
+            G + "LongTermDebtCurrent",
+            G + "OtherLongTermDebtCurrent",
+            G + "LongTermDebtAndCapitalLeaseObligationsCurrent",
+        ),
+    ),
     (
         "borrowings",
         (G + "ShortTermBorrowings", G + "CommercialPaper", G + "NotesPayableCurrent"),
     ),
 )
+# T-159a rules 2 and 3: the calculation children of the map's terms (the FASB 2026 sfp-cls arc).
+# A family counts once: the node when it is filed, else the sum of its filed children. A child is
+# never added beside its parent. ``SecuritiesSoldUnderAgreementsToRepurchase`` and the FHLB
+# advances are not in the tree: they are securities financing and bank funding (APP-02 makes a
+# bank's debt metrics not applicable).
+SHORT_TERM_DEBT_CHILDREN: dict[str, tuple[str, ...]] = {
+    G + "LongTermDebtCurrent": (
+        G + "SecuredDebtCurrent",
+        G + "ConvertibleDebtCurrent",
+        G + "UnsecuredDebtCurrent",
+        G + "SubordinatedDebtCurrent",
+        G + "ConvertibleSubordinatedDebtCurrent",
+        G + "LongTermCommercialPaperCurrent",
+        G + "LongTermConstructionLoanCurrent",
+        G + "LongtermTransitionBondCurrent",
+        G + "LongtermPollutionControlBondCurrent",
+        G + "OtherLongTermDebtCurrent",
+        G + "LinesOfCreditCurrent",
+        G + "NotesAndLoansPayableCurrent",
+        G + "SpecialAssessmentBondCurrent",
+    ),
+    G + "NotesAndLoansPayableCurrent": (
+        G + "NotesPayableCurrent",
+        G + "LoansPayableCurrent",
+    ),
+    G + "NotesPayableCurrent": (
+        G + "ConvertibleNotesPayableCurrent",
+        G + "SeniorNotesCurrent",
+        G + "OtherNotesPayableCurrent",
+    ),
+    G + "ShortTermBorrowings": (
+        G + "BankOverdrafts",
+        G + "CommercialPaper",
+        G + "BridgeLoan",
+        G + "ConstructionLoan",
+        G + "ShortTermBankLoansAndNotesPayable",
+        G + "ShortTermNonBankLoansAndNotesPayable",
+        G + "WarehouseAgreementBorrowings",
+        G + "OtherShortTermBorrowings",
+    ),
+}
+# The node whose children the term sums when the term is filed only as them (rules 2 and 3).
+SHORT_TERM_DEBT_ROOTS: dict[str, str] = {
+    "current_maturities": G + "LongTermDebtCurrent",
+    "borrowings": G + "ShortTermBorrowings",
+}
+# The filed line that contains the whole tree: when it is the term's own read, the children are
+# inside it and are not added (``LongTermDebtAndCapitalLeaseObligationsCurrent`` contains
+# ``LongTermDebtCurrent``; ``LongTermDebtCurrent`` contains its own children).
+SHORT_TERM_DEBT_CONTAINERS: dict[str, tuple[str, ...]] = {
+    "current_maturities": (
+        G + "LongTermDebtCurrent",
+        G + "LongTermDebtAndCapitalLeaseObligationsCurrent",
+    ),
+    "borrowings": (G + "ShortTermBorrowings",),
+}
 SHORT_TERM_DEBT_LAST = G + "DebtCurrent"
 # Long-term lines that already contain the current maturities: a short-term term that is a kind of
 # current maturity is not added to them (N4).
@@ -389,6 +490,101 @@ SHORT_TERM_INVESTMENT_CONCEPTS: tuple[str, ...] = (
     "us-gaap_MarketableSecuritiesCurrent",
 )
 
+# -- T-159a: the registry substitutes ---------------------------------------------------------------
+# The item's total under **another standard concept** (ID-02a precedence: these are read only
+# after the item's own concepts found nothing), the component families whose sole filed member is
+# the total, the ASC 320 classes that are summed, and the exact two-part sums. Every element
+# below is a us-gaap element; the taxonomy definition each one rests on is quoted in
+# ``docs/model_fixes.md`` (T-159a), and the elements the brief rejects are listed there too.
+
+# Receivables: the current receivables total, under the three names the taxonomy gives it.
+RECEIVABLES_SUBSTITUTES: tuple[str, ...] = (
+    # "Accounts and notes receivable, net" -- trade receivables with the notes receivable a filer
+    # presents beside them.
+    G + "AccountsNotesAndLoansReceivableNetCurrent",
+    # the same total for a filer that presents other receivables with trade receivables.
+    G + "AccountsAndOtherReceivablesNetCurrent",
+    # "Accounts receivable, net" -- the total of an **unclassified** balance sheet (no
+    # current/noncurrent split), so it is the receivables and not a current-asset component.
+    G + "AccountsReceivableNet",
+)
+# Cost of goods and services sold excluding the depreciation, depletion and amortization the filer
+# presents on its own line: the total cost of sales, less the D&A (flagged ``cogs_excludes_da``).
+COGS_SUBSTITUTES: tuple[str, ...] = (
+    G + "CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+)
+# The inventory total, under the two names the taxonomy gives it.
+INVENTORY_SUBSTITUTES: tuple[str, ...] = (
+    G + "InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings",
+    G + "RetailRelatedInventoryMerchandise",
+)
+# The inventory component families (concept **prefixes**): a family covers its element and its
+# variants (``InventoryFinishedGoods`` covers ``...NetOfReserves``). A component is accepted only
+# when it is the sole filed member of one family.
+INVENTORY_FAMILIES: tuple[str, ...] = (
+    G + "EnergyRelatedInventory",
+    G + "InventoryRawMaterialsAndSupplies",
+    G + "InventoryFinishedGoods",
+    G + "InventoryWorkInProcess",
+    G + "InventoryPartsAndComponents",
+    G + "OtherInventory",
+)
+# The redeemable NCI at fair value -- read only when no carrying amount is filed.
+REDEEMABLE_NCI_SUBSTITUTES: tuple[str, ...] = (
+    G + "RedeemableNoncontrollingInterestEquityFairValue",
+)
+# Gross interest expense, under the two names the taxonomy gives it. Never a net element
+# (``InterestIncomeExpense...Net``): net interest is not interest expense.
+INTEREST_EXPENSE_SUBSTITUTES: tuple[str, ...] = (
+    G + "InterestExpenseOperating",
+    G + "InterestExpenseBorrowings",
+)
+# The NCI in operating partnerships -- the minority interest a partnership-structured filer files.
+MINORITY_INTEREST_SUBSTITUTES: tuple[str, ...] = (G + "MinorityInterestInOperatingPartnerships",)
+# Net income available to common stockholders: the same quantity as parent net income when no
+# preferred dividend is filed for the period (flagged ``net_income_to_common``).
+NET_INCOME_SUBSTITUTES: tuple[str, ...] = (G + "NetIncomeLossAvailableToCommonStockholdersBasic",)
+# The ASC 320 short-term-investment classes. They are **disjoint** (trading, available for sale,
+# held to maturity, other), so several filed classes are summed -- each class counts once, its own
+# total first (``TradingSecurities`` before its ``...Debt``/``...Equity`` components).
+STI_CLASSES: tuple[tuple[str, ...], ...] = (
+    (
+        G + "AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+        G + "DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+    ),
+    (G + "TradingSecurities", G + "TradingSecuritiesDebt", G + "TradingSecuritiesEquity"),
+    (G + "HeldToMaturitySecuritiesCurrent",),
+    (G + "OtherShortTermInvestments",),
+)
+# The long-term debt components a filer presents instead of a tree total (MET-07 / ID-02b): they
+# enter the sourced sum, never a free alternative.
+LONG_TERM_DEBT_COMPONENTS: tuple[str, ...] = (
+    G + "SeniorNotes",
+    G + "ConvertibleLongTermNotesPayable",
+    G + "LongTermNotesPayable",
+    G + "OtherLongTermDebtNoncurrent",
+)
+# The exact two-part sums (ID-02b: a map with a source states the identity). Both parts must be
+# filed for the period, or the item stays empty.
+DA_EXACT_SUM: tuple[str, str] = (G + "Depreciation", G + "AmortizationOfIntangibleAssets")
+# The filed D&A aggregates (T-159a rule 4): a filer that presents the intangible amortization as
+# a separate add-back line files them apart.
+DA_AGGREGATE_CONCEPTS: tuple[str, ...] = (
+    G + "DepreciationDepletionAndAmortization",
+    G + "DepreciationAndAmortization",
+    G + "DepreciationAmortizationAndAccretionNet",
+)
+PRETAX_EXACT_SUM: tuple[str, str] = (
+    G + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+    G + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign",
+)
+# The preferred dividends that make "net income available to common" a **different** quantity
+# from parent net income (N13).
+PREFERRED_DIVIDEND_CONCEPTS: tuple[str, ...] = (
+    G + "PreferredStockDividendsAndOtherAdjustments",
+    G + "PreferredStockDividends",
+)
+
 # US-GAAP concept tags are stable across filers and are matched first; ``standard``
 # and ``label`` hints are conservative fallbacks scoped to the same statement.
 REGISTRY: dict[str, LineItem] = {
@@ -451,6 +647,16 @@ REGISTRY: dict[str, LineItem] = {
         nonnegative=(
             "us-gaap_CostOfGoodsAndServicesSold",
             "us-gaap_CostOfRevenue",
+            "us-gaap_CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+        ),
+        # T-159a: the cost of sales without the D&A the filer presents on its own line -- the total
+        # cost of sales, flagged ``cogs_excludes_da`` (the reader must know the D&A is not in it).
+        substitute=Substitute(totals=COGS_SUBSTITUTES),
+        concept_flags=(
+            (
+                "us-gaap_CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
+                "cogs_excludes_da",
+            ),
         ),
     ),
     "gross_profit": LineItem("gross_profit", _INCOME, concepts=("us-gaap_GrossProfit",)),
@@ -467,6 +673,14 @@ REGISTRY: dict[str, LineItem] = {
         _INCOME,
         concepts=("us-gaap_NetIncomeLoss", "us-gaap_ProfitLoss"),
         resolver="net_income",
+        # T-159a: "net income available to common" -- the same quantity as parent net income when
+        # no preferred dividend is filed for the period (flagged ``net_income_to_common``).
+        concept_flags=(
+            (
+                "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+                "net_income_to_common",
+            ),
+        ),
     ),
     "pretax_income": LineItem(
         "pretax_income",
@@ -476,6 +690,9 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
         ),
         standard=("PretaxIncomeLoss",),
+        # T-159a: the exact two-part sum -- the domestic and the foreign pre-tax income of a filer
+        # that splits them. Both parts must be filed for the period.
+        substitute=Substitute(sums=(PRETAX_EXACT_SUM,)),
     ),
     # ID-02b / D-06(c) (T-148): the total, else current + deferred when both are on the statement
     # face (B6's definition of IncomeTaxExpenseBenefit); never a single component, so no
@@ -497,7 +714,14 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_InterestExpenseDebt",
         ),
         # ID-13: DQC_0015 lists these two in every release of the window
-        nonnegative=("us-gaap_InterestAndDebtExpense", "us-gaap_InterestExpenseDebt"),
+        nonnegative=(
+            "us-gaap_InterestAndDebtExpense",
+            "us-gaap_InterestExpenseDebt",
+            "us-gaap_InterestExpenseBorrowings",
+        ),
+        # T-159a: gross interest expense under the other names the taxonomy gives it. Never a net
+        # element (``InterestIncomeExpense...Net``): net interest is not interest expense.
+        substitute=Substitute(totals=INTEREST_EXPENSE_SUBSTITUTES),
     ),
     "depreciation_amortization": LineItem(
         "depreciation_amortization",
@@ -657,6 +881,8 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_CashAndCashEquivalentsAtCarryingValue",
             "us-gaap_CashCashEquivalentsAndShortTermInvestments",
             "us-gaap_CashAndDueFromBanks",
+            # T-159a: the bare ``Cash`` line the substitute reads (ID-13: a DQC_0015 element).
+            "us-gaap_Cash",
         ),
         resolver="cash",
     ),
@@ -665,7 +891,20 @@ REGISTRY: dict[str, LineItem] = {
         _BALANCE,
         # ID-20: AvailableForSaleSecuritiesCurrent removed (sec_xcheck/taxonomy_absence_log.md)
         concepts=SHORT_TERM_INVESTMENT_CONCEPTS,
-        nonnegative=SHORT_TERM_INVESTMENT_CONCEPTS,
+        nonnegative=(
+            *SHORT_TERM_INVESTMENT_CONCEPTS,
+            # T-159a: the ASC 320 classes the resolver now reads (ID-13: the DQC_0015 elements).
+            "us-gaap_AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+            "us-gaap_DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+            "us-gaap_TradingSecurities",
+            "us-gaap_TradingSecuritiesDebt",
+            "us-gaap_TradingSecuritiesEquity",
+            "us-gaap_HeldToMaturitySecuritiesCurrent",
+            "us-gaap_OtherShortTermInvestments",
+        ),
+        # T-159a: the ASC 320 classes (trading, available for sale, held to maturity, other). They
+        # are disjoint, so several filed classes are summed, each counted once.
+        substitute=Substitute(classes=STI_CLASSES),
     ),
     # NCI (MD-02, MD-35; D6): the NCI in equity, the redeemable NCI between liabilities and equity,
     # and the equity-including-NCI total CON-04's identity needs. See the constants above.
@@ -673,6 +912,9 @@ REGISTRY: dict[str, LineItem] = {
         "minority_interest",
         _BALANCE,
         concepts=("us-gaap_MinorityInterest",),
+        # T-159a: the NCI in operating partnerships -- the minority interest a filer with
+        # partnerships structures files.
+        substitute=Substitute(totals=MINORITY_INTEREST_SUBSTITUTES),
     ),
     "redeemable_nci": LineItem(
         "redeemable_nci",
@@ -691,7 +933,15 @@ REGISTRY: dict[str, LineItem] = {
         "inventory",
         _BALANCE,
         concepts=("us-gaap_InventoryNet",),
-        nonnegative=("us-gaap_InventoryNet",),
+        nonnegative=(
+            "us-gaap_InventoryNet",
+            "us-gaap_InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings",
+            "us-gaap_RetailRelatedInventoryMerchandise",
+        ),
+        # T-159a: the total under the other names the taxonomy gives it, else the sole filed member
+        # of one component family (a component is never the total: it is one only when it is all
+        # the filing has -- XOM's two components leave the item empty).
+        substitute=Substitute(totals=INVENTORY_SUBSTITUTES, families=INVENTORY_FAMILIES),
     ),
     "receivables": LineItem(
         "receivables",
@@ -703,7 +953,12 @@ REGISTRY: dict[str, LineItem] = {
         nonnegative=(
             "us-gaap_AccountsReceivableNetCurrent",
             "us-gaap_ReceivablesNetCurrent",
+            "us-gaap_AccountsNotesAndLoansReceivableNetCurrent",
+            "us-gaap_AccountsAndOtherReceivablesNetCurrent",
+            "us-gaap_AccountsReceivableNet",
         ),
+        # T-159a: the same total under the other names the taxonomy gives it.
+        substitute=Substitute(totals=RECEIVABLES_SUBSTITUTES),
     ),
     # MET-07 / ID-02b (T-148). The debt resolvers are composite (:meth:`Statements._long_term_debt`,
     # :meth:`Statements._short_term_debt`, :meth:`Statements.total_debt`); the concepts below are
@@ -724,6 +979,11 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_LongTermDebt",
             "us-gaap_LongTermDebtAndCapitalLeaseObligations",
             "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+            # T-159a: the debt components the sourced sum now reads (ID-13: DQC_0015 elements).
+            "us-gaap_SeniorNotes",
+            "us-gaap_ConvertibleLongTermNotesPayable",
+            "us-gaap_LongTermNotesPayable",
+            "us-gaap_OtherLongTermDebtNoncurrent",
         ),
         resolver="long_term_debt",
     ),
@@ -731,7 +991,12 @@ REGISTRY: dict[str, LineItem] = {
         "short_term_debt",
         _BALANCE,
         concepts=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
-        nonnegative=(*(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs), SHORT_TERM_DEBT_LAST),
+        nonnegative=(
+            *(c for _term, cs in SHORT_TERM_DEBT_MAP for c in cs),
+            SHORT_TERM_DEBT_LAST,
+            # T-159a: the calculation children the map now reads (ID-13: DQC_0015 elements).
+            *(c for kids in SHORT_TERM_DEBT_CHILDREN.values() for c in kids),
+        ),
         resolver="short_term_debt",
     ),
 }
@@ -831,6 +1096,23 @@ RESOLVER_RULE_IDS: dict[str, tuple[str, ...]] = {
     "DA_SOURCED_CHILDREN": ("ID-02b", "MD-01"),
     "REDEEMABLE_NCI_CONCEPTS": ("MD-02", "CON-04", "D6"),
     "SHORT_TERM_INVESTMENT_CONCEPTS": ("MD-02", "MD-03", "MD-35", "D6"),
+    "RECEIVABLES_SUBSTITUTES": ("ID-02a", "MD-21"),
+    "COGS_SUBSTITUTES": ("ID-02a", "MD-06"),
+    "INVENTORY_SUBSTITUTES": ("ID-02a", "MD-20"),
+    "INVENTORY_FAMILIES": ("ID-02b", "MD-20"),
+    "REDEEMABLE_NCI_SUBSTITUTES": ("ID-02a", "MD-02"),
+    "INTEREST_EXPENSE_SUBSTITUTES": ("ID-02a", "MD-17"),
+    "MINORITY_INTEREST_SUBSTITUTES": ("ID-02a", "MD-02"),
+    "NET_INCOME_SUBSTITUTES": ("ID-03", "N13"),
+    "STI_CLASSES": ("ID-02b", "MD-03", "MD-35", "D6"),
+    "LONG_TERM_DEBT_COMPONENTS": ("ID-02b", "MET-07", "N4"),
+    "SHORT_TERM_DEBT_CHILDREN": ("ID-02b", "MET-07", "N4"),
+    "SHORT_TERM_DEBT_ROOTS": ("ID-02b", "MET-07", "N4"),
+    "SHORT_TERM_DEBT_CONTAINERS": ("ID-02b", "MET-07", "N4"),
+    "DA_EXACT_SUM": ("ID-02b", "MD-01"),
+    "DA_AGGREGATE_CONCEPTS": ("ID-02b", "MD-01"),
+    "PRETAX_EXACT_SUM": ("ID-02b", "MD-30"),
+    "PREFERRED_DIVIDEND_CONCEPTS": ("ID-03", "N13"),
     "_NCI_INCOME_CONCEPTS": ("ID-03", "CON-19"),
     "_COMPOSITE": ("ID-02b",),
 }
@@ -845,6 +1127,23 @@ RESOLVER_MAPS: tuple[str, ...] = (
     "DA_SOURCED_CHILDREN",
     "REDEEMABLE_NCI_CONCEPTS",
     "SHORT_TERM_INVESTMENT_CONCEPTS",
+    "RECEIVABLES_SUBSTITUTES",
+    "COGS_SUBSTITUTES",
+    "INVENTORY_SUBSTITUTES",
+    "INVENTORY_FAMILIES",
+    "REDEEMABLE_NCI_SUBSTITUTES",
+    "INTEREST_EXPENSE_SUBSTITUTES",
+    "MINORITY_INTEREST_SUBSTITUTES",
+    "NET_INCOME_SUBSTITUTES",
+    "STI_CLASSES",
+    "LONG_TERM_DEBT_COMPONENTS",
+    "SHORT_TERM_DEBT_CHILDREN",
+    "SHORT_TERM_DEBT_ROOTS",
+    "SHORT_TERM_DEBT_CONTAINERS",
+    "DA_EXACT_SUM",
+    "DA_AGGREGATE_CONCEPTS",
+    "PRETAX_EXACT_SUM",
+    "PREFERRED_DIVIDEND_CONCEPTS",
     "_NCI_INCOME_CONCEPTS",
     "_COMPOSITE",
     "net_income",
@@ -1264,9 +1563,105 @@ class Statements:
                 return None, None, None
             return total, used[0], "concept"
         value, concept, how = self._first_component_row(spec, column)
-        if value is None and (spec.fallback_concepts or spec.label_fallback):
-            return self._fallback_row(spec, column)
+        if value is None:
+            value, concept, how = self._last_resort(spec, column)
         return value, concept, how
+
+    def _last_resort(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """The tiers after the item's own concepts found nothing: the T-133 fallback tiers (the
+        filer's own caption) and then the T-159a substitutes."""
+        if spec.fallback_concepts or spec.label_fallback:
+            return self._fallback_row(spec, column)
+        return self._substitute_row(spec, column)
+
+    # -- the substitutes (T-159a) -------------------------------------------------------------------
+
+    def _substitute_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """The item's value from a **substitute** concept (T-159a): the item's total under another
+        standard concept, the sole member of a component family, the disjoint classes summed, or an
+        exact two-part sum.
+
+        Reached only when the item's own concepts found nothing (ID-02a precedence), so an item
+        that resolves today resolves to the same value after T-159a. The order is the brief's: the
+        total first, then the component families, then the classes, then the exact sums."""
+        substitute = spec.substitute
+        if substitute is None:
+            return None, None, None
+        for concept in substitute.totals:
+            value = self._concept_value(spec, column, concept)
+            if value is not None:
+                return value, concept, "substitute"
+        family = self._sole_family_member(spec, column, substitute.families)
+        if family is not None:
+            concept, value = family
+            return value, concept, "substitute"
+        if substitute.classes:
+            total, concept, counted = self._class_sum(spec, column, substitute.classes)
+            if counted:
+                return total, concept, "map"
+        for left, right in substitute.sums:
+            first = self._concept_value(spec, column, left)
+            second = self._concept_value(spec, column, right)
+            if first is not None and second is not None:
+                return first + second, f"{left} + {right}", "sourced_map"
+        return None, None, None
+
+    def _sole_family_member(
+        self, spec: LineItem, column: str, families: tuple[str, ...]
+    ) -> tuple[str, float] | None:
+        """The one filed member of the one filled component family, or nothing (T-159a).
+
+        A component is never the total (ID-02b): it is one only when it is all the filing has. So
+        exactly one family may be filled, and that family may hold exactly one filed member --
+        two families (XOM's ``EnergyRelatedInventory`` beside ``InventoryPartsAndComponents...``)
+        or two members of one family leave the item empty: a partial figure is worse than none."""
+        filled: list[tuple[str, list[tuple[str, float]]]] = []
+        for family in families:
+            members: list[tuple[str, float]] = []
+            for row in self._rows_for(spec):
+                concept = str(row.get("concept") or "")
+                if not concept.startswith(family):
+                    continue
+                value = self._read(row, column, spec)
+                if value is not None:
+                    members.append((concept, value))
+            if members:
+                filled.append((family, members))
+        if len(filled) != 1:
+            return None
+        members = filled[0][1]
+        if len(members) != 1:
+            return None
+        return members[0]
+
+    def _class_sum(
+        self, spec: LineItem, column: str, classes: tuple[tuple[str, ...], ...]
+    ) -> tuple[float, str, int]:
+        """The disjoint classes' values, one member per class, summed (T-159a).
+
+        Each class contributes the first of its members that is filed (its own total first), so a
+        class is counted once; a class with several filed members is flagged
+        ``substitute_class_multiple`` -- the reader must know the class held more than one line."""
+        total = 0.0
+        used: list[str] = []
+        for members in classes:
+            for concept in members:
+                value = self._concept_value(spec, column, concept)
+                if value is None:
+                    continue
+                if (
+                    len([m for m in members if self._concept_value(spec, column, m) is not None])
+                    > 1
+                ):
+                    self._flag("substitute_class_multiple")
+                total += value
+                used.append(concept)
+                break
+        return total, " + ".join(sorted(used)), len(used)
 
     def _component_value(self, spec: LineItem, column: str) -> float | None:
         return self._component_row(spec, column)[0]
@@ -1309,8 +1704,10 @@ class Statements:
             return parent, G + "NetIncomeLoss", "concept"
         profit = self._filed_anywhere(column, G + "ProfitLoss")
         if profit is None:
-            self._flag("net_income_not_filed")
-            return None, None, None
+            substitute = self._net_income_substitute(spec, column)
+            if substitute[0] is None:
+                self._flag("net_income_not_filed")
+            return substitute
         if not self._nci_income_filed(column):
             self._flag("no_nci_income_filed")
             return profit, G + "ProfitLoss", "concept"
@@ -1320,6 +1717,32 @@ class Statements:
             self._flag("profit_loss_nci_income_not_total")
             return None, None, None
         return profit - nci, f"{G}ProfitLoss - {nci_concept}", "map"
+
+    def _net_income_substitute(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """T-159a: "net income available to common" as parent net income.
+
+        The line is after the preferred dividends, so it is the same quantity as parent net income
+        only when **no** preferred dividend is filed for the period (N13). The flag
+        ``net_income_to_common`` (on the item) names the substitution for the reader."""
+        for concept in NET_INCOME_SUBSTITUTES:
+            value = self._concept_value(spec, column, concept)
+            if value is None:
+                continue
+            if self._preferred_dividends_filed(column):
+                self._flag("net_income_to_common_refused_preferred_dividends")
+                return None, None, None
+            return value, concept, "substitute"
+        return None, None, None
+
+    def _preferred_dividends_filed(self, column: str) -> bool:
+        """Whether a preferred dividend is filed for the period (N13): then "net income available
+        to common" is a different quantity from parent net income."""
+        return any(
+            self._filed_anywhere(column, concept) is not None
+            for concept in PREFERRED_DIVIDEND_CONCEPTS
+        )
 
     def _valued_rows(self, column: str) -> Iterator[dict[str, Any]]:
         """Every non-abstract, non-dimensional row of the stored statements that has a value in
@@ -1466,7 +1889,9 @@ class Statements:
         4. ES map: Cash + CashEquivalentsAtCarryingValue;
         5. (k)(1): CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents,
            caption checked and no other balance-sheet restricted line;
-        6. (k)(3): Cash alone on a classified balance sheet.
+        6. (k)(3): Cash alone on a classified balance sheet;
+        7. (T-159a) Cash alone on any other balance sheet -- the bare ``Cash`` line, read only when
+           no ``CashEquivalentsAtCarryingValue`` is filed (the ES map of step 4 has it then).
         """
         primary = self._cash_primary(spec, column)
         if primary[0] is not None:
@@ -1483,6 +1908,11 @@ class Statements:
             res_c = self._cash_classified(spec, column, val_cash, G + "Cash")
             if res_c is not None:
                 return res_c
+            # T-159a: the bare ``Cash`` line is the cash of a filer that files no cash-equivalents
+            # fact (the ES map of step 4 covers the case where it does).
+            if self._concept_value(spec, column, G + "CashEquivalentsAtCarryingValue") is None:
+                self._flag("cash_element_only")
+                return val_cash, G + "Cash", "substitute"
 
         return None, None, None
 
@@ -1508,7 +1938,9 @@ class Statements:
         at all, so a cash-flow D&A fact in any column keeps today's behaviour."""
         value, concept, how = self._component_row(spec, column)
         if value is not None:
-            return value, concept, how
+            # T-159a rule 4 (F7): D&A filed as two face lines.
+            plus = self._da_plus_intangibles_row(spec, column, value, concept)
+            return plus if plus is not None else (value, concept, how)
         result = self._da_sourced_sum(spec, column)
         if result[0] is not None:
             return result
@@ -1526,7 +1958,62 @@ class Statements:
         caption = self._da_caption_fallback(spec, column)
         if caption[0] is not None:
             return caption
-        return result
+        # T-159a: the exact two-part sum (ID-02b: a map with a source states the identity) --
+        # ``Depreciation`` + ``AmortizationOfIntangibleAssets``, when both are filed for the period.
+        # It is the last tier, so every read that resolves today resolves to the same value.
+        exact = self._da_exact_sum(spec, column)
+        return exact if exact[0] is not None else result
+
+    def _da_plus_intangibles_row(
+        self, spec: LineItem, column: str, value: float, concept: str | None
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """T-159a rule 4 (F7): D&A filed as two face lines.
+
+        When the D&A is the filed aggregate (``DepreciationDepletionAndAmortization``,
+        ``DepreciationAndAmortization`` or ``DepreciationAmortizationAndAccretionNet``) **and**
+        ``AmortizationOfIntangibleAssets`` is a **separate row of the served cash-flow statement**
+        in the same column, the two are separate add-back lines of one reconciliation and the D&A
+        is their sum (flagged ``da_plus_intangibles_row``). A row that is a child of the D&A row --
+        an "of which" line, already inside it -- is not added."""
+        if concept not in DA_AGGREGATE_CONCEPTS:
+            return None
+        for row in self._rows_for(spec):
+            if row.get("concept") != G + "AmortizationOfIntangibleAssets":
+                continue
+            if row.get("parent_concept") == concept:
+                continue  # an "of which" line: it is already inside the D&A
+            intangibles = self._read(row, column, spec)
+            if intangibles is None:
+                continue
+            self._flag("da_plus_intangibles_row")
+            return (
+                value + intangibles,
+                f"{concept} + {G}AmortizationOfIntangibleAssets",
+                "sourced_map",
+            )
+        return None
+
+    def _da_exact_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """T-159a: D&A = ``Depreciation`` + ``AmortizationOfIntangibleAssets``.
+
+        The two parts are the whole of the D&A a filer that presents them presents (ID-02b: a
+        component map with a source states the identity), so the sum is read when **both** are
+        filed for the period; one part alone leaves the item empty (a partial D&A is not D&A,
+        N14/D7). The "only lines" condition of :meth:`_da_sourced_sum` does not apply here: the
+        sum is of the two named parts, not of the statement's D&A-named lines. Flagged
+        ``da_sourced_map``."""
+        first = self._concept_value(spec, column, DA_EXACT_SUM[0])
+        second = self._concept_value(spec, column, DA_EXACT_SUM[1])
+        if first is None or second is None:
+            return None, None, None
+        self._flag("da_sourced_map")
+        return (
+            first + second,
+            f"{DA_EXACT_SUM[0]} + {DA_EXACT_SUM[1]}",
+            "sourced_map",
+        )
 
     def _da_caption_fallback(
         self, spec: LineItem, column: str
@@ -2030,7 +2517,21 @@ class Statements:
             if current_maturities:
                 self._flag("includes_current_maturities")
             return sum(filed.values()), " + ".join(sorted(filed)), "map"
-        return None, None, None
+        # T-159a: the debt components a filer presents instead of a tree total (MET-07 / ID-02b).
+        # They enter the same sum -- never a free alternative -- and the "only lines" condition
+        # holds for them as it holds for the tree's children.
+        filed = {
+            c: v
+            for c in LONG_TERM_DEBT_COMPONENTS
+            if (v := self._concept_value(spec, column, c)) is not None
+        }
+        if not filed:
+            return None, None, None
+        if self.debt_lines_outside(LONG_TERM_DEBT_COMPONENTS):
+            self._flag("debt_sum_refused_other_lines")
+            return None, None, None
+        self._flag("debt_sourced_sum")
+        return sum(filed.values()), " + ".join(sorted(filed)), "map"
 
     def debt_lines_outside(self, children: tuple[str, ...]) -> list[str]:
         """The debt-named balance-sheet lines that are not a child of *children* nor a short-term
@@ -2040,6 +2541,7 @@ class Statements:
         allowed = (
             set(children)
             | {c for _term, concepts in SHORT_TERM_DEBT_MAP for c in concepts}
+            | {c for kids in SHORT_TERM_DEBT_CHILDREN.values() for c in kids}
             | {SHORT_TERM_DEBT_LAST}
         )
         outside: list[str] = []
@@ -2058,17 +2560,90 @@ class Statements:
         """The filed terms of the short-term debt map (D-06(d), D-01; MET-07): for each term of
         :data:`SHORT_TERM_DEBT_MAP` the first of its concepts that is filed, as
         ``{term: (value, concept)}``. The current-maturities term is left out when the long-term
-        line already contains the current maturities (N4)."""
+        line already contains the current maturities (N4).
+
+        T-159a rule 1: the combined debt-and-lease element is one of the current-maturities
+        concepts (flagged ``includes_finance_leases``). A child is never read beside its parent:
+        ``NotesPayableCurrent`` is not read when ``NotesAndLoansPayableCurrent`` is filed (the
+        parent contains it)."""
         parts: dict[str, tuple[float, str]] = {}
         for term, concepts in SHORT_TERM_DEBT_MAP:
             if term == "current_maturities" and current_maturities_in_long_term:
                 continue
             for concept in concepts:
+                if concept == G + "NotesPayableCurrent" and (
+                    self._concept_value(spec, column, G + "NotesAndLoansPayableCurrent") is not None
+                ):
+                    continue  # a child is never added beside its parent
                 value = self._concept_value(spec, column, concept)
                 if value is not None:
+                    if concept == G + "LongTermDebtAndCapitalLeaseObligationsCurrent":
+                        self._flag("includes_finance_leases")
                     parts[term] = (value, concept)
                     break
         return parts
+
+    def _short_term_components(
+        self,
+        spec: LineItem,
+        column: str,
+        parts: dict[str, tuple[float, str]],
+        *,
+        current_maturities_in_long_term: bool,
+    ) -> dict[str, tuple[float, str]]:
+        """T-159a rules 2 and 3: the term's calculation children.
+
+        When no concept the term reads today is filed, the term is the **sum of its filed
+        calculation children** (:data:`SHORT_TERM_DEBT_CHILDREN`); when the term is read from one of
+        them (``CommercialPaper``), the other filed children are added beside it. Each family counts
+        once (the node when it is filed, else the sum of its filed children) and a child is never
+        added beside its parent. Flagged ``debt_components_sum``."""
+        out = dict(parts)
+        for term, root in SHORT_TERM_DEBT_ROOTS.items():
+            if term == "current_maturities" and current_maturities_in_long_term:
+                continue
+            own = parts.get(term)
+            if own is not None and own[1] in SHORT_TERM_DEBT_CONTAINERS[term]:
+                continue  # the filed line contains the whole tree
+            blocked: set[str] = set()
+            if own is not None:
+                blocked.add(own[1])  # the line already read
+            if term == "current_maturities" and parts.get("borrowings", ("", ""))[1] == (
+                G + "NotesPayableCurrent"
+            ):
+                # the notes payable are the borrowings term's line: the family that contains them
+                # is not added to the current maturities (a child is never added beside its parent)
+                blocked.add(G + "NotesAndLoansPayableCurrent")
+            total, used = self._tree_total(spec, column, root, blocked)
+            if not used:
+                continue
+            self._flag("debt_components_sum")
+            if own is None:
+                out[term] = (total, " + ".join(sorted(used)))
+            else:
+                out[term] = (
+                    own[0] + total,
+                    f"{own[1]} + " + " + ".join(sorted(used)),
+                )
+        return out
+
+    def _tree_total(
+        self, spec: LineItem, column: str, node: str, blocked: set[str]
+    ) -> tuple[float, list[str]]:
+        """The value of a calculation node: the node itself when it is filed, else the sum of its
+        filed children (each family once, T-159a rules 2 and 3)."""
+        if node in blocked:
+            return 0.0, []
+        value = self._concept_value(spec, column, node)
+        if value is not None:
+            return value, [node]
+        total = 0.0
+        used: list[str] = []
+        for child in SHORT_TERM_DEBT_CHILDREN.get(node, ()):
+            child_value, child_used = self._tree_total(spec, column, child, blocked)
+            total += child_value
+            used.extend(child_used)
+        return total, used
 
     def _long_term_with_flags(
         self, column: str
@@ -2086,18 +2661,19 @@ class Statements:
     ) -> tuple[float | None, str | None, dict[str, tuple[float, str]], bool]:
         """The short-term side of the debt map, shared by :meth:`_short_term_debt` and
         :meth:`_total_debt`: ``(value, concept, filed terms, used DebtCurrent)``. The filed terms
-        of :data:`SHORT_TERM_DEBT_MAP` added; ``DebtCurrent`` -- "debt and lease obligation" -- only
-        when no term is filed, flagged ``includes_leases``. Against a long-term line that includes
-        the current maturities (*in_long_term*) neither the current-maturities term nor
-        ``DebtCurrent`` (which contains them) is added (N4)."""
+        of :data:`SHORT_TERM_DEBT_MAP` added, with their calculation children (T-159a rules 2 and
+        3); ``DebtCurrent`` -- "debt and lease obligation" -- only when no term is filed, flagged
+        ``includes_leases``. Against a long-term line that includes the current maturities
+        (*in_long_term*) neither the current-maturities term nor ``DebtCurrent`` (which contains
+        them) is added (N4)."""
         parts = self._short_term_parts(spec, column, current_maturities_in_long_term=in_long_term)
+        parts = self._short_term_components(
+            spec, column, parts, current_maturities_in_long_term=in_long_term
+        )
         if parts:
-            return (
-                sum(v for v, _c in parts.values()),
-                " + ".join(c for _v, c in parts.values()),
-                parts,
-                False,
-            )
+            values = [v for v, _c in parts.values()]
+            concepts = [c for _v, c in parts.values()]
+            return sum(values), " + ".join(concepts), parts, False
         if not in_long_term:
             value = self._concept_value(spec, column, SHORT_TERM_DEBT_LAST)
             if value is not None:
@@ -2114,12 +2690,12 @@ class Statements:
         in_long_term = "includes_current_maturities" in lt_flags
         if in_long_term:
             self._flag("current_maturities_in_long_term")
-        value, concept, parts, _used_debt_current = self._short_term(
+        value, concept, _parts, _used_debt_current = self._short_term(
             spec, column, in_long_term=in_long_term
         )
-        if value is None:
+        if value is None or concept is None:
             return None, None, None
-        return value, concept, "map" if len(parts) > 1 else "concept"
+        return value, concept, "map" if " + " in concept else "concept"
 
     def total_debt(self, period_key: str) -> Resolution:
         """Total debt for *period_key* (MET-07, ID-02b, D-01; MET-00): long-term plus short-term.
@@ -2246,6 +2822,12 @@ class Statements:
         parts = {c: self._concept_value(spec, column, c) for c in REDEEMABLE_NCI_CONCEPTS[1:]}
         filed = {c: v for c, v in parts.items() if v is not None}
         if not filed:
+            # T-159a: the redeemable NCI at fair value -- read only when no carrying amount is
+            # filed (the total and the three parts are carrying amounts).
+            for concept in REDEEMABLE_NCI_SUBSTITUTES:
+                value = self._concept_value(spec, column, concept)
+                if value is not None:
+                    return value, concept, "substitute"
             return None, None, None
         if len(filed) == len(parts):
             self._flag("redeemable_nci_sum")

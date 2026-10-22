@@ -23,7 +23,8 @@ def compute(
     ttm: dict[str, float] | None = None,
 ) -> list[MetricResult]:
     revenue = stmts.get("revenue", period_key)
-    cogs = stmts.get("cogs", period_key)
+    cogs_resolution = stmts.resolve("cogs", period_key)
+    cogs = cogs_resolution.value
     gross = stmts.get("gross_profit", period_key)
     if gross is None and revenue is not None and cogs is not None:
         gross = revenue - cogs
@@ -52,6 +53,9 @@ def compute(
         equity=equity,
     )
     inputs.update(flag_inputs("net_income", net_resolution.flags))
+    # T-159a: the cost of sales read without the D&A the filer presents on its own line is flagged
+    # on the item, and every metric that reads the item carries the flag.
+    inputs.update(flag_inputs("cogs", cogs_resolution.flags))
     inputs.update(present(net_income_ttm=net_ttm))
 
     # MET-01 / MET-02 (D1/D2, T-151 part 2): capital at the end of the prior fiscal year -- the

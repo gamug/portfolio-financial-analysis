@@ -103,7 +103,23 @@ known-third-party = ["fastapi", "pydantic"]
 # B008: FastAPI's whole DI model is `param = Depends(...)` / `Query(...)` in the
 # signature default -- the function call there is the intended API, not a bug.
 "src/api/**" = ["B008"]
-# The pilot's evidence scripts (T-143 part A, the empty-value finding) are reviewer's working
-# scripts, collected verbatim: they read a database and print a table, and their style is the
-# reviewer's, not the repository's.
-"scripts/pilot_a/evidence/**" = ["ALL"]
+# The pilot measurement scripts (T-159a): the reviewer B evidence scripts of the T-143 part A
+# finding, kept as they were written (one-liners, module-level code) so the measurement they
+# produce is the reviewer's, not a rewrite of it. E402/E401/I001: the imports follow the
+# docstring; SIM115: the scripts open their files without a context manager; PLR2004: the
+# duration thresholds (351, 119, 80, 371 days) are the SEC's own buckets; B007/B023/E731/E741:
+# the loops bind their names the way the measurement reads them; S310/S314: the raw XML read.
+"scripts/pilot_a/**" = [
+    "B007",
+    "B023",
+    "E401",
+    "E402",
+    "E731",
+    "E741",
+    "I001",
+    "PLC0206",
+    "PLR2004",
+    "S310",
+    "S314",
+    "SIM115",
+]

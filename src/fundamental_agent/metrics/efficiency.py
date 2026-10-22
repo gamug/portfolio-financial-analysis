@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fundamental_agent.metrics.base import MetricResult, present, safe_div
+from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
 from fundamental_agent.statements import Statements
 
 GROUP = "efficiency"
@@ -15,7 +15,8 @@ def compute(
     ttm: dict[str, float] | None = None,
 ) -> list[MetricResult]:
     revenue = stmts.get("revenue", period_key)
-    cogs = stmts.get("cogs", period_key)
+    cogs_resolution = stmts.resolve("cogs", period_key)
+    cogs = cogs_resolution.value
     assets = stmts.get("total_assets", period_key)
     inventory = stmts.get("inventory", period_key)
     receivables = stmts.get("receivables", period_key)
@@ -27,6 +28,9 @@ def compute(
         inventory=inventory,
         receivables=receivables,
     )
+    # T-159a: the cost of sales read without the D&A the filer presents on its own line is flagged
+    # on the item, and every metric that reads the item carries the flag.
+    inputs.update(flag_inputs("cogs", cogs_resolution.flags))
     # Every turnover ratio here divides a flow (revenue/cogs) by an instantaneous
     # balance-sheet stock -- same 10-Q quarter-vs-annual mismatch as ROA/ROE
     # (F4, docs/model_fixes.md); `inputs` above keeps the raw, single-period

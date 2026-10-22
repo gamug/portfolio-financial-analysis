@@ -618,12 +618,15 @@ def test_revenue_total_label_correction_refuses_to_guess_when_between_rows_are_t
     assert stmts.get("revenue", key) is None
 
 
-def test_net_income_is_never_the_available_to_common_line() -> None:
-    """ID-03 / N13 (T-148, replacing T-096's test of the opposite): WAT's real shape -- 14 of 18
-    `metrics-v2` filings in the 20-ticker sample tag no `us-gaap_NetIncomeLoss` /
-    `us-gaap_ProfitLoss` row, only `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic`
-    (WAT's Oct-2022 10-Q, real value). That line is after preferred dividends: it is not the
-    parent's net income, so the item is empty and flagged, not filled with it."""
+def test_the_available_to_common_line_is_the_parent_net_income_without_a_preferred_dividend() -> (
+    None
+):
+    """ID-03 / N13, decided by T-159a: WAT's real shape -- 14 of 18 `metrics-v2` filings in the
+    20-ticker sample tag no `us-gaap_NetIncomeLoss` / `us-gaap_ProfitLoss` row, only
+    `us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic` (WAT's Oct-2022 10-Q, real value).
+    That line is after the preferred dividends, so it is the parent's net income **only** when no
+    preferred dividend is filed for the period: then the item is that value, flagged
+    `net_income_to_common`."""
     key = "2022-10-01 (Q4)"
     stmts = Statements.from_payload(
         _revenue_payload(
@@ -636,8 +639,36 @@ def test_net_income_is_never_the_available_to_common_line() -> None:
     )
 
     resolution = stmts.resolve("net_income", key)
+    assert resolution.value == 155_998_000.0
+    assert resolution.concept == "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic"
+    assert resolution.how == "substitute"
+    assert "net_income_to_common" in resolution.flags
+    assert "net_income_not_filed" not in resolution.flags
+
+
+def test_the_available_to_common_line_is_refused_when_a_preferred_dividend_is_filed() -> None:
+    """N13: with a preferred dividend filed for the period, the "available to common" line is
+    after it and is not the parent's earnings -- the item stays empty (N13)."""
+    key = "2022-10-01 (Q4)"
+    stmts = Statements.from_payload(
+        _revenue_payload(
+            _income_row(
+                "us-gaap_NetIncomeLossAvailableToCommonStockholdersBasic",
+                "Net income",
+                **{key: 155_998_000.0},
+            ),
+            _income_row(
+                "us-gaap_PreferredStockDividendsAndOtherAdjustments",
+                "Preferred stock dividends",
+                **{key: 3_000_000.0},
+            ),
+        )
+    )
+
+    resolution = stmts.resolve("net_income", key)
     assert resolution.value is None
-    assert resolution.flags == ("net_income_not_filed",)
+    assert "net_income_to_common_refused_preferred_dividends" in resolution.flags
+    assert "net_income_not_filed" in resolution.flags
 
 
 def test_net_income_still_prefers_the_plain_tag_when_both_are_present() -> None:
@@ -745,10 +776,14 @@ EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
     "cogs": {  # DQC_0015
         "us-gaap_CostOfGoodsAndServicesSold",
         "us-gaap_CostOfRevenue",
+        # T-159a: the substitute the resolver now reads (the DQC_0015 list names it).
+        "us-gaap_CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization",
     },
     "interest_expense": {  # DQC_0015
         "us-gaap_InterestAndDebtExpense",
         "us-gaap_InterestExpenseDebt",
+        # T-159a: the substitute the resolver now reads (the DQC_0015 list names it).
+        "us-gaap_InterestExpenseBorrowings",
     },
     "depreciation_amortization": {  # DQC_0015
         "us-gaap_DepreciationAndAmortization",
@@ -791,23 +826,45 @@ EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
         "us-gaap_CashAndCashEquivalentsAtCarryingValue",
         "us-gaap_CashAndDueFromBanks",
         "us-gaap_CashCashEquivalentsAndShortTermInvestments",
+        # T-159a: the bare ``Cash`` line the substitute reads (the DQC_0015 list names it).
+        "us-gaap_Cash",
     },
     "short_term_investments": {  # DQC_0015
         "us-gaap_MarketableSecuritiesCurrent",
         "us-gaap_ShortTermInvestments",
+        # T-159a: the ASC 320 classes the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_AvailableForSaleSecuritiesDebtSecuritiesCurrent",
+        "us-gaap_DebtSecuritiesAvailableForSaleExcludingAccruedInterestCurrent",
+        "us-gaap_HeldToMaturitySecuritiesCurrent",
+        "us-gaap_OtherShortTermInvestments",
+        "us-gaap_TradingSecurities",
+        "us-gaap_TradingSecuritiesDebt",
+        "us-gaap_TradingSecuritiesEquity",
     },
     "inventory": {  # DQC_0015
         "us-gaap_InventoryNet",
+        # T-159a: the totals the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_InventoryNetOfAllowancesCustomerAdvancesAndProgressBillings",
+        "us-gaap_RetailRelatedInventoryMerchandise",
     },
     "receivables": {  # DQC_0015
         "us-gaap_AccountsReceivableNetCurrent",
         "us-gaap_ReceivablesNetCurrent",
+        # T-159a: the totals the resolver now reads (the DQC_0015 list names them).
+        "us-gaap_AccountsNotesAndLoansReceivableNetCurrent",
+        "us-gaap_AccountsAndOtherReceivablesNetCurrent",
+        "us-gaap_AccountsReceivableNet",
     },
     "long_term_debt": {  # DQC_0015
         "us-gaap_LongTermDebt",
         "us-gaap_LongTermDebtAndCapitalLeaseObligations",
         "us-gaap_LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
         "us-gaap_LongTermDebtNoncurrent",
+        # T-159a: the debt components the sourced sum now reads (the DQC_0015 list names them).
+        "us-gaap_SeniorNotes",
+        "us-gaap_ConvertibleLongTermNotesPayable",
+        "us-gaap_LongTermNotesPayable",
+        "us-gaap_OtherLongTermDebtNoncurrent",
     },
     "short_term_debt": {  # DQC_0015
         "us-gaap_CommercialPaper",
@@ -816,6 +873,32 @@ EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
         "us-gaap_NotesPayableCurrent",
         "us-gaap_OtherLongTermDebtCurrent",
         "us-gaap_ShortTermBorrowings",
+        # T-159a: the current maturities filed as the combined debt-and-lease element (rule 1) and
+        # the calculation children the map now reads (rules 2 and 3) -- the DQC_0015 list names them.
+        "us-gaap_LongTermDebtAndCapitalLeaseObligationsCurrent",
+        "us-gaap_BankOverdrafts",
+        "us-gaap_BridgeLoan",
+        "us-gaap_ConstructionLoan",
+        "us-gaap_ConvertibleDebtCurrent",
+        "us-gaap_ConvertibleNotesPayableCurrent",
+        "us-gaap_ConvertibleSubordinatedDebtCurrent",
+        "us-gaap_LinesOfCreditCurrent",
+        "us-gaap_LoansPayableCurrent",
+        "us-gaap_LongTermCommercialPaperCurrent",
+        "us-gaap_LongTermConstructionLoanCurrent",
+        "us-gaap_LongtermPollutionControlBondCurrent",
+        "us-gaap_LongtermTransitionBondCurrent",
+        "us-gaap_NotesAndLoansPayableCurrent",
+        "us-gaap_OtherNotesPayableCurrent",
+        "us-gaap_OtherShortTermBorrowings",
+        "us-gaap_SecuredDebtCurrent",
+        "us-gaap_SeniorNotesCurrent",
+        "us-gaap_ShortTermBankLoansAndNotesPayable",
+        "us-gaap_ShortTermNonBankLoansAndNotesPayable",
+        "us-gaap_SpecialAssessmentBondCurrent",
+        "us-gaap_SubordinatedDebtCurrent",
+        "us-gaap_UnsecuredDebtCurrent",
+        "us-gaap_WarehouseAgreementBorrowings",
     },
 }
 

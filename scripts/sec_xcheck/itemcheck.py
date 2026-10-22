@@ -58,14 +58,38 @@ INSTANT_ITEMS = {"total_assets", "equity", "cash"}
 
 
 def own_concepts() -> dict[str, set[str]]:
-    """Registry item -> its own concept names, without the ``us-gaap_`` prefix."""
+    """Registry item -> its own concept names, without the ``us-gaap_`` prefix.
+
+    T-159a: the **substitute** concepts are the item's own concepts too -- each of them is the
+    item's total under another standard concept (the taxonomy defines it as that quantity), so a
+    value stored under one of them is the item's own value, not another item's."""
     return {
         name: {
             c.split("_", 1)[1]
-            for c in (*item.concepts, *item.total_concepts, *item.fallback_concepts)
+            for c in (
+                *item.concepts,
+                *item.total_concepts,
+                *item.fallback_concepts,
+                *substitute_concepts(item),
+            )
         }
         for name, item in REGISTRY.items()
     }
+
+
+def substitute_concepts(item: object) -> tuple[str, ...]:
+    """The item's substitute concepts (T-159a): the totals, the component families (prefixes), the
+    classes' members and the parts of the exact sums."""
+    substitute = getattr(item, "substitute", None)
+    if substitute is None:
+        return ()
+    out: list[str] = list(substitute.totals)
+    out.extend(substitute.families)
+    for members in substitute.classes:
+        out.extend(members)
+    for left, right in substitute.sums:
+        out.extend((left, right))
+    return tuple(out)
 
 
 #: The gateway's own period buckets (data-mining 5c77262, ``src/sec_edgar/agent.py``:67): a

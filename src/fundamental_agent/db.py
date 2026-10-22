@@ -99,8 +99,17 @@ _CROSS_ITEM_BAND = 1.25
 # of an accepted D&A element is read through the shared caption fallback (E3, flagged
 # ``caption_fallback`` + ``extension_concept``), and operating income is formed from the FASB 2026
 # ``soi`` calculation identities when its terms are filed (E4, flagged ``oi_from_calc_identity``).
+# ``metrics-v9`` (T-159a): a line item the filing reports under **another standard concept** is
+# read from a substitute, after the item's own concepts (ID-02a precedence, so an item that
+# resolves today resolves to the same value): the receivables, cost of sales, inventory, redeemable
+# NCI, interest expense, minority interest, cash and net income totals, the ASC 320
+# short-term-investment classes (disjoint, so they are summed), the sole member of a component
+# family (inventory), the long-term debt components and the short-term debt lines (MET-07), and
+# the exact two-part sums (D&A = ``Depreciation`` + ``AmortizationOfIntangibleAssets``; pre-tax
+# income = domestic + foreign). The short-term investments the filing reports are no longer read
+# as 0 (the only defaulted input). Flags: ``cogs_excludes_da``, ``net_income_to_common``.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v8"
+METRICS_ENGINE_VERSION = "metrics-v9"
 
 
 @dataclass(frozen=True)

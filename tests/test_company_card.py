@@ -80,7 +80,7 @@ def test_card_prints_the_stored_row_not_a_recomputation(
     assert card.filing["form"] == "10-K"
     assert card.filing["accession"] == "0000320193-23-000106"
     assert card.is_reit is False
-    assert "metrics-v8" in card.metrics_version
+    assert "metrics-v9" in card.metrics_version
     roe = next(m for m in card.metrics if m["name"] == "return_on_equity")
     assert roe["value"] == 9.99
     assert "MD-10" in roe["rule_ids"]
