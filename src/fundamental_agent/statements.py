@@ -559,16 +559,26 @@ STI_CLASSES: tuple[tuple[str, ...], ...] = (
 # The long-term debt components a filer presents instead of a tree total (MET-07 / ID-02b): they
 # enter the sourced sum, never a free alternative. Each is a **node of the FASB 2026 tree**, so a
 # component's filed children count when the component itself is not filed (the family rule, the
-# same as the short-term map's terms): EA files ``SeniorLongTermNotes`` -- the noncurrent portion
-# of its senior notes -- and the gateway serves that element, not the total. The current portion of
-# a component is never added to the long-term debt (N4): it belongs to the current-maturities term.
+# same as the short-term map's terms): EA files ``SeniorLongTermNotes`` -- "Carrying value as of
+# the balance sheet date of Notes with the highest claim on the assets of the issuer in case of
+# bankruptcy or liquidation (with maturities initially due after one year or beyond the operating
+# cycle, if longer), **excluding current portion**" -- and the gateway serves that element, not
+# the total. The current portion of a component is never added to the long-term debt (N4): it
+# belongs to the current-maturities term.
+# The components are read **widest first** (a component that contains another comes before it), so
+# a child is never added beside its parent.
 LONG_TERM_DEBT_COMPONENTS: tuple[str, ...] = (
     G + "SeniorNotes",
-    G + "ConvertibleLongTermNotesPayable",
     G + "LongTermNotesPayable",
+    G + "ConvertibleLongTermNotesPayable",
     G + "OtherLongTermDebtNoncurrent",
 )
-# The children of the components (the taxonomy's arcs): the noncurrent ones only.
+# The children of the components: the sfp-cls arc's
+# ``LongTermNotesAndLoans`` -> ``LongTermNotesPayable`` -> {``MediumtermNotesNoncurrent``,
+# ``JuniorSubordinatedLongTermNotes``, ``SeniorLongTermNotes``, ``ConvertibleLongTermNotesPayable``,
+# ``NotesPayableToBankNoncurrent``, ``OtherLongTermNotesPayable``} and the sfp-dbo arc's
+# ``NotesPayable`` -> ``SeniorNotes`` -> {``SeniorNotesCurrent``, ``SeniorLongTermNotes``}. The
+# current portions are the current-maturities term's (N4).
 LONG_TERM_DEBT_COMPONENT_CHILDREN: dict[str, tuple[str, ...]] = {
     G + "SeniorNotes": (G + "SeniorLongTermNotes",),
     G + "LongTermNotesPayable": (
@@ -590,6 +600,9 @@ DA_AGGREGATE_CONCEPTS: tuple[str, ...] = (
     G + "DepreciationAndAmortization",
     G + "DepreciationAmortizationAndAccretionNet",
 )
+# The tolerance of rule 4's HLT exception: the income statement and the cash flow carry the same
+# fact, so the two values are the same to the unit.
+_SAME_VALUE = 0.5
 PRETAX_EXACT_SUM: tuple[str, str] = (
     G + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
     G + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign",
@@ -1995,7 +2008,13 @@ class Statements:
         ``AmortizationOfIntangibleAssets`` is a **separate row of the served cash-flow statement**
         in the same column, the two are separate add-back lines of one reconciliation and the D&A
         is their sum (flagged ``da_plus_intangibles_row``). A row that is a child of the D&A row --
-        an "of which" line, already inside it -- is not added."""
+        an "of which" line, already inside it -- is not added.
+
+        **HLT's exception** (reviewer B, 2026-10-22): the rule does not apply when the income
+        statement of the same column carries the cash-flow D&A concept (or ``Depreciation``) at
+        the same value and no ``AmortizationOfIntangibleAssets`` line: the D&A row is then the
+        whole D&A expense and the other row lies outside it (HLT's "Amortization of contract
+        acquisition costs"), so adding it would overstate the D&A and the EBITDA."""
         if concept not in DA_AGGREGATE_CONCEPTS:
             return None
         for row in self._rows_for(spec):
@@ -2006,6 +2025,8 @@ class Statements:
             intangibles = self._read(row, column, spec)
             if intangibles is None:
                 continue
+            if self._income_da_is_the_full_expense(column, value):
+                return None
             self._flag("da_plus_intangibles_row")
             return (
                 value + intangibles,
@@ -2013,6 +2034,31 @@ class Statements:
                 "sourced_map",
             )
         return None
+
+    def _income_da_is_the_full_expense(self, column: str, da_value: float) -> bool:
+        """Whether the income statement of *column* shows the cash-flow D&A row as the whole D&A
+        expense (T-159a rule 4's HLT exception): it carries the D&A concept (or ``Depreciation``)
+        at the same value and no ``AmortizationOfIntangibleAssets`` line."""
+        income = self._income_statement_concepts(column)
+        if G + "AmortizationOfIntangibleAssets" in income:
+            return False
+        return any(
+            income.get(c) is not None and abs(income[c] - da_value) < _SAME_VALUE
+            for c in (*DA_AGGREGATE_CONCEPTS, G + "Depreciation")
+        )
+
+    def _income_statement_concepts(self, column: str) -> dict[str, float]:
+        """The income statement's concepts and their values in *column* (the non-dimensional,
+        non-abstract rows)."""
+        out: dict[str, float] = {}
+        for row in self.raw.get("income_statement", []):
+            if row.get("abstract") or row.get("dimension"):
+                continue
+            concept = str(row.get("concept") or "")
+            value = _numeric(row.get(column))
+            if concept and value is not None:
+                out.setdefault(concept, value)
+        return out
 
     def _da_exact_sum(
         self, spec: LineItem, column: str
@@ -2554,20 +2600,37 @@ class Statements:
     def _long_term_components(self, spec: LineItem, column: str) -> dict[str, float]:
         """The filed debt components of the long-term debt sum (T-159a): the components themselves
         and, for a component that is not filed, its filed children (the family rule). Each concept
-        counts once."""
+        counts once, and a child is never added beside its parent (the components are read widest
+        first)."""
         filed: dict[str, float] = {}
+        blocked: set[str] = set()
         for component in LONG_TERM_DEBT_COMPONENTS:
+            if component in blocked:
+                continue
             value = self._concept_value(spec, column, component)
             if value is not None:
                 filed[component] = value
+                blocked.update(self._component_descendants(component))
                 continue
             for child in LONG_TERM_DEBT_COMPONENT_CHILDREN.get(component, ()):
-                if child in filed:
+                if child in filed or child in blocked:
                     continue
                 child_value = self._concept_value(spec, column, child)
                 if child_value is not None:
                     filed[child] = child_value
+                    blocked.update(self._component_descendants(child))
         return filed
+
+    def _component_descendants(self, node: str) -> set[str]:
+        """The components' children, transitively: a filed node's descendants are inside it and are
+        never added beside it (the taxonomy's arcs)."""
+        out: set[str] = set()
+        for child in LONG_TERM_DEBT_COMPONENT_CHILDREN.get(node, ()):
+            if child in out:
+                continue
+            out.add(child)
+            out.update(self._component_descendants(child))
+        return out
 
     def debt_lines_outside(self, children: tuple[str, ...]) -> list[str]:
         """The debt-named balance-sheet lines that are not a child of *children* nor a short-term

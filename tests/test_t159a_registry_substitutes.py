@@ -619,6 +619,80 @@ def test_a_dimensional_of_which_row_is_not_added() -> None:
     assert "da_plus_intangibles_row" not in resolution.flags
 
 
+def test_rule_4_does_not_apply_when_the_income_statement_shows_the_da_as_the_full_expense() -> None:
+    """Rule 4's HLT exception (reviewer B, 2026-10-22): the income statement of the same column
+    carries the cash-flow D&A concept at the same value and no ``AmortizationOfIntangibleAssets``
+    line -- the D&A row is then the whole D&A expense and the other row lies outside it (HLT's
+    "Amortization of contract acquisition costs"), so adding it would overstate the D&A."""
+    stmts = _payload(
+        income=[
+            _row(
+                "DepreciationAndAmortization",
+                "Depreciation and amortization expenses",
+                **{KEY: 99.0},
+            ),
+        ],
+        cash_flow=[
+            _row(
+                "DepreciationAndAmortization",
+                "Depreciation and amortization expenses",
+                **{KEY: 99.0},
+            ),
+            _row(
+                "AmortizationOfIntangibleAssets",
+                "Amortization of contract acquisition costs",
+                **{KEY: 32.0},
+            ),
+        ],
+    )
+    resolution = stmts.resolve("depreciation_amortization", KEY)
+    assert resolution.value == 99.0
+    assert resolution.concept == G + "DepreciationAndAmortization"
+    assert "da_plus_intangibles_row" not in resolution.flags
+
+
+def test_rule_4_applies_when_the_income_statement_carries_both_lines() -> None:
+    """Rule 4: CME's shape -- the income statement carries the intangible amortization as its own
+    line, so the cash-flow D&A row is not the whole expense and the two are summed."""
+    stmts = _payload(
+        income=[
+            _row("DepreciationAndAmortization", "Depreciation and amortization", **{KEY: 107.5}),
+            _row(
+                "AmortizationOfIntangibleAssets",
+                "Amortization of purchased intangibles",
+                **{KEY: 223.4},
+            ),
+        ],
+        cash_flow=[
+            _row("DepreciationAndAmortization", "Depreciation and amortization", **{KEY: 107.5}),
+            _row(
+                "AmortizationOfIntangibleAssets",
+                "Amortization of purchased intangibles",
+                **{KEY: 223.4},
+            ),
+        ],
+    )
+    resolution = stmts.resolve("depreciation_amortization", KEY)
+    assert resolution.value == 330.9
+    assert resolution.how == "sourced_map"
+    assert "da_plus_intangibles_row" in resolution.flags
+
+
+def test_a_long_term_debt_component_is_never_added_beside_its_parent() -> None:
+    """T-159a: the long-term debt components are read widest first, so a child is never added
+    beside its parent: EA's filing tags its senior notes under both ``SeniorNotes`` (the total) and
+    ``SeniorLongTermNotes`` (the noncurrent portion) -- the total is the value."""
+    stmts = _payload(
+        balance=[
+            _row("SeniorNotes", "Senior notes, net", **{INSTANT: 1_882.0}),
+            _row("SeniorLongTermNotes", "Senior notes, net", **{INSTANT: 1_882.0}),
+        ]
+    )
+    resolution = stmts.resolve("long_term_debt", KEY)
+    assert resolution.value == 1_882.0
+    assert resolution.concept == G + "SeniorNotes"
+
+
 # -- the rejected list -------------------------------------------------------------------------------
 
 
