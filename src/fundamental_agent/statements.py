@@ -3250,10 +3250,18 @@ class Statements:
     def _long_term_with_flags(
         self, column: str
     ) -> tuple[float | None, str | None, str | None, list[str]]:
-        """The long-term debt resolution and the flags it raised (kept apart from the caller's)."""
+        """The long-term debt resolution and the flags it raised (kept apart from the caller's).
+
+        T-159c: when the statements give nothing, the filed-fact fallback fills the term here too,
+        so ``total_debt`` (which calls this method directly, not ``resolve``) sees it."""
         outer, self._flags = self._flags, []
         try:
             value, concept, how = self._long_term_debt(REGISTRY["long_term_debt"], column)
+            if value is None:
+                fallback = self._filed_fact_row(REGISTRY["long_term_debt"], column, instant=True)
+                if fallback is not None:
+                    value, concept, how = fallback
+                    self._flag("filed_fact")
             return value, concept, how, list(self._flags)
         finally:
             self._flags = outer
@@ -3281,7 +3289,30 @@ class Statements:
             if value is not None:
                 self._flag("includes_leases")
                 return value, SHORT_TERM_DEBT_LAST, {}, True
+        # T-159c: the filed facts fill the map when the served rows give nothing. The term the
+        # concept belongs to is kept, so total_debt's coverage test reads the same map.
+        if in_long_term:
+            self._flag("current_maturities_in_long_term")
+        fallback = self._filed_fact_row(REGISTRY["short_term_debt"], column, instant=True)
+        if fallback is not None:
+            value, concept, _how = fallback
+            self._flag("filed_fact")
+            return value, concept or "", self._filed_fact_short_term_terms(concept or ""), False
         return None, None, {}, False
+
+    @staticmethod
+    def _filed_fact_short_term_terms(concept: str) -> dict[str, tuple[float, str]]:
+        """The term(s) a filed-fact short-term concept belongs to, for total_debt's coverage."""
+        terms: dict[str, tuple[float, str]] = {}
+        parts = [part.strip() for part in re.split(r"\s+\+\s+", concept) if part.strip()]
+        for part in parts:
+            for term, concepts in SHORT_TERM_DEBT_MAP:
+                if part in concepts or part in SHORT_TERM_DEBT_CHILDREN.get(
+                    SHORT_TERM_DEBT_ROOTS[term], ()
+                ):
+                    terms[term] = (0.0, part)
+                    break
+        return terms
 
     def _short_term_debt(
         self, spec: LineItem, column: str

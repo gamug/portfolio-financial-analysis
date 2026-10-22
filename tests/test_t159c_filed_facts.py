@@ -322,6 +322,36 @@ def test_apa_profit_loss_with_nci_parts_uses_the_available_to_common_fact() -> N
     assert "profit_loss_nci_income_not_total" in resolution.flags
 
 
+def test_total_debt_uses_a_filed_fact_long_term_debt() -> None:
+    """T-159c: total_debt reads the same fallback (it calls the long-term resolver directly)."""
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("StockholdersEquity", "Equity", **{INSTANT: 50.0}),
+            _row("CashAndCashEquivalentsAtCarryingValue", "Cash", **{INSTANT: 10.0}),
+        ],
+        filed_facts=[_fact("LongTermDebt", 50.0, end=INSTANT)],
+    )
+    resolution = stmts.total_debt(FY)
+    assert resolution.value == 50.0
+    assert "partial_map" in resolution.flags
+
+
+def test_a_short_term_fact_alone_is_not_total_debt() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("StockholdersEquity", "Equity", **{INSTANT: 50.0}),
+            _row("CashAndCashEquivalentsAtCarryingValue", "Cash", **{INSTANT: 10.0}),
+        ],
+        filed_facts=[_fact("CommercialPaper", 10.0, end=INSTANT)],
+    )
+    assert stmts.resolve("short_term_debt", FY).value == 10.0
+    resolution = stmts.total_debt(FY)
+    assert resolution.value is None
+    assert "short_term_debt_only" in resolution.flags
+
+
 def test_the_net_proceeds_element_never_fills_capex() -> None:
     stmts = _payload(
         cash_flow=[_row("NetCashProvidedByUsedInOperatingActivities", "OCF", **{FY: 100.0})],
