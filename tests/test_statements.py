@@ -865,6 +865,11 @@ EXPECTED_NONNEGATIVE_CONCEPTS: dict[str, set[str]] = {
         "us-gaap_ConvertibleLongTermNotesPayable",
         "us-gaap_LongTermNotesPayable",
         "us-gaap_OtherLongTermDebtNoncurrent",
+        "us-gaap_SeniorLongTermNotes",
+        "us-gaap_MediumtermNotesNoncurrent",
+        "us-gaap_JuniorSubordinatedLongTermNotes",
+        "us-gaap_NotesPayableToBankNoncurrent",
+        "us-gaap_OtherLongTermNotesPayable",
     },
     "short_term_debt": {  # DQC_0015
         "us-gaap_CommercialPaper",

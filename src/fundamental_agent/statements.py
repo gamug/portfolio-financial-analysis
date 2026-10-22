@@ -557,13 +557,29 @@ STI_CLASSES: tuple[tuple[str, ...], ...] = (
     (G + "OtherShortTermInvestments",),
 )
 # The long-term debt components a filer presents instead of a tree total (MET-07 / ID-02b): they
-# enter the sourced sum, never a free alternative.
+# enter the sourced sum, never a free alternative. Each is a **node of the FASB 2026 tree**, so a
+# component's filed children count when the component itself is not filed (the family rule, the
+# same as the short-term map's terms): EA files ``SeniorLongTermNotes`` -- the noncurrent portion
+# of its senior notes -- and the gateway serves that element, not the total. The current portion of
+# a component is never added to the long-term debt (N4): it belongs to the current-maturities term.
 LONG_TERM_DEBT_COMPONENTS: tuple[str, ...] = (
     G + "SeniorNotes",
     G + "ConvertibleLongTermNotesPayable",
     G + "LongTermNotesPayable",
     G + "OtherLongTermDebtNoncurrent",
 )
+# The children of the components (the taxonomy's arcs): the noncurrent ones only.
+LONG_TERM_DEBT_COMPONENT_CHILDREN: dict[str, tuple[str, ...]] = {
+    G + "SeniorNotes": (G + "SeniorLongTermNotes",),
+    G + "LongTermNotesPayable": (
+        G + "MediumtermNotesNoncurrent",
+        G + "JuniorSubordinatedLongTermNotes",
+        G + "SeniorLongTermNotes",
+        G + "ConvertibleLongTermNotesPayable",
+        G + "NotesPayableToBankNoncurrent",
+        G + "OtherLongTermNotesPayable",
+    ),
+}
 # The exact two-part sums (ID-02b: a map with a source states the identity). Both parts must be
 # filed for the period, or the item stays empty.
 DA_EXACT_SUM: tuple[str, str] = (G + "Depreciation", G + "AmortizationOfIntangibleAssets")
@@ -984,6 +1000,11 @@ REGISTRY: dict[str, LineItem] = {
             "us-gaap_ConvertibleLongTermNotesPayable",
             "us-gaap_LongTermNotesPayable",
             "us-gaap_OtherLongTermDebtNoncurrent",
+            "us-gaap_SeniorLongTermNotes",
+            "us-gaap_MediumtermNotesNoncurrent",
+            "us-gaap_JuniorSubordinatedLongTermNotes",
+            "us-gaap_NotesPayableToBankNoncurrent",
+            "us-gaap_OtherLongTermNotesPayable",
         ),
         resolver="long_term_debt",
     ),
@@ -2519,12 +2540,9 @@ class Statements:
             return sum(filed.values()), " + ".join(sorted(filed)), "map"
         # T-159a: the debt components a filer presents instead of a tree total (MET-07 / ID-02b).
         # They enter the same sum -- never a free alternative -- and the "only lines" condition
-        # holds for them as it holds for the tree's children.
-        filed = {
-            c: v
-            for c in LONG_TERM_DEBT_COMPONENTS
-            if (v := self._concept_value(spec, column, c)) is not None
-        }
+        # holds for them as it holds for the tree's children. A component's filed children count
+        # when the component itself is not filed (the family rule); each concept counts once.
+        filed = self._long_term_components(spec, column)
         if not filed:
             return None, None, None
         if self.debt_lines_outside(LONG_TERM_DEBT_COMPONENTS):
@@ -2532,6 +2550,24 @@ class Statements:
             return None, None, None
         self._flag("debt_sourced_sum")
         return sum(filed.values()), " + ".join(sorted(filed)), "map"
+
+    def _long_term_components(self, spec: LineItem, column: str) -> dict[str, float]:
+        """The filed debt components of the long-term debt sum (T-159a): the components themselves
+        and, for a component that is not filed, its filed children (the family rule). Each concept
+        counts once."""
+        filed: dict[str, float] = {}
+        for component in LONG_TERM_DEBT_COMPONENTS:
+            value = self._concept_value(spec, column, component)
+            if value is not None:
+                filed[component] = value
+                continue
+            for child in LONG_TERM_DEBT_COMPONENT_CHILDREN.get(component, ()):
+                if child in filed:
+                    continue
+                child_value = self._concept_value(spec, column, child)
+                if child_value is not None:
+                    filed[child] = child_value
+        return filed
 
     def debt_lines_outside(self, children: tuple[str, ...]) -> list[str]:
         """The debt-named balance-sheet lines that are not a child of *children* nor a short-term
@@ -2542,6 +2578,7 @@ class Statements:
             set(children)
             | {c for _term, concepts in SHORT_TERM_DEBT_MAP for c in concepts}
             | {c for kids in SHORT_TERM_DEBT_CHILDREN.values() for c in kids}
+            | {c for kids in LONG_TERM_DEBT_COMPONENT_CHILDREN.values() for c in kids}
             | {SHORT_TERM_DEBT_LAST}
         )
         outside: list[str] = []
