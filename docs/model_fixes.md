@@ -10759,3 +10759,105 @@ capex is calibrated, and KR/DPZ's note facts do not prove. Fidelity on the scrat
 D and E, each refusal flag and both proof flags; `tests/test_t159c_cover_scale.py` covers the ×1,000
 defect, its recovery filing and V's class event. The full suite is **3,155 passed**; ruff, ruff
 format, mypy and pre-commit are green. The engine stays `metrics-v10`.
+
+### T-159c round 3 — rule A', the empty-reason rank and proof-only flags
+
+**This subsection supersedes round 2's rule A and its empty-reason order.**
+
+**Rule A' — the face row must be the item's own line.** Round 2 accepted any equal non-zero row of
+the item's face statement. On pilot_a2, **71** kept values passed only by coinciding with a
+different line (CTVA's per-share tags matching the EPS row; PANW's long-term debt equal to the
+current convertible notes the statements read as short-term; TSLA's net income equal to operating
+income; IBKR/STT/BNY receivables equal to OCI or stock; SBC/D&A equal to capex, OCF, buybacks,
+dividends, debt repayments, stock issuance or "Other"). A face proof now also requires:
+
+* **(i)** at least one equal row's label matches the item's pattern (`_FACE_LABEL`, verbatim from
+  B's harness) and not its exclusion (`_FACE_LABEL_NOT`); an item without a pattern has no face
+  proof (calibration only). Refusal `face_row_not_item`;
+* **(ii)** for `long_term_debt` / `short_term_debt`, the value is not the statements' value of the
+  other debt item at the same column. Refusal `face_row_other_debt` (PANW); KVUE's 7,072M face
+  line "Total long-term debt" stays.
+
+The patterns are the table in `T159c_round3.md` §1 and the constants in
+`fundamental_agent.statements` (`_FACE_LABEL`, `_FACE_LABEL_NOT`, `_OTHER_DEBT`).
+
+**The empty reason's rank (round 3).** `_flag_reason` drops `filed_fact_refused*` keys before
+ranking (so a refused input is not a generic `capture_failure`), but keeps a statement refusal on
+the same item (VNO's `debt_sum_refused_other_lines` → `capture_failure`). Step 2's missing list is
+decided immediately after its loop — `not_applicable`, else `not_reported`, else `missing_input`
+— so a missing current input again outranks `capture_failure` / `prior_year_missing` (G4); steps 3
+and 4 run only when nothing is missing. The TTM branch returns only while the missing list is
+still empty.
+
+**A kept value carries its proof only.** The fallback wrapper drops every
+`filed_fact_refused*` flag when a tier is kept; the refusal flags stay only on an item left empty
+(117 values on b02f901 carried an earlier tier's refusal beside `filed_fact_on_face` / `_calibrated`).
+
+**Harness r3 (B's acceptance, committed head `bfca803`):**
+
+```
+B's expected refusals (non-total items) 71; still kept by the new tree 0
+filings 10189; values compared 315859; changed 5186
+  capital_expenditure          {'PASS B': 161, 'PASS A': 1}
+  cash                         {'PASS A': 31}
+  cogs                         {'PASS A': 11}
+  depreciation_amortization    {'PASS B': 1485, 'PASS A': 84}
+  equity_incl_nci              {'PASS A': 304}
+  interest_expense             {'PASS A': 76}
+  long_term_debt               {'PASS A': 21}
+  net_income                   {'PASS A': 78}
+  net_income_to_common         {'PASS A': 1075}
+  pretax_income                {'PASS A': 187}
+  receivables                  {'PASS A': 28}
+  redeemable_nci               {'PASS A': 20}
+  short_term_debt              {'PASS A': 97}
+  short_term_investments       {'PASS A': 39}
+  stock_based_compensation     {'PASS B': 1374, 'PASS A': 29}
+  total_debt                   {'PASS total': 85}
+TOTAL {'PASS B': 3020, 'PASS A': 2081, 'PASS total': 85}
+kept item values (non-total) carrying a filed_fact_refused flag 0
+B's expected keeps (non-total items) 5101; not kept by the new tree 0
+```
+
+No FAIL, **0 MISSING**, **0 KEPT**, **0 MIXED**. On b02f901 the same harness printed 71 FAIL A',
+5 FAIL total, 71 KEPT and 117 MIXED.
+
+**Real 18-company run (head `bfca803`)**: 328 filings stored, 0 failed (`JPM 10-Q 2024
+0000019617-24-000611` is the gateway's recurring empty payload). Against B's
+`real18_round3_vs_master.csv`, on all **11,290 shared rows: 0 value differences, 0 reason
+differences** (170 extra rows belong to six filings B's run does not hold). The seven fills and no
+emptied/changed values:
+
+| ticker | filing | metric | before | after |
+|---|---|---|---:|---:|
+| COST | 10-K 2024-09-01 | return_on_invested_capital | empty | 0.4505066945 |
+| COST | 10-K 2024-09-01 | return_on_invested_capital_effective_rate | empty | 0.4313262312 |
+| COST | 10-K 2025-08-31 | effective_tax_rate | empty | 0.2513403587 |
+| COST | 10-K 2025-08-31 | return_on_invested_capital_effective_rate | empty | 0.4254232189 |
+| COST | 10-K 2026-08-30 | effective_tax_rate | empty | 0.2469186189 |
+| COST | 10-K 2026-08-30 | return_on_invested_capital_effective_rate | empty | 0.4474148840 |
+| VICI | 10-Q 2026-03-31 | free_cash_flow_growth | empty | 0.0668122352 |
+
+**Empty-reason transitions against master 42ee90c (B's run, matched exactly):**
+
+| non-price-dependent | count |
+|---|---:|
+| `missing_input` → `not_reported` | 1,411 |
+| `missing_input` → `not_applicable` | 292 |
+| `missing_input` → `denominator_not_positive` | 8 |
+| `missing_input` → `prior_year_missing` | 3 |
+| `missing_input` → `growth_base_not_positive` | 1 |
+| nothing else | |
+
+| price-dependent | count |
+|---|---:|
+| `missing_input` → `not_reported` | 168 |
+| `missing_input` → `prior_year_missing` | 2 |
+| `missing_input` → `capture_failure` | 2 |
+| `capture_failure` → `prior_year_missing` | 1 |
+
+**Tests**: rule A' (SBC equal to capex, PANW refused, KVUE kept, no pattern, later tier kept with
+proof only), the three metric-level rank tests (refused input → `missing_input`; missing input
+beside a debt capture failure → `missing_input`; VNO statement refusal → `capture_failure`), and
+the face labels of the inventory and D&A fixtures. Full suite **3,163 passed**; ruff, ruff format,
+mypy and pre-commit green. Engine stays `metrics-v10`.
