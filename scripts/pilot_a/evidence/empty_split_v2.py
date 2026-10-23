@@ -4,6 +4,7 @@ import collections
 import csv
 import datetime as dt
 import json
+import os
 import sqlite3
 import sys
 
@@ -24,24 +25,53 @@ fil = {
         "select f.id,f.form,f.period_end,f.accession_number,a.ticker,a.cik from sec_filings f join assets a on a.id=f.asset_id"
     )
 }
-total = c.execute("select count(*) from fundamental_metrics").fetchone()[0]
+# T-159c: an optional comma-separated ticker list, so the same script measures a scratch
+# database's evidence companies and the pilot's own rows for them (no env = every ticker, the
+# T-159a behaviour).
+ONLY = {
+    t.strip().upper() for t in os.environ.get("EMPTY_SPLIT_TICKERS", "").split(",") if t.strip()
+}
+total = sum(
+    1
+    for (fid,) in c.execute("select filing_id from fundamental_metrics")
+    if not ONLY or fil[fid]["ticker"].upper() in ONLY
+)
 empties = []
 need = collections.defaultdict(set)
 for fid, m, j in c.execute(
     "select filing_id, metric_name, inputs_json from fundamental_metrics where value is null"
 ):
+    if ONLY and fil[fid]["ticker"].upper() not in ONLY:
+        continue
     d = json.loads(j) if j else {}
     p = d.get("provenance") or {}
     reason = p.get("empty_reason")
+    entries = [
+        (i, l)
+        for i, l in (p.get("items") or {}).items()
+        if l and not any(str(e.get("basis", "")).startswith("prior") for e in l)
+    ]
     items = [
         i
-        for i, l in (p.get("items") or {}).items()
-        if l and l[0].get("concept") is None and l[0].get("how") is None and d.get(i) is None
+        for i, l in entries
+        if all(e.get("concept") is None and e.get("how") is None for e in l) and d.get(i) is None
     ]
+    prior_missing = False
+    for i, l in (p.get("items") or {}).items():
+        if d.get(i) is not None:
+            continue
+        if any(
+            str(e.get("basis", "")).startswith("prior")
+            and e.get("concept") is None
+            and e.get("how") is None
+            for e in l
+        ):
+            prior_missing = True
+            break
     if not p and "missing" in d:
         reason = "missing_input(no provenance)"
         items = [k for k in d["missing"] if k in REGISTRY]
-    empties.append((fid, m, reason, items, bool(p.get("applicability_rule"))))
+    empties.append((fid, m, reason, items, prior_missing))
     if reason and reason.startswith(("missing_input", "capture_failure")):
         for i in items:
             need[fil[fid]["cik"]].add((fid, i))
@@ -93,12 +123,14 @@ LABEL = {
 out = collections.Counter()
 per = collections.defaultdict(collections.Counter)
 rows = []
-for fid, m, reason, items, app in empties:
+for fid, m, reason, items, prior_missing in empties:
     if reason == "not_applicable":
         b = "na"
+    elif reason == "not_reported":
+        b = "notreported"
     elif reason in ("growth_base_not_positive", "denominator_not_positive"):
         b = "math"
-    elif reason == "prior_year_missing":
+    elif reason == "prior_year_missing" or (prior_missing and not items):
         b = "prior"
     elif reason and reason.startswith(("missing_input", "capture_failure")) and items:
         vs = {verdict[(fid, i)] for i in items}

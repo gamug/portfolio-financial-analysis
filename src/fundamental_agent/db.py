@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -109,7 +110,7 @@ _CROSS_ITEM_BAND = 1.25
 # income = domestic + foreign). The short-term investments the filing reports are no longer read
 # as 0 (the only defaulted input). Flags: ``cogs_excludes_da``, ``net_income_to_common``.
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v9"
+METRICS_ENGINE_VERSION = "metrics-v10"
 
 
 @dataclass(frozen=True)
@@ -676,6 +677,72 @@ def insert_cover_shares(
     )
     conn.commit()
     return len(rows)
+
+
+#: T-159c round 2: the cover-count flag is only the x1,000 / x1/1,000 defect, and it is measured
+#: against the **median** of the class's counts in the company's up-to-4 prior filings (filed
+#: strictly before). Within 10 % of either factor. A stored flag only -- the MKT guard stays the
+#: value rule, so the market cap is unchanged.
+_COVER_SCALE_TOLERANCE = 0.10
+_COVER_SCALE_FACTORS = (1_000.0, 0.001)
+_COVER_PRIOR_FILINGS = 4
+
+
+def cover_share_scale_suspect(
+    conn: Database,
+    asset_id: int,
+    shares: Iterable[CoverShares],
+    *,
+    filing_id: int,
+    filing_date: str | None,
+) -> bool:
+    """Whether one of *shares* is within 10 % of x1,000 (or x1/1,000) the same class's **median**
+    count in the company's up-to-4 prior filings (T-159c round 2). Point in time: only filings
+    filed strictly before *filing_date* count. A stored flag for the reader; it never changes a
+    value (the MKT guard decides the cap)."""
+    entries = [entry for entry in shares if entry.value > 0]
+    if not entries or not filing_date:
+        return False
+    rows = conn.execute(
+        """
+        SELECT fcs.filing_id, fcs.class_member, fcs.value
+        FROM filing_cover_shares fcs
+        JOIN sec_filings sf ON sf.id = fcs.filing_id
+        JOIN sec_filings cur ON cur.id = ?
+        WHERE sf.asset_id = ?
+          AND fcs.filing_id != ?
+          AND sf.filing_date IS NOT NULL
+          AND sf.filing_date < cur.filing_date
+          AND fcs.value > 0
+        ORDER BY sf.filing_date DESC, sf.period_end DESC, fcs.id DESC
+        """,
+        (filing_id, asset_id, filing_id),
+    ).fetchall()
+    prior: dict[str, list[float]] = {}
+    seen: dict[str, set[int]] = {}
+    for row in rows:
+        member = str(row["class_member"])
+        prior_filing = int(row["filing_id"])
+        if (
+            len(seen.setdefault(member, set())) >= _COVER_PRIOR_FILINGS
+            and prior_filing not in seen[member]
+        ):
+            continue
+        seen[member].add(prior_filing)
+        prior.setdefault(member, []).append(float(row["value"]))
+    for entry in entries:
+        values = prior.get(entry.class_member)
+        if not values:
+            continue
+        median = statistics.median(values)
+        if median <= 0:
+            continue
+        ratio = entry.value / median
+        if any(
+            abs(ratio / factor - 1.0) <= _COVER_SCALE_TOLERANCE for factor in _COVER_SCALE_FACTORS
+        ):
+            return True
+    return False
 
 
 def overlapping_history(

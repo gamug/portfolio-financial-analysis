@@ -67,7 +67,11 @@ def compute(
         item_inputs = dict(inputs)
         item_inputs.update(present(begin=begin, end=end))
         # F5 / D4: a CAGR from a base <= 0 is empty and flagged, like the growth group's metrics.
+        # T-159c: a non-positive **end** is not a growth base either (MET-04: "the base (or the
+        # first CAGR end) is <= 0").
         if begin is not None and begin <= 0.0:
+            item_inputs[f"flag_{name}_growth_base_not_positive"] = 1.0
+        if end is not None and end <= 0.0:
             item_inputs[f"flag_{name}_growth_base_not_positive"] = 1.0
         # F5: CECL changes the provision, which is in net income -- the flag belongs to the
         # net-income CAGR alone, never to the shared inputs of all three series.

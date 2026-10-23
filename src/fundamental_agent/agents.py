@@ -323,6 +323,9 @@ class FilingContext:
     # value by this to correct a detected XBRL scale/tagging defect (see
     # docs/model_fixes.md, F1; fundamental_agent.db.detect_share_scale_factors).
     share_scale_factors: dict[str, float] = field(default_factory=dict)
+    # T-159c: the cover-page count is >= 50x / <= 1/50x the prior filing's count for its class.
+    # A stored flag only: the MKT guard stays the value rule, so the market cap is unchanged.
+    cover_scale_suspect: bool = False
     # {flow: TTMFlow} on a 10-Q filing -- the trailing-twelve-month flows that ratios over a
     # stock or a price level need instead of the raw 3-month value (F4, T-105,
     # docs/model_fixes.md; fundamental_agent.db.ttm_detail). Empty for a 10-K, which already
@@ -506,6 +509,7 @@ def compute_metrics(ctx: FilingContext) -> list[tuple[str, MetricResult]]:
             cik=ctx.cik,
             market_cap=ctx.market_cap,
             market_cap_missing=ctx.market_cap_missing,
+            cover_scale_suspect=ctx.cover_scale_suspect,
         ):
             out.append((valuation_metrics.GROUP, result))
 

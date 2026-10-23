@@ -10443,3 +10443,421 @@ recovered values are the classes themselves (the 92 of them the sum of two disjo
   elements, and the families are the reviewer's construct).
 - The notes-only substitutes (F5b), the never-served rows (F1-F3) and the rule refusals (F4) are
   T-159c's.
+
+## T-159c — the filing's own `filed_facts` when the statements lack an item; labels; F4
+
+**Status**: Fixed 2026-10-22 (branch `fix/t159c-filed-fact-fallback`, `T-159c`). Engine
+`metrics-v9` → **`metrics-v10`**.
+
+### Symptom
+
+The T-143 finding measured **17,363** empty metric values the filing's own XBRL holds (cause 7):
+F1 9,810 (only in the notes), F2 731 (served on another statement), F3 332 (a 10-Q's quarter filed
+only year-to-date in the served column), F5b 1,256 (the item's total under another standard concept,
+notes only) and F4 690 (the read column refused by a rule). The pilot's F4 list is
+`handoff/pilot/b_review_p2b/f4.txt` (198 inputs, 690 values).
+
+### The fallback (T-159c §1)
+
+`Statements.from_payload` now reads T-159b's `payload["filed_facts"]` and
+`payload["filed_facts_error"]`. When an item resolves to nothing from the statements (no concept, no
+derivation, no sourced map), `Statements.resolve` looks the item up in the filing's own filed facts:
+
+* **The read column's period**: a balance-sheet item an instant at the column date; a flow on a
+  10-Q a fact of **80–119 days** ending at the period end (the quarter, never a year-to-date fact);
+  a 10-K a fact of **>= 351 days**; a year-to-date column **175–285 days**; an untagged duration
+  column **<= 371 days** (A's rule, PER-08). A bare date on an income or cash-flow statement is now
+  an untagged duration column; on the balance sheet it stays an instant.
+* **The item's own registry concepts in registry order**, then T-159a's substitutes: the total
+  concepts (before the components for revenue), the component families (a sole family member is the
+  total), the disjoint ASC 320 classes (summed) and the exact sums (D&A, pre-tax). A concept whose
+  statement caption decides what it is is never read from a fact: the net-proceeds capex element
+  (C3/MET-08) and the cash-and-short-term-investments element are skipped.
+* **Exactly one distinct value** for the concept and period is used, `unit = USD` for a monetary
+  item (shares for the two share-count items); equal duplicate facts are one value. Two different
+  values for the same concept and period leave the item empty (`filed_fact_ambiguous`) — never a
+  guess.
+* **Statements first, always**: the fallback is reached only when the statement resolution gave no
+  value; a statement value (including a filed 0) is never replaced.
+* The value carries **`how = "filed_fact"`**, the concept and the **`filed_fact`** flag. A failed
+  gateway read (`filed_facts_error`, empty list) leaves the item as it was and flags
+  `filed_facts_unavailable`.
+* A negative value of an ID-13 non-negative concept is rejected exactly as `_read` rejects it
+  (`wrong_sign_rejected`), and N4 still refuses the current maturities when the long-term line
+  already contains them.
+
+Net income (ID-03/CON-19, N13) is read in this order: `NetIncomeLoss`; `ProfitLoss` only when no
+NCI income is filed, or less the filed NCI **total**; when only NCI **parts** are filed the
+`ProfitLoss` refusal stands, but T-159a's "available to common" substitute is still read when no
+preferred dividend is filed — APA's FY2022 is 4,082 − 464 − 14 − (−70) = 3,674M, the
+`NetIncomeLossAvailableToCommonStockholdersBasic` fact, flagged `net_income_to_common`.
+
+`_long_term_with_flags` and `_short_term` use the same fallback, so `total_debt` (which calls them
+directly, not `resolve`) sees a filed-fact long-term or short-term line. A short-term fact alone
+still leaves total debt empty (`short_term_debt_only`).
+
+### F4 — rule by rule
+
+The list has 198 inputs (690 metric values); each group's decision, with the source:
+
+| group | inputs | decision | source / reason |
+|---|---:|---|---|
+| APA `ProfitLoss` with NCI (`profit_loss_nci_income_not_total`) | 80 | **right**; the fallback reads the available-to-common fact (no preferred dividend) | ID-03/CON-19; N13. `ProfitLoss` includes NCI, so it is not parent net income; the substitute is the same quantity here |
+| N4 current maturities (`current_maturities_in_long_term`) | 21 | **right**; keep empty | MET-07/N4, D-06(d): the long-term line already contains them; adding them would double count |
+| N4 sign rejections (`WrongSign`, CCI/ZION/CBOE) | 6 | **right**; keep empty | ID-13/DQC_0015, ID-11: a negative non-negative element is a wrong sign, never `abs()`; CBOE's standard `InterestExpenseDebt` fact, where filed, is the one the fallback reads |
+| NI revenue (FY/Q1/Q2/Q3) | 38 | no rule refused it; the fallback reads `RevenueFromContractWithCustomerExcludingAssessedTax` | the served column lacked it (F1/F2) |
+| APO cash | 10 | no rule refused it; the fallback reads `CashAndCashEquivalentsAtCarryingValue` 12,718M | F1: notes/other statement |
+| BALL/BRO minority interest | 8 | no rule refused it; the fallback reads `MinorityInterest` (BALL 19M, BRO 9M) | F1 |
+| BRK.B redeemable NCI | 7 | no rule refused it; the fallback reads `RedeemableNoncontrollingInterestEquityCommonCarryingAmount` 3,183M | MD-02/D6; the carrying-amount part is the only carrying amount filed |
+| CNP/CSX/KKR short-term debt, long-term debt, STI, equity | 31 | **right/no change**: the current items resolve; the missing ones are prior-year capital (cause 3) or the already-refused `short_term_debt_only` | MET-02 (prior year), MET-07 |
+| VICI capex | 4 | no rule; the current registry reads `PaymentsToAcquireOtherPropertyPlantAndEquipment` 2,505M | MET-08, APP-04b; the pilot's storage predates the read |
+| HOLX capex (net element) | 1 | **right**; keep empty | MET-08/C3: `PaymentsForProceedsFromProductiveAssets` is a net-proceeds element; the fallback skips it |
+| SPG short-term investments | 1 | no rule; the fallback reads `ShortTermInvestments` 1,000M | F1 |
+
+The two remaining F4-style refusals (negative non-negative elements, N4 current maturities) stay
+empty; everything else in the list is either filled by the fallback or was a prior-year/other-cause
+empty, not a rule refusal.
+
+### Labels (T-159c §3)
+
+* `empty_reason = "not_reported"` when every missing current-period item has no concept anywhere
+  in the filing (statements and filed facts, any period). An item the filing reports in another
+  column (a YTD-only 10-Q, a prior column) stays `missing_input`; a filing with no statement rows
+  or a failed filed-fact read is never called "not reported".
+* `effective_tax_rate` and `return_on_invested_capital_effective_rate` in a loss year
+  (pre-tax <= 0, MD-30/L-05) carry `denominator_not_positive`.
+* a CAGR with a non-positive **start or end** carries `growth_base_not_positive` (MET-04).
+* receivables / current assets / current liabilities of an unclassified balance sheet or a bank
+  are `not_applicable` under APP-09 (liquidity), MD-38 (non-cash working capital) and APP-01
+  (Article 9), instead of `missing_input`.
+
+### §2b — the three small defects
+
+* **F8 (CON-08)**: `NetCashProvidedByUsedInDiscontinuedOperations` is read as the discontinued
+  operating leg when its caption names operating activities (MPC's "operating activities -
+  discontinued operations"; 8,384 − 4,024 = 4,360). A total discontinued line, or a caption naming
+  investing/financing, is not read.
+* **EBITDA provenance basis**: on a 10-Q the `ebitda` metric's items are labelled `basis = "ttm"`
+  (the value is the TTM); on a 10-K they stay `period`. No value changes.
+* **Cover-count scale**: a cover count >= 50x or <= 1/50x the same class's count in the prior
+  filing (PKG, CMG, GDDY, V) stores
+  `flag_market_capitalization_cover_scale_suspect = 1.0` on the valuation rows. The MKT guard
+  remains the value rule; the market cap is unchanged.
+
+### Verification (fresh scratch database)
+
+`/tmp/t159c/scratch.db`, `fundamental_agent run --metrics-only --since-year 2022` through the
+redeployed gateway for 18 tickers (VNO, VMRK, PCAR, AZO, NUE, MPC, JPM, BAC, AIG, MET, SPG, VICI,
+NEE, DUK, KR, COST, PEP, DPZ), 2026-10-22: **329 analyzed, 5 skipped, 0 failed** (174 planned),
+25m57s. The pilot_a2 comparison is the same tickers (11,290 metric values; the scratch database has
+204 more from newer 2026 filings).
+
+| ticker | filing | input | before (pilot_a2) | after (scratch) | filed fact |
+|---|---|---|---:|---:|---|
+| VNO | 10-Q 2022-09-30 | total debt | (empty) | 2,559,169,000 | `us-gaap:LongTermDebt` |
+| VMRK | 10-K 2024-12-31 | total debt | (empty) | 8,737,552,000 | long-term + `us-gaap:CommercialPaper` 544,500,000 |
+| PCAR | 10-Q 2022-09-30 | stock-based compensation | (empty) | 2,600,000 | `us-gaap:AllocatedShareBasedCompensationExpense` |
+| AZO | 10-K 2024-08-31 | interest expense | (empty) | 465,191,000 | `us-gaap:InterestExpenseNonoperating` |
+| NUE | 10-Q 2025-10-04 | D&A | (empty) | 367,000,000 | `us-gaap:Depreciation` + `us-gaap:AmortizationOfIntangibleAssets` |
+| MPC | 10-K 2021-12-31 | CON-08 | 12 quarantined metric rows (4 filings) | **0** | `us-gaap:NetCashProvidedByUsedInDiscontinuedOperations` (operating caption) |
+| JPM | 10-K 2021-12-31 | stock-based compensation | (empty) | 2,929,000,000 | `us-gaap:ShareBasedCompensation` |
+| AIG | 10-K 2021-12-31 | capex | (empty) | 343,000,000 | `us-gaap:PaymentsToAcquireProductiveAssets` |
+| MET | 10-K 2021-12-31 | interest expense | (empty) | 920,000,000 | `us-gaap:InterestAndDebtExpense` |
+| SPG | 10-K 2025-12-31 | income tax | (empty) | 20,279,000 | `us-gaap:IncomeTaxExpenseBenefit` |
+| VICI | 10-K 2021-12-31 | capex | (empty) | 2,505,000 | `us-gaap:PaymentsToAcquireOtherPropertyPlantAndEquipment` |
+| NEE | 10-K 2021-12-31 | stock-based compensation | (empty) | 119,000,000 | `us-gaap:AllocatedShareBasedCompensationExpense` |
+| DUK | 10-K 2021-12-31 | stock-based compensation | (empty) | 88,000,000 | `us-gaap:AllocatedShareBasedCompensationExpense` |
+| KR | 10-K 2022-01-29 | total debt | (empty) | 11,745,000,000 | `us-gaap:LongTermDebtNoncurrent` 11,294M + `us-gaap:LongTermDebtCurrent` 451M |
+| COST | 10-Q 2022-02-13 | stock-based compensation | (empty) | 128,000,000 | `us-gaap:ShareBasedCompensation` |
+| PEP | 10-Q 2025-06-14 | D&A | (empty) | 787,000,000 | `us-gaap:DepreciationAndAmortization` |
+| DPZ | 10-Q 2022-06-19 | D&A | (empty) | 18,117,000 | `us-gaap:DepreciationAndAmortization` |
+
+BAC's total debt changed 280,117M → 303,870M with **no** `filed_fact` item: it is T-159a's debt
+tree, not T-159c. Every value in the table above is the filing's own filed fact; no statement value
+was replaced.
+
+**The empty split** (`scripts/pilot_a/evidence/empty_split_v2.py`, the same 18 tickers, pilot_a2
+against the scratch database; the script now reads the new reasons and skips prior-year basis items
+for the cause-4 test):
+
+| | before | after |
+|---|---:|---:|
+| metric values | 11,290 | 11,494 |
+| empty | 4,719 (41.8 %) | 5,443 (47.4 %) |
+| 1. does not apply by rule | 1,753 | 2,027 |
+| 2. not defined mathematically | 43 | 48 |
+| 3. needs the prior year | 340 | 509 |
+| 4. **SEC has the input, we do not** | **389** | **12** |
+| 5. 10-Q quarter filed year-to-date only | 263 | 129 |
+| 6. company does not file the input | 1,820 | 1,864 |
+| 7. SEC has no data for the filing | 16 | 9 |
+| 8. other | 95 | 845 |
+
+The 12 remaining cause-4 values are **DUK's inventory** in six 10-Ks: DUK files the total as
+`us-gaap:PublicUtilitiesInventory` (3,199M, the balance-sheet caption "Inventory"), which is not in
+T-159a's inventory substitutes; its two `EnergyRelatedInventory*` components are ambiguous, so the
+fallback refuses them. This is a declared residual, not a rule refusal: it needs a separate
+substitute-list change (T-159a's scope), not a T-159c one.
+
+Cause 8's rise is the scratch database's missing prices/corporate actions (market capitalization
+311 and every valuation metric), not a T-159c effect; T-159a's entry records the same difference.
+
+**Fidelity** (`fundamental_agent fidelity --companyfacts-dir`): **every item 100 %**, 0 items below
+the 98 % gate, 0 mismatching (filing, item) pairs.
+
+**Tests**: `tests/test_t159c_filed_facts.py` (instant, quarter, YTD, 10-K, untagged, ambiguous,
+equal duplicates, statements win, read failure, substitutes, families, classes, sums, negative
+reject, N4, APA net income, total debt), `tests/test_t159c_labels.py` (the three labels, the
+EBITDA basis, the cover flag), `tests/test_t159c_f8_con08.py` (operating/total/investing captions
+and the stored-fact read), `tests/test_t159c_cover_scale.py` (x1,000, x1/1,000, normal, point in
+time). All 3,144 tests pass; ruff, ruff format, mypy and pre-commit are green.
+
+### Residual scope, deliberately deferred
+
+- **DUK `PublicUtilitiesInventory`** (12 metric values, six 10-Ks): the utility inventory total is
+  not in T-159a's substitute list; adding it is a registry change for a follow-up, not a silent
+  expansion here.
+- **Prior-year capital**: the fallback reads only the filing's own accession. A prior-year debt sum
+  that refuses on its own comparative (`debt_sum_refused_other_lines`) remains a capture failure
+  (VNO 2021, VMRK 2022-2023, KKR, KR): cause 3/4 in the split, not F1.
+- **Prices/corporate actions** are not part of a metrics-only scratch run, so its market caps and
+  valuation yields are empty (cause 8); the pilot re-run imports them.
+
+### T-159c round 2 — a filed value must be proved to be the item
+
+**This subsection supersedes the round-1 "use it" rule and its measured tables above; those
+round-1 numbers are kept only as the round-1 record.**
+
+Reviewer B ran the PR's resolver on all 10,189 pilot filings with the filing's own SEC facts
+standing in for `filed_facts` (`handoff/pilot/b_review_t159c/`, decisions rows 42–47). The first
+rule ("the item's own concept, one distinct value → use it") was not enough: note facts of the
+same concept are often a different quantity (VNO's debt-note `LongTermDebt` excludes the face's
+mortgages; MET's segment `OperatingIncomeLoss` is adjusted earnings; EMR/ICE's SBC is a sub-plan).
+Round 2 replaces it with rules **A–E**:
+
+* **A, on the face:** the value equals, in absolute value to the dollar, a non-zero value of a row
+  of the item's own face statement (`spec.statements`) at the read column — the balance sheet's
+  period-end instant for a balance item, the read column for a flow. The reader missed the line.
+* **B, calibrated:** when the filing gives the item a non-zero value at another column and the same
+  filed path (same concept, or same `+`/`-` sum) has a value there under the same period rules, the
+  two agree within 0.5 % at **every** such column, and there is at least one.
+* **C:** a zero filed value is never used.
+* **D:** no item value the statements gave is removed or changed. A long-term fact that includes
+  current maturities does not set N4's `current_maturities_in_long_term` when the statements gave
+  short-term debt; it may still fill `long_term_debt`. The statement's short-term value stands (PANW,
+  KVUE). Total debt follows its components; `none_filed`'s zero stands.
+* **E:** no filed long-term (or total) debt when the statements refused the sum because the face
+  carries other debt lines (`debt_sum_refused_other_lines`) — VNO, VMRK.
+
+A kept value carries `filed_fact_on_face` or `filed_fact_calibrated`; a refused one carries
+`filed_fact_refused` with `filed_fact_refused_not_on_face`, `_calibration`, `_zero`,
+`_includes_current_maturities` or `_other_debt_lines`. The empty reason stays `missing_input`
+(the filing reports the item; never `not_reported`), and a refused fact no longer becomes a
+`capture_failure` in provenance. `shares_outstanding` and `diluted_shares` are not read by this
+fallback (the pipeline reads the cover and weighted counts elsewhere).
+
+**Harness (B's acceptance, head `3c2c8d3`):**
+
+```
+filings 10189; values compared 315859; changed 5262
+  capital_expenditure          {'PASS B': 161, 'PASS A': 1}
+  cash                         {'PASS A': 31}
+  cogs                         {'PASS A': 11}
+  depreciation_amortization    {'PASS B': 1485, 'PASS A': 89}
+  equity_incl_nci              {'PASS A': 310}
+  income_tax                   {'PASS A': 1}
+  interest_expense             {'PASS A': 86}
+  long_term_debt               {'PASS A': 25}
+  net_income                   {'PASS A': 80}
+  net_income_to_common         {'PASS A': 1089}
+  pretax_income                {'PASS A': 188}
+  receivables                  {'PASS A': 33}
+  redeemable_nci               {'PASS A': 20}
+  short_term_debt              {'PASS A': 98}
+  short_term_investments       {'PASS A': 41}
+  stock_based_compensation     {'PASS B': 1374, 'PASS A': 49}
+  total_debt                   {'PASS total': 90}
+TOTAL {'PASS B': 3020, 'PASS A': 2152, 'PASS total': 90}
+B's expected keeps (non-total items) 5061; not kept by the new tree 0
+```
+
+**Cover-count flag (round 2)**: only the ×1,000 / ×1/1,000 defect, against the **median** of the
+class's counts in the company's up-to-4 prior filings (filed strictly before), within 10 %. On
+`pilot_a2` exactly **4**: CMG 10-Q 2022-03-31, PKG 10-Q 2023-03-31, PKG 10-Q 2024-03-31, PKG 10-K
+2025-12-31. V's 2024 class-B exchange (245.5M against 4.8M, 50.8×) and GDDY's class-B event are
+real share-class events, not the defect, and CMG's 2022-06-30 recovery is not flagged because the
+median of the prior four is the normal ~27.7M.
+
+**Fresh scratch database (`/tmp/t159c/scratch2.db`, head `3c2c8d3`)**: 18 tickers, `--metrics-only
+--since-year 2022`, 2026-10-22; 328 filings stored (JPM 10-Q 2024 0000019617-24-000611 is the
+gateway's recurring empty payload, not a T-159c failure), 0 failed. `pilot_subset.db` is pilot_a2
+restricted to the same 328 accessions, so the split is like for like:
+
+| non-price-dependent metrics | before | after |
+|---|---:|---:|
+| metric values | 11,256 | 11,460 |
+| empty | 3,909 | 3,920 |
+| 1 not applicable | 1,371 | 1,663 |
+| 2 not defined | 43 | 48 |
+| 3 prior year | 242 | 385 |
+| 4 SEC has, we do not | 293 | 203 |
+| 5 YTD only | 235 | 114 |
+| 6 not filed | 1,661 | 1,453 |
+| 7 no SEC data | 12 | 1 |
+| 8 other | 52 | 53 |
+
+| price-dependent metrics (no prices in the scratch DB) | before | after |
+|---|---:|---:|
+| metric values | 784 | 1,669 |
+| empty | 784 | 1,669 |
+| 1 not applicable | 361 | 361 |
+| 3 prior year | 98 | 148 |
+| 4 SEC has | 96 | 101 |
+| 5 YTD only | 27 | 24 |
+| 6 not filed | 155 | 283 |
+| 7 no SEC data | 4 | 8 |
+| 8 other | 43 | 744 |
+
+The non-price rise is **cause 1 +292** (receivables_turnover 151, current_ratio 80, cash_ratio 61:
+the new `not_applicable` labels for a bank/an unclassified balance sheet), **cause 3 +143** (the
+prior-year inputs of the FCF/turnover metrics: free_cash_flow_margin 26, free_cash_flow_conversion
+26, capex_intensity 26, operating_cash_flow_margin 25, net_debt_to_ebitda 7, inventory_turnover 7,
+return_on_assets 5, asset_turnover 5, receivables_turnover 5, return_on_invested_capital 5,
+return_on_equity 5) and **cause 2 +5** (effective_tax_rate +7, net_income_cagr +1, ROIC-effective
++1, with moves out). Cause 4 falls 293 → 203 because the unproved note facts are now refused;
+cause 6 falls 1,661 → 1,453 and cause 5 235 → 114. The price line's +885 is the scratch DB's
+missing prices/corporate actions, not T-159c.
+
+**Per company (round 2)** — proof or refusal reason:
+
+| ticker | filing | input | before | after | proof / refusal |
+|---|---|---|---:|---:|---|
+| VNO | 10-Q 2022-09-30 | long-term / total debt | empty | empty | `other_debt_lines` (E) |
+| VMRK | 10-K 2024-12-31 | long-term / total debt | empty | empty | `other_debt_lines` (E) |
+| PCAR | 10-Q 2022-09-30 | SBC | empty | empty | `not_on_face` (A) |
+| AZO | 10-K 2024-08-31 | interest expense | empty | empty | `not_on_face` (A) |
+| NUE | 10-Q 2025-10-04 | D&A | empty | empty | `not_on_face` (A) |
+| MPC | 10-K 2021-12-31 | CON-08 | 16 rows / 12 quarantined | 0 | F8 holds on all 4 filings |
+| JPM | 10-K 2021-12-31 | SBC | empty | empty | `not_on_face` (A) |
+| BAC | 10-K 2021-12-31 | total debt | 280,117M | 303,870M | no filed fact (T-159a's tree) |
+| AIG | 10-K 2021-12-31 | capex | empty | empty | `not_on_face` (A) |
+| MET | 10-K 2024-12-31 | operating income; receivables | empty | empty | `not_on_face` (A) |
+| SPG | 10-K 2025-12-31 | income tax | empty | empty | `not_on_face` (A) |
+| VICI | 10-Q 2026-03-31 | capex | empty | 628,000 | `filed_fact_on_face` |
+| NEE | 10-K 2021-12-31 | SBC | empty | empty | `not_on_face` (A) |
+| DUK | 10-K 2021-12-31 | SBC; inventory | empty | empty | `not_on_face` (A); inventory ambiguous |
+| KR | 10-K 2022-01-29 | long-term / total debt | empty | empty | `not_on_face` (A) |
+| COST | 10-K 2025-08-31 | pre-tax income | empty | 10,818,000,000 | `filed_fact_on_face` |
+| PEP | 10-Q 2025-09-06 | capex | empty | 992,000,000 | `filed_fact_calibrated` |
+| DPZ | 10-Q 2022-06-19 | D&A | empty | empty | `not_on_face` (A) |
+
+The 16/24-week filers are as the real gateway payload gives them: COST's pretax is on face, PEP's
+capex is calibrated, and KR/DPZ's note facts do not prove. Fidelity on the scratch DB: every item
+100 %, 0 below the 98 % gate, 0 mismatching (filing, item) pairs.
+
+**Tests**: `tests/test_t159c_filed_facts.py` now has one test per rule A, B (agree and disagree), C,
+D and E, each refusal flag and both proof flags; `tests/test_t159c_cover_scale.py` covers the ×1,000
+defect, its recovery filing and V's class event. The full suite is **3,155 passed**; ruff, ruff
+format, mypy and pre-commit are green. The engine stays `metrics-v10`.
+
+### T-159c round 3 — rule A', the empty-reason rank and proof-only flags
+
+**This subsection supersedes round 2's rule A and its empty-reason order.**
+
+**Rule A' — the face row must be the item's own line.** Round 2 accepted any equal non-zero row of
+the item's face statement. On pilot_a2, **71** kept values passed only by coinciding with a
+different line (CTVA's per-share tags matching the EPS row; PANW's long-term debt equal to the
+current convertible notes the statements read as short-term; TSLA's net income equal to operating
+income; IBKR/STT/BNY receivables equal to OCI or stock; SBC/D&A equal to capex, OCF, buybacks,
+dividends, debt repayments, stock issuance or "Other"). A face proof now also requires:
+
+* **(i)** at least one equal row's label matches the item's pattern (`_FACE_LABEL`, verbatim from
+  B's harness) and not its exclusion (`_FACE_LABEL_NOT`); an item without a pattern has no face
+  proof (calibration only). Refusal `face_row_not_item`;
+* **(ii)** for `long_term_debt` / `short_term_debt`, the value is not the statements' value of the
+  other debt item at the same column. Refusal `face_row_other_debt` (PANW); KVUE's 7,072M face
+  line "Total long-term debt" stays.
+
+The patterns are the table in `T159c_round3.md` §1 and the constants in
+`fundamental_agent.statements` (`_FACE_LABEL`, `_FACE_LABEL_NOT`, `_OTHER_DEBT`).
+
+**The empty reason's rank (round 3).** `_flag_reason` drops `filed_fact_refused*` keys before
+ranking (so a refused input is not a generic `capture_failure`), but keeps a statement refusal on
+the same item (VNO's `debt_sum_refused_other_lines` → `capture_failure`). Step 2's missing list is
+decided immediately after its loop — `not_applicable`, else `not_reported`, else `missing_input`
+— so a missing current input again outranks `capture_failure` / `prior_year_missing` (G4); steps 3
+and 4 run only when nothing is missing. The TTM branch returns only while the missing list is
+still empty.
+
+**A kept value carries its proof only.** The fallback wrapper drops every
+`filed_fact_refused*` flag when a tier is kept; the refusal flags stay only on an item left empty
+(117 values on b02f901 carried an earlier tier's refusal beside `filed_fact_on_face` / `_calibrated`).
+
+**Harness r3 (B's acceptance, committed head `bfca803`):**
+
+```
+B's expected refusals (non-total items) 71; still kept by the new tree 0
+filings 10189; values compared 315859; changed 5186
+  capital_expenditure          {'PASS B': 161, 'PASS A': 1}
+  cash                         {'PASS A': 31}
+  cogs                         {'PASS A': 11}
+  depreciation_amortization    {'PASS B': 1485, 'PASS A': 84}
+  equity_incl_nci              {'PASS A': 304}
+  interest_expense             {'PASS A': 76}
+  long_term_debt               {'PASS A': 21}
+  net_income                   {'PASS A': 78}
+  net_income_to_common         {'PASS A': 1075}
+  pretax_income                {'PASS A': 187}
+  receivables                  {'PASS A': 28}
+  redeemable_nci               {'PASS A': 20}
+  short_term_debt              {'PASS A': 97}
+  short_term_investments       {'PASS A': 39}
+  stock_based_compensation     {'PASS B': 1374, 'PASS A': 29}
+  total_debt                   {'PASS total': 85}
+TOTAL {'PASS B': 3020, 'PASS A': 2081, 'PASS total': 85}
+kept item values (non-total) carrying a filed_fact_refused flag 0
+B's expected keeps (non-total items) 5101; not kept by the new tree 0
+```
+
+No FAIL, **0 MISSING**, **0 KEPT**, **0 MIXED**. On b02f901 the same harness printed 71 FAIL A',
+5 FAIL total, 71 KEPT and 117 MIXED.
+
+**Real 18-company run (head `bfca803`)**: 328 filings stored, 0 failed (`JPM 10-Q 2024
+0000019617-24-000611` is the gateway's recurring empty payload). Against B's
+`real18_round3_vs_master.csv`, on all **11,290 shared rows: 0 value differences, 0 reason
+differences** (170 extra rows belong to six filings B's run does not hold). The seven fills and no
+emptied/changed values:
+
+| ticker | filing | metric | before | after |
+|---|---|---|---:|---:|
+| COST | 10-K 2024-09-01 | return_on_invested_capital | empty | 0.4505066945 |
+| COST | 10-K 2024-09-01 | return_on_invested_capital_effective_rate | empty | 0.4313262312 |
+| COST | 10-K 2025-08-31 | effective_tax_rate | empty | 0.2513403587 |
+| COST | 10-K 2025-08-31 | return_on_invested_capital_effective_rate | empty | 0.4254232189 |
+| COST | 10-K 2026-08-30 | effective_tax_rate | empty | 0.2469186189 |
+| COST | 10-K 2026-08-30 | return_on_invested_capital_effective_rate | empty | 0.4474148840 |
+| VICI | 10-Q 2026-03-31 | free_cash_flow_growth | empty | 0.0668122352 |
+
+**Empty-reason transitions against master 42ee90c (B's run, matched exactly):**
+
+| non-price-dependent | count |
+|---|---:|
+| `missing_input` → `not_reported` | 1,411 |
+| `missing_input` → `not_applicable` | 292 |
+| `missing_input` → `denominator_not_positive` | 8 |
+| `missing_input` → `prior_year_missing` | 3 |
+| `missing_input` → `growth_base_not_positive` | 1 |
+| nothing else | |
+
+| price-dependent | count |
+|---|---:|
+| `missing_input` → `not_reported` | 168 |
+| `missing_input` → `prior_year_missing` | 2 |
+| `missing_input` → `capture_failure` | 2 |
+| `capture_failure` → `prior_year_missing` | 1 |
+
+**Tests**: rule A' (SBC equal to capex, PANW refused, KVUE kept, no pattern, later tier kept with
+proof only), the three metric-level rank tests (refused input → `missing_input`; missing input
+beside a debt capture failure → `missing_input`; VNO statement refusal → `capture_failure`), and
+the face labels of the inventory and D&A fixtures. Full suite **3,163 passed**; ruff, ruff format,
+mypy and pre-commit green. Engine stays `metrics-v10`.

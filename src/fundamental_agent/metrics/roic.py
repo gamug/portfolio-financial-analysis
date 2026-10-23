@@ -125,6 +125,13 @@ def compute(
         inputs["flag_effective_tax_rate_outside_unit_interval"] = 1.0
     if outside_unit_interval(effective_annual):
         inputs["flag_return_on_invested_capital_effective_rate_outside_unit_interval"] = 1.0
+    # T-159c (G4 label): a loss year leaves the effective rate -- and the robustness ROIC that
+    # uses it -- empty because the denominator is not positive (MD-30, L-05), not because an input
+    # is missing. A missing pre-tax income is still `missing_input`.
+    if pretax is not None and pretax <= 0.0:
+        inputs["flag_effective_tax_rate_denominator_not_positive"] = 1.0
+    if annual_pretax is not None and annual_pretax <= 0.0:
+        inputs["flag_return_on_invested_capital_effective_rate_denominator_not_positive"] = 1.0
 
     roic = None
     roic_effective = None
