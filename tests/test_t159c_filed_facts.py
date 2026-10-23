@@ -281,7 +281,7 @@ def test_the_exact_da_sum_reads_only_when_both_parts_are_filed() -> None:
     both = _payload(
         cash_flow=[
             _row("NetCashProvidedByUsedInOperatingActivities", "OCF", **{FY: 100.0}),
-            _face("x_CashAddBack", "Other noncash item", **{FY: 15.0}),
+            _face("x_CashAddBack", "Depreciation and amortization, other", **{FY: 15.0}),
         ],
         filed_facts=[
             _fact("Depreciation", 10.0, start="2024-01-01", end="2024-12-31"),
@@ -478,6 +478,82 @@ def test_rule_e_no_filed_debt_when_the_face_carries_other_debt_lines() -> None:
     resolution = stmts.resolve("long_term_debt", FY)
     assert resolution.value is None
     assert "filed_fact_refused_other_debt_lines" in resolution.flags
+
+
+def test_rule_a_prime_a_capex_row_does_not_prove_sbc() -> None:
+    """SBC equal to a capex row is a coincidence, not the item's own line."""
+    stmts = _payload(
+        cash_flow=[
+            _row("NetCashProvidedByUsedInOperatingActivities", "OCF", **{FY: 100.0}),
+            _face("x_Capex", "Capital expenditures", **{FY: 20.0}),
+        ],
+        filed_facts=[_fact("ShareBasedCompensation", 20.0, start="2024-01-01", end="2024-12-31")],
+    )
+    resolution = stmts.resolve("stock_based_compensation", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused_face_row_not_item" in resolution.flags
+
+
+def test_rule_a_prime_panw_shape_is_refused_as_the_other_debt_item() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _row("ConvertibleDebtCurrent", "Convertible senior notes, net", **{INSTANT: 3_678.0}),
+        ],
+        filed_facts=[_fact("LongTermDebt", 3_678.0, end=INSTANT)],
+    )
+    assert stmts.resolve("short_term_debt", FY).value == 3_678.0
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused_face_row_other_debt" in resolution.flags
+
+
+def test_rule_a_prime_kvue_shape_is_kept() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 10_000.0}),
+            _row("DebtCurrent", "Loans and notes payable", **{INSTANT: 1_589.0}),
+            _face("x_TotalLongTermDebt", "Total long-term debt", **{INSTANT: 7_072.0}),
+        ],
+        filed_facts=[
+            _fact(
+                "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities",
+                7_072.0,
+                end=INSTANT,
+            )
+        ],
+    )
+    assert stmts.resolve("short_term_debt", FY).value == 1_589.0
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value == 7_072.0
+    assert "filed_fact_on_face" in resolution.flags
+
+
+def test_rule_a_prime_an_item_without_a_pattern_has_no_face_proof() -> None:
+    stmts = _payload(
+        balance=[_face("x_Other", "Something else", **{INSTANT: 50.0})],
+        filed_facts=[_fact("Assets", 50.0, end=INSTANT)],
+    )
+    resolution = stmts.resolve("total_assets", FY)
+    assert resolution.value is None
+    assert "filed_fact_refused_face_row_not_item" in resolution.flags
+
+
+def test_a_kept_later_tier_carries_its_proof_only() -> None:
+    stmts = _payload(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 100.0}),
+            _face("x_LongTermDebt", "Long-term debt", **{INSTANT: 50.0}),
+        ],
+        filed_facts=[
+            _fact("LongTermDebt", 40.0, end=INSTANT),  # not on the face: refused
+            _fact("LongTermDebtNoncurrent", 50.0, end=INSTANT),  # on the face: kept
+        ],
+    )
+    resolution = stmts.resolve("long_term_debt", FY)
+    assert resolution.value == 50.0
+    assert "filed_fact_on_face" in resolution.flags
+    assert not any(flag.startswith("filed_fact_refused") for flag in resolution.flags)
 
 
 def test_the_net_proceeds_element_never_fills_capex() -> None:

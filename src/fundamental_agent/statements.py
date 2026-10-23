@@ -37,6 +37,50 @@ _UNTAGGED_MAX_DAYS = 371
 # The unit a monetary item's fact must carry, and the two items whose facts are share counts.
 _MONETARY_UNIT = "USD"
 _SHARE_ITEMS = frozenset({"shares_outstanding", "diluted_shares"})
+# Rule A' (T-159c round 3): the face row a filed value equals must be the item's own line -- its
+# label names the item. An item without a pattern has no face proof (calibration only).
+_FACE_LABEL = {
+    "pretax_income": r"before (provision for |\(provision\) for |benefit from )?(income )?tax|pre-?tax",
+    "net_income": r"\bnet (income|earnings|loss|\(loss\)|\(income\)|\(earnings\))",
+    "net_income_to_common": r"\bnet (income|earnings|loss|\(loss\)|\(income\)|\(earnings\))",
+    "equity_incl_nci": r"equity|deficit",
+    "receivables": r"receivable",
+    "inventory": r"inventor",
+    "short_term_debt": (
+        r"debt|borrowing|notes payable|commercial paper|current maturities|current portion"
+        r"|funds purchased|repurchase"
+    ),
+    "long_term_debt": r"debt|borrowing|notes payable|senior notes|\bnotes\b",
+    "stock_based_compensation": (
+        r"(stock|share|equity)[- ]?based|stock compensation|share compensation|stock option"
+        r"|restricted stock|equity compensation"
+    ),
+    "depreciation_amortization": r"depreciation|amortization|depletion",
+    "interest_expense": r"interest|financing charges",
+    "short_term_investments": r"investments|securities|marketable|trading assets",
+    "cash": r"\bcash\b",
+    "cogs": r"cost of|costs of|operating expenses|operating costs",
+    "redeemable_nci": r"redeemable|noncontrolling|non-controlling",
+    "income_tax": r"\btax",
+    "capital_expenditure": r"capital|property|plant|equipment|productive assets",
+}
+_FACE_LABEL_NOT = {
+    "equity_incl_nci": r"accumulated other comprehensive|liabilities and",
+    "net_income": r"per share|comprehensive",
+    "net_income_to_common": r"per share|comprehensive|before",
+    "interest_expense": r"in shares|attributable to noncontrolling|other income",
+}
+_OTHER_DEBT = {"long_term_debt": "short_term_debt", "short_term_debt": "long_term_debt"}
+
+
+def _face_label_names_item(item: str, label: str) -> bool:
+    pattern = _FACE_LABEL.get(item)
+    if pattern is None or not re.search(pattern, label.lower()):
+        return False
+    exclude = _FACE_LABEL_NOT.get(item)
+    return exclude is None or not re.search(exclude, label.lower())
+
+
 _SHARE_UNIT = "shares"
 # T-159c: registry concepts whose statement-face caption decides whether they are the item. A
 # filed fact carries no caption, so the fallback never reads them: the cash-and-short-term-
@@ -1743,7 +1787,19 @@ class Statements:
 
     # -- the filed-fact fallback (T-159c) -----------------------------------------------------------
 
-    def _filed_fact_row(  # noqa: C901, PLR0911 - one return per fallback kind
+    def _filed_fact_row(
+        self, spec: LineItem, column: str, *, instant: bool
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """The fallback's tiers; a kept value carries its proof only -- an earlier tier's refusal
+        flag stays only on an item left empty (T-159c round 3)."""
+        row = self._filed_fact_tiers(spec, column, instant=instant)
+        if row is not None and row[0] is not None:
+            self._flags = [
+                raised for raised in self._flags if not raised.startswith("filed_fact_refused")
+            ]
+        return row
+
+    def _filed_fact_tiers(  # noqa: C901, PLR0911 - one return per fallback kind
         self, spec: LineItem, column: str, *, instant: bool
     ) -> tuple[float | None, str | None, str | None] | None:
         """The item's value from the filing's own ``filed_facts`` when the statements gave nothing.
@@ -1878,16 +1934,17 @@ class Statements:
         self._flag("filed_fact_refused")
         self._flag(f"filed_fact_refused_{reason}")
 
-    def _filed_fact_face_values(self, spec: LineItem, period: Period) -> set[int]:
-        """The item's own face statement's non-zero values at *period*, rounded to the dollar."""
-        out: set[int] = set()
+    def _filed_fact_face_values(self, spec: LineItem, period: Period) -> dict[int, list[str]]:
+        """The item's own face statement's non-zero values at *period*, rounded to the dollar, with
+        the labels of the rows that carry each."""
+        out: dict[int, list[str]] = {}
         for statement in spec.statements:
             for row in self.raw.get(statement, []):
                 if row.get("abstract") or row.get("dimension"):
                     continue
                 value = _numeric(row.get(period.key))
                 if value is not None and value != 0.0:
-                    out.add(round(abs(value)))
+                    out.setdefault(round(abs(value)), []).append(str(row.get("label") or ""))
         return out
 
     def _filed_fact_statement_value(self, spec: LineItem, column: str) -> float | None:
@@ -1924,7 +1981,7 @@ class Statements:
         finally:
             self._flags = outer_flags
 
-    def _filed_fact_proof(
+    def _filed_fact_proof(  # noqa: C901 - A's label check and B's calibration in one place
         self, spec: LineItem, period: Period, concept: str, value: float
     ) -> str | None:
         """Rule A/B: ``"on_face"``, ``"calibrated"``, or the refusal reason (``not_on_face`` /
@@ -1934,13 +1991,13 @@ class Statements:
             return "zero"
         balance = spec.statements == _BALANCE
         compared = agreed = 0
-        for other in self.periods:
-            if other.is_instant != balance or other.key == period.key:
+        for other_period in self.periods:
+            if other_period.is_instant != balance or other_period.key == period.key:
                 continue
-            statement_value = self._filed_fact_statement_value(spec, other.key)
+            statement_value = self._filed_fact_statement_value(spec, other_period.key)
             if statement_value is None or statement_value == 0.0:
                 continue
-            path_value = self._filed_fact_path_value(spec, other, concept)
+            path_value = self._filed_fact_path_value(spec, other_period, concept)
             if path_value is None:
                 continue
             compared += 1
@@ -1948,8 +2005,17 @@ class Statements:
                 agreed += 1
         if compared:
             return "calibrated" if agreed == compared else "calibration"
-        face = self._filed_fact_face_values(spec, period)
-        return "on_face" if round(abs(value)) in face else "not_on_face"
+        labels = self._filed_fact_face_values(spec, period).get(round(abs(value)))
+        if not labels:
+            return "not_on_face"
+        if not any(_face_label_names_item(spec.name, label) for label in labels):
+            return "face_row_not_item"
+        other_item = _OTHER_DEBT.get(spec.name)
+        if other_item is not None:
+            other_value = self._filed_fact_statement_value(REGISTRY[other_item], period.key)
+            if other_value is not None and round(abs(other_value)) == round(abs(value)):
+                return "face_row_other_debt"
+        return "on_face"
 
     def _filed_fact_accept(
         self, spec: LineItem, period: Period, concept: str, value: float

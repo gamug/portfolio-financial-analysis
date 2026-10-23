@@ -392,10 +392,9 @@ def _is_own_flag(key: str, result: MetricResult, items: tuple[str, ...]) -> bool
 
 def _flag_reason(flags: Any) -> str | None:
     # T-159c: a filed fact refused by the A-E proof is a **reported** item the fallback could not
-    # prove; the empty reason stays missing_input, never capture_failure/not_reported. Its flags
-    # are not a capture failure the metric's formula refused.
-    if any(str(raised).startswith("filed_fact_refused") for raised in flags):
-        return None
+    # prove; its flags are not a capture failure the metric's formula refused. Drop them before
+    # ranking, but keep any statement refusal on the same item (round 3).
+    flags = [raised for raised in flags if "filed_fact_refused" not in str(raised)]
     for flag, reason in _FLAG_REASONS:
         if any(flag in raised for raised in flags):
             return reason
@@ -570,6 +569,8 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                 # months; a flow that was not formed (x4, or refused) is not a present input.
                 flow = (ttm_flows or {}).get(item)
                 if flow is not None and flow.method not in ("ytd", "quarters"):
+                    if missing:
+                        break  # G4 / master's order: an earlier missing input already decides
                     return PRIOR_YEAR_MISSING if flow.method == "x4" else CAPTURE_FAILURE
             resolution, _capital = _resolve(stmts, period_key, item, basis)
             if (
@@ -578,6 +579,16 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
                 and item not in missing
             ):
                 missing.append(item)
+    # G4: a missing current-period input ranks before a refused or prior input (rank 2 before 3/4).
+    if missing:
+        if _not_applicable_here(result.name, stmts, missing, bank=_is_bank(stmts)):
+            return NOT_APPLICABLE
+        # Cause 6 vs the earlier causes: an item the filing reports nowhere (not on any statement
+        # row or filed fact, in any period) is "not reported"; one it reports in another period (a
+        # YTD-only 10-Q, a prior column) stays a missing input.
+        if not all(_item_reported_anywhere(stmts, item) for item in missing):
+            return NOT_REPORTED
+        return MISSING_INPUT
     # 3. an input filed but refused, or a prior column that is absent
     for item, entry in items.items():
         for raw_basis in _bases(entry):
@@ -596,13 +607,6 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
             reason = _flag_reason([key])
             if reason in (CAPTURE_FAILURE, PRIOR_YEAR_MISSING):
                 return reason
-    if missing and _not_applicable_here(result.name, stmts, missing, bank=_is_bank(stmts)):
-        return NOT_APPLICABLE
-    # Cause 6 vs the earlier causes: an item the filing reports nowhere (not on any statement row
-    # or filed fact, in any period) is "not reported"; one it reports in another period (a YTD-only
-    # 10-Q, a prior column) stays a missing input.
-    if missing and not all(_item_reported_anywhere(stmts, item) for item in missing):
-        return NOT_REPORTED
     return MISSING_INPUT
 
 

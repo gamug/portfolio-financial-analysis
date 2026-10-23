@@ -202,6 +202,51 @@ def test_a_refused_filed_fact_stays_missing_input_not_not_reported() -> None:
     assert "filed_fact_refused" in block["items"]["long_term_debt"][0]["flags"]
 
 
+def test_a_refused_input_through_a_metric_is_missing_input() -> None:
+    stmts = _stmts(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 500.0}),
+            _row("Other", "Something else", **{INSTANT: 100.0}),
+        ],
+    )
+    stmts.filed_facts = (
+        FiledFact(
+            concept="us-gaap:LongTermDebt",
+            value=100.0,
+            unit="USD",
+            period_start=None,
+            period_end=INSTANT,
+        ),
+    )
+    block = provenance.build(stmts, FY, MetricResult("debt_to_assets", None, "x", {}))
+    assert block["empty_reason"] == provenance.MISSING_INPUT
+
+
+def test_a_missing_current_input_outranks_a_debt_capture_failure() -> None:
+    stmts = _stmts(
+        balance=[
+            _row("Assets", "Assets", **{"2023-12-31": 500.0}),
+            _row("Other", "Something else", **{INSTANT: 1.0}),
+            _row("SeniorNotes", "Senior notes", **{INSTANT: 50.0}),
+            _row("MortgagesPayable", "Mortgages payable", **{INSTANT: 100.0}),
+        ],
+    )
+    block = provenance.build(stmts, FY, MetricResult("debt_to_assets", None, "x", {}))
+    assert block["empty_reason"] == provenance.MISSING_INPUT
+
+
+def test_vno_s_statement_refusal_is_still_capture_failure() -> None:
+    stmts = _stmts(
+        balance=[
+            _row("Assets", "Assets", **{INSTANT: 500.0}),
+            _row("SeniorNotes", "Senior notes", **{INSTANT: 50.0}),
+            _row("MortgagesPayable", "Mortgages payable", **{INSTANT: 100.0}),
+        ],
+    )
+    block = provenance.build(stmts, FY, MetricResult("debt_to_assets", None, "x", {}))
+    assert block["empty_reason"] == provenance.CAPTURE_FAILURE
+
+
 def test_a_cover_scale_suspect_is_a_stored_flag_on_the_valuation_rows() -> None:
     inputs: dict[str, float] = {}
     valuation._market_cap_inputs(
