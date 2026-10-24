@@ -208,6 +208,20 @@ def _classify(conn, case: dict[str, Any], ab: dict, seasonal: dict) -> tuple[str
     return "D", "no structural tag mix, restatement, acquisition/disposal or adjacent-year pattern"
 
 
+def _input_value(conn, filing_id: int, version: str, item: str) -> float | None:
+    """The item's anchor input on a 10-K (a period value, not a TTM provenance value)."""
+    group, metric = agent_db._TTM_FLOW_SOURCE[item]
+    row = conn.execute(
+        "SELECT inputs_json FROM fundamental_metrics WHERE filing_id=? AND metric_group=? "
+        "AND metric_name=? AND engine_version=? ORDER BY id DESC LIMIT 1",
+        (filing_id, group, metric, version),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return None
+    value = json.loads(row["inputs_json"]).get(item)
+    return float(value) if isinstance(value, (int, float)) else None
+
+
 def _value(conn, filing_id: int, version: str, item: str) -> float | None:
     row = conn.execute(
         "SELECT inputs_json FROM fundamental_metrics WHERE filing_id=? AND "
@@ -415,6 +429,31 @@ def main() -> int:
                     "note": "",
                 }
             )
+    # The A case's own 10-K reading: the TTM rows above inherit it, and the 10-K's own
+    # metrics (EBITDA, net debt / EBITDA, enterprise FCF yield) change with it.
+    for key, case in cases.items():
+        if class_of.get(key) != "A":
+            continue
+        before_da = _input_value(conn, case["fy_filing"], v10, "depreciation_amortization")
+        after_da = _input_value(conn, case["fy_filing"], version, "depreciation_amortization")
+        fy = _fy_meta(conn, case["fy_filing"]) or {}
+        rows_out.append(
+            {
+                "company": case["ticker"],
+                "filing": f"10-K FY{case['fiscal_year']} ({fy.get('period_end')})",
+                "item": "depreciation_amortization",
+                "terms": "the 10-K's FY reading (the TTM rows above inherit it)",
+                "r": "",
+                "derived_q4": "",
+                "class": "A",
+                "evidence": _classify(conn, case, ab, seasonal)[1],
+                "value_before": f"{before_da:,.0f}" if isinstance(before_da, (int, float)) else "",
+                "value_after": f"{after_da:,.0f}" if isinstance(after_da, (int, float)) else "",
+                "tests": "structural",
+                "rules": "",
+                "note": "the 10-K's own metrics change with this reading",
+            }
+        )
     with open(args.out, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(rows_out[0]))
         writer.writeheader()

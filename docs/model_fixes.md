@@ -10920,3 +10920,16 @@ nine-month YTD) and flags 52 cases, 25 of them also by test (i). The scan is
 the ambiguous-depreciation refusal, a genuine aggregate that stays, the TTM through the corrected
 10-K (150,077,000), and the prior-10-K refusal reaching the flow (`refused`). The engine-version
 test is `metrics-v11`.
+
+**Measurement on the scratch copy (2026-10-24).** The recompute is `metrics-v11` on
+`/workspaces/thesis/scratch/t161/financial_clean.db` (the raw scratch copy of pilot_a3 with the
+v11 rows of the four affected filings; the three NDSN 2025 Q1–Q3 rows the gateway-authored
+recompute had emptied — the FY2024 10-K's payload is empty at the gateway, not a T-161 value — were
+removed so those untouched filings keep their pilot_a3 rows). The NDSN values are in the entry
+above. The union classing is **4,403 cases over 540 companies: A 1, B 0, C 2,812, D 1,590**
+(`out/t161_flagged.csv`; one A case, three TTM term rows and the 10-K's own reading row). The
+per-metric comparison is **12 changed, 0 emptied, 0 filled, 357,219 same** — the four NDSN filings'
+`ebitda`, `net_debt_to_ebitda` and `enterprise_fcf_yield`. V3 independent recompute: **357,231 rows,
+36 mismatches (the declared FOX/NWS market-cap class), 0 unexplained**. `verify_pilot` T-161
+**WARN: D&A 63 of 5,844**, no structural A/B left (the fix is applied); the two other FAILs
+(T-153b, T-153g CTVA 2026-10-01) are the pilot's pre-existing rows, not T-161.

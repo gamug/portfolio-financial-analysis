@@ -2888,3 +2888,52 @@ Closed 2026-10-24, PR #186 (branch `fix/t160-v2-checkers`, off master `6b7589d`)
       `docs/pilot_a3_report.md` V2.
 
 **Closing measurement.** `precedence.py` on pilot_a3: `resolver == concept-first everywhere: True`, **0** mismatches (1 m 17 s). `itemcheck.py` after round 2: `OTHER_CONCEPT` net_income **0** (from 119), D&A **5** (from 24), cash **542** (from 740), pretax **23** (unchanged), revenue **1** (unchanged). Every one of the **571** remaining rows has a class in `out/t160_itemcheck_other.csv` (1,063 rows with the 492 class changes): **563 (c)**, **6 (b)**, **2 (d)**. The D&A subset map moved the 11 round-1 own reads and 8 round-1 OTHER reads to `ok_sourced_map`; the cash map moved 2 ES rows. The two (d) rows are ERIE's parenthetical caption (`statements.py:2575` strips it before the `"restrict"` test at `:2576`), declared and carried to **T-162** (DECISIONS row 62); the 30 AJG/KIM/ZTS rows and CSGP's 3 are class (c), the (k)(1) face line declared in `docs/model_fixes.md` §8 item 1. No stored value was changed; no new `verify_pilot` check.
+
+## T-161 — the TTM consistency check — DONE 2026-10-24
+
+Closed 2026-10-24: branch `fix/t161-ttm-consistency` (PR #187); engine `metrics-v11`. The entry
+below is moved here verbatim from `.specify/memory/TASKS.md` with the amended rule (DECISIONS row
+63).
+
+- [x] **T-161** *(P0 — prerequisite of `T-100`; value change)* The TTM consistency check. The
+      YTD-method TTM (prior fiscal year − prior YTD + YTD) mixes two meanings when a company tags a
+      flow differently on the 10-K and the 10-Qs. NDSN: the FY2025 10-K files only the intangible
+      amortization (79,264,000) under `DepreciationDepletionAndAmortization`
+      (`AmortizationOfIntangibleAssets` the same value, `Depreciation` 71,259,000); the 10-Qs the
+      full D&A (Q1 FY2026 36,585,000 = 17,016,000 + 19,569,000); the stored TTM is 78,818,000, the
+      consistent one ≈150,077,000 (EBITDA ≈8 % low). B's scan of the 10-Q EBITDA D&A terms, prior
+      YTD / prior FY against q/4 outside 0.6–1.5×: **66 of 5,844**; 28 with EBITDA empty, 29
+      identical in pilot_a2 (pre-existing), 9 changed or filled. The engine already has a 10-K guard
+      of the same family, `flag_depreciation_amortization_depreciation_only_not_da`
+      (`db.py:1081-1090`); NDSN is the mirror case (amortization only). **Scope: every TTM flow
+      item**, not only D&A — measure first. **Rule (amended by the T-161 brief §0 and DECISIONS row
+      63; the four-quarter-sum rule it replaces was B's error):** a fiscal Q4 has no 10-Q, so
+      `_quarter_flow_ending` derives it as the 10-K's FY less the 9-month YTD (`db.py:918`) and the
+      four-quarter sum carries the same 10-K term — the fix belongs on the reading of the off
+      filing. When a filing's D&A aggregate equals its amortization only
+      (`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization`) and
+      `Depreciation` is filed separately for the same period, D&A = `Depreciation` + amortization
+      (flagged `da_amortization_only_sum`); when the depreciation fact is ambiguous, refuse the
+      value with `da_amortization_only_refused`; never store the mixed value. `Depreciation` alone
+      stays refused (`depreciation_only_not_da`). Genuine cases (seasonality, acquisition, disposal,
+      restatement, changed fiscal year) keep their value. The ratio scan — prior YTD / prior FY
+      against q/4 outside 0.6–1.5×, applied when the prior FY and prior YTD are positive (B's scan;
+      the brief's "same sign" wording was B's error, DECISIONS row 63) and the all-negative terms
+      listed separately — is a `verify_pilot` **WARN**, never an engine rule. **Acceptance** on a
+      scratch copy of pilot_a3 (metrics-only recompute): NDSN FY2025 10-K D&A **150,523,000** and
+      Q1 FY2026 TTM D&A **150,077,000**; every flagged (company, fiscal year, item) classed A–D
+      with its evidence in `out/t161_flagged.csv`; `docs/model_fixes.md` entry. Evidence: DECISIONS
+      rows 58 and 63.
+
+**Closing measurement (2026-10-24):** the union classing (option 1 + option 2 + test (ii)) is
+**4,403 cases over 540 companies: A 1, B 0, C 2,812 (acquisition/disposal 2,183, seasonality 626,
+restatement 3), D 1,590** (`out/t161_flagged.csv`). The A case is NDSN FY2025. The 1,590 D cases are
+ratio-only and keep their value: the engine guard uses structural evidence only, and the ratio alone
+cannot separate them from the genuine cases. NDSN FY2025 10-K D&A **79,264,000 → 150,523,000**
+(EBITDA **790,989,000 → 862,248,000**); Q1 FY2026 TTM D&A **78,818,000 → 150,077,000** (EBITDA
+**816,001,000 → 887,260,000**), Q2 **77,556,000 → 148,815,000**, Q3 **76,256,000 → 147,515,000**.
+The per-metric comparison against pilot_a3 changes **12** rows, all on NDSN's four filings (`ebitda`,
+`net_debt_to_ebitda`, `enterprise_fcf_yield`), **0 emptied, 0 filled, 357,219 same**; the post-fix
+ratio scan is **63 of 5,844** (66 before; the three NDSN TTM terms are inside the band), the 10-Q
+mirror finds no B, and the V3 independent recompute is **0 unexplained** (36 FOX/NWS market-cap
+rows, declared). `verify_pilot` T-161 **WARN**, as designed.

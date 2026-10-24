@@ -1004,35 +1004,6 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       delivers: `itemcheck.py`, `signcheck.py`, `precedence.py` with `--db`, and `audit_sec_checklist.py fetch` for the SEC cache). **FAIL** on any value mismatch, on any
       resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
       any flipped sign. **WARN** on documented not-applicable cases.
-- [ ] **T-161** *(P0 — prerequisite of `T-100`; value change)* The TTM consistency check. The
-      YTD-method TTM (prior fiscal year − prior YTD + YTD) mixes two meanings when a company tags a
-      flow differently on the 10-K and the 10-Qs. NDSN: the FY2025 10-K files only the intangible
-      amortization (79,264,000) under `DepreciationDepletionAndAmortization`
-      (`AmortizationOfIntangibleAssets` the same value, `Depreciation` 71,259,000); the 10-Qs the
-      full D&A (Q1 FY2026 36,585,000 = 17,016,000 + 19,569,000); the stored TTM is 78,818,000, the
-      consistent one ≈150,077,000 (EBITDA ≈8 % low). B's scan of the 10-Q EBITDA D&A terms, prior
-      YTD / prior FY against q/4 outside 0.6–1.5×: **66 of 5,844**; 28 with EBITDA empty, 29
-      identical in pilot_a2 (pre-existing), 9 changed or filled. The engine already has a 10-K guard
-      of the same family, `flag_depreciation_amortization_depreciation_only_not_da`
-      (`db.py:1081-1090`); NDSN is the mirror case (amortization only). **Scope: every TTM flow
-      item**, not only D&A — measure first. **Rule (amended by the T-161 brief §0 and DECISIONS row
-      63; the four-quarter-sum rule it replaces was B's error):** a fiscal Q4 has no 10-Q, so
-      `_quarter_flow_ending` derives it as the 10-K's FY less the 9-month YTD (`db.py:918`) and the
-      four-quarter sum carries the same 10-K term — the fix belongs on the reading of the off
-      filing. When a filing's D&A aggregate equals its amortization only
-      (`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization`) and
-      `Depreciation` is filed separately for the same period, D&A = `Depreciation` + amortization
-      (flagged `da_amortization_only_sum`); when the depreciation fact is ambiguous, refuse the
-      value with `da_amortization_only_refused`; never store the mixed value. `Depreciation` alone
-      stays refused (`depreciation_only_not_da`). Genuine cases (seasonality, acquisition, disposal,
-      restatement, changed fiscal year) keep their value. The ratio scan — prior YTD / prior FY
-      against q/4 outside 0.6–1.5×, applied when the prior FY and prior YTD are positive (B's scan;
-      the brief's "same sign" wording was B's error, DECISIONS row 63) and the all-negative terms
-      listed separately — is a `verify_pilot` **WARN**, never an engine rule. **Acceptance** on a
-      scratch copy of pilot_a3 (metrics-only recompute): NDSN FY2025 10-K D&A **150,523,000** and
-      Q1 FY2026 TTM D&A **150,077,000**; every flagged (company, fiscal year, item) classed A–D
-      with its evidence in `out/t161_flagged.csv`; `docs/model_fixes.md` entry. Evidence: DECISIONS
-      rows 58 and 63.
 
 - [ ] **T-162** *(P0 — prerequisite of `T-100`; value change)* (k)(1) must test "restrict" on the
       caption before stripping parentheses (strip only note references). Measured on pilot_a3: **890**
@@ -1058,7 +1029,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` (done 2026-10-24), `T-161` and `T-162` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` (done 2026-10-24), `T-161` (done 2026-10-24) and `T-162` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -1183,7 +1154,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
 2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
-`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` (done 2026-10-24), `T-161` and `T-162`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
+`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` (done 2026-10-24), `T-161` (done 2026-10-24) and `T-162`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per

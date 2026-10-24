@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import io
 import json
 import math
@@ -17,6 +18,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 from unexplained_split_rows import unexplained_split_rows
@@ -2030,6 +2032,17 @@ def main() -> int:  # noqa: C901, PLR0915
             detail += "; structural A/B: " + ", ".join(structural[:8])
         else:
             detail += "; structural A/B: none"
+        # The per-term class list: name the A/B rows from the CSV when it is present (the ratio-only
+        # C/D rows are the rest of the file).
+        csv_path = Path("out/t161_flagged.csv")
+        if csv_path.exists():
+            with csv_path.open(newline="") as fh:
+                ab_rows = [
+                    f"{row['company']} {row['filing']} {row['item']} {row['class']}"
+                    for row in csv.DictReader(fh)
+                    if row["class"] in ("A", "B")
+                ]
+            detail += "; CSV A/B: " + (", ".join(ab_rows[:6]) or "none")
         detail += "; classes in out/t161_flagged.csv"
         report("T-161", "WARN" if any_flag else "PASS", detail)
 
