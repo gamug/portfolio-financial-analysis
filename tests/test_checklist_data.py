@@ -95,3 +95,5 @@ def test_every_dictionary_row_names_its_period_basis() -> None:
         "value_inputs",
     ):
         assert f"`{metric}`" in text
+    assert "else four quarters" in text
+    assert "close at the filing's period end x the latest cover share count" in text

@@ -1018,7 +1018,10 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       full D&A (Q1 FY2026 36,585,000 = 17,016,000 + 19,569,000); the stored TTM is 78,818,000, the
       consistent one ≈150,077,000 (EBITDA ≈8 % low). B's scan of the 10-Q EBITDA D&A terms, prior
       YTD / prior FY against q/4 outside 0.6–1.5×: **66 of 5,844**; 28 with EBITDA empty, 29
-      identical in pilot_a2 (pre-existing), 9 changed or filled. **Scope: every TTM flow item**,
+      identical in pilot_a2 (pre-existing), 9 changed or filled. The engine already has a 10-K guard
+      of the same family, `flag_depreciation_amortization_depreciation_only_not_da`
+      (`db.py:1081-1090`); NDSN is the mirror case (amortization only), and the design can extend
+      that guard. **Scope: every TTM flow item**,
       not only D&A — measure first. **Rule to design:** when the terms are inconsistent, use the
       four-quarter sum if the four discrete quarters exist, else leave the value empty with a
       recorded reason; never store the mixed value. **Acceptance** on a scratch copy of pilot_a3
