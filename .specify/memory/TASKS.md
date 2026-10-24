@@ -1004,12 +1004,6 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       delivers: `itemcheck.py`, `signcheck.py`, `precedence.py` with `--db`, and `audit_sec_checklist.py fetch` for the SEC cache). **FAIL** on any value mismatch, on any
       resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
       any flipped sign. **WARN** on documented not-applicable cases.
-- [ ] **T-160** *(P0 — prerequisite of `T-100`; tooling, no stored-value change)* Finish the V2
-      checker follow-up from pilot_a3. `precedence.is_plain` must exclude `LineItem.substitute`;
-      `itemcheck.own_concepts` must add `concept_flags` and the resolver's named concepts.
-      **Acceptance:** re-run both on pilot_a3; the report's V2 tooling gaps go to **0**, or each
-      remaining row is listed with its cause; **no database write**. Evidence:
-      `docs/pilot_a3_report.md` V2.
 - [ ] **T-161** *(P0 — prerequisite of `T-100`; value change)* The TTM consistency check. The
       YTD-method TTM (prior fiscal year − prior YTD + YTD) mixes two meanings when a company tags a
       flow differently on the 10-K and the 10-Qs. NDSN: the FY2025 10-K files only the intangible
@@ -1029,6 +1023,14 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (fixed / genuinely seasonal or M&A, kept / emptied with reason); `docs/model_fixes.md`
       entry. Evidence: DECISIONS row 58.
 
+- [ ] **T-162** *(P0 — prerequisite of `T-100`; value change)* (k)(1) must test "restrict" on the
+      caption before stripping parentheses (strip only note references). Measured on pilot_a3: **890**
+      balance-sheet face rows with the combined tag; **21** have "restrict" only inside parentheses
+      (ERIE 11, AXP 10; check whether AXP's "Total cash and cash equivalents" caption is already
+      refused). **Acceptance** on a scratch copy of pilot_a3: the affected filings' cash is refused
+      with its flag; the metrics built on it are listed before and after; everything else is
+      identical; a `docs/model_fixes.md` entry. Evidence: DECISIONS row 62.
+
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final
       prompts)* Run the whole
@@ -1045,7 +1047,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` and `T-161` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` (done 2026-10-24), `T-161` and `T-162` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -1170,7 +1172,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
 2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
-`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` and `T-161`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
+`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` (done 2026-10-24), `T-161` and `T-162`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per

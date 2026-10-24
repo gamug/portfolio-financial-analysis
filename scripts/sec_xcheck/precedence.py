@@ -33,13 +33,18 @@ from sec_xcheck.common import filings, open_ro, own_period_key, statements_from_
 
 
 def is_plain(spec: LineItem) -> bool:
-    """A line item the precedence alone decides: no composite resolver, total, sum or fallback tier."""
+    """A line item the precedence alone decides: no composite resolver, total, sum or fallback tier.
+
+    T-160: a **substitute** item is not plain either (T-159a): the substitute tier decides the
+    value, not the precedence (``statements.py``'s :class:`Substitute`), and concept-first would
+    report it as a mismatch when the item's own concepts are filed under another name."""
     return not (
         spec.resolver
         or spec.total_concepts
         or spec.sum_components
         or spec.fallback_concepts
         or spec.label_fallback
+        or spec.substitute
     )
 
 

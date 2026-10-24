@@ -2875,3 +2875,16 @@ Closed 2026-10-24: T-159a (PR #182), T-159b (data-mining PR #101, gateway redepl
       cause-7 empties must be only the named, declared exceptions.
 
 **Closing measurement (`out/a3_vs_a2_summary.md`):** on the shared filings, non-price `missing_input` **51,382 → 13,224** and `capture_failure` **3,549 → 2,189**; **6,393** metrics filled, **28** emptied (FTNT/P ROIC, correct by MET-09); `verify_pilot` T-159c **PASS** (3,490 filed-fact items). The documentation line is now in `docs/metric_dictionary.md`: every Annex B metric names its period basis and the three stored metrics outside Annex B are recorded (PR for this close-out).
+
+## T-160 — the V2 checker follow-up (T-143 part A) — DONE 2026-10-24
+
+Closed 2026-10-24, PR #186 (branch `fix/t160-v2-checkers`, off master `6b7589d`). The entry below is moved here verbatim from `.specify/memory/TASKS.md`.
+
+- [x] **T-160** *(P0 — prerequisite of `T-100`; tooling, no stored-value change)* Finish the V2
+      checker follow-up from pilot_a3. `precedence.is_plain` must exclude `LineItem.substitute`;
+      `itemcheck.own_concepts` must add `concept_flags` and the resolver's named concepts.
+      **Acceptance:** re-run both on pilot_a3; the report's V2 tooling gaps go to **0**, or each
+      remaining row is listed with its cause; **no database write**. Evidence:
+      `docs/pilot_a3_report.md` V2.
+
+**Closing measurement.** `precedence.py` on pilot_a3: `resolver == concept-first everywhere: True`, **0** mismatches (1 m 17 s). `itemcheck.py` after round 2: `OTHER_CONCEPT` net_income **0** (from 119), D&A **5** (from 24), cash **542** (from 740), pretax **23** (unchanged), revenue **1** (unchanged). Every one of the **571** remaining rows has a class in `out/t160_itemcheck_other.csv` (1,063 rows with the 492 class changes): **563 (c)**, **6 (b)**, **2 (d)**. The D&A subset map moved the 11 round-1 own reads and 8 round-1 OTHER reads to `ok_sourced_map`; the cash map moved 2 ES rows. The two (d) rows are ERIE's parenthetical caption (`statements.py:2575` strips it before the `"restrict"` test at `:2576`), declared and carried to **T-162** (DECISIONS row 62); the 30 AJG/KIM/ZTS rows and CSGP's 3 are class (c), the (k)(1) face line declared in `docs/model_fixes.md` §8 item 1. No stored value was changed; no new `verify_pilot` check.
