@@ -189,12 +189,12 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     )
     a2.execute(
         "INSERT INTO financial_facts (filing_id, period_key, concept, value) VALUES "
-        "(1, '2024-12-31 (FY)', 'us-gaap_LongTermDebtNoncurrent', 40.0)"
+        "(1, '2024-12-31', 'us-gaap_LongTermDebtNoncurrent', 40.0)"
     )
     a2.commit()
     a3.execute(
         "INSERT INTO financial_facts (filing_id, period_key, concept, value) VALUES "
-        "(1, '2024-12-31 (FY)', 'us-gaap_LongTermDebtNoncurrent', 50.0)"
+        "(1, '2024-12-31', 'us-gaap_LongTermDebtNoncurrent', 50.0)"
     )
     a3.commit()
     a2.close()

@@ -209,7 +209,13 @@ def _value_from_facts(
     if len(concepts) != 1:
         return None
     parts = concepts[0].split(" + ")
-    values = [facts.get((record["period"], part)) for part in parts]
+    period = _period_date(record["period"])
+    values = [
+        facts.get((period, part))
+        if (period, part) in facts
+        else facts.get((record["period"], part))
+        for part in parts
+    ]
     if any(value is None for value in values):
         return None
     return float(sum(value for value in values if value is not None))
