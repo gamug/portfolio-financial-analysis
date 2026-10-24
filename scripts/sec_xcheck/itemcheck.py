@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import itertools
 import json
 import sys
 from collections.abc import Iterable
@@ -29,7 +30,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from fundamental_agent.statements import DA_SOURCED_CHILDREN, NET_INCOME_SUBSTITUTES, REGISTRY
+from fundamental_agent.statements import NET_INCOME_SUBSTITUTES, REGISTRY
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -57,11 +58,12 @@ CHECK: dict[str, list[str]] = {
 INSTANT_ITEMS = {"total_assets", "equity", "cash"}
 
 
-#: The concepts each item's **composite resolver** reads by name, beyond the item's own
-#: ``concepts``, ``total_concepts`` and substitutes (T-160). A concept is listed when the resolver
-#: can return its value as the item's value, or subtract it from one; a concept read only to
-#: *refuse* a value (N13's preferred dividends, the cash-flow D&A "only lines" scan) is not the
-#: item's own concept. The line numbers are ``fundamental_agent/statements.py``'s at this branch.
+#: The concepts each item's composite resolver can return **alone** as the item's value, beyond
+#: the item's own ``concepts``, ``total_concepts`` and substitutes (T-160). A concept read only to
+#: *refuse* a value (N13's preferred dividends), or one term of a sum, is not the item's own
+#: concept: a stored value equal to one term is a coincidence or a defect, and calling it "own"
+#: would hide it. The sums live in :data:`SOURCED_MAPS` and class as ``ok_sourced_map``. The line
+#: numbers are ``fundamental_agent/statements.py``'s at this branch.
 #:
 #: ``cash``'s restricted-cash fallback (``CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents``,
 #: ``statements.py:2645-2649``) is deliberately **not** listed: it is a caption-checked fallback
@@ -69,29 +71,12 @@ INSTANT_ITEMS = {"total_assets", "equity", "cash"}
 #: filing -- the face line under (k)(1) is the declared limitation (``docs/model_fixes.md`` §8
 #: item 1, AJG 2023-03-31); ERIE's parenthetical caption is the defect **T-162** (DECISIONS row 62).
 RESOLVER_CONCEPTS: dict[str, tuple[str, ...]] = {
-    "net_income": (
-        # statements.py:2459-2464: ProfitLoss less the filed NCI total.
-        "us-gaap_NetIncomeLossAttributableToNoncontrollingInterest",
-        # statements.py:613 and 2452: "net income available to common" as parent net income, when
-        # no preferred dividend is filed (N13).
-        *NET_INCOME_SUBSTITUTES,
-    ),
-    "income_tax": (
-        # statements.py:2531-2532: the current plus deferred map (ID-02b, D-06(c)).
-        "us-gaap_CurrentIncomeTaxExpenseBenefit",
-        "us-gaap_DeferredIncomeTaxExpenseBenefit",
-    ),
-    "depreciation_amortization": (
-        # statements.py:447-452: the D&A-nature children of the sourced sum and, for the first
-        # and last, of the exact two-part sum.
-        *DA_SOURCED_CHILDREN,
-    ),
-    "cash": (
-        # statements.py:2651-2660: the bare ``Cash`` line (T-159a), and the cash-equivalents fact
-        # its tier tests (the ES map beside it is step 4, statements.py:2634).
-        "us-gaap_Cash",
-        "us-gaap_CashEquivalentsAtCarryingValue",
-    ),
+    # statements.py:613 and 2452: "net income available to common" as parent net income, when no
+    # preferred dividend is filed (N13) -- the only net-income candidate read alone.
+    "net_income": NET_INCOME_SUBSTITUTES,
+    # statements.py:2651-2660: the bare ``Cash`` line (T-159a). ``CashEquivalentsAtCarryingValue``
+    # is only one term of the ES map (statements.py:2634), so it is in SOURCED_MAPS, not here.
+    "cash": ("us-gaap_Cash",),
 }
 
 
@@ -103,10 +88,10 @@ def own_concepts() -> dict[str, set[str]]:
     value stored under one of them is the item's own value, not another item's.
 
     T-160: so are each item's ``concept_flags`` concepts (the concept the resolver flags when it
-    reads it, ``statements.py:232``) and the concepts its composite resolver reads by name
+    reads it, ``statements.py:232``) and the concepts its composite resolver can return alone
     (:data:`RESOLVER_CONCEPTS`). Before this, the checker reported a correctly read T-159a value
-    as ``OTHER_CONCEPT`` (net income's available-to-common line, the D&A children, the bare
-    ``Cash`` line, income tax's current + deferred)."""
+    as ``OTHER_CONCEPT`` (net income's available-to-common line and the bare ``Cash`` line). A sum
+    is not an own concept; it is in :data:`SOURCED_MAPS` and classes as ``ok_sourced_map``."""
     return {
         name: {
             c.split("_", 1)[1]
@@ -206,35 +191,78 @@ def facts_of(
     return out
 
 
-# the sourced maps T-148 implements: item -> ((concept, weight), ...), the value being the weighted sum of the facts
-SOURCED_MAPS: dict[str, tuple[tuple[str, float], ...]] = {
-    "net_income": (
-        ("ProfitLoss", 1.0),
-        ("NetIncomeLossAttributableToNoncontrollingInterest", -1.0),
+@dataclass(frozen=True)
+class SourcedMap:
+    """A sourced sum (ID-02b): the ``required`` terms, plus ``optional`` terms of which at least
+    ``min_optional`` must be filed. Every combination of the filed optional terms is a candidate
+    value, so a subset sum is recognised as the sum it is."""
+
+    required: tuple[tuple[str, float], ...]
+    optional: tuple[tuple[str, float], ...] = ()
+    min_optional: int = 0
+
+
+#: The sourced maps T-148/T-160 implement: item -> the terms of its sum. The values are classed
+#: ``ok_sourced_map``; they are never "the item's own concept" (see :data:`RESOLVER_CONCEPTS`).
+SOURCED_MAPS: dict[str, SourcedMap] = {
+    "net_income": SourcedMap(
+        (
+            ("ProfitLoss", 1.0),
+            ("NetIncomeLossAttributableToNoncontrollingInterest", -1.0),
+        )
     ),
-    "income_tax": (
-        ("CurrentIncomeTaxExpenseBenefit", 1.0),
-        ("DeferredIncomeTaxExpenseBenefit", 1.0),
+    "income_tax": SourcedMap(
+        (
+            ("CurrentIncomeTaxExpenseBenefit", 1.0),
+            ("DeferredIncomeTaxExpenseBenefit", 1.0),
+        )
+    ),
+    # statements.py:447-452 and 2709: ``_da_sourced_sum`` needs Depreciation plus at least one of
+    # the other three D&A-nature children; ``_da_exact_sum`` is the Depreciation +
+    # AmortizationOfIntangibleAssets case. Every non-empty subset is a candidate sum.
+    "depreciation_amortization": SourcedMap(
+        required=(("Depreciation", 1.0),),
+        optional=(
+            ("Depletion", 1.0),
+            ("OtherDepreciationAndAmortization", 1.0),
+            ("AmortizationOfIntangibleAssets", 1.0),
+        ),
+        min_optional=1,
+    ),
+    # statements.py:2634: the ES map, Cash + CashEquivalentsAtCarryingValue (both terms required).
+    "cash": SourcedMap(
+        (
+            ("Cash", 1.0),
+            ("CashEquivalentsAtCarryingValue", 1.0),
+        )
     ),
 }
 
 
 def map_values(item: str, values: dict[float, set[str]]) -> list[float]:
-    """The values a sourced map of *item* gives from the SEC facts of the accession and period (empty when a term is
-    not filed)."""
-    terms = SOURCED_MAPS.get(item)
-    if not terms:
+    """The values a sourced map of *item* gives from the SEC facts of the accession and period
+    (empty when a required term is not filed; for an optional-term map, every non-empty subset of
+    the filed optional terms is a candidate)."""
+    sourced = SOURCED_MAPS.get(item)
+    if sourced is None:
         return []
     by_concept: dict[str, list[float]] = collections.defaultdict(list)
     for value, concepts in values.items():
         for concept in concepts:
             by_concept[concept].append(value)
-    if any(concept not in by_concept for concept, _w in terms):
+    if any(concept not in by_concept for concept, _w in sourced.required):
         return []
-    totals = [0.0]
-    for concept, weight in terms:
-        totals = [t + weight * v for t in totals for v in by_concept[concept]]
-    return totals
+    optional = [(c, w) for c, w in sourced.optional if c in by_concept]
+    if len(optional) < sourced.min_optional:
+        return []
+    out: list[float] = []
+    for size in range(sourced.min_optional, len(optional) + 1):
+        for chosen in itertools.combinations(optional, size):
+            totals = [0.0]
+            for concept, weight in (*sourced.required, *chosen):
+                totals = [t + weight * v for t in totals for v in by_concept[concept]]
+            out.extend(totals)
+    return out
 
 
 @dataclass(frozen=True)

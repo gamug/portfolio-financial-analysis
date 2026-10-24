@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
-from sec_xcheck.itemcheck import classify, load_drop_log, own_concepts, stored_facts
+from sec_xcheck.itemcheck import classify, load_drop_log, map_values, own_concepts, stored_facts
 
 from fundamental_agent.pipeline import DROP_LOG_ENV, log_gateway_drops
 from fundamental_agent.statements import REGISTRY
@@ -245,14 +245,34 @@ def test_a_concept_flag_concept_counts_as_the_items_own_concept() -> None:
 
 
 def test_a_resolver_named_concept_counts_as_the_items_own_concept() -> None:
-    """T-160: the composite resolvers read these concepts by name, so a stored value under one is
-    the item's own value: income tax's current + deferred (``statements.py:2531-2532``), the D&A
-    children (``statements.py:447-452``) and the bare ``Cash`` line (``statements.py:2651-2660``)."""
-    assert "CurrentIncomeTaxExpenseBenefit" in own_concepts()["income_tax"]
-    assert "DeferredIncomeTaxExpenseBenefit" in own_concepts()["income_tax"]
-    assert "Depreciation" in own_concepts()["depreciation_amortization"]
-    assert "AmortizationOfIntangibleAssets" in own_concepts()["depreciation_amortization"]
+    """T-160 round 2: only a concept the resolver can return **alone** is the item's own -- the
+    bare ``Cash`` line (``statements.py:2651-2660``). A component of a sum is not (a stored value
+    equal to one term is a coincidence or a defect; the sum is in ``SOURCED_MAPS``)."""
     assert "Cash" in own_concepts()["cash"]
+    assert "CashEquivalentsAtCarryingValue" not in own_concepts()["cash"]
+    assert "Depreciation" not in own_concepts()["depreciation_amortization"]
+    assert "CurrentIncomeTaxExpenseBenefit" not in own_concepts()["income_tax"]
+
+
+def test_a_stored_da_equal_to_one_child_is_not_ok_own_concept() -> None:
+    """T-160 round 2: one D&A child is not the item's own concept; a single component is a
+    coincidence or a defect, never a whole (``_da_sourced_sum`` needs Depreciation plus another
+    child, ``statements.py:447-452``)."""
+    own = own_concepts()["depreciation_amortization"]
+    values = {100.0: {"Depreciation"}}
+    cls, _ = classify(100.0, own, values, map_values("depreciation_amortization", values))
+    assert cls != "ok_own_concept"
+    assert cls == "OTHER_CONCEPT"
+
+
+def test_a_depreciation_plus_amortization_sum_is_ok_sourced_map() -> None:
+    """T-160 round 2: the exact two-part D&A sum is a sourced map (``statements.py:662``,
+    ``_da_exact_sum`` at ``:2774``)."""
+    own = own_concepts()["depreciation_amortization"]
+    values = {100.0: {"Depreciation"}, 20.0: {"AmortizationOfIntangibleAssets"}}
+    mapped = map_values("depreciation_amortization", values)
+    assert mapped == [120.0]
+    assert classify(120.0, own, values, mapped)[0] == "ok_sourced_map"
 
 
 def test_a_value_stored_under_another_concept_is_a_warning_by_item() -> None:
