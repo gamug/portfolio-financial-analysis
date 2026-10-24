@@ -10861,3 +10861,62 @@ proof only), the three metric-level rank tests (refused input → `missing_input
 beside a debt capture failure → `missing_input`; VNO statement refusal → `capture_failure`), and
 the face labels of the inventory and D&A fixtures. Full suite **3,163 passed**; ruff, ruff format,
 mypy and pre-commit green. Engine stays `metrics-v10`.
+
+## T-161 — the TTM consistency check: an amortization-only D&A on the 10-K, read as depreciation + amortization
+
+**Status**: fixed on branch `fix/t161-ttm-consistency` (off master `6b7589d`), engine
+`metrics-v11`. Verified on a scratch copy of `pilot_a3` (`/workspaces/thesis/scratch/t161/
+financial.db`; the original's sha256 `d2b757b4…68fb8` is unchanged).
+
+**The defect.** A 10-Q's YTD-method TTM is `FY(prior 10-K) − YTD(prior) + YTD(this year)`
+(`db.py:1024-1105`). It mixes two meanings when the two forms tag the same flow differently.
+NDSN's FY2025 10-K files only the intangible amortization (**79,264,000**) as
+`DepreciationDepletionAndAmortization` — equal to `AmortizationOfIntangibleAssets` — and files
+`Depreciation` **71,259,000** separately, while the 10-Qs file the full D&A (Q1 FY2026
+36,585,000). The 10-K's own EBITDA was low too (790,989,000 vs **862,248,000**), and every TTM
+built on it: Q1 FY2026 D&A **78,818,000** instead of **150,077,000** (EBITDA 816,001,000 vs
+887,260,000, **8.03 % low**). B's §1 correction: the four-quarter sum is not an escape — a fiscal
+Q4 has no 10-Q, so `_quarter_flow_ending` derives it as the 10-K's FY less the nine-month YTD
+(`db.py:918`), and every 10-Q TTM carries that 10-K term. The fix belongs on the reading of the
+filing whose tag means something different.
+
+**The rule.** When a filing's D&A aggregate equals its amortization only —
+`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization` — and
+`Depreciation` is a filed fact of the **same filing and period**, the reading is
+`Depreciation + amortization`, flagged `da_amortization_only_sum`
+(`statements._da_amortization_only_sum`, `_da_amortization_only_sum_filed`, called from the
+statement tier and `_da_filed_fact`). When the depreciation fact is ambiguous (two values for the
+period), the item is refused with `da_amortization_only_refused` and the 10-Q's TTM carries
+`da_amortization_only_refused` (never the mixed value; the flow falls back to four quarters, else
+refuses). `Depreciation` alone stays refused (`depreciation_only_not_da`, T-151 part 1). Genuine
+cases (seasonality, acquisition, disposal, restatement, changed fiscal year) keep their value.
+
+**The structural scope.** The NDSN-shaped test over every 10-K's stored facts finds **one** case:
+NDSN FY2025 (2,179 10-Ks with a resolved period D&A). The 10-Q mirror over the stored facts finds
+**none** under the brief's test (the aggregate equals `AmortizationOfIntangibleAssets` and
+`Depreciation` is separate). INTU 2025Q1 is a **near-miss** and stays: its D&A 165,000,000 equals
+the cash-flow `AdjustmentForAmortization`, but its reading is the exact sum
+`Depreciation` 44,000,000 + `AmortizationOfIntangibleAssets` 121,000,000 (the 44,000,000
+cost-of-sales amortization is a separate line), so the full D&A is not established by the brief's
+two filed facts — class D in the CSV, not fixed. A further filed-facts-only case cannot be seen in
+`financial_facts`; the engine's `AdjustmentForAmortization` branch covers an aggregate that does
+equal it at read time.
+
+**The ratio scan (a WARN, not an engine rule).** Test (i): `r = (prior_ytd / prior_FY) / (m / 12)`,
+m = the 10-Q's fiscal-quarter length (3/6/9), flagged outside [0.6, 1.5]. The pre-flight (B's scan)
+applies it when the prior FY and prior YTD are positive: **66 of 5,844** D&A terms, reproduced
+exactly. The brief's "all three terms the same sign" wording (B's error, DECISIONS row 63) gives
+**67 of 5,857**: the 21 all-negative terms (5 flagged; AMP/KKR/WRB's own net
+`DepreciationAmortizationAndAccretionNet` presentations, not engine sign defects) and the 8
+mixed-sign terms (4 flagged; AMP 2022, KEY 2026 Q1, KKR 2024 Q1). The union of option 1, option 2
+and test (ii) is classed in `out/t161_flagged.csv`; test (ii) (the derived Q4
+`prior_FY − prior 9-month YTD`) tests 19,695 of 24,259 possible Q4s (the rest have no stored
+nine-month YTD) and flags 52 cases, 25 of them also by test (i). The scan is
+`verify_pilot`'s `T-161` WARN (`scripts/t161_scan.py`).
+
+**Tests.** `tests/test_t161_ttm_consistency.py`: the NDSN 10-K reading (79,264,000 →
+150,523,000), the 10-Q mirror (36,585,000, not the 39,138,000 double count), the INTU
+`AdjustmentForAmortization` shape (209,000,000; a synthetic guard branch, not a real pilot case),
+the ambiguous-depreciation refusal, a genuine aggregate that stays, the TTM through the corrected
+10-K (150,077,000), and the prior-10-K refusal reaching the flow (`refused`). The engine-version
+test is `metrics-v11`.

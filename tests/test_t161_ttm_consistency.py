@@ -161,10 +161,9 @@ def test_a_genuine_aggregate_that_is_not_the_amortization_stays() -> None:
 
 
 def test_an_aggregate_equal_to_adjustment_for_amortization_is_the_sum() -> None:
-    """INTU 2025Q1's shape: the 10-Q's DDA (165,000,000) is the total amortization, filed as
-    ``AdjustmentForAmortization``, with ``Depreciation`` 44,000,000 separate. D&A = 209,000,000;
-    the income statement's ``AmortizationOfIntangibleAssets`` (121,000,000) is a different line
-    and must not be the matched component."""
+    """The cash-flow aggregate's amortization name: DDA 165,000,000 equals
+    ``AdjustmentForAmortization`` and ``Depreciation`` 44,000,000 is separate. D&A = 209,000,000.
+    (This is the guard's general branch; it is not claimed as a real pilot case.)"""
     stmts = _payload(
         cash_flow=[
             _row(

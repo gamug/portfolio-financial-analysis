@@ -24,7 +24,9 @@ from collections import Counter
 from typing import Any
 
 from fundamental_agent import db as agent_db
+from fundamental_agent.statements import DA_AGGREGATE_CONCEPTS
 from kg_schema.db import connect_ro
+from kg_schema.versions import version_key
 
 TTM_ITEMS = (
     "net_income",
@@ -49,7 +51,7 @@ FIXED_SIGN = (
     "stock_based_compensation",
 )
 _QUARTER_MONTHS = {"Q1": 3, "Q2": 6, "Q3": 9}
-_AMORTIZATION = ("us-gaap_AdjustmentForAmortization", "us-gaap_AmortizationOfIntangibleAssets")
+_AMORTIZATION = ("us-gaap_AmortizationOfIntangibleAssets", "us-gaap_AdjustmentForAmortization")
 _SAME = 1.0
 _TERMS = 3
 _R_LOW = 0.6
@@ -63,13 +65,14 @@ def _engine_version(conn) -> str:
     return str(row["engine_version"]) if row else agent_db.METRICS_ENGINE_VERSION
 
 
-def stored_terms(conn) -> list[dict[str, Any]]:  # noqa: C901 - one provenance pass
+def stored_terms(  # noqa: C901, PLR0912 - one provenance pass
+    conn, version: str | None = None
+) -> list[dict[str, Any]]:
     """Every 10-Q's stored YTD-method TTM terms, one record per (filing, item).
 
     The terms live in the anchor metric row's ``inputs_json.provenance.items[item]`` (H4). An item
     with more than one declaring metric row is de-duplicated; the extractor never saw two rows
     disagree on the terms."""
-    version = _engine_version(conn)
     filings = {
         int(r["id"]): dict(r)
         for r in conn.execute(
@@ -77,13 +80,32 @@ def stored_terms(conn) -> list[dict[str, Any]]:  # noqa: C901 - one provenance p
         )
     }
     found: dict[tuple[int, str], dict[str, Any]] = {}
-    rows = conn.execute(
-        "SELECT id, filing_id, metric_group, metric_name, inputs_json FROM fundamental_metrics "
-        "WHERE filing_id IN (SELECT id FROM sec_filings WHERE form='10-Q') "
-        "AND engine_version=? ORDER BY id",
-        (version,),
-    )
+    # The latest stored version per (filing, group, metric): a partially recomputed scratch copy
+    # has the new engine for some filings and the old one for the rest, and each filing's own
+    # latest row is what its readers see.
+    if version is None:
+        rows = conn.execute(
+            "SELECT id, filing_id, metric_group, metric_name, engine_version, inputs_json "
+            "FROM fundamental_metrics "
+            "WHERE filing_id IN (SELECT id FROM sec_filings WHERE form='10-Q') ORDER BY id"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, filing_id, metric_group, metric_name, engine_version, inputs_json "
+            "FROM fundamental_metrics "
+            "WHERE filing_id IN (SELECT id FROM sec_filings WHERE form='10-Q') "
+            "AND engine_version=? ORDER BY id",
+            (version,),
+        ).fetchall()
+    best: dict[tuple[int, str, str], tuple[int, Any]] = {}
     for r in rows:
+        if not r["engine_version"]:
+            continue
+        key = (int(r["filing_id"]), str(r["metric_group"]), str(r["metric_name"]))
+        vk = version_key(str(r["engine_version"]))
+        if key not in best or vk > best[key][0]:
+            best[key] = (vk, r)
+    for _vk, r in best.values():
         if not r["inputs_json"]:
             continue
         try:
@@ -170,26 +192,48 @@ def ratio_flagged(terms: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _structural_rows(conn, form: str) -> list[dict[str, Any]]:
+def _structural_rows(conn, form: str, version: str | None = None) -> list[dict[str, Any]]:
     """The NDSN shape on *form*: the resolved D&A (or its YTD) equals the amortization fact of the
     same period and a ``Depreciation`` fact is filed separately. A proxy over ``financial_facts``
     for the verify check; the engine's guard reads the filing's own filed facts."""
     ticker = {int(r["id"]): r["ticker"] for r in conn.execute("SELECT id, ticker FROM assets")}
-    version = _engine_version(conn)
-    rows = conn.execute(
-        "SELECT fm.filing_id, sf.asset_id, sf.period_end, sf.fiscal_period, sf.fiscal_year, "
-        "sf.accession_number, fm.inputs_json FROM fundamental_metrics fm "
-        "JOIN sec_filings sf ON sf.id=fm.filing_id "
-        "WHERE sf.form=? AND fm.metric_group='leverage' AND fm.metric_name='net_debt_to_ebitda' "
-        "AND fm.engine_version=?",
-        (form, version),
-    ).fetchall()
-    out = []
+    if version is None:
+        rows = conn.execute(
+            "SELECT fm.id, fm.filing_id, fm.engine_version, sf.asset_id, sf.period_end, "
+            "sf.fiscal_period, sf.fiscal_year, sf.accession_number, fm.inputs_json "
+            "FROM fundamental_metrics fm JOIN sec_filings sf ON sf.id=fm.filing_id "
+            "WHERE sf.form=? AND fm.metric_group='leverage' "
+            "AND fm.metric_name='net_debt_to_ebitda' ORDER BY fm.id",
+            (form,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT fm.id, fm.filing_id, fm.engine_version, sf.asset_id, sf.period_end, "
+            "sf.fiscal_period, sf.fiscal_year, sf.accession_number, fm.inputs_json "
+            "FROM fundamental_metrics fm JOIN sec_filings sf ON sf.id=fm.filing_id "
+            "WHERE sf.form=? AND fm.metric_group='leverage' "
+            "AND fm.metric_name='net_debt_to_ebitda' AND fm.engine_version=? ORDER BY fm.id",
+            (form, version),
+        ).fetchall()
+    best: dict[int, tuple[int, Any]] = {}
     for r in rows:
+        if not r["engine_version"]:
+            continue
+        vk = version_key(str(r["engine_version"]))
+        if int(r["filing_id"]) not in best or vk > best[int(r["filing_id"])][0]:
+            best[int(r["filing_id"])] = (vk, r)
+    out = []
+    for _vk, r in best.values():
         data = json.loads(r["inputs_json"]) if r["inputs_json"] else {}
         key = "ytd_depreciation_amortization" if form == "10-Q" else "depreciation_amortization"
         da = data.get(key)
         if not isinstance(da, (int, float)):
+            continue
+        # The engine's guard fires on an *aggregate* reading; an exact sum that happens to equal
+        # an amortization fact (INTU's 44 + 121 = 165) is not the NDSN shape.
+        entries = (data.get("provenance") or {}).get("items", {}).get("depreciation_amortization")
+        concept = entries[0].get("concept") if entries else None
+        if concept not in DA_AGGREGATE_CONCEPTS:
             continue
         if form == "10-Q":
             pk = (
@@ -229,10 +273,10 @@ def _structural_rows(conn, form: str) -> list[dict[str, Any]]:
     return out
 
 
-def scan(conn) -> dict[str, Any]:
-    terms = stored_terms(conn)
+def scan(conn, version: str | None = None) -> dict[str, Any]:
+    terms = stored_terms(conn, version)
     ratios = ratio_flagged(terms)
-    ab = _structural_rows(conn, "10-K") + _structural_rows(conn, "10-Q")
+    ab = _structural_rows(conn, "10-K", version) + _structural_rows(conn, "10-Q", version)
     return {
         "terms": terms,
         "ratios": ratios,

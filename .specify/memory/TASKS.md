@@ -1014,14 +1014,25 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       YTD / prior FY against q/4 outside 0.6–1.5×: **66 of 5,844**; 28 with EBITDA empty, 29
       identical in pilot_a2 (pre-existing), 9 changed or filled. The engine already has a 10-K guard
       of the same family, `flag_depreciation_amortization_depreciation_only_not_da`
-      (`db.py:1081-1090`); NDSN is the mirror case (amortization only), and the design can extend
-      that guard. **Scope: every TTM flow item**,
-      not only D&A — measure first. **Rule to design:** when the terms are inconsistent, use the
-      four-quarter sum if the four discrete quarters exist, else leave the value empty with a
-      recorded reason; never store the mixed value. **Acceptance** on a scratch copy of pilot_a3
-      (metrics-only recompute): NDSN Q1 FY2026 TTM D&A ≈150,077,000; each flagged filing classed
-      (fixed / genuinely seasonal or M&A, kept / emptied with reason); `docs/model_fixes.md`
-      entry. Evidence: DECISIONS row 58.
+      (`db.py:1081-1090`); NDSN is the mirror case (amortization only). **Scope: every TTM flow
+      item**, not only D&A — measure first. **Rule (amended by the T-161 brief §0 and DECISIONS row
+      63; the four-quarter-sum rule it replaces was B's error):** a fiscal Q4 has no 10-Q, so
+      `_quarter_flow_ending` derives it as the 10-K's FY less the 9-month YTD (`db.py:918`) and the
+      four-quarter sum carries the same 10-K term — the fix belongs on the reading of the off
+      filing. When a filing's D&A aggregate equals its amortization only
+      (`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization`) and
+      `Depreciation` is filed separately for the same period, D&A = `Depreciation` + amortization
+      (flagged `da_amortization_only_sum`); when the depreciation fact is ambiguous, refuse the
+      value with `da_amortization_only_refused`; never store the mixed value. `Depreciation` alone
+      stays refused (`depreciation_only_not_da`). Genuine cases (seasonality, acquisition, disposal,
+      restatement, changed fiscal year) keep their value. The ratio scan — prior YTD / prior FY
+      against q/4 outside 0.6–1.5×, applied when the prior FY and prior YTD are positive (B's scan;
+      the brief's "same sign" wording was B's error, DECISIONS row 63) and the all-negative terms
+      listed separately — is a `verify_pilot` **WARN**, never an engine rule. **Acceptance** on a
+      scratch copy of pilot_a3 (metrics-only recompute): NDSN FY2025 10-K D&A **150,523,000** and
+      Q1 FY2026 TTM D&A **150,077,000**; every flagged (company, fiscal year, item) classed A–D
+      with its evidence in `out/t161_flagged.csv`; `docs/model_fixes.md` entry. Evidence: DECISIONS
+      rows 58 and 63.
 
 - [ ] **T-162** *(P0 — prerequisite of `T-100`; value change)* (k)(1) must test "restrict" on the
       caption before stripping parentheses (strip only note references). Measured on pilot_a3: **890**
