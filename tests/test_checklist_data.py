@@ -76,3 +76,24 @@ def test_the_rule_file_has_the_checklists_counts() -> None:
 def test_every_rule_id_is_unique() -> None:
     ids = [row["id"] for row in _csv(RULES)]
     assert len(ids) == len(set(ids)) == RULE_ROWS + LIMITATIONS + SCREENS + DICTIONARY_ROWS
+
+
+def test_every_dictionary_row_names_its_period_basis() -> None:
+    """T-159's documentation follow-up: the generated dictionary names each metric's period basis."""
+    rows = []
+    for line in DICTIONARY.read_text().splitlines():
+        if not line.startswith("| MD-"):
+            continue
+        rows.append([cell.strip() for cell in line.strip().strip("|").split("|")])
+    assert rows
+    assert all(len(row) >= 9 and row[8] for row in rows), "a dictionary row has no period basis"
+    text = DICTIONARY.read_text()
+    assert "Stored metrics not in Annex B" in text
+    for metric in (
+        "return_on_invested_capital_effective_rate",
+        "utility_cash_coverage_3y",
+        "value_inputs",
+    ):
+        assert f"`{metric}`" in text
+    assert "else four quarters" in text
+    assert "close at the filing's period end x the latest cover share count" in text

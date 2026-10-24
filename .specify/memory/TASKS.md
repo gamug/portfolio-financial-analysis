@@ -958,19 +958,29 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       `scripts/check_event_quotes.py` 105 OK).
       **Part B** comes later: the LLM on a few companies, then the orchestrator end to end (it still closes
       `T-014`). `T-100` still waits for both.
-      **Part A, status (2026-10-22, reviewer B):** the pilot ran on a **fresh** database
-      (`/workspaces/thesis/pilot_a2/financial.db`, sha256 `0b5bc086…684f0c`, tag `pilot-a-2026-10-20`,
-      analysis date **2026-10-18**, 591 lines / 10,188 filings) and its **P2+P3 report** is in
-      `PROGRESS.md` (the pilot's log) and `handoff/pilot/p2b/p2b_report.md`. The acceptance, per layer:
+      **Part A, status (2026-10-24, reviewer B):** the pilot_a3 re-run ran on a **fresh** database
+      (`/workspaces/thesis/pilot_a3/financial.db`, sha256 `d2b757b4…68fb8`, tag
+      `pilot-a-2026-10-23` on `564127c`, gateway data-mining `165aae8`, analysis date
+      **2026-10-18**, 591 lines / **10,196 filings**); the report is `docs/pilot_a3_report.md`
+      (PR #184). The acceptance, per layer:
 
       | the layer | the result |
       |---|---|
-      | **V1** (integrity) | `verify_pilot.py` on the pilot database: **7 FAIL, 1 WARN** — **T-108**, **T-111** and **WI-18** (not built in part A), **T-131** (MRNA's 2026-08-19 move — a real move, declared), **T-140** (27 `DQ_REVENUE_POS` filings = the class (a) gateway drops, known), the **valuation filings with a stored price but no market cap** (the T-132 state, known) and **T-153g** (CTVA 2026-10-01 — declared by reviewer A's ruling, TASKS.md "CTVA follow-up"); the stale-metrics check **PASS**; the market cap across every corporate action: 70 of 72 events measured, **70 ok**, 0 refusals. **FISV 2025-11-12** is a **declared one-session source gap** — the first session after Fiserv's listing transfer NYSE → Nasdaq and its ticker FI → FISV on 2025-11-11 (Fiserv's FY2025 10-K); the other 588 companies have the session. **MRNA 2026-08-19 (×2.77) is a real move** (the melanoma vaccine trial result; the public close 62.96 → 174.38, the same as ours; the volume ×46 and no corporate action) — both opened in `scripts/pilot_a/v1_open_items.py` |
-      | **V2** (the SEC cross-check) | `itemcheck.py`: **58 FAIL**, every one a class (a) gateway drop (**known defect**); `signcheck.py`: **0 FLIPPED**; `precedence.py`: the resolver is concept-first everywhere (**pass**); `fidelity --golden`: **0 items below the 98 % gate**, 32 mismatching (filing, item) pairs (the known fidelity defects) |
-      | **V3** (the metrics recomputed independently) | **done** — the independent session's own script (`scripts/pilot_a/independent_metrics.py`, from the metric dictionary and the checklist only): **356,957 of 356,993 rows agree**; the **36** are the FOX/NWS market cap (the second class's count and price are not recorded, MKT-03) — **declared**. V3 recomputes **from the recorded inputs**, so by construction it cannot see an input defect: **F6/F7 were found by V5** |
-      | **V4** (the rules recomputed independently) | the system side (`scripts/pilot_a/v4_system_side.py`, 80,490 rows over the 16 dates, 3,658 hits) against the independent side: **0 hit disagreements and 0 severity disagreements**; the differences are the `evaluated` flag's semantics (8,049 `EARNINGS_MISSING` — part A writes no FUNDAMENTAL score; **1 `NEGATIVE_FCF` — MPC, the new defect F8**: CON_08 reads the discontinued operating leg only under `CashProvidedByUsedInOperatingActivitiesDiscontinuedOperations` and MPC files it as `NetCashProvidedByUsedInDiscontinuedOperations`, its identity holding — all 4 CON_08 filings of the pilot are this case, 12 quarantined metric rows → T-159c) and the universe's scope (14,070 rows the cycle does not evaluate — the 88 non-members per date) |
-      | **V5** (the human-readable sample) | the 25 cards (`scripts/pilot_a/v5_cards.py`) with their values, accessions, EDGAR links and vetoes (PR #180); against the human reading of the 25 10-Ks: **181 match, 9 differ, 12 both empty, 23 card empty** (13 by rule, 10 known). The 9 differences: **F6a ×4** (AMCR, HON, PM, HLT — the total debt too low), **F6c** (NEE — `OtherShortTermBorrowings` unread), **F7** (BEN — the D&A too low), a **company concept** (CRWD's D&A — declared), **APP-04b by rule** (VMRK's capex — the REIT composite) and **T-159a's rejected list by rule** (CINF's `NotesPayable`) |
-      | **V6** (the earlier decisions' evidence) | every command of the plan's list run or **N/A with the table it needs** (`scripts/pilot_a/v6_sweep.py`): **28 run, 26 N/A** — 16 need the control database (a before/after pair of two code versions), 6 need the cycle's outputs (part A writes none → part B), 3 need a writable scratch database (the cycle's runs), 1 is the before/after measure. The three `verify_t155` commands (classify, used, split) **were run with the register the user supplied** (`handoff/pilot/succession_8ks.csv`, sha256 `ed34fbe3…`, 19 lines; **git-excluded, never committed**): the evidence is **unchanged from T-155** (PR #165) — 7 `new_cik` / 12 `same_cik`; the lost filings APO 26, BG 8, BLK 11, FERG 8, PSKY 15, XOM 18; used: BG, BLK, PSKY and XOM yes, APO and FERG no; PSKY splits its year, BLK and BG hold a full year, XOM has no 10-K after 2026-07-01 yet (`handoff/pilot/b_review_v4/t155/`); **no decision's evidence changes materially** (the D-13 check, the multi-class table and the D-14 table: **0 differing rows**) |
+      | **V1** (integrity) | `verify_pilot.py`: **40 checks, 7 FAIL, 2 WARN** — **T-108**, **T-111** and **WI-18** (not built in part A), **T-131** (MRNA 2026-08-19 — the declared real move), **T-140** (27 `DQ_REVENUE_POS` filings, the known class (a) gateway drops), the **618 valuation filings with a stored price but no market cap** (the T-132 state), and **T-153g** (CTVA 2026-10-01 — **expected 1**, pilot_a2's declared row; the brief's 0 was B's error). WARNs: the T-140 quarters with recorded run errors (APO, ARES, DELL, ENPH) and the **7 JPM stale-metrics rows** (restart order; one FY2024 market cap +1.06 %, declared). Point-in-time **0**, identity **0**, CNP 2022Q1/2022Q3 correct, market cap **70 of 72 events measured, 70 OK, 0 combined refusals**, idempotency **0 rows written**; FISV 2025-11-12 is the one declared session gap |
+      | **V2** (the SEC cross-check) | `signcheck.py`: **0 FLIPPED**; `fidelity --golden`: **0 items below the 98 % gate**, **63** known debt/D&A/revenue pairs. The raw `precedence.py`/`itemcheck.py` rows are T-159a **tooling gaps** (the substitute tier and `concept_flags`/resolver concepts), not stored-value changes — **T-160** |
+      | **V3** (the metrics recomputed independently) | **357,231 rows compared; 357,195 agree; 36** are the known FOX/NWS market cap (MKT-03); **0 unexplained** |
+      | **V4** (the rules recomputed independently) | **80,490 common rows; 0 hit and 0 severity disagreements**; the 8,049 `EARNINGS_MISSING` rows are the `evaluated`-flag class (part A writes no FUNDAMENTAL score); the MPC `NEGATIVE_FCF` row is gone (T-159c's F8 fix) |
+      | **V5** (the human-readable sample) | **190 match, 4 differ, 19 card empty (7 known, 12 by rule), 12 both empty**; the 4 are CINF (`NotesPayable` on T-159a's rejected list), CPAY (securitization facility excluded by the reader's own note), CRWD (F5a D&A) and VMRK (APP-04b REIT capex) — each explained |
+      | **V6** (the earlier decisions' evidence) | D-13: 29 utilities, **`below_5_on_both_bounds` [] in both**, 27 vs 26 with both bounds, **114 field differences** from T-159a's debt components; multi-class and REIT capex **0 differing rows**; weights spearman **0.995491 vs 0.995434**; **no decision reopened** |
+
+      **Declared limitations (one line each; evidence in `docs/pilot_a3_report.md` unless named):**
+      **CTVA 2026-10-01** (T-153g, expected 1); **MRNA 2026-08-19** (T-131, real move,
+      `out/a3_v1_open_items.md`); **FISV 2025-11-12** (one-session source gap,
+      `out/a3_v1_open_items.md`); **T-140's 27 `DQ_REVENUE_POS` filings**
+      (`out/a3_p3_v1_verify_pilot.log`); **the 618 valuation filings with no market cap**
+      (the T-132 state, same log); **JPM FY2024 market cap +1.06 %** (restart order; one value;
+      DECISIONS row 55); **the TTM tag mix** (→ **T-161**; DECISIONS row 58).
+      **Part A done 2026-10-24 (PRs #176, #175, #177–#184).** T-143's box stays open for part B.
 
       **The declared pilot finding that gates `T-100` (the user's decision, 2026-10-22 — finish the pilot
       first, fix after):** `handoff/T143a_empty_values_finding.md` (v3) — **the filed values the pipeline
@@ -994,32 +1004,31 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       delivers: `itemcheck.py`, `signcheck.py`, `precedence.py` with `--db`, and `audit_sec_checklist.py fetch` for the SEC cache). **FAIL** on any value mismatch, on any
       resolved income tax/equity/net income/short-term debt that differs from its intended SEC concept, or on
       any flipped sign. **WARN** on documented not-applicable cases.
-- [ ] **T-159** *(P0 — it blocks `T-100`; the pilot's empty-value finding, the user's decision
-      2026-10-22: the pilot is finished first, the fixes come after)* The pilot measured that **4.9 % of
-      the stored values are empty although the filing holds them** (`handoff/T143a_empty_values_finding.md`:
-      the evidence and the scripts in `handoff/pilot/b_review_p2b/`). Three parts, as the finding's §6:
-      **(a)** the registry's **substitutes** (the item's total under another standard concept — F5a,
-      4,045 values) **and the short-term investments' defaulted 0** (1,188 wrong filings), **plus the
-      T-159a addendum** — the calculation-tree rules 1–4 for the two totals that are too low
-      (**F6** total debt in 1,636 filings / 111 companies + 44 F6c filings, median 5.5 %; **F7** D&A in
-      73 filings / 12 companies; `handoff/T159a_addendum_debt_da.md`) — with **rule 4's exception**: it
-      does **not** apply when the income statement carries the cash-flow D&A concept at the same value
-      and no `AmortizationOfIntangibleAssets` line (the D&A row is then the full expense); measured on
-      every filing of the 13 companies, only **HLT's 8 columns** ("contract acquisition costs");
-      **(b)** the **gateway's `filed_facts` in the payload** (the untagged-column defect — F0, 499 values;
-      in the data-mining repo, with a gateway redeploy);
-      **(c)** the **filed-fact fallback** (F1, F2, F3, F5b — the filing's own XBRL holds the fact) and
-      **F4 rule by rule** (the read column refused by a rule), with the labels of the finding's §5.4
-      and §5.6, **plus**: **F8** (CON_08 must read the discontinued operating leg under
-      `NetCashProvidedByUsedInDiscontinuedOperations` as well — MPC files it that way and its identity
-      holds; 4 filings, 12 quarantined metric rows); the **EBITDA provenance basis label** (4,169 rows:
-      the inputs are labelled `period` while the value is the TTM); and a **stored flag on a cover count
-      ×1,000 or ×1/1,000 against the prior filing** (the MKT guard stays the value rule).
-      **Documentation follow-ups (no value change):** one line per metric in the dictionary's Annex B
-      naming its period basis, and the three stored metrics that are not in Annex B
-      (`return_on_invested_capital_effective_rate`, `utility_cash_coverage_3y`, `value_inputs`).
-      After them the pilot is re-run on a fresh database (the finding's §6 step 4) and the
-      cause-7 empties must be only the named, declared exceptions.
+- [ ] **T-160** *(P0 — prerequisite of `T-100`; tooling, no stored-value change)* Finish the V2
+      checker follow-up from pilot_a3. `precedence.is_plain` must exclude `LineItem.substitute`;
+      `itemcheck.own_concepts` must add `concept_flags` and the resolver's named concepts.
+      **Acceptance:** re-run both on pilot_a3; the report's V2 tooling gaps go to **0**, or each
+      remaining row is listed with its cause; **no database write**. Evidence:
+      `docs/pilot_a3_report.md` V2.
+- [ ] **T-161** *(P0 — prerequisite of `T-100`; value change)* The TTM consistency check. The
+      YTD-method TTM (prior fiscal year − prior YTD + YTD) mixes two meanings when a company tags a
+      flow differently on the 10-K and the 10-Qs. NDSN: the FY2025 10-K files only the intangible
+      amortization (79,264,000) under `DepreciationDepletionAndAmortization`
+      (`AmortizationOfIntangibleAssets` the same value, `Depreciation` 71,259,000); the 10-Qs the
+      full D&A (Q1 FY2026 36,585,000 = 17,016,000 + 19,569,000); the stored TTM is 78,818,000, the
+      consistent one ≈150,077,000 (EBITDA ≈8 % low). B's scan of the 10-Q EBITDA D&A terms, prior
+      YTD / prior FY against q/4 outside 0.6–1.5×: **66 of 5,844**; 28 with EBITDA empty, 29
+      identical in pilot_a2 (pre-existing), 9 changed or filled. The engine already has a 10-K guard
+      of the same family, `flag_depreciation_amortization_depreciation_only_not_da`
+      (`db.py:1081-1090`); NDSN is the mirror case (amortization only), and the design can extend
+      that guard. **Scope: every TTM flow item**,
+      not only D&A — measure first. **Rule to design:** when the terms are inconsistent, use the
+      four-quarter sum if the four discrete quarters exist, else leave the value empty with a
+      recorded reason; never store the mixed value. **Acceptance** on a scratch copy of pilot_a3
+      (metrics-only recompute): NDSN Q1 FY2026 TTM D&A ≈150,077,000; each flagged filing classed
+      (fixed / genuinely seasonal or M&A, kept / emptied with reason); `docs/model_fixes.md`
+      entry. Evidence: DECISIONS row 58.
+
 - [ ] **T-100** *(takes over `T-068`'s former full-universe scope; also takes over `T-079`'s LLM re-run
       and supersedes `T-075`: it runs the LLM on every filing, from a fresh database, with the final
       prompts)* Run the whole
@@ -1036,7 +1045,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (2026-10-05, 2026-10-06)**: Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item
       20's `T-146` are deferred until after `T-100` and are not prerequisites; `T-075` and `T-079` are
       superseded by this task.
-      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), and the final pilot `T-143` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
+      `T-083`, `T-142`, `T-144`, `T-152` and `T-145` (Work item 19), the final pilot `T-143`, and its part A follow-ups `T-160` and `T-161` are prerequisites; `T-100` keeps `T-153` as a prerequisite. A task added
       after this one is still a prerequisite of it, unless the user defers it the same way. `T-100`
       stays unchecked until every other box in this file is checked, or explicitly
       superseded/moved/deferred. **Acceptance**: `coverage` for
@@ -1161,7 +1170,7 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first
 2026-10-09; scope: finish this repo first):** **`T-144` → `T-152`** (the knowledge-graph view contract and its endpoint, moved first 2026-10-09: the knowledge-graph repo waits on them) → Work item 8 (`T-141` → `T-077` → `T-070` → `T-147` → `T-149` → `T-148` → `T-150` → `T-151` (done 2026-10-13, PR #148) → `T-076` (done 2026-10-13, PR #152) → `T-071` part 1 (done 2026-10-13, PR #156) → `T-073` (done 2026-10-14, PR #160) → `T-074` (superseded 2026-10-14) → `T-155` (done 2026-10-14, PR #165) → **`T-071` part 2** (done 2026-10-16, PRs #156, #167, #169, in `CHANGELOG.md`)) → `T-153` (historical universe) → Work item 19 (`T-083` → `T-142` →
-`T-145`) → Work item 2 (orchestrator) → `T-143` (the final pilot) → `T-100` (the full-universe run, last of all).
+`T-145`) → Work item 2 (orchestrator) → `T-143` part A (the final pilot) → **`T-160` and `T-161`** (part A follow-ups) → `T-143` part B → `T-100` (the full-universe run, last of all).
 Work item 4, Work item 9's `T-080`/`T-081`/`T-082`/`T-084` and Work item 20 (`T-146`) are deferred until after
 `T-100`; Work item 3
 stays superseded by `T-077` (do not implement). `T-079` and `T-075` are superseded by `T-100`. One task per

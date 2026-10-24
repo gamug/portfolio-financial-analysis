@@ -71,6 +71,58 @@ _SCREEN_ID_RE = re.compile(r"^A-\d+$")
 _METRIC_ID_RE = re.compile(r"^MD-\d+$")
 
 
+#: The engine's own period basis, one line per Annex B metric (T-159 documentation follow-up).
+#: ``period`` is the filing's own column, ``point in time`` a balance-sheet instant or the close at
+#: the filing's period end x the latest cover count, and ``TTM`` the YTD method on a 10-Q (prior
+#: fiscal year - prior YTD + YTD); when that identity cannot be formed, the sum of four recorded
+#: quarters is the value.  A quarter x 4 is refused.  The ``alt`` four-quarter sum beside a YTD
+#: value is a cross-check only.  The code line is in the PR body, not the table.
+PERIOD_BASIS: dict[str, str] = {
+    "ebitda": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K",
+    "invested capital": "point in time (prior fiscal year end)",
+    "net debt": "point in time (period-end balance sheet)",
+    "free cash flow": "period on a 10-K; TTM on a 10-Q (YTD method; else four quarters)",
+    "nopat": "period (the filing's own column; the ROIC ratio uses the TTM on a 10-Q, YTD or four quarters)",
+    "gross_margin": "period (the filing's own column)",
+    "operating_margin": "period (the filing's own column)",
+    "net_margin": "period (the filing's own column)",
+    "return_on_assets": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the prior-year assets are point in time",
+    "return_on_equity": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the prior-year equity is point in time",
+    "return_on_invested_capital": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the prior-year invested capital is point in time",
+    "current_ratio": "point in time (period-end balance sheet)",
+    "quick_ratio": "point in time (period-end balance sheet)",
+    "cash_ratio": "point in time (period-end balance sheet)",
+    "debt_to_equity": "point in time (period-end balance sheet)",
+    "debt_to_assets": "point in time (period-end balance sheet)",
+    "interest_coverage": "period (the filing's own column)",
+    "net_debt_to_ebitda": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; net debt is point in time",
+    "asset_turnover": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; total assets are point in time",
+    "inventory_turnover": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; inventory is point in time",
+    "receivables_turnover": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; receivables are point in time",
+    "revenue_growth": "period (current vs the prior-year same period; both from one filing)",
+    "operating_income_growth": "period (current vs the prior-year same period; both from one filing)",
+    "net_income_growth": "period (current vs the prior-year same period; both from one filing)",
+    "free_cash_flow_growth": "period (current vs the prior-year same period; both from one filing)",
+    "operating_cash_flow_margin": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K",
+    "free_cash_flow_margin": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K",
+    "free_cash_flow_conversion": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K",
+    "capex_intensity": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K",
+    "effective_tax_rate": "period (the filing's own column; the ROIC robustness rate uses the TTM on a 10-Q, YTD or four quarters)",
+    "revenue_cagr": "period (fiscal-year endpoints; a 2-3 year CAGR)",
+    "net_income_cagr": "period (fiscal-year endpoints; a 2-3 year CAGR)",
+    "operating_cash_flow_cagr": "period (fiscal-year endpoints; a 2-3 year CAGR)",
+    "market_capitalization": "point in time (the close at the filing's period end x the latest cover share count)",
+    "enterprise_value": "point in time (the close at the filing's period end x the latest cover share count plus the balance-sheet bridge at period end)",
+    "free_cash_flow_yield": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the market cap is the close at the filing's period end x the latest cover share count",
+    "sbc_adjusted_fcf_yield": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the market cap is the close at the filing's period end x the latest cover share count",
+    "enterprise_fcf_yield": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the enterprise value is point in time (the close at the filing's period end x the latest cover share count, plus the balance-sheet bridge)",
+    "earnings_yield": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the market cap is the close at the filing's period end x the latest cover share count",
+    "return_on_invested_capital_effective_rate": "TTM on a 10-Q (YTD method; else four quarters); the fiscal year on a 10-K; the prior-year invested capital is point in time",
+    "utility_cash_coverage_3y": "period (three fiscal years; a 3-year average)",
+    "value_inputs": "TTM on a 10-Q (YTD method; else four quarters) / the fiscal year on a 10-K for the flows; book equity and the EV bridge are point in time",
+}
+
+
 def _cells(line: str) -> list[str]:
     """The cells of one markdown table row, unescaping the checklist's ``\\|`` inside a cell."""
     return [c.strip().replace("\\|", "|") for c in _CELL_SPLIT_RE.split(line.strip().strip("|"))]
@@ -200,10 +252,15 @@ def write_dictionary(annex: list[dict[str, str]], checklist_sha: str, version: s
         "— it follows from a source (the note says how); *Source pending* — no loaded source states it,",
         "so the code keeps today's formula until the second author is loaded (checklist D-05). The",
         "rows marked *(building block)* are shared by several metrics; the rows marked *(derived)* or",
-        "*(VALORIZATION)* are not standalone `fundamental_metrics` names.",
+        "*(VALORIZATION)* are not standalone `fundamental_metrics` names. **Period basis** is the",
+        "engine's own column: *period* (the filing's own column), *TTM* (the YTD method: prior fiscal",
+        "year minus prior YTD plus YTD; when that identity cannot be formed, the sum of four recorded",
+        "quarters; a quarter x4 is refused; the four-quarter sum beside a YTD value is a cross-check",
+        "only) or *point in time* (a balance-sheet instant, or the close at the filing's period end x",
+        "the latest cover share count).",
         "",
-        "| ID | Metric | Kind | Formula | Basis | Source | Quote | Note |",
-        "|---|---|---|---|---|---|---|---|",
+        "| ID | Metric | Kind | Formula | Basis | Source | Quote | Note | Period basis |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in annex:
         cells = [
@@ -215,9 +272,27 @@ def write_dictionary(annex: list[dict[str, str]], checklist_sha: str, version: s
             row["source"],
             row["quote"].replace("|", "\\|"),
             row["note"].replace("|", "\\|"),
+            PERIOD_BASIS.get(row["metric"], "period (unclassified)"),
         ]
         lines.append("| " + " | ".join(cells) + " |")
     lines += [
+        "",
+        "## Stored metrics not in Annex B",
+        "",
+        "These three rows are `fundamental_metrics` names the engine stores but Annex B does not",
+        "list; `value_inputs` is a rule input, not a ratio.",
+        "",
+        "| Metric | What it stores / formula | Period basis | Code |",
+        "|---|---|---|---|",
+        "| `return_on_invested_capital_effective_rate` | MD-11's ROIC at the filing's own effective rate (MET-03, D3) | "
+        + PERIOD_BASIS["return_on_invested_capital_effective_rate"]
+        + " | `metrics/roic.py:77-90` |",
+        "| `utility_cash_coverage_3y` | the three-year average of cash flow from operations before working-capital changes over total debt (D-13) | "
+        + PERIOD_BASIS["utility_cash_coverage_3y"]
+        + " | `utility_coverage.py:54,326-396` |",
+        "| `value_inputs` | not a ratio: trailing-year parent net income, EBITDA, the MD-38 numerator, book equity and the EV bridge (debt, NCI, cash, short-term investments) for VALORIZATION | "
+        + PERIOD_BASIS["value_inputs"]
+        + " | `value_inputs.py:65-...` |",
         "",
         "## Source pending (the second author's brief)",
         "",
@@ -268,6 +343,9 @@ def write_rules(rules: list[dict[str, str]]) -> None:
 def main() -> None:
     text = CHECKLIST.read_text()
     annex = parse_annex_b(text)
+    missing = sorted({row["metric"] for row in annex} - set(PERIOD_BASIS))
+    if missing:
+        raise SystemExit(f"no period basis for: {missing}")
     matrix = parse_matrix(text)
     sha = hashlib.sha256(CHECKLIST.read_bytes()).hexdigest()
     version = ""
