@@ -54,8 +54,8 @@ rows are CNP and CSX warnings). They are the known pilot_a2 data classes; the re
 | cover-count scale flag: exactly 4 | **PASS** — CMG 10-Q 2022-03-31; PKG 10-Q 2023-03-31, 10-Q 2024-03-31, 10-K 2025-12-31 |
 | MPC: 0 CON-08 quarantined rows | **PASS** — 0 |
 | `verify_pilot` T-159c PASS | **PASS** — 3,490 filed-fact items, 33,087 `not_reported` values |
-| `verify_pilot` stale-metrics 0 | **MISS** — WARN lists **7 JPM filings** (FY2024 … 2026Q2): run 1 metrics vs an earlier-period filing written in run 2, caused by the host restarts. The point-in-time check is 0 violations; declared as an artefact, not a lookahead |
-| `unexplained_split_rows` 0 | **MISS** — **1: CTVA 2026-10-01**, the same declared pilot_a2 limitation (the completion filing does not state the ratio) |
+| `verify_pilot` stale-metrics 0 | **WARN, measured** — the 7 later JPM filings were computed in run 1; the 2024-09-30 Q3 10-Q (`0000019617-24-000611`) was written in run 2 after the restart. 279 of 280 values are identical to pilot_a2; the one difference is JPM FY2024 (`0000019617-25-000270`) market cap **682,014,455,812 vs 674,865,271,459 (+1.06 %)**: its cover count came from the Q2 10-Q (`share_age_days` 184) instead of Q3 (92), because Q3 was not there yet. EV and the EV ratios of that filing move with it. Declared limitation, not rewritten |
+| `unexplained_split_rows` 0 | **PASS, expected 1** — **CTVA 2026-10-01**; pilot_a2 had the same one row (`p2b_v1_verify_pilot_final.log:39`), the brief's 0 corrected by B |
 | combined-event refusals 0 | **PASS** — 0 |
 | `lines_gateway_only` empty | **PASS** — 0 |
 | fidelity gate ≥ 98 % per item | **PASS** — 0 items below the gate; lowest item still above 98 % |
@@ -75,10 +75,10 @@ pilot_a2:
 5. the valuation filings with a stored price but no market cap — **618**, exactly p2b’s list
    (T-132/K1);
 6. WI-18 — no books (N/A);
-7. T-153g — CTVA 2026-10-01 (the declared split row).
+7. T-153g — CTVA 2026-10-01; **expected 1** (pilot_a2's declared row, B's correction).
 
 WARNs: the T-140 quarters with recorded run errors (APO, ARES, DELL, ENPH) and the JPM
-stale-metrics artefact above.
+stale-metrics row above, with its measured effect.
 
 `v1_integrity`: point-in-time **0** violations; identity **0** wrong CIK; CNP 2022Q1/2022Q3 correct
 with no label collision; coverage 591 lines; observations: **1** line with an unexplained missing
@@ -86,6 +86,11 @@ session (FISV 2025-11-12, the declared vendor gap). Market-cap refusals **582**,
 
 `v1_market_cap` / review: **72 events, 70 measured, 70 OK, 0 failed**, 2 not measured (EXC
 2022-02-02, BDX 2026-02-10); **0 combined_corporate_action refusals**.
+
+The other 7 market-cap changes are correct: KR 2022–2026 Q2 and AAP 2022–2023 Q2 get a fresher
+cover count from the new Q1 10-Qs. **BEN's EBITDA** (16 filings, about +300 M each) is correct: D&A
+now adds the face row "amortization of intangible assets" (`da_plus_intangibles_row`; FY2025 Q1
+D&A 30.2 M → 142.8 M).
 
 `v1_open_items` reproduces MRNA’s real move and FISV’s missing session. `tiingo_gateway_only` is
 empty.
@@ -222,13 +227,31 @@ from `out/a3_vs_a2_summary.md`:
 
 Filings only in a2: **none**. Filings only in a3: the seven listed in §2.
 
-`out/a3_vs_a2_items.csv` — **9,210** (accession, item) rows whose value, concept or `how` differs,
-with both values/concepts, the a3 `how`/flags, and the SEC companyfacts value for the concept and
-period (empty where the cache has no fact). The largest groups are D&A (2,362), short-term debt
-(2,091), short-term investments (1,090), receivables (804), COGS (466), gross profit (447), interest
-expense (394), long-term debt (359), inventory (348); the changes are the T-159a/b/c substitutions,
-totals, maps and filed facts (e.g. APD short-term debt 112.9 M → 199.7 M, both equal to the SEC’s
-facts).
+`out/a3_vs_a2_items.csv` — **7,724** (accession, item) rows whose value, concept or `how` differs,
+with both values/concepts, the a3 `basis`/`how`/flags, and the SEC companyfacts value for the
+concept and period. The largest groups are short-term debt (2,091), short-term investments (1,090),
+receivables (804), D&A (743), COGS (466), gross profit (447), interest expense (394), long-term debt
+(359), inventory (348).
+
+Round-2 fixes in the comparison script:
+
+* **1a — basis:** records keep every provenance basis; the comparison uses the period basis when
+  both sides have it, otherwise a shared basis, otherwise each side's best. `basis_a2`/`basis_a3`
+  are columns. The TTM-only D&A rows are no longer empty: **D&A rows with `value_a2` set and
+  `value_a3` empty: 2,187 → 0**.
+* **1b — SEC duration:** the lookup picks an instant for balance-sheet items, 70–120 days for
+  `(Qn)` (12-, 13- and 16-week quarters), the year-to-date for `(YTD)`, and ≥340 days for `(FY)`,
+  comparing in absolute value. Period-basis rows: **6,253 compared, 0 not equal, 76 no SEC fact**
+  (listed in `a3_vs_a2_summary.md`). TTM-basis rows (722) are not compared with a single SEC period.
+* **1c — facts fallback:** the full provenance label is tried before the plain date. The named
+  examples now resolve as: **PEP 2022-06-11 COGS 9,415,000,000; COST 2022-02-13 45,517,000,000;
+  LHX 2025-06-27 4,091,000,000** (the stored LHX sign is −4,091,000,000; the SEC comparison is
+  absolute). These rows are no longer differences (a2 and a3 agree), so they do not appear in the
+  item CSV; the values are recorded here.
+
+The metric CSV is unchanged: sha256 `4f1a06eb…d4d75e`. The item CSV is
+`5f7fceecd0aa6d626bc962cfcb4ab7f49caf17be4c0afa77f2e5fa14ec048004`; the summary is
+`316e050dc30257a0e6792faff48481e67691457bfa9e04fb8dbd0afb15ffb167`.
 
 ## 5. Files, hashes and the final state
 
@@ -254,13 +277,13 @@ facts).
 
 | layer | result |
 |---|---|
-| V1 | **7 FAIL, 2 WARN** — the known N/A/declared classes; one restart WARN (JPM); 0 new data FAIL |
+| V1 | **7 FAIL, 2 WARN** — the known N/A/declared classes; CTVA is the expected 1; one measured JPM WARN; 0 new data FAIL |
 | V2 | signcheck **0 FLIPPED**, fidelity **0 below the gate**; the raw precedence/itemcheck counts are tooling false positives/gaps from T-159a’s substitute/concept-flag tiers (plain precedence **True**; net-income OTHER 119→0; D&A 24→13; cash 740→542) — **follow-up needed** |
 | V3 | **36 known** FOX/NWS market-cap mismatches; **0 unexplained** |
 | V4 | **0 hit / 0 severity disagreements**; 8,049 known `EARNINGS_MISSING` evaluated-flag rows |
 | V5 | **4 differences**, each explained; 19 card empty (7 known, 12 by rule) |
 | V6 | all changes listed above; **no decision reopened** |
 
-**Misses against the brief’s §6:** `stale-metrics` is a 7-row WARN (restart artefact), and
-`unexplained_split_rows` is 1 (CTVA, the declared limitation). The raw V2 tools need the T-159a
-substitute/concept-flag follow-up. Everything else in §6 passes.
+**Round-2 result:** `unexplained_split_rows` is **1 (CTVA)**, now recorded as expected/PASS; the
+stale-metrics WARN is the measured 7-filing JPM restart effect; the raw V2 tools still need the
+T-159a substitute/concept-flag follow-up (separate PR). Everything else in §6 passes.

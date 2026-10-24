@@ -281,3 +281,122 @@ def test_classes_and_the_item_row_trace_to_the_sec(
     assert "`A2` BBB 10-K 2024-12-31" in text
     assert "`A3` CCC 10-K 2024-12-31" in text
     assert "Item rows whose value, concept or how differs: 4" in text
+
+
+def _flow_fact(start: str, end: str, value: float) -> dict[str, object]:
+    return {"accn": "A1", "start": start, "end": end, "val": value}
+
+
+def test_a_ttm_only_item_is_not_emptied() -> None:
+    a2 = {
+        "depreciation_amortization": 506.0,
+        "provenance": {
+            "period": "2022-03-31 (Q1)",
+            "items": {
+                "depreciation_amortization": [
+                    {"basis": "period", "concept": "us-gaap_Depreciation", "how": "concept"}
+                ]
+            },
+        },
+    }
+    a3 = {
+        "depreciation_amortization": 506.0,
+        "provenance": {
+            "period": "2022-03-31 (Q1)",
+            "items": {
+                "depreciation_amortization": [
+                    {
+                        "basis": "ttm",
+                        "concept": "us-gaap_Depreciation",
+                        "how": "concept",
+                        "value": 2012.0,
+                    }
+                ]
+            },
+        },
+    }
+    first = a3_vs_a2._dedupe(
+        a3_vs_a2._item_records({("A1", "g", "ebitda"): {"inputs": a2}})[
+            ("A1", "depreciation_amortization")
+        ]
+    )
+    second = a3_vs_a2._dedupe(
+        a3_vs_a2._item_records({("A1", "g", "ebitda"): {"inputs": a3}})[
+            ("A1", "depreciation_amortization")
+        ]
+    )
+    first_basis, second_basis = a3_vs_a2._choose_bases(first, second)
+    assert (first_basis, second_basis) == ("period", "ttm")
+    assert first[first_basis]["value"] == 506.0
+    assert second[second_basis]["value"] == 2012.0
+
+
+def test_the_sec_quarter_is_chosen_over_the_ytd(tmp_path: Path) -> None:
+    cache = tmp_path / "companyfacts"
+    cache.mkdir()
+    (cache / "CIK0000000001.json").write_text(
+        json.dumps(
+            {
+                "facts": {
+                    "us-gaap": {
+                        "Revenues": {
+                            "units": {
+                                "USD": [
+                                    _flow_fact("2022-01-01", "2022-03-31", 100.0),
+                                    _flow_fact("2021-10-01", "2022-03-31", 250.0),
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    )
+    assert a3_vs_a2._sec_values(
+        str(cache), "1", "A1", "2022-03-31 (Q2)", ["us-gaap_Revenues"], "revenue"
+    ) == ["100.0"]
+    assert a3_vs_a2._sec_values(
+        str(cache), "1", "A1", "2022-03-31 (YTD)", ["us-gaap_Revenues"], "revenue"
+    ) == ["250.0"]
+
+
+def test_sixteen_and_twelve_week_quarters_match(tmp_path: Path) -> None:
+    cache = tmp_path / "companyfacts"
+    cache.mkdir()
+    (cache / "CIK0000000001.json").write_text(
+        json.dumps(
+            {
+                "facts": {
+                    "us-gaap": {
+                        "Revenues": {
+                            "units": {
+                                "USD": [
+                                    _flow_fact("2021-11-28", "2022-03-20", 112.0),
+                                    _flow_fact("2021-12-26", "2022-03-19", 83.0),
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        )
+    )
+    assert a3_vs_a2._sec_values(
+        str(cache), "1", "A1", "2022-03-20 (Q1)", ["us-gaap_Revenues"], "revenue"
+    ) == ["112.0"]
+    assert a3_vs_a2._sec_values(
+        str(cache), "1", "A1", "2022-03-19 (Q1)", ["us-gaap_Revenues"], "revenue"
+    ) == ["83.0"]
+
+
+def test_the_facts_fallback_takes_the_labelled_column() -> None:
+    facts = {
+        ("2022-06-11 (Q2)", "us-gaap_CostOfGoodsAndServicesSold"): 9415.0,
+        ("2022-06-11", "us-gaap_CostOfGoodsAndServicesSold"): 16848.0,
+    }
+    record = {
+        "value": None,
+        "concepts": ["us-gaap_CostOfGoodsAndServicesSold"],
+        "period": "2022-06-11 (Q2)",
+    }
+    assert a3_vs_a2._value_from_facts(facts, record) == 9415.0

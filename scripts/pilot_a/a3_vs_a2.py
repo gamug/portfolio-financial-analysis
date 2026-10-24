@@ -29,14 +29,20 @@ import contextlib
 import csv
 import json
 import math
+import re
 from collections import Counter, defaultdict
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from fundamental_agent.statements import REGISTRY
 from kg_schema.db import connect_ro
 
 PRICE_GROUP = "valuation"
+QUARTER_DAYS = (70, 120)
+YTD_DAYS = (120, 340)
+FY_MIN_DAYS = 340
 CLASSES = ("same", "fill", "emptied", "changed", "reason_only", "only_a2", "only_a3")
 METRIC_COLUMNS = (
     "ticker",
@@ -57,6 +63,8 @@ ITEM_COLUMNS = (
     "form",
     "period_end",
     "item",
+    "basis_a2",
+    "basis_a3",
     "value_a2",
     "value_a3",
     "concept_a2",
@@ -142,49 +150,84 @@ def _period_date(period: Any) -> str:
 def _item_records(
     metrics: dict[tuple[str, str, str], dict[str, Any]],
 ) -> dict[tuple[str, str], list[dict[str, Any]]]:
-    """One record per (accession, item), preferring the provenance's period basis."""
+    """One record per (accession, item, basis) from the recorded provenance.
+
+    The value is the metric's own recorded input (the top-level key); a TTM entry's ``value`` is
+    used only when the row does not carry the top-level item.  ``basis`` is kept so the comparison
+    can choose a shared basis instead of treating a TTM-only item as empty.
+    """
     out: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for (accession, _group, _name), record in metrics.items():
         inputs = record["inputs"]
         provenance = inputs.get("provenance") or {}
-        period = provenance.get("period")
+        period = str(provenance.get("period") or "")
         for item, entries in (provenance.get("items") or {}).items():
             if not isinstance(entries, list):
                 continue
-            chosen = [entry for entry in entries if entry.get("basis") == "period"]
-            if not chosen:
-                continue
-            for entry in chosen:
+            for entry in entries:
+                basis = str(entry.get("basis") or "")
+                value = _number(inputs.get(item))
+                if basis == "ttm":
+                    value = _number(entry.get("value")) or value
+                elif value is None:
+                    value = _number(entry.get("value"))
                 out[(accession, str(item))].append(
                     {
-                        "value": _number(inputs.get(item)),
+                        "basis": basis,
+                        "value": value,
                         "concept": str(entry.get("concept") or ""),
                         "how": str(entry.get("how") or ""),
                         "flags": tuple(str(flag) for flag in entry.get("flags") or []),
-                        "period": str(period or ""),
+                        "period": period,
+                        "item": str(item),
                     }
                 )
     return out
 
 
-def _dedupe(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not records:
-        return None
-    values = [record for record in records if record["value"] is not None]
-    chosen = values[0] if values else records[0]
-    concepts = sorted({record["concept"] for record in records if record["concept"]})
-    hows = sorted({record["how"] for record in records if record["how"]})
-    flags = tuple(sorted({flag for record in records for flag in record["flags"]}))
-    value = chosen["value"]
-    if len({record["value"] for record in values}) > 1:
-        value = None  # inconsistent across metrics: leave the value opened in the CSV
-    return {
-        "value": value,
-        "concepts": concepts,
-        "hows": hows,
-        "flags": flags,
-        "period": chosen["period"],
-    }
+def _dedupe(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """One record per basis; a basis with conflicting values keeps an empty value."""
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        grouped[record["basis"]].append(record)
+    out: dict[str, dict[str, Any]] = {}
+    for basis, group in grouped.items():
+        values = [record for record in group if record["value"] is not None]
+        chosen = values[0] if values else group[0]
+        distinct = {record["value"] for record in values}
+        out[basis] = {
+            "basis": basis,
+            "value": chosen["value"] if len(distinct) <= 1 else None,
+            "concepts": sorted({record["concept"] for record in group if record["concept"]}),
+            "hows": sorted({record["how"] for record in group if record["how"]}),
+            "flags": tuple(sorted({flag for record in group for flag in record["flags"]})),
+            "period": chosen["period"],
+            "item": chosen["item"],
+        }
+    return out
+
+
+def _preferred_basis(records: dict[str, dict[str, Any]]) -> str:
+    for basis in ("period", "ttm", "prior_year", "prior_quarter"):
+        if basis in records:
+            return basis
+    return sorted(records)[0]
+
+
+def _choose_bases(
+    first: dict[str, dict[str, Any]], second: dict[str, dict[str, Any]]
+) -> tuple[str, str]:
+    """The period basis when both have it, else a shared basis, else each side's best."""
+    if "period" in first and "period" in second:
+        return "period", "period"
+    shared = set(first) & set(second)
+    for basis in ("ttm", "prior_year", "prior_quarter"):
+        if basis in shared:
+            return basis, basis
+    if shared:
+        basis = sorted(shared)[0]
+        return basis, basis
+    return _preferred_basis(first), _preferred_basis(second)
 
 
 def _facts_for(conn: Any, filing_id: int) -> dict[tuple[str, str], float]:
@@ -209,13 +252,16 @@ def _value_from_facts(
     if len(concepts) != 1:
         return None
     parts = concepts[0].split(" + ")
-    period = _period_date(record["period"])
-    values = [
-        facts.get((period, part))
-        if (period, part) in facts
-        else facts.get((record["period"], part))
-        for part in parts
-    ]
+    labelled = str(record.get("period") or "")
+    plain = _period_date(labelled)
+    values: list[float | None] = []
+    for part in parts:
+        if (labelled, part) in facts:
+            values.append(facts[(labelled, part)])
+        elif (plain, part) in facts:
+            values.append(facts[(plain, part)])
+        else:
+            values.append(None)
     if any(value is None for value in values):
         return None
     return float(sum(value for value in values if value is not None))
@@ -230,15 +276,39 @@ def _companyfacts(path: str) -> dict[str, Any]:
     return document if isinstance(document, dict) else {}
 
 
-def _sec_values(
-    companyfacts_dir: str, cik: str, accession: str, period: str, concepts: list[str]
+def _duration_days(entry: dict[str, Any]) -> int | None:
+    start, end = entry.get("start"), entry.get("end")
+    if not start or not end:
+        return None
+    try:
+        return (date.fromisoformat(str(end)) - date.fromisoformat(str(start))).days
+    except ValueError:
+        return None
+
+
+def _sec_values(  # noqa: C901, PLR0912, PLR0913, PLR0917 - one duration rule per period kind
+    companyfacts_dir: str,
+    cik: str,
+    accession: str,
+    period: str,
+    concepts: list[str],
+    item: str,
 ) -> list[str]:
-    """The SEC's values for one concept (a ``+`` sum is rebuilt) at the accession and period."""
+    """The SEC value for the concept and the provenance period, in absolute value.
+
+    The selection is by duration: an instant for a balance-sheet item; 70-120 days for ``(Qn)``;
+    the year-to-date for ``(YTD)``; at least 340 days for ``(FY)``.  This is the 1b fix: a 10-Q
+    carries the quarter and the year-to-date at the same end date.
+    """
     if not concepts or not cik or not period:
         return []
     path = str(Path(companyfacts_dir) / f"CIK{int(cik):010d}.json") if cik.isdigit() else ""
     document = _companyfacts(path) if path else {}
     facts = document.get("facts") or {}
+    spec = REGISTRY.get(item)
+    instant = bool(spec and "balance_sheet" in spec.statements)
+    match = re.search(r"\((Q[1-4]|YTD|FY)\)\s*$", period)
+    kind = match.group(1) if match else ""
     out: list[str] = []
     for concept in concepts:
         parts = concept.split(" + ")
@@ -247,22 +317,55 @@ def _sec_values(
         for part in parts:
             taxonomy, _, tag = part.partition("_")
             units = ((facts.get(taxonomy) or {}).get(tag) or {}).get("units") or {}
-            found: list[float] = []
+            candidates: list[tuple[int | None, float]] = []
             for entries in units.values():
                 for entry in entries or []:
-                    if str(entry.get("accn")) != accession or str(entry.get("end")) != period:
+                    if str(entry.get("accn")) != accession or str(entry.get("end")) != _period_date(
+                        period
+                    ):
                         continue
                     value = _number(entry.get("val"))
-                    if value is not None:
-                        found.append(value)
-            unique = sorted(set(found))
+                    if value is None:
+                        continue
+                    start = entry.get("start")
+                    if instant:
+                        if start:
+                            continue
+                    elif not start:
+                        continue
+                    candidates.append((_duration_days(entry), value))
+            if not candidates:
+                missing = True
+                break
+            if instant:
+                chosen = candidates
+            elif kind.startswith("Q"):
+                chosen = [
+                    c
+                    for c in candidates
+                    if c[0] is not None and QUARTER_DAYS[0] <= c[0] <= QUARTER_DAYS[1]
+                ]
+            elif kind == "YTD":
+                long_ytd = [
+                    c for c in candidates if c[0] is not None and YTD_DAYS[0] < c[0] < YTD_DAYS[1]
+                ]
+                chosen = long_ytd or [
+                    c
+                    for c in candidates
+                    if c[0] is not None and QUARTER_DAYS[0] <= c[0] <= QUARTER_DAYS[1]
+                ]
+            elif kind == "FY":
+                chosen = [c for c in candidates if c[0] is not None and c[0] >= FY_MIN_DAYS]
+            else:
+                chosen = candidates
+            unique = sorted({c[1] for c in chosen})
             if len(unique) != 1:
                 missing = True
                 break
             values.append(unique[0])
         if missing:
             continue
-        out.append(_format(sum(values)))
+        out.append(_format(abs(sum(values))))
     return out
 
 
@@ -321,6 +424,56 @@ def _empty_causes(
             if value is None:
                 out[bucket][(side, metrics[key]["reason"] or "(none)")] += 1
     return out
+
+
+def _append_sec_table(path: Path, item_rows: list[dict[str, Any]]) -> None:
+    """The 1b acceptance: period-basis rows against the SEC, by how, plus the no-fact list."""
+    period_rows = [
+        row
+        for row in item_rows
+        if row["basis_a3"] == "period" and row["value_a3"] and row["concept_a3"]
+    ]
+    by_how: dict[str, Counter[str]] = defaultdict(Counter)
+    no_fact: list[dict[str, Any]] = []
+    for row in period_rows:
+        how = row["how_a3"]
+        if not row["sec_value_a3"]:
+            by_how[how]["no_sec"] += 1
+            no_fact.append(row)
+        elif round(abs(float(row["value_a3"]))) == round(abs(float(row["sec_value_a3"]))):
+            by_how[how]["equal"] += 1
+        else:
+            by_how[how]["not_equal"] += 1
+    lines = [
+        "",
+        "## Period-basis rows against the SEC (1b)",
+        "",
+        "| how | equal | not equal | no SEC fact |",
+        "|---|---:|---:|---:|",
+    ]
+    for how in sorted(by_how):
+        counts = by_how[how]
+        lines.append(
+            f"| `{how}` | {counts['equal']} | {counts['not_equal']} | {counts['no_sec']} |"
+        )
+    lines += [
+        "",
+        f"Period-basis rows compared: {len(period_rows)}; no SEC fact: {len(no_fact)}.",
+        "",
+        "### Rows with no SEC fact",
+        "",
+        "| ticker | accession | item | how | value a3 |",
+        "|---|---|---|---|---:|",
+    ]
+    for row in no_fact:
+        lines.append(
+            f"| {row['ticker']} | {row['accession']} | {row['item']} | `{row['how_a3']}` | "
+            f"{row['value_a3']} |"
+        )
+    ttm = sum(1 for row in item_rows if row["basis_a3"] == "ttm")
+    lines += ["", f"TTM-basis rows (not compared with a single SEC period): {ttm}", ""]
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
 
 
 def _summary(  # noqa: PLR0913, PLR0917 - the report needs both sides and the counts
@@ -383,7 +536,7 @@ def _summary(  # noqa: PLR0913, PLR0917 - the report needs both sides and the co
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, then the three outputs
+def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one pass over the two databases, then the three outputs
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--a2-db", required=True)
     parser.add_argument("--a3-db", required=True)
@@ -425,22 +578,40 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
 
     items_a2 = _item_records(metrics_a2)
     items_a3 = _item_records(metrics_a3)
-    by_accession: dict[str, list[tuple[str, dict[str, Any] | None, dict[str, Any] | None]]] = (
-        defaultdict(list)
-    )
+    by_accession: dict[
+        str, list[tuple[str, str, str, dict[str, Any] | None, dict[str, Any] | None]]
+    ] = defaultdict(list)
     for accession, item in sorted(set(items_a2) | set(items_a3)):
         if accession not in shared:
             continue
-        first = _dedupe(items_a2.get((accession, item), []))
-        second = _dedupe(items_a3.get((accession, item), []))
-        if first is None and second is None:
+        first_bases = _dedupe(items_a2.get((accession, item), []))
+        second_bases = _dedupe(items_a3.get((accession, item), []))
+        if not first_bases and not second_bases:
             continue
-        by_accession[accession].append((item, first, second))
+        if first_bases and second_bases:
+            first_basis, second_basis = _choose_bases(first_bases, second_bases)
+        elif first_bases:
+            first_basis, second_basis = _preferred_basis(first_bases), ""
+        else:
+            first_basis, second_basis = "", _preferred_basis(second_bases)
+        by_accession[accession].append(
+            (
+                item,
+                first_basis,
+                second_basis,
+                first_bases.get(first_basis),
+                second_bases.get(second_basis),
+            )
+        )
 
     item_rows: list[dict[str, Any]] = []
     for accession, entries in sorted(by_accession.items()):
-        needs_a2 = any(first is not None and first["value"] is None for _, first, _ in entries)
-        needs_a3 = any(second is not None and second["value"] is None for _, _, second in entries)
+        needs_a2 = any(
+            first is not None and first["value"] is None for _, _, _, first, _ in entries
+        )
+        needs_a3 = any(
+            second is not None and second["value"] is None for _, _, _, _, second in entries
+        )
         facts_a2: dict[tuple[str, str], float] = {}
         facts_a3: dict[tuple[str, str], float] = {}
         if needs_a2:
@@ -449,7 +620,7 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
         if needs_a3:
             with contextlib.closing(connect_ro(args.a3_db)) as conn_a3:
                 facts_a3 = _facts_for(conn_a3, filings_a3[accession]["filing_id"])
-        for item, first, second in entries:
+        for item, first_basis, second_basis, first, second in entries:
             first_value = None if first is None else first["value"]
             second_value = None if second is None else second["value"]
             if first is not None and first_value is None:
@@ -472,8 +643,9 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
                     args.companyfacts_dir,
                     filing["cik"],
                     accession,
-                    _period_date(first["period"]),
+                    first["period"],
                     first_concepts,
+                    item,
                 )
                 if first is not None
                 else []
@@ -483,8 +655,9 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
                     args.companyfacts_dir,
                     filing["cik"],
                     accession,
-                    _period_date(second["period"]),
+                    second["period"],
                     second_concepts,
+                    item,
                 )
                 if second is not None
                 else []
@@ -496,6 +669,8 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
                     "form": filing["form"],
                     "period_end": filing["period_end"],
                     "item": item,
+                    "basis_a2": first_basis,
+                    "basis_a3": second_basis,
                     "value_a2": _format(first_value),
                     "value_a3": _format(second_value),
                     "concept_a2": "|".join(first_concepts),
@@ -510,8 +685,9 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
 
     _write_csv(Path(args.out_metrics), METRIC_COLUMNS, metric_rows)
     _write_csv(Path(args.out_items), ITEM_COLUMNS, item_rows)
+    summary_path = Path(args.out_summary)
     _summary(
-        Path(args.out_summary),
+        summary_path,
         metrics_a2,
         metrics_a3,
         filings_a2,
@@ -519,6 +695,7 @@ def main() -> int:  # noqa: C901, PLR0915 - one pass over the two databases, the
         classes,
         len(item_rows),
     )
+    _append_sec_table(summary_path, item_rows)
     print(
         json.dumps(
             {
