@@ -10931,5 +10931,6 @@ above. The union classing is **4,403 cases over 540 companies: A 1, B 0, C 2,812
 per-metric comparison is **12 changed, 0 emptied, 0 filled, 357,219 same** — the four NDSN filings'
 `ebitda`, `net_debt_to_ebitda` and `enterprise_fcf_yield`. V3 independent recompute: **357,231 rows,
 36 mismatches (the declared FOX/NWS market-cap class), 0 unexplained**. `verify_pilot` T-161
-**WARN: D&A 63 of 5,844**, no structural A/B left (the fix is applied); the two other FAILs
-(T-153b, T-153g CTVA 2026-10-01) are the pilot's pre-existing rows, not T-161.
+**WARN: D&A 63 of 5,844**, no structural A/B left (the fix is applied). The other FAILs are the
+partial v11 recompute's mixed versions (a full v11 run closes it), the pilot's pre-existing rows,
+and the default-`universe.db` valuation check; none is a T-161 value.
