@@ -109,8 +109,14 @@ _CROSS_ITEM_BAND = 1.25
 # the exact two-part sums (D&A = ``Depreciation`` + ``AmortizationOfIntangibleAssets``; pre-tax
 # income = domestic + foreign). The short-term investments the filing reports are no longer read
 # as 0 (the only defaulted input). Flags: ``cogs_excludes_da``, ``net_income_to_common``.
+# ``metrics-v11`` (T-161): a D&A aggregate that equals the filing's ``AmortizationOfIntangibleAssets``
+# for the same period, with ``Depreciation`` filed separately, is that filer's amortization alone,
+# not D&A: the reading becomes ``Depreciation`` + amortization (flagged
+# ``da_amortization_only_sum``), and when the depreciation fact is ambiguous the item is refused
+# (``da_amortization_only_refused``) instead of storing the mixed value. NDSN FY2025: the 10-K's
+# D&A 79,264,000 becomes 150,523,000 and its TTM follows (T-161).
 FACTS_ENGINE_VERSION = "facts-v1"
-METRICS_ENGINE_VERSION = "metrics-v10"
+METRICS_ENGINE_VERSION = "metrics-v11"
 
 
 @dataclass(frozen=True)
@@ -1088,6 +1094,18 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 )
                 if p_flag == 1.0:
                     flow_flags = ("depreciation_only_not_da",)
+                else:
+                    # T-161: the prior 10-K's D&A was the amortization alone and could not be
+                    # sourced (two different Depreciation facts): never combine the mixed value.
+                    p_flag = _recorded_input(
+                        conn,
+                        fy_filing,
+                        item,
+                        "flag_depreciation_amortization_da_amortization_only_refused",
+                        engine_version,
+                    )
+                    if p_flag == 1.0:
+                        flow_flags = ("da_amortization_only_refused",)
         ytd_now = pair.current if pair else None
         quarters = _quarter_columns(conn, asset_id, period_end)
         if summed is not None:

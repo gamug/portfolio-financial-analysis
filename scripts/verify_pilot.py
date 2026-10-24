@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import csv
 import io
 import json
 import math
@@ -17,6 +18,7 @@ import sqlite3
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
 from unexplained_split_rows import unexplained_split_rows
@@ -47,6 +49,11 @@ try:
 except ImportError:
     METRICS_ENGINE_VERSION = ""
     EMPTY_REASONS = ()
+
+try:
+    from t161_scan import summary as t161_summary
+except ImportError:
+    t161_summary = None  # type: ignore[assignment]
 
 try:
     import verify_t138
@@ -1987,6 +1994,60 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-159c", t159c)
+
+    def t161() -> None:
+        """T-161: the TTM consistency scan. WARN, never FAIL -- the ratio also flags genuine cases.
+
+        Lists the structural A/B readings (the NDSN 10-K shape and its 10-Q mirror) by name and the
+        ratio scan's counts; the per-term class list is ``out/t161_flagged.csv``."""
+        if t161_summary is None:
+            report("T-161", "SKIP", "scripts/t161_scan.py not found")
+            return
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        lines: list[str] = []
+        structural: list[str] = []
+        any_flag = False
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            try:
+                s = t161_summary(path)
+            except Exception as exc:
+                report("T-161", "SKIP", f"{prefix}not checkable ({exc})")
+                return
+            any_flag = any_flag or bool(s["flagged_opt1"] or s["flagged_opt2"])
+            lines.append(
+                f"{prefix}D&A {s['da_flagged']} of {s['da_tested']} (B's scan), "
+                f"{s['flagged_opt1']} option-1 / {s['flagged_opt2']} option-2 terms, "
+                f"{s['negative']} all-negative terms"
+            )
+            for row in s["structural"]:
+                structural.append(
+                    f"{row['ticker']} FY{row['fiscal_year']} {row['form']} "
+                    f"{row['da']:.0f} -> {row['sum']:.0f}"
+                )
+        detail = "; ".join(lines)
+        if structural:
+            detail += "; structural A/B: " + ", ".join(structural[:8])
+        else:
+            detail += "; structural A/B: none"
+        # The per-term class list: name the A/B rows from the CSV when it is present (the ratio-only
+        # C/D rows are the rest of the file).
+        csv_path = Path("out/t161_flagged.csv")
+        if csv_path.exists():
+            with csv_path.open(newline="") as fh:
+                lines = [line for line in fh if not line.startswith("#")]
+                ab_rows = [
+                    f"{row['company']} {row['filing']} {row['item']} {row['class']}"
+                    for row in csv.DictReader(lines)
+                    if row.get("class") in ("A", "B")
+                ]
+            detail += "; CSV A/B: " + (", ".join(ab_rows[:6]) or "none")
+        detail += "; classes in out/t161_flagged.csv"
+        report("T-161", "WARN" if any_flag else "PASS", detail)
+
+    check("T-161", t161)
 
     def t153g() -> None:
         """T-153 part 3d (D10): every recorded SPLIT row is in the tracked event list.

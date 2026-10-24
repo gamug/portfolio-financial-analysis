@@ -41,20 +41,21 @@ def _da_flags(
     stmts: Statements, period_key: str, ttm: dict[str, float] | None, flags: set[str]
 ) -> set[str]:
     """The D&A refusal flags: ``depreciation_only_not_da`` from any column of the filing, and from
-    the TTM flow itself (C1, T-151 part 1)."""
+    the TTM flow itself (C1, T-151 part 1); T-161's mirror ``amortization_only_refused``."""
     if ttm is None:
         return flags
     for p in stmts.periods:
         is_other_flow = p.tag == "YTD" or (p.is_quarter and p.key != period_key)
-        if (
-            is_other_flow
-            and "depreciation_only_not_da"
-            in stmts.resolve("depreciation_amortization", p.key).flags
-        ):
-            flags.add("depreciation_only_not_da")
-            break
+        if is_other_flow:
+            other = stmts.resolve("depreciation_amortization", p.key).flags
+            if "depreciation_only_not_da" in other:
+                flags.add("depreciation_only_not_da")
+            if "da_amortization_only_refused" in other:
+                flags.add("da_amortization_only_refused")
     if ttm.get("flag_depreciation_amortization_depreciation_only_not_da"):
         flags.add("depreciation_only_not_da")
+    if ttm.get("flag_depreciation_amortization_da_amortization_only_refused"):
+        flags.add("da_amortization_only_refused")
     return flags
 
 

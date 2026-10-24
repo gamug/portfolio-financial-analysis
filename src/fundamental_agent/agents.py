@@ -395,6 +395,8 @@ def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
         da_flow = ctx.ttm_flows.get("depreciation_amortization")
         if da_flow and "depreciation_only_not_da" in da_flow.flags:
             res["flag_depreciation_amortization_depreciation_only_not_da"] = 1.0
+        if da_flow and "da_amortization_only_refused" in da_flow.flags:
+            res["flag_depreciation_amortization_da_amortization_only_refused"] = 1.0
     return res
 
 
@@ -417,6 +419,8 @@ def _flag_annualization(results: list[tuple[str, MetricResult]], flows: dict[str
             da_flow = flows.get("depreciation_amortization")
             if da_flow and "depreciation_only_not_da" in da_flow.flags:
                 result.inputs["flag_depreciation_amortization_depreciation_only_not_da"] = 1.0
+            if da_flow and "da_amortization_only_refused" in da_flow.flags:
+                result.inputs["flag_depreciation_amortization_da_amortization_only_refused"] = 1.0
         # F2: an added item's x4 fallback gets its own flag, never the group's stamp.
         for item in _GROUP_TTM_EXTRA_ITEMS.get(group, ()):
             flow = flows.get(item)
