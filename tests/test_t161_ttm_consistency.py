@@ -160,10 +160,11 @@ def test_a_genuine_aggregate_that_is_not_the_amortization_stays() -> None:
     assert "da_amortization_only_refused" not in res.flags
 
 
-def test_an_aggregate_equal_to_adjustment_for_amortization_is_the_sum() -> None:
-    """The cash-flow aggregate's amortization name: DDA 165,000,000 equals
-    ``AdjustmentForAmortization`` and ``Depreciation`` 44,000,000 is separate. D&A = 209,000,000.
-    (This is the guard's general branch; it is not claimed as a real pilot case.)"""
+def test_an_aggregate_equal_to_adjustment_for_amortization_is_kept() -> None:
+    """INTU 2025Q1's shape: the 10-Q's DDA (165,000,000) equals ``AdjustmentForAmortization``,
+    with ``Depreciation`` 44,000,000 separate. ``AdjustmentForAmortization`` is not the
+    amortization term (it also carries financing-cost and debt-discount amortization), so the
+    165,000,000 is kept — never 209,000,000."""
     stmts = _payload(
         cash_flow=[
             _row(
@@ -180,9 +181,31 @@ def test_an_aggregate_equal_to_adjustment_for_amortization_is_the_sum() -> None:
         ],
     )
     res = stmts.resolve("depreciation_amortization", FY)
-    assert res.value == 209_000_000.0
-    assert res.concept == f"{G}Depreciation + {G}AdjustmentForAmortization"
-    assert "da_amortization_only_sum" in res.flags
+    assert res.value == 165_000_000.0
+    assert res.concept == f"{G}DepreciationDepletionAndAmortization"
+    assert "da_amortization_only_sum" not in res.flags
+    assert "da_amortization_only_refused" not in res.flags
+
+
+def test_an_aggregate_that_already_equals_the_sum_is_kept_not_doubled() -> None:
+    """DDA 150,523,000 = Depreciation 71,259,000 + AmortizationOfIntangibleAssets 79,264,000:
+    the aggregate already is the full D&A, so T-159a's rule 4 must not add the amortization a
+    second time (229,787,000)."""
+    stmts = _payload(
+        cash_flow=[
+            _row(
+                "DepreciationDepletionAndAmortization",
+                "Depreciation and amortization",
+                150_523_000.0,
+            ),
+            _row("AmortizationOfIntangibleAssets", "Amortization of intangibles", 79_264_000.0),
+            _row("Depreciation", "Depreciation", 71_259_000.0),
+        ],
+    )
+    res = stmts.resolve("depreciation_amortization", FY)
+    assert res.value == 150_523_000.0
+    assert "da_amortization_only_sum" not in res.flags
+    assert "da_plus_intangibles_row" not in res.flags
 
 
 # -- the TTM through it --------------------------------------------------------------------------
