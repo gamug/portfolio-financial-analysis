@@ -2842,3 +2842,36 @@ Closed on the user's direction: part 1 (PR #156, the company profile and the app
       book-to-market, EBITDA/EV and enterprise FCF yield, all priced on the analysis date (MKT-01); size removed; the
       FCF measures dropped for regulated utilities; DQ-02, N9, coverage; and the financial firms' sector-specific
       factors.)*
+
+## Work item 8 — `T-159` (closed task) — the empty-value finding and its fixes — DONE 2026-10-24
+
+Closed 2026-10-24: T-159a (PR #182), T-159b (data-mining PR #101, gateway redeployed 2026-10-22), T-159c (PR #183), the pilot_a3 re-run (PR #184) and this documentation PR. The entry below is moved here verbatim from `.specify/memory/TASKS.md`.
+
+- [x] **T-159** *(P0 — it blocks `T-100`; the pilot's empty-value finding, the user's decision
+      2026-10-22: the pilot is finished first, the fixes come after)* The pilot measured that **4.9 % of
+      the stored values are empty although the filing holds them** (`handoff/T143a_empty_values_finding.md`:
+      the evidence and the scripts in `handoff/pilot/b_review_p2b/`). Three parts, as the finding's §6:
+      **(a)** the registry's **substitutes** (the item's total under another standard concept — F5a,
+      4,045 values) **and the short-term investments' defaulted 0** (1,188 wrong filings), **plus the
+      T-159a addendum** — the calculation-tree rules 1–4 for the two totals that are too low
+      (**F6** total debt in 1,636 filings / 111 companies + 44 F6c filings, median 5.5 %; **F7** D&A in
+      73 filings / 12 companies; `handoff/T159a_addendum_debt_da.md`) — with **rule 4's exception**: it
+      does **not** apply when the income statement carries the cash-flow D&A concept at the same value
+      and no `AmortizationOfIntangibleAssets` line (the D&A row is then the full expense); measured on
+      every filing of the 13 companies, only **HLT's 8 columns** ("contract acquisition costs");
+      **(b)** the **gateway's `filed_facts` in the payload** (the untagged-column defect — F0, 499 values;
+      in the data-mining repo, with a gateway redeploy);
+      **(c)** the **filed-fact fallback** (F1, F2, F3, F5b — the filing's own XBRL holds the fact) and
+      **F4 rule by rule** (the read column refused by a rule), with the labels of the finding's §5.4
+      and §5.6, **plus**: **F8** (CON_08 must read the discontinued operating leg under
+      `NetCashProvidedByUsedInDiscontinuedOperations` as well — MPC files it that way and its identity
+      holds; 4 filings, 12 quarantined metric rows); the **EBITDA provenance basis label** (4,169 rows:
+      the inputs are labelled `period` while the value is the TTM); and a **stored flag on a cover count
+      ×1,000 or ×1/1,000 against the prior filing** (the MKT guard stays the value rule).
+      **Documentation follow-ups (no value change):** one line per metric in the dictionary's Annex B
+      naming its period basis, and the three stored metrics that are not in Annex B
+      (`return_on_invested_capital_effective_rate`, `utility_cash_coverage_3y`, `value_inputs`).
+      After them the pilot is re-run on a fresh database (the finding's §6 step 4) and the
+      cause-7 empties must be only the named, declared exceptions.
+
+**Closing measurement (`out/a3_vs_a2_summary.md`):** on the shared filings, non-price `missing_input` **51,382 → 13,224** and `capture_failure` **3,549 → 2,189**; **6,393** metrics filled, **28** emptied (FTNT/P ROIC, correct by MET-09); `verify_pilot` T-159c **PASS** (3,490 filed-fact items). The documentation line is now in `docs/metric_dictionary.md`: every Annex B metric names its period basis and the three stored metrics outside Annex B are recorded (PR for this close-out).
