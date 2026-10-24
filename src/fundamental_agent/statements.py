@@ -2342,6 +2342,12 @@ class Statements:
             if status == "ambiguous":
                 return None
             if value is not None and self._filed_fact_accept(spec, period, concept, value):
+                # T-161: the aggregate is the amortization alone (the NDSN 10-K shape).
+                amortization_only = self._da_amortization_only_sum_filed(
+                    spec, period, value, concept
+                )
+                if amortization_only is not None:
+                    return amortization_only
                 return value, concept, "filed_fact"
         first, first_status = self._filed_fact_value(spec, period, DA_EXACT_SUM[0])
         second, second_status = self._filed_fact_value(spec, period, DA_EXACT_SUM[1])
@@ -2661,7 +2667,7 @@ class Statements:
 
         return None, None, None
 
-    def _depreciation_amortization(
+    def _depreciation_amortization(  # noqa: PLR0911 - one return per reading tier
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None]:
         """D&A (MD-01, ID-02b; C1, T-151 part 1): the filed aggregate first, unchanged, else the
@@ -2683,6 +2689,11 @@ class Statements:
         at all, so a cash-flow D&A fact in any column keeps today's behaviour."""
         value, concept, how = self._component_row(spec, column)
         if value is not None:
+            # T-161: the mirror of T-151's ``depreciation_only_not_da`` -- the filed aggregate is
+            # the intangible amortization alone and depreciation is filed separately.
+            amortization_only = self._da_amortization_only_sum(spec, column, value, concept)
+            if amortization_only is not None:
+                return amortization_only
             # T-159a rule 4 (F7): D&A filed as two face lines.
             plus = self._da_plus_intangibles_row(spec, column, value, concept)
             return plus if plus is not None else (value, concept, how)
@@ -2745,6 +2756,87 @@ class Statements:
                 "sourced_map",
             )
         return None
+
+    def _da_amortization_only_sum(
+        self, spec: LineItem, column: str, value: float, concept: str | None
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """T-161: the mirror of ``depreciation_only_not_da`` (T-151 part 1), on the *other* partial
+        reading.
+
+        A filer tags its whole D&A on the 10-Qs but only the amortization on the 10-K under an
+        aggregate concept (NDSN FY2025: ``DepreciationDepletionAndAmortization`` =
+        ``AmortizationOfIntangibleAssets`` = 79,264,000, with ``Depreciation`` 71,259,000 filed
+        separately; INTU's 10-Q files ``DepreciationDepletionAndAmortization`` =
+        ``AdjustmentForAmortization`` = 165,000,000 with ``Depreciation`` 44,000,000 separate).
+        The aggregate is then **not** the item: D&A = ``Depreciation`` + amortization, both filed
+        facts of the same filing and the same column. Returns ``None``
+        when the pattern does not hold (the caller keeps the value), and ``(None, None, None)``
+        when it holds but the depreciation fact is ambiguous (the caller refuses the mixed value,
+        flagged ``da_amortization_only_refused``). Only an aggregate concept is considered, so a
+        substitute or caption value that happens to equal the amortization cannot trigger it."""
+        if concept not in DA_AGGREGATE_CONCEPTS:
+            return None
+        amortization = self._da_amortization_matching(spec, column, value)
+        if amortization is None:
+            return None
+        depreciation = self._concept_value(spec, column, G + "Depreciation")
+        if depreciation is None:
+            return None
+        self._flag("da_amortization_only_sum")
+        return (
+            depreciation + amortization[1],
+            f"{G}Depreciation + {amortization[0]}",
+            "sourced_map",
+        )
+
+    def _da_amortization_matching(
+        self, spec: LineItem, column: str, value: float
+    ) -> tuple[str, float] | None:
+        """The amortization concept whose filed value equals *value*, if any: the intangible
+        amortization first, then the cash-flow ``AdjustmentForAmortization`` (INTU's 10-Q files
+        the total amortization there, 165,000,000, with ``Depreciation`` 44,000,000 separate)."""
+        for concept in (G + "AmortizationOfIntangibleAssets", G + "AdjustmentForAmortization"):
+            amortization = self._concept_value(spec, column, concept)
+            if amortization is not None and abs(value - amortization) <= _SAME_VALUE:
+                return concept, amortization
+        return None
+
+    def _da_amortization_only_sum_filed(
+        self, spec: LineItem, period: Period, value: float, concept: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """T-161, the ``filed_facts`` side of :meth:`_da_amortization_only_sum`.
+
+        The same structural test against the filing's own non-dimensional filed facts: the
+        aggregate D&A equals ``AmortizationOfIntangibleAssets`` (or the cash-flow
+        ``AdjustmentForAmortization``) for the period and ``Depreciation`` is filed separately. Two different ``Depreciation`` values for the period leave the sum
+        unsourced: the item is refused, never stored as the amortization alone."""
+        if concept not in DA_AGGREGATE_CONCEPTS:
+            return None
+        matched: tuple[str, float] | None = None
+        for amortization_concept in (
+            G + "AmortizationOfIntangibleAssets",
+            G + "AdjustmentForAmortization",
+        ):
+            amortization, status = self._filed_fact_value(spec, period, amortization_concept)
+            if status == "ambiguous":
+                return None
+            if amortization is not None and abs(value - amortization) <= _SAME_VALUE:
+                matched = (amortization_concept, amortization)
+                break
+        if matched is None:
+            return None
+        depreciation, dep_status = self._filed_fact_value(spec, period, G + "Depreciation")
+        if dep_status == "ambiguous":
+            self._flag("da_amortization_only_refused")
+            return None, None, None
+        if depreciation is None:
+            return None
+        self._flag("da_amortization_only_sum")
+        return (
+            depreciation + matched[1],
+            f"{G}Depreciation + {matched[0]}",
+            "sourced_map",
+        )
 
     def _income_da_is_the_full_expense(self, column: str, da_value: float) -> bool:
         """Whether the income statement of *column* shows the cash-flow D&A row as the whole D&A

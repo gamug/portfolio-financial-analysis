@@ -49,6 +49,11 @@ except ImportError:
     EMPTY_REASONS = ()
 
 try:
+    from t161_scan import summary as t161_summary
+except ImportError:
+    t161_summary = None  # type: ignore[assignment]
+
+try:
     import verify_t138
 except ImportError:
     verify_t138 = None  # type: ignore[assignment]
@@ -1987,6 +1992,48 @@ def main() -> int:  # noqa: C901, PLR0915
         )
 
     check("T-159c", t159c)
+
+    def t161() -> None:
+        """T-161: the TTM consistency scan. WARN, never FAIL -- the ratio also flags genuine cases.
+
+        Lists the structural A/B readings (the NDSN 10-K shape and its 10-Q mirror) by name and the
+        ratio scan's counts; the per-term class list is ``out/t161_flagged.csv``."""
+        if t161_summary is None:
+            report("T-161", "SKIP", "scripts/t161_scan.py not found")
+            return
+        paths = [("db", args.db)]
+        if args.replay_db:
+            paths.append(("replay-db", args.replay_db))
+        lines: list[str] = []
+        structural: list[str] = []
+        any_flag = False
+        for label, path in paths:
+            prefix = f"{label} " if len(paths) > 1 else ""
+            try:
+                s = t161_summary(path)
+            except Exception as exc:
+                report("T-161", "SKIP", f"{prefix}not checkable ({exc})")
+                return
+            any_flag = any_flag or bool(s["flagged_opt1"] or s["flagged_opt2"])
+            lines.append(
+                f"{prefix}D&A {s['da_flagged']} of {s['da_tested']} (B's scan), "
+                f"{s['flagged_opt1']} option-1 / {s['flagged_opt2']} option-2 terms, "
+                f"{s['negative']} all-negative terms"
+            )
+            for row in s["structural"]:
+                structural.append(
+                    f"{row['ticker']} FY{row['fiscal_year']} {row['form']} "
+                    f"{row['da']:.0f} -> {row['sum']:.0f}"
+                )
+        detail = "; ".join(lines)
+        if structural:
+            detail += "; structural A/B: " + ", ".join(structural[:8])
+        else:
+            detail += "; structural A/B: none"
+        detail += "; classes in out/t161_flagged.csv"
+        report("T-161", "WARN" if any_flag else "PASS", detail)
+
+    check("T-161", t161)
 
     def t153g() -> None:
         """T-153 part 3d (D10): every recorded SPLIT row is in the tracked event list.
