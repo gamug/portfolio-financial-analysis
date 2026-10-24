@@ -115,8 +115,10 @@ table** (filings, facts, metrics, actions, cover shares, quality rows). The comp
   plan’s V2 FAIL list). `revenue` keeps its 16 `FAIL_gateway_dropped` rows from the gateway drop log
   (the known F0 class).
 
-The V2 tools therefore need a small follow-up for T-159a’s substitute/concept-flag tiers; no new
-stored value or concept defect was found beyond the known classes.
+The V2 tools therefore need a small follow-up for T-159a’s substitute/concept-flag tiers. The D&A
+count falls from 24 to 13 after adding the known sourced-sum children; the remaining 13 are still
+under concepts the committed `own_concepts()` does not know, so they are a checker follow-up, not a
+new value change. No stored value was changed by this analysis.
 
 ### V3 — every metric recomputed independently
 
@@ -253,7 +255,7 @@ facts).
 | layer | result |
 |---|---|
 | V1 | **7 FAIL, 2 WARN** — the known N/A/declared classes; one restart WARN (JPM); 0 new data FAIL |
-| V2 | signcheck **0 FLIPPED**, fidelity **0 below the gate**; the raw precedence/itemcheck counts are tooling false positives from T-159a’s substitute/concept-flag tiers; **no new value/concept defect** |
+| V2 | signcheck **0 FLIPPED**, fidelity **0 below the gate**; the raw precedence/itemcheck counts are tooling false positives/gaps from T-159a’s substitute/concept-flag tiers (plain precedence **True**; net-income OTHER 119→0; D&A 24→13; cash 740→542) — **follow-up needed** |
 | V3 | **36 known** FOX/NWS market-cap mismatches; **0 unexplained** |
 | V4 | **0 hit / 0 severity disagreements**; 8,049 known `EARNINGS_MISSING` evaluated-flag rows |
 | V5 | **4 differences**, each explained; 19 card empty (7 known, 12 by rule) |
