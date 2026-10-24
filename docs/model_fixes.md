@@ -10864,9 +10864,9 @@ mypy and pre-commit green. Engine stays `metrics-v10`.
 
 ## T-161 — the TTM consistency check: an amortization-only D&A on the 10-K, read as depreciation + amortization
 
-**Status**: fixed on branch `fix/t161-ttm-consistency` (off master `6b7589d`), engine
-`metrics-v11`. Verified on a scratch copy of `pilot_a3` (`/workspaces/thesis/scratch/t161/
-financial.db`; the original's sha256 `d2b757b4…68fb8` is unchanged).
+**Status**: fixed on branch `fix/t161-ttm-consistency` (off master `6b7589d`, rebased on `8669df3`),
+engine `metrics-v11`. Verified on a scratch copy of `pilot_a3` (`/workspaces/thesis/scratch/t161/`;
+the original's sha256 `d2b757b4…68fb8` is unchanged).
 
 **The defect.** A 10-Q's YTD-method TTM is `FY(prior 10-K) − YTD(prior) + YTD(this year)`
 (`db.py:1024-1105`). It mixes two meanings when the two forms tag the same flow differently.
@@ -10875,62 +10875,78 @@ NDSN's FY2025 10-K files only the intangible amortization (**79,264,000**) as
 `Depreciation` **71,259,000** separately, while the 10-Qs file the full D&A (Q1 FY2026
 36,585,000). The 10-K's own EBITDA was low too (790,989,000 vs **862,248,000**), and every TTM
 built on it: Q1 FY2026 D&A **78,818,000** instead of **150,077,000** (EBITDA 816,001,000 vs
-887,260,000, **8.03 % low**). B's §1 correction: the four-quarter sum is not an escape — a fiscal
-Q4 has no 10-Q, so `_quarter_flow_ending` derives it as the 10-K's FY less the nine-month YTD
-(`db.py:918`), and every 10-Q TTM carries that 10-K term. The fix belongs on the reading of the
-filing whose tag means something different.
+887,260,000, **8.03 % low**). The four-quarter sum is not an escape — a fiscal Q4 has no 10-Q, so
+`_quarter_flow_ending` derives it as the 10-K's FY less the nine-month YTD (`db.py:918`), and every
+10-Q TTM carries that 10-K term. The fix belongs on the reading of the filing whose tag means
+something different.
 
-**The rule.** When a filing's D&A aggregate equals its amortization only —
-`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization` — and
-`Depreciation` is a filed fact of the **same filing and period**, the reading is
+**The rule.** When a filing's D&A aggregate equals its **`AmortizationOfIntangibleAssets`** and
+`Depreciation` is a filed fact of the same filing and period, the reading is
 `Depreciation + amortization`, flagged `da_amortization_only_sum`
 (`statements._da_amortization_only_sum`, `_da_amortization_only_sum_filed`, called from the
-statement tier and `_da_filed_fact`). When the depreciation fact is ambiguous (two values for the
-period), the item is refused with `da_amortization_only_refused` and the 10-Q's TTM carries
-`da_amortization_only_refused` (never the mixed value; the flow falls back to four quarters, else
-refuses). `Depreciation` alone stays refused (`depreciation_only_not_da`, T-151 part 1). Genuine
-cases (seasonality, acquisition, disposal, restatement, changed fiscal year) keep their value.
+statement tier and `_da_filed_fact`). `AdjustmentForAmortization` is **not** a match: it is a
+parent that also carries financing-cost and debt-discount amortization (`DA_SOURCED_CHILDREN`'s
+comment, T-151 part 1); INTU 2025Q1's aggregate 165,000,000 is kept. When `Depreciation +
+amortization` already equals the aggregate, the aggregate **is** the full D&A and is kept — the
+same guard applies inside T-159a rule 4, so a separate amortization row is never added twice.
+When the depreciation fact is ambiguous, the item is refused (`da_amortization_only_refused`) and
+the 10-Q's TTM carries the flag (never the mixed value). `Depreciation` alone stays refused
+(`depreciation_only_not_da`, T-151 part 1).
 
-**The structural scope.** The NDSN-shaped test over every 10-K's stored facts finds **one** case:
-NDSN FY2025 (2,179 10-Ks with a resolved period D&A). The 10-Q mirror over the stored facts finds
-**none** under the brief's test (the aggregate equals `AmortizationOfIntangibleAssets` and
-`Depreciation` is separate). INTU 2025Q1 is a **near-miss** and stays: its D&A 165,000,000 equals
-the cash-flow `AdjustmentForAmortization`, but its reading is the exact sum
-`Depreciation` 44,000,000 + `AmortizationOfIntangibleAssets` 121,000,000 (the 44,000,000
-cost-of-sales amortization is a separate line), so the full D&A is not established by the brief's
-two filed facts — class D in the CSV, not fixed. A further filed-facts-only case cannot be seen in
-`financial_facts`; the engine's `AdjustmentForAmortization` branch covers an aggregate that does
-equal it at read time.
+**The measured scope (r2 §1).** `scripts/t161_rule_fires.py` re-resolved
+`depreciation_amortization` for **all 10,196 pilot_a3 filings and all 53,793 stored columns**, twice:
+with master's `Statements` (8669df3) and with this PR's. Offline filings are rebuilt from
+`financial_facts` (`sec_xcheck.common.statements_from_db`); the **150** filings whose aggregate D&A
+the engine read from the gateway's `filed_facts` (not stored) were rebuilt from a cached gateway
+payload for the filed facts; a filing whose D&A is empty has no accepted aggregate and cannot
+trigger the guard. `out/t161_rule_fires.csv` has **3 rows, one company**: NDSN's FY2025 10-K, in
+its FY2023/FY2024/FY2025 columns (79,264,000 → 150,523,000 for the current column; 59,719,000 →
+111,898,000 and 76,972,000 → 136,175,000 for the comparatives). **NDSN is the only company.** The
+10-Q mirror finds no case. The metrics recomputed on the scratch cover the filing (FY2025 10-K) and
+the 10-Qs whose TTM reads it (FY2026 Q1–Q3).
 
 **The ratio scan (a WARN, not an engine rule).** Test (i): `r = (prior_ytd / prior_FY) / (m / 12)`,
 m = the 10-Q's fiscal-quarter length (3/6/9), flagged outside [0.6, 1.5]. The pre-flight (B's scan)
-applies it when the prior FY and prior YTD are positive: **66 of 5,844** D&A terms, reproduced
-exactly. The brief's "all three terms the same sign" wording (B's error, DECISIONS row 63) gives
-**67 of 5,857**: the 21 all-negative terms (5 flagged; AMP/KKR/WRB's own net
+applies it when the prior FY and prior YTD are positive: **66 of 5,844** D&A terms on pilot_a3,
+reproduced exactly. The brief's "all three terms the same sign" wording (B's error, DECISIONS row
+63) gives 67 of 5,857: the 21 all-negative terms (5 flagged; AMP/KKR/WRB's own net
 `DepreciationAmortizationAndAccretionNet` presentations, not engine sign defects) and the 8
 mixed-sign terms (4 flagged; AMP 2022, KEY 2026 Q1, KKR 2024 Q1). The union of option 1, option 2
 and test (ii) is classed in `out/t161_flagged.csv`; test (ii) (the derived Q4
 `prior_FY − prior 9-month YTD`) tests 19,695 of 24,259 possible Q4s (the rest have no stored
-nine-month YTD) and flags 52 cases, 25 of them also by test (i). The scan is
-`verify_pilot`'s `T-161` WARN (`scripts/t161_scan.py`).
+nine-month YTD) and flags 52 cases, 25 of them also by test (i). The scan is `verify_pilot`'s
+`T-161` WARN (`scripts/t161_scan.py`).
+
+**The classes, by the test that placed them (r2 §4).** A 1 (NDSN FY2025), B 0, **C 1,252**, D 3,150
+over 4,403 cases / 540 companies. C's sub-classes are named by the test: `ratio_recurs_adjacent_fy`
+**1,234** (the same ratio recurs in an adjacent fiscal year, same quarter, within 30 %);
+`next_10k_prior_column_confirms_fy` **15** (the next 10-K's prior-year column equals this 10-K's FY
+value); `next_10k_prior_column_restates_fy` **3** (it differs). No acquisition or disposal is named
+unless its filing was read (none was). **D is the ratio alone and stays**: the engine guard is
+structural and the ratio cannot separate D from the genuine C cases; refusing it would empty far
+more than the brief's 20-filing threshold (DECISIONS row 66). The CSV's first line states the four
+tests.
 
 **Tests.** `tests/test_t161_ttm_consistency.py`: the NDSN 10-K reading (79,264,000 →
-150,523,000), the 10-Q mirror (36,585,000, not the 39,138,000 double count), the INTU
-`AdjustmentForAmortization` shape (209,000,000; a synthetic guard branch, not a real pilot case),
-the ambiguous-depreciation refusal, a genuine aggregate that stays, the TTM through the corrected
-10-K (150,077,000), and the prior-10-K refusal reaching the flow (`refused`). The engine-version
-test is `metrics-v11`.
+150,523,000); the 10-Q mirror (36,585,000, not the 39,138,000 double count); the INTU
+`AdjustmentForAmortization` shape **kept at 165,000,000**; the aggregate that already equals
+`Depreciation + amortization` **kept at 150,523,000** (not 229,787,000); the ambiguous-depreciation
+refusal; a genuine aggregate that stays; the TTM through the corrected 10-K (150,077,000); and the
+prior-10-K refusal reaching the flow (`refused`). The engine-version test is `metrics-v11`.
 
-**Measurement on the scratch copy (2026-10-24).** The recompute is `metrics-v11` on
-`/workspaces/thesis/scratch/t161/financial_clean.db` (the raw scratch copy of pilot_a3 with the
-v11 rows of the four affected filings; the three NDSN 2025 Q1–Q3 rows the gateway-authored
-recompute had emptied — the FY2024 10-K's payload is empty at the gateway, not a T-161 value — were
-removed so those untouched filings keep their pilot_a3 rows). The NDSN values are in the entry
-above. The union classing is **4,403 cases over 540 companies: A 1, B 0, C 2,812, D 1,590**
-(`out/t161_flagged.csv`; one A case, three TTM term rows and the 10-K's own reading row). The
-per-metric comparison is **12 changed, 0 emptied, 0 filled, 357,219 same** — the four NDSN filings'
-`ebitda`, `net_debt_to_ebitda` and `enterprise_fcf_yield`. V3 independent recompute: **357,231 rows,
-36 mismatches (the declared FOX/NWS market-cap class), 0 unexplained**. `verify_pilot` T-161
-**WARN: D&A 63 of 5,844**, no structural A/B left (the fix is applied). The other FAILs are the
-partial v11 recompute's mixed versions (a full v11 run closes it), the pilot's pre-existing rows,
-and the default-`universe.db` valuation check; none is a T-161 value.
+**Measurement on the scratch copy (r2, 2026-10-24).** `metrics-v11` on
+`/workspaces/thesis/scratch/t161/financial_clean.db` (the raw scratch copy's NDSN 2025 Q1–Q3 v11
+rows, emptied by the gateway's empty FY2024 10-K payload, removed so those untouched filings keep
+their pilot_a3 rows). NDSN values above. The per-metric comparison is **12 changed, 0 emptied, 0
+filled, 357,219 same** — the four NDSN filings' `ebitda`, `net_debt_to_ebitda` and
+`enterprise_fcf_yield`. V3 independent recompute: **357,231 rows, 36 mismatches (the declared
+FOX/NWS market-cap class), 0 unexplained**. `verify_pilot` T-161 **WARN: D&A 63 of 5,844**, no
+structural A/B left (the fix is applied); the run's **8 FAILs are the pilot's 7 named ones plus the
+targeted recompute's mixed version** (`{'metrics-v10': 357231, 'metrics-v11': 1154}`, expected only
+v11 — a full v11 run closes it).
+
+**Two T-100 risks (r2 §5).** The gateway serves an **empty payload** for NDSN's FY2024 10-K
+(`0000072331-24-000177`, 0 cash-flow rows); **0 of 10** random pilot_a3 10-Ks fetched 2026-10-24
+(spaced GETs) were empty, so it is a per-filing gap, not gateway-wide. The metrics-only rate is
+**36–80 s/filing** vs P2b's 6.2 s/unit; on one NDSN FY2025 10-K the gateway GET is **3.77 s** and
+parse + 221 facts + 38 metrics + gate is **0.12 s** — the gateway, not the compute, is the cost.

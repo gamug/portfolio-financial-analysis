@@ -51,7 +51,7 @@ FIXED_SIGN = (
     "stock_based_compensation",
 )
 _QUARTER_MONTHS = {"Q1": 3, "Q2": 6, "Q3": 9}
-_AMORTIZATION = ("us-gaap_AmortizationOfIntangibleAssets", "us-gaap_AdjustmentForAmortization")
+_AMORTIZATION = ("us-gaap_AmortizationOfIntangibleAssets",)
 _SAME = 1.0
 _TERMS = 3
 _R_LOW = 0.6

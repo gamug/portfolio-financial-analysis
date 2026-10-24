@@ -2910,30 +2910,37 @@ below is moved here verbatim from `.specify/memory/TASKS.md` with the amended ru
       63; the four-quarter-sum rule it replaces was B's error):** a fiscal Q4 has no 10-Q, so
       `_quarter_flow_ending` derives it as the 10-K's FY less the 9-month YTD (`db.py:918`) and the
       four-quarter sum carries the same 10-K term — the fix belongs on the reading of the off
-      filing. When a filing's D&A aggregate equals its amortization only
-      (`AmortizationOfIntangibleAssets`, else the cash-flow `AdjustmentForAmortization`) and
-      `Depreciation` is filed separately for the same period, D&A = `Depreciation` + amortization
-      (flagged `da_amortization_only_sum`); when the depreciation fact is ambiguous, refuse the
-      value with `da_amortization_only_refused`; never store the mixed value. `Depreciation` alone
+      filing. When a filing's D&A aggregate equals its **`AmortizationOfIntangibleAssets`** only
+      (`AdjustmentForAmortization` is not a match: it carries financing-cost and debt-discount
+      amortization too) and `Depreciation` is filed separately for the same period, D&A =
+      `Depreciation` + amortization (flagged `da_amortization_only_sum`); when the aggregate
+      already equals that sum it **is** the full D&A and is kept (the same guard prevents T-159a
+      rule 4 from adding the amortization twice); when the depreciation fact is ambiguous, refuse
+      the value with `da_amortization_only_refused`; never store the mixed value. `Depreciation` alone
       stays refused (`depreciation_only_not_da`). Genuine cases (seasonality, acquisition, disposal,
       restatement, changed fiscal year) keep their value. The ratio scan — prior YTD / prior FY
       against q/4 outside 0.6–1.5×, applied when the prior FY and prior YTD are positive (B's scan;
       the brief's "same sign" wording was B's error, DECISIONS row 63) and the all-negative terms
-      listed separately — is a `verify_pilot` **WARN**, never an engine rule. **Acceptance** on a
+      listed separately — is a `verify_pilot` **WARN**, never an engine rule. **D** is defined only
+      by the ratio: it stays as the WARN listing and is **not refused** (the engine guard is
+      structural; DECISIONS row 66). **Acceptance** on a
       scratch copy of pilot_a3 (metrics-only recompute): NDSN FY2025 10-K D&A **150,523,000** and
       Q1 FY2026 TTM D&A **150,077,000**; every flagged (company, fiscal year, item) classed A–D
       with its evidence in `out/t161_flagged.csv`; `docs/model_fixes.md` entry. Evidence: DECISIONS
       rows 58 and 63.
 
-**Closing measurement (2026-10-24):** the union classing (option 1 + option 2 + test (ii)) is
-**4,403 cases over 540 companies: A 1, B 0, C 2,812 (acquisition/disposal 2,183, seasonality 626,
-restatement 3), D 1,590** (`out/t161_flagged.csv`). The A case is NDSN FY2025. The 1,590 D cases are
-ratio-only and keep their value: the engine guard uses structural evidence only, and the ratio alone
-cannot separate them from the genuine cases. NDSN FY2025 10-K D&A **79,264,000 → 150,523,000**
-(EBITDA **790,989,000 → 862,248,000**); Q1 FY2026 TTM D&A **78,818,000 → 150,077,000** (EBITDA
-**816,001,000 → 887,260,000**), Q2 **77,556,000 → 148,815,000**, Q3 **76,256,000 → 147,515,000**.
-The per-metric comparison against pilot_a3 changes **12** rows, all on NDSN's four filings (`ebitda`,
-`net_debt_to_ebitda`, `enterprise_fcf_yield`), **0 emptied, 0 filled, 357,219 same**; the post-fix
-ratio scan is **63 of 5,844** (66 before; the three NDSN TTM terms are inside the band), the 10-Q
-mirror finds no B, and the V3 independent recompute is **0 unexplained** (36 FOX/NWS market-cap
-rows, declared). `verify_pilot` T-161 **WARN**, as designed.
+**Closing measurement (2026-10-24; r2):** the r2 §1 re-resolution of every filing and column
+(master vs this PR, `out/t161_rule_fires.csv`) fires on **3 rows, one company**: NDSN's FY2025
+10-K, its FY2023/FY2024/FY2025 columns (79,264,000 → 150,523,000; 59,719,000 → 111,898,000;
+76,972,000 → 136,175,000). **NDSN is the only company**; the 10-Q mirror finds no case. The union
+classing is **4,403 cases over 540 companies: A 1, B 0, C 1,252, D 3,150**; C is named by its test
+(`ratio_recurs_adjacent_fy` 1,234, `next_10k_prior_column_confirms_fy` 15,
+`next_10k_prior_column_restates_fy` 3); D stays (the WARN listing, DECISIONS row 66). NDSN FY2025
+10-K D&A **79,264,000 → 150,523,000** (EBITDA **790,989,000 → 862,248,000**); Q1 FY2026 TTM D&A
+**78,818,000 → 150,077,000** (EBITDA **816,001,000 → 887,260,000**), Q2 **148,815,000**, Q3
+**147,515,000**. The per-metric comparison changes **12** rows, all on NDSN's four filings, **0
+emptied, 0 filled, 357,219 same**; the post-fix ratio scan is **63 of 5,844**; V3 is **0
+unexplained** (36 FOX/NWS market-cap rows, declared); `verify_pilot` T-161 **WARN**, and its 8 FAILs
+are the pilot's 7 named ones plus the targeted recompute's mixed-version one. Two T-100 risks are
+recorded under T-100: the gateway's empty NDSN FY2024 10-K payload (0 of 10 random 10-Ks empty) and
+the 36–80 s/filing metrics-only rate (gateway GET 3.77 s vs compute 0.12 s on one filing).

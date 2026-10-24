@@ -2037,10 +2037,11 @@ def main() -> int:  # noqa: C901, PLR0915
         csv_path = Path("out/t161_flagged.csv")
         if csv_path.exists():
             with csv_path.open(newline="") as fh:
+                lines = [line for line in fh if not line.startswith("#")]
                 ab_rows = [
                     f"{row['company']} {row['filing']} {row['item']} {row['class']}"
-                    for row in csv.DictReader(fh)
-                    if row["class"] in ("A", "B")
+                    for row in csv.DictReader(lines)
+                    if row.get("class") in ("A", "B")
                 ]
             detail += "; CSV A/B: " + (", ".join(ab_rows[:6]) or "none")
         detail += "; classes in out/t161_flagged.csv"

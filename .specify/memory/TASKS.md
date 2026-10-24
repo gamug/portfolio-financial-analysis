@@ -1068,6 +1068,15 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       reader (`T-132`) both read
       `financial_facts` directly and would otherwise silently keep reading synthesized
       values. The pilot is unaffected, since it already starts from a fresh database.
+      **Gateway empty payloads (T-161 r2, 2026-10-24):** NDSN's FY2024 10-K
+      (`0000072331-24-000177`) is served with **0 cash-flow rows** while pilot_a3 holds its data;
+      **0 of 10** random pilot_a3 10-Ks fetched the same day (spaced GETs) were empty, so it is a
+      per-filing gap, not gateway-wide. A T-100 run must treat an empty payload as a failure and
+      retry it, never as an empty filing.
+      **Metrics-only rate (T-161 r2, 2026-10-24):** measured **36–80 s/filing** on the current
+      gateway (INTU 19 filings 11 m 24 s; NDSN 11 filings 14 m 41 s) against P2b's 6.2 s/unit. On
+      one NDSN FY2025 10-K the gateway GET is **3.77 s** and parse + 221 facts + 38 metrics + gate
+      is **0.12 s** — the gateway, not the compute; re-base the T-100 budget.
       **Delisting-return policy inputs (Shumway 1997; reviewer A, 2026-10-15).** How a position closed by
       an index exit or a halt is valued is decided in this task; its inputs are recorded here. The
       feasibility step's **exit-event table** — one row per unpriced line: the index-exit event, any later

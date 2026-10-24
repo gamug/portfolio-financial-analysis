@@ -9,9 +9,11 @@ dropped. Classes (brief §2):
 * A -- a tag mix on the 10-K: the 10-K's D&A aggregate equals its amortization only and
   ``Depreciation`` is filed separately (NDSN).
 * B -- the mirror on the 10-Qs (INTU).
-* C -- genuine: a changed fiscal year, a restatement (the next 10-K's prior-year column differs),
-  an acquisition/disposal, or seasonality (the same ratio in an adjacent year).
-* D -- cannot tell.
+* C -- named by the test that placed it there: the 10-K covers a non-12-month year; the next
+  10-K's prior-year column **confirms** the FY value; it **restates** it; or the same ratio
+  **recurs** in an adjacent fiscal year. No acquisition or disposal is named unless its filing was
+  read (none is).
+* D -- cannot tell; the ratio test alone identified it, so it stays (the WARN listing).
 
 Read-only. Run on the recomputed scratch copy so ``value_after`` is the engine's value.
 """
@@ -35,14 +37,6 @@ import t161_scan
 
 from fundamental_agent import db as agent_db
 from kg_schema.db import connect_ro
-
-_ACQ = (
-    "PaymentsToAcquireBusinesses",
-    "PaymentsToAcquireBusinessesNetOfCashAcquired",
-    "ProceedsFromDivestitureOfBusinesses",
-    "ProceedsFromDivestitureOfBusinessesNetOfCashDivested",
-    "PaymentsForProceedsFromBusinesses",
-)
 
 
 def _sign(x: float) -> int:
@@ -135,19 +129,6 @@ def _fact_at(conn, filing_id: int, period_key: str, concept: str | None) -> floa
     return float(row["value"]) if row is not None and row["value"] is not None else None
 
 
-def _acquisition(conn, filing_id: int, period_end: str) -> tuple[str, float] | None:
-    key = f"{period_end} (FY)"
-    for concept in _ACQ:
-        row = conn.execute(
-            "SELECT concept, value FROM financial_facts WHERE filing_id=? AND period_key=? "
-            "AND concept=? AND value IS NOT NULL",
-            (filing_id, key, "us-gaap_" + concept),
-        ).fetchone()
-        if row is not None and abs(float(row["value"])) > 0.0:
-            return str(row["concept"]), float(row["value"])
-    return None
-
-
 def _fy_id(conn, rec: dict[str, Any]) -> int | None:
     if rec.get("fy_filing"):
         return int(rec["fy_filing"])
@@ -163,37 +144,37 @@ def _classify(conn, case: dict[str, Any], ab: dict, seasonal: dict) -> tuple[str
     item = case["item"]
     fy = _fy_meta(conn, case["fy_filing"])
     if fy is None:
-        return "D", "the prior 10-K is not stored"
+        return "D", "cannot tell: the prior 10-K is not stored"
     fy_value = agent_db._recorded_flow(conn, case["fy_filing"], item)
-    if item == "depreciation_amortization" and ("10-K", case["asset_id"], fy["fiscal_year"]) in ab:
-        row = ab[("10-K", case["asset_id"], fy["fiscal_year"])]
-        return "A", (
-            f"10-K D&A {row['da']:,.0f} = its amortization only; Depreciation "
-            f"{row['depreciation']:,.0f} filed separately; sum {row['sum']:,.0f}"
-        )
-    for fid in case["filing_ids"]:
-        if item == "depreciation_amortization" and ("10-Q", fid) in ab:
-            row = ab[("10-Q", fid)]
-            return "B", (
-                f"10-Q YTD D&A {row['da']:,.0f} = its amortization only; Depreciation "
-                f"{row['depreciation']:,.0f} filed separately; sum {row['sum']:,.0f}"
-            )
+    # A/B: the structural D&A tag mix, from out/t161_rule_fires.csv (the §1 measurement)
+    if item == "depreciation_amortization":
+        key = (case["ticker"], "10-K", fy["fiscal_year"], item)
+        if key in ab:
+            return "A", ab[key]
+        for fid in case["filing_ids"]:
+            period = _filing_period(conn, fid)
+            key = (case["ticker"], "10-Q", period, item)
+            if key in ab:
+                return "B", ab[key]
+    # C, by the test that placed the case here -- never a presumed cause
     prior = _prior_10k(conn, case["asset_id"], fy["period_end"])
     if prior is not None:
         days = (date.fromisoformat(fy["period_end"]) - date.fromisoformat(prior["period_end"])).days
         if not 330 <= days <= 400:
-            return "C", f"changed fiscal year: the 10-K covers {days} days"
+            return "C", f"test fy_not_12_months: the 10-K covers {days} days"
     nxt = _next_10k(conn, case["asset_id"], fy["period_end"])
     if nxt is not None and fy_value is not None:
         nxt_value = _fact_at(conn, nxt["id"], f"{fy['period_end']} (FY)", case.get("concept"))
-        if nxt_value is not None and abs(nxt_value - fy_value) > 0.005 * max(abs(fy_value), 1.0):
+        if nxt_value is not None:
+            if abs(nxt_value - fy_value) > 0.005 * max(abs(fy_value), 1.0):
+                return "C", (
+                    f"test next_10k_prior_column_restates_fy: {nxt_value:,.0f} vs this 10-K's "
+                    f"{fy_value:,.0f}"
+                )
             return "C", (
-                f"restated: the next 10-K's prior-year column gives {nxt_value:,.0f}, this "
-                f"10-K gave {fy_value:,.0f}"
+                f"test next_10k_prior_column_confirms_fy: {nxt_value:,.0f} = this 10-K's "
+                f"{fy_value:,.0f}"
             )
-    acq = _acquisition(conn, case["fy_filing"], fy["period_end"])
-    if acq is not None:
-        return "C", f"acquisition/disposal filed: {acq[0]} {acq[1]:,.0f}"
     here = case.get("r")
     if here:
         for other_year in (case["fiscal_year"] - 1, case["fiscal_year"] + 1):
@@ -202,10 +183,40 @@ def _classify(conn, case: dict[str, Any], ab: dict, seasonal: dict) -> tuple[str
                 continue
             if abs(here - other) / abs(here) <= 0.30:
                 return "C", (
-                    f"seasonal: r={here:.3f} this year, {other:.3f} in FY{other_year} "
-                    f"(same quarter position)"
+                    f"test ratio_recurs_adjacent_fy: r={here:.3f} here, {other:.3f} in "
+                    f"FY{other_year} (same quarter)"
                 )
-    return "D", "no structural tag mix, restatement, acquisition/disposal or adjacent-year pattern"
+    return "D", "no test passed: the ratio alone (kept; the WARN listing)"
+
+
+def _filing_period(conn, filing_id: int) -> str:
+    row = conn.execute("SELECT fiscal_period FROM sec_filings WHERE id=?", (filing_id,)).fetchone()
+    return str(row["fiscal_period"]) if row is not None else ""
+
+
+def _load_rule_fires(path: str) -> dict[tuple, str]:
+    """The A/B rows of ``out/t161_rule_fires.csv`` (the §1 measurement), keyed for _classify."""
+    out: dict[tuple, str] = {}
+    try:
+        with open(path, newline="") as fh:
+            rows = [line for line in fh if not line.startswith("#")]
+    except OSError:
+        return out
+    for row in csv.DictReader(rows):
+        if "da_amortization_only" not in row["flag"]:
+            continue
+        if row["form"] == "10-K":
+            period = row["period"]
+            year = int(period[2:]) if period.startswith("FY") else int(row["column"][:4])
+            key = (row["company"], "10-K", year, "depreciation_amortization")
+        else:
+            key = (row["company"], "10-Q", row["period"], "depreciation_amortization")
+        out[key] = (
+            f"{row['flag']}: aggregate {row['aggregate_value']} ({row['aggregate_concept']}) = "
+            f"amortization {row['amortization_value']}; Depreciation {row['depreciation']} "
+            f"separate; new D&A {row['new_value']}"
+        )
+    return out
 
 
 def _input_value(conn, filing_id: int, version: str, item: str) -> float | None:
@@ -247,6 +258,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", required=True)
     ap.add_argument("--out", default="out/t161_flagged.csv")
+    ap.add_argument("--rule-fires", default="out/t161_rule_fires.csv")
     args = ap.parse_args()
     conn = connect_ro(args.db)
     version = t161_scan._engine_version(conn)
@@ -351,12 +363,9 @@ def main() -> int:
         )
         case["tests"].add("ii")
 
-    # the structural A/B rows and each case's 10-K concept
-    ab: dict[tuple, dict[str, Any]] = {}
-    for row in t161_scan._structural_rows(conn, "10-K", v10):
-        ab[("10-K", row["asset_id"], row["fiscal_year"])] = row
-    for row in t161_scan._structural_rows(conn, "10-Q", v10):
-        ab[("10-Q", row["filing_id"])] = row
+    # the structural A/B rows, from the §1 measurement (out/t161_rule_fires.csv), and each
+    # case's 10-K concept
+    ab: dict[tuple, str] = _load_rule_fires(args.rule_fires)
     for case in cases.values():
         group, metric = agent_db._TTM_FLOW_SOURCE[case["item"]]
         prow = conn.execute(
@@ -455,6 +464,11 @@ def main() -> int:
             }
         )
     with open(args.out, "w", newline="") as fh:
+        fh.write(
+            "# C tests: fy_not_12_months | next_10k_prior_column_confirms_fy | "
+            "next_10k_prior_column_restates_fy | ratio_recurs_adjacent_fy; D = the ratio alone "
+            "(kept, the WARN listing)\n"
+        )
         writer = csv.DictWriter(fh, fieldnames=list(rows_out[0]))
         writer.writeheader()
         writer.writerows(rows_out)
