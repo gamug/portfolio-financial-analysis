@@ -237,6 +237,24 @@ def test_the_same_drop_on_two_statements_keeps_both_rows(
     assert cls == "FAIL_gateway_dropped"
 
 
+def test_a_concept_flag_concept_counts_as_the_items_own_concept() -> None:
+    """T-160: a ``concept_flags`` concept is one the resolver reads and flags
+    (``statements.py:232``); net income's available-to-common line is the check's case
+    (``statements.py:774-779``)."""
+    assert "NetIncomeLossAvailableToCommonStockholdersBasic" in own_concepts()["net_income"]
+
+
+def test_a_resolver_named_concept_counts_as_the_items_own_concept() -> None:
+    """T-160: the composite resolvers read these concepts by name, so a stored value under one is
+    the item's own value: income tax's current + deferred (``statements.py:2531-2532``), the D&A
+    children (``statements.py:447-452``) and the bare ``Cash`` line (``statements.py:2651-2660``)."""
+    assert "CurrentIncomeTaxExpenseBenefit" in own_concepts()["income_tax"]
+    assert "DeferredIncomeTaxExpenseBenefit" in own_concepts()["income_tax"]
+    assert "Depreciation" in own_concepts()["depreciation_amortization"]
+    assert "AmortizationOfIntangibleAssets" in own_concepts()["depreciation_amortization"]
+    assert "Cash" in own_concepts()["cash"]
+
+
 def test_a_value_stored_under_another_concept_is_a_warning_by_item() -> None:
     own = own_concepts()["revenue"]
     cls, extra = classify(

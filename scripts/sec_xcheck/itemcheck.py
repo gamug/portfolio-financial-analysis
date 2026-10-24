@@ -29,7 +29,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from fundamental_agent.statements import REGISTRY
+from fundamental_agent.statements import DA_SOURCED_CHILDREN, NET_INCOME_SUBSTITUTES, REGISTRY
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -57,12 +57,56 @@ CHECK: dict[str, list[str]] = {
 INSTANT_ITEMS = {"total_assets", "equity", "cash"}
 
 
+#: The concepts each item's **composite resolver** reads by name, beyond the item's own
+#: ``concepts``, ``total_concepts`` and substitutes (T-160). A concept is listed when the resolver
+#: can return its value as the item's value, or subtract it from one; a concept read only to
+#: *refuse* a value (N13's preferred dividends, the cash-flow D&A "only lines" scan) is not the
+#: item's own concept. The line numbers are ``fundamental_agent/statements.py``'s at this branch.
+#:
+#: ``cash``'s restricted-cash fallback (``CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents``,
+#: ``statements.py:2645-2649``) is deliberately **not** listed: it is a caption-checked fallback
+#: whose value may be cash **plus** restricted cash. The V2 analysis classes each stored value per
+#: filing -- the face line under (k)(1) is the declared limitation (``docs/model_fixes.md`` §8
+#: item 1, AJG 2023-03-31); ERIE's parenthetical caption is the defect **T-162** (DECISIONS row 62).
+RESOLVER_CONCEPTS: dict[str, tuple[str, ...]] = {
+    "net_income": (
+        # statements.py:2459-2464: ProfitLoss less the filed NCI total.
+        "us-gaap_NetIncomeLossAttributableToNoncontrollingInterest",
+        # statements.py:613 and 2452: "net income available to common" as parent net income, when
+        # no preferred dividend is filed (N13).
+        *NET_INCOME_SUBSTITUTES,
+    ),
+    "income_tax": (
+        # statements.py:2531-2532: the current plus deferred map (ID-02b, D-06(c)).
+        "us-gaap_CurrentIncomeTaxExpenseBenefit",
+        "us-gaap_DeferredIncomeTaxExpenseBenefit",
+    ),
+    "depreciation_amortization": (
+        # statements.py:447-452: the D&A-nature children of the sourced sum and, for the first
+        # and last, of the exact two-part sum.
+        *DA_SOURCED_CHILDREN,
+    ),
+    "cash": (
+        # statements.py:2651-2660: the bare ``Cash`` line (T-159a), and the cash-equivalents fact
+        # its tier tests (the ES map beside it is step 4, statements.py:2634).
+        "us-gaap_Cash",
+        "us-gaap_CashEquivalentsAtCarryingValue",
+    ),
+}
+
+
 def own_concepts() -> dict[str, set[str]]:
     """Registry item -> its own concept names, without the ``us-gaap_`` prefix.
 
     T-159a: the **substitute** concepts are the item's own concepts too -- each of them is the
     item's total under another standard concept (the taxonomy defines it as that quantity), so a
-    value stored under one of them is the item's own value, not another item's."""
+    value stored under one of them is the item's own value, not another item's.
+
+    T-160: so are each item's ``concept_flags`` concepts (the concept the resolver flags when it
+    reads it, ``statements.py:232``) and the concepts its composite resolver reads by name
+    (:data:`RESOLVER_CONCEPTS`). Before this, the checker reported a correctly read T-159a value
+    as ``OTHER_CONCEPT`` (net income's available-to-common line, the D&A children, the bare
+    ``Cash`` line, income tax's current + deferred)."""
     return {
         name: {
             c.split("_", 1)[1]
@@ -71,6 +115,8 @@ def own_concepts() -> dict[str, set[str]]:
                 *item.total_concepts,
                 *item.fallback_concepts,
                 *substitute_concepts(item),
+                *(concept for concept, _flag in item.concept_flags),
+                *RESOLVER_CONCEPTS.get(name, ()),
             )
         }
         for name, item in REGISTRY.items()

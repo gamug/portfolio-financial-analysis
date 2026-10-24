@@ -17,7 +17,7 @@ from sec_xcheck.common import SecClient, index_by_accession
 from sec_xcheck.itemcheck import own_concepts
 from sec_xcheck_support import metric, rec
 
-from fundamental_agent.statements import Statements
+from fundamental_agent.statements import REGISTRY, Statements
 
 ACCN = "0000000001-24-000001"
 
@@ -110,6 +110,17 @@ def test_measure_reads_each_ciks_facts_once_and_marks_the_proxy_incomplete(tmp_p
 
 
 # -- precedence (D2) ------------------------------------------------------------------------------------
+def test_a_substitute_item_is_not_plain() -> None:
+    """T-160: T-159a's substitute tier decides the value, so the precedence alone does not.
+
+    Before the fix the checker treated a substitute item as plain and reported its substitute
+    reads as ``resolver != concept-first`` (775 receivables, 1,051 short-term investments in
+    pilot_a3)."""
+    assert not precedence.is_plain(REGISTRY["receivables"])
+    assert not precedence.is_plain(REGISTRY["short_term_investments"])
+    assert precedence.is_plain(REGISTRY["total_assets"])
+
+
 def test_the_resolver_reads_the_exact_concept_first_wherever_the_other_row_sits() -> None:
     stmts = Statements.from_payload(
         {
