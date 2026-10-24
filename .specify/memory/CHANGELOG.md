@@ -2843,7 +2843,7 @@ Closed on the user's direction: part 1 (PR #156, the company profile and the app
       FCF measures dropped for regulated utilities; DQ-02, N9, coverage; and the financial firms' sector-specific
       factors.)*
 
-## Work item 8 — `T-159` (closed task) — the empty-value finding and its fixes — DONE 2026-10-24
+## T-159 — the empty-value finding and its fixes (T-143 part A) — DONE 2026-10-24
 
 Closed 2026-10-24: T-159a (PR #182), T-159b (data-mining PR #101, gateway redeployed 2026-10-22), T-159c (PR #183), the pilot_a3 re-run (PR #184) and this documentation PR. The entry below is moved here verbatim from `.specify/memory/TASKS.md`.
 
