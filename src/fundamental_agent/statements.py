@@ -1152,6 +1152,65 @@ def _cover_shares(payload: dict[str, Any]) -> list[CoverShares]:
     return out
 
 
+def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[str, Any]) -> None:
+    """Audit (reviewer B, 2026-10-25): undo a gateway drop the filing's own facts disprove.
+
+    The gateway nulls a face cell it cannot match to a non-dimensional filed fact (T-042,
+    ``no_filed_nondimensional_fact``) and records the original in ``corrections``. The audit found
+    real face rows dropped although the SEC holds the fact (CAT's 46.1 B and TMUS's 70.1 B long-term
+    debt, VLO's capex, NDAQ's COGS, YUM's revenue; the filers' own presentation linkbases list them
+    on the face). A dropped cell is restored -- its original displayed value back in the row -- only
+    when the filing's own non-dimensional filed fact of the **same concept** for the column's period
+    equals it in magnitude within 0.5 % (T-159c rule B). Never a dimensional row; never a guess."""
+    facts: dict[tuple[str, str], list[tuple[str | None, float]]] = {}
+    for fact in _filed_facts(payload):
+        facts.setdefault((fact.concept.replace(":", "_"), fact.period_end), []).append(
+            (fact.period_start, fact.value)
+        )
+    for corr in payload.get("corrections") or []:
+        if not isinstance(corr, dict) or corr.get("corrected") is not None:
+            continue
+        statement, concept, column = corr.get("statement"), corr.get("concept"), corr.get("column")
+        original = _numeric(corr.get("original"))
+        if statement not in raw or not concept or not column or original is None or original == 0:
+            continue
+        period = _parse_period(str(column))
+        if period is None:
+            continue
+        end = str(column)[:10]
+        candidates = facts.get((str(concept), end), [])
+        matched = None
+        for start, value in candidates:
+            if statement == "balance_sheet":
+                if start is not None:
+                    continue
+            else:
+                if start is None:
+                    continue
+                days = (date.fromisoformat(end) - date.fromisoformat(start[:10])).days
+                tag = period.tag
+                if tag == "FY" and not 340 <= days <= 380:
+                    continue
+                if tag.startswith("Q") and not 75 <= days <= 120:
+                    continue
+                if tag == "YTD" and not 120 < days < 340:
+                    continue
+            if abs(abs(value) - abs(original)) <= 0.005 * abs(value):
+                matched = value
+                break
+        if matched is None:
+            continue
+        rows = [r for r in raw[statement] if r.get("concept") == concept and not r.get("dimension")]
+        if rows:
+            if _numeric(rows[0].get(column)) is None:
+                rows[0][column] = original
+                rows[0].setdefault("audit_restored", []).append(column)
+        else:
+            raw[statement].append({"concept": concept, "label": str(concept), "standard_concept": None,
+                                   "abstract": False, "dimension": False, column: matched,
+                                   "audit_restored": [column]})
+
+
 def _filed_facts(payload: dict[str, Any]) -> tuple[FiledFact, ...]:
     """The gateway's ``filed_facts`` list (T-159b), keeping only well-formed numeric facts."""
     out: list[FiledFact] = []
@@ -1420,6 +1479,7 @@ class Statements:
     @classmethod
     def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
         raw = {key: list(payload.get(key) or []) for key in STATEMENT_KEYS}
+        _restore_dropped_cells(raw, payload)
         # T-159c: a bare date on the income statement or the cash-flow statement is an **untagged
         # duration column** (the 16/24-week filers T-159b's F0 fix keeps), not an instant; only
         # the balance sheet's bare date is an instant. The key is shared, so both periods are kept
@@ -1595,6 +1655,8 @@ class Statements:
                     value, concept, how = fallback
                     self._flag("filed_fact")
             if value is None and spec.name == "revenue":
+                # F-A13: a dropped revenue row whose value equals another own revenue concept's
+                # filed fact (YUM: the face row ``RevenueFromContract...``, the filed ``Revenues``).
                 restored = self._restore_dropped_revenue(spec, column)
                 if restored is not None:
                     value, concept, how = restored
