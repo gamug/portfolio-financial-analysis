@@ -995,6 +995,33 @@ def _quarter_columns(
     return tuple(out)
 
 
+def _fy_item_concept(conn: Database, filing_id: int, item: str, engine_version: str) -> str | None:
+    """The concept the 10-K's own rows resolved *item* to. The ``_TTM_FLOW_SOURCE`` row first,
+    then any other row of the filing: the source row's provenance does not always list the item
+    (``return_on_assets`` names neither revenue nor net income -- audit F-A11, APP 2025-Q2)."""
+    group, name = _TTM_FLOW_SOURCE[item]
+    rows = conn.execute(
+        "SELECT metric_group, metric_name, inputs_json FROM fundamental_metrics "
+        "WHERE filing_id = ? AND engine_version = ? ORDER BY id DESC",
+        (filing_id, engine_version),
+    ).fetchall()
+    rows = sorted(rows, key=lambda r: (r["metric_group"], r["metric_name"]) != (group, name))
+    for row in rows:
+        if not row["inputs_json"]:
+            continue
+        provenance = json.loads(row["inputs_json"]).get("provenance")
+        if isinstance(provenance, str):
+            try:
+                provenance = ast.literal_eval(provenance)
+            except (ValueError, SyntaxError):
+                continue
+        entries = ((provenance or {}).get("items") or {}).get(item) or []
+        concept = next((e.get("concept") for e in entries if e.get("concept")), None)
+        if concept:
+            return str(concept)
+    return None
+
+
 def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pin
     conn: Database,
     asset_id: int,
@@ -1031,22 +1058,7 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
     previous_fy = _recorded_flow(conn, previous[0], item, engine_version)
     if previous_fy is None or previous_fy == 0:
         return False
-    group, name = _TTM_FLOW_SOURCE[item]
-    row = conn.execute(
-        "SELECT inputs_json FROM fundamental_metrics WHERE filing_id = ? AND metric_group = ? "
-        "AND metric_name = ? AND engine_version = ? ORDER BY id DESC LIMIT 1",
-        (fy_filing, group, name, engine_version),
-    ).fetchone()
-    if row is None or not row["inputs_json"]:
-        return False
-    provenance = json.loads(row["inputs_json"]).get("provenance")
-    if isinstance(provenance, str):
-        try:
-            provenance = ast.literal_eval(provenance)
-        except (ValueError, SyntaxError):
-            return False
-    entries = ((provenance or {}).get("items") or {}).get(item) or []
-    concept = next((e.get("concept") for e in entries if e.get("concept")), None)
+    concept = _fy_item_concept(conn, fy_filing, item, engine_version)
     if not concept:
         return False
     parts = [c.strip() for c in str(concept).split(" + ")]

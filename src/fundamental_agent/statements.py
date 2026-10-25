@@ -10,8 +10,8 @@ instant column with the matching (or nearest-earlier) date.
 
 from __future__ import annotations
 
-import math
 import itertools
+import math
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
@@ -683,7 +683,8 @@ DA_CAPTION_US_GAAP: frozenset[str] = frozenset(
 # Audit F-A9: a separate face line of intangible amortization (a standard or an extension concept);
 # never an impairment, financing-cost, inventory step-up, contract-cost or lease line (MD-01).
 _INTANGIBLE_AMORT_RE = re.compile(
-    r"^amortization of (acquisition[- ]related |acquired |purchased |other )?intangible", re.IGNORECASE
+    r"^amortization of (acquisition[- ]related |acquired |purchased |other )?intangible",
+    re.IGNORECASE,
 )
 _NOT_DA_AMORT_RE = re.compile(
     r"impairment|financing|debt|discount|premium|inventory|contract|lease|deferred", re.IGNORECASE
@@ -1189,12 +1190,16 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
         if period is None:
             continue
         end = str(column)[:10]
+        # The same concept within 0.5 % (T-159c rule B); another concept of the item only when equal:
+        # a near value there is another line (BA's cost of products vs its total cost of revenue,
+        # a combined filer's subsidiary row -- AEE's 993 M vs the parent's 994 M), not a proof.
         candidates = [
-            c for member in sorted(family.get(str(concept), set()) | {str(concept)})
+            (member == str(concept), *c)
+            for member in sorted(family.get(str(concept), set()) | {str(concept)})
             for c in facts.get((member, end), [])
         ]
         matched = None
-        for start, value in candidates:
+        for same, start, value in candidates:
             if statement == "balance_sheet":
                 if start is not None:
                     continue
@@ -1209,7 +1214,8 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
                     continue
                 if tag == "YTD" and not 120 < days < 340:
                     continue
-            if abs(abs(value) - abs(original)) <= 0.005 * abs(value):
+            tolerance = 0.005 if same else 1e-9
+            if abs(abs(value) - abs(original)) <= tolerance * abs(value):
                 matched = value
                 break
         if matched is None:
@@ -1220,9 +1226,17 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
                 rows[0][column] = original
                 rows[0].setdefault("audit_restored", []).append(column)
         else:
-            raw[statement].append({"concept": concept, "label": str(concept), "standard_concept": None,
-                                   "abstract": False, "dimension": False, column: matched,
-                                   "audit_restored": [column]})
+            raw[statement].append(
+                {
+                    "concept": concept,
+                    "label": str(concept),
+                    "standard_concept": None,
+                    "abstract": False,
+                    "dimension": False,
+                    column: matched,
+                    "audit_restored": [column],
+                }
+            )
 
 
 def _filed_facts(payload: dict[str, Any]) -> tuple[FiledFact, ...]:
@@ -2507,9 +2521,7 @@ class Statements:
                     return filed, candidate, "filed_fact"
         return None
 
-    def _sti_caption_row(
-        self, spec: LineItem, column: str
-    ) -> tuple[float, str, str] | None:
+    def _sti_caption_row(self, spec: LineItem, column: str) -> tuple[float, str, str] | None:
         """Audit F-A1 (MD-02 / MD-03 / MD-35: "cash and marketable securities", C9 p.7): a current-asset
         face row captioned as short-term investments or marketable securities, filed under a concept
         the registry does not list (DXCM's extension "Short-term marketable securities", KLAC's,
@@ -2582,8 +2594,13 @@ class Statements:
         caption = re.compile(
             r"inventor|stockpile|materials and supplies|^fuel\b|^product$", re.IGNORECASE
         )
-        prefixes = ("Inventor", "EnergyRelatedInventory", "PublicUtilitiesInventory", "OtherInventory",
-                    "MaterialsSupplies")
+        prefixes = (
+            "Inventor",
+            "EnergyRelatedInventory",
+            "PublicUtilitiesInventory",
+            "OtherInventory",
+            "MaterialsSupplies",
+        )
         for row in self._rows_for(spec):
             concept = str(row.get("concept") or "")
             if concept == member or "Noncurrent" in concept or "Regulatory" in concept:
@@ -3511,8 +3528,10 @@ class Statements:
                         )
                         if og is not None and og != 0:
                             self._flag("ppe_family_plus_og_added")
-                            used = (G + "PaymentsForCapitalImprovements",
-                                    G + "PaymentsToExploreAndDevelopOilAndGasProperties")
+                            used = (
+                                G + "PaymentsForCapitalImprovements",
+                                G + "PaymentsToExploreAndDevelopOilAndGasProperties",
+                            )
                             return val + og, " + ".join(sorted(used)), "map"
                     return val, str(concept), "concept"
         return None
@@ -3976,9 +3995,15 @@ class Statements:
                     if value is None:
                         # the verified lines are the total: the reading's refusal flags no longer hold
                         self._flags = [
-                            f for f in self._flags
-                            if f not in ("capture_failure", "partial_map_rejected",
-                                         "short_term_debt_only", "debt_sum_refused_other_lines")
+                            f
+                            for f in self._flags
+                            if f
+                            not in (
+                                "capture_failure",
+                                "partial_map_rejected",
+                                "short_term_debt_only",
+                                "debt_sum_refused_other_lines",
+                            )
                         ]
                     self._flag("audit_debt_lines_added")
                     value = (value or 0.0) + sum(extra.values())
