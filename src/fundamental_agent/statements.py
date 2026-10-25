@@ -3448,9 +3448,15 @@ class Statements:
             for c in children
             if (v := self._concept_value(spec, column, c)) is not None and v != 0
         }
+        disjoint = self._investing_lines_disjoint(column)
         if parent_value is not None and parent_value != 0:
             used[parent] = parent_value
-            if siblings and abs(parent_value) < sum(abs(v) for v in siblings.values()):
+            if siblings and disjoint:
+                # Decision D-4 (extends D-3): the investing face lines sum to the stated total, so
+                # no line contains another (BXP 2021-24)
+                self._flag("reit_face_lines_disjoint")
+                used.update(siblings)
+            elif siblings and abs(parent_value) < sum(abs(v) for v in siblings.values()):
                 # Decision D-3 (pilot_a3/DECISIONS.md, amends APP-04b's sentence): a parent smaller
                 # than its filed children cannot contain them -- separate face lines (BXP 2024:
                 # acquisitions 35 M beside building improvements 190 M)
@@ -3461,10 +3467,14 @@ class Statements:
         elif siblings:
             self._flag("reit_sibling_sum")
             used.update(siblings)
-        if not any(
+        if disjoint or not any(
             c in used
-            for c in (parent, *children, G + "PaymentsToDevelopRealEstateAssets",
-                      G + "PaymentsForConstructionInProcess")
+            for c in (
+                parent,
+                *children,
+                G + "PaymentsToDevelopRealEstateAssets",
+                G + "PaymentsForConstructionInProcess",
+            )
         ):
             # the tree's grandparent, used only when none of its parts is filed
             both = self._concept_value(spec, column, G + "PaymentsToAcquireAndDevelopRealEstate")
@@ -3481,6 +3491,37 @@ class Statements:
             self._flag("reit_other_productive_captioned")
             used[G + "PaymentsToAcquireOtherProductiveAssets"] = other
         return used
+
+    def _investing_lines_disjoint(self, column: str) -> bool:
+        """Decision D-4: whether the cash-flow face rows between the operating and the investing
+        totals sum to the stated investing total (0.1 %) -- then each is its own outflow and the
+        FASB tree's containment does not hold on this face (BXP 2021: -1,039,956,000 both ways)."""
+        rows = [
+            r
+            for r in self.raw.get("cash_flow", [])
+            if not r.get("abstract") and not r.get("dimension")
+        ]
+        names = [str(r.get("concept") or "") for r in rows]
+        ends = [
+            i
+            for i, n in enumerate(names)
+            if n.startswith(G + "NetCashProvidedByUsedInInvestingActivities")
+        ]
+        if not ends:
+            return False
+        end = ends[0]
+        starts = [
+            i
+            for i, n in enumerate(names[:end])
+            if n.startswith(G + "NetCashProvidedByUsedInOperatingActivities")
+        ]
+        if not starts:
+            return False
+        total = _numeric(rows[end].get(column))
+        values = [_numeric(r.get(column)) for r in rows[starts[-1] + 1 : end]]
+        if total is None or total == 0 or not values:
+            return False
+        return abs(sum(v for v in values if v is not None) - total) <= 0.001 * abs(total)
 
     def _captioned_value(
         self, spec: LineItem, column: str, concept: str, caption: re.Pattern[str]

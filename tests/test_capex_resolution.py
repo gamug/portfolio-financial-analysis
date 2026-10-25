@@ -510,3 +510,23 @@ def test_reit_other_productive_assets_only_when_captioned_as_capital_spending() 
 
     assert capex("Construction in progress") == 841_000_000.0
     assert capex("Purchases of intangible assets") == 190_000_000.0
+
+
+def test_reit_lines_disjoint_when_the_investing_section_adds_up() -> None:
+    """Decision D-4: BXP 2021's "Acquisitions of real estate" (the tree's grandparent) beside its
+    capital improvements -- the face lines sum to the stated investing total, so both are added."""
+    stmts = _cashflow(
+        _row("us-gaap_NetCashProvidedByUsedInOperatingActivities", "Operating", 1_000.0, sign=1.0),
+        _row(
+            "us-gaap_PaymentsToAcquireAndDevelopRealEstate",
+            "Acquisitions of real estate",
+            -222.0,
+            sign=-1.0,
+        ),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Building improvements", -151.0, sign=-1.0),
+        _row("us-gaap_ProceedsFromSaleOfRealEstate", "Proceeds", 180.0, sign=1.0),
+        _row("us-gaap_NetCashProvidedByUsedInInvestingActivities", "Investing", -193.0, sign=1.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 373.0
