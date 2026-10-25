@@ -3897,6 +3897,13 @@ class Statements:
                         if v is not None:
                             extra.setdefault(con, abs(v))
                 if extra:
+                    if value is None:
+                        # the verified lines are the total: the reading's refusal flags no longer hold
+                        self._flags = [
+                            f for f in self._flags
+                            if f not in ("capture_failure", "partial_map_rejected",
+                                         "short_term_debt_only", "debt_sum_refused_other_lines")
+                        ]
                     self._flag("audit_debt_lines_added")
                     value = (value or 0.0) + sum(extra.values())
                     concept = " + ".join([c for c in [concept] if c] + sorted(extra))
