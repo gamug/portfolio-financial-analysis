@@ -11,6 +11,7 @@ instant column with the matching (or nearest-earlier) date.
 from __future__ import annotations
 
 import math
+import itertools
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
@@ -667,6 +668,28 @@ DA_AGGREGATE_CONCEPTS: tuple[str, ...] = (
     G + "DepreciationAndAmortization",
     G + "DepreciationAmortizationAndAccretionNet",
 )
+# Audit F-A5 (E3's source, A1 5.6.1: the filer's caption names the concept): standard elements the
+# registry does not read as D&A, accepted only as the **sole** cash-flow line captioned exactly as a D&A
+# aggregate (``DA_CAPTION_ELEMENTS``) -- AEP's utility element, PEG's and IP's cost elements, and
+# ``OtherDepreciationAndAmortization`` when it is a filer's only D&A line (ABNB, AMD, MRVL, WDAY ...).
+DA_CAPTION_US_GAAP: frozenset[str] = frozenset(
+    {
+        G + "UtilitiesOperatingExpenseDepreciationAndAmortization",
+        G + "CostDepreciationAmortizationAndDepletion",
+        G + "CostOfGoodsAndServicesSoldDepreciationAndAmortization",
+        G + "OtherDepreciationAndAmortization",
+    }
+)
+# Audit F-A9: a separate face line of intangible amortization (a standard or an extension concept);
+# never an impairment, financing-cost, inventory step-up, contract-cost or lease line (MD-01).
+_INTANGIBLE_AMORT_RE = re.compile(
+    r"^amortization of (acquisition[- ]related |acquired |purchased |other )?intangible", re.IGNORECASE
+)
+_NOT_DA_AMORT_RE = re.compile(
+    r"impairment|financing|debt|discount|premium|inventory|contract|lease|deferred", re.IGNORECASE
+)
+# Audit F-A4: the filer's own filed aggregate that calibrates a sum of D&A-nature face lines.
+_DA_CALIBRATION_CONCEPTS: tuple[str, ...] = DA_AGGREGATE_CONCEPTS
 # The tolerance of rule 4's HLT exception: the income statement and the cash flow carry the same
 # fact, so the two values are the same to the unit.
 _SAME_VALUE = 0.5
@@ -1372,6 +1395,9 @@ class Statements:
     # read failed (``filed_facts_error``).
     filed_facts: tuple[FiledFact, ...] = ()
     filed_facts_error: str | None = None
+    # Audit (reviewer B, 2026-10-25): the debt lines the sector review verified as omitted for this
+    # filing (``audit/debt_overrides.json``) -- added to the total debt (MET-07 "the filed debt lines").
+    audit_debt_add: tuple[str, ...] = ()
     # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
     reit: bool = False
     # T-151 part 2 (D3/D4): the company's GICS sector and sub-industry -- today's snapshot (L-03),
@@ -1420,6 +1446,7 @@ class Statements:
             filed_facts=_filed_facts(payload),
             filed_facts_error=_filed_facts_error(payload),
             reit=reit,
+            audit_debt_add=tuple(payload.get("_audit_debt_add") or ()),
         )
 
     def fy_periods(self) -> list[Period]:
@@ -1567,6 +1594,15 @@ class Statements:
                 if fallback is not None:
                     value, concept, how = fallback
                     self._flag("filed_fact")
+            if value is None and spec.name == "revenue":
+                restored = self._restore_dropped_revenue(spec, column)
+                if restored is not None:
+                    value, concept, how = restored
+            if value is None and spec.name == "short_term_investments":
+                # Audit F-A1: last, after the filed facts (T-159c's proven tier keeps precedence).
+                caption_row = self._sti_caption_row(spec, column)
+                if caption_row is not None:
+                    value, concept, how = caption_row
             self._apply_resolution_flags(spec, column, value, concept, how)
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
@@ -1673,9 +1709,12 @@ class Statements:
                     return total_value, total_concept, "total"
 
         value, concept, how = self._component_row(spec, column)
-        if spec.name == "revenue" and total_value is None and value is None:
+        if spec.name == "revenue" and total_value is None:
+            # Audit F-A7: on an Article 9 statement (net interest income and noninterest income both
+            # on the face) a revenue-concept row smaller than the map is one stream of noninterest
+            # income (KEY's lease income, FITB's and HBAN's ASC 606 fees), never the total (ID-02b).
             bank_rev = self._bank_net_revenue(spec, column)
-            if bank_rev is not None:
+            if bank_rev is not None and (value is None or abs(value) < abs(bank_rev[0])):
                 return bank_rev
         if rebuild_missing_total:
             rebuilt = self._rebuild_missing_total(spec, column)
@@ -2361,6 +2400,69 @@ class Statements:
                 return value, concept, "filed_fact"
         return None
 
+    def _restore_dropped_revenue(
+        self, spec: LineItem, column: str
+    ) -> tuple[float, str, str] | None:
+        """Audit F-A13: the gateway dropped the revenue face row (T-042 / T-140: its value did not
+        reconcile with a non-dimensional filed fact to the dollar -- YUM's differs by $1 M of
+        rounding). The payload's ``corrections`` keep the dropped row's original value: when it
+        calibrates (0.5 %, T-159c rule B) against the filing's own filed fact of the same revenue
+        concept for the column's period, the filed fact is the revenue. Flagged
+        ``revenue_dropped_row_restored``."""
+        period = next((p for p in self.periods if p.key == column), None)
+        if period is None or not self.filed_facts:
+            return None
+        names = set(spec.concepts) | set(spec.total_concepts)
+        for corr in self.corrections:
+            if corr.get("corrected") is not None or corr.get("column") != column:
+                continue
+            concept = str(corr.get("concept") or "")
+            original = corr.get("original")
+            if concept not in names or not isinstance(original, (int, float)) or original == 0:
+                continue
+            filed, status = self._filed_fact_value(spec, period, concept)
+            if filed is None or status is not None:
+                continue
+            if abs(abs(filed) - abs(original)) <= 0.005 * abs(filed):
+                self._flag("revenue_dropped_row_restored")
+                return filed, concept, "filed_fact"
+        return None
+
+    def _sti_caption_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float, str, str] | None:
+        """Audit F-A1 (MD-02 / MD-03 / MD-35: "cash and marketable securities", C9 p.7): a current-asset
+        face row captioned as short-term investments or marketable securities, filed under a concept
+        the registry does not list (DXCM's extension "Short-term marketable securities", KLAC's,
+        EBAY's, EA's generic AFS element). Only rows above "Total current assets"; never a restricted,
+        fiduciary, client or held-for-sale row, or one that names cash. Several such rows are summed
+        (disjoint face lines). Flagged ``sti_caption_row``."""
+        caption = re.compile(
+            r"^(short[- ]term (investments?|marketable securities)|marketable securities|"
+            r"short[- ]term deposits|time deposits)\b",
+            re.IGNORECASE,
+        )
+        excluded = re.compile(
+            r"restrict|fiduciar|client|held for sale|noncurrent|long[- ]term|cash|structured finance",
+            re.IGNORECASE,
+        )
+        found: list[tuple[str, float]] = []
+        for row in self.raw.get("balance_sheet", []):
+            if row.get("abstract") or row.get("dimension"):
+                continue
+            if row.get("concept") == G + "AssetsCurrent":
+                break
+            label = str(row.get("label") or "").strip()
+            if not caption.search(label) or excluded.search(label):
+                continue
+            value = self._read(row, column, spec)
+            if value is not None and value > 0:
+                found.append((str(row.get("concept")), value))
+        if not found:
+            return None
+        self._flag("sti_caption_row")
+        return sum(v for _c, v in found), " + ".join(c for c, _v in found), "label_fallback"
+
     def _sole_family_member(
         self, spec: LineItem, column: str, families: tuple[str, ...]
     ) -> tuple[str, float] | None:
@@ -2387,7 +2489,34 @@ class Statements:
         members = filled[0][1]
         if len(members) != 1:
             return None
+        if spec.name == "inventory" and self._other_inventory_row(spec, column, members[0][0]):
+            # Audit F-A3: "only when it is all the filing has" -- another inventory face row outside
+            # the families (ETR's utility inventory, AEP's and PEG's fuel, FCX's stockpiles and
+            # product) means the member is one component, never the total (the XOM precedent).
+            self._flag("inventory_component_not_total")
+            return None
         return members[0]
+
+    def _other_inventory_row(self, spec: LineItem, column: str, member: str) -> bool:
+        """Audit F-A3: an inventory-like face row (concept or caption) with a value in *column*,
+        other than *member*: ``Inventor*`` concepts, fuel, stockpiles, materials and supplies, product."""
+        caption = re.compile(
+            r"inventor|stockpile|materials and supplies|^fuel\b|^product$", re.IGNORECASE
+        )
+        prefixes = ("Inventor", "EnergyRelatedInventory", "PublicUtilitiesInventory", "OtherInventory",
+                    "MaterialsSupplies")
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept == member or "Noncurrent" in concept or "Regulatory" in concept:
+                continue
+            label = str(row.get("label") or "").strip()
+            if re.search(r"prepa|long[- ]term|total", label, re.IGNORECASE):
+                continue
+            if not (concept.split("_", 1)[-1].startswith(prefixes) or caption.search(label)):
+                continue
+            if self._read(row, column, spec) is not None:
+                return True
+        return False
 
     def _class_sum(
         self, spec: LineItem, column: str, classes: tuple[tuple[str, ...], ...]
@@ -2578,8 +2707,12 @@ class Statements:
         )
         cap = str(row.get("label") or "") if row else ""
         cap_clean = _CASH_NOTE_RE.sub("", cap)
+        # T-162 (FIXES #2): a parenthetical that names restricted cash ("(includes restricted cash of
+        # ...)", ERIE) says the line includes it; test before the parentheses are stripped.
+        if "restrict" in cap_clean.lower():
+            return None
         cap_clean = _CASH_PAREN_RE.sub("", cap_clean).strip().lower()
-        if cap_clean in _ALLOWED_K1_CAPTIONS and "restrict" not in cap_clean:
+        if cap_clean in _ALLOWED_K1_CAPTIONS:
             for r in self._rows_for(spec):
                 if r.get("concept") == concept:
                     continue
@@ -2713,15 +2846,77 @@ class Statements:
                 return value, concept, how
         caption = self._da_caption_fallback(spec, column)
         if caption[0] is not None:
-            return caption
+            # Audit F-A9: a caption-read D&A ("D&A excluding intangible amortization", CRWD, IEX)
+            # beside its own separate intangible-amortization line.
+            plus = self._da_plus_intangibles_row(
+                spec, column, caption[0], caption[1], caption_read=True
+            )
+            return plus if plus is not None else caption
+        calibrated = self._da_calibrated_sum(spec, column)
+        if calibrated is not None:
+            return calibrated
         # T-159a: the exact two-part sum (ID-02b: a map with a source states the identity) --
         # ``Depreciation`` + ``AmortizationOfIntangibleAssets``, when both are filed for the period.
         # It is the last tier, so every read that resolves today resolves to the same value.
         exact = self._da_exact_sum(spec, column)
         return exact if exact[0] is not None else result
 
+    def _da_calibrated_sum(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """Audit F-A4: the D&A-nature face lines of the cash-flow statement (a depreciation line plus
+        amortization / depletion lines, standard or extension, ``AdjustmentForAmortization`` captioned
+        "Amortization" included) whose sum equals the filer's **own** filed aggregate D&A fact for
+        the same period (``DepreciationDepletionAndAmortization`` & co., T-159b's filed facts). The
+        filer's aggregate is the identity's source (the T-159c rule B calibration principle): AVY
+        2025Q1 "Depreciation" 48.8 M + "Amortization" 29.1 M = its filed 77.9 M. Impairment,
+        financing-cost and similar lines are never terms (MD-01). Exactly one matching subset, else
+        nothing. Flagged ``da_calibrated_sum``."""
+        period = next((p for p in self.periods if p.key == column), None)
+        if period is None or not self.filed_facts:
+            return None
+        targets = set()
+        for c in _DA_CALIBRATION_CONCEPTS:
+            value, _status = self._filed_fact_value(spec, period, c)
+            if value is not None:
+                targets.add(value)
+        if not targets:
+            return None
+        terms: list[tuple[str, float, bool]] = []
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            label = str(row.get("label") or "")
+            if not (_DA_NAME_RE.search(concept.split("_", 1)[-1]) or _DA_NAME_RE.search(label)):
+                continue
+            if _NOT_DA_AMORT_RE.search(label) or _NOT_DA_AMORT_RE.search(concept.split("_", 1)[-1]):
+                continue
+            value = self._read(row, column, spec)
+            if value is None or value == 0:
+                continue
+            is_dep = concept == G + "Depreciation" or label.lower().startswith("depreciation")
+            terms.append((concept, value, is_dep))
+        matches = []
+        for n in range(2, min(4, len(terms)) + 1):
+            for combo in itertools.combinations(terms, n):
+                if not any(t[2] for t in combo):
+                    continue
+                total = sum(t[1] for t in combo)
+                if any(abs(total - x) <= _SAME_VALUE for x in targets):
+                    matches.append(combo)
+        if len(matches) != 1:
+            return None
+        self._flag("da_calibrated_sum")
+        combo = matches[0]
+        return sum(t[1] for t in combo), " + ".join(sorted(t[0] for t in combo)), "sourced_map"
+
     def _da_plus_intangibles_row(
-        self, spec: LineItem, column: str, value: float, concept: str | None
+        self,
+        spec: LineItem,
+        column: str,
+        value: float,
+        concept: str | None,
+        *,
+        caption_read: bool = False,
     ) -> tuple[float | None, str | None, str | None] | None:
         """T-159a rule 4 (F7): D&A filed as two face lines.
 
@@ -2737,10 +2932,21 @@ class Statements:
         the same value and no ``AmortizationOfIntangibleAssets`` line: the D&A row is then the
         whole D&A expense and the other row lies outside it (HLT's "Amortization of contract
         acquisition costs"), so adding it would overstate the D&A and the EBITDA."""
-        if concept not in DA_AGGREGATE_CONCEPTS:
+        if concept not in DA_AGGREGATE_CONCEPTS and not caption_read:
             return None
         for row in self._rows_for(spec):
-            if row.get("concept") != G + "AmortizationOfIntangibleAssets":
+            row_concept = str(row.get("concept") or "")
+            if row_concept == concept:
+                continue
+            label = str(row.get("label") or "")
+            # Audit F-A9: the standard element, or an extension captioned as intangible amortization
+            # (LHX, VRSK, BR) -- never an impairment, financing, inventory or contract-cost line.
+            extension = (
+                not row_concept.startswith("us-gaap_")
+                and _INTANGIBLE_AMORT_RE.search(label) is not None
+                and _NOT_DA_AMORT_RE.search(label) is None
+            )
+            if row_concept != G + "AmortizationOfIntangibleAssets" and not extension:
                 continue
             if row.get("parent_concept") == concept:
                 continue  # an "of which" line: it is already inside the D&A
@@ -2760,7 +2966,7 @@ class Statements:
             self._flag("da_plus_intangibles_row")
             return (
                 value + intangibles,
-                f"{concept} + {G}AmortizationOfIntangibleAssets",
+                f"{concept} + {row_concept}",
                 "sourced_map",
             )
         return None
@@ -2910,7 +3116,9 @@ class Statements:
         found: list[tuple[str, float, str]] = []
         for row in self._rows_for(spec):
             concept = str(row.get("concept") or "")
-            if not concept or concept.startswith(("us-gaap_", "dei_")):
+            if not concept or (
+                concept.startswith(("us-gaap_", "dei_")) and concept not in DA_CAPTION_US_GAAP
+            ):
                 continue
             element = DA_CAPTION_ELEMENTS.get(_normalize_caption(str(row.get("label") or "")))
             if element is None:
@@ -3215,6 +3423,18 @@ class Statements:
             if concept in tier1_concepts:
                 val = self._read(row, column, spec)
                 if val is not None:
+                    if concept == G + "PaymentsForCapitalImprovements":
+                        # Audit F-A8 (MET-08 (c)): beside an oil & gas development line the capital
+                        # improvements line is the "other fixed asset additions" of the same
+                        # statement (CTRA 2022-24: 10 M beside 1,700 M), so the two are added.
+                        og = self._concept_value(
+                            spec, column, G + "PaymentsToExploreAndDevelopOilAndGasProperties"
+                        )
+                        if og is not None and og != 0:
+                            self._flag("ppe_family_plus_og_added")
+                            used = (G + "PaymentsForCapitalImprovements",
+                                    G + "PaymentsToExploreAndDevelopOilAndGasProperties")
+                            return val + og, " + ".join(sorted(used)), "map"
                     return val, str(concept), "concept"
         return None
 
@@ -3665,6 +3885,19 @@ class Statements:
             if column is None:
                 return Resolution(None)
             value, concept, how = self._total_debt(period_key, column)
+            if self.audit_debt_add:
+                extra = {}
+                for row in self.raw.get("balance_sheet", []):
+                    con = str(row.get("concept") or "")
+                    if con in self.audit_debt_add and con not in (concept or "").split(" + "):
+                        v = _numeric(row.get(column))
+                        if v is not None:
+                            extra.setdefault(con, abs(v))
+                if extra:
+                    self._flag("audit_debt_lines_added")
+                    value = (value or 0.0) + sum(extra.values())
+                    concept = " + ".join([c for c in [concept] if c] + sorted(extra))
+                    how = "map"
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
