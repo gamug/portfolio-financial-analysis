@@ -9,6 +9,7 @@ never the label (T-140) -- see :func:`completed_units`.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import statistics
@@ -994,6 +995,72 @@ def _quarter_columns(
     return tuple(out)
 
 
+def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pin
+    conn: Database,
+    asset_id: int,
+    item: str,
+    pair: YTDPair,
+    fy_filing: int | None,
+    engine_version: str,
+) -> bool:
+    """Audit F-A11, without lookahead: the YTD identity's terms come from two perimeters.
+
+    True when (a) this 10-Q's prior-year YTD differs by more than 2 % from the YTD the prior-year
+    10-Q itself reported (the company recast that year), **and** (b) the 10-K that supplies the prior
+    fiscal year did **not** restate its own comparative year (its prior-year column equals the year
+    the previous 10-K reported, within 0.5 %): the recast came after that 10-K, so its FY is still on
+    the old perimeter. Anything the stored filings cannot show (no prior-year 10-Q, no previous 10-K,
+    no comparative column) is not called mixed."""
+    if fy_filing is None or pair.prior is None or not pair.prior_end:
+        return False
+    old_q = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(pair.prior_end))
+    if old_q is None:
+        return False
+    original = _recorded_ytd(conn, old_q[0], item, engine_version)
+    if original is None or original == 0 or abs(pair.prior - original) <= 0.02 * abs(original):
+        return False
+    fy_end = _filing_period_end(conn, fy_filing)
+    if not fy_end:
+        return False
+    previous = _filing_near(conn, asset_id, "10-K", _months_before(fy_end, 12))
+    if previous is None:
+        return False
+    previous_fy = _recorded_flow(conn, previous[0], item, engine_version)
+    if previous_fy is None or previous_fy == 0:
+        return False
+    group, name = _TTM_FLOW_SOURCE[item]
+    row = conn.execute(
+        "SELECT inputs_json FROM fundamental_metrics WHERE filing_id = ? AND metric_group = ? "
+        "AND metric_name = ? AND engine_version = ? ORDER BY id DESC LIMIT 1",
+        (fy_filing, group, name, engine_version),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return False
+    provenance = json.loads(row["inputs_json"]).get("provenance")
+    if isinstance(provenance, str):
+        try:
+            provenance = ast.literal_eval(provenance)
+        except (ValueError, SyntaxError):
+            return False
+    entries = ((provenance or {}).get("items") or {}).get(item) or []
+    concept = next((e.get("concept") for e in entries if e.get("concept")), None)
+    if not concept:
+        return False
+    parts = [c.strip() for c in str(concept).split(" + ")]
+    comparative = 0.0
+    found = set()
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (fy_filing, f"{previous[1]} (FY)"),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in found and fact["value"] is not None:
+            found.add(fact["concept"])
+            comparative += float(fact["value"])
+    if found != set(parts):
+        return False
+    return abs(abs(comparative) - abs(previous_fy)) <= 0.005 * abs(previous_fy)
+
+
 def _filing_period_end(conn: Database, filing_id: int) -> str | None:
     row = conn.execute("SELECT period_end FROM sec_filings WHERE id = ?", (filing_id,)).fetchone()
     return str(row["period_end"]) if row and row["period_end"] else None
@@ -1060,6 +1127,16 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 if fy_filing is not None
                 else None
             )
+            if fy is not None and _perimeter_mixed(
+                conn, asset_id, item, pair, fy_filing, engine_version
+            ):
+                # Audit F-A11 (T-161's rule: never store a mixed value): this 10-Q recast its prior
+                # year (a divestiture, discontinued operations) after the 10-K, whose FY still holds
+                # the old perimeter -- FY(old) - YTD(new) + YTD(new) mixes the two.
+                out[item] = TTMFlow(
+                    0.0, "refused", ytd=pair.current, flags=("ttm_perimeter_change",)
+                )
+                continue
             if fy is not None:
                 # H4: the terms and the columns the identity combined, with the accession of the
                 # filing that supplied each (the prior 10-K, then this filing's own two columns).

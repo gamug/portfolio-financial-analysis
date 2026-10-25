@@ -337,7 +337,7 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
     count's own ``as_of_date`` are both on or before it (T-107, no lookahead). Empty when the
     table does not exist yet (a database no ingest has touched)."""
     try:
-        return db.execute(
+        rows = db.execute(
             """
             SELECT sf.asset_id, a.cik, sf.id AS filing_id, sf.available_at,
                    c.class_member, c.value, c.as_of_date
@@ -351,6 +351,23 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
         ).fetchall()
     except DatabaseError:
         return []
+    try:
+        # Audit F-A12 (MKT-01): the cover count of the company's last filing **before** its first
+        # stored one, from the SEC's own dei fact (filed on or before *as_of* -- no lookahead). A
+        # negative id, so it never collides with a stored filing.
+        rows += db.execute(
+            """
+            SELECT p.asset_id, a.cik, -p.id AS filing_id, p.available_at,
+                   '' AS class_member, p.value, p.as_of_date
+            FROM audit_prior_cover_shares p JOIN assets a ON a.id = p.asset_id
+            WHERE p.asset_id IN (SELECT value FROM json_each(?))
+              AND p.available_at <= ? AND p.as_of_date <= ?
+            """,
+            (json.dumps(sorted(set(asset_ids))), as_of, as_of),
+        ).fetchall()
+    except DatabaseError:
+        pass
+    return rows
 
 
 def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -> list[Row]:
