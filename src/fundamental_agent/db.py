@@ -1002,6 +1002,7 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
     pair: YTDPair,
     fy_filing: int | None,
     engine_version: str,
+    fy: float,
 ) -> bool:
     """Audit F-A11, without lookahead: the YTD identity's terms come from two perimeters.
 
@@ -1019,6 +1020,8 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
     original = _recorded_ytd(conn, old_q[0], item, engine_version)
     if original is None or original == 0 or abs(pair.prior - original) <= 0.02 * abs(original):
         return False
+    if abs(pair.prior - original) < 0.01 * abs(fy):
+        return False  # immaterial against the year (ABNB 2023: thousands -> millions rounding)
     fy_end = _filing_period_end(conn, fy_filing)
     if not fy_end:
         return False
@@ -1128,7 +1131,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 else None
             )
             if fy is not None and _perimeter_mixed(
-                conn, asset_id, item, pair, fy_filing, engine_version
+                conn, asset_id, item, pair, fy_filing, engine_version, fy
             ):
                 # Audit F-A11 (T-161's rule: never store a mixed value): this 10-Q recast its prior
                 # year (a divestiture, discontinued operations) after the 10-K, whose FY still holds
