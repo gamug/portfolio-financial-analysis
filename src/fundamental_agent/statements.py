@@ -1160,13 +1160,24 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
     real face rows dropped although the SEC holds the fact (CAT's 46.1 B and TMUS's 70.1 B long-term
     debt, VLO's capex, NDAQ's COGS, YUM's revenue; the filers' own presentation linkbases list them
     on the face). A dropped cell is restored -- its original displayed value back in the row -- only
-    when the filing's own non-dimensional filed fact of the **same concept** for the column's period
+    when the filing's own non-dimensional filed fact of the same concept, or of another concept of
+    the same registry item (not debt, cash or short-term investments), for the column's period
     equals it in magnitude within 0.5 % (T-159c rule B). Never a dimensional row; never a guess."""
     facts: dict[tuple[str, str], list[tuple[str | None, float]]] = {}
     for fact in _filed_facts(payload):
         facts.setdefault((fact.concept.replace(":", "_"), fact.period_end), []).append(
             (fact.period_start, fact.value)
         )
+    # the concepts of the same registry item: a dropped row of one is proven by another's filed fact
+    # (YUM's ``RevenueFromContract...`` row by its ``Revenues`` fact, COGS by ``CostOfRevenue``).
+    # Never the debt, cash or short-term investment items: there an equal fact may be another line.
+    family: dict[str, set[str]] = {}
+    for name, item in REGISTRY.items():
+        if name in ("long_term_debt", "short_term_debt", "cash", "short_term_investments"):
+            continue
+        members = {*item.concepts, *item.total_concepts, *item.fallback_concepts}
+        for concept_name in members:
+            family.setdefault(concept_name, set()).update(members)
     for corr in payload.get("corrections") or []:
         if not isinstance(corr, dict) or corr.get("corrected") is not None:
             continue
@@ -1178,7 +1189,10 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
         if period is None:
             continue
         end = str(column)[:10]
-        candidates = facts.get((str(concept), end), [])
+        candidates = [
+            c for member in sorted(family.get(str(concept), set()) | {str(concept)})
+            for c in facts.get((member, end), [])
+        ]
         matched = None
         for start, value in candidates:
             if statement == "balance_sheet":
