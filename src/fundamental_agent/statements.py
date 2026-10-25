@@ -2420,12 +2420,15 @@ class Statements:
             original = corr.get("original")
             if concept not in names or not isinstance(original, (int, float)) or original == 0:
                 continue
-            filed, status = self._filed_fact_value(spec, period, concept)
-            if filed is None or status is not None:
-                continue
-            if abs(abs(filed) - abs(original)) <= 0.005 * abs(filed):
-                self._flag("revenue_dropped_row_restored")
-                return filed, concept, "filed_fact"
+            # the dropped row's concept first, then the item's other own concepts: YUM's face row is
+            # ``RevenueFromContractWithCustomer...``, its filed total ``Revenues`` (the same 1,547 M)
+            for candidate in (concept, *sorted(names - {concept})):
+                filed, status = self._filed_fact_value(spec, period, candidate)
+                if filed is None or status is not None:
+                    continue
+                if abs(abs(filed) - abs(original)) <= 0.005 * abs(filed):
+                    self._flag("revenue_dropped_row_restored")
+                    return filed, candidate, "filed_fact"
         return None
 
     def _sti_caption_row(
