@@ -3984,7 +3984,7 @@ class Statements:
                 return Resolution(None)
             value, concept, how = self._total_debt(period_key, column)
             if self.audit_debt_add:
-                extra = {}
+                extra: dict[str, float] = {}
                 for row in self.raw.get("balance_sheet", []):
                     con = str(row.get("concept") or "")
                     if con in self.audit_debt_add and con not in (concept or "").split(" + "):

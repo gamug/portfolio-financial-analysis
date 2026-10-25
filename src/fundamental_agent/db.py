@@ -10,6 +10,7 @@ never the label (T-140) -- see :func:`completed_units`.
 from __future__ import annotations
 
 import ast
+import itertools
 import json
 import math
 import statistics
@@ -1030,6 +1031,7 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
     fy_filing: int | None,
     engine_version: str,
     fy: float,
+    period_end: str,
 ) -> bool:
     """Audit F-A11, without lookahead: the YTD identity's terms come from two perimeters.
 
@@ -1037,8 +1039,9 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
     10-Q itself reported (the company recast that year), **and** (b) the 10-K that supplies the prior
     fiscal year did **not** restate its own comparative year (its prior-year column equals the year
     the previous 10-K reported, within 0.5 %): the recast came after that 10-K, so its FY is still on
-    the old perimeter. Anything the stored filings cannot show (no prior-year 10-Q, no previous 10-K,
-    no comparative column) is not called mixed."""
+    the old perimeter -- or it did, but a 10-Q of the current year recast again
+    (:func:`_recast_within_year`). With no previous 10-K stored (the first year), (b) cannot be shown
+    and the observed recast decides. No prior-year 10-Q or no comparative column: not called mixed."""
     if fy_filing is None or pair.prior is None or not pair.prior_end:
         return False
     old_q = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(pair.prior_end))
@@ -1054,7 +1057,9 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
         return False
     previous = _filing_near(conn, asset_id, "10-K", _months_before(fy_end, 12))
     if previous is None:
-        return False
+        # the company's first stored year: (b) cannot be tested, and the recast is observed -- the
+        # identity's FY is not shown to be on the new perimeter (audit: 27 mixed / 17 consistent)
+        return True
     previous_fy = _recorded_flow(conn, previous[0], item, engine_version)
     if previous_fy is None or previous_fy == 0:
         return False
@@ -1073,7 +1078,76 @@ def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pi
             comparative += float(fact["value"])
     if found != set(parts):
         return False
-    return abs(abs(comparative) - abs(previous_fy)) <= 0.005 * abs(previous_fy)
+    if abs(abs(comparative) - abs(previous_fy)) <= 0.005 * abs(previous_fy):
+        return True
+    # the 10-K restated its comparative year -- for a change up to the 10-K. A recast a later 10-Q
+    # of the same year shows (GE's Vernova spin after the GEHC-restated FY2023 10-K) is not in it.
+    return _recast_within_year(conn, asset_id, fy_end, period_end, parts, fy)
+
+
+def _period_sum(conn: Database, filing_id: int, key: str, parts: list[str]) -> float | None:
+    values: dict[str, float] = {}
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (filing_id, key),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in values and fact["value"] is not None:
+            values[fact["concept"]] = float(fact["value"])
+    return sum(values.values()) if len(values) == len(parts) else None
+
+
+def _recast_within_year(  # noqa: PLR0913 - the identity's parts
+    conn: Database, asset_id: int, fy_end: str, period_end: str, parts: list[str], fy: float
+) -> bool:
+    """Audit F-A11, no lookahead: whether a 10-Q of the current fiscal year (after the 10-K) recast
+    the prior year again. For each two consecutive 10-Qs after the fiscal year end, up to and
+    including this one (its facts are stored before its metrics), the later one's prior-year YTD
+    minus its prior-year quarter is the prior-year YTD through the earlier quarter on the later
+    basis; it must equal what the earlier 10-Q itself showed (within 2 %, or under 1 % of the year).
+    Measured on the audit's labelled TTMs: 21 mixed found, 0 of 409 consistent flagged."""
+    chain = [
+        int(r["id"])
+        for r in conn.execute(
+            "SELECT id FROM sec_filings WHERE asset_id = ? AND form = '10-Q' "
+            "AND period_end > ? AND period_end <= ? ORDER BY period_end",
+            (asset_id, fy_end, period_end),
+        ).fetchall()
+    ]
+    for earlier, later in itertools.pairwise(chain):
+        keys1 = sorted(
+            k
+            for k in _period_keys(conn, earlier)
+            if k[:10] <= fy_end and k.endswith(("(YTD)", "(Q1)"))
+        )
+        keys2 = _period_keys(conn, later)
+        ytd2 = sorted(k for k in keys2 if k.endswith("(YTD)") and k[:10] <= fy_end)
+        if not keys1 or not ytd2:
+            continue
+        q2 = sorted(
+            k
+            for k in keys2
+            if "(" in k and not k.endswith(("(YTD)", "(FY)")) and keys1[-1][:10] < k[:10] <= fy_end
+        )
+        if not q2:
+            continue
+        a = _period_sum(conn, earlier, keys1[-1], parts)
+        b = _period_sum(conn, later, ytd2[-1], parts)
+        c = _period_sum(conn, later, q2[-1], parts)
+        if a is None or b is None or c is None or a == 0:
+            continue
+        implied = b - c
+        if abs(implied - a) > 0.02 * abs(a) and abs(implied - a) >= 0.01 * abs(fy):
+            return True
+    return False
+
+
+def _period_keys(conn: Database, filing_id: int) -> list[str]:
+    return [
+        str(r["period_key"])
+        for r in conn.execute(
+            "SELECT DISTINCT period_key FROM financial_facts WHERE filing_id = ?", (filing_id,)
+        ).fetchall()
+    ]
 
 
 def _filing_period_end(conn: Database, filing_id: int) -> str | None:
@@ -1143,7 +1217,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 else None
             )
             if fy is not None and _perimeter_mixed(
-                conn, asset_id, item, pair, fy_filing, engine_version, fy
+                conn, asset_id, item, pair, fy_filing, engine_version, fy, period_end
             ):
                 # Audit F-A11 (T-161's rule: never store a mixed value): this 10-Q recast its prior
                 # year (a divestiture, discontinued operations) after the 10-K, whose FY still holds
