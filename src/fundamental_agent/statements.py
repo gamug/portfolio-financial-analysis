@@ -493,7 +493,17 @@ _NOT_A_CAPEX_PAYMENT_RE = re.compile(r"proceeds?|\bsales?\b|disposition|gain", r
 # is refused -- the filer's own wording is the discriminator (PSA's "…RemainingUnpaidAtPeriodEnd"
 # lines carry the *same caption* as their cash counterpart, so only the concept name separates them).
 _NOT_AN_EXTENSION_CAPEX_RE = re.compile(
-    r"accrual|accrued|unpaid|remaining|payable|at period end", re.IGNORECASE
+    r"accrual|accrued|unpaid|remaining|payable|at period end|third[- ]party|contracts?\b"
+    r"|joint venture|unconsolidated|deconsolidat|loans?\b|notes? receivable|mortgage",
+    re.IGNORECASE,
+)
+
+# Audit F-A10 (APP-04b): a REIT face caption naming capital spending on existing properties or
+# development (never an acquisition caption: acquisitions are read by their us-gaap concepts).
+_REIT_CAPEX_CAPTION_RE = re.compile(
+    r"capital expenditures?|improvements?\b|redevelopment|\bdevelopment\b|renovations?"
+    r"|construction in progress|renewals? and replacements?",
+    re.IGNORECASE,
 )
 
 # -- Cash (T-148 (k), B4, B6) ----------------------------------------------------------------------
@@ -3407,34 +3417,53 @@ class Statements:
         are added, because siblings in a calculation sum to the parent and are therefore explicitly
         disjoint (MET-08 (b)), flagged ``reit_sibling_sum``."""
         parent = G + "PaymentsToAcquireRealEstate"
+        # Audit F-A10: every child the FASB 2026 tree gives the parent (WELL's, AVB's, DOC's
+        # acquisitions are ``PaymentsToAcquireOtherRealEstate``; DRE's and INVH's land lines).
         children = (
             G + "PaymentsToAcquireCommercialRealEstate",
             G + "PaymentsForCapitalImprovements",
+            G + "PaymentsToAcquireOtherRealEstate",
+            G + "PaymentsToAcquireLand",
+            G + "PaymentsToAcquireLandHeldForUse",
+            G + "PaymentsToAcquireBuildings",
+            G + "PaymentsToAcquireResidentialRealEstate",
         )
         used: dict[str, float] = {}
         for c in (
             G + "PaymentsToAcquirePropertyPlantAndEquipment",
             G + "PaymentsToAcquireRealEstateHeldForInvestment",
             G + "PaymentsToDevelopRealEstateAssets",
+            # Audit F-A10: the tree's sibling of development (WELL), and tenant improvements -- a
+            # branch of their own (leasing costs), disjoint from the real-estate tree (BXP)
+            G + "PaymentsForConstructionInProcess",
+            G + "PaymentsForTenantImprovements",
         ):
             val = self._concept_value(spec, column, c)
             if val is not None and val != 0:
                 used[c] = val
 
         parent_value = self._concept_value(spec, column, parent)
+        siblings = {
+            c: v
+            for c in children
+            if (v := self._concept_value(spec, column, c)) is not None and v != 0
+        }
         if parent_value is not None and parent_value != 0:
             used[parent] = parent_value
-            if any(self._concept_value(spec, column, c) is not None for c in children):
-                self._flag("capital_improvements_overlap_not_added")
-        else:
-            siblings = {
-                c: v
-                for c in children
-                if (v := self._concept_value(spec, column, c)) is not None and v != 0
-            }
             if siblings:
-                self._flag("reit_sibling_sum")
-                used.update(siblings)
+                self._flag("capital_improvements_overlap_not_added")
+        elif siblings:
+            self._flag("reit_sibling_sum")
+            used.update(siblings)
+        if not any(
+            c in used
+            for c in (parent, *children, G + "PaymentsToDevelopRealEstateAssets",
+                      G + "PaymentsForConstructionInProcess")
+        ):
+            # the tree's grandparent, used only when none of its parts is filed
+            both = self._concept_value(spec, column, G + "PaymentsToAcquireAndDevelopRealEstate")
+            if both is not None and both != 0:
+                used[G + "PaymentsToAcquireAndDevelopRealEstate"] = both
         return used
 
     @staticmethod
@@ -3484,7 +3513,11 @@ class Statements:
         resolution). The one-line rule is unchanged for every other filer."""
         if not spec.label_fallback:
             return {}
-        wanted = re.compile(spec.label_fallback, re.IGNORECASE)
+        # Audit F-A10: APP-04b's components by their own captions too (PLD "Property improvements",
+        # ESS "Redevelopment", DRE "Second generation tenant improvements ... building improvements")
+        wanted = re.compile(
+            rf"{spec.label_fallback}|{_REIT_CAPEX_CAPTION_RE.pattern}", re.IGNORECASE
+        )
         unwanted = re.compile(spec.label_fallback_exclude or r"(?!)", re.IGNORECASE)
         out: dict[str, float] = {}
         for row in self._rows_for(spec):
