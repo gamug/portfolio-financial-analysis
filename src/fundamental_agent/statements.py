@@ -3450,7 +3450,13 @@ class Statements:
         }
         if parent_value is not None and parent_value != 0:
             used[parent] = parent_value
-            if siblings:
+            if siblings and abs(parent_value) < sum(abs(v) for v in siblings.values()):
+                # Decision D-3 (pilot_a3/DECISIONS.md, amends APP-04b's sentence): a parent smaller
+                # than its filed children cannot contain them -- separate face lines (BXP 2024:
+                # acquisitions 35 M beside building improvements 190 M)
+                self._flag("reit_parent_smaller_than_children")
+                used.update(siblings)
+            elif siblings:
                 self._flag("capital_improvements_overlap_not_added")
         elif siblings:
             self._flag("reit_sibling_sum")
@@ -3464,7 +3470,28 @@ class Statements:
             both = self._concept_value(spec, column, G + "PaymentsToAcquireAndDevelopRealEstate")
             if both is not None and both != 0:
                 used[G + "PaymentsToAcquireAndDevelopRealEstate"] = both
+        # Decision D-2 (amends MET-08 (b)(5) for REITs): ``PaymentsToAcquireOtherProductiveAssets``
+        # ("tangible or intangible") is a component when its face caption names capital spending
+        # (BXP "Construction in progress", HST "Renewals and replacements", INVH "Other capital
+        # expenditures ..."); it is the FASB tree's sibling of PP&E, so it is added.
+        other = self._captioned_value(
+            spec, column, G + "PaymentsToAcquireOtherProductiveAssets", _REIT_CAPEX_CAPTION_RE
+        )
+        if other is not None and other != 0:
+            self._flag("reit_other_productive_captioned")
+            used[G + "PaymentsToAcquireOtherProductiveAssets"] = other
         return used
+
+    def _captioned_value(
+        self, spec: LineItem, column: str, concept: str, caption: re.Pattern[str]
+    ) -> float | None:
+        """The first non-dimensional row tagged *concept* whose caption matches *caption*."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept and caption.search(str(row.get("label") or "")):
+                value = self._read(row, column, spec)
+                if value is not None:
+                    return value
+        return None
 
     @staticmethod
     def _extension_is_a_total(extensions: dict[str, float], taken: list[float]) -> bool:

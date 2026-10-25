@@ -335,8 +335,12 @@ def test_reit_extension_sum_takes_only_extensions_and_only_payment_captions() ->
         reit=True,
     )
     res = stmts.resolve("capital_expenditure", FY)
-    assert res.value == 13_000_000.0  # PP&E 10M + the extension 3M; not the us-gaap 5M nor the two
+    # PP&E 10M + the extension 3M + the us-gaap "Other capital expenditures" 5M, a component by its
+    # caption (decision D-2, pilot_a3/DECISIONS.md) -- taken by the concept path, not the extension
+    # path; never the proceeds or gain lines
+    assert res.value == 18_000_000.0
     assert "reit_extension_sum" in res.flags
+    assert "reit_other_productive_captioned" in res.flags
 
 
 def test_reit_extension_sum_refuses_a_non_outflow_and_a_mirror_line() -> None:
@@ -457,3 +461,52 @@ def test_ppe_and_oil_and_gas_property_and_equipment_flags_acquisitions_contrary_
     assert res.how == "map"
     assert "ppe_family_plus_og_added" in res.flags
     assert "includes_acquisitions_contrary_to_a" in res.flags
+
+
+def test_reit_components_follow_the_fasb_tree_children_and_tenant_improvements() -> None:
+    """Audit F-A10: WELL's acquisitions are ``PaymentsToAcquireOtherRealEstate`` (a child of
+    ``PaymentsToAcquireRealEstate``), its development ``PaymentsForConstructionInProcess``; BXP's
+    tenant improvements are their own branch. All are APP-04b components and are summed."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsForCapitalImprovements", "Capital improvements", 1_050_000_000.0),
+        _row("us-gaap_PaymentsForConstructionInProcess", "Construction in progress", 437_000_000.0),
+        _row("us-gaap_PaymentsToAcquireOtherRealEstate", "Acquisitions", 13_914_000_000.0),
+        _row("us-gaap_PaymentsForTenantImprovements", "Tenant improvements", 258_000_000.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 15_659_000_000.0
+    assert "reit_sibling_sum" in res.flags
+
+
+def test_reit_parent_smaller_than_its_children_is_a_separate_line() -> None:
+    """Decision D-3: BXP 2024's 35 M acquisitions (the parent) cannot contain its 190 M capital
+    improvements (the child) -- both are added; a parent at least as large stays alone."""
+    small = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisitions of real estate", 35_000_000.0),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Building improvements", 190_000_000.0),
+        reit=True,
+    ).resolve("capital_expenditure", FY)
+    assert small.value == 225_000_000.0
+    assert "reit_parent_smaller_than_children" in small.flags
+    large = _cashflow(
+        _row("us-gaap_PaymentsToAcquireRealEstate", "Acquisitions of real estate", 500_000_000.0),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Building improvements", 190_000_000.0),
+        reit=True,
+    ).resolve("capital_expenditure", FY)
+    assert large.value == 500_000_000.0
+    assert "capital_improvements_overlap_not_added" in large.flags
+
+
+def test_reit_other_productive_assets_only_when_captioned_as_capital_spending() -> None:
+    """Decision D-2: BXP's "Construction in progress" filed as ``PaymentsToAcquireOtherProductiveAssets``
+    is a component; the same tag captioned as something else is not."""
+    def capex(label: str) -> float | None:
+        return _cashflow(
+            _row("us-gaap_PaymentsForCapitalImprovements", "Building improvements", 190_000_000.0),
+            _row("us-gaap_PaymentsToAcquireOtherProductiveAssets", label, 651_000_000.0),
+            reit=True,
+        ).resolve("capital_expenditure", FY).value
+
+    assert capex("Construction in progress") == 841_000_000.0
+    assert capex("Purchases of intangible assets") == 190_000_000.0
