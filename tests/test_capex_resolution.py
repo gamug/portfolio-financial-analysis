@@ -530,3 +530,20 @@ def test_reit_lines_disjoint_when_the_investing_section_adds_up() -> None:
     )
     res = stmts.resolve("capital_expenditure", FY)
     assert res.value == 373.0
+
+
+def test_reit_extension_lines_alone_are_the_capex() -> None:
+    """Audit F-A10: FRT Q1 2024 files only its two extension capex lines -- they are the capex."""
+    stmts = _cashflow(
+        _row(
+            "frt_CapitalExpendituresDevelopmentRedevelopment",
+            "Capital expenditures - development and redevelopment",
+            -35_993_000.0,
+            sign=-1.0,
+        ),
+        _row("frt_CapitalExpendituresOther", "Capital expenditures - other", -27_754_000.0, sign=-1.0),
+        reit=True,
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 63_747_000.0
+    assert "reit_extensions_only" in res.flags

@@ -3377,7 +3377,17 @@ class Statements:
         The **extension sum** reads the filer's own "capital expenditures" lines the concept map has
         no element for -- :meth:`_reit_extension_capex`, flagged ``reit_extension_sum``."""
         used = self._reit_components(spec, column)
-        if used:
+        # Audit F-A10: a quarter whose only capex lines are the filer's extensions (FRT Q1 2022 and
+        # Q1 2024: "Capital expenditures - development and redevelopment" and "- other") -- they are
+        # the components, unless the broad productive-assets line (which may hold them) is filed
+        extensions_only = (
+            not used
+            and self._concept_value(spec, column, G + "PaymentsToAcquireProductiveAssets") is None
+            and bool(self._reit_extension_capex(spec, column))
+        )
+        if extensions_only:
+            self._flag("reit_extensions_only")
+        if used or extensions_only:
             extensions = self._reit_extension_capex(spec, column)
             if extensions and self._extension_is_a_total(extensions, list(used.values())):
                 self._flag("reit_extension_total_present")
