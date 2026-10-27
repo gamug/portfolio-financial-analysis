@@ -218,3 +218,22 @@ def test_f_a17_a_comparative_takes_the_line_verified_for_its_own_filing() -> Non
         },
     )
     assert stmts.total_debt("2022-12-31").value == 292.0 + 4_200.0 + 1_250.0
+
+
+def test_f_a18_a_comparative_matched_to_its_owner_takes_the_owner_reading() -> None:
+    # MTD 2022-Q2's 2021 year-end column: the 10-K reads the short-term line from a filed fact this
+    # 10-Q does not carry; the audit matched the 10-K's reading on this face, so the column takes it
+    rows = [
+        {**_row(G + "LongTermDebtNoncurrent", "Long-term debt", 1_821.0), "2022-12-31": 1_580.0},
+        {**_row("mtd_ShortTermDebtAndCurrentMaturities", "Short-term", 106.0), "2022-12-31": 101.0},
+    ]
+    owner = {
+        "value": 1_681.0,
+        "concept": G + "LongTermDebtNoncurrent + " + G + "DebtCurrent",
+        "flags": [],
+    }
+    stmts = _two_columns(rows, _audit_debt_by_column={"2022-12-31": owner})
+    r = stmts.total_debt("2022-12-31")
+    assert r.value == 1_681.0 and "audit_debt_owner_reading" in r.flags
+    # the own column is never replaced
+    assert "audit_debt_owner_reading" not in stmts.total_debt(PE).flags

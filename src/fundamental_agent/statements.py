@@ -1539,6 +1539,9 @@ class Statements:
     # (concept, tier) they were verified against -- see :meth:`_audit_lines_for`.
     audit_own_date: str | None = None
     audit_debt_add_by_date: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Audit F-A18: comparative dates whose debt is the own reading of the filing whose period ends then
+    # (``{value, concept, flags}``) -- see :meth:`_audit_owner_reading`.
+    audit_debt_by_column: dict[str, dict[str, Any]] = field(default_factory=dict)
     # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
     reit: bool = False
     # T-151 part 2 (D3/D4): the company's GICS sector and sub-industry -- today's snapshot (L-03),
@@ -1597,6 +1600,7 @@ class Statements:
             audit_debt_add=tuple(payload.get("_audit_debt_add") or ()),
             audit_own_date=payload.get("_audit_own_date"),
             audit_debt_add_by_date=dict(payload.get("_audit_debt_add_by_date") or {}),
+            audit_debt_by_column=dict(payload.get("_audit_debt_by_column") or {}),
         )
 
     def fy_periods(self) -> list[Period]:
@@ -4154,6 +4158,9 @@ class Statements:
             column = self._instant_for(period_key)
             if column is None:
                 return Resolution(None)
+            owner = self._audit_owner_reading(column)
+            if owner is not None:
+                return owner
             self._refused_debt = (None, None)
             value, concept, how = self._total_debt(period_key, column)
             lines = (
@@ -4199,6 +4206,20 @@ class Statements:
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
+
+    def _audit_owner_reading(self, column: str) -> Resolution | None:
+        """Audit F-A18 (reviewer B, 2026-10-27): a comparative column read unlike the filing whose own
+        period ends then (MTD's 10-Q year-end column without the short-term line its 10-K reads from a
+        filed fact; J's current maturities counted twice) takes that filing's own debt reading -- only
+        where the audit matched it value for value: every value of that reading is on this face in this
+        column, and this column's reading counts no value outside it. A restated column (other values)
+        or one presenting more debt lines keeps its own reading (D1)."""
+        own_column = self._instant_for(self.audit_own_date) if self.audit_own_date else None
+        took = self.audit_debt_by_column.get(column[:10])
+        if own_column is None or column == own_column or not took:
+            return None
+        flags = (*tuple(took.get("flags") or ()), "audit_debt_owner_reading")
+        return Resolution(float(took["value"]), took.get("concept"), "audit_owner", flags)
 
     def _audit_lines_for(self, period_key: str) -> tuple[str, ...]:
         """Audit F-A17: the verified debt lines (``audit/debt_overrides.json``) that apply to one column.
