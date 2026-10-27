@@ -83,3 +83,44 @@ def test_a_debt_override_without_a_lease_line_is_not_flagged_as_leases() -> None
     r = stmts.total_debt(PE)
     assert r.value == 3_729.0 + 13_603.0
     assert "includes_finance_leases" not in r.flags
+
+
+def test_a_face_cell_the_gateway_emptied_is_restored_from_the_instance() -> None:
+    # AES 2025-Q3: the gateway emptied ShortTermBorrowings and LongTermDebt (dimensional only, T-042); the
+    # face's recourse + non-recourse members restore them (F-A15)
+    debt = [
+        _row(G + "ShortTermBorrowings", "Recourse debt", 0.0),
+        _row(G + "LongTermDebt", "Non-recourse debt", 0.0),
+    ]
+    for r in debt:
+        r[PE] = None
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": [
+                _row(G + "Assets", "Assets", 100_000.0),
+                _row(G + "StockholdersEquity", "Equity", 30_000.0),
+                _row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", 2_000.0),
+                *debt,
+            ],
+            "cash_flow": [],
+            "_audit_face_cells": [
+                {
+                    "statement": "balance_sheet",
+                    "concept": G + "ShortTermBorrowings",
+                    "column": PE,
+                    "value": 4_386.0,
+                },
+                {
+                    "statement": "balance_sheet",
+                    "concept": G + "LongTermDebt",
+                    "column": PE,
+                    "value": 26_463.0,
+                },
+                # a valued cell is never overwritten
+                {"statement": "balance_sheet", "concept": G + "Assets", "column": PE, "value": 1.0},
+            ],
+        }
+    )
+    assert stmts.total_debt(PE).value == 4_386.0 + 26_463.0
+    assert stmts.resolve("total_assets", PE).value == 100_000.0

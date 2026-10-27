@@ -1,7 +1,8 @@
 """Tests for T-148 (f): capex under MET-08 and APP-04b.
 
 Rules tested:
-- Non-REIT Tier 1: first filed of PaymentsToAcquirePropertyPlantAndEquipment and PaymentsForCapitalImprovements.
+- Non-REIT Tier 1: first filed of PaymentsToAcquirePropertyPlantAndEquipment and PaymentsForCapitalImprovements;
+  both filed as separate face lines -> added, flagged ppe_plus_capital_improvements_added (audit D-5, VLO).
 - Non-REIT Tier 2 & 3: PP&E-family lines (Machinery, Furniture, Other PP&E) and Oil & Gas lines (E&D, Equipment).
   - DOW: Machinery (2,479M) + Gas field developments (157M) -> 2,636M flagged ppe_family_plus_og_added.
   - EOG: O&G E&D (6,115M) + Other PP&E (479M) -> 6,594M flagged ppe_family_plus_og_added.
@@ -501,12 +502,19 @@ def test_reit_parent_smaller_than_its_children_is_a_separate_line() -> None:
 def test_reit_other_productive_assets_only_when_captioned_as_capital_spending() -> None:
     """Decision D-2: BXP's "Construction in progress" filed as ``PaymentsToAcquireOtherProductiveAssets``
     is a component; the same tag captioned as something else is not."""
+
     def capex(label: str) -> float | None:
-        return _cashflow(
-            _row("us-gaap_PaymentsForCapitalImprovements", "Building improvements", 190_000_000.0),
-            _row("us-gaap_PaymentsToAcquireOtherProductiveAssets", label, 651_000_000.0),
-            reit=True,
-        ).resolve("capital_expenditure", FY).value
+        return (
+            _cashflow(
+                _row(
+                    "us-gaap_PaymentsForCapitalImprovements", "Building improvements", 190_000_000.0
+                ),
+                _row("us-gaap_PaymentsToAcquireOtherProductiveAssets", label, 651_000_000.0),
+                reit=True,
+            )
+            .resolve("capital_expenditure", FY)
+            .value
+        )
 
     assert capex("Construction in progress") == 841_000_000.0
     assert capex("Purchases of intangible assets") == 190_000_000.0
@@ -541,9 +549,23 @@ def test_reit_extension_lines_alone_are_the_capex() -> None:
             -35_993_000.0,
             sign=-1.0,
         ),
-        _row("frt_CapitalExpendituresOther", "Capital expenditures - other", -27_754_000.0, sign=-1.0),
+        _row(
+            "frt_CapitalExpendituresOther", "Capital expenditures - other", -27_754_000.0, sign=-1.0
+        ),
         reit=True,
     )
     res = stmts.resolve("capital_expenditure", FY)
     assert res.value == 63_747_000.0
     assert "reit_extensions_only" in res.flags
+
+
+def test_d5_ppe_beside_capital_improvements_is_added() -> None:
+    """Audit D-5 (VLO FY2025): PP&E (796 M) and the deferred turnaround and catalyst costs tagged
+    PaymentsForCapitalImprovements (1,089 M) are separate face lines -> added, flagged."""
+    stmts = _cashflow(
+        _row("us-gaap_PaymentsToAcquirePropertyPlantAndEquipment", "Capital expenditures", 796e6),
+        _row("us-gaap_PaymentsForCapitalImprovements", "Deferred turnaround and catalyst", 1_089e6),
+    )
+    res = stmts.resolve("capital_expenditure", FY)
+    assert res.value == 1_885e6
+    assert "ppe_plus_capital_improvements_added" in res.flags

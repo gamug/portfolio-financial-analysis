@@ -1163,13 +1163,47 @@ def _cover_shares(payload: dict[str, Any]) -> list[CoverShares]:
     return out
 
 
+def _restore_audit_face_cells(
+    raw: dict[str, list[dict[str, Any]]], payload: dict[str, Any]
+) -> None:
+    """Audit F-A15 (reviewer B, 2026-10-27): face cells the gateway emptied (T-042) or never read,
+    restored from the filing's own XBRL instance (``audit/face_cells.json``): the sum of the members
+    the face presents on one axis (AES recourse status, TMUS related party, CAT product line, VLO
+    consolidated entities -- each verified on EDGAR by the user for one filing), or a filer's own
+    non-dimensional extension fact (AES ``RecourseDebtCurrent``). A valued cell is never overwritten."""
+    for cell in payload.get("_audit_face_cells") or []:
+        statement, concept, column = cell["statement"], cell["concept"], cell["column"]
+        if statement not in raw:
+            continue
+        rows = [r for r in raw[statement] if r.get("concept") == concept and not r.get("dimension")]
+        if rows:
+            # an existing row keeps the gateway's display sign (its correction's ``original``)
+            if _numeric(rows[0].get(column)) is None:
+                rows[0][column] = cell.get("displayed", cell["value"])
+                rows[0].setdefault("audit_restored", []).append(column)
+        else:
+            # a new row carries the fact's magnitude, as the filed-fact restore below writes it
+            members = " + ".join(sorted(cell.get("members") or {}))
+            raw[statement].append(
+                {
+                    "concept": concept,
+                    "label": f"{concept} ({members})" if members else str(concept),
+                    "standard_concept": None,
+                    "abstract": False,
+                    "dimension": False,
+                    column: cell["value"],
+                    "audit_restored": [column],
+                }
+            )
+
+
 def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[str, Any]) -> None:
     """Audit (reviewer B, 2026-10-25): undo a gateway drop the filing's own facts disprove.
 
     The gateway nulls a face cell it cannot match to a non-dimensional filed fact (T-042,
     ``no_filed_nondimensional_fact``) and records the original in ``corrections``. The audit found
-    real face rows dropped although the SEC holds the fact (CAT's 46.1 B and TMUS's 70.1 B long-term
-    debt, VLO's capex, NDAQ's COGS, YUM's revenue; the filers' own presentation linkbases list them
+    real face rows dropped although the SEC holds the fact (NDAQ's COGS, YUM's revenue; CAT's, TMUS's
+    and VLO's dimensional lines are F-A15's, :func:`_restore_audit_face_cells`; the filers' own presentation linkbases list them
     on the face). A dropped cell is restored -- its original displayed value back in the row -- only
     when the filing's own non-dimensional filed fact of the same concept, or of another concept of
     the same registry item (not debt, cash or short-term investments), for the column's period
@@ -1523,6 +1557,7 @@ class Statements:
     def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
         raw = {key: list(payload.get(key) or []) for key in STATEMENT_KEYS}
         _restore_dropped_cells(raw, payload)
+        _restore_audit_face_cells(raw, payload)
         # T-159c: a bare date on the income statement or the cash-flow statement is an **untagged
         # duration column** (the 16/24-week filers T-159b's F0 fix keeps), not an instant; only
         # the balance sheet's bare date is an instant. The key is shared, so both periods are kept
@@ -3649,6 +3684,15 @@ class Statements:
                                 G + "PaymentsToExploreAndDevelopOilAndGasProperties",
                             )
                             return val + og, " + ".join(sorted(used)), "map"
+                    other = next(c for c in tier1_concepts if c != concept)
+                    other_val = self._concept_value(spec, column, other)
+                    if other_val is not None and other_val != 0:
+                        # Audit D-5 (user, 2026-10-27; MET-08 (c)): PP&E and capital improvements
+                        # filed as separate face lines of the same statement are separate outflows
+                        # (VLO: PP&E 796 M beside its deferred turnaround and catalyst costs 1,089 M,
+                        # FY2025) -- added, flagged
+                        self._flag("ppe_plus_capital_improvements_added")
+                        return val + other_val, " + ".join(sorted(tier1_concepts)), "map"
                     return val, str(concept), "concept"
         return None
 
