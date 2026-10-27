@@ -124,3 +124,61 @@ def test_a_face_cell_the_gateway_emptied_is_restored_from_the_instance() -> None
     )
     assert stmts.total_debt(PE).value == 4_386.0 + 26_463.0
     assert stmts.resolve("total_assets", PE).value == 100_000.0
+
+
+def _two_columns(debt_rows: list[dict[str, Any]], **payload: Any) -> Statements:
+    prior = "2022-12-31"
+    base = [
+        {**_row(G + "Assets", "Assets", 100_000.0), prior: 90_000.0},
+        {**_row(G + "StockholdersEquity", "Equity", 30_000.0), prior: 28_000.0},
+        {**_row(G + "CashAndCashEquivalentsAtCarryingValue", "Cash", 2_000.0), prior: 1_500.0},
+    ]
+    return Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": [*base, *debt_rows],
+            "cash_flow": [],
+            "_audit_own_date": PE,
+            **payload,
+        }
+    )
+
+
+def test_f_a17_a_comparative_read_another_way_takes_no_unverified_line() -> None:
+    # REG FY2023's 2022 column: long-term debt reads as LongTermDebt there (blank face lines), which
+    # already holds NotesPayable; the lines verified on the own column are not stacked on it
+    rows = [
+        {**_row(G + "LongTermDebt", "Total debt", None), "2022-12-31": 3_726.0},  # type: ignore[arg-type]
+        {**_row(G + "NotesPayable", "Notes payable", 4_001.0), "2022-12-31": 3_726.0},
+        {**_row(G + "UnsecuredDebt", "Line of credit", 152.0), "2022-12-31": None},
+    ]
+    stmts = _two_columns(
+        rows,
+        _audit_debt_add=[G + "NotesPayable", G + "UnsecuredDebt"],
+        _audit_debt_add_by_date={
+            "2022-12-31": {"lines": [], "sig": [G + "LongTermDebt", "concept"]}
+        },
+    )
+    assert stmts.total_debt(PE).value == 4_001.0 + 152.0
+    assert stmts.total_debt("2022-12-31").value == 3_726.0
+
+
+def test_f_a17_a_comparative_takes_the_line_verified_for_its_own_filing() -> None:
+    # EQT FY2024's 2023 column: the term loan is zero in the own column (not in its verified list) but
+    # verified in the FY2023 10-K, whose long-term debt reads the same way
+    rows = [
+        {**_row(G + "LongTermDebtCurrent", "Current portion of debt", 321.0), "2022-12-31": 292.0},
+        {**_row(G + "SeniorNotes", "Senior notes", 8_853.0), "2022-12-31": 4_200.0},
+        {**_row(G + "LongTermLoansPayable", "Term loan", 0.0), "2022-12-31": 1_250.0},
+    ]
+    stmts = _two_columns(
+        rows,
+        _audit_debt_add=[G + "SeniorNotes"],
+        _audit_debt_add_by_date={
+            "2022-12-31": {
+                "lines": [G + "SeniorNotes", G + "LongTermLoansPayable"],
+                "sig": [None, None],
+            }
+        },
+    )
+    assert stmts.total_debt("2022-12-31").value == 292.0 + 4_200.0 + 1_250.0

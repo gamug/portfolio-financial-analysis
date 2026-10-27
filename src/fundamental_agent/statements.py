@@ -1529,6 +1529,11 @@ class Statements:
     # Audit (reviewer B, 2026-10-25): the debt lines the sector review verified as omitted for this
     # filing (``audit/debt_overrides.json``) -- added to the total debt (MET-07 "the filed debt lines").
     audit_debt_add: tuple[str, ...] = ()
+    # Audit F-A17 (reviewer B, 2026-10-27): the filing's own period end, and for each comparative date
+    # the lines verified for the filing whose own period ends then, with the long-term debt reading
+    # (concept, tier) they were verified against -- see :meth:`_audit_lines_for`.
+    audit_own_date: str | None = None
+    audit_debt_add_by_date: dict[str, dict[str, Any]] = field(default_factory=dict)
     # MET-08 / APP-04b (T-148): equity REITs treat real estate acquisitions and developments as capex
     reit: bool = False
     # T-151 part 2 (D3/D4): the company's GICS sector and sub-industry -- today's snapshot (L-03),
@@ -1585,6 +1590,8 @@ class Statements:
             filed_facts_error=_filed_facts_error(payload),
             reit=reit,
             audit_debt_add=tuple(payload.get("_audit_debt_add") or ()),
+            audit_own_date=payload.get("_audit_own_date"),
+            audit_debt_add_by_date=dict(payload.get("_audit_debt_add_by_date") or {}),
         )
 
     def fy_periods(self) -> list[Period]:
@@ -4144,11 +4151,16 @@ class Statements:
                 return Resolution(None)
             self._refused_debt = (None, None)
             value, concept, how = self._total_debt(period_key, column)
-            if self.audit_debt_add:
+            lines = (
+                self._audit_lines_for(period_key)
+                if self.audit_debt_add or self.audit_debt_add_by_date
+                else ()
+            )
+            if lines:
                 extra: dict[str, float] = {}
                 for row in self.raw.get("balance_sheet", []):
                     con = str(row.get("concept") or "")
-                    if con in self.audit_debt_add and con not in (concept or "").split(" + "):
+                    if con in lines and con not in (concept or "").split(" + "):
                         v = _numeric(row.get(column))
                         if v is not None:
                             extra.setdefault(con, abs(v))
@@ -4182,6 +4194,43 @@ class Statements:
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
+
+    def _audit_lines_for(self, period_key: str) -> tuple[str, ...]:
+        """Audit F-A17: the verified debt lines (``audit/debt_overrides.json``) that apply to one column.
+
+        The sector review verified a filing's lines on its own column, beside that column's long-term
+        debt reading. A comparative column can read long-term debt another way -- the SEC's total
+        fact where the face lines are blank (REG 2022: ``LongTermDebt`` 3.73 B, which already holds
+        ``NotesPayable``) -- or carry a line the own column does not (EQT's term loan). So a
+        comparative column takes the lines verified against the reading it shares: the filing's own
+        when its long-term debt reads as in the own column, the lines of the filing whose own period
+        ends on that date when it reads as there (both when both), both when no long-term debt line
+        resolves (the lines are the long-term debt), none otherwise (flagged)."""
+        mine = self.audit_debt_add
+        own_column = self._instant_for(self.audit_own_date) if self.audit_own_date else None
+        column = self._instant_for(period_key)
+        if own_column is None or column is None or column == own_column:
+            return mine
+        other = self.audit_debt_add_by_date.get(column[:10])
+        theirs = tuple(other.get("lines") or ()) if other else ()
+        if not mine and not theirs:
+            return ()
+        lt = self.resolve("long_term_debt", period_key)
+        own = self.resolve("long_term_debt", own_column)
+        sig = (lt.concept, lt.how)
+        same_mine = sig == (own.concept, own.how)
+        same_theirs = other is not None and list(sig) == list(other.get("sig") or [None, None])
+        both = tuple(dict.fromkeys(mine + theirs))
+        if same_mine and same_theirs:
+            return both
+        if same_mine:
+            return mine
+        if same_theirs:
+            return theirs
+        if lt.value is None:
+            return both
+        self._flag("audit_debt_lines_not_verified_for_column")
+        return ()
 
     def _balance_sheet_resolved(self, period_key: str, *, with_cash: bool = False) -> bool:
         """The rest of the balance sheet resolved (D-01 (ii), ID-02b): total assets and equity -- the
