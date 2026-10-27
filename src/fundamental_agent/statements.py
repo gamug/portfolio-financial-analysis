@@ -1177,9 +1177,13 @@ def _restore_audit_face_cells(
             continue
         rows = [r for r in raw[statement] if r.get("concept") == concept and not r.get("dimension")]
         if rows:
-            # an existing row keeps the gateway's display sign (its correction's ``original``)
+            # an existing row keeps the gateway's display sign (its correction's ``original``); a row
+            # this restore appended keeps magnitudes in every column (VLO's prior-year capex cells)
             if _numeric(rows[0].get(column)) is None:
-                rows[0][column] = cell.get("displayed", cell["value"])
+                appended = rows[0].get("audit_appended")
+                rows[0][column] = (
+                    cell["value"] if appended else cell.get("displayed", cell["value"])
+                )
                 rows[0].setdefault("audit_restored", []).append(column)
         else:
             # a new row carries the fact's magnitude, as the filed-fact restore below writes it
@@ -1193,6 +1197,7 @@ def _restore_audit_face_cells(
                     "dimension": False,
                     column: cell["value"],
                     "audit_restored": [column],
+                    "audit_appended": True,
                 }
             )
 

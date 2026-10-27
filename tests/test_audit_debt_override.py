@@ -126,6 +126,42 @@ def test_a_face_cell_the_gateway_emptied_is_restored_from_the_instance() -> None
     assert stmts.resolve("total_assets", PE).value == 100_000.0
 
 
+def test_a_restored_row_keeps_magnitudes_in_every_column() -> None:
+    # VLO 2022-Q1: no capex row in the payload; the first cell appends the row with the magnitude, the
+    # prior-year cell of the same concept must not write the displayed (negative) sign into it
+    cur, prior = "2022-03-31 (Q1)", "2021-03-31 (Q1)"
+    cells = [
+        {
+            "statement": "cash_flow",
+            "concept": concept,
+            "column": column,
+            "value": value,
+            "displayed": -value,
+        }
+        for concept, by_column in (
+            (G + "PaymentsToAcquirePropertyPlantAndEquipment", {cur: 384.0, prior: 339.0}),
+            (G + "PaymentsForCapitalImprovements", {cur: 459.0, prior: 231.0}),
+        )
+        for column, value in by_column.items()
+    ]
+    stmts = Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": [],
+            "cash_flow": [
+                {
+                    **_row(G + "NetCashProvidedByUsedInOperatingActivities", "Operating", 588.0),
+                    cur: 588.0,
+                    prior: -52.0,
+                }
+            ],
+            "_audit_face_cells": cells,
+        }
+    )
+    assert stmts.resolve("capital_expenditure", cur).value == 384.0 + 459.0
+    assert stmts.resolve("capital_expenditure", prior).value == 339.0 + 231.0
+
+
 def _two_columns(debt_rows: list[dict[str, Any]], **payload: Any) -> Statements:
     prior = "2022-12-31"
     base = [
