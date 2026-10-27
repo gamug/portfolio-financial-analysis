@@ -1513,6 +1513,11 @@ class Statements:
     prior_quarter_capital: Capital | None = None
     # The flags of the resolution in progress (see :meth:`resolve`); never part of the payload.
     _flags: list[str] = field(default_factory=list, init=False, repr=False, compare=False)
+    # Audit: the debt lines :meth:`_total_debt` read and then refused (short-term only, partial map
+    # rejected) -- the base the verified override lines are added to (:meth:`total_debt`).
+    _refused_debt: tuple[float | None, str | None] = field(
+        default=(None, None), init=False, repr=False, compare=False
+    )
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
@@ -4093,6 +4098,7 @@ class Statements:
             column = self._instant_for(period_key)
             if column is None:
                 return Resolution(None)
+            self._refused_debt = (None, None)
             value, concept, how = self._total_debt(period_key, column)
             if self.audit_debt_add:
                 extra: dict[str, float] = {}
@@ -4104,6 +4110,12 @@ class Statements:
                             extra.setdefault(con, abs(v))
                 if extra:
                     if value is None:
+                        # the verified lines complete the total: the lines the reading refused (a
+                        # short-term line without a long-term one, a rejected partial map) stay in
+                        # it -- the override never drops a filed line (audit F-A14: DE, KVUE, EQT)
+                        value, concept = self._refused_debt
+                        if "partial_map_rejected" in self._flags:
+                            self._flag("partial_map")
                         # the verified lines are the total: the reading's refusal flags no longer hold
                         self._flags = [
                             f
@@ -4117,6 +4129,9 @@ class Statements:
                             )
                         ]
                     self._flag("audit_debt_lines_added")
+                    if any("lease" in c.split("_", 1)[-1].lower() for c in extra):
+                        # MET-07: a combined debt-and-lease line, the filer's only line of its term
+                        self._flag("includes_finance_leases")
                     value = (value or 0.0) + sum(extra.values())
                     concept = " + ".join([c for c in [concept] if c] + sorted(extra))
                     how = "map"
@@ -4150,6 +4165,7 @@ class Statements:
         if lt_value is None:
             self._flag("short_term_debt_only")
             self._flag("capture_failure")
+            self._refused_debt = (st_value, st_concept)
             return None, st_concept, None
         covered = {
             "current_maturities": in_long_term
@@ -4163,6 +4179,7 @@ class Statements:
         if not self._balance_sheet_resolved(period_key):
             self._flag("partial_map_rejected")
             self._flag("capture_failure")
+            self._refused_debt = (lt_value + (st_value or 0.0), concept)
             return None, concept, None
         self._flag("partial_map")
         return lt_value + (st_value or 0.0), concept, "map"
