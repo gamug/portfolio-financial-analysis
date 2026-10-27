@@ -4168,13 +4168,37 @@ class Statements:
                 if self.audit_debt_add or self.audit_debt_add_by_date
                 else ()
             )
+            refused_value, refused_concept = self._refused_debt
+            if (
+                value is None
+                and lines
+                and refused_value is not None
+                and refused_concept
+                and all(p.strip() in lines for p in refused_concept.split(" + "))
+            ):
+                # audit F-A19: the reading refused (short-term only) lines the sector review verified
+                # as the filer's whole debt -- PANW's current convertible senior notes
+                value, concept, how = refused_value, refused_concept, "map"
+                self._flags = [
+                    f
+                    for f in self._flags
+                    if f not in ("capture_failure", "short_term_debt_only", "partial_map_rejected")
+                ]
+                self._flag("audit_debt_lines_verified")
             if lines:
                 extra: dict[str, float] = {}
+                # audit F-A18: a verified line whose amount the reading already counts under another
+                # element (BE's recourse debt read from the filed LongTermDebtNoncurrent) is not added again
+                counted = {
+                    round(abs(v), -3)
+                    for part in (concept or "").split(" + ")
+                    if part and (v := self._audit_part_value(part.strip(), column)) is not None
+                }
                 for row in self.raw.get("balance_sheet", []):
                     con = str(row.get("concept") or "")
                     if con in lines and con not in (concept or "").split(" + "):
                         v = _numeric(row.get(column))
-                        if v is not None:
+                        if v is not None and (not v or round(abs(v), -3) not in counted):
                             extra.setdefault(con, abs(v))
                 if extra:
                     if value is None:
@@ -4206,6 +4230,24 @@ class Statements:
             return Resolution(value, concept, how, tuple(self._flags))
         finally:
             self._flags = outer
+
+    def _audit_part_value(self, concept: str, column: str) -> float | None:
+        """The amount one part of a debt reading carries at *column*: its face row, else the filing's
+        non-dimensional filed fact of that element for the column's instant (audit F-A18)."""
+        for row in self.raw.get("balance_sheet", []):
+            if row.get("concept") == concept and not row.get("dimension"):
+                v = _numeric(row.get(column))
+                if v is not None:
+                    return v
+        colon = concept.replace("_", ":", 1)
+        for fact in self.filed_facts:
+            if (
+                fact.concept == colon
+                and fact.period_start is None
+                and fact.period_end == column[:10]
+            ):
+                return fact.value
+        return None
 
     def _audit_owner_reading(self, column: str) -> Resolution | None:
         """Audit F-A18 (reviewer B, 2026-10-27): a comparative column read unlike the filing whose own

@@ -237,3 +237,29 @@ def test_f_a18_a_comparative_matched_to_its_owner_takes_the_owner_reading() -> N
     assert r.value == 1_681.0 and "audit_debt_owner_reading" in r.flags
     # the own column is never replaced
     assert "audit_debt_owner_reading" not in stmts.total_debt(PE).flags
+
+
+def test_f_a18_a_verified_line_already_counted_under_another_element_is_not_added() -> None:
+    # BE FY2025: the reading counts the recourse debt as LongTermDebtNoncurrent; the verified extension
+    # line of the same face amount must not be added on top (5,236 instead of 2,618)
+    stmts = _stmts(
+        [
+            _row(G + "LongTermDebtNoncurrent", "Long-term debt", 2_614.0),
+            _row("be_LongTermPortionOfRecourseDebt", "Recourse debt", 2_614.0),
+            _row("be_LongTermPortionOfNonRecourseDebt", "Non-recourse debt", 4.0),
+        ],
+        ["be_LongTermPortionOfRecourseDebt", "be_LongTermPortionOfNonRecourseDebt"],
+    )
+    assert stmts.total_debt(PE).value == 2_614.0 + 4.0
+
+
+def test_f_a19_a_refused_reading_of_verified_lines_only_is_accepted() -> None:
+    # PANW 2022-Q3: the convertible senior notes (current) are the whole debt; short-term only would
+    # be refused, but the sector review verified the line
+    stmts = _stmts(
+        [_row(G + "ConvertibleDebtCurrent", "Convertible senior notes, net", 3_678.6)],
+        [G + "ConvertibleDebtCurrent"],
+    )
+    r = stmts.total_debt(PE)
+    assert r.value == 3_678.6
+    assert "audit_debt_lines_verified" in r.flags and "capture_failure" not in r.flags
