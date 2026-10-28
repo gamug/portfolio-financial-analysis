@@ -1047,6 +1047,104 @@ def _ytd_columns(stmts: Statements, target: _Target) -> tuple[str | None, str | 
     return None, None, None
 
 
+# Audit round #10 (Q8, user-approved): a 10-Q's quarter cash flow, filed year-to-date only, derived as this filing's
+# year-to-date less the previous 10-Q's year-to-date of the same fiscal year -- and the prior-year quarter from the two
+# filings' own comparative columns -- each value read from its own filing. Flagged ``quarter_derived``.
+_DERIVED_QUARTER_ITEMS = ("operating_cash_flow", "capital_expenditure")
+# the previous 10-Q closes one fiscal quarter earlier: 12 to 16 weeks for a 52/53-week calendar included
+_PREVIOUS_QUARTER_DAYS = (75, 125)
+
+
+def _ytd_pair_keys(stmts: Statements, end: str) -> tuple[str | None, str | None]:
+    """The cash-flow statement's year-to-date column at *end* and its comparative one year earlier: the
+    ``(YTD)``-tagged pair, else a quarter-tagged pair (a first quarter's year to date is its quarter), else the
+    untagged pair (R2)."""
+    end_date = date.fromisoformat(end)
+    keys = {str(k) for row in stmts.raw.get("cash_flow", []) for k in row}
+    picks: tuple[Callable[[Period], bool], ...] = (
+        lambda p: p.tag == "YTD",
+        lambda p: p.is_quarter,
+        lambda p: p.tag == "",
+    )
+    for pick in picks:
+        periods = [p for p in stmts.periods if pick(p) and p.key in keys]
+        current = next((p for p in periods if p.date == end), None)
+        prior = next(
+            (p for p in periods if is_year_apart(date.fromisoformat(p.date), end_date)), None
+        )
+        if current is not None and prior is not None:
+            return current.key, prior.key
+    return None, None
+
+
+def _derived_quarter_flows(  # noqa: PLR0911 - one return per missing term
+    engine: _Engine, task: _YearTask, stmts: Statements, target: _Target
+) -> dict[str, tuple[float, float]]:
+    """Q8: ``{item: (this quarter, the prior-year quarter)}`` for the FCF items of a 10-Q that files them year to
+    date only; empty when the quarter is filed, on a first quarter, or when either filing lacks a value."""
+    if task.form != "10-Q" or target.prior is None or _is_first_quarter(stmts, target):
+        return {}
+    if any(stmts.get(item, target.period.key) is not None for item in _DERIVED_QUARTER_ITEMS):
+        return {}
+    fy_key = stmts.prior_fiscal_year_end_key(target.period.key)
+    if fy_key is None:
+        return {}
+    row = engine.conn.execute(
+        "SELECT id, period_end FROM sec_filings WHERE asset_id = ? AND form = '10-Q' "
+        "AND period_end < ? AND period_end > ? ORDER BY period_end DESC LIMIT 1",
+        (task.asset_id, target.period.date, fy_key[:10]),
+    ).fetchone()
+    if row is None:
+        return {}
+    gap = (date.fromisoformat(target.period.date) - date.fromisoformat(row["period_end"])).days
+    if not within(gap, _PREVIOUS_QUARTER_DAYS):
+        return {}
+    cur_key, prior_key = _ytd_pair_keys(stmts, target.period.date)
+    previous = db.statements_from_facts(engine.conn, row["id"])
+    prev_cur, prev_prior = _ytd_pair_keys(previous, row["period_end"])
+    if not (cur_key and prior_key and prev_cur and prev_prior):
+        return {}
+    out: dict[str, tuple[float, float]] = {}
+    for item in _DERIVED_QUARTER_ITEMS:
+        this_ytd = stmts.get(item, cur_key)
+        prior_ytd = stmts.get(item, prior_key)
+        prev_ytd = previous.get(item, prev_cur)
+        prev_prior_ytd = previous.get(item, prev_prior)
+        if this_ytd is None or prior_ytd is None or prev_ytd is None or prev_prior_ytd is None:
+            return {}
+        out[item] = (this_ytd - prev_ytd, prior_ytd - prev_prior_ytd)
+    return out
+
+
+# the TTM items the cash-flow statement carries (R2)
+_CASH_FLOW_TTM_ITEMS = (
+    "operating_cash_flow",
+    "capital_expenditure",
+    "depreciation_amortization",
+    "stock_based_compensation",
+)
+
+
+def _untagged_cash_flow_ytd(
+    stmts: Statements, target: _Target
+) -> tuple[str | None, str | None, str | None]:
+    """Audit round #10 (R2): the cash-flow statement's own year-to-date pair when it arrives in **untagged** columns
+    only -- a 52/53-week filer's 24- or 28-week cash flow (COST, DPZ, PEP, KR, AZO, AAP, LHX), which the gateway tags
+    neither ``(Qn)`` nor ``(YTD)``. A 10-Q's statement of cash flows covers the year to date (Reg. S-X 10-01(c)(4)),
+    so its untagged columns at the period end and one year earlier are that pair. ``(None, None, None)`` when the
+    cash-flow statement carries a tagged column at the period end."""
+    keys = {str(k) for row in stmts.raw.get("cash_flow", []) for k in row}
+    if any(k.startswith(target.period.date + " (") for k in keys):
+        return None, None, None
+    end = date.fromisoformat(target.period.date)
+    untagged = [p for p in stmts.periods if p.tag == "" and p.key in keys]
+    current = next((p for p in untagged if p.date == target.period.date), None)
+    prior = next((p for p in untagged if is_year_apart(date.fromisoformat(p.date), end)), None)
+    if current is None or prior is None:
+        return None, None, None
+    return current.key, prior.key, prior.date
+
+
 def _ttm_flows(
     engine: _Engine,
     task: _YearTask,
@@ -1074,6 +1172,14 @@ def _ttm_flows(
         if cur_key and prior_key
         else {}
     )
+    cf_cur, cf_prior, cf_prior_end = _untagged_cash_flow_ytd(stmts, target)
+    if cf_cur and cf_prior:
+        for item in _CASH_FLOW_TTM_ITEMS:
+            pair = ytd.get(item)
+            if pair is None or (pair.current is None and pair.prior is None):
+                ytd[item] = db.YTDPair(
+                    stmts.get(item, cf_cur), stmts.get(item, cf_prior), cf_prior_end
+                )
     if not current and not ytd:
         return {}
     return db.ttm_detail(
@@ -1142,6 +1248,7 @@ def _analyze_one(
     )
 
     ttm = _ttm_flows(engine, task, stmts, target, accession=meta.accession_number)
+    derived_quarter = _derived_quarter_flows(engine, task, stmts, target)
     ctx = FilingContext(
         ticker=task.ticker,
         company_name=task.company_name,
@@ -1160,6 +1267,7 @@ def _analyze_one(
             filing_date=meta.filing_date,
         ),
         ttm_flows=ttm,
+        derived_quarter=derived_quarter,
         cik=_asset_cik(engine, task.asset_id),
         market_cap=market_cap_obj,
         market_cap_missing=market_cap_missing,

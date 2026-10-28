@@ -428,15 +428,17 @@ def test_rule_b_calibration_refuses_a_path_that_disagrees() -> None:
     assert "filed_fact_refused_calibration" in resolution.flags
 
 
-def test_rule_a_refuses_a_fact_that_is_not_on_the_face() -> None:
+def test_rule_a_reads_a_fact_that_is_not_on_the_face_from_the_notes() -> None:
+    """Audit round #10 (Q7, user-approved): a fact on no face row is the filing's own figure, filed only in the notes
+    -- read last, flagged ``filed_fact_from_notes``; Rule A's refusal no longer leaves the item empty."""
     stmts = _payload(
         balance=[_row("Assets", "Assets", **{INSTANT: 100.0})],
         filed_facts=[_fact("LongTermDebt", 50.0, end=INSTANT)],
     )
     resolution = stmts.resolve("long_term_debt", FY)
-    assert resolution.value is None
-    assert "filed_fact_refused" in resolution.flags
-    assert "filed_fact_refused_not_on_face" in resolution.flags
+    assert resolution.value == 50.0
+    assert "filed_fact_from_notes" in resolution.flags
+    assert "filed_fact_refused_not_on_face" not in resolution.flags
 
 
 def test_rule_c_a_zero_filed_value_is_never_used() -> None:

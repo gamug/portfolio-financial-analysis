@@ -189,9 +189,10 @@ def test_a_refused_filed_fact_stays_missing_input_not_not_reported() -> None:
         ],
     )
     stmts.filed_facts = (
+        # a zero is refused (Rule C) -- the notes figure of audit round #10 (Q7) is not one
         FiledFact(
             concept="us-gaap:LongTermDebt",
-            value=100.0,
+            value=0.0,
             unit="USD",
             period_start=None,
             period_end=INSTANT,

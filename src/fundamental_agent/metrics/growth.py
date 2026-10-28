@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from fundamental_agent.metrics.base import MetricResult, present
-from fundamental_agent.metrics.cashflow import free_cash_flow
+from fundamental_agent.metrics.cashflow import _free_cash_flow, free_cash_flow
 from fundamental_agent.statements import Statements
 
 GROUP = "growth"
@@ -59,6 +59,24 @@ def _yoy(current: float | None, prior: float | None) -> float | None:
     return current / prior - 1.0
 
 
+def _derived_quarters(
+    ttm: dict[str, float] | None,
+) -> tuple[tuple[float, float], tuple[float, float]] | None:
+    """Q8: ``((OCF, capex) this quarter, (OCF, capex) the prior-year quarter)`` the pipeline derived, or ``None``."""
+    if not ttm:
+        return None
+    keys = (
+        "quarter_derived_operating_cash_flow",
+        "quarter_derived_capital_expenditure",
+        "quarter_derived_operating_cash_flow_prior",
+        "quarter_derived_capital_expenditure_prior",
+    )
+    if not all(isinstance(ttm.get(k), (int, float)) for k in keys):
+        return None
+    ocf, capex, ocf_prior, capex_prior = (float(ttm[k]) for k in keys)
+    return (ocf, capex), (ocf_prior, capex_prior)
+
+
 def compute(
     stmts: Statements,
     period_key: str,
@@ -76,6 +94,12 @@ def compute(
     net_prior = stmts.get("net_income", prior_key)
     _, fcf = free_cash_flow(stmts, period_key)
     _, fcf_prior = free_cash_flow(stmts, prior_key)
+    # Q8 (audit round #10): a 10-Q filing its cash flow year to date only -- the quarter derived from the YTD columns
+    derived = _derived_quarters(ttm) if fcf is None and fcf_prior is None else None
+    if derived is not None:
+        (ocf_q, capex_q), (ocf_prior_q, capex_prior_q) = derived
+        _, fcf = _free_cash_flow(ocf_q, capex_q)
+        _, fcf_prior = _free_cash_flow(ocf_prior_q, capex_prior_q)
 
     inputs = present(
         revenue=revenue,
@@ -98,6 +122,15 @@ def compute(
     if fcf_prior is not None and fcf_prior <= 0.0:
         base_flags["flag_free_cash_flow_growth_growth_base_not_positive"] = 1.0
     inputs.update(base_flags)
+    if derived is not None:
+        inputs["flag_free_cash_flow_growth_quarter_derived"] = 1.0
+        (ocf_q, capex_q), (ocf_prior_q, capex_prior_q) = derived
+        inputs.update(
+            operating_cash_flow_quarter_derived=ocf_q,
+            capital_expenditure_quarter_derived=capex_q,
+            operating_cash_flow_prior_quarter_derived=ocf_prior_q,
+            capital_expenditure_prior_quarter_derived=capex_prior_q,
+        )
 
     asc842 = crosses_adoption(stmts, prior_key, period_key, ASC842_FIRST_YEAR_BEGINS)
     cecl = stmts.sub_industry in LENDER_SUB_INDUSTRIES and crosses_adoption(

@@ -20,7 +20,13 @@ PRIOR = "2024-12-31"
 
 
 def _bs(concept: str, label: str, val: float | None, prior: float | None = None) -> dict[str, Any]:
-    row: dict[str, Any] = {"concept": G + concept, "label": label, "abstract": False, "dimension": False, COL: val}
+    row: dict[str, Any] = {
+        "concept": G + concept,
+        "label": label,
+        "abstract": False,
+        "dimension": False,
+        COL: val,
+    }
     if prior is not None:
         row[PRIOR] = prior
     return row
@@ -31,7 +37,13 @@ def _is(concept: str, label: str, val: float) -> dict[str, Any]:
 
 
 def _fact(concept: str, value: float, end: str = COL, start: str | None = None) -> dict[str, Any]:
-    return {"concept": "us-gaap:" + concept, "value": value, "unit": "USD", "period_start": start, "period_end": end}
+    return {
+        "concept": "us-gaap:" + concept,
+        "value": value,
+        "unit": "USD",
+        "period_start": start,
+        "period_end": end,
+    }
 
 
 BASE_FACTS = [_fact("Revenues", 500.0, start="2025-01-01")]
@@ -74,14 +86,21 @@ def test_lease_interest_without_any_debt_balance_is_a_verified_zero() -> None:
 
 
 def test_a_debt_balance_among_the_filing_facts_refuses_the_zero() -> None:
-    """The face shows no debt line but the filing's own facts carry a debt balance at the date: missing, not 0."""
+    """The face shows no debt line but the filing's own facts carry a debt balance at the date: never 0 -- since
+    audit round #10 (Q7) the balance the filing files in its notes is the long-term debt."""
     total = _stmts(interest=True, facts=[*BASE_FACTS, _fact("LongTermDebt", 250.0)]).total_debt(FY)
-    assert total.value is None and "capture_failure" in total.flags and "debt_absent_verified" not in total.flags
+    assert (
+        total.value == 250.0
+        and "filed_fact_from_notes" in total.flags
+        and "debt_absent_verified" not in total.flags
+    )
 
 
 def test_interest_with_a_debt_balance_at_another_date_and_no_zero_shown_stays_refused() -> None:
     """PAYC FY2023: interest expense, a debt balance at the prior date, nothing on this year's face proving 0."""
-    total = _stmts(interest=True, facts=[*BASE_FACTS, _fact("LineOfCredit", 30.0, end=PRIOR)]).total_debt(FY)
+    total = _stmts(
+        interest=True, facts=[*BASE_FACTS, _fact("LineOfCredit", 30.0, end=PRIOR)]
+    ).total_debt(FY)
     assert total.value is None and total.flags == ("capture_failure",)
 
 
@@ -98,13 +117,22 @@ def test_a_debt_line_shown_at_zero_after_a_repayment_is_a_verified_zero() -> Non
 
 def test_a_short_term_line_at_zero_alone_is_not_short_term_debt_only() -> None:
     """FFIV FY2023: "Current portion of long-term debt" 0.0 and no long-term line -> 0, not a refusal."""
-    total = _stmts(_bs("LongTermDebtCurrent", "Current portion of long-term debt", 0.0, prior=349.8)).total_debt(FY)
+    total = _stmts(
+        _bs("LongTermDebtCurrent", "Current portion of long-term debt", 0.0, prior=349.8)
+    ).total_debt(FY)
     assert total.value == 0.0 and "short_term_debt_only" not in total.flags
 
 
 def test_a_debt_amount_the_gateway_dropped_refuses_the_zero_even_without_its_row() -> None:
     """AIG: the whole ``LongTermDebt`` row dropped (T-042), only the ``corrections`` entry left."""
-    dropped = [{"statement": "balance_sheet", "concept": G + "LongTermDebt", "column": COL, "original": 29_938.0}]
+    dropped = [
+        {
+            "statement": "balance_sheet",
+            "concept": G + "LongTermDebt",
+            "column": COL,
+            "original": 29_938.0,
+        }
+    ]
     total = _stmts(corrections=dropped).total_debt(FY)
     assert total.value is None and total.flags == ("capture_failure",)
 

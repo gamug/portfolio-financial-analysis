@@ -331,6 +331,9 @@ class FilingContext:
     # docs/model_fixes.md; fundamental_agent.db.ttm_detail). Empty for a 10-K, which already
     # reports annual flows.
     ttm_flows: dict[str, TTMFlow] = field(default_factory=dict)
+    # Audit round #10 (Q8): {item: (this quarter, the prior-year quarter)} derived from year-to-date columns when a 10-Q
+    # files its cash flow year to date only (``fundamental_agent.pipeline._derived_quarter_flows``).
+    derived_quarter: dict[str, tuple[float, float]] = field(default_factory=dict)
     # the issuer's zero-padded CIK: a multi-class share count is converted to the traded class by
     # `kg_schema.market_cap.CLASS_CONVERSION` (T-132: BRK's A = 1,500 B)
     cik: str | None = None
@@ -391,6 +394,11 @@ def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
         flow = ctx.ttm_flows.get(item)
         if flow is not None and flow.method in ("x4", "refused"):
             res[f"flag_{item}_ttm_not_built"] = 1.0
+    if group == "growth":
+        # Q8: the derived quarter flows the growth group reads when the filing's quarter column has none
+        for item, (current, prior) in ctx.derived_quarter.items():
+            res[f"quarter_derived_{item}"] = current
+            res[f"quarter_derived_{item}_prior"] = prior
     if group == "leverage":
         da_flow = ctx.ttm_flows.get("depreciation_amortization")
         if da_flow and "depreciation_only_not_da" in da_flow.flags:

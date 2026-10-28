@@ -543,7 +543,11 @@ _NCI_INCOME_CONCEPTS = (
 _NCI_NAME_RE = re.compile(r"non-?controlling|minority\s*interest", re.IGNORECASE)
 _NCI_INCOME_WORD_RE = re.compile(r"income|loss|earnings|profit|allocation", re.IGNORECASE)
 _NCI_NOT_AN_INCOME_RE = re.compile(
-    r"including|before|payments?|proceeds|dividends?|distributions?|contributions?", re.IGNORECASE
+    r"including|before|payments?|proceeds|dividends?|distributions?|contributions?"
+    # audit round #10 (R3): a gain on selling a stake *in* another company is not income attributable to an NCI (ITW
+    # FY2024: "Gain on sale of noncontrolling interest in Wilsonart", ``EquityMethodInvestmentRealizedGainLossOnDisposal``)
+    r"|gain on (the )?sale|disposal|disposition",
+    re.IGNORECASE,
 )
 
 # -- Noncontrolling interest (MD-02, MD-35; D6, T-151 part 2) ---------------------------------------
@@ -1145,16 +1149,263 @@ REGISTRY: dict[str, LineItem] = {
 _DEBT_BALANCE_FACTS: frozenset[str] = frozenset(
     c.split("_", 1)[1]
     for name in ("long_term_debt", "short_term_debt")
-    for c in (*REGISTRY[name].concepts, *REGISTRY[name].total_concepts, *REGISTRY[name].fallback_concepts)
+    for c in (
+        *REGISTRY[name].concepts,
+        *REGISTRY[name].total_concepts,
+        *REGISTRY[name].fallback_concepts,
+    )
     if "_" in c
-) | frozenset({
-    "LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent", "DebtCurrent", "DebtInstrumentCarryingAmount",
-    "DebtLongtermAndShorttermCombinedAmount", "LineOfCredit", "LongTermLineOfCredit", "ShortTermBorrowings",
-    "CommercialPaper", "NotesPayable", "NotesPayableCurrent", "SeniorNotes", "SeniorLongTermNotes",
-    "ConvertibleNotesPayable", "ConvertibleNotesPayableCurrent", "ConvertibleDebtNoncurrent", "ConvertibleDebtCurrent",
-    "SecuredDebt", "UnsecuredDebt", "LoansPayable", "OtherLongTermDebt", "OtherLongTermDebtNoncurrent",
-    "LongTermDebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligationsCurrent",
-})
+) | frozenset(
+    {
+        "LongTermDebt",
+        "LongTermDebtNoncurrent",
+        "LongTermDebtCurrent",
+        "DebtCurrent",
+        "DebtInstrumentCarryingAmount",
+        "DebtLongtermAndShorttermCombinedAmount",
+        "LineOfCredit",
+        "LongTermLineOfCredit",
+        "ShortTermBorrowings",
+        "CommercialPaper",
+        "NotesPayable",
+        "NotesPayableCurrent",
+        "SeniorNotes",
+        "SeniorLongTermNotes",
+        "ConvertibleNotesPayable",
+        "ConvertibleNotesPayableCurrent",
+        "ConvertibleDebtNoncurrent",
+        "ConvertibleDebtCurrent",
+        "SecuredDebt",
+        "UnsecuredDebt",
+        "LoansPayable",
+        "OtherLongTermDebt",
+        "OtherLongTermDebtNoncurrent",
+        "LongTermDebtAndCapitalLeaseObligations",
+        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+    }
+)
+
+
+# -- Audit round #10 (reviewer B; user-approved 2026-10-28, samples E1-E7 checked on EDGAR) ---------------------------
+# R1: the face line that IS the item, under an element the engine does not read -- a filer's extension, or another
+# standard element the filer chose for the line (COST tags "Income before income taxes" with
+# ``IncomeLossAttributableToParent``, AT&T its "Inventories" with ``PrepaidExpenseCurrent``). Read only after every
+# other tier left the item empty and before the notes (statements first, ID-02a), on the item's own statement, for the
+# (item, element) pairs below -- each group read on the face of its filings (``audit/r10``) -- and only when the
+# line's caption names the item (``_FACE_LINE_CAPTION``) and nothing else (``_FACE_LINE_CAPTION_NOT``).
+_FACE_LINE_ELEMENTS: dict[str, frozenset[str]] = {
+    "capital_expenditure": frozenset(
+        {
+            "d_PaymentsToAcquirePropertyPlantAndEquipmentIncludingNuclearFuel",
+            G + "PaymentsForConstructionInProcess",
+        }
+    ),
+    "cash": frozenset(
+        {
+            G + "CashAndCashEquivalentsAtCarryingValueIncludingDiscontinuedOperations",
+            "cvx_CashAndCashEquivalentsExcludingTimeDeposits",
+            "cvx_CashandCashEquivalentsExcludingTimeDepositsatCarryingValue",
+            "ivz_CashAndCashEquivalentsExcludingCashAndCashEquivalentsFromConsolidatedInvestmentProducts",
+            "lkq_Cashandcashequivalentsatcarryingvalueexcludingrestrictedcash",
+            G + "CashEquivalentsAtCarryingValue",
+            # elements whose name includes restricted cash: read only when the filing shows no restricted cash
+            # (:meth:`Statements._restricted_cash_filed`, L-5 / Q6)
+            "podd_CashCashEquivalentsAndRestrictedCashCurrent",
+            G
+            + "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsIncludingDisposalGroupAndDiscontinuedOperations",
+            "bwa_CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsContinuingOperations",
+        }
+    ),
+    "cogs": frozenset(
+        {
+            G + "DirectOperatingCosts",
+            "wsm_CostOfGoodsSoldAndOccupancyExpenses",
+            "ipg_CostOfServicesGeneralExpenses",
+            G + "OperatingCostsAndExpenses",
+        }
+    ),
+    "income_tax": frozenset({G + "CurrentIncomeTaxExpenseBenefit"}),
+    "interest_expense": frozenset(
+        {
+            "awk_InterestExpenseNonoperating",
+            "cnp_InterestAndDebtExpenseAndOtherCharges",
+            "deck_InterestAndOtherExpense",
+            "dish_InterestExpenseNetOfAmountCapitalized",
+            "sats_InterestExpenseNetOfAmountCapitalized",
+            "exr_InterestExpenseExcludingAmortizationOfDebtDiscountPremium",
+            "nee_InterestExpenseAggregateExpenses",
+            G + "InterestCostsIncurred",
+            G + "InvestmentIncomeInvestmentExpense",
+        }
+    ),
+    "inventory": frozenset(
+        {
+            G + "InventoryRealEstate",
+            G + "AirlineRelatedInventoryNet",
+            G + "AirlineRelatedInventory",
+            "nem_InventoryOtherThanOreStockpilesOnLeachpadsNetOfReserves",
+            G + "InventoryOperativeBuilders",
+            G + "PublicUtilitiesInventory",
+            "para_FilmCapitalizedCostCurrent",
+            "psky_FilmCapitalizedCostCurrent",
+            G + "PrepaidExpenseCurrent",
+            "len_InventoryOwned",
+            G + "FIFOInventoryAmount",
+            G + "InventoryGross",
+        }
+    ),
+    "minority_interest": frozenset({G + "OtherMinorityInterests"}),
+    "operating_cash_flow": frozenset({"chd_NetCashProvidedByOperatingActivities"}),
+    "pretax_income": frozenset(
+        {
+            G + "IncomeLossAttributableToParent",
+            G + "IncomeLossIncludingPortionAttributableToNoncontrollingInterest",
+            G + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic",
+            "all_IncomeLossFromOperationsBeforeIncomeTaxExpenseBenefit",
+            "bk_IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+            "lh_IncomeLossfromContinuingOperationsBeforeIncomeTaxesandNoncontrollingInterest",
+            "mcd_IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+            "orcl_IncomeLossFromContinuingOperationsIncludingNoncontrollingInterestBeforeIncomeTaxesExtraordinaryItems",
+            "pfg_IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+            "pg_IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+            "cma_IncomeLossFromContinuingOperationsBeforeIncomeTaxes",
+            "dvn_IncomeLossFromContinuingOperationsBeforeNoncontrollingInterest",
+            "well_IncomeLossFromContinuingOperationsPreTaxBookBeforeEquityMethodInvestmentsIncomeTaxesNoncontrollingInterest",
+        }
+    ),
+    "receivables": frozenset(
+        {
+            G + "AccountsReceivableGrossCurrent",
+            G + "PremiumsAndOtherReceivablesNet",
+            "bro_CommissionFeesAndOtherReceivable",
+            "bro_PremiumsCommissionsAndFeesReceivable",
+            G + "AccountsAndNotesReceivableNet",
+            G + "ContractWithCustomerAssetNet",
+        }
+    ),
+    "redeemable_nci": frozenset(
+        {
+            G
+            + "TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests",
+            "lh_NoncontrollingInterestMezzanineEquity",
+        }
+    ),
+    "stock_based_compensation": frozenset(
+        {
+            G + "StockOptionPlanExpense",
+            "dlr_AmortizationDeferredStockBasedCompensation",
+            "be_SharebasedCompensationAndIssuanceOfStockAndWarrantsForServicesOrClaims",
+            G + "RestrictedStockExpense",
+            "bkng_ShareBasedCompensationAndOtherStockBasedExpense",
+        }
+    ),
+}
+# The caption must name the item ...
+_FACE_LINE_CAPTION: dict[str, str] = {
+    "capital_expenditure": r"capital|property|plant|equipment|construction expenditures",
+    "cash": r"^cash and (cash )?equivalents$",
+    "cogs": r"^(directly related )?cost(s)? of (goods sold|sales|services|revenues?|transportation)",
+    "income_tax": r"^(provision for )?income tax(es)?( expense)?( \(benefit\))?( from continuing operations)?$",
+    "interest_expense": r"^interest (expense|and debt expense)",
+    "inventory": r"inventor",
+    "minority_interest": r"non-?controlling interests?$",
+    "operating_cash_flow": r"operating activities",
+    "pretax_income": r"before (provision for |\(provision\) for )?(income )?tax",
+    "receivables": r"receivable",
+    "redeemable_nci": r"(redeemable )?non-?controlling interests?$",
+    "stock_based_compensation": r"(stock|share)[- ]based compensation|share-based compensation|stock compensation",
+}
+# ... and nothing beside it: a restricted cash, a component, a non-current line, an equalization deferral.
+_FACE_LINE_CAPTION_NOT: dict[str, str] = {
+    "cash": r"restricted",
+    "inventory": r"noncurrent|non-current|equalization|deferred",
+    "receivables": r"contract assets|income tax|financing|notes and loans|investment income",
+    "stock_based_compensation": r"tax|customer",
+    "interest_expense": r"income",
+}
+# The items whose face line must not carry a negative filed value (a payment, an expense, a balance).
+_FACE_LINE_NOT_NEGATIVE = frozenset(
+    {
+        "capital_expenditure",
+        "cash",
+        "cogs",
+        "inventory",
+        "minority_interest",
+        "receivables",
+        "redeemable_nci",
+        "stock_based_compensation",
+    }
+)
+# Q3/Q4 (user-approved): a gross line less the reserve the face shows beside it; with no reserve line the gross line
+# is the total (MKC's "Total inventory", KMI's "Accounts receivable").
+_FACE_LINE_RESERVES: dict[str, str] = {
+    G + "FIFOInventoryAmount": G + "InventoryLIFOReserve",
+    G + "InventoryGross": G + "InventoryValuationReserves",
+    G + "AccountsReceivableGrossCurrent": G + "AllowanceForDoubtfulAccountsReceivableCurrent",
+}
+# Q3 (user-approved): inventory shown as several component lines without a total (CNP natural gas + materials and
+# supplies, DTE, XOM, ETR, D, LNT, DAL's 10-K) is their sum. A component line is an inventory element (these local-name
+# prefixes) or an extension whose name says inventory; never a deferral, an equalization or a non-current balance.
+_INVENTORY_COMPONENT_PREFIXES: tuple[str, ...] = (
+    "EnergyRelatedInventory",
+    "InventoryRawMaterialsAndSupplies",
+    "InventoryPartsAndComponents",
+    "InventoryFinishedGoods",
+    "InventoryWorkInProcess",
+    "OtherInventory",
+    "PublicUtilitiesInventory",
+    "AirlineRelatedInventory",
+)
+_NOT_AN_INVENTORY_COMPONENT_RE = re.compile(
+    r"Equalization|Noncurrent|Deferred|Reserve|LIFO|Valuation|Gross", re.IGNORECASE
+)
+# Q1 (user-approved): the net interest line the filer presents as its interest line ("Interest expense, net"), read
+# only when no gross interest expense is filed anywhere (statements, then the notes) -- flagged ``interest_net``.
+NET_INTEREST_ELEMENTS: tuple[str, ...] = (
+    G + "InterestIncomeExpenseNonoperatingNet",
+    G + "InterestIncomeExpenseNet",
+    G + "InterestRevenueExpenseNet",
+)
+# Q2b (user-approved): D&A presented as its two parts on the cash-flow face -- a depreciation line and amortization
+# line(s) -- is their sum; one part alone when the filing files no amount of the other part. A part's caption names
+# depreciation or amortization (of intangibles, of capitalized software) and nothing else: a line that adds
+# impairment, a write-off, "other", leases, debt costs, an inventory step-up or a disposal is not a part (Q2a: such a
+# line stays unread unless its addition is shown to be 0).
+_DA_DEPRECIATION_CAPTION_RE = re.compile(r"^(depreciation|depletion)\b", re.IGNORECASE)
+# a D&A-named line of another nature (debt costs, leases, investments, deferred costs): not D&A, left out
+_DA_NOT_DA_LINE_RE = re.compile(
+    r"financ|debt|discount|premium|lease|right[- ]of[- ]use|accretion|servicing|contract|deferred|inventory|"
+    r"step[- ]up|stock|share|compensation|unrealized|reinsurance|loan|investment|interest|commission",
+    re.IGNORECASE,
+)
+_DA_AMORTIZATION_CAPTION_RE = re.compile(
+    r"^amortization( expense)?$|^amortization of (acquired |acquisition[- ]related |other |purchased |core deposit and "
+    r"other )?intangibles?( assets)?$|^amortization of capitalized software$|^depreciation and other amortization$",
+    re.IGNORECASE,
+)
+_DA_PART_NOT_RE = re.compile(
+    r"impair|write|\band other\b(?! amortization)|other assets|right[- ]of[- ]use|lease|financ|debt|discount|premium|deferred|"
+    r"servicing|inventory|step[- ]up|contract|accretion|disposal|loss|gain|restructuring",
+    re.IGNORECASE,
+)
+_DA_PART_NOT_CONCEPT_RE = re.compile(
+    r"Impairment|WriteOff|InventoryStepUp|RightOfUse|Lease|Financing|Debt|Discount|Premium|Servicing|Accretion|"
+    r"Disposal|GainLoss|Restructuring|Deferred",
+)
+# the elements an amount of the other part can be filed under (a fact in the notes counts: Q7)
+_DA_DEPRECIATION_FACTS = (
+    "Depreciation",
+    "DepreciationNonproduction",
+    "DepreciationAndAmortization",
+    "DepreciationDepletionAndAmortization",
+)
+_DA_AMORTIZATION_FACTS = (
+    "AmortizationOfIntangibleAssets",
+    "AdjustmentForAmortization",
+    "CapitalizedComputerSoftwareAmortization1",
+    "DepreciationAndAmortization",
+    "DepreciationDepletionAndAmortization",
+)
 
 
 @dataclass(frozen=True)
@@ -1222,7 +1473,9 @@ def _restore_audit_face_cells(
             )
 
 
-def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[str, Any]) -> None:
+def _restore_dropped_cells(  # noqa: C901, PLR0912 - one test per drop kind (audit F-A13/F-A15)
+    raw: dict[str, list[dict[str, Any]]], payload: dict[str, Any]
+) -> None:
     """Audit (reviewer B, 2026-10-25): undo a gateway drop the filing's own facts disprove.
 
     The gateway nulls a face cell it cannot match to a non-dimensional filed fact (T-042,
@@ -1277,11 +1530,11 @@ def _restore_dropped_cells(raw: dict[str, list[dict[str, Any]]], payload: dict[s
                     continue
                 days = (date.fromisoformat(end) - date.fromisoformat(start[:10])).days
                 tag = period.tag
-                if tag == "FY" and not 340 <= days <= 380:
+                if tag == "FY" and not 340 <= days <= 380:  # noqa: PLR2004 - a fiscal year, 52/53 weeks
                     continue
-                if tag.startswith("Q") and not 75 <= days <= 120:
+                if tag.startswith("Q") and not 75 <= days <= 120:  # noqa: PLR2004 - a quarter, 12-16 weeks
                     continue
-                if tag == "YTD" and not 120 < days < 340:
+                if tag == "YTD" and not 120 < days < 340:  # noqa: PLR2004 - between a quarter and a year
                     continue
             tolerance = 0.005 if same else 1e-9
             if abs(abs(value) - abs(original)) <= tolerance * abs(value):
@@ -1585,6 +1838,9 @@ class Statements:
     _refused_debt: tuple[float | None, str | None] = field(
         default=(None, None), init=False, repr=False, compare=False
     )
+    # Audit round #10 (Q7): set while the filed-fact tiers run their second pass, where a value the filing files only
+    # in the notes is accepted (``filed_fact_from_notes``).
+    _accept_notes: bool = field(default=False, init=False, repr=False, compare=False)
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any], *, reit: bool = False) -> Statements:
@@ -1741,7 +1997,7 @@ class Statements:
 
     # -- resolution ------------------------------------------------------------------------------
 
-    def resolve(self, item: str, period_key: str) -> Resolution:
+    def resolve(self, item: str, period_key: str) -> Resolution:  # noqa: C901 - one tier per line
         """Registry *item* for *period_key*: its value and where the value came from.
 
         ``concept`` is the concept the value was read from (``a + b`` for a map, ``None`` for a
@@ -1767,7 +2023,13 @@ class Statements:
                 fallback = self._filed_fact_row(spec, column, instant=spec.statements == _BALANCE)
                 if fallback is not None:
                     value, concept, how = fallback
-                    self._flag("filed_fact")
+                    if how == "filed_fact":
+                        self._flag("filed_fact")
+            if value is None and spec.name == "interest_expense":
+                # Q1 (audit round #10): no gross interest expense anywhere -- the net line the filer presents
+                net = self._net_interest_row(spec, column)
+                if net is not None:
+                    value, concept, how = net
             if value is None and spec.name == "revenue":
                 # F-A13: a dropped revenue row whose value equals another own revenue concept's
                 # filed fact (YUM: the face row ``RevenueFromContract...``, the filed ``Revenues``).
@@ -2008,6 +2270,22 @@ class Statements:
         """The fallback's tiers; a kept value carries its proof only -- an earlier tier's refusal
         flag stays only on an item left empty (T-159c round 3)."""
         row = self._filed_fact_tiers(spec, column, instant=instant)
+        if row is None or row[0] is None:
+            # audit round #10: the face line under an element the engine does not read (R1, Q3, Q4) -- statements
+            # first -- then the figure the filing files only in the notes (Q7)
+            face = self._face_line_row(spec, column)
+            if face is not None:
+                row = face
+            elif self.filed_facts:
+                before = list(self._flags)
+                self._accept_notes = True
+                try:
+                    row = self._filed_fact_tiers(spec, column, instant=instant)
+                finally:
+                    self._accept_notes = False
+                if row is None or row[0] is None:
+                    # nothing read: the second pass leaves no trace (a part it accepted is not the item)
+                    self._flags = before
         if row is not None and row[0] is not None:
             self._flags = [
                 raised for raised in self._flags if not raised.startswith("filed_fact_refused")
@@ -2239,6 +2517,12 @@ class Statements:
         proof = self._filed_fact_proof(spec, period, concept, value)
         if proof in ("on_face", "calibrated"):
             self._flag(f"filed_fact_{proof}")
+            return True
+        if proof == "not_on_face" and self._accept_notes:
+            # Q7 (audit round #10, user-approved): the filing's own figure, filed only in the notes -- the item is
+            # omitted from the face or bundled into another line. Every other refusal (calibration, ambiguity, a zero,
+            # a face row of another item) stands.
+            self._flag("filed_fact_from_notes")
             return True
         self._filed_fact_refuse(proof or "not_on_face")
         return False
@@ -2576,6 +2860,322 @@ class Statements:
                 return value, concept, "filed_fact"
         return None
 
+    # -- audit round #10 (reviewer B; user-approved 2026-10-28) ------------------------------------------------------
+
+    @staticmethod
+    def _face_caption(row: dict[str, Any]) -> str:
+        """The row's caption, lower case, without a note reference ("Inventories (Note 17)")."""
+        label = re.sub(r"\(notes?\s+[^)]*\)", "", str(row.get("label") or ""), flags=re.IGNORECASE)
+        return re.sub(r"\s+", " ", label).strip().lower()
+
+    def _face_line_candidates(self, spec: LineItem, column: str) -> list[tuple[str, float]] | None:
+        """R1: the item's own-statement rows under an allowlisted element whose caption names the item, each
+        ``(concept, filed value)``; ``None`` when one is refused (a wrong sign, restricted cash shown)."""
+        allowed = _FACE_LINE_ELEMENTS.get(spec.name)
+        if not allowed:
+            return []
+        caption = _FACE_LINE_CAPTION.get(spec.name, "")
+        caption_not = _FACE_LINE_CAPTION_NOT.get(spec.name)
+        out: list[tuple[str, float]] = []
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept not in allowed:
+                continue
+            label = self._face_caption(row)
+            if not re.search(caption, label) or (caption_not and re.search(caption_not, label)):
+                continue
+            value = self._read(row, column)
+            if value is None:
+                continue
+            if spec.name in _FACE_LINE_NOT_NEGATIVE and value < 0:
+                self._flag("face_line_negative_rejected")
+                return None
+            if "RestrictedCash" in concept and self._restricted_cash_filed(column):
+                self._flag("face_line_restricted_cash_refused")
+                return None
+            reserve = _FACE_LINE_RESERVES.get(concept)
+            if reserve is not None:
+                reserve_value = self._filed_anywhere_in(spec, column, reserve)
+                if reserve_value is not None:
+                    value -= abs(reserve_value)
+                    concept = f"{concept} - {reserve}"
+            out.append((concept, value))
+        return out
+
+    def _face_line_row(
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """R1 / Q3 / Q4: the face line that is the item under an element the engine does not read (one distinct
+        value, else nothing); for inventory, the face's inventory lines (:meth:`_inventory_face_lines`)."""
+        if spec.name == "inventory":
+            return self._inventory_face_lines(spec, column)
+        if spec.name == "depreciation_amortization":
+            # Q2b: after the filed facts' own proofs (T-161's readings keep their concept), before the notes
+            parts = self._da_face_parts(spec, column)
+            return parts if parts[0] is not None else None
+        if spec.name == "income_tax" and any(
+            re.search(r"deferred.*tax|tax.*deferred", self._face_caption(row))
+            and _numeric(row.get(column)) is not None
+            for row in self._rows_for(spec)
+        ):
+            return (
+                None  # a deferred line beside it: the line is the current component, not the total
+            )
+        candidates = self._face_line_candidates(spec, column)
+        if not candidates:
+            return None
+        values = {round(value, 2) for _concept, value in candidates}
+        if len(values) != 1:
+            self._flag("face_line_ambiguous")
+            return None
+        concept, value = candidates[0]
+        # the face line is the total the composite refused to build from a component
+        self._flags = [f for f in self._flags if f != "tax_component_not_total"]
+        self._flag("face_line_other_element")
+        return value, concept, "face_line"
+
+    def _inventory_face_lines(  # noqa: C901, PLR0911, PLR0912 - one return per reading
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """R1 / Q3 / Q4 for inventory: the allowlisted line and the component lines the face shows. One line is the
+        item; of several, one that equals the sum of the others is their total (MKC); else the sum (Q3, flagged
+        ``inventory_components_summed``) -- never when one element nests another (a family total beside its part)."""
+        candidates = self._face_line_candidates(spec, column)
+        if candidates is None:
+            return None
+        lines = dict(candidates)
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            local = concept.split("_", 1)[-1]
+            if concept in lines or any(c.startswith(concept + " ") for c in lines):
+                continue
+            component = local.startswith(_INVENTORY_COMPONENT_PREFIXES) or (
+                not concept.startswith(G) and "Inventory" in local
+            )
+            if not component or _NOT_AN_INVENTORY_COMPONENT_RE.search(local):
+                continue
+            if re.search(_FACE_LINE_CAPTION_NOT["inventory"], self._face_caption(row)):
+                continue
+            value = self._read(row, column)
+            if value is None or value == 0.0:
+                continue
+            if value < 0:
+                self._flag("face_line_negative_rejected")
+                return None
+            lines[concept] = value
+        if not lines:
+            return None
+        if len(lines) == 1:
+            concept, value = next(iter(lines.items()))
+            if concept.split(" - ")[0] not in _FACE_LINE_ELEMENTS["inventory"]:
+                return None  # a sole component is the T-159a family rule's, not this one's
+            self._flag("face_line_other_element")
+            return value, concept, "face_line"
+        total = sum(lines.values())
+        for concept, value in lines.items():
+            if abs(2 * value - total) <= 0.005 * abs(value):
+                self._flag("face_line_other_element")
+                return value, concept, "face_line"
+        locals_ = [c.split(" - ")[0].split("_", 1)[-1] for c in lines]
+        if any(a != b and b.startswith(a) for a in locals_ for b in locals_):
+            self._flag("inventory_components_nested")
+            return None
+        self._flags = [f for f in self._flags if f != "inventory_component_not_total"]
+        self._flag("inventory_components_summed")
+        return total, " + ".join(sorted(lines)), "sum"
+
+    def _filed_anywhere_in(self, spec: LineItem, column: str, concept: str) -> float | None:
+        """The filed value of the first non-dimensional row of *concept* on *spec*'s statements at *column*."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept:
+                value = self._read(row, column)
+                if value is not None:
+                    return value
+        return None
+
+    def _restricted_cash_filed(self, column: str) -> bool:
+        """Q6 / L-5: whether the filing shows a restricted cash amount at the instant (a balance-sheet row or a filed
+        fact; the combined cash-and-restricted-cash total is not one)."""
+
+        def restricted(concept: str) -> bool:
+            local = concept.split("_", 1)[-1].split(":", 1)[-1]
+            return "RestrictedCash" in local and not local.startswith(
+                ("CashCashEquivalents", "CashAndCashEquivalents")
+            )
+
+        for row in self.raw.get("balance_sheet", []):
+            if not row.get("dimension") and restricted(str(row.get("concept") or "")):
+                value = _numeric(row.get(column))
+                if value:
+                    return True
+        period = self._filed_fact_period(column, instant=True)
+        if period is None:
+            return False
+        for fact in self.filed_facts:
+            if (
+                restricted(self._filed_concept(fact.concept))
+                and self._filed_fact_matches(fact, period)
+                and fact.value
+            ):
+                return True
+        return False
+
+    def _net_interest_row(  # noqa: C901 - the sign from the fact, else the row
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None] | None:
+        """Q1 (audit round #10, user-approved): the net interest line ("Interest expense, net") as the interest
+        expense when no gross interest expense is filed anywhere -- flagged ``interest_net``. The amount is the
+        filed net element's negative: a net expense is a negative filed ``InterestIncomeExpense...Net``. The sign comes
+        from the filing's own fact for the period, else the row's ``preferred_sign``; neither, nothing is read."""
+        period = self._filed_fact_period(column, instant=False)
+        found: set[float] = set()
+        concept_read = None
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            if concept not in NET_INTEREST_ELEMENTS:
+                continue
+            if not re.search(r"interest", self._face_caption(row)):
+                continue
+            displayed = _numeric(row.get(column))
+            if displayed is None:
+                continue
+            filed = None
+            if period is not None:
+                fact_value, status = self._filed_fact_value(spec, period, concept)
+                if status == "ambiguous":
+                    return None
+                if fact_value is not None and round(abs(fact_value)) == round(abs(displayed)):
+                    filed = fact_value
+            if filed is None:
+                sign = _preferred_sign(row)
+                if sign is None:
+                    self._flag("interest_net_sign_unknown")
+                    continue
+                filed = displayed * sign
+            found.add(round(-filed, 2))
+            concept_read = concept
+        if len(found) != 1 or concept_read is None:
+            return None
+        self._flag("interest_net")
+        return next(iter(found)), concept_read, "net_interest"
+
+    def _da_face_parts(  # noqa: C901 - one test per line kind
+        self, spec: LineItem, column: str
+    ) -> tuple[float | None, str | None, str | None]:
+        """Q2b (audit round #10, user-approved): D&A as the sum of its clean part lines on the cash-flow face -- a
+        depreciation line and amortization line(s) -- or one part alone when the filing files no amount of the other
+        part (nor an aggregate) for the period. A D&A line that adds anything else (impairment, "other", a disposal,
+        right-of-use assets) refuses the reading (Q2a); lines that are not D&A at all (debt costs, leases, accretion)
+        are left out."""
+        depreciation: dict[str, float] = {}
+        amortization: dict[str, float] = {}
+        for row in self._rows_for(spec):
+            concept = str(row.get("concept") or "")
+            local = concept.split("_", 1)[-1]
+            label = str(row.get("label") or "").strip()
+            if not _DA_NAME_RE.search(label):
+                continue  # the caption decides what the line is: an element-only match is not a D&A line
+            value = self._read(row, column)
+            if value is None or value == 0.0:
+                continue
+            names_da_asset = re.search(
+                r"depreciat|intangible|propert|equipment|software|premises", label, re.I
+            )
+            clean = not _DA_PART_NOT_RE.search(label) and not _DA_PART_NOT_CONCEPT_RE.search(local)
+            if clean and _DA_DEPRECIATION_CAPTION_RE.search(label):
+                target = depreciation
+            elif clean and _DA_AMORTIZATION_CAPTION_RE.search(label):
+                target = amortization
+            elif _DA_NOT_DA_LINE_RE.search(label) and not names_da_asset:
+                continue  # not D&A: debt costs, leases, accretion, deferred costs
+            else:
+                self._flag("da_parts_bundled")
+                return None, None, None
+            if value < 0:
+                self._flag("da_parts_negative")
+                return None, None, None
+            target[concept] = value
+        if not depreciation and not amortization:
+            return None, None, None
+        aggregate = [
+            c
+            for c in depreciation
+            if re.search(
+                r"^depreciation,? (depletion,? )?and amortization( expense)?$",
+                self._label_of(spec, c),
+                re.I,
+            )
+        ]
+        if aggregate and amortization:
+            # an aggregate "Depreciation and amortization" beside an amortization line: E3/F-A9's reading, not parts
+            self._flag("da_parts_bundled")
+            return None, None, None
+        if not (depreciation and amortization):
+            other = _DA_AMORTIZATION_FACTS if depreciation else _DA_DEPRECIATION_FACTS
+            period = self._filed_fact_period(column, instant=False)
+            filed_other = period is not None and any(
+                self._filed_concept(f.concept).split("_", 1)[-1] in other
+                and f.value
+                and self._filed_fact_matches(f, period)
+                for f in self.filed_facts
+            )
+            if filed_other or not self.filed_facts:
+                return None, None, None
+            self._flag("da_single_part")
+        parts = {**depreciation, **amortization}
+        self._flag("da_face_parts")
+        return sum(parts.values()), " + ".join(sorted(parts)), "sum"
+
+    def _label_of(self, spec: LineItem, concept: str) -> str:
+        """The caption of *concept*'s first row on *spec*'s statements."""
+        for row in self._rows_for(spec):
+            if row.get("concept") == concept:
+                return str(row.get("label") or "").strip()
+        return ""
+
+    def _nci_parts_proved(self, column: str, profit: float) -> tuple[float, str, str] | None:
+        """R3 (audit round #10): NCI income filed only as lines without the total (SRE's nonredeemable + redeemable,
+        APA's Altus preferred units) is their sum **when the face proves it**: profit less the lines equals another
+        income-statement row of the period (the net income attributable to the parent or to common). Flagged
+        ``nci_parts_proved``."""
+        outer = list(self._flags)
+        try:
+            return self._nci_parts_proof(column, profit)
+        finally:
+            self._flags = outer + [
+                f for f in self._flags if f == "nci_parts_proved" and f not in outer
+            ]
+
+    def _nci_parts_proof(self, column: str, profit: float) -> tuple[float, str, str] | None:
+        lines = [
+            (str(row.get("concept") or ""), self._read(row, column))
+            for row in self._valued_rows(column)
+            if _names_nci_income(row)
+        ]
+        if not lines or any(v is None for _c, v in lines):
+            return None
+        parent = profit - sum(v for _c, v in lines if v is not None)
+        tolerance = max(0.5, 0.0005 * abs(profit))
+        for row in self.raw.get("income_statement", []):
+            if row.get("abstract") or row.get("dimension"):
+                continue
+            concept = str(row.get("concept") or "")
+            if concept == G + "ProfitLoss" or _names_nci_income(row):
+                continue
+            label = str(row.get("label") or "").lower()
+            if "per share" in label or "comprehensive" in label:
+                continue
+            value = self._read(row, column)
+            if (
+                value is not None
+                and abs(value - parent) <= tolerance
+                and re.search(r"net (income|earnings|loss)|earnings|attributable", label)
+            ):
+                self._flag("nci_parts_proved")
+                concepts = " - ".join([G + "ProfitLoss", *sorted(c for c, _v in lines)])
+                return parent, concepts, "map"
+        return None
+
     def _restore_dropped_revenue(
         self, spec: LineItem, column: str
     ) -> tuple[float, str, str] | None:
@@ -2776,6 +3376,9 @@ class Statements:
         nci_concept = G + "NetIncomeLossAttributableToNoncontrollingInterest"
         nci = self._filed_anywhere(column, nci_concept)
         if nci is None:
+            parts = self._nci_parts_proved(column, profit)
+            if parts is not None:
+                return parts
             self._flag("profit_loss_nci_income_not_total")
             return None, None, None
         return profit - nci, f"{G}ProfitLoss - {nci_concept}", "map"
@@ -3043,7 +3646,7 @@ class Statements:
         exact = self._da_exact_sum(spec, column)
         return exact if exact[0] is not None else result
 
-    def _da_calibrated_sum(
+    def _da_calibrated_sum(  # noqa: C901, PLR0912 - audit F-A4's calibration, one pass
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None] | None:
         """Audit F-A4: the D&A-nature face lines of the cash-flow statement (a depreciation line plus
@@ -3492,7 +4095,7 @@ class Statements:
 
         return None, None, None
 
-    def _reit_components(self, spec: LineItem, column: str) -> dict[str, float]:
+    def _reit_components(self, spec: LineItem, column: str) -> dict[str, float]:  # noqa: C901 - the tree, one pass
         """APP-04b's us-gaap REIT components (corporate, development, held-for-investment) and the
         real-estate acquisition part, by the FASB 2026 calculation tree.
 
@@ -4087,7 +4690,8 @@ class Statements:
                 fallback = self._filed_fact_row(REGISTRY["long_term_debt"], column, instant=True)
                 if fallback is not None:
                     value, concept, how = fallback
-                    self._flag("filed_fact")
+                    if how == "filed_fact":
+                        self._flag("filed_fact")
             return value, concept, how, list(self._flags)
         finally:
             self._flags = outer
@@ -4122,7 +4726,8 @@ class Statements:
         fallback = self._filed_fact_row(REGISTRY["short_term_debt"], column, instant=True)
         if fallback is not None:
             value, concept, _how = fallback
-            self._flag("filed_fact")
+            if _how == "filed_fact":
+                self._flag("filed_fact")
             return value, concept or "", self._filed_fact_short_term_terms(concept or ""), False
         return None, None, {}, False
 
@@ -4159,7 +4764,7 @@ class Statements:
             return value, concept, "filed_fact"
         return value, concept, "map" if " + " in concept else "concept"
 
-    def total_debt(self, period_key: str) -> Resolution:
+    def total_debt(self, period_key: str) -> Resolution:  # noqa: C901 - the map, then the verified lines
         """Total debt for *period_key* (MET-07, ID-02b, D-01; MET-00): long-term plus short-term.
 
         * both filed -> their sum; one term of the map not filed -> the filed terms, flagged
@@ -4285,7 +4890,7 @@ class Statements:
         flags = (*tuple(took.get("flags") or ()), "audit_debt_owner_reading")
         return Resolution(float(took["value"]), took.get("concept"), "audit_owner", flags)
 
-    def _audit_lines_for(self, period_key: str) -> tuple[str, ...]:
+    def _audit_lines_for(self, period_key: str) -> tuple[str, ...]:  # noqa: PLR0911 - one return per date rule
         """Audit F-A17: the verified debt lines (``audit/debt_overrides.json``) that apply to one column.
 
         The sector review verified a filing's lines on its own column, beside that column's long-term
@@ -4396,13 +5001,24 @@ class Statements:
         this date; (d) an interest-expense line still refuses it unless the zero is shown -- a debt line at 0 in this
         column, or no debt balance at any date of the filing (lease or facility interest, no borrowing). J&J FY2023
         and GM FY2025 stay capture failures."""
-        if self.resolve("total_assets", period_key).value is None or self.resolve("equity", period_key).value is None:
+        if (
+            self.resolve("total_assets", period_key).value is None
+            or self.resolve("equity", period_key).value is None
+        ):
             return False
         if self.resolve("cash", period_key).value is None and not self._cash_line_amount(column):
             return False
-        if self._debt_amount_in_column(column) or not self.filed_facts or self._debt_balance_fact(column):
+        if (
+            self._debt_amount_in_column(column)
+            or not self.filed_facts
+            or self._debt_balance_fact(column)
+        ):
             return False
-        return not self._has_interest_expense_line() or self._zero_debt_line(column) or not self._debt_balance_fact(None)
+        return (
+            not self._has_interest_expense_line()
+            or self._zero_debt_line(column)
+            or not self._debt_balance_fact(None)
+        )
 
     def _debt_rows(self) -> Iterator[dict[str, Any]]:
         for row in self._statement_rows("balance_sheet"):
@@ -4440,7 +5056,8 @@ class Statements:
 
     def _cash_line_amount(self, column: str) -> bool:
         return any(
-            "cash" in str(row.get("concept") or "").lower() and _numeric(row.get(column)) not in (None, 0.0)
+            "cash" in str(row.get("concept") or "").lower()
+            and _numeric(row.get(column)) not in (None, 0.0)
             for row in self._statement_rows("balance_sheet")
         )
 

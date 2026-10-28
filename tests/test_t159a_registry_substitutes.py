@@ -698,7 +698,9 @@ def test_a_long_term_debt_component_is_never_added_beside_its_parent() -> None:
 
 @pytest.mark.parametrize("concept", REJECTED)
 def test_a_rejected_concept_never_resolves(concept: str) -> None:
-    """The brief's rejected list: none of these concepts may ever resolve, for any item."""
+    """The brief's rejected list: none of these concepts may ever resolve, for any item -- as a *concept*. Audit round
+    #10 (user-approved Q1, Q4) reads four of them as a face line only (``audit_face_line``): a net interest line, a
+    gross line with no reserve beside it; ``test_audit_round10.py`` holds those readings."""
     for statement, columns in (
         ("income", {KEY: 100.0}),
         ("balance", {INSTANT: 100.0}),
@@ -707,5 +709,7 @@ def test_a_rejected_concept_never_resolves(concept: str) -> None:
         stmts = _payload(income=[row]) if statement == "income" else _payload(balance=[row])
         for item in REGISTRY:
             resolution = stmts.resolve(item, KEY)
+            if resolution.how in ("face_line", "net_interest"):
+                continue  # audit round #10: the face line, not the concept
             assert resolution.concept != G + concept, (item, concept, statement)
             assert resolution.value != 100.0 or item not in ("short_term_investments",)

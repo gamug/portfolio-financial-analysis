@@ -122,8 +122,9 @@ def test_the_10q_mirror_of_the_same_shape_is_the_sum_not_a_double_count() -> Non
 
 
 def test_an_ambiguous_depreciation_refuses_the_mixed_value() -> None:
-    """Two different ``Depreciation`` facts for the period: no sourced reading, so the item is
-    empty (never the amortization alone) and the refusal is flagged."""
+    """Two different ``Depreciation`` facts for the period: no sourced reading (never the amortization alone) and
+    the refusal is flagged; since audit round #10 (Q2b) the face's own two lines -- "Depreciation" and
+    "Amortization" -- are the D&A."""
     stmts = _payload(
         cash_flow=[
             _row("AdjustmentForAmortization", "Amortization", 79_264_000.0),
@@ -137,8 +138,8 @@ def test_an_ambiguous_depreciation_refuses_the_mixed_value() -> None:
         ],
     )
     res = stmts.resolve("depreciation_amortization", FY)
-    assert res.value is None
-    assert "da_amortization_only_refused" in res.flags
+    assert res.value == 150_523_000.0
+    assert "da_amortization_only_refused" in res.flags and "da_face_parts" in res.flags
 
 
 def test_a_genuine_aggregate_that_is_not_the_amortization_stays() -> None:
