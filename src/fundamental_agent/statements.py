@@ -407,7 +407,9 @@ _DEBT_LINE_RE = re.compile(
 )
 _NOT_A_DEBT_LINE_RE = re.compile(
     r"securities|receivable|investment|asset|gain|loss|expense|income|interest|issuance"
-    r"|repayment|proceeds|fairvalue|deferred|held|discount|premium|realestate|payable.*related",
+    r"|repayment|proceeds|fairvalue|deferred|held|discount|premium|realestate|payable.*related"
+    # L-21 (audit 2026-10-28): ISRG's ``LiabilitiesOtherThanLongtermDebtNoncurrent`` names what is NOT debt
+    r"|otherthan",
     re.IGNORECASE,
 )
 _INTEREST_EXPENSE_LINE_RE = re.compile(r"^Interest(Expense|AndDebtExpense)")
@@ -1135,6 +1137,24 @@ REGISTRY: dict[str, LineItem] = {
         resolver="short_term_debt",
     ),
 }
+
+
+# L-21 (audit 2026-10-28): the debt *balances* a filing's own facts can carry -- the registry's debt elements and the
+# generic balance elements. A capacity, a fee or a rate (``LineOfCreditFacilityMaximumBorrowingCapacity``) is not a
+# balance, so it is listed by element rather than matched by pattern.
+_DEBT_BALANCE_FACTS: frozenset[str] = frozenset(
+    c.split("_", 1)[1]
+    for name in ("long_term_debt", "short_term_debt")
+    for c in (*REGISTRY[name].concepts, *REGISTRY[name].total_concepts, *REGISTRY[name].fallback_concepts)
+    if "_" in c
+) | frozenset({
+    "LongTermDebt", "LongTermDebtNoncurrent", "LongTermDebtCurrent", "DebtCurrent", "DebtInstrumentCarryingAmount",
+    "DebtLongtermAndShorttermCombinedAmount", "LineOfCredit", "LongTermLineOfCredit", "ShortTermBorrowings",
+    "CommercialPaper", "NotesPayable", "NotesPayableCurrent", "SeniorNotes", "SeniorLongTermNotes",
+    "ConvertibleNotesPayable", "ConvertibleNotesPayableCurrent", "ConvertibleDebtNoncurrent", "ConvertibleDebtCurrent",
+    "SecuredDebt", "UnsecuredDebt", "LoansPayable", "OtherLongTermDebt", "OtherLongTermDebtNoncurrent",
+    "LongTermDebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligationsCurrent",
+})
 
 
 @dataclass(frozen=True)
@@ -4150,7 +4170,9 @@ class Statements:
         * no debt line at all -> **0**, flagged ``no_debt_lines``, only when the balance sheet
           resolved completely (total assets, equity and cash), no debt concept is filed on it and
           no interest-expense concept on the income statement (the variants the registry does not
-          read included); otherwise
+          read included); or, when those refuse it, the filing itself proves the zero (L-21,
+          :meth:`_debt_absent_verified`: flagged ``debt_absent_verified`` too); a short-term line shown
+          at 0 alone is no debt line; otherwise
           empty, flagged ``capture_failure`` (N23). A missing debt is never read as 0 (MET-00).
         """
         outer, self._flags = self._flags, []
@@ -4321,8 +4343,9 @@ class Statements:
             REGISTRY["short_term_debt"], column, in_long_term=in_long_term
         )
 
-        if lt_value is None and st_value is None:
-            return self._no_debt_line(period_key)
+        if lt_value is None and (st_value is None or st_value == 0.0):
+            # L-21: a short-term line shown at 0 is not "short-term debt alone" (FFIV, WSM, TER after repaying)
+            return self._no_debt_line(period_key, column)
         if lt_value is None:
             self._flag("short_term_debt_only")
             self._flag("capture_failure")
@@ -4345,7 +4368,9 @@ class Statements:
         self._flag("partial_map")
         return lt_value + (st_value or 0.0), concept, "map"
 
-    def _no_debt_line(self, period_key: str) -> tuple[float | None, str | None, str | None]:
+    def _no_debt_line(
+        self, period_key: str, column: str
+    ) -> tuple[float | None, str | None, str | None]:
         """ID-02b: no long-term and no short-term debt resolved."""
         if (
             self._balance_sheet_resolved(period_key, with_cash=True)
@@ -4354,8 +4379,70 @@ class Statements:
         ):
             self._flag("no_debt_lines")
             return 0.0, None, "none_filed"
+        if self._debt_absent_verified(period_key, column):
+            self._flag("no_debt_lines")
+            self._flag("debt_absent_verified")
+            return 0.0, None, "none_filed"
         self._flag("capture_failure")
         return None, None, None
+
+    def _debt_absent_verified(self, period_key: str, column: str) -> bool:
+        """L-21 (user-approved 2026-10-28): the zero proven by the filing itself when the tests above refuse it.
+
+        (a) total assets and equity resolve and the face shows a cash line with an amount (a caption naming restricted
+        cash is refused as *cash* -- L-5 -- but the balance sheet is whole); (b) no debt line carries an amount in this
+        column, and the gateway dropped none there (``corrections``, whether or not a row of it is left: AIG's and
+        AMP's whole ``LongTermDebt`` rows); (c) the filing's own facts are available and none is a debt balance at
+        this date; (d) an interest-expense line still refuses it unless the zero is shown -- a debt line at 0 in this
+        column, or no debt balance at any date of the filing (lease or facility interest, no borrowing). J&J FY2023
+        and GM FY2025 stay capture failures."""
+        if self.resolve("total_assets", period_key).value is None or self.resolve("equity", period_key).value is None:
+            return False
+        if self.resolve("cash", period_key).value is None and not self._cash_line_amount(column):
+            return False
+        if self._debt_amount_in_column(column) or not self.filed_facts or self._debt_balance_fact(column):
+            return False
+        return not self._has_interest_expense_line() or self._zero_debt_line(column) or not self._debt_balance_fact(None)
+
+    def _debt_rows(self) -> Iterator[dict[str, Any]]:
+        for row in self._statement_rows("balance_sheet"):
+            local = str(row.get("concept") or "").split("_", 1)[-1]
+            if _DEBT_LINE_RE.search(local) and not _NOT_A_DEBT_LINE_RE.search(local):
+                yield row
+
+    def _debt_amount_in_column(self, column: str) -> bool:
+        if any(_numeric(row.get(column)) not in (None, 0.0) for row in self._debt_rows()):
+            return True
+        for corr in self.corrections:
+            local = str(corr.get("concept") or "").split("_", 1)[-1]
+            if (
+                corr.get("statement") == "balance_sheet"
+                and str(corr.get("column") or "")[:10] == column[:10]
+                and _numeric(corr.get("original")) not in (None, 0.0)
+                and _DEBT_LINE_RE.search(local)
+                and not _NOT_A_DEBT_LINE_RE.search(local)
+            ):
+                return True
+        return False
+
+    def _zero_debt_line(self, column: str) -> bool:
+        return any(_numeric(row.get(column)) == 0.0 for row in self._debt_rows())
+
+    def _debt_balance_fact(self, column: str | None) -> bool:
+        """A nonzero debt balance among the filing's own facts, at *column*'s date (``None``: any date)."""
+        return any(
+            fact.period_start is None
+            and (column is None or fact.period_end == column[:10])
+            and fact.value
+            and fact.concept.split(":", 1)[-1] in _DEBT_BALANCE_FACTS
+            for fact in self.filed_facts
+        )
+
+    def _cash_line_amount(self, column: str) -> bool:
+        return any(
+            "cash" in str(row.get("concept") or "").lower() and _numeric(row.get(column)) not in (None, 0.0)
+            for row in self._statement_rows("balance_sheet")
+        )
 
     def _statement_rows(self, statement: str) -> Iterator[dict[str, Any]]:
         """Every non-abstract row of *statement*: dimensional or not, with a value or not. A concept
@@ -4373,6 +4460,17 @@ class Statements:
         for row in self._statement_rows("balance_sheet"):
             local = str(row.get("concept") or "").split("_", 1)[-1]
             if _DEBT_LINE_RE.search(local) and not _NOT_A_DEBT_LINE_RE.search(local):
+                return True
+        # L-21 audit: a row the gateway emptied whole can leave only its ``corrections`` entry (a payload rebuilt from
+        # the stored face rows keeps no row of it: AIG's and AMP's ``LongTermDebt``)
+        for corr in self.corrections:
+            local = str(corr.get("concept") or "").split("_", 1)[-1]
+            if (
+                corr.get("statement") == "balance_sheet"
+                and _numeric(corr.get("original")) not in (None, 0.0)
+                and _DEBT_LINE_RE.search(local)
+                and not _NOT_A_DEBT_LINE_RE.search(local)
+            ):
                 return True
         return False
 
