@@ -270,3 +270,26 @@ def test_roic_on_a_near_zero_capital_base_is_not_meaningful() -> None:
     row = results["return_on_invested_capital"]
     assert row.value is None
     assert row.inputs.get("flag_return_on_invested_capital_invested_capital_not_meaningful") == 1.0
+
+
+def test_a_debt_figure_only_in_the_notes_is_not_read() -> None:
+    """Q7's exclusion: a balance the face's other lines may contain (PHM's senior notes inside "Notes payable", BE's
+    verified debt lines) is never read from the notes -- it would be counted twice."""
+    facts = [*BASE_FACTS, _fact("LongTermDebt", 250.0)]
+    res = _stmts(facts=facts).resolve("long_term_debt", COL)
+    assert res.value is None and "filed_fact_from_notes" not in res.flags
+
+
+def test_a_notes_figure_is_refused_when_the_face_shows_the_item_itself() -> None:
+    """Q7's guard (WEC): the face shows "Common shareholders' equity" under an element the engine does not read; the
+    notes figure that differs from it is another scope (equity including NCI), never the item."""
+    balance = [
+        _row("Assets", "Total assets", COL, 1_000.0),
+        _row("wec_TotalCommonShareholdersEquity", "Common shareholders' equity", COL, 600.0),
+    ]
+    facts = [
+        *BASE_FACTS,
+        _fact("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest", 640.0),
+    ]
+    res = _stmts(balance=balance, facts=facts).resolve("equity", COL)
+    assert res.value is None and "filed_fact_refused_face_line_differs" in res.flags

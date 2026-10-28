@@ -1323,6 +1323,45 @@ _FACE_LINE_CAPTION_NOT: dict[str, str] = {
     "stock_based_compensation": r"tax|customer",
     "interest_expense": r"income",
 }
+# Q7's exclusions (audit round #10): a balance the face's other lines already contain -- short-term investments
+# inside "cash and cash equivalents" (TGT), senior notes inside "notes payable" (PHM), the debt lines verified for the
+# filing (BE, D-6), an NCI inside equity -- would be counted twice, and gross profit is the face's revenue less its
+# cost of sales: their notes figures are not read.
+_NOTES_NOT_READ = frozenset(
+    {
+        "short_term_investments",
+        "short_term_debt",
+        "long_term_debt",
+        "gross_profit",
+        "minority_interest",
+        "redeemable_nci",
+        "equity_incl_nci",
+        "total_assets",
+        "total_liabilities",
+        "current_assets",
+        "current_liabilities",
+    }
+)
+# Q7's guard: a face line whose caption is the item itself (the whole caption, note references dropped). When the
+# face shows one, the notes figure that differs from it is a component or another scope, never the item.
+_NOTES_FACE_CAPTION: dict[str, str] = {
+    "revenue": r"(total )?(net )?(operating )?(revenues?|sales)(, net)?|net sales and revenues?|total net revenues?",
+    "cogs": r"(total )?costs? of (sales|revenues?|goods sold|products sold)",
+    "operating_income": r"(total )?operating (income|profit|earnings)( \(loss\))?|(income|earnings) \(loss\) from operations"
+    r"|(income|earnings) from operations|operating loss",
+    "pretax_income": r"(income|earnings)( \(loss\))? (from continuing operations )?before (provision for )?income taxes",
+    "income_tax": r"(provision for |\(provision\) benefit for )?income tax(es)?( expense)?( \(benefit\))?",
+    "net_income": r"net (income|earnings)( \(loss\))?",
+    "interest_expense": r"interest expense",
+    "depreciation_amortization": r"depreciation(,)? (depletion,? )?and amortization( expense)?",
+    "stock_based_compensation": r"(stock|share|equity)[- ]based compensation( expense)?",
+    "capital_expenditure": r"capital expenditures?|(purchases?|additions?) (of|to) property(, plant)? and equipment"
+    r"|payments for property(, plant)? and equipment",
+    "cash": r"cash and cash equivalents",
+    "inventory": r"inventor(y|ies)(, net)?",
+    "receivables": r"(accounts|trade) receivables?(, net)?|receivables(, net)?",
+    "equity": r"(total )?(common )?(stockholders|shareholders|shareowners)['\u2019]? equity",
+}
 # The items whose face line must not carry a negative filed value (a payment, an expense, a balance).
 _FACE_LINE_NOT_NEGATIVE = frozenset(
     {
@@ -2276,7 +2315,7 @@ class Statements:
             face = self._face_line_row(spec, column)
             if face is not None:
                 row = face
-            elif self.filed_facts:
+            elif self.filed_facts and spec.name not in _NOTES_NOT_READ:
                 before = list(self._flags)
                 self._accept_notes = True
                 try:
@@ -2284,8 +2323,12 @@ class Statements:
                 finally:
                     self._accept_notes = False
                 if row is None or row[0] is None:
-                    # nothing read: the second pass leaves no trace (a part it accepted is not the item)
-                    self._flags = before
+                    # nothing read: the second pass leaves only its refusals (a part it accepted is not the item)
+                    self._flags = before + [
+                        f
+                        for f in self._flags
+                        if f.startswith("filed_fact_refused") and f not in before
+                    ]
         if row is not None and row[0] is not None:
             self._flags = [
                 raised for raised in self._flags if not raised.startswith("filed_fact_refused")
@@ -2521,7 +2564,11 @@ class Statements:
         if proof == "not_on_face" and self._accept_notes:
             # Q7 (audit round #10, user-approved): the filing's own figure, filed only in the notes -- the item is
             # omitted from the face or bundled into another line. Every other refusal (calibration, ambiguity, a zero,
-            # a face row of another item) stands.
+            # a face row of another item) stands, and so does this one when the face shows a line captioned as the
+            # item itself (its figure is the face's, not the notes')
+            if self._face_presents_item(spec, period.key):
+                self._filed_fact_refuse("face_line_differs")
+                return False
             self._flag("filed_fact_from_notes")
             return True
         self._filed_fact_refuse(proof or "not_on_face")
@@ -2983,6 +3030,18 @@ class Statements:
         self._flags = [f for f in self._flags if f != "inventory_component_not_total"]
         self._flag("inventory_components_summed")
         return total, " + ".join(sorted(lines)), "sum"
+
+    def _face_presents_item(self, spec: LineItem, column: str) -> bool:
+        """Q7's guard: a face row of *spec*'s statements, with a value in *column*, whose whole caption is the item."""
+        pattern = _NOTES_FACE_CAPTION.get(spec.name)
+        if pattern is None:
+            return False
+        key = column
+        for row in self._rows_for(spec):
+            label = re.sub(r"[,.:]+$", "", self._face_caption(row)).strip()
+            if re.fullmatch(pattern, label) and _numeric(row.get(key)) is not None:
+                return True
+        return False
 
     def _filed_anywhere_in(self, spec: LineItem, column: str, concept: str) -> float | None:
         """The filed value of the first non-dimensional row of *concept* on *spec*'s statements at *column*."""

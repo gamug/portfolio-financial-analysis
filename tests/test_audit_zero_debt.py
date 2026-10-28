@@ -86,12 +86,11 @@ def test_lease_interest_without_any_debt_balance_is_a_verified_zero() -> None:
 
 
 def test_a_debt_balance_among_the_filing_facts_refuses_the_zero() -> None:
-    """The face shows no debt line but the filing's own facts carry a debt balance at the date: never 0 -- since
-    audit round #10 (Q7) the balance the filing files in its notes is the long-term debt."""
+    """The face shows no debt line but the filing's own facts carry a debt balance at the date: missing, not 0."""
     total = _stmts(interest=True, facts=[*BASE_FACTS, _fact("LongTermDebt", 250.0)]).total_debt(FY)
     assert (
-        total.value == 250.0
-        and "filed_fact_from_notes" in total.flags
+        total.value is None
+        and "capture_failure" in total.flags
         and "debt_absent_verified" not in total.flags
     )
 
