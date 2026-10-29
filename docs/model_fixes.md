@@ -10950,3 +10950,70 @@ v11 — a full v11 run closes it).
 (spaced GETs) were empty, so it is a per-filing gap, not gateway-wide. The metrics-only rate is
 **36–80 s/filing** vs P2b's 6.2 s/unit; on one NDSN FY2025 10-K the gateway GET is **3.77 s** and
 parse + 221 facts + 38 metrics + gate is **0.12 s** — the gateway, not the compute, is the cost.
+
+## Audit round #11 — derived operating income (D-17), the quick ratio without inventory (D-18), every empty value's reason
+
+Decided by the user with reviewer A (2026-10-29, `pilot_a3/ROUND11_BRIEF.md`, `pilot_a3/DECISIONS.md` D-17 / D-18);
+implemented and measured by reviewer B on the audit worktree (`r11-d17`; the D-18 code is an OpenCode agent's commit
+a9385e5, reviewed and hardened by B). Applied to `pilot_a3/financial.db` through the plan / apply method (FIXES #11).
+
+### Symptom
+
+* **138 companies print no operating-income line** (single-step income statements): the registry reads operating
+  income only from `OperatingIncomeLoss`, so operating margin, operating-income growth, EBITDA, interest coverage, NOPAT,
+  ROIC (both rates), the NOPAT-based return on assets, net debt / EBITDA and the enterprise FCF yield were empty —
+  16,350 empty values listed operating income as not filed.
+* **2,110 quick ratios** were empty only because the filing has no inventory line (software, services, exchanges).
+* **1,154 empty rule-input rows** (`value_inputs` 366, `utility_cash_coverage_3y` 788) recorded no empty reason.
+
+### D-17 — the derivation (`Statements._derived_operating_income`)
+
+Pre-tax income + the registry's gross interest expense − the non-operating lines between the revenue line and the
+pre-tax line − the equity-method income above the pre-tax line (S-X 5-03 items 7–9; C7 p.8 and p.46). The
+non-operating elements (`_EBIT_NONOPERATING`, 28): the US-GAAP 2026 calculation tree of pre-tax income outside the
+`OperatingIncomeLoss` subtree, kept only where the control filings (they print the line) place the element below
+operating income in ≥ 90 % of ≥ 5 appearances — the list and each element's B6 definition are in
+`audit/r11/D17_CONCEPTS.md`. A nested element is read once; the filer's own `NonoperatingIncomeExpense` total is split
+by arithmetic into the lines directly above it (a unique split; lines of unknown direction tried both ways, at most
+three), and the interest lines it holds are taken back out — 1,262 control totals hold the interest, and eliminating
+such a total while adding the interest back counted it twice (NEE, SBAC). Not for an APP-00 financial type or an
+unknown type; empty without pre-tax income or a gross interest expense (a net interest line is never the interest);
+never when an `OperatingIncomeLoss` line is on the face or was dropped from it by the gateway. Flags: `ebit_derived`
+(how `derived_ebit`) on the value, `flag_operating_income_ebit_derived` on every metric that reads it,
+`ebit_extension_line_not_read` (an extension line read as non-operating by its caption: IBM's "Other (income) and
+expense", CVX's equity affiliates), `ebit_tree_element_kept` (a tree element left in: HON's deconsolidation gain). A
+10-Q TTM whose terms mix a printed and a derived operating income is refused (`ttm_ebit_method_mixed`).
+
+**Deviations from the brief, by its own accuracy test:** the REIT real-estate sale gains are **not** removed (the REIT
+controls place the gain inside their printed operating income in 42 of 44 cases; removing it makes Real Estate worse
+than no elimination on the held-out half); the equity-method income is subtracted wherever it sits above the pre-tax
+line, inside revenue's section too (XOM) — no accuracy change on the controls; the revenue line stays the lower bound
+of the other non-operating lines (dropping it worsens Energy's p95 from 2.47 to 26.51 %: the E&Ps' derivative lines).
+
+**Declared accuracy** (the engine's own code on 5,004 control filings, the line removed; |printed − derived| /
+revenue, median / p75 / p90 / p95): **0.00 / 0.00 / 0.93 / 2.15 %** against 0.79 / 2.11 / 4.52 / 7.27 % without
+elimination; within 1 / 2 / 5 % of revenue 90.5 / 94.5 / 97.8 %; better in every sector and APP-00 type at every
+quantile, and on the held-out half of the companies (`audit/r11/ebit_engine_check.json`, `ebit_variants2.json`).
+
+### D-18 — inventory = 0 for the quick ratio only (`Statements.no_inventory_lines`, `metrics/liquidity.py`)
+
+A classified balance sheet (`AssetsCurrent`, `LiabilitiesCurrent`), a known non-financial APP-00 type, and no
+inventory evidence anywhere in the filing: no row (any statement, dimensional rows and every column included), filed
+fact or gateway-dropped row (`corrections`) of an inventory concept — the registry item's concepts, substitutes and
+families, the face-line allowlist and reserves, `MaterialsSuppliesAndOther`, `Supplies`, any concept named
+"inventor…" — and no caption naming inventory, supplies, spare parts, merchandise or stockpiles (S-X 5-02 item 6's
+inventories include supplies: the railroads, WM, UHS, FDX). The quick ratio reads current assets − 0 and carries
+`flag_quick_ratio_no_inventory_lines`; nothing else changes.
+
+### Part 2 — every empty value records its reason; the has_missed read one by one
+
+`value_inputs` and `utility_cash_coverage_3y` now carry `provenance.empty_reason` (G4's codes; a trailing year built
+as x4 is `prior_year_missing`). Of the 88 `has_missed` values: XOM's inventory (two components, one
+`InventoryPartsAndComponentsNetOfReserves`, refused as a "reserve" line) is now summed when the inventory lines form
+one closed block; FCX's block holds an unnamed extension line ("Product") and stays empty; PNC's net income and the
+remaining cases are declared in LIMITATIONS.
+
+### Tests
+
+`tests/test_audit_round11_d17.py` (18), `tests/test_audit_round11_d18.py` (15 functions, 20 cases), `tests/test_audit_round11_reasons.py`
+(5); the full suite passes (3,267).
