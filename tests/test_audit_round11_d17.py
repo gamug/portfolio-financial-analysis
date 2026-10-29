@@ -148,6 +148,22 @@ def test_the_equity_method_income_above_pretax_is_taken_out() -> None:
     assert _stmts(income).resolve("operating_income", FY).value == 200.0
 
 
+def test_the_equity_method_income_inside_revenue_is_taken_out_too() -> None:
+    """XOM: "Income from equity affiliates" inside "Total revenues and other income" -- above the pre-tax line."""
+    income = [
+        _row(
+            "RevenueFromContractWithCustomerExcludingAssessedTax",
+            "Sales and other operating revenue",
+            1_000.0,
+        ),
+        _row("IncomeLossFromEquityMethodInvestments", "Income from equity affiliates", 60.0),
+        _row("Revenues", "Total revenues and other income", 1_060.0),
+        *SINGLE_STEP[1:4],
+        SINGLE_STEP[5] | {FY: 230.0},
+    ]
+    assert _stmts(income).resolve("operating_income", FY).value == 200.0
+
+
 def test_a_line_inside_revenue_and_an_operating_cost_element_are_not_eliminated() -> None:
     """EQT: derivative gains presented inside revenue; EIX: wildfire claims (``LossFromCatastrophes``, a
     non-operating element in the calculation tree the controls place among operating costs) -- neither removed."""

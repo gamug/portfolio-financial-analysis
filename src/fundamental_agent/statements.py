@@ -3457,7 +3457,9 @@ class Statements:
             ):
                 self._flag("ebit_extension_line_not_read")
         derived = pretax + interest.value - nonoperating
-        equity = next((k for k in range(lo + 1, pre) if concepts[k] == _EBIT_EQUITY_METHOD), None)
+        # C7 p.46 / reviewer A: the equity-method income anywhere above the pre-tax line -- inside revenue's section too
+        # (XOM's "Total revenues and other income"); measured on the controls: no accuracy change
+        equity = next((k for k in range(pre) if concepts[k] == _EBIT_EQUITY_METHOD), None)
         equity_value = values[equity] if equity is not None and equity not in skip else None
         if equity_value is not None:
             derived -= equity_value
