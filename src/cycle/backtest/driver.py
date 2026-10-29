@@ -333,13 +333,37 @@ def _model_id(payload: Mapping[str, Any]) -> int:
         raise BacktestError(f"quant printed no model_id: {dict(payload)}") from exc
 
 
-def _portfolio_ids(payload: Mapping[str, Any]) -> list[int]:
-    if payload.get("portfolio_id") is not None:
-        return [int(payload["portfolio_id"])]
+def _build_returns_version(payload: Mapping[str, Any], expected: str) -> None:
+    """Refuse a returns build that wrote a different engine version than the params expect."""
+    version = payload.get("engine_version")
+    if not isinstance(version, str) or not version:
+        raise BacktestError(f"quant build-returns printed no engine_version: {dict(payload)}")
+    if version != expected:
+        raise BacktestError(
+            f"quant build-returns built {version}, but the params expect {expected}; "
+            "refusing to simulate a different return series"
+        )
+
+
+def _min_var_portfolio_id(payload: Mapping[str, Any]) -> int:
+    """Plain ``optimize``'s ``portfolio_ids`` map: read ``min_var`` by name, never position."""
     ids = payload.get("portfolio_ids")
-    if isinstance(ids, list) and ids:
-        return [int(i) for i in ids]
-    raise BacktestError(f"quant printed no portfolio_id(s): {dict(payload)}")
+    if not isinstance(ids, Mapping) or "min_var" not in ids:
+        raise BacktestError(f"quant optimize printed no portfolio_ids['min_var']: {dict(payload)}")
+    try:
+        return int(ids["min_var"])
+    except (TypeError, ValueError) as exc:
+        raise BacktestError(
+            f"quant optimize printed a non-integer portfolio_ids['min_var']: {dict(payload)}"
+        ) from exc
+
+
+def _topn_portfolio_id(payload: Mapping[str, Any]) -> int:
+    """``optimize --cycle-run-id``'s single Top-30 book id."""
+    try:
+        return int(payload["portfolio_id"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BacktestError(f"quant optimize printed no portfolio_id: {dict(payload)}") from exc
 
 
 # -- data loading ---------------------------------------------------------------------
@@ -727,8 +751,8 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
             db_path,
             universe_db_path,
         )
-        base_portfolio = _portfolio_ids(base)[0]
-        topn_portfolio = _portfolio_ids(topn)[0]
+        base_portfolio = _min_var_portfolio_id(base)
+        topn_portfolio = _topn_portfolio_id(topn)
         targets[BASE_ARM][decision] = _positions(conn, base_portfolio, BASE_ARM)
         targets[NOGUARD_ARM][decision] = _positions(conn, topn_portfolio, NOGUARD_ARM)
 
@@ -1269,11 +1293,12 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
         run_id = _open_run(conn, window, params, warmup_steps, input_sha, applied)
         payload: dict[str, Any] = {}
         try:
-            run_quant(
+            returns_report = run_quant(
                 ["build-returns", "--from", RETURNS_FROM, "--to", window.d_end],
                 database,
                 universe,
             )
+            _build_returns_version(returns_report, params.returns_engine_version)
             settings = CycleSettings(
                 db_path=database,
                 universe_db_path=universe,

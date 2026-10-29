@@ -146,7 +146,12 @@ def _fake_quant(conn: Any, calls: list[list[str]]) -> Any:
     def run(args: list[str], db: Path, universe: Path) -> dict[str, Any]:
         calls.append(list(args))
         if args[0] == "build-returns":
-            return {}
+            return {
+                "engine_version": "qret-v2",
+                "n_rows": 0,
+                "date_from": args[args.index("--from") + 1],
+                "date_to": args[args.index("--to") + 1],
+            }
         if args[0] == "build-risk-model":
             as_of = args[args.index("--analysis-date") + 1]
             cursor = conn.execute(
@@ -184,7 +189,9 @@ def _fake_quant(conn: Any, calls: list[list[str]]) -> Any:
                     (portfolio_id, asset_id, as_of),
                 )
             conn.commit()
-            return {"portfolio_id": portfolio_id, "model_id": model_id, "kind": kind}
+            if kind == "min_var_topn":
+                return {"portfolio_id": portfolio_id, "model_id": model_id, "kind": kind}
+            return {"model_id": model_id, "portfolio_ids": {"min_var": portfolio_id}}
         raise AssertionError(args)
 
     return run

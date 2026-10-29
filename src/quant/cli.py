@@ -691,6 +691,14 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             f"  WARNING: --allow-dirty overrode the clean-tree guard ({rep.dirty_tree_bypassed})",
             file=sys.stderr,
         )
+    _print_final_json(
+        {
+            "engine_version": rep.engine_version,
+            "n_rows": rep.rows_written,
+            "date_from": args.date_from,
+            "date_to": date_to,
+        }
+    )
     return 0
 
 
