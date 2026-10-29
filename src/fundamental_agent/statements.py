@@ -1326,9 +1326,12 @@ _FACE_LINE_CAPTION_NOT: dict[str, str] = {
 # Q7's exclusions (audit round #10): a balance the face's other lines already contain -- short-term investments
 # inside "cash and cash equivalents" (TGT), senior notes inside "notes payable" (PHM), the debt lines verified for the
 # filing (BE, D-6), an NCI inside equity -- would be counted twice, and gross profit is the face's revenue less its
-# cost of sales: their notes figures are not read.
+# cost of sales: their notes figures are not read. Nor is operating income: a filer that presents none on its face files
+# it in the segment note, whose total the statements do not prove (HON 2026-Q1: 2,129 M against a pre-tax income of
+# 886 M; RF, AVB) -- left for the user's check.
 _NOTES_NOT_READ = frozenset(
     {
+        "operating_income",
         "short_term_investments",
         "short_term_debt",
         "long_term_debt",
