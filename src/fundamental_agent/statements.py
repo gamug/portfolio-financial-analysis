@@ -2949,13 +2949,22 @@ class Statements:
             out.append((concept, value))
         return out
 
-    def _face_line_row(
+    def _face_line_row(  # noqa: PLR0911 - one return per item kind
         self, spec: LineItem, column: str
     ) -> tuple[float | None, str | None, str | None] | None:
         """R1 / Q3 / Q4: the face line that is the item under an element the engine does not read (one distinct
         value, else nothing); for inventory, the face's inventory lines (:meth:`_inventory_face_lines`)."""
         if spec.name == "inventory":
             return self._inventory_face_lines(spec, column)
+        if spec.name == "net_income":
+            # R3: after the filing's own facts (its NetIncomeLoss stays the value), before the notes
+            profit = self._filed_anywhere(column, G + "ProfitLoss")
+            if profit is None or "profit_loss_nci_income_not_total" not in self._flags:
+                return None
+            proved = self._nci_parts_proved(column, profit)
+            if proved is not None:
+                self._flags = [f for f in self._flags if f != "profit_loss_nci_income_not_total"]
+            return proved
         if spec.name == "depreciation_amortization":
             # Q2b: after the filed facts' own proofs (T-161's readings keep their concept), before the notes
             parts = self._da_face_parts(spec, column)
@@ -3210,8 +3219,14 @@ class Statements:
             (str(row.get("concept") or ""), self._read(row, column))
             for row in self._valued_rows(column)
             if _names_nci_income(row)
+            and "PerShare" not in str(row.get("concept") or "")
+            and "per share" not in str(row.get("label") or "").lower()
         ]
         if not lines or any(v is None for _c, v in lines):
+            return None
+        if any("Excluding" in c.split("_", 1)[-1] for c, _v in lines):
+            # TKO: "...NoncontrollingInterestExcludingAmountPriorToTransaction" -- the line says it is not the whole
+            # NCI income of the period (the predecessor's columns), so the parts cannot be the total
             return None
         parent = profit - sum(v for _c, v in lines if v is not None)
         tolerance = max(0.5, 0.0005 * abs(profit))
@@ -3222,7 +3237,12 @@ class Statements:
             if concept == G + "ProfitLoss" or _names_nci_income(row):
                 continue
             label = str(row.get("label") or "").lower()
-            if "per share" in label or "comprehensive" in label:
+            if (
+                "per share" in label
+                or "comprehensive" in label
+                or "continuing" in label
+                or "PerShare" in concept
+            ):
                 continue
             value = self._read(row, column)
             if (
@@ -3435,9 +3455,6 @@ class Statements:
         nci_concept = G + "NetIncomeLossAttributableToNoncontrollingInterest"
         nci = self._filed_anywhere(column, nci_concept)
         if nci is None:
-            parts = self._nci_parts_proved(column, profit)
-            if parts is not None:
-                return parts
             self._flag("profit_loss_nci_income_not_total")
             return None, None, None
         return profit - nci, f"{G}ProfitLoss - {nci_concept}", "map"
