@@ -180,6 +180,18 @@ def test_an_extension_non_operating_line_is_counted_not_read() -> None:
     assert res.value == 210.0 and "ebit_extension_line_not_read" in res.flags
 
 
+def test_an_extension_equity_affiliates_line_is_counted_not_read() -> None:
+    """CVX: "Income (loss) from equity affiliates" under an extension element, inside revenue's section."""
+    income = [
+        SINGLE_STEP[0],
+        _row("cvx_EquityMethodInvestmentIncome", "Income (loss) from equity affiliates", 40.0),
+        *SINGLE_STEP[1:4],
+        SINGLE_STEP[5] | {FY: 210.0},
+    ]
+    res = _stmts(income).resolve("operating_income", FY)
+    assert res.value == 240.0 and "ebit_extension_line_not_read" in res.flags
+
+
 def test_a_pretax_line_under_another_element_places_the_lines() -> None:
     """COST: "INCOME BEFORE INCOME TAXES" tagged ``IncomeLossAttributableToParent``."""
     income = [

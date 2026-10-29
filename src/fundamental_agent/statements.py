@@ -1640,7 +1640,8 @@ _EBIT_EXCLUDED_TYPES = frozenset(
 # D-17: a company-extension line between revenue and pre-tax income whose caption reads non-operating is not read;
 # it is counted (flag ``ebit_extension_line_not_read``).
 _EBIT_EXTENSION_CAPTION_RE = re.compile(
-    r"\b(other|non-?operating|investment|interest)\b.*\b(income|expense|gains?|loss(es)?|deductions?)\b",
+    r"\b(other|non-?operating|investment|interest|dividends?)\b.*\b(income|expense|gains?|loss(es)?|deductions?)\b"
+    r"|\bequity\b.*\b(affiliates?|earnings|investees?|method)\b|\b(income|earnings)\b.*\baffiliates?\b",
     re.IGNORECASE,
 )
 # Q2b (user-approved): D&A presented as its two parts on the cash-flow face -- a depreciation line and amortization
