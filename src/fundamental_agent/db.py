@@ -23,6 +23,7 @@ from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent import fiscal
+from fundamental_agent.applicability import profile_for_period
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import (
     EBIT_DERIVED_INPUT,
@@ -2139,7 +2140,8 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     does not hold -- never a guessed type. The two agree on every pilot asset."""
     row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
     cik = str(row["cik"]) if row and row["cik"] else None
-    profile = profile_as_of(cik, period_key[:10]) if cik else None
+    # D-19: a period ending before the profile's interval reads it at the interval's start.
+    profile = profile_for_period(cik, period_key)[0] if cik else None
     if profile is not None:
         stmts.sector = profile.sector
         stmts.sub_industry = profile.sub_industry
