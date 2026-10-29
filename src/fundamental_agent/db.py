@@ -26,6 +26,7 @@ from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.statements import (
     EBIT_DERIVED_INPUT,
+    PRIOR_ANNUAL_INVENTORY_FLAG,
     REGISTRY,
     Capital,
     CoverShares,
@@ -2093,6 +2094,33 @@ def prior_capital(
         )
 
 
+def prior_annual_inventory(
+    conn: Database, asset_id: int, period_end: str, engine_version: str = METRICS_ENGINE_VERSION
+) -> bool:
+    """D-18 (audit round #11): whether the company's previous 10-K (period end before *period_end*) recorded an
+    inventory -- its quick-ratio row carries an ``inventory`` above 0, or was itself refused D-18's zero for this
+    reason. A 10-Q silent on inventory proves nothing when the last annual report showed one (ORCL's and UNH's 10-Ks
+    disclose it in the notes, their 10-Qs do not)."""
+    row = conn.execute(
+        """
+        SELECT m.inputs_json FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
+        WHERE f.asset_id = ? AND f.form = '10-K' AND f.period_end < ? AND m.metric_group = 'liquidity'
+          AND m.metric_name = 'quick_ratio' AND m.engine_version = ?
+        ORDER BY f.period_end DESC, m.id DESC
+        LIMIT 1
+        """,
+        (asset_id, period_end, engine_version),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return False
+    inputs = json.loads(row["inputs_json"])
+    inventory = inputs.get("inventory")
+    has_value = (
+        isinstance(inventory, (int, float)) and not isinstance(inventory, bool) and inventory > 0
+    )
+    return bool(has_value or inputs.get(PRIOR_ANNUAL_INVENTORY_FLAG))
+
+
 def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements it enriches
     conn: Database,
     asset_id: int,
@@ -2120,4 +2148,5 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     else:
         stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
     stmts.accession = accession
+    stmts.prior_annual_inventory = prior_annual_inventory(conn, asset_id, period_key[:10])
     prior_capital(conn, asset_id, form, period_key, stmts)

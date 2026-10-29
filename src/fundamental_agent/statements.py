@@ -1638,6 +1638,9 @@ _EBIT_MAX_UNKNOWN_LINES = 3
 # one-method rule reads it back from the prior filings' rows: db.ttm_detail).
 EBIT_DERIVED_HOW = "derived_ebit"
 EBIT_DERIVED_INPUT = "flag_operating_income_ebit_derived"
+# D-18 (audit round #11): the quick ratio refused its zero because the previous 10-K recorded an inventory (carried on
+# so the next filing reads the same).
+PRIOR_ANNUAL_INVENTORY_FLAG = "flag_quick_ratio_prior_annual_inventory"
 _EBIT_EQUITY_METHOD = G + "IncomeLossFromEquityMethodInvestments"
 _EBIT_PRETAX = (
     G
@@ -2116,6 +2119,9 @@ class Statements:
     # the GICS sector, which says nothing about whether a balance sheet is a classified one.
     # ``None`` in a hermetic fixture or when the CIK holds no profile.
     company_type: str | None = None
+    # D-18 (audit round #11): the company's previous 10-K recorded an inventory (db.prior_annual_inventory) -- this
+    # filing's silence on inventory then proves nothing.
+    prior_annual_inventory: bool = False
     # T-151 part 3 (D14): the filing's accession, recorded in every metric's ``provenance`` block.
     # Set by the pipeline / recompute (:func:`fundamental_agent.db.attach_context`).
     accession: str | None = None

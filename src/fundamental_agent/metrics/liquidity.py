@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fundamental_agent.metrics.base import MetricResult, flag_inputs, present, safe_div
-from fundamental_agent.statements import G, Statements
+from fundamental_agent.statements import PRIOR_ANNUAL_INVENTORY_FLAG, G, Statements
 from kg_schema.company_profile import FINANCIAL_TYPES
 
 GROUP = "liquidity"
@@ -29,7 +29,7 @@ def compute(
     inventory = stmts.get("inventory", period_key)
 
     quick_assets = None
-    quick_inventory_zero = False
+    quick_inventory_zero = prior_inventory_refused = False
     if current_assets is not None and inventory is not None:
         quick_assets = current_assets - inventory
     elif (
@@ -41,10 +41,14 @@ def compute(
         and stmts.company_type not in _NO_INVENTORY_ZERO_TYPES
         and stmts.no_inventory_lines()
     ):
-        # D-18: a classified balance sheet with no inventory line at all is a company without
-        # inventory (S-X 5-02 item 6): the quick ratio alone reads inventory as 0.
-        quick_assets = current_assets
-        quick_inventory_zero = True
+        if stmts.prior_annual_inventory:
+            # D-18 (audit round #11): the previous 10-K recorded an inventory -- this silence proves nothing
+            prior_inventory_refused = True
+        else:
+            # D-18: a classified balance sheet with no inventory line at all is a company without
+            # inventory (S-X 5-02 item 6): the quick ratio alone reads inventory as 0.
+            quick_assets = current_assets
+            quick_inventory_zero = True
     cash_like = cash
     # N5 (ID-02a): the combined "cash, cash equivalents and short-term investments" line already
     # contains the short-term investments -- adding them again counted them twice
@@ -68,6 +72,8 @@ def compute(
     quick_inputs = dict(inputs)
     if quick_inventory_zero:
         quick_inputs["flag_quick_ratio_no_inventory_lines"] = 1.0
+    if prior_inventory_refused:
+        quick_inputs[PRIOR_ANNUAL_INVENTORY_FLAG] = 1.0
     return [
         MetricResult(
             "current_ratio",

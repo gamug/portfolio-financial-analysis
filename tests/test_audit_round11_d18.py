@@ -296,3 +296,41 @@ def test_an_other_than_inventory_tax_element_is_not_inventory() -> None:
         ]
     )
     assert stmts.no_inventory_lines() is True
+
+
+def test_a_previous_10k_with_inventory_refuses_the_zero() -> None:
+    """ORCL / UNH: the 10-K discloses inventory in the notes, the 10-Q does not -- the 10-Q's silence proves nothing."""
+    stmts = _operating_stmts()
+    stmts.prior_annual_inventory = True
+    quick = _ratios(stmts)["quick_ratio"]
+    assert quick.value is None
+    assert quick.inputs["flag_quick_ratio_prior_annual_inventory"] == 1.0
+    assert "flag_quick_ratio_no_inventory_lines" not in quick.inputs
+
+
+def test_prior_annual_inventory_reads_the_previous_10k_quick_ratio_row(memory_db: Any) -> None:
+    from conftest import filed_after  # noqa: PLC0415
+
+    from fundamental_agent import db  # noqa: PLC0415
+    from fundamental_agent.db import FilingKey, FilingMeta  # noqa: PLC0415
+    from fundamental_agent.metrics.base import MetricResult  # noqa: PLC0415
+
+    memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'X')")
+
+    def record(period: str, end: str, inputs: dict[str, Any]) -> None:
+        fid = db.upsert_filing(
+            memory_db,
+            FilingKey(1, "10-K", int(end[:4]), period),
+            FilingMeta(filing_date=filed_after(end), period_end=end),
+        )
+        db.record_metrics(
+            memory_db, fid, [("liquidity", MetricResult("quick_ratio", None, "x", inputs))]
+        )
+
+    assert db.prior_annual_inventory(memory_db, 1, "2025-03-31") is False
+    record("FY2024", "2024-12-31", {"inventory": 3_500.0})
+    assert db.prior_annual_inventory(memory_db, 1, "2025-03-31") is True
+    record("FY2025", "2025-12-31", {"flag_quick_ratio_prior_annual_inventory": 1.0})
+    assert db.prior_annual_inventory(memory_db, 1, "2026-03-31") is True
+    record("FY2026", "2026-12-31", {"flag_quick_ratio_no_inventory_lines": 1.0})
+    assert db.prior_annual_inventory(memory_db, 1, "2027-03-31") is False
