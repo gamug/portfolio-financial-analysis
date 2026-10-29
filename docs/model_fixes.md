@@ -11022,15 +11022,51 @@ filed facts, nor when the previous 10-K recorded an inventory (ORCL, UNH: invent
 10-Qs; `flag_quick_ratio_prior_annual_inventory`). Final accuracy (4,991 controls): **0.00 / 0.00 / 0.73 / 1.82 %**
 against 0.79 / 2.11 / 4.53 / 7.28 % without elimination, within 1 / 2 / 5 % of revenue 91.6 / 95.3 / 98.2 %.
 
+### After the user's EDGAR check and reviewer A's decisions (dc95a0a), and D-19 (71b12a0)
+
+* **E11-2, PFE FY2021 — the interest counted twice.** PFE reports its interest expense only in the notes; on the face
+  it sits inside "Other (income)/deductions—net", which D-17 takes out whole. Adding the notes' interest back counted
+  it a second time (20,724 M; the user's EDGAR figure 19,433 M). When the face shows no interest line and a
+  non-operating line is taken out, the interest is not added back (`ebit_interest_inside_nonoperating`). The v1
+  accuracy check rebuilt the payload from the stored facts alone, without the filing's filed facts, so it never read
+  the notes' interest and could not see this; the declared accuracy is now **v2** (`audit/r11/ebit_engine_check2.py`:
+  the full payload the run reads).
+* **Reviewer A's rule (a) — a net interest line only** (C7 p.9; S-X 5-03 items 7–8): the net line taken out whole is
+  the gross interest added back and the interest income taken out. Adopted on A's test: the 4,827 controls with a gross
+  line, that line and the interest-income lines replaced by one net line — 0.00 / 0.00 / 0.70 / 1.68 % against
+  0.75 / 2.02 / 4.42 / 7.10 % without elimination, no sector, APP-00 type or half worse. Flag `ebit_net_interest` /
+  `flag_ebit_net_interest`.
+* **Rule (b) — no interest expense:** 0 only when the filing's filed facts are there, no interest-expense concept is
+  among them or on any statement row, and the debt is proven 0 (ID-02b); flag `ebit_zero_interest_proven` /
+  `flag_ebit_zero_interest_proven` (OGN 2021-Q1, before its separation debt).
+* **`DeconsolidationGainOrLossAmount` added to the list** (reviewer A; E11-8, HON 2026-Q2's 6,629 M gain): C7 p.37
+  (operating income excludes one-time items) and the nature of `GainLossOnSaleOfStockInSubsidiaryOrEquityMethodInvestee`;
+  3 of its 5 control appearances are below operating income (the 2 inside are APTV's zeros). It changes
+  15 filing-columns in 2 companies and 51 metric values (an exact with / without run, `audit/r11/deconsol_compare.json`) (HON 2026-Q2 8,366 → 1,737 M; PFE's 2019 Consumer Healthcare JV gain:
+  FY2019 13,174 M = revenue − the operating costs on the face).
+* **D-19 — a period before the profile's interval.** The 2020+ load's 487 filings filed in January–March 2020 whose
+  fiscal period ends in 2019 read no company profile (every interval starts 2020-01-01; the lookup is at the period
+  end): their metrics ran under `company_type_unknown`, the APP-00 NA cells unapplied (56 financial-type filings),
+  D-17 / D-18 skipped. `applicability.profile_for_period` reads the profile at the interval's start for such a period
+  (the filing was filed inside the interval: no look-ahead), flag `flag_<metric>_company_type_window_start`; both dated
+  lookups (`db.attach_context`, the applicability layer) use it.
+
+**Declared accuracy (v2, 6,929 controls):** **0.00 / 0.02 / 0.86 / 1.92 %** against 0.69 / 1.91 / 4.37 / 7.11 % without
+elimination; within 1 / 2 / 5 % of revenue 91.0 / 95.1 / 98.0 %; no sector, APP-00 type or half of the companies worse
+at any quantile (`audit/r11/ebit_check2_summary.json`). The user confirmed on EDGAR E11-2 (19,433 M), E11-8 (1,737 M),
+E11-11 (BKR, rule (a), 3,342 M), E11-12 (OGN, rule (b), 467 M), E11-13 (PFE FY2019, 13,174 M).
+
 ### Verification on the real data (FIXES #11)
 
-Plan (master `r10_*` vs fixed `b11_*`, one frozen commit c35b549): 17,389 value changes on the stored rows — D-17
-10,864, D-D 4,922, D-18 1,276, XOM inventory 74, `no_facts` refresh 13, and 240 TTMs F-A11 now refuses for a
+Plan (master `r10_*` vs fixed `b11_*`, one frozen commit 71b12a0): 19,083 value changes on the stored rows — D-17
+12,562, D-D 4,923, D-18 1,276, XOM inventory 74, `no_facts` refresh 13, and 235 TTMs F-A11 now refuses for a
 perimeter change — **0 unexplained**; 4,419 new filings inserted (154,624 metric rows). On the applied copy: only planned
 rows changed, stale flags 0, inputs-only differences all within L-25, V3 511,808 agree / 47 (FOX/NWS, the declared
-class). D-17 fills 13,904 values (10,864 + 3,040 on the new filings); empty values on the stored rows 74,012 → 57,103.
+class). D-17 fills 17,284 values (12,562 + 4,722 on the new filings; 1,924 filings, 89 companies), rule (a) 2,395 of
+them, rule (b) 4; D-18 1,850; D-19 gives 487 filings their type (17,806 rows no longer `company_type_unknown`); empty
+values on the stored rows 74,012 → 55,399. The values the user checked on EDGAR (E11-1 … E11-13) are the stored ones.
 
 ### Tests
 
-`tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_reasons.py`; the full
-suite passes (3,276).
+`tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_d19.py`,
+`tests/test_audit_round11_reasons.py`; the full suite passes (3,285).

@@ -3438,9 +3438,11 @@ class Statements:
         between the revenue line and the pre-tax line - the equity-method income above the pre-tax line (C7 p.46).
         The filer's own ``NonoperatingIncomeExpense`` total is split by arithmetic into the lines directly above it
         (:meth:`_ebit_total_parts`); the interest lines it holds are taken back out of it, since the interest is added
-        back gross. ``None`` -- the item stays empty -- for an APP-00 financial type or an unknown type, when an
-        ``OperatingIncomeLoss`` line with a value is on the face, when pre-tax income or the gross interest expense
-        is missing (a net interest line is never the interest: reviewer A), or when no pre-tax line places the lines.
+        back gross. A net interest line is the interest (reviewer A's rule (a), ``ebit_net_interest``); no interest
+        expense is 0 only with rule (b)'s proof (:meth:`_interest_zero_proven`). ``None`` -- the item stays empty --
+        for an APP-00 financial type or an unknown type, when an ``OperatingIncomeLoss`` line with a value is on the
+        face, when pre-tax income is missing or the interest expense is missing without that proof, or when no
+        pre-tax line places the lines.
         """
         if self.company_type is None or self.company_type in _EBIT_EXCLUDED_TYPES:
             return None
