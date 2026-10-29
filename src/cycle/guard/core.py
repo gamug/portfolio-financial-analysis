@@ -338,6 +338,10 @@ def _layer1(
 ) -> tuple[frozenset[int], list[Alert]]:
     """K-L transitions for the names held and for every name currently out.
 
+    Kaminski & Lo (2014), Def. 1, *inspired by*: ``S(J)`` is the sum of the last ``J``
+    simple returns; a name is out while ``S(J) < -gamma`` and back in once its own
+    latest return is ``>= delta``. No cooldown.
+
     An asset with fewer than ``J`` returns gives no signal either way and keeps its
     state. A non-finite sum or latest return fails the comparisons, i.e. no signal.
     """
@@ -391,7 +395,12 @@ def _layer2(
     news: Mapping[int, NewsCounts],
     news_params: NewsParams,
 ) -> tuple[tuple[tuple[int, _L2State], ...], frozenset[int], list[Alert]]:
-    """Advance every layer-2 machine over the names held and the names it still tracks."""
+    """Advance every layer-2 machine over the names held and the names it still tracks.
+
+    Tetlock (2007) and Loughran & McDonald (2011), *inspired by*: enter on
+    ``n_articles >= n_min`` and ``q > tau``, exit on ``n_articles >= n_min`` and
+    ``q <= tau_exit``, stay trimmed through the cooldown and reactivate inside it.
+    """
     known = dict(l2_state)
     updated: dict[int, _L2State] = {}
     trimmed: set[int] = set()
@@ -473,7 +482,12 @@ def _layer2(
 
 
 def _layer3(reference_returns: Sequence[float], params: GuardParams) -> tuple[float, Alert | None]:
-    """Moreira-Muir scaling of the reference book; 1.0 (no alert) on a degenerate estimate."""
+    """Moreira-Muir scaling of the reference book; 1.0 (no alert) on a degenerate estimate.
+
+    Moreira & Muir (2017), *inspired by*: ``min(1, sigma_star / sigma_hat)`` with
+    ``sigma_hat`` the annualised ``ddof=1`` standard deviation of the last
+    ``vol_window`` returns of the reference weights held fixed.
+    """
     if len(reference_returns) < params.vol_window:
         return 1.0, None
     window = np.asarray(reference_returns[-params.vol_window :], dtype=float)
@@ -494,7 +508,11 @@ def _layer3(reference_returns: Sequence[float], params: GuardParams) -> tuple[fl
 
 
 def _layer4(nav: float, nav_max: float, params: GuardParams) -> tuple[float, Alert | None]:
-    """Grossman-Zhou drawdown scaling of this arm's NAV; 0.0 at ruin, never negative."""
+    """Grossman-Zhou drawdown scaling of this arm's NAV; 0.0 at ruin, never negative.
+
+    Grossman & Zhou (1993), via Yang & Zhong (2012), *inspired by*:
+    ``clip(m (nav - alpha * nav_max) / nav, 0, 1)`` on the running maximum of the NAV.
+    """
     if nav <= 0.0:
         scale = 0.0
     else:

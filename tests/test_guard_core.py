@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import inspect
 import math
+import random
 from collections.abc import Callable, Iterable
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 from typing import Any, cast
@@ -818,3 +819,83 @@ def test_news_while_layer_two_is_off_is_allowed_and_ignored() -> None:
     assert out.weights == {1: 1.0}
     assert out.cut_assets == frozenset()
     assert out.state.l2 == ()
+
+
+# -- invariants over a fixed-seed random sweep ---------------------------------------------------
+
+
+def test_invariants_hold_over_random_multi_session_arms() -> None:
+    """Fixed-seed sweep: no result may break a guarantee the spec states.
+
+    Every case is a chain of sessions of one arm, so the state (cooldowns, re-entries, the
+    running maximum) is carried exactly as the engine will carry it.
+    """
+    rng = random.Random(20261028)
+    for _ in range(30):
+        layers = frozenset(rng.sample([1, 2, 3, 4], rng.randint(0, 4)))
+        news_params = NewsParams(
+            k=rng.randint(1, 5),
+            tau=rng.choice([0.0, 0.3, 0.5, 0.9]),
+            tau_exit=rng.choice([0.0, 0.1, 0.4]),
+            n_min=rng.randint(1, 3),
+            cooldown=rng.randint(0, 3),
+            trim_fraction=rng.choice([0.0, 0.25, 0.5, 1.0]),
+        )
+        params = _params(
+            layers=layers,
+            J=rng.randint(1, 5),
+            gamma=rng.choice([0.01, 0.05, 0.2]),
+            delta=rng.choice([0.0, 0.01, 0.05]),
+            sigma_star=rng.choice([0.0, 0.1, 0.5]),
+            m=rng.choice([0.5, 1.0, 2.0]),
+            alpha=rng.choice([0.1, 0.4, 0.9]),
+            vol_window=rng.randint(2, 5),
+            news=news_params if 2 in layers else None,
+        )
+        state = initial_state()
+        nav = 100.0
+        for _session in range(6):
+            held = rng.sample(range(1, 9), rng.randint(1, 5))
+            reference = {asset_id: round(rng.uniform(0.02, 0.4), 3) for asset_id in held}
+            assets = sorted(
+                set(held) | {asset_id for asset_id in range(1, 9) if rng.random() < 0.2}
+            )
+            returns = {
+                asset_id: [rng.gauss(0.0, 0.05) for _ in range(rng.randint(0, 6))]
+                for asset_id in assets
+            }
+            counts: dict[int, NewsCounts] = {}
+            for asset_id in assets:
+                n_articles = rng.randint(0, 5)
+                counts[asset_id] = NewsCounts(
+                    n_articles=n_articles, n_negative=rng.randint(0, n_articles)
+                )
+            nav *= 1.0 + rng.gauss(0.0, 0.08)
+            inp = _input(
+                weights=reference,
+                returns=returns,
+                reference_returns=[rng.gauss(0.0, 0.01) for _ in range(rng.randint(0, 7))],
+                nav=nav,
+                news=counts,
+            )
+            before = copy.deepcopy(inp)
+            out = evaluate(state, inp, params)
+            assert inp == before
+
+            assert 0.0 <= out.scale <= 1.0
+            expected_scale = min(
+                1.0,
+                out.s_sigma if out.s_sigma is not None else 1.0,
+                out.s_dd if out.s_dd is not None else 1.0,
+            )
+            assert out.scale == expected_scale
+            assert set(out.weights) <= set(reference)
+            assert out.cut_assets <= set(reference)
+            assert not set(out.weights) & out.cut_assets
+            for asset_id, weight in out.weights.items():
+                assert 0.0 < weight <= reference[asset_id] + 1e-15
+            assert sum(out.weights.values()) <= sum(reference.values()) + 1e-15
+            assert 1 in layers or out.state.l1_out == state.l1_out
+            assert 2 in layers or out.state.l2 == state.l2
+            assert out.state.nav_max == pytest.approx(max(nav, state.nav_max or nav))
+            state = out.state
