@@ -128,7 +128,7 @@ def test_contract_version_is_the_highest_migration_and_code_version_is_the_codes
     client: TestClient,
 ) -> None:
     body = client.get("/api/v1/contract").json()
-    assert body["contract_version"] == max(v for v, _, _ in MIGRATIONS) == 17
+    assert body["contract_version"] == max(v for v, _, _ in MIGRATIONS) == 18
     assert body["code_version"] == code_version()
 
 
@@ -157,7 +157,7 @@ def test_the_declared_quant_run_table_matches_quants_own() -> None:
 def test_database_contract_of_a_complete_database(client: TestClient) -> None:
     body = client.get("/api/v1/contract/database").json()
     assert body == {
-        "schema_version": 17,
+        "schema_version": 18,
         "views_present": list(VIEWS),
         "views_missing": [],
     }
@@ -176,7 +176,7 @@ def test_database_contract_of_a_partial_database_names_the_missing_views(tmp_pat
         r = c.get("/api/v1/contract/database")
     assert r.status_code == 200
     body = r.json()
-    assert body["schema_version"] == 17
+    assert body["schema_version"] == 18
     assert body["views_present"] == present
     assert body["views_missing"] == [n for n in VIEWS if n not in present]
     assert "v_quant_run" in body["views_missing"]
@@ -192,7 +192,7 @@ def test_database_contract_reports_the_recorded_version_not_the_codes(
     raw.close()
     with _app(migrated_path, tmp_path) as c:
         assert c.get("/api/v1/contract/database").json()["schema_version"] == 14
-        assert c.get("/api/v1/contract").json()["contract_version"] == 17
+        assert c.get("/api/v1/contract").json()["contract_version"] == 18
 
 
 def test_database_without_a_schema_version_table_reports_0_and_stays_empty(

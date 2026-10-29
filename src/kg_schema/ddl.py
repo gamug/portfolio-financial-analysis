@@ -626,6 +626,145 @@ CREATE TABLE IF NOT EXISTS orchestrator_step (
 
 
 # ---------------------------------------------------------------------------
+# Backtest engine (m018, WP-A): one run, its books, their decisions, weights,
+# GUARD alerts/actions, daily performance, per-segment summaries and paired tests.
+# Additive and idempotent: ``ensure`` creates them and m018 records the contract
+# version; a database that already has them is not touched.
+# ---------------------------------------------------------------------------
+
+BACKTEST_DDL = """
+-- One simulated backtest: a window (P1/P2/P3), its formation date, the exact params
+-- (sha256 in params_json), the IPS caps and the sha256 of the input database copy.
+CREATE TABLE IF NOT EXISTS backtest_run (
+    id              INTEGER PRIMARY KEY,
+    window_id       TEXT NOT NULL,             -- 'P1' | 'P2' | 'P3'
+    d_start         TEXT NOT NULL,
+    d_end           TEXT NOT NULL,
+    formation_date  TEXT,                      -- first execution whose cycle selection succeeded
+    warmup_steps    INTEGER NOT NULL DEFAULT 0,
+    params_json     TEXT NOT NULL,             -- the params TOML's values + sha256
+    ips_json        TEXT NOT NULL,             -- the fixed caps (top_n, name/sector cap, ...)
+    code_version    TEXT,
+    input_db_sha256 TEXT,
+    status          TEXT NOT NULL,             -- running | completed | failed
+    created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_backtest_run_window ON backtest_run (window_id, created_at);
+
+-- One arm of a run. guard_layers is a JSON list ([] / NULL = GUARD off).
+CREATE TABLE IF NOT EXISTS strategy_book (
+    id                INTEGER PRIMARY KEY,
+    backtest_run_id   INTEGER NOT NULL REFERENCES backtest_run(id) ON DELETE CASCADE,
+    arm_code          TEXT NOT NULL,
+    objective         TEXT NOT NULL,           -- 'min_var' | 'equal_weight' (benchmark)
+    exclude_hard_vetoed INTEGER NOT NULL,      -- 0 (the arms) | 1
+    guard_layers      TEXT,
+    UNIQUE (backtest_run_id, arm_code)
+);
+
+-- One scheduled rebalance of a book: the decision date and the execution it formed.
+CREATE TABLE IF NOT EXISTS book_rebalance (
+    id                  INTEGER PRIMARY KEY,
+    book_id             INTEGER NOT NULL REFERENCES strategy_book(id) ON DELETE CASCADE,
+    decision_date       TEXT NOT NULL,
+    execution_date      TEXT NOT NULL,
+    quant_portfolio_id  INTEGER REFERENCES quant_portfolio(id),
+    cycle_run_id        INTEGER REFERENCES cycle_run(id),
+    risk_model_id       INTEGER REFERENCES quant_risk_model(id),
+    status              TEXT NOT NULL           -- executed | refused_unscored | aborted
+);
+CREATE INDEX IF NOT EXISTS ix_book_rebalance_book ON book_rebalance (book_id, execution_date);
+
+-- Weights recorded at the close of every session, for the book held into the next one.
+-- holding_key = ticker, or 'CASH' (asset_id NULL). Weights, never prices or returns.
+CREATE TABLE IF NOT EXISTS book_weight_daily (
+    book_id                 INTEGER NOT NULL REFERENCES strategy_book(id) ON DELETE CASCADE,
+    date                    TEXT NOT NULL,
+    holding_key             TEXT NOT NULL,
+    asset_id                INTEGER REFERENCES assets(id),
+    markowitz_target_weight REAL,
+    drifted_weight          REAL,
+    pre_guard_weight        REAL,
+    final_target_weight     REAL,
+    PRIMARY KEY (book_id, date, holding_key)
+);
+CREATE INDEX IF NOT EXISTS ix_book_weight_asset ON book_weight_daily (book_id, asset_id);
+
+-- GUARD alerts of a run (a scale alert has asset_id NULL), and the action each book took.
+CREATE TABLE IF NOT EXISTS guard_alert (
+    id               INTEGER PRIMARY KEY,
+    backtest_run_id  INTEGER NOT NULL REFERENCES backtest_run(id) ON DELETE CASCADE,
+    date             TEXT NOT NULL,            -- session close the alert was raised at
+    layer            INTEGER NOT NULL,
+    asset_id         INTEGER REFERENCES assets(id),
+    rule_id          TEXT NOT NULL,            -- L1_STOP_LOSS | L1_REENTRY | L2_NEWS | ...
+    value            REAL,
+    threshold        REAL,
+    state            TEXT NOT NULL             -- ENTER | EXIT | ACTIVE | COOLDOWN | SCALE
+);
+CREATE INDEX IF NOT EXISTS ix_guard_alert_run_date ON guard_alert (backtest_run_id, date);
+
+CREATE TABLE IF NOT EXISTS guard_action (
+    id            INTEGER PRIMARY KEY,
+    book_id       INTEGER NOT NULL REFERENCES strategy_book(id) ON DELETE CASCADE,
+    alert_id      INTEGER NOT NULL REFERENCES guard_alert(id) ON DELETE CASCADE,
+    decision_date TEXT NOT NULL,               -- the alert's session
+    effective_date TEXT NOT NULL,              -- the session the target applies to (t+1)
+    asset_id      INTEGER REFERENCES assets(id),
+    status        TEXT NOT NULL,               -- APPLIED | ARM_DISABLED | NOT_HELD | SUPERSEDED
+    weight_before REAL,
+    weight_after  REAL
+);
+CREATE INDEX IF NOT EXISTS ix_guard_action_book ON guard_action (book_id, decision_date);
+
+CREATE TABLE IF NOT EXISTS book_daily_performance (
+    book_id         INTEGER NOT NULL REFERENCES strategy_book(id) ON DELETE CASCADE,
+    date            TEXT NOT NULL,
+    gross_return    REAL NOT NULL,
+    turnover        REAL NOT NULL,
+    cost_return     REAL NOT NULL,
+    net_return      REAL NOT NULL,
+    nav             REAL NOT NULL,
+    drawdown        REAL NOT NULL,
+    cash_weight     REAL NOT NULL,
+    n_equity        INTEGER NOT NULL,
+    benchmark_return REAL,
+    PRIMARY KEY (book_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS backtest_summary (
+    book_id            INTEGER NOT NULL REFERENCES strategy_book(id) ON DELETE CASCADE,
+    segment            TEXT NOT NULL,          -- P1 | P2 | P2a | P2b | P3
+    date_from          TEXT NOT NULL,
+    date_to            TEXT NOT NULL,
+    cumulative_return  REAL NOT NULL,
+    annualized_return  REAL NOT NULL,
+    annualized_vol     REAL NOT NULL,
+    ex_post_sharpe     REAL NOT NULL,
+    max_drawdown       REAL NOT NULL,
+    total_turnover     REAL NOT NULL,
+    total_cost_bps     REAL NOT NULL,
+    n_rebalances       INTEGER NOT NULL,
+    n_guard_actions    INTEGER NOT NULL,
+    PRIMARY KEY (book_id, segment)
+);
+
+CREATE TABLE IF NOT EXISTS backtest_test (
+    backtest_run_id INTEGER NOT NULL REFERENCES backtest_run(id) ON DELETE CASCADE,
+    segment         TEXT NOT NULL,
+    arm_a           TEXT NOT NULL,
+    arm_b           TEXT NOT NULL,
+    test            TEXT NOT NULL,             -- memmel_jk | ledoit_wolf | hac_mean_diff
+    statistic       REAL NOT NULL,
+    p_value         REAL NOT NULL,
+    n_obs           INTEGER NOT NULL,
+    params_json     TEXT,
+    PRIMARY KEY (backtest_run_id, segment, arm_a, arm_b, test)
+);
+"""
+
+
+# ---------------------------------------------------------------------------
 # Nullable columns to add to pre-existing agent tables (additive)
 #   {table: {column: "SQLITE TYPE"}}
 # ---------------------------------------------------------------------------
@@ -824,6 +963,15 @@ RUN_ID_EXCLUSIONS: dict[tuple[str, str], str] = {
         "references orchestrator_run (AUTOINCREMENT since creation, FK declared), not one of "
         "the five T-145 tables"
     ),
+    # m018 (WP-A): the backtest's own run log, a separate parent outside the five shared
+    # agent run tables (it has no cross-repo run reference to seed).
+    ("book_rebalance", "cycle_run_id"): (
+        "m018 (backtest) references cycle_run, but it is written only after the cycle runs it "
+        "names exist, and m014 replays on a database that predates m018: nothing to seed"
+    ),
+    ("strategy_book", "backtest_run_id"): "references backtest_run (m018), not a T-145 table",
+    ("guard_alert", "backtest_run_id"): "references backtest_run (m018), not a T-145 table",
+    ("backtest_test", "backtest_run_id"): "references backtest_run (m018), not a T-145 table",
 }
 
 # Static literal SQL queries (Constitution Code & Git #10)

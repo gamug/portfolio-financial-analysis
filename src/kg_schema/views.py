@@ -20,6 +20,9 @@ Cycle ranking & weights  v_cycle_ranking, v_cycle_ranking_component, v_weight_sc
                          v_weight_component
 Quant optimization       v_quant_risk_model, v_quant_portfolio, v_quant_position,
                          v_quant_frontier_point, v_quant_benchmark_performance, v_quant_vs_live
+Backtest                 v_book, v_book_rebalance, v_guard_alert, v_guard_action,
+                         v_book_weight_daily, v_book_daily_performance,
+                         v_portfolio_period_summary, v_backtest_test
 
 Projection semantics
 --------------------
@@ -206,6 +209,24 @@ Projection semantics
                           dead ``equal_weight`` / ``cap_weight`` filters). ``engine_version`` /
                           ``is_current`` are the book's; a ``LIVE_ONLY`` row has a NULL
                           ``engine_version`` and ``is_current = 1``.
+``v_book`` / ``v_book_rebalance``  one row per strategy book (arm) of a ``backtest_run`` / per
+                          scheduled rebalance of one book: decision and execution dates, the
+                          ``quant_portfolio`` / ``cycle_run`` / ``quant_risk_model`` ids it used.
+``v_guard_alert`` / ``v_guard_action``  the GUARD alerts a run raised (an L3/L4 scale alert has
+                          ``asset_id`` NULL) and the action each book took on it: ``APPLIED``,
+                          ``ARM_DISABLED`` (the NOGUARD twin's shadow alert, never applied),
+                          ``NOT_HELD`` or ``SUPERSEDED``.
+``v_book_weight_daily``   weights only: the Markowitz target, the drifted weight, the NOGUARD
+                          reference (``pre_guard_weight``) and the final target for the next
+                          session. Never a price or a return.
+``v_book_daily_performance``  portfolio-level daily gross/net return, turnover, cost, NAV,
+                          drawdown, cash weight and equity count, with the EW benchmark. Never
+                          one asset's return.
+``v_portfolio_period_summary``  per-book, per-segment statistics (P1, P2/P2a/P2b, P3).
+``v_backtest_test``       the paired tests (Memmel-Jobson-Korkie, Ledoit-Wolf bootstrap, HAC) of
+                          two arms of a run. ``knowledge_date`` is the row's own date for dated
+                          rows, the run's creation date for run-level rows and ``date_to`` for a
+                          summary.
 """
 
 from __future__ import annotations
@@ -647,6 +668,85 @@ VIEWS: dict[str, str] = {
             JOIN quant_position p2 ON p2.portfolio_id = q2.id AND p2.valid_to IS NULL
             WHERE q2.as_of = b.as_of AND p2.asset_id = pp.asset_id
               AND q2.kind <> 'live_book' AND q2.is_current = 1)
+    """,
+    # -- backtest engine (m018, WP-A). Every view carries knowledge_date; no view exposes
+    #    one asset's price or return -- weights, alerts and portfolio aggregates only.
+    "v_book": """
+        CREATE VIEW v_book AS
+        SELECT b.id AS book_id, b.backtest_run_id, r.window_id, r.d_start, r.d_end,
+               r.formation_date, r.status AS run_status, b.arm_code, b.objective,
+               b.exclude_hard_vetoed, b.guard_layers, r.code_version,
+               substr(r.created_at, 1, 10) AS knowledge_date
+        FROM strategy_book b
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_book_rebalance": """
+        CREATE VIEW v_book_rebalance AS
+        SELECT br.id AS rebalance_id, br.book_id, b.backtest_run_id, b.arm_code,
+               br.decision_date, br.execution_date, br.quant_portfolio_id, br.cycle_run_id,
+               br.risk_model_id, br.status,
+               br.execution_date AS knowledge_date
+        FROM book_rebalance br
+        JOIN strategy_book b ON b.id = br.book_id
+    """,
+    "v_guard_alert": """
+        CREATE VIEW v_guard_alert AS
+        SELECT ga.id AS alert_id, ga.backtest_run_id, r.window_id, ga.date, ga.layer,
+               a.ticker, ga.asset_id, ga.rule_id, ga.value, ga.threshold, ga.state,
+               ga.date AS knowledge_date
+        FROM guard_alert ga
+        JOIN backtest_run r ON r.id = ga.backtest_run_id
+        LEFT JOIN assets a ON a.id = ga.asset_id
+    """,
+    "v_guard_action": """
+        CREATE VIEW v_guard_action AS
+        SELECT act.id AS action_id, act.book_id, b.backtest_run_id, b.arm_code,
+               act.alert_id, act.decision_date, act.effective_date,
+               a.ticker, act.asset_id, act.status, act.weight_before, act.weight_after,
+               act.effective_date AS knowledge_date
+        FROM guard_action act
+        JOIN strategy_book b ON b.id = act.book_id
+        LEFT JOIN assets a ON a.id = act.asset_id
+    """,
+    "v_book_weight_daily": """
+        CREATE VIEW v_book_weight_daily AS
+        SELECT w.book_id, b.backtest_run_id, b.arm_code, w.date, w.holding_key, w.asset_id,
+               a.company_name AS holding_name,
+               w.markowitz_target_weight, w.drifted_weight, w.pre_guard_weight,
+               w.final_target_weight,
+               w.date AS knowledge_date
+        FROM book_weight_daily w
+        JOIN strategy_book b ON b.id = w.book_id
+        LEFT JOIN assets a ON a.id = w.asset_id
+    """,
+    "v_book_daily_performance": """
+        CREATE VIEW v_book_daily_performance AS
+        SELECT p.book_id, b.backtest_run_id, b.arm_code, r.window_id, p.date,
+               p.gross_return, p.turnover, p.cost_return, p.net_return, p.nav, p.drawdown,
+               p.cash_weight, p.n_equity, p.benchmark_return,
+               p.date AS knowledge_date
+        FROM book_daily_performance p
+        JOIN strategy_book b ON b.id = p.book_id
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_portfolio_period_summary": """
+        CREATE VIEW v_portfolio_period_summary AS
+        SELECT s.book_id, b.backtest_run_id, b.arm_code, r.window_id, s.segment,
+               s.date_from, s.date_to, s.cumulative_return, s.annualized_return,
+               s.annualized_vol, s.ex_post_sharpe, s.max_drawdown, s.total_turnover,
+               s.total_cost_bps, s.n_rebalances, s.n_guard_actions,
+               s.date_to AS knowledge_date
+        FROM backtest_summary s
+        JOIN strategy_book b ON b.id = s.book_id
+        JOIN backtest_run r ON r.id = b.backtest_run_id
+    """,
+    "v_backtest_test": """
+        CREATE VIEW v_backtest_test AS
+        SELECT t.backtest_run_id, r.window_id, t.segment, t.arm_a, t.arm_b, t.test,
+               t.statistic, t.p_value, t.n_obs, t.params_json,
+               substr(r.created_at, 1, 10) AS knowledge_date
+        FROM backtest_test t
+        JOIN backtest_run r ON r.id = t.backtest_run_id
     """,
 }
 

@@ -28,6 +28,7 @@ from . import availability as _availability
 from . import identity as _identity
 from . import queries as _queries
 from .ddl import (
+    BACKTEST_DDL,
     M014_REBUILD_COLUMNS,
     M014_TABLE_REBUILD_STATEMENTS,
     MAX_ID_QUERIES,
@@ -985,6 +986,18 @@ def _m017_tiingo_read_contract(db: Database) -> None:
     _ = db
 
 
+# -- m018: the backtest engine's tables (WP-A) --------------------------------
+
+
+def _m018_backtest(db: Database) -> None:
+    """Additive: the §5 backtest tables (``backtest_run`` .. ``backtest_test``) and their
+    ``v_*`` views. The DDL is the same constant ``ensure`` creates them from, so a database
+    that already ran ``ensure`` gets no change here (``CREATE ... IF NOT EXISTS``); this
+    raises the floor to 18 so the integration repo can assert the contract.
+    """
+    db.create_schema(BACKTEST_DDL)
+
+
 MIGRATIONS: list[tuple[int, str, Migration]] = [
     (1, "bootstrap schema_version", _m001_bootstrap),
     (2, "financial_facts: append-only, filing_version in key, event_time", _m002_financial_facts),
@@ -1062,6 +1075,13 @@ MIGRATIONS: list[tuple[int, str, Migration]] = [
         "marker: the Tiingo read contract -- v_* price views drop the private import's rows, "
         "quant_return_daily.vendor (T-153 part 3d)",
         _m017_tiingo_read_contract,
+    ),
+    (
+        18,
+        "backtest: backtest_run / strategy_book / book_rebalance / book_weight_daily / "
+        "guard_alert / guard_action / book_daily_performance / backtest_summary / backtest_test "
+        "and their v_* views (WP-A)",
+        _m018_backtest,
     ),
 ]
 

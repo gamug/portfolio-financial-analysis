@@ -202,7 +202,7 @@ def test_m008_backfills_every_row_and_restores_the_guards(scored: tuple[Database
         "fundamental_metrics": 1,
         "score_snapshot": 1,
     }
-    assert apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+    assert apply_migrations(conn) == [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     assert queries.current_version(conn) == max(v for v, _, _ in migrations.MIGRATIONS)
     assert {v for _, v in _available(conn)} == {"2026-02-23"}
     assert availability.missing(conn) == {}
