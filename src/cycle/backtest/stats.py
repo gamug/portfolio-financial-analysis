@@ -20,6 +20,8 @@ Conventions that hold everywhere in this module
 * Every public function validates its inputs and raises ``ValueError`` rather than return a number
   the data cannot support: series of unequal length, a non-finite value, or fewer than
   :data:`MIN_OBS` (= 30) observations.
+* The closed-form p-values come from ``scipy.stats.norm.sf``; below about 1e-300 they underflow to
+  exactly 0.0, which means "smaller than double precision can represent", not "impossible".
 """
 
 from __future__ import annotations
@@ -38,13 +40,13 @@ _BPS = 10_000.0
 # BACKTEST_SPEC §8.4 writes the parameters as ``Sequence[float]``. It also says WP-A passes numpy
 # arrays, and a bare ``Sequence`` annotation makes every such call a mypy error at the call site,
 # so the alias accepts both: a list/tuple and an ``ndarray``.
-Series = Sequence[float] | np.ndarray
+FloatSeries = Sequence[float] | np.ndarray
 
 
 # -- validation --------------------------------------------------------------------------------
 
 
-def _series(name: str, values: Series) -> np.ndarray:
+def _series(name: str, values: FloatSeries) -> np.ndarray:
     """*values* as a finite 1-D float array of at least :data:`MIN_OBS` observations."""
     try:
         arr = np.asarray(values, dtype=float)
@@ -75,10 +77,10 @@ def _check_periods_per_year(periods_per_year: int) -> None:
 
 
 def summarize(
-    net_returns: Series,
-    rf: Series,
-    turnover: Series,
-    cost: Series,
+    net_returns: FloatSeries,
+    rf: FloatSeries,
+    turnover: FloatSeries,
+    cost: FloatSeries,
     periods_per_year: int = 252,
 ) -> dict[str, float]:
     """Performance summary of one book's daily net returns over one segment.
@@ -161,7 +163,7 @@ def _sharpe(x: np.ndarray) -> float:
     return float(np.mean(x)) / sd
 
 
-def memmel_jk(r_a: Series, r_b: Series, rf: Series) -> tuple[float, float]:
+def memmel_jk(r_a: FloatSeries, r_b: FloatSeries, rf: FloatSeries) -> tuple[float, float]:
     """Two-sided Jobson & Korkie (1981) test of ``H0: SR_a = SR_b``, Memmel (2003) corrected.
 
     Jobson, J.D. & Korkie, B. (1981), "Performance hypothesis testing with the Sharpe and Treynor
@@ -278,9 +280,9 @@ def _circular_indices(rng: np.random.Generator, n: int, block: int) -> np.ndarra
 
 
 def ledoit_wolf_sharpe_diff(  # noqa: PLR0913 - the signature is fixed by BACKTEST_SPEC §8.4
-    r_a: Series,
-    r_b: Series,
-    rf: Series,
+    r_a: FloatSeries,
+    r_b: FloatSeries,
+    rf: FloatSeries,
     *,
     block: int = 5,
     n_boot: int = 4999,
@@ -364,7 +366,9 @@ def ledoit_wolf_sharpe_diff(  # noqa: PLR0913 - the signature is fixed by BACKTE
 # -- Newey-West test on the mean difference -----------------------------------------------------
 
 
-def hac_mean_diff(r_a: Series, r_b: Series, *, lags: int | None = None) -> tuple[float, float]:
+def hac_mean_diff(
+    r_a: FloatSeries, r_b: FloatSeries, *, lags: int | None = None
+) -> tuple[float, float]:
     """Newey & West (1987) HAC t-test of ``H0: E[r_a - r_b] = 0``, two-sided.
 
     Newey, W.K. & West, K.D. (1987), "A simple, positive semi-definite, heteroskedasticity and
