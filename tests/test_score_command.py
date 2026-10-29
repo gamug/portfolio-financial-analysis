@@ -545,9 +545,10 @@ def test_the_prices_are_read_at_the_filings_own_period_end(
 
 
 def test_the_cli_prints_the_final_json_line(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = _seed_db(tmp_path)
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(settings.db_path))
     code = cli.main(
         [
             "score",

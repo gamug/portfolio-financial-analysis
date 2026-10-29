@@ -70,7 +70,8 @@ def seeded(memory_quant_db: Database, quant_seed: Callable[..., Database]) -> Da
 # -- the flag ---------------------------------------------------------------------------------
 
 
-def test_the_flag_exists_on_both_commands() -> None:
+def test_the_flag_exists_on_both_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KG_FINANCIAL_DB", str(tmp_path / "financial.db"))
     parser = build_parser()
     for command in ("build-risk-model", "optimize"):
         args = parser.parse_args([command, "--include-hard-vetoed"])
