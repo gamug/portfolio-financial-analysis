@@ -606,7 +606,7 @@ class PipelineResult:
     decisions_refused: list[dict[str, str]]
 
 
-def _pipeline(  # noqa: C901, PLR0913 - one linear per-date pipeline (spec §2)
+def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipeline
     conn: Database,
     *,
     db_path: Path,
@@ -634,6 +634,8 @@ def _pipeline(  # noqa: C901, PLR0913 - one linear per-date pipeline (spec §2)
             )
         except cycle_data.TooManyUnscored as exc:
             warmup_refused.append({"decision_date": warm_date, "reason": str(exc)})
+        except Exception as exc:  # name the refusing date, keep the cause
+            raise BacktestError(f"cycle REPLAY failed at warm-up date {warm_date}: {exc}") from exc
     if warmup_refused:
         print(
             f"cycle.backtest: warm-up refused at {len(warmup_refused)}/{len(warmup)} dates",
@@ -672,6 +674,8 @@ def _pipeline(  # noqa: C901, PLR0913 - one linear per-date pipeline (spec §2)
                 raise BacktestError(f"cycle refused after formation at {decision}: {exc}") from exc
             decisions_refused.append({"decision_date": decision, "reason": str(exc)})
             continue
+        except Exception as exc:  # name the refusing date, keep the cause
+            raise BacktestError(f"cycle REPLAY failed at {decision}: {exc}") from exc
 
         cycle_run_id = int(report.cycle_run_id)
         status = _cycle_completed(conn, cycle_run_id)
