@@ -1023,7 +1023,7 @@ def _fy_item_concept(conn: Database, filing_id: int, item: str, engine_version: 
     return None
 
 
-def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pin
+def _perimeter_mixed(  # noqa: C901, PLR0911, PLR0913, PLR0917 - the identity's parts and the version pin
     conn: Database,
     asset_id: int,
     item: str,
@@ -1096,7 +1096,7 @@ def _period_sum(conn: Database, filing_id: int, key: str, parts: list[str]) -> f
     return sum(values.values()) if len(values) == len(parts) else None
 
 
-def _recast_within_year(  # noqa: PLR0913 - the identity's parts
+def _recast_within_year(  # noqa: PLR0913, PLR0917 - the identity's parts
     conn: Database, asset_id: int, fy_end: str, period_end: str, parts: list[str], fy: float
 ) -> bool:
     """Audit F-A11, no lookahead: whether a 10-Q of the current fiscal year (after the 10-K) recast
@@ -1173,7 +1173,7 @@ def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str)
     return int(row["id"]) if row else None
 
 
-def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the version pin
+def ttm_detail(  # noqa: C901, PLR0913 - the filing's identity, its flows, and the version pin
     conn: Database,
     asset_id: int,
     *,
@@ -2021,6 +2021,8 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     if profile is not None:
         stmts.sector = profile.sector
         stmts.sub_industry = profile.sub_industry
+        # D-18: the APP-00 type itself, which the quick ratio's no-inventory reading needs.
+        stmts.company_type = profile.type
     else:
         stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
     stmts.accession = accession
