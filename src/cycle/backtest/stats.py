@@ -94,7 +94,8 @@ def summarize(
     * ``ex_post_sharpe`` = ``mean(r - f) / std(r - f, ddof=1) * sqrt(periods_per_year)``, i.e. the
       realized (ex-post) Sharpe ratio on daily excess returns. ``nan`` when the excess returns are
       constant (zero standard deviation): the ratio is then undefined, and a constant excess series
-      carries no risk-adjusted information. ``nan`` is stored as NULL by the writer.
+      carries no risk-adjusted information. SQLite stores ``nan`` as NULL, so the column is simply
+      empty for such a segment.
     * ``max_drawdown`` = ``max_t (1 - NAV_t / max(1, NAV_1..NAV_t))``, where
       ``NAV_t = prod_{s<=t}(1 + r_s)``. Positive; the starting NAV of 1.0 is the first peak, so a
       loss on the first session counts.
