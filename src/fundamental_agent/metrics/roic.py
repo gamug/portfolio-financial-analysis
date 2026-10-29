@@ -25,7 +25,7 @@ GROUP = "roic"
 _DEFAULT_TAX_RATE = STATUTORY_TAX_RATE
 _MAX_TAX_RATE = 0.50
 # D-14 (audit round #10, user-approved Q9): invested capital below this share of total assets (both at the prior fiscal
-# year end) is a near-zero base -- cash almost equal to debt + equity (PLTR FY2023: 8.76 M against 4.5 B of assets gave
+# year end) is a near-zero base -- cash almost equal to debt + equity (PLTR FY2023: 8.76 M against 3,461 M of total assets gave
 # 1,082 %). ROIC on it is not a return: empty, flagged ``invested_capital_not_meaningful``.
 MIN_INVESTED_CAPITAL_SHARE_OF_ASSETS = 0.05
 
