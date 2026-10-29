@@ -588,8 +588,6 @@ NEW_VIEWS: dict[str, tuple[str, ...]] = {
         "asset_id",
         "holding_name",
         "markowitz_target_weight",
-        "drifted_weight",
-        "pre_guard_weight",
         "final_target_weight",
         "knowledge_date",
     ),

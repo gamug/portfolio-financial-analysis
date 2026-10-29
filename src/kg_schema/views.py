@@ -215,10 +215,15 @@ Projection semantics
 ``v_guard_alert`` / ``v_guard_action``  the GUARD alerts a run raised (an L3/L4 scale alert has
                           ``asset_id`` NULL) and the action each book took on it: ``APPLIED``,
                           ``ARM_DISABLED`` (the NOGUARD twin's shadow alert, never applied),
-                          ``NOT_HELD`` or ``SUPERSEDED``.
-``v_book_weight_daily``   weights only: the Markowitz target, the drifted weight, the NOGUARD
-                          reference (``pre_guard_weight``) and the final target for the next
-                          session. Never a price or a return.
+                          ``NOT_HELD`` or ``SUPERSEDED``. A layer-1 alert's ``value`` is NULL
+                          (it is a sum of one asset's returns, or its one-day return); its
+                          ``threshold`` and ``state`` stay. An asset-level action's
+                          ``weight_before``/``weight_after`` are NULL; the L3/L4 portfolio
+                          actions keep them.
+``v_book_weight_daily``   the Markowitz target and the final target, exposed only on the book's
+                          decision and execution dates; never a drifted daily weight, a price
+                          or a return. (Daily drifted weights plus the book's daily return
+                          would recover each asset's return.)
 ``v_book_daily_performance``  portfolio-level daily gross/net return, turnover, cost, NAV,
                           drawdown, cash weight and equity count, with the EW benchmark. Never
                           one asset's return.
@@ -692,7 +697,9 @@ VIEWS: dict[str, str] = {
     "v_guard_alert": """
         CREATE VIEW v_guard_alert AS
         SELECT ga.id AS alert_id, ga.backtest_run_id, r.window_id, ga.date, ga.layer,
-               a.ticker, ga.asset_id, ga.rule_id, ga.value, ga.threshold, ga.state,
+               a.ticker, ga.asset_id, ga.rule_id,
+               CASE WHEN ga.layer = 1 THEN NULL ELSE ga.value END AS value,
+               ga.threshold, ga.state,
                ga.date AS knowledge_date
         FROM guard_alert ga
         JOIN backtest_run r ON r.id = ga.backtest_run_id
@@ -702,7 +709,11 @@ VIEWS: dict[str, str] = {
         CREATE VIEW v_guard_action AS
         SELECT act.id AS action_id, act.book_id, b.backtest_run_id, b.arm_code,
                act.alert_id, act.decision_date, act.effective_date,
-               a.ticker, act.asset_id, act.status, act.weight_before, act.weight_after,
+               a.ticker, act.asset_id, act.status,
+               CASE WHEN act.asset_id IS NOT NULL THEN NULL ELSE act.weight_before END
+                   AS weight_before,
+               CASE WHEN act.asset_id IS NOT NULL THEN NULL ELSE act.weight_after END
+                   AS weight_after,
                act.effective_date AS knowledge_date
         FROM guard_action act
         JOIN strategy_book b ON b.id = act.book_id
@@ -712,8 +723,16 @@ VIEWS: dict[str, str] = {
         CREATE VIEW v_book_weight_daily AS
         SELECT w.book_id, b.backtest_run_id, b.arm_code, w.date, w.holding_key, w.asset_id,
                a.company_name AS holding_name,
-               w.markowitz_target_weight, w.drifted_weight, w.pre_guard_weight,
-               w.final_target_weight,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM book_rebalance br
+                   WHERE br.book_id = w.book_id
+                     AND w.date IN (br.decision_date, br.execution_date)
+               ) THEN w.markowitz_target_weight END AS markowitz_target_weight,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM book_rebalance br
+                   WHERE br.book_id = w.book_id
+                     AND w.date IN (br.decision_date, br.execution_date)
+               ) THEN w.final_target_weight END AS final_target_weight,
                w.date AS knowledge_date
         FROM book_weight_daily w
         JOIN strategy_book b ON b.id = w.book_id

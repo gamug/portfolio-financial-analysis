@@ -111,7 +111,8 @@ def test_the_views_read_a_persisted_book(conn: Database) -> None:
         "INSERT INTO book_weight_daily (book_id, date, holding_key, asset_id, "
         "markowitz_target_weight, drifted_weight, pre_guard_weight, final_target_weight) "
         "VALUES (1, '2022-01-04', 'AAA', 1, 0.5, 0.5, 0.5, 0.5), "
-        "(1, '2022-01-04', 'CASH', NULL, 0.5, 0.5, 0.5, 0.5)"
+        "(1, '2022-01-04', 'CASH', NULL, 0.5, 0.5, 0.5, 0.5), "
+        "(1, '2022-01-05', 'AAA', 1, 0.4, 0.4, 0.4, 0.4)"
     )
     conn.execute(
         "INSERT INTO book_daily_performance (book_id, date, gross_return, turnover, "
@@ -120,13 +121,15 @@ def test_the_views_read_a_persisted_book(conn: Database) -> None:
     )
     conn.execute(
         "INSERT INTO guard_alert (id, backtest_run_id, date, layer, asset_id, rule_id, "
-        "value, threshold, state) VALUES (1, 1, '2022-01-04', 1, 1, 'L1_STOP_LOSS', "
-        "-0.11, -0.10, 'ENTER')"
+        "value, threshold, state) VALUES "
+        "(1, 1, '2022-01-04', 1, 1, 'L1_STOP_LOSS', -0.11, -0.10, 'ENTER'), "
+        "(2, 1, '2022-01-04', 3, NULL, 'L3_VOL', 0.8, 1.0, 'SCALE')"
     )
     conn.execute(
         "INSERT INTO guard_action (book_id, alert_id, decision_date, effective_date, "
         "asset_id, status, weight_before, weight_after) VALUES "
-        "(1, 1, '2022-01-04', '2022-01-05', 1, 'APPLIED', 0.5, 0.0)"
+        "(1, 1, '2022-01-04', '2022-01-05', 1, 'APPLIED', 0.5, 0.0), "
+        "(1, 2, '2022-01-04', '2022-01-05', NULL, 'APPLIED', 1.0, 0.8)"
     )
     conn.execute(
         "INSERT INTO backtest_summary (book_id, segment, date_from, date_to, "
@@ -144,11 +147,36 @@ def test_the_views_read_a_persisted_book(conn: Database) -> None:
 
     book = conn.execute("SELECT * FROM v_book").fetchone()
     assert (book["arm_code"], book["knowledge_date"]) == ("TOPN_MV_GUARD", "2026-10-29")
-    weight = conn.execute("SELECT * FROM v_book_weight_daily WHERE holding_key = 'AAA'").fetchone()
+    weight = conn.execute(
+        "SELECT * FROM v_book_weight_daily WHERE holding_key = 'AAA' AND date = '2022-01-04'"
+    ).fetchone()
     assert weight["final_target_weight"] == 0.5
+    assert weight["markowitz_target_weight"] == 0.5
     assert weight["knowledge_date"] == "2022-01-04"
-    assert conn.execute("SELECT * FROM v_guard_alert").fetchone()["ticker"] == "AAA"
-    assert conn.execute("SELECT * FROM v_guard_action").fetchone()["status"] == "APPLIED"
+    # A daily weight the plan never exposed: no target on a non-decision/non-execution date.
+    ordinary = conn.execute(
+        "SELECT * FROM v_book_weight_daily WHERE holding_key = 'AAA' AND date = '2022-01-05'"
+    ).fetchone()
+    assert ordinary["markowitz_target_weight"] is None
+    assert ordinary["final_target_weight"] is None
+
+    layer1 = conn.execute("SELECT * FROM v_guard_alert WHERE layer = 1").fetchone()
+    assert (layer1["ticker"], layer1["value"], layer1["threshold"], layer1["state"]) == (
+        "AAA",
+        None,
+        -0.10,
+        "ENTER",
+    )
+    layer3 = conn.execute("SELECT * FROM v_guard_alert WHERE layer = 3").fetchone()
+    assert (layer3["asset_id"], layer3["value"]) == (None, 0.8)
+
+    asset_action = conn.execute(
+        "SELECT * FROM v_guard_action WHERE asset_id IS NOT NULL"
+    ).fetchone()
+    assert asset_action["status"] == "APPLIED"
+    assert asset_action["weight_before"] is None and asset_action["weight_after"] is None
+    scale_action = conn.execute("SELECT * FROM v_guard_action WHERE asset_id IS NULL").fetchone()
+    assert (scale_action["weight_before"], scale_action["weight_after"]) == (1.0, 0.8)
     assert conn.execute("SELECT * FROM v_portfolio_period_summary").fetchone()["segment"] == "P1"
     assert conn.execute("SELECT * FROM v_backtest_test").fetchone()["test"] == "memmel_jk"
     assert conn.execute("SELECT * FROM v_book_daily_performance").fetchone()["nav"] == 0.999
