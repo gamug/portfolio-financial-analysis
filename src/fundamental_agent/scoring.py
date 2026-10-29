@@ -564,9 +564,18 @@ def _dry_run(
     params: ScoreParams,
     report: ScoreReport,
 ) -> None:
-    """Print one line per filing the run would score, with the prompt it would send."""
+    """Print one line per filing the run would score, with the prompt it would send.
+
+    A filing whose applicable pillar is empty never reaches the model (D1) and is marked as such:
+    it costs no prompt and is counted in ``unscored``, the count the real run reports.
+    """
     for entry in planned:
-        calls = 0 if params.rule_based else estimated_model_calls(entry.metrics)
+        would_call = estimated_model_calls(entry.metrics)  # 0 when D1 leaves the filing unscored
+        if would_call == 0:
+            print(f"{entry.filing.label:<64} unscored (D1): no model call")
+            report.unscored += 1
+            continue
+        calls = 0 if params.rule_based else would_call
         chars = estimated_prompt_chars(
             entry.view, entry.metrics, withheld_map(entry.view, entry.metrics)
         )
@@ -579,9 +588,10 @@ def _dry_run(
     for filing, reason in rejected:
         _note(report, f"fail  {filing.label if filing else '-'}: {reason}")
     tqdm.write(
-        f"dry run: {len(planned)} filing(s) to score, {len(rejected)} not scorable, "
-        f"{report.model_calls} model call(s), ~{report.prompt_chars // CHARS_PER_TOKEN} prompt "
-        f"tokens ({report.prompt_chars} chars); nothing written"
+        f"dry run: {len(planned)} filing(s) to score, {report.unscored} unscored (D1), "
+        f"{len(rejected)} not scorable, {report.model_calls} model call(s), "
+        f"~{report.prompt_chars // CHARS_PER_TOKEN} prompt tokens ({report.prompt_chars} chars); "
+        "nothing written"
     )
 
 

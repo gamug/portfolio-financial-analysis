@@ -707,6 +707,16 @@ def withheld_map(
     return withheld
 
 
+def _model_is_asked(computed: Sequence[tuple[str, MetricResult]]) -> bool:
+    """Whether the LLM path asks the model at all: D1's coverage rule stops it at empty pillars.
+
+    An applicable pillar with no value leaves the score empty and the model is never called (there
+    is nothing it returned that could be scored), exactly as :meth:`FundamentalAnalyst.analyze`
+    decides.
+    """
+    return not pillars.empty_pillars(pillars.pillar_statuses(computed))
+
+
 def estimated_prompt_chars(
     ctx: FilingView,
     computed: list[tuple[str, MetricResult]],
@@ -714,12 +724,15 @@ def estimated_prompt_chars(
 ) -> int:
     """The characters the LLM path would send for one filing, from its metric results.
 
-    The brief, the synthesis prompt, and every specialist request: a specialist is consulted only
+    Zero when the model would not be asked at all (an applicable pillar with no value, D1). Otherwise
+    the brief, the synthesis prompt, and every specialist request: a specialist is consulted only
     when its group has a value (an all-empty group answers from the code, with no model call), and
     its request is its system prompt (the skill and the generated blocks) plus the filing's lines.
-    This is the *input* size of the requests, not of the accumulating conversation, and it prices an
+    This is the *input* size of the requests, not of the accumulating conversation, and it is an
     estimate -- no tokenizer is run here (``len // 4`` is the usual rough conversion).
     """
+    if not _model_is_asked(computed):
+        return 0
     by_group = _group(computed)
     statuses = pillars.pillar_statuses(computed)
     total = len(_brief(ctx, by_group, withheld)) + len(
@@ -745,10 +758,13 @@ def estimated_prompt_chars(
 def estimated_model_calls(computed: list[tuple[str, MetricResult]]) -> int:
     """The model calls the LLM path would make for one filing, from its metric results.
 
-    One per specialist group with a value, plus the orchestrator's opening call and the synthesis
-    call. A repair round and a second tool round are not counted; the master prompt asks for every
-    group with signal, so this is the planned count, not a guarantee.
+    Zero when the model would not be asked (D1, :func:`_model_is_asked`). Otherwise one per
+    specialist group with a value, plus the orchestrator's opening call and the synthesis call. A
+    repair round and a second tool round are not counted; the master prompt asks for every group
+    with signal, so this is the planned count, not a guarantee.
     """
+    if not _model_is_asked(computed):
+        return 0
     groups = {group for group, result in computed if result.value is not None}
     return 2 + len(groups)
 

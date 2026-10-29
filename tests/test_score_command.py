@@ -599,3 +599,24 @@ def test_a_production_database_path_is_refused(tmp_path: Path) -> None:
     guarded = settings.model_copy(update={"db_path": scoring.PRODUCTION_DATA_ROOT / "financial.db"})
     with pytest.raises(ValueError, match="read-only"):
         run_score(guarded, ScoreParams(rule_based=True))
+
+
+def test_a_dry_run_marks_a_filing_that_will_be_unscored(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D1's coverage rule stops the model before it is called, so an unscorable filing costs no
+    prompt and no call -- the estimate the director prices the run with must say so."""
+    settings = _seed_db(tmp_path)
+    conn = connect(settings.db_path)
+    try:
+        conn.execute("DELETE FROM fundamental_metrics WHERE metric_group = 'growth'")
+        conn.commit()
+    finally:
+        conn.close()
+    report = run_score(settings, ScoreParams(dry_run=True))
+    assert report.unscored == 1
+    assert report.model_calls == 0
+    assert report.prompt_chars == 0
+    out = capsys.readouterr().out
+    assert "unscored (D1): no model call" in out
+    assert "prompt~" not in out
