@@ -168,6 +168,21 @@ def test_a_supplies_line_proves_inventory(concept: str, caption: str) -> None:
     assert _ratios(stmts)["quick_ratio"].value is None
 
 
+def test_an_inventory_row_the_gateway_dropped_proves_inventory() -> None:
+    """VST 2026-Q1: the gateway dropped ``InventoryNet`` (T-042) and kept its original in ``corrections``."""
+    stmts = _operating_stmts()
+    stmts.corrections.append(
+        {
+            "statement": "balance_sheet",
+            "concept": "us-gaap_InventoryNet",
+            "column": COL,
+            "original": 1_030.0,
+        }
+    )
+    assert stmts.no_inventory_lines() is False
+    assert _ratios(stmts)["quick_ratio"].value is None
+
+
 def test_a_dimensional_inventory_row_proves_inventory() -> None:
     """A dimensional row is not read by the metrics, but it still proves the filing has inventory."""
     dimensional = _row("InventoryNet", "Inventories", COL, 40.0)

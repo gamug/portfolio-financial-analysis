@@ -82,6 +82,19 @@ def test_a_printed_operating_income_line_is_read_never_derived() -> None:
     assert res.value == 205.0 and res.how != EBIT_DERIVED_HOW
 
 
+def test_an_operating_income_line_the_gateway_dropped_is_never_derived() -> None:
+    stmts = _stmts(SINGLE_STEP)
+    stmts.corrections.append(
+        {
+            "statement": "income_statement",
+            "concept": G + "OperatingIncomeLoss",
+            "column": FY,
+            "original": 200.0,
+        }
+    )
+    assert stmts.resolve("operating_income", FY).how != EBIT_DERIVED_HOW
+
+
 def test_financial_and_unknown_company_types_get_no_derived_operating_income() -> None:
     for company_type in ("article_9", "article_7", "other_financial", "multi_sector_holding", None):
         assert _stmts(SINGLE_STEP, company_type).resolve("operating_income", FY).value is None

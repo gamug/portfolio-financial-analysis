@@ -2197,8 +2197,14 @@ class Statements:
         True when no row of any statement -- dimensional rows included, every column and every
         period -- carries an inventory concept (:data:`INVENTORY_CONCEPTS`) or a caption naming
         inventory with a number, and no filed fact of the filing is an inventory concept. A header
-        or abstract row without a number is not a line; a zero is.
+        or abstract row without a number is not a line; a zero is. Audit round #11: a row the gateway dropped
+        (T-042, kept in ``corrections`` with its original value) was on the face too -- VST's 2026 ``InventoryNet``.
         """
+        for corr in self.corrections:
+            if _numeric(corr.get("original")) is not None and _is_inventory_concept(
+                str(corr.get("concept") or "")
+            ):
+                return False
         for statement in STATEMENT_KEYS:
             for row in self.raw.get(statement) or []:
                 if not self._row_has_value(row):
@@ -3420,6 +3426,12 @@ class Statements:
             for row in self.raw.get("income_statement", [])
             if not row.get("abstract") and not row.get("dimension")
         ]
+        if any(
+            corr.get("concept") == G + "OperatingIncomeLoss"
+            and _numeric(corr.get("original")) is not None
+            for corr in self.corrections
+        ):
+            return None  # the face printed the line; the gateway dropped it (T-042)
         for row in rows:
             if row.get("concept") == G + "OperatingIncomeLoss" and any(
                 _parse_period(str(key)) is not None and _numeric(cell) is not None
