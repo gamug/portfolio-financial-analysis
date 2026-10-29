@@ -699,7 +699,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
                 risk_model_id=None,
                 veto_cutoff_same_day=True,
             )
-        except cycle_data.TooManyUnscored as exc:
+        except (cycle_data.TooManyUnscored, cycle_data.TooFewCandidates) as exc:
             warmup_refused.append({"decision_date": warm_date, "reason": str(exc)})
         except Exception as exc:  # name the refusing date, keep the cause
             raise BacktestError(f"cycle REPLAY failed at warm-up date {warm_date}: {exc}") from exc
@@ -736,7 +736,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
                 risk_model_id=model_id,
                 veto_cutoff_same_day=True,
             )
-        except cycle_data.TooManyUnscored as exc:
+        except (cycle_data.TooManyUnscored, cycle_data.TooFewCandidates) as exc:
             if formation is not None:
                 raise BacktestError(f"cycle refused after formation at {decision}: {exc}") from exc
             decisions_refused.append({"decision_date": decision, "reason": str(exc)})

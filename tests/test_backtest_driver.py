@@ -24,6 +24,7 @@ from cycle.backtest.driver import (
     run_backtest,
     sessions_between,
 )
+from cycle.data import TooFewCandidates
 from fundamental_agent import db as fundamental_db
 from kg_schema import connect, queries
 
@@ -52,7 +53,7 @@ def _now() -> str:
     return datetime.now(tz=UTC).isoformat(timespec="seconds")
 
 
-def _fixture(tmp_path: Path) -> tuple[Path, Path]:
+def _fixture(tmp_path: Path, *, end: str = "2022-03-15") -> tuple[Path, Path]:
     """A migrated financial DB with 2 assets, returns and RF, plus a 1-member universe DB."""
     db_path = tmp_path / "financial.db"
     conn = connect(db_path)
@@ -61,7 +62,7 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path]:
         "INSERT INTO assets (id, ticker, company_name, cik) VALUES "
         "(1, 'AAA', 'Alpha', '0000000001'), (2, 'BBB', 'Beta', '0000000002')"
     )
-    sessions = sessions_between("2021-11-01", "2022-03-15")
+    sessions = sessions_between("2021-11-01", end)
     for session in sessions:
         for asset_id in (1, 2):
             log_return = -0.10 if (asset_id == 1 and session == "2022-01-06") else 0.001
@@ -408,6 +409,79 @@ def test_a_reused_database_with_a_topn_book_at_a_decision_date_is_refused(
             warmup_steps=2,
         )
     assert conn.execute("SELECT COUNT(*) FROM backtest_run").fetchone()[0] == 0
+    conn.close()
+
+
+def test_formation_moves_past_a_too_few_candidates_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path, end="2022-04-14")
+    params_path = _params_file(tmp_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-04-14"))
+    schedule = driver.schedule_for(driver.window_spec("PX"))
+    conn = connect(db_path)
+    base = _fake_replay(conn)
+
+    def fake(settings: Any, cycle_date: str, **kwargs: Any) -> Any:
+        if cycle_date == schedule[0].decision_date:
+            raise TooFewCandidates("0 selectable names")
+        return base(settings, cycle_date, **kwargs)
+
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", fake)
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=1,
+    )
+    assert result["formation_date"] == schedule[1].execution_date
+    params = json.loads(
+        str(
+            conn.execute(
+                "SELECT params_json FROM backtest_run WHERE id = ?",
+                (result["backtest_run_id"],),
+            ).fetchone()["params_json"]
+        )
+    )
+    assert params["decisions_refused"] == [
+        {"decision_date": schedule[0].decision_date, "reason": "0 selectable names"}
+    ]
+    conn.close()
+
+
+def test_a_too_few_candidates_refusal_after_formation_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path, end="2022-04-14")
+    params_path = _params_file(tmp_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-04-14"))
+    schedule = driver.schedule_for(driver.window_spec("PX"))
+    conn = connect(db_path)
+    base = _fake_replay(conn)
+
+    def fake(settings: Any, cycle_date: str, **kwargs: Any) -> Any:
+        if cycle_date == schedule[1].decision_date:
+            raise TooFewCandidates("0 selectable names")
+        return base(settings, cycle_date, **kwargs)
+
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", fake)
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    with pytest.raises(BacktestError, match="cycle refused after formation"):
+        run_backtest(
+            window_id="PX",
+            db_path=db_path,
+            universe_db_path=universe_path,
+            params_path=params_path,
+            warmup_steps=1,
+        )
+    run = conn.execute("SELECT status FROM backtest_run ORDER BY id DESC LIMIT 1").fetchone()
+    assert run["status"] == "failed"
     conn.close()
 
 
