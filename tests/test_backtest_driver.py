@@ -485,6 +485,48 @@ def test_a_too_few_candidates_refusal_after_formation_aborts(
     conn.close()
 
 
+def test_a_too_few_candidates_refusal_in_warmup_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path, end="2022-04-14")
+    params_path = _params_file(tmp_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-04-14"))
+    schedule = driver.schedule_for(driver.window_spec("PX"))
+    warmup = driver.warmup_dates(schedule[0].decision_date, 2)
+    conn = connect(db_path)
+    base = _fake_replay(conn)
+
+    def fake(settings: Any, cycle_date: str, **kwargs: Any) -> Any:
+        if cycle_date == warmup[0]:
+            raise TooFewCandidates("0 selectable names")
+        return base(settings, cycle_date, **kwargs)
+
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", fake)
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+    )
+    params = json.loads(
+        str(
+            conn.execute(
+                "SELECT params_json FROM backtest_run WHERE id = ?",
+                (result["backtest_run_id"],),
+            ).fetchone()["params_json"]
+        )
+    )
+    assert params["warmup_refused"] == [
+        {"decision_date": warmup[0], "reason": "0 selectable names"}
+    ]
+    assert result["formation_date"] == schedule[0].execution_date
+    conn.close()
+
+
 def test_a_missing_database_is_refused(tmp_path: Path) -> None:
     with pytest.raises(BacktestError, match="does not exist"):
         run_backtest(
