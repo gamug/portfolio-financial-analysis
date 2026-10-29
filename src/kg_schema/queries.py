@@ -675,6 +675,48 @@ def veto_out_of_order_reason(conn: Database, cycle_date: str) -> str | None:
     return f"cycle_date {cycle_date} is older than the latest veto transition ({latest})"
 
 
+class UnknownRiskModel(RuntimeError):
+    """``quant_risk_model`` holds no usable row for the id a caller asked about (the backtest's
+    ``cycle`` selection, WP-C): a wrong id, a model built before the panel spec was recorded, or
+    a spec that disagrees with the model's own ``n_assets``."""
+
+
+def risk_model_asset_ids(conn: Database, model_id: int) -> set[int]:
+    """The assets ``quant`` risk model *model_id* covers -- the universe its Σ was estimated on.
+
+    **``panel_spec_json.asset_ids`` is authoritative, not ``quant_covariance``.** The panel is the
+    exact id vector the model was built on: ``quant.persist`` writes it unconditionally, it is what
+    ``quant_risk_model.n_assets`` counts, and every stored matrix column is drawn from it.
+    ``quant_covariance`` is a *cache of the output*, not the contract: it is written only when the
+    build asked to store the matrix, and it holds the **lower triangle only**
+    (``asset_id_i <= asset_id_j``, per the DDL), so reading it would have to union ``i`` and ``j``
+    and would still report "no assets" for a model whose matrix was not stored. A spec whose
+    distinct ids disagree with the model's recorded ``n_assets`` is refused instead of half-read.
+    """
+    row = conn.execute(
+        "SELECT n_assets, panel_spec_json FROM quant_risk_model WHERE id = ?", (model_id,)
+    ).fetchone()
+    if row is None:
+        raise UnknownRiskModel(f"no quant_risk_model with id {model_id}")
+    try:
+        spec = json.loads(row["panel_spec_json"] or "{}")
+    except (TypeError, ValueError):
+        spec = {}
+    ids = spec.get("asset_ids") if isinstance(spec, dict) else None
+    if not isinstance(ids, list) or not ids:
+        raise UnknownRiskModel(
+            f"quant_risk_model {model_id} records no panel asset_ids in its panel_spec_json"
+        )
+    asset_ids = {int(a) for a in ids}
+    n_assets = int(row["n_assets"])
+    if len(asset_ids) != n_assets:
+        raise UnknownRiskModel(
+            f"quant_risk_model {model_id} records n_assets = {n_assets} but "
+            f"{len(asset_ids)} distinct asset_ids in its panel spec"
+        )
+    return asset_ids
+
+
 def check_coverage(
     fin_db: Database,
     universe_db: Database,
@@ -981,6 +1023,7 @@ __all__ = [
     "WINDOW_START",
     "StaleAsOf",
     "UniverseMember",
+    "UnknownRiskModel",
     "WindowMember",
     "check_coverage",
     "connect_ro",
@@ -994,6 +1037,7 @@ __all__ = [
     "reconcile",
     "record",
     "resolve_asset_ids",
+    "risk_model_asset_ids",
     "stale_as_of_reason",
     "symbols_asof",
     "unresolved_run_references",

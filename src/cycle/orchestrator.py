@@ -40,6 +40,7 @@ from cycle.scores.normalize import normalized_scores
 from cycle.state import (
     check_construction,
     check_manifest,
+    check_replay_inputs,
     check_score_weights,
     checkpoint,
     done_steps,
@@ -56,6 +57,7 @@ from kg_schema.queries import (
     StaleAsOf,
     StaleGateVersion,
     connect_ro,
+    risk_model_asset_ids,
     stale_as_of_reason,
     stale_gate_version_reason,
     veto_out_of_order_reason,
@@ -134,6 +136,10 @@ class CycleReport:
     # resume skipped the step.
     book: BookResult | None = None
     book_rows: list[tuple[str, str | None, float]] = field(default_factory=list)
+    # The ids the book holds, in rank order, read back from ``cycle_ranking.selected`` (WP-C):
+    # never a separate source of truth, so a resumed run (whose ``positions`` step is skipped)
+    # still reports its book. Empty on a MONITORING run -- nothing is selected there.
+    selected_asset_ids: list[int] = field(default_factory=list)
 
 
 class PreferencesNeedDryRun(RuntimeError):
@@ -147,17 +153,21 @@ def _book_candidates(
     price_obs: Mapping[int, Mapping[str, float | None]],
 ) -> list[BookCandidate]:
     """The ranked cohort as ``build_book`` input. HARD-vetoed names (at the T-1 cutoff) are passed
-    in, marked, so a HARD pin is refused with its reason; UNSCORED and UNPRICED names are
-    ineligible and left out (a pin on one is refused as "not among the candidates"). A data-gap
-    marker is never a SOFT veto, so it takes no penalty off the blended score."""
+    in, marked, so a HARD pin is refused with its reason; UNSCORED, UNPRICED and NO_RISK_MODEL
+    names are ineligible and left out (a pin on one is refused as "not among the candidates"). A
+    data-gap marker is never a SOFT veto, so it takes no penalty off the blended score."""
     cands: list[BookCandidate] = []
     for r in rows:
         aid = int(r["asset_id"])
         rules = r["veto_rules"]
         veto: VetoStatus = "HARD" if "HARD" in rules else "none"
-        if veto == "none" and ("UNSCORED" in rules or "UNPRICED" in rules):
+        if veto == "none" and any(
+            marker in rules for marker in ("UNSCORED", "UNPRICED", "NO_RISK_MODEL")
+        ):
             continue
-        if veto == "none" and any(rule not in ("HARD", "UNSCORED", "UNPRICED") for rule in rules):
+        if veto == "none" and any(
+            rule not in ("HARD", "UNSCORED", "UNPRICED", "NO_RISK_MODEL") for rule in rules
+        ):
             veto = "SOFT"
         cands.append(
             BookCandidate(
@@ -183,6 +193,26 @@ def _call_build_book(settings: CycleSettings, cands: list[BookCandidate]) -> Boo
         exclude=settings.exclude,
         exclude_sectors=settings.exclude_sectors,
         only_sectors=settings.only_sectors,
+    )
+
+
+def _require_top_n(
+    book: BookResult, rows: list[dict], n_model_assets: int, risk_model_id: int, top_n: int
+) -> None:
+    """Refuse a restricted selection that cannot hold exactly *top_n* names (WP-C).
+
+    With ``risk_model_id`` set the cohort is the model's panel; a book shorter than ``top_n``
+    means too few of the ranked names are both covered and eligible. That is reported with where
+    the names went, never silently traded as a smaller book."""
+    if len(book.weights) == top_n:
+        return
+    no_model = sum(1 for r in rows if "NO_RISK_MODEL" in r["veto_rules"])
+    hard = sum(1 for r in rows if "HARD" in r["veto_rules"])
+    raise data.TooFewCandidates(
+        f"only {len(book.weights)} of the {top_n} names a Top-N selection must hold are eligible "
+        f"under risk model {risk_model_id} ({n_model_assets} assets): of {len(rows)} ranked "
+        f"names, {no_model} are NO_RISK_MODEL and {hard} HARD-vetoed; the book is never padded "
+        "or shrunk"
     )
 
 
@@ -299,7 +329,16 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     *,
     conn: Database,
     fundamental_hook: FundamentalHook | None,
+    risk_model_id: int | None = None,
+    veto_cutoff_same_day: bool = False,
 ) -> CycleReport:
+    if veto_cutoff_same_day and cycle_type != "REPLAY":
+        # WP-C, BACKTEST_SPEC §8.3: the R cutoff is the backtest's declared variation, never the
+        # live book's rule (T-070's contagion lag stays R-1 there).
+        raise ValueError(
+            "veto_cutoff_same_day is a REPLAY-only cut: the live SELECTION/MONITORING book "
+            "filters vetoes as of R-1 (the T-070 contagion lag) and must not change"
+        )
     if cycle_type == "SELECTION" and settings.has_preferences:
         # The live book is the thesis book: preferences make it decision support (T-134 decision 6),
         # so a writing select refuses them -- `--dry-run` previews them, `backfill` replays with them.
@@ -312,6 +351,11 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # Every fundamental read below keys on `available_at` (T-107): refuse to run on rows that
     # predate its backfill rather than read none of them.
     availability.require(conn)
+    # WP-C: the cohort a Top-N selection must come from, resolved once, before any run row exists
+    # (an unknown model is a clear refusal, never a half-read or an empty cohort).
+    risk_ids: frozenset[int] | None = None
+    if risk_model_id is not None:
+        risk_ids = frozenset(risk_model_asset_ids(conn, risk_model_id))
     # Resolve the metric versions this run reads (T-090) and refuse to resume an earlier run of
     # the same (type, date) that was built on different ones -- before touching that run.
     versions = resolve_metric_versions(conn, parse_metric_selection(settings.metrics_version))
@@ -326,6 +370,15 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
     # T-141: params_json.score_weights is written once, by the first attempt; every ranking of
     # this run must use those weights, so refuse a resume under others (any cycle type).
     check_score_weights(conn, cycle_type, cycle_date, settings.score_weights)
+    # WP-C: the selection cut (risk model, veto cutoff) is recorded once and never rewritten, so a
+    # resume under another one would replace this date's cohort silently -- refuse it here.
+    check_replay_inputs(
+        conn,
+        cycle_type,
+        cycle_date,
+        risk_model_id=risk_model_id,
+        veto_cutoff_same_day=veto_cutoff_same_day,
+    )
     if "positions" in steps:
         # T-136: never resume onto a different book than the one the first attempt built.
         check_construction(conn, cycle_type, cycle_date, settings.construction())
@@ -374,6 +427,10 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             "stale_as_of_bypassed": stale_reason,
             "dirty_tree_bypassed": dirty_reason,
             "stale_dq_gate_bypassed": gate_reason,
+            # WP-C: the selection cut this run's ranking and book were built under --
+            # `check_replay_inputs` refuses a resume under other values.
+            "risk_model_id": risk_model_id,
+            "veto_cutoff_same_day": veto_cutoff_same_day,
         },
         code_version=cv,
     )
@@ -656,9 +713,17 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         ranked_cache: dict[str, list[dict]] = {}
 
         def _rank() -> dict:
-            cutoff = _t_minus_1(cycle_date)
+            # WP-C: the backtest's REPLAY selects with the vetoes as of the cycle date itself
+            # (`veto_cutoff_same_day`), against the live book's T-1 contagion lag (T-070).
+            cutoff = cycle_date if veto_cutoff_same_day else _t_minus_1(cycle_date)
             hard = writers.hard_vetoed_as_of(conn, cutoff)
             soft = writers.active_soft_vetoes(conn, cutoff)
+            # WP-C: names the run's risk model does not cover can be neither optimized nor held by
+            # the Top-N arm -- marked, never selected, and never a HARD/SOFT veto or a coverage
+            # refusal (the `unscored_max_share` brake below counts scores and prices only).
+            no_model = (
+                {a for a in asset_ids if a not in risk_ids} if risk_ids is not None else set()
+            )
             # N9 (T-071 part 2b, D4): read **this** cycle's FUNDAMENTAL normalization, recomputed
             # from the rows, never the shared snapshot row's `normalized_score` -- a `rank` resumed
             # after another cycle date ran in between would otherwise blend the other date's value.
@@ -704,7 +769,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):
-                ineligible = a in unscored or a in unpriced
+                ineligible = a in unscored or a in unpriced or a in no_model
                 ranked.append(
                     {
                         "asset_id": a,
@@ -715,7 +780,8 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                         "veto_rules": soft.get(a, [])
                         + (["HARD"] if a in hard else [])
                         + (["UNSCORED"] if a in unscored else [])
-                        + (["UNPRICED"] if a in unpriced else []),
+                        + (["UNPRICED"] if a in unpriced else [])
+                        + (["NO_RISK_MODEL"] if a in no_model else []),
                         "selected": False,
                         "target_weight": None,
                     }
@@ -727,6 +793,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 "hard_vetoed": len(hard),
                 "unscored": len(unscored),
                 "unpriced": len(unpriced),
+                "no_risk_model": len(no_model),
             }
 
         _do("rank", _rank)
@@ -758,6 +825,13 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 rows = ranked_cache.get("rows") or _load_ranking(conn, run_id)
                 cands = _book_candidates(rows, ticker_of, sector_name_of, price_obs)
                 book = _call_build_book(settings, cands)
+                if risk_model_id is not None:
+                    # WP-C: the backtest's Top-N arm holds exactly `top_n` names -- the book has
+                    # already gone down the ranking past the names the model does not cover,
+                    # under the same sector-count cap (`build_book`'s `_fill`). A short book here
+                    # is a data problem (HARD vetoes, unscored, unpriced, uncovered) to report,
+                    # never a smaller portfolio to trade.
+                    _require_top_n(book, rows, len(risk_ids or ()), risk_model_id, settings.top_n)
                 weights = book.weights
                 closes = {a: (price_obs.get(a) or {}).get("close") for a in weights}
                 if cycle_type == "REPLAY":
@@ -804,6 +878,19 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
                 }
 
             _do("positions", _positions)
+
+        # WP-C: the report's book is read back from the persisted ranking, so a resumed run --
+        # whose `positions` step was skipped -- reports the same ids as the run that wrote them.
+        if "positions" in steps and ({"positions"} & set(report.steps_run + report.steps_skipped)):
+            report.selected_asset_ids = [
+                int(r["asset_id"])
+                for r in conn.execute(
+                    "SELECT asset_id FROM cycle_ranking WHERE cycle_run_id = ? AND selected = 1 "
+                    "ORDER BY rank",
+                    (run_id,),
+                ).fetchall()
+            ]
+            report.selected = len(report.selected_asset_ids)
 
         finish_cycle(conn, run_id, "completed")
     except BaseException:
@@ -974,17 +1061,32 @@ def run_monitoring(
             conn.close()
 
 
-def run_replay(
+def run_replay(  # noqa: PLR0913 - the §8.3 interface: two conn/hook passthroughs, two cuts
     settings: CycleSettings,
     cycle_date: str,
     *,
     conn: Database | None = None,
     fundamental_hook: FundamentalHook | None = None,
+    risk_model_id: int | None = None,
+    veto_cutoff_same_day: bool = False,
 ) -> CycleReport:
     """``cycle backfill``'s entrypoint (T-115): the same step sequence and checkpointing as
     :func:`run_selection`, but ``cycle_type='REPLAY'`` keeps its ``cycle_run``/
     ``cycle_checkpoint`` rows and its positions (``portfolio_position_replay``, via
-    ``cycle.replay``) entirely separate from a live ``select`` run at the same date."""
+    ``cycle.replay``) entirely separate from a live ``select`` run at the same date.
+
+    Two cuts the backtest adds (WP-C, BACKTEST_SPEC §8.3), both REPLAY-only:
+
+    * *risk_model_id* -- the Top-N selection comes from ``quant`` risk model M's panel
+      (``kg_schema.queries.risk_model_asset_ids``): a ranked name outside it is marked
+      ``NO_RISK_MODEL`` in ``cycle_ranking.veto_rules_json``, never selected, and the book keeps
+      filling down the ranking under the same sector cap. It must end with exactly ``top_n``
+      selected or raise :class:`cycle.data.TooFewCandidates`.
+    * *veto_cutoff_same_day* -- ``rank`` filters HARD and SOFT vetoes as of ``cycle_date`` itself
+      instead of R-1 (the live book's T-070 contagion lag).
+
+    Both are recorded in the run's ``params_json``; a resume under other values is refused
+    (``cycle.state.check_replay_inputs``)."""
     owned = conn is None
     if conn is None:
         conn = connect(settings.db_path)
@@ -996,6 +1098,8 @@ def run_replay(
             _SELECTION_STEPS,
             conn=conn,
             fundamental_hook=fundamental_hook,
+            risk_model_id=risk_model_id,
+            veto_cutoff_same_day=veto_cutoff_same_day,
         )
     finally:
         if owned:
