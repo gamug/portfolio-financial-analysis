@@ -255,7 +255,7 @@ def _run_score(args: argparse.Namespace) -> int:
     except (ValueError, VersionError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 2
-    for line in report.errors[:50]:
+    for line in report.errors[:20]:
         print(line, file=sys.stderr)
     print(json.dumps(report.as_dict()))
     # Like `run`: a batch that scored nothing and failed everything is a failed step; a run whose

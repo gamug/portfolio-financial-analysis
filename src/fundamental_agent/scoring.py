@@ -171,6 +171,14 @@ class _Planned:
 
 
 @dataclass(frozen=True)
+class _Scope:
+    """What the database holds for this run: the resolved versions and the metric rows per filing."""
+
+    resolution: MetricVersions
+    counts: dict[int, int]  # filing_id -> stored metric rows under the resolved versions
+
+
+@dataclass(frozen=True)
 class _Scorer:
     """The scoring path one run uses: the analyst and how many filings to run at once."""
 
@@ -350,17 +358,25 @@ def _select(
     settings: Settings,
     params: ScoreParams,
     unknown: list[str],
+    scope: _Scope,
 ) -> list[_Filing]:
     """The filings the selectors name, deduplicated and in a stable order.
 
-    Neither selector given: every stored filing (a metrics-only database's whole scope). With
-    ``--accessions``, each named filing, whether it has metrics or not; an accession no filing
-    carries is appended to *unknown* (never dropped). With ``--for-dates``, per date and per
-    ``members_asof`` member, the filing that member's latest period had available on that date.
-    The two selectors are unioned by filing id.
+    Neither selector given: every stored filing that has metrics under the resolved versions (a
+    metrics-only database's whole scope) -- a filing without them cannot be scored, and is counted
+    by the caller, not enumerated. With ``--accessions``, each named filing, whether it has metrics
+    or not; an accession no filing carries is appended to *unknown* (never dropped). With
+    ``--for-dates``, per date and per ``members_asof`` member, the filing that member's latest
+    period had available on that date. The two selectors are unioned by filing id.
     """
     if not params.accessions and not params.for_dates:
-        return [_filing(row) for row in conn.execute(_ALL_FILINGS_SQL).fetchall()]
+        stored = [_filing(row) for row in conn.execute(_ALL_FILINGS_SQL).fetchall()]
+        scored = [filing for filing in stored if scope.counts.get(filing.filing_id, 0) > 0]
+        tqdm.write(
+            f"scope: {len(scored)} of {len(stored)} stored filings have metrics under the resolved "
+            "versions; the rest cannot be scored"
+        )
+        return scored
     chosen: dict[int, _Filing] = {}
     for accession in params.accessions:
         rows = conn.execute(_ACCESSION_SQL, (accession,)).fetchall()
@@ -482,15 +498,15 @@ def _stored_text(conn: Database) -> str:
 
 
 def _note(report: ScoreReport, message: str) -> None:
+    """Keep one per-filing line for the caller to show (``main`` prints the first 20)."""
     report.errors.append(message)
-    tqdm.write(message)
 
 
 def _plan(  # noqa: PLR0913, PLR0917 - the selection, its versions and the report it counts into
     conn: Database,
     filings: Sequence[_Filing],
     params: ScoreParams,
-    resolution: MetricVersions,
+    scope: _Scope,
     unknown: Sequence[str],
     report: ScoreReport,
 ) -> tuple[list[_Planned], list[tuple[_Filing | None, str]]]:
@@ -502,7 +518,6 @@ def _plan(  # noqa: PLR0913, PLR0917 - the selection, its versions and the repor
     with the reason. ``--limit`` caps the planned filings *after* the skips, so a resumed run makes
     progress.
     """
-    counts = _counts(conn, resolution)
     stored = _stored_text(conn)
     planned: list[_Planned] = []
     rejected: list[tuple[_Filing | None, str]] = [
@@ -521,12 +536,12 @@ def _plan(  # noqa: PLR0913, PLR0917 - the selection, its versions and the repor
         if filing.period_end is None:
             rejected.append((filing, "the filing has no stored period_end"))
             continue
-        if counts.get(filing.filing_id, 0) == 0:
+        if scope.counts.get(filing.filing_id, 0) == 0:
             rejected.append(
                 (
                     filing,
-                    f"no stored metrics under the resolved versions ({_resolved_text(resolution)}); "
-                    f"the database holds {stored}",
+                    "no stored metrics under the resolved versions "
+                    f"({_resolved_text(scope.resolution)}); the database holds {stored}",
                 )
             )
             continue
@@ -534,7 +549,7 @@ def _plan(  # noqa: PLR0913, PLR0917 - the selection, its versions and the repor
             _Planned(
                 filing=filing,
                 event_time=filing.period_end,
-                metrics=_load_metrics(conn, filing.filing_id, resolution),
+                metrics=_load_metrics(conn, filing.filing_id, scope.resolution),
                 view=_view(conn, filing),
             )
         )
@@ -564,9 +579,9 @@ def _dry_run(
     for filing, reason in rejected:
         _note(report, f"fail  {filing.label if filing else '-'}: {reason}")
     tqdm.write(
-        f"dry run: {len(planned)} filing(s), {report.model_calls} model call(s), "
-        f"~{report.prompt_chars // CHARS_PER_TOKEN} prompt tokens "
-        f"({report.prompt_chars} chars); nothing written"
+        f"dry run: {len(planned)} filing(s) to score, {len(rejected)} not scorable, "
+        f"{report.model_calls} model call(s), ~{report.prompt_chars // CHARS_PER_TOKEN} prompt "
+        f"tokens ({report.prompt_chars} chars); nothing written"
     )
 
 
@@ -656,16 +671,17 @@ def run_score(settings: Settings, params: ScoreParams) -> ScoreReport:
         if not params.dry_run:
             db.ensure_schema(conn)
         resolution = resolve_metric_versions(conn, params.metrics_version)
+        scope = _Scope(resolution, _counts(conn, resolution))
         unknown: list[str] = []
-        filings = _select(conn, settings, params, unknown)
-        planned, rejected = _plan(conn, filings, params, resolution, unknown, report)
+        filings = _select(conn, settings, params, unknown, scope)
+        planned, rejected = _plan(conn, filings, params, scope, unknown, report)
         report.planned = len(planned)
         if params.dry_run:
             _dry_run(planned, rejected, params, report)
             report.failed = len(rejected)
             report.seconds = time.monotonic() - started
             return report
-        run_id = _start_run(conn, settings, params, resolution, len(filings), len(planned))
+        run_id = _start_run(conn, settings, params, scope.resolution, len(filings), len(planned))
         report.run_id = run_id
         analyst = (
             FundamentalAnalyst(None, FALLBACK_MODEL_LABEL)
