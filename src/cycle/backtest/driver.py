@@ -158,10 +158,20 @@ def _refuse_reused_database(
     dates = sorted(set(warmup) | {rebalance.decision_date for rebalance in decisions})
     if not dates:
         return
+    present = {
+        str(row["name"])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN "
+            "('cycle_run', 'quant_portfolio')"
+        ).fetchall()
+    }
+    if "cycle_run" not in present and "quant_portfolio" not in present:
+        return
     replay = [
         day
         for day in dates
-        if conn.execute(
+        if "cycle_run" in present
+        and conn.execute(
             "SELECT 1 FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = ?",
             (day,),
         ).fetchone()
@@ -176,7 +186,8 @@ def _refuse_reused_database(
     books = [
         day
         for day in dates
-        if conn.execute(
+        if "quant_portfolio" in present
+        and conn.execute(
             "SELECT 1 FROM quant_portfolio WHERE kind = 'min_var_topn' AND as_of = ?",
             (day,),
         ).fetchone()
@@ -1329,11 +1340,12 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
     conn = connect(database)
     universe_conn = connect_ro(universe)
     try:
+        # Refuse a reused copy before any write (including the migration below).
+        _refuse_reused_database(conn, warmup, schedule)
         # The scratch copy may predate the current migration floor: migrate it here (recorded
         # in params_json) rather than running on old table shapes.
         applied = kg_schema.ensure(conn, run_migrations=True)
         require_migrated(conn)
-        _refuse_reused_database(conn, warmup, schedule)
         run_id = _open_run(conn, window, params, warmup_steps, input_sha, applied)
         payload: dict[str, Any] = {}
         try:
