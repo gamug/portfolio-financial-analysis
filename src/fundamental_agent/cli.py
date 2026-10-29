@@ -1,10 +1,11 @@
 """Command-line entry point: ``python -m fundamental_agent
-run|pending|quality|repair-accessions|migrate|coverage``."""
+run|score|pending|quality|repair-accessions|migrate|coverage``."""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from collections.abc import Sequence
@@ -17,15 +18,17 @@ from fundamental_agent.edgar_client import EdgarClient
 from fundamental_agent.fidelity import run_fidelity
 from fundamental_agent.pending import run_pending
 from fundamental_agent.pipeline import DEFAULT_FORMS, DEFAULT_SINCE_YEAR, RunParams, run
+from fundamental_agent.scoring import ScoreParams, parse_dates, read_lines, run_score
 from kg_schema import connect
 from kg_schema.cli import add_coverage_parser, coverage_from_args, resolve_db_path, run_migrate
 from kg_schema.env import universe_database_path
 from kg_schema.queries import connect_ro
 from kg_schema.rundate import add_analysis_date_argument
 from kg_schema.rundate import resolve as resolve_analysis_date
+from kg_schema.versions import VersionError
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> argparse.ArgumentParser:  # noqa: PLR0915 - one parser block per command
     parser = argparse.ArgumentParser(
         prog="fundamental_agent",
         description="Fundamental economic analysis of S&P 500 SEC filings.",
@@ -82,6 +85,42 @@ def build_parser() -> argparse.ArgumentParser:
         "though the working tree has uncommitted changes -- results would come from code "
         "HEAD alone can't reproduce; for a deliberate run from a work-in-progress checkout, "
         "not routine use",
+    )
+
+    score_cmd = sub.add_parser(
+        "score",
+        help="write the FUNDAMENTAL scores from the metrics already stored (no gateway call)",
+    )
+    score_cmd.add_argument("--db", help="override KG_FINANCIAL_DB path")
+    score_cmd.add_argument("--universe-db", help="override KG_UNIVERSE_DB path")
+    score_cmd.add_argument(
+        "--rule-based",
+        action="store_true",
+        help="the deterministic fallback (rule-based-fallback-v1): no model call, no LLM settings",
+    )
+    score_cmd.add_argument(
+        "--workers", type=int, default=1, help="concurrent model calls (default: 1)"
+    )
+    score_cmd.add_argument(
+        "--for-dates",
+        help="file with one ISO date per line: score each member's latest filing available then",
+    )
+    score_cmd.add_argument("--accessions", help="file with one accession number per line")
+    score_cmd.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the filings and the model calls the run would make, with a prompt-size "
+        "estimate per filing; write nothing and call nothing",
+    )
+    score_cmd.add_argument("--limit", type=int, help="cap the filings this run attempts")
+    score_cmd.add_argument(
+        "--metrics-version",
+        help="pin one stored metric engine version (default: the newest stored per metric group)",
+    )
+    score_cmd.add_argument(
+        "--allow-dirty",
+        action="store_true",
+        help="override the clean-tree guard (T-114) for this run's code_version",
     )
 
     pending_cmd = sub.add_parser(
@@ -175,8 +214,60 @@ def _split(value: str | None) -> list[str] | None:
     return [item.strip().upper() for item in value.split(",") if item.strip()]
 
 
-def _run_quality(args: argparse.Namespace) -> int:
-    # No LLM involved, so no Settings.load() (which insists on the LLM variables).
+def _score_settings(args: argparse.Namespace) -> Settings:
+    """The settings a ``score`` run uses, with the command's overrides applied.
+
+    ``--rule-based`` makes no model call, so it needs no LLM configuration (as ``quality`` does not).
+    A dry run only counts, and falls back to the LLM-free settings when they are not configured.
+    """
+    if args.rule_based:
+        settings = Settings.load(metrics_only=True)
+    else:
+        try:
+            settings = Settings.load()
+        except RuntimeError:
+            if not args.dry_run:
+                raise
+            settings = Settings.load(metrics_only=True)
+    updates: dict[str, object] = {}
+    if args.db:
+        updates["db_path"] = Path(args.db)
+    if args.universe_db:
+        updates["universe_db_path"] = Path(args.universe_db)
+    if args.allow_dirty:
+        updates["allow_dirty"] = True
+    return settings.model_copy(update=updates) if updates else settings
+
+
+def _run_score(args: argparse.Namespace) -> int:
+    """``fundamental_agent score``: the FUNDAMENTAL rows from the stored metrics."""
+    try:
+        params = ScoreParams(
+            rule_based=args.rule_based,
+            workers=args.workers,
+            for_dates=parse_dates(read_lines(args.for_dates)),
+            accessions=read_lines(args.accessions),
+            limit=args.limit,
+            dry_run=args.dry_run,
+            metrics_version=args.metrics_version,
+        )
+        report = run_score(_score_settings(args), params)
+    except (ValueError, VersionError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 2
+    for line in report.errors[:50]:
+        print(line, file=sys.stderr)
+    print(json.dumps(report.as_dict()))
+    # Like `run`: a batch that scored nothing and failed everything is a failed step; a run whose
+    # only failures are per-filing data problems is recorded and exits 0.
+    if params.dry_run:
+        return 0
+    return 1 if report.failed and not report.scored else 0
+
+
+def _run_quality(
+    args: argparse.Namespace,
+) -> int:  # No LLM involved, so no Settings.load() (which insists on the LLM variables).
     conn = connect(resolve_db_path(args.db))
     try:
         db.ensure_schema(conn)
@@ -291,7 +382,7 @@ def _run_fidelity(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one dispatch branch per command
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911, PLR0912 - one dispatch branch per command
     args = build_parser().parse_args(argv)
     if args.command == "migrate":
         return run_migrate(args.db)
@@ -306,6 +397,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
         )
     if args.command == "quality":
         return _run_quality(args)
+    if args.command == "score":
+        return _run_score(args)
     if args.command == "repair-accessions":
         return _run_repair(args)
     if args.command == "card":

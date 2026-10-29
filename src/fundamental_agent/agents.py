@@ -13,7 +13,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent, tool
@@ -165,8 +165,36 @@ def withheld_metrics(results: list[tuple[str, MetricResult]]) -> dict[tuple[str,
 TIINGO_CLOSE_REASON = "TIINGO_CLOSE"
 
 
+class FilingView(Protocol):
+    """What the scoring step reads from one filing -- its identity and the prices it was valued on.
+
+    The metrics are given to :meth:`FundamentalAnalyst.score` already computed, so the statements are
+    not here: a score depends on the metric results, the filing's name in the prompts, and whether its
+    period-end close is the private import's (the Tiingo withholding rule below). :class:`FilingContext`
+    satisfies this protocol, and ``fundamental_agent score`` satisfies it from the stored rows alone.
+    """
+
+    @property
+    def ticker(self) -> str: ...
+
+    @property
+    def company_name(self) -> str: ...
+
+    @property
+    def form(self) -> str: ...
+
+    @property
+    def fiscal_period(self) -> str: ...
+
+    @property
+    def price(self) -> ClosePrice | None: ...
+
+    @property
+    def market_cap(self) -> MarketCap | None: ...
+
+
 def tiingo_withheld_metrics(
-    ctx: FilingContext, results: list[tuple[str, MetricResult]]
+    ctx: FilingView, results: list[tuple[str, MetricResult]]
 ) -> dict[tuple[str, str], str]:
     """``{(group, metric): reason}`` for the valuation group when the private import priced the line.
 
@@ -189,7 +217,7 @@ def tiingo_withheld_metrics(
     }
 
 
-def _close_is_from_tiingo(ctx: FilingContext) -> bool:
+def _close_is_from_tiingo(ctx: FilingView) -> bool:
     """True when the filing's close -- the market cap's and ``ctx.price``'s -- is the import's.
 
     Both come from the same ``price_daily`` row family: the market cap's reader records its
@@ -540,35 +568,27 @@ class FundamentalAnalyst:
         self.model_name = model_name
 
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
-        computed = self._compute_all(ctx)
+        """Compute this filing's metrics, then score them (the run's own path)."""
+        return self.score(ctx, self._compute_all(ctx))
+
+    def score(self, ctx: FilingView, computed: list[tuple[str, MetricResult]]) -> AnalysisResult:
+        """The scoring step for **already-computed** metrics -- the model's part, once.
+
+        Split out of :meth:`analyze` so ``fundamental_agent score`` scores the metric rows a run
+        already stored without recomputing a ratio, and the run and the ``score`` command write the
+        same row from the same code. Nothing here reads the statements: every value comes from
+        *computed*, and *ctx* only names the filing in the prompts and decides the Tiingo
+        withholding (T-153 part 3d, A3).
+        """
         statuses = pillars.pillar_statuses(computed)
-        flat = {f"{g}.{r.name}": r.value for g, r in computed}
+        flat = _flat_metrics(computed)
         if pillars.empty_pillars(statuses):
             # D1's coverage rule (MET-00): an applicable pillar with no value leaves the score
             # empty, so there is nothing to rate and the model is not asked (nothing it returned
             # would be scored). The block records the statuses and every empty reason.
-            verdict = facts_only_synthesis(computed)
-            return AnalysisResult(
-                assessment=verdict.assessment,
-                metrics=computed,
-                flat_metrics=flat,
-                used_fallback=verdict.used_fallback,
-                prompt_hash=self.prompt_hash,
-                pillars=verdict.pillars,
-            )
+            return self._result(computed, flat, facts_only_synthesis(computed))
         by_group = _group(computed)
-        # T-153 part 3d (A3): the private import's valuation values are withheld from the model
-        # too. The map is built separately and merged after the DQ map, and a key the HARD DQ
-        # rules already withhold keeps their own reason -- so which metrics they withhold, and
-        # why, is unchanged.
-        withheld = withheld_metrics(computed)
-        withheld.update(
-            {
-                key: reason
-                for key, reason in tiingo_withheld_metrics(ctx, computed).items()
-                if key not in withheld
-            }
-        )
+        withheld = withheld_map(ctx, computed)
         orchestrator = Agent(
             model=self._model,
             system_prompt=MASTER_PROMPT,
@@ -579,14 +599,37 @@ class FundamentalAnalyst:
             ],
         )
         orchestrator(_brief(ctx, by_group, withheld))
-        synthesis = _synthesize(orchestrator, flat, statuses, withheld)
+        return self._result(computed, flat, _synthesize(orchestrator, flat, statuses, withheld))
+
+    def score_rule_based(
+        self, ctx: FilingView, computed: list[tuple[str, MetricResult]]
+    ) -> AnalysisResult:
+        """The deterministic verdict on already-computed metrics, with **no model call**.
+
+        It is exactly what :meth:`score` returns when the model cannot answer (``_synthesize``'s
+        fallback, HARD-withheld metrics included), so a ``fundamental_agent score --rule-based`` row
+        is the row a run writes when every filing falls back: ``rule-based-fallback-v1``.
+        """
+        statuses = pillars.pillar_statuses(computed)
+        flat = _flat_metrics(computed)
+        if pillars.empty_pillars(statuses):
+            return self._result(computed, flat, facts_only_synthesis(computed))
+        verdict = _fallback_synthesis(flat, statuses, withheld_map(ctx, computed))
+        return self._result(computed, flat, verdict)
+
+    def _result(
+        self,
+        computed: list[tuple[str, MetricResult]],
+        flat: dict[str, float | None],
+        verdict: _Synthesis,
+    ) -> AnalysisResult:
         return AnalysisResult(
-            assessment=synthesis.assessment,
+            assessment=verdict.assessment,
             metrics=computed,
             flat_metrics=flat,
-            used_fallback=synthesis.used_fallback,
+            used_fallback=verdict.used_fallback,
             prompt_hash=self.prompt_hash,
-            pillars=synthesis.pillars,
+            pillars=verdict.pillars,
         )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
@@ -597,7 +640,7 @@ class FundamentalAnalyst:
         self,
         group: str,
         results: list[MetricResult],
-        ctx: FilingContext,
+        ctx: FilingView,
         withheld: Mapping[tuple[str, str], str],
     ) -> Any:
         computed = [result for result in results if result.value is not None]
@@ -639,8 +682,79 @@ def _group(pairs: list[tuple[str, MetricResult]]) -> dict[str, list[MetricResult
     return out
 
 
+def _flat_metrics(pairs: Sequence[tuple[str, MetricResult]]) -> dict[str, float | None]:
+    """``"group.metric" -> value`` -- the flat block a score row stores beside its pillars."""
+    return {f"{group}.{result.name}": result.value for group, result in pairs}
+
+
+def withheld_map(
+    ctx: FilingView, computed: list[tuple[str, MetricResult]]
+) -> dict[tuple[str, str], str]:
+    """Every reason a metric is withheld from the model: the HARD DQ rules, then the Tiingo close.
+
+    T-153 part 3d (A3): the private import's valuation values are withheld from the model too. The
+    Tiingo map is built separately and merged after the DQ map, and a key the HARD DQ rules already
+    withhold keeps their own reason -- so which metrics they withhold, and why, is unchanged.
+    """
+    withheld = withheld_metrics(computed)
+    withheld.update(
+        {
+            key: reason
+            for key, reason in tiingo_withheld_metrics(ctx, computed).items()
+            if key not in withheld
+        }
+    )
+    return withheld
+
+
+def estimated_prompt_chars(
+    ctx: FilingView,
+    computed: list[tuple[str, MetricResult]],
+    withheld: Mapping[tuple[str, str], str] | None = None,
+) -> int:
+    """The characters the LLM path would send for one filing, from its metric results.
+
+    The brief, the synthesis prompt, and every specialist request: a specialist is consulted only
+    when its group has a value (an all-empty group answers from the code, with no model call), and
+    its request is its system prompt (the skill and the generated blocks) plus the filing's lines.
+    This is the *input* size of the requests, not of the accumulating conversation, and it prices an
+    estimate -- no tokenizer is run here (``len // 4`` is the usual rough conversion).
+    """
+    by_group = _group(computed)
+    statuses = pillars.pillar_statuses(computed)
+    total = len(_brief(ctx, by_group, withheld)) + len(
+        synthesis_prompt(pillars.scored_pillars(statuses))
+    )
+    for group, results in by_group.items():
+        if not any(result.value is not None for result in results):
+            continue
+        paragraph = basis_paragraph(group, results) if ctx.form == "10-Q" else ""
+        prompt = "\n\n".join(
+            part
+            for part in (
+                f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}",
+                paragraph,
+                f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)),
+            )
+            if part
+        )
+        total += len(_specialist_system_prompt(group)) + len(prompt)
+    return total
+
+
+def estimated_model_calls(computed: list[tuple[str, MetricResult]]) -> int:
+    """The model calls the LLM path would make for one filing, from its metric results.
+
+    One per specialist group with a value, plus the orchestrator's opening call and the synthesis
+    call. A repair round and a second tool round are not counted; the master prompt asks for every
+    group with signal, so this is the planned count, not a guarantee.
+    """
+    groups = {group for group, result in computed if result.value is not None}
+    return 2 + len(groups)
+
+
 def _brief(
-    ctx: FilingContext,
+    ctx: FilingView,
     by_group: dict[str, list[MetricResult]],
     withheld: Mapping[tuple[str, str], str] | None = None,
 ) -> str:
