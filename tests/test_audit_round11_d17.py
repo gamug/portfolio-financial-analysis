@@ -352,3 +352,81 @@ def test_a_net_of_reserves_sum_with_an_unnamed_neighbour_line_is_refused() -> No
     ]
     res = _balance(rows).resolve("inventory", COL)
     assert res.value is None and "inventory_components_block_open" in res.flags
+
+
+# -- the independent review (B1, B3, minors 1-4) -------------------------------------------------------------------
+
+PRETAX_ROW = SINGLE_STEP[5]
+
+
+def test_splits_that_agree_on_the_interest_are_one_split() -> None:
+    """Review B1 (GPC's shape): a zero line of unknown direction inside the total gives two fitting sign choices
+    that agree -- the total is split, its interest taken back out: 220 + 100 - (-80 + 100) = 300."""
+    income = [
+        _row("Revenues", "Operating revenues", 1_000.0),
+        _row("OperatingExpenses", "Total operating expenses", 700.0),
+        _row("InterestExpense", "Interest expense", 100.0),
+        _row("abc_SeveranceCosts", "Severance", 0.0),
+        _row("OtherNonoperatingIncomeExpense", "Other - net", 20.0),
+        _row("NonoperatingIncomeExpense", "Total other income (deductions) - net", -80.0),
+        PRETAX_ROW | {FY: 220.0},
+    ]
+    assert _stmts(income).resolve("operating_income", FY).value == 300.0
+
+
+def test_no_revenue_line_leaves_it_empty() -> None:
+    """Review B3: without the revenue line the non-operating window is not placed."""
+    income = [r for r in SINGLE_STEP if r["concept"] != G + "Revenues"]
+    res = _stmts(income).resolve("operating_income", FY)
+    assert res.value is None
+
+
+def test_the_pretax_line_is_the_row_the_pretax_value_was_read_from() -> None:
+    """Review minor 1: a zero line above the pre-tax line, with a pre-tax income of zero, is not the pre-tax line."""
+    income = [
+        *SINGLE_STEP[:3],
+        _row("InterestExpense", "Interest expense", 30.0),
+        _row("abc_Other", "Other", 0.0),
+        _row("OtherNonoperatingIncomeExpense", "Other income, net", 10.0),
+        PRETAX_ROW | {FY: 0.0},
+    ]
+    income[0] = income[0] | {FY: 800.0}
+    assert _stmts(income).resolve("operating_income", FY).value == 20.0
+
+
+def test_a_ttm_term_with_no_recorded_anchor_row_is_not_called_mixed(memory_db: Database) -> None:
+    """Review minor 2: a prior quarter that recorded no anchor row supplies no term -- not a method mix."""
+    memory_db.execute("INSERT INTO assets (id, ticker) VALUES (1, 'X')")
+    _record(
+        memory_db,
+        "10-K",
+        "FY2024",
+        "2024-12-31",
+        {"operating_income": 400.0, EBIT_DERIVED_INPUT: 1.0},
+    )
+    fid = db.upsert_filing(
+        memory_db,
+        FilingKey(1, "10-Q", 2025, "2025Q1"),
+        FilingMeta(filing_date=filed_after("2025-03-31"), period_end="2025-03-31"),
+    )
+    assert fid
+    flows = db.ttm_detail(
+        memory_db,
+        1,
+        period_end="2025-09-30",
+        current={},
+        ytd={"operating_income": YTDPair(300.0, 280.0, "2024-09-30")},
+        derived=frozenset({"operating_income"}),
+    )
+    assert flows["operating_income"].method == "ytd"
+
+
+def test_a_noncurrent_net_of_reserves_element_is_not_a_component() -> None:
+    """Review minor 4: only the "Reserve" of a net-of-reserves name is excused."""
+    rows = [
+        _row("ReceivablesNetCurrent", "Receivables", 100.0, column=COL),
+        _row("EnergyRelatedInventory", "Crude oil and products", 50.0, column=COL),
+        _row("InventoryNoncurrentNetOfReserves", "Long-term materials", 30.0, column=COL),
+        _row("OtherAssetsCurrent", "Other current assets", 10.0, column=COL),
+    ]
+    assert _balance(rows).resolve("inventory", COL).value != 80.0

@@ -2200,6 +2200,9 @@ class Statements:
         or abstract row without a number is not a line; a zero is. Audit round #11: a row the gateway dropped
         (T-042, kept in ``corrections`` with its original value) was on the face too -- VST's 2026 ``InventoryNet``.
         """
+        if not self.filed_facts:
+            # review minor 6: without the filing's own facts the "no inventory fact" test proves nothing (L-21's rule)
+            return False
         for corr in self.corrections:
             if _numeric(corr.get("original")) is not None and _is_inventory_concept(
                 str(corr.get("concept") or "")
@@ -3300,9 +3303,10 @@ class Statements:
             )
             # audit round #11 (Part 2, XOM): an element "...NetOfReserves" is a net component, not a reserve line
             net_of_reserves = bool(_INVENTORY_NET_OF_RESERVES_RE.search(local))
-            if not component or (
-                _NOT_AN_INVENTORY_COMPONENT_RE.search(local) and not net_of_reserves
-            ):
+            # review minor 4: only the "Reserve" of a "...NetOfReserves" name is excused -- Noncurrent, LIFO, ... still
+            # exclude the line
+            tested = _INVENTORY_NET_OF_RESERVES_RE.sub("", local) if net_of_reserves else local
+            if not component or _NOT_AN_INVENTORY_COMPONENT_RE.search(tested):
                 continue
             if re.search(_FACE_LINE_CAPTION_NOT["inventory"], self._face_caption(row)):
                 continue
@@ -3406,7 +3410,7 @@ class Statements:
                 return True
         return False
 
-    def _derived_operating_income(  # noqa: C901, PLR0912 - one guard per D-17 condition
+    def _derived_operating_income(  # noqa: C901, PLR0911, PLR0912, PLR0915 - one guard per D-17 condition
         self, column: str
     ) -> float | None:
         """D-17 (audit round #11): operating income when the income statement prints no operating-income line.
@@ -3438,7 +3442,8 @@ class Statements:
                 for key, cell in row.items()
             ):
                 return None
-        pretax = self.resolve("pretax_income", column).value
+        pretax_read = self.resolve("pretax_income", column)
+        pretax = pretax_read.value
         interest = self.resolve("interest_expense", column)
         if pretax is None or interest.value is None or interest.how == "net_interest":
             return None
@@ -3446,22 +3451,30 @@ class Statements:
         tol = max(1.0, 0.0005 * abs(revenue if revenue is not None else pretax))
         values = [_filed_or_displayed(row, column) for row in rows]
         concepts = [str(row.get("concept") or "") for row in rows]
-        # the pre-tax line: a pre-tax element with the value, else the first line with the value (COST tags it
-        # IncomeLossAttributableToParent), else the first pre-tax element
+        # the pre-tax line: the row the pre-tax value was read from, else a pre-tax element with the value, else the
+        # first line with the value (COST tags it IncomeLossAttributableToParent), else the first pre-tax element
         matches = [k for k, v in enumerate(values) if v is not None and abs(v - pretax) <= tol]
         pre = next(
-            (k for k in matches if concepts[k] in _EBIT_PRETAX),
-            next(
-                iter(matches),
+            (k for k in matches if concepts[k] == pretax_read.concept),
+            next((k for k in matches if concepts[k] in _EBIT_PRETAX), None),
+        )
+        pre = (
+            pre
+            if pre is not None
+            else next(
+                (k for k in matches if concepts[k] in _EBIT_PRETAX),
                 next(
-                    (
-                        k
-                        for k, c in enumerate(concepts)
-                        if c in _EBIT_PRETAX and values[k] is not None
+                    iter(matches),
+                    next(
+                        (
+                            k
+                            for k, c in enumerate(concepts)
+                            if c in _EBIT_PRETAX and values[k] is not None
+                        ),
+                        None,
                     ),
-                    None,
                 ),
-            ),
+            )
         )
         if pre is None:
             return None
@@ -3471,6 +3484,10 @@ class Statements:
                 (k for k in range(pre) if (v := values[k]) is not None and abs(v - revenue) <= tol),
                 default=-1,
             )
+        if lo < 0:
+            # review B3: no revenue line places the non-operating window -- the whole statement is not read as one
+            self._flag("ebit_no_revenue_line")
+            return None
         nonoperating, skip = 0.0, set()
         if _EBIT_TOTAL in concepts[lo + 1 : pre]:
             ti = concepts.index(_EBIT_TOTAL, lo + 1)
@@ -3485,7 +3502,9 @@ class Statements:
                     for j in run:
                         if concepts[j] in _EBIT_INTEREST:
                             nonoperating -= directions[j] * (values[j] or 0.0)
-        present = {concepts[k] for k in range(lo + 1, pre) if k not in skip}
+        present = {
+            concepts[k] for k in range(lo + 1, pre) if k not in skip and values[k] is not None
+        }
         for k in range(lo + 1, pre):
             value = values[k]
             if k in skip or value is None:
@@ -3519,7 +3538,8 @@ class Statements:
         concepts: list[str], values: list[float | None], ti: int, lo: int, tol: float
     ) -> tuple[list[int], dict[int, int]] | None:
         """D-17: the lines directly above the filer's ``NonoperatingIncomeExpense`` total (row *ti*) that add up to
-        it, and each one's direction into pre-tax income -- ``None`` when no unique set does. A line of a known
+        it, and each one's direction into pre-tax income -- ``None`` when no set does (several sign choices that
+        fit are one split: each takes the same interest back). A line of a known
         direction (:data:`_EBIT_NONOPERATING`, :data:`_EBIT_INTEREST`, :data:`_EBIT_OTHER_DIRECTION`, the
         equity-method line) counts as it is; any other line is tried both ways (at most three such lines: NEE's
         extension and pension lines). The revenue line, an operating total or a pre-tax line ends the walk."""
@@ -3553,7 +3573,10 @@ class Statements:
             if len(hits) == 1:
                 return list(run), hits[0]
             if hits:
-                return None
+                # review B1: several sign choices fit (a zero line, a line within the tolerance) -- the run, the total and
+                # the interest it holds are the same in each (every interest line has a known direction), so the
+                # derived value is too: one split
+                return list(run), hits[0]
         return None
 
     def _net_interest_row(  # noqa: C901 - the sign from the fact, else the row

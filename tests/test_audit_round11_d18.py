@@ -278,3 +278,10 @@ def test_inventory_turnover_stays_empty_in_the_zero_inventory_case() -> None:
     assert results["inventory_turnover"].value is None
     assert "inventory" not in results["inventory_turnover"].inputs
     assert _ratios(stmts)["quick_ratio"].value == pytest.approx(500.0 / 250.0)
+
+
+def test_without_the_filings_filed_facts_inventory_is_not_read_as_zero() -> None:
+    """Review minor 6: with no filed facts the "no inventory fact" test proves nothing (L-21's rule for debt)."""
+    stmts = _operating_stmts(facts=[])
+    assert stmts.no_inventory_lines() is False
+    assert _ratios(stmts)["quick_ratio"].value is None

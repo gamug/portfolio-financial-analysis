@@ -947,9 +947,12 @@ def _ebit_derived_at(conn: Database, filing_id: int, engine_version: str) -> boo
     return bool(json.loads(row["inputs_json"] or "{}").get(EBIT_DERIVED_INPUT) == 1.0)
 
 
-def _quarter_filings(conn: Database, asset_id: int, period_end: str) -> list[int]:
-    """D-17: the filings the three quarters before *period_end* are read from -- a quarter's 10-Q, else the 10-K of
-    its fiscal year and that year's 10-Qs (a fiscal Q4 is the FY less the nine months, PER-05)."""
+def _quarter_filings(
+    conn: Database, asset_id: int, period_end: str, engine_version: str
+) -> list[int]:
+    """D-17: the filings the three quarters before *period_end* are read from, as :func:`_quarter_flow_ending` reads
+    them -- a quarter's 10-Q, else the 10-K of its fiscal year and the third quarter's 10-Q (FY less the nine months,
+    PER-05), or the year's three 10-Qs when that 10-Q recorded no nine months."""
     out: list[int] = []
     for k in (1, 2, 3):
         end = _months_before(period_end, _QUARTER_MONTHS * k)
@@ -961,11 +964,26 @@ def _quarter_filings(conn: Database, asset_id: int, period_end: str) -> list[int
         if fiscal_year is None:
             continue
         out.append(fiscal_year[0])
-        for months in (_QUARTER_MONTHS, _QUARTER_MONTHS * 2, _QUARTER_MONTHS * 3):
+        nine = _nine_month_ytd(conn, asset_id, fiscal_year[1], "operating_income", engine_version)
+        months_read = (
+            (_QUARTER_MONTHS,)
+            if nine is not None
+            else (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS)
+        )
+        for months in months_read:
             q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
             if q is not None:
                 out.append(q[0])
     return out
+
+
+def _ebit_method_differs(
+    conn: Database, filing_id: int, engine_version: str, derived_now: bool
+) -> bool:
+    """D-17: whether *filing_id* recorded its operating income by the other method -- never for a filing that
+    recorded no anchor row (it supplied no term)."""
+    recorded = _ebit_derived_at(conn, filing_id, engine_version)
+    return recorded is not None and recorded != derived_now
 
 
 def _quarter_flow_ending(
@@ -1280,7 +1298,7 @@ def ttm_detail(  # noqa: C901, PLR0912, PLR0913 - the filing's identity, its flo
                 fy is not None
                 and fy_filing is not None
                 and item == "operating_income"
-                and _ebit_derived_at(conn, fy_filing, engine_version) != (item in derived)
+                and _ebit_method_differs(conn, fy_filing, engine_version, item in derived)
             ):
                 out[item] = TTMFlow(
                     0.0, "refused", ytd=pair.current, flags=("ttm_ebit_method_mixed",)
@@ -1338,8 +1356,8 @@ def ttm_detail(  # noqa: C901, PLR0912, PLR0913 - the filing's identity, its flo
             summed is not None
             and item == "operating_income"
             and any(
-                _ebit_derived_at(conn, filing, engine_version) != (item in derived)
-                for filing in _quarter_filings(conn, asset_id, period_end)
+                _ebit_method_differs(conn, filing, engine_version, item in derived)
+                for filing in _quarter_filings(conn, asset_id, period_end, engine_version)
             )
         ):
             out[item] = TTMFlow(
