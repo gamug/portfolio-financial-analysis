@@ -11013,7 +11013,24 @@ as x4 is `prior_year_missing`). Of the 88 `has_missed` values: XOM's inventory (
 one closed block; FCX's block holds an unnamed extension line ("Product") and stays empty; PNC's net income and the
 remaining cases are declared in LIMITATIONS.
 
+### After the independent review (audit/r11/REVIEW11_independent.md) and the reading of D-18's zeros
+
+Several sign choices that fit the filer's total are one split (each takes the same interest back: GPC FY2021, REG
+2021-Q3); no revenue line leaves the value empty; the pre-tax line is the row the pre-tax value was read from. D-18: the
+two ASU 2016-16 `...OtherThanInventory` tax elements are not inventory (ADBE's 10-Ks); no zero without the filing's own
+filed facts, nor when the previous 10-K recorded an inventory (ORCL, UNH: inventory in the 10-K notes, not in the
+10-Qs; `flag_quick_ratio_prior_annual_inventory`). Final accuracy (4,991 controls): **0.00 / 0.00 / 0.73 / 1.82 %**
+against 0.79 / 2.11 / 4.53 / 7.28 % without elimination, within 1 / 2 / 5 % of revenue 91.6 / 95.3 / 98.2 %.
+
+### Verification on the real data (FIXES #11)
+
+Plan (master `r10_*` vs fixed `b11_*`, one frozen commit c35b549): 17,389 value changes on the stored rows — D-17
+10,864, D-D 4,922, D-18 1,276, XOM inventory 74, `no_facts` refresh 13, and 240 TTMs F-A11 now refuses for a
+perimeter change — **0 unexplained**; 4,419 new filings inserted (154,624 metric rows). On the applied copy: only planned
+rows changed, stale flags 0, inputs-only differences all within L-25, V3 511,808 agree / 47 (FOX/NWS, the declared
+class). D-17 fills 13,904 values (10,864 + 3,040 on the new filings); empty values on the stored rows 74,012 → 57,103.
+
 ### Tests
 
-`tests/test_audit_round11_d17.py` (18), `tests/test_audit_round11_d18.py` (15 functions, 20 cases), `tests/test_audit_round11_reasons.py`
-(5); the full suite passes (3,267).
+`tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_reasons.py`; the full
+suite passes (3,276).
