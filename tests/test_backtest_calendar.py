@@ -5,14 +5,9 @@ from __future__ import annotations
 from datetime import date
 from itertools import pairwise
 
-import _guard_double
 import pytest
 
-from kg_schema import trading_calendar
-
-_guard_double.install_if_missing()
-
-from cycle.backtest.driver import (  # noqa: E402
+from cycle.backtest.driver import (
     WINDOWS,
     Rebalance,
     next_session,
@@ -22,6 +17,7 @@ from cycle.backtest.driver import (  # noqa: E402
     warmup_dates,
     window_spec,
 )
+from kg_schema import trading_calendar
 
 # The D1 execution dates of the three windows, computed by hand from the NYSE calendar and
 # fixed here so a calendar/rule change fails the build rather than silently moving a run.

@@ -1,20 +1,14 @@
 """The pure daily engine (BACKTEST_SPEC §3/§4): hand-computed multi-session cases.
 
-The GUARD semantics live in WP-D's package; until it is merged these tests install the
-spec-faithful double in ``tests/_guard_double.py`` (never under ``src/``)."""
+The GUARD semantics come from ``cycle.guard`` (WP-D)."""
 
 from __future__ import annotations
 
 import copy
 
-import _guard_double
 import pytest
 
-_guard_double.install_if_missing()
-
-from cycle.guard import GuardParams, NewsCounts, NewsParams  # noqa: E402
-
-from cycle.backtest.engine import (  # noqa: E402
+from cycle.backtest.engine import (
     ARM_MARKOWITZ_BASE,
     ARM_TOPN_GUARD,
     ARM_TOPN_NOGUARD,
@@ -23,6 +17,7 @@ from cycle.backtest.engine import (  # noqa: E402
     EngineInput,
     simulate,
 )
+from cycle.guard import GuardParams, NewsCounts, NewsParams
 
 D0 = "2022-01-05"
 FORMATION = "2022-01-06"
@@ -384,7 +379,7 @@ def test_news_layer_trims_and_exits_with_a_cooldown() -> None:
         FORMATION: {},
         T1: {1: NewsCounts(2, 2)},  # q = 1 > 0.5: trim
         T2: {1: NewsCounts(2, 0)},  # q = 0 <= 0.4: exit, cooldown starts
-        T3: {1: NewsCounts(2, 0)},  # still in cooldown: trimmed, no new alert
+        T3: {1: NewsCounts(2, 0)},  # still in cooldown: trimmed, a state alert only
     }
     inp = _input(
         sessions=sessions,
@@ -399,9 +394,10 @@ def test_news_layer_trims_and_exits_with_a_cooldown() -> None:
     assert by_date[T1].final_target == {}
     assert by_date[T2].final_target == {}
     assert by_date[T3].final_target == {}
-    assert [(e.date, e.alert.rule_id, e.status) for e in arm.guard_events] == [
-        (T1, "L2_NEWS", "APPLIED"),
-        (T2, "L2_NEWS_EXIT", "APPLIED"),
+    assert [(e.date, e.alert.rule_id, e.alert.state, e.status) for e in arm.guard_events] == [
+        (T1, "L2_NEWS", "ENTER", "APPLIED"),
+        (T2, "L2_NEWS_EXIT", "EXIT", "APPLIED"),
+        (T3, "L2_NEWS", "COOLDOWN", "APPLIED"),
     ]
 
 

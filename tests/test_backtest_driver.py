@@ -7,41 +7,25 @@ pipeline calls with the exact §8 arguments, the engine run and the m018 persist
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import math
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-import _guard_double
 import pytest
 
-_guard_double.install_if_missing()
-
-import _stats_double  # noqa: E402
-
-import cycle.backtest  # noqa: E402
-from cycle.backtest import driver  # noqa: E402
-from cycle.backtest.driver import (  # noqa: E402
+from cycle.backtest import driver
+from cycle.backtest.driver import (
     BacktestError,
     load_params,
     refuse_production_db,
     run_backtest,
     sessions_between,
 )
-from fundamental_agent import db as fundamental_db  # noqa: E402
-from kg_schema import connect, queries  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _install_stats_double(monkeypatch: pytest.MonkeyPatch) -> None:
-    if importlib.util.find_spec("cycle.backtest.stats") is None:
-        monkeypatch.setitem(sys.modules, "cycle.backtest.stats", _stats_double)
-        monkeypatch.setattr(cycle.backtest, "stats", _stats_double, raising=False)
-
+from fundamental_agent import db as fundamental_db
+from kg_schema import connect, queries
 
 UNIVERSE_DDL = """
 CREATE TABLE universe_membership (
