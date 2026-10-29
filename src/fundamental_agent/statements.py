@@ -1401,6 +1401,7 @@ _INVENTORY_COMPONENT_PREFIXES: tuple[str, ...] = (
 _NOT_AN_INVENTORY_COMPONENT_RE = re.compile(
     r"Equalization|Noncurrent|Deferred|Reserve|LIFO|Valuation|Gross", re.IGNORECASE
 )
+_INVENTORY_NET_OF_RESERVES_RE = re.compile(r"NetOfReserves?$")
 # D-18 (audit round #11, reviewer B): the concepts that prove a filing has an inventory line -- what
 # the registry item reads (its ``concepts``, its ``nonnegative`` elements and its substitute
 # ``totals``/``families``), the inventory face-line allowlist, the two inventory reserve lines of
@@ -3275,6 +3276,7 @@ class Statements:
         if candidates is None:
             return None
         lines = dict(candidates)
+        net_components: set[str] = set()
         for row in self._rows_for(spec):
             concept = str(row.get("concept") or "")
             local = concept.split("_", 1)[-1]
@@ -3283,7 +3285,11 @@ class Statements:
             component = local.startswith(_INVENTORY_COMPONENT_PREFIXES) or (
                 not concept.startswith(G) and "Inventory" in local
             )
-            if not component or _NOT_AN_INVENTORY_COMPONENT_RE.search(local):
+            # audit round #11 (Part 2, XOM): an element "...NetOfReserves" is a net component, not a reserve line
+            net_of_reserves = bool(_INVENTORY_NET_OF_RESERVES_RE.search(local))
+            if not component or (
+                _NOT_AN_INVENTORY_COMPONENT_RE.search(local) and not net_of_reserves
+            ):
                 continue
             if re.search(_FACE_LINE_CAPTION_NOT["inventory"], self._face_caption(row)):
                 continue
@@ -3294,6 +3300,8 @@ class Statements:
                 self._flag("face_line_negative_rejected")
                 return None
             lines[concept] = value
+            if net_of_reserves:
+                net_components.add(concept)
         if not lines:
             return None
         if len(lines) == 1:
@@ -3311,9 +3319,31 @@ class Statements:
         if any(a != b and b.startswith(a) for a in locals_ for b in locals_):
             self._flag("inventory_components_nested")
             return None
+        if net_components and not self._inventory_block_closed(spec, column, lines):
+            # a sum that needs a net-of-reserves component is read only when the face's inventory lines are one block
+            # with a non-inventory us-gaap line on each side: FCX's "Product" (fcx_Product) would be left out
+            self._flag("inventory_components_block_open")
+            return None
         self._flags = [f for f in self._flags if f != "inventory_component_not_total"]
         self._flag("inventory_components_summed")
         return total, " + ".join(sorted(lines)), "sum"
+
+    def _inventory_block_closed(self, spec: LineItem, column: str, lines: dict[str, float]) -> bool:
+        """Audit round #11: the summed inventory lines are contiguous on the face, and the lines just before and just
+        after them (with a value in *column*) are us-gaap elements that are not inventory -- nothing else on the
+        face can be a part of the inventory."""
+        rows = [row for row in self._rows_for(spec) if _numeric(row.get(column)) is not None]
+        concepts = [str(row.get("concept") or "") for row in rows]
+        named = {c.split(" - ")[0] for c in lines}
+        index = [k for k, c in enumerate(concepts) if c in named]
+        if len(index) != len(named) or index[-1] - index[0] + 1 != len(index):
+            return False
+        for k in (index[0] - 1, index[-1] + 1):
+            if not 0 <= k < len(concepts):
+                return False
+            if not concepts[k].startswith(G) or "inventor" in concepts[k].lower():
+                return False
+        return True
 
     def _face_presents_item(self, spec: LineItem, column: str) -> bool:
         """Q7's guard: a face row of *spec*'s statements, with a value in *column*, whose whole caption is the item."""

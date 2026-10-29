@@ -282,3 +282,60 @@ def test_a_ttm_of_derived_terms_is_built(memory_db: Database) -> None:
         derived=frozenset({"operating_income"}),
     )
     assert flows["operating_income"].method == "ytd" and flows["operating_income"].value == 420.0
+
+
+# -- Part 2 (the 88 has_missed read one by one): XOM's inventory, FCX's open block --------------------------------
+
+
+def _balance(rows: list[dict[str, Any]]) -> Statements:
+    return Statements.from_payload(
+        {
+            "income_statement": [],
+            "balance_sheet": rows,
+            "cash_flow": [],
+            "corrections": [],
+            "filed_facts": [],
+        }
+    )
+
+
+def test_two_inventory_components_one_net_of_reserves_are_summed_in_a_closed_block() -> None:
+    """XOM 2023-Q1: "Crude oil, products and merchandise" + "Materials and supplies" (``...NetOfReserves``), no total,
+    between receivables and other current assets: 19,458 + 4,184."""
+    rows = [
+        _row("ReceivablesNetCurrent", "Notes and accounts receivable - net", 38_808.0, column=COL),
+        _row("EnergyRelatedInventory", "Crude oil, products and merchandise", 19_458.0, column=COL),
+        _row(
+            "InventoryPartsAndComponentsNetOfReserves",
+            "Materials and supplies",
+            4_184.0,
+            column=COL,
+        ),
+        _row("OtherAssetsCurrent", "Other current assets", 2_098.0, column=COL),
+    ]
+    res = _balance(rows).resolve("inventory", COL)
+    assert res.value == 23_642.0 and "inventory_components_summed" in res.flags
+
+
+def test_a_net_of_reserves_sum_with_an_unnamed_neighbour_line_is_refused() -> None:
+    """FCX 2022: "Product" sits in the inventory block under an extension element that does not name inventory --
+    the two named lines (3,347) would leave it out, so nothing is read."""
+    rows = [
+        _row("AccountsReceivableNetCurrent", "Trade accounts receivable", 1_336.0, column=COL),
+        _row(
+            "InventoryRawMaterialsAndSuppliesNetOfReserves",
+            "Total materials and supplies, net",
+            1_964.0,
+            column=COL,
+        ),
+        _row(
+            "fcx_InventoryMillandStockpilesonLeachPadsCurrent",
+            "Mill and leach stockpiles",
+            1_383.0,
+            column=COL,
+        ),
+        _row("fcx_Product", "Product", 1_833.0, column=COL),
+        _row("OtherAssetsCurrent", "Other current assets", 492.0, column=COL),
+    ]
+    res = _balance(rows).resolve("inventory", COL)
+    assert res.value is None and "inventory_components_block_open" in res.flags
