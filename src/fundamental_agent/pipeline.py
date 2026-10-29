@@ -1204,11 +1204,43 @@ def _analyze_one(
         # score_snapshot row, not even the fallback (the gate/rule-input writes above stand).
         return
 
+    store_score(
+        engine.conn,
+        asset_id=task.asset_id,
+        form=task.form,
+        fiscal_period=target.fiscal_period,
+        event_time=target.period.date,
+        filing_id=filing_id,
+        result=result,
+        scoring_model=scoring_model,
+        run_id=run_id,
+    )
+
+
+def store_score(  # noqa: PLR0913 - the row's identity, its result and the run that logs it
+    conn: Database,
+    *,
+    asset_id: int,
+    form: str,
+    fiscal_period: str,
+    event_time: str,
+    filing_id: int,
+    result: AnalysisResult,
+    scoring_model: str,
+    run_id: int | None = None,
+) -> str:
+    """Write one filing's FUNDAMENTAL ``score_snapshot`` row from its analysis result.
+
+    The one place the row is written: ``run`` calls it right after the metrics and the
+    ``fundamental_agent score`` command calls it on the metrics a run already stored (WP-F), so the
+    two cannot label or shape a row differently. Returns the ``model`` label it wrote.
+
+    T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
+    production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
+    this way. T-073 (D1): a row whose applicable pillar has no value is not scored at all, and is
+    labelled as such too -- the model was never asked about it.
+    """
     assessment = result.assessment
-    # T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
-    # production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
-    # this way. T-073 (D1): a row whose applicable pillar has no value is not scored at all, and is
-    # labelled as such too -- the model was never asked about it.
     if assessment.score is None:
         model = UNSCORED_MODEL_LABEL
     elif result.used_fallback:
@@ -1216,12 +1248,12 @@ def _analyze_one(
     else:
         model = scoring_model
     db.insert_snapshot(
-        engine.conn,
+        conn,
         SnapshotRow(
-            asset_id=task.asset_id,
+            asset_id=asset_id,
             filing_id=filing_id,
-            form=task.form,
-            fiscal_period=target.fiscal_period,
+            form=form,
+            fiscal_period=fiscal_period,
             score=assessment.score,
             rating=assessment.rating,
             narrative=assessment.narrative,
@@ -1229,14 +1261,15 @@ def _analyze_one(
             risks=assessment.risks,
             model=model,
             metrics=result.flat_metrics,
-            event_time=target.period.date,
+            event_time=event_time,
             prompt_hash=result.prompt_hash,
             pillars=result.pillars,
         ),
         run_id=run_id,
     )
-    if result.used_fallback:
-        db.bump_run_counter(engine.conn, run_id, "fallback_units")
+    if result.used_fallback and run_id is not None:
+        db.bump_run_counter(conn, run_id, "fallback_units")
+    return model
 
 
 def _params_dict(params: RunParams) -> _Payload:
