@@ -147,6 +147,49 @@ def refuse_production_db(path: Path) -> None:
     )
 
 
+def _refuse_reused_database(
+    conn: Database, warmup: Sequence[str], decisions: Sequence[Rebalance]
+) -> None:
+    """One backtest run = one fresh copy of the input DB (BACKTEST_SPEC §0).
+
+    cycle keeps one REPLAY run per date and resumes it, and ``quant optimize`` overwrites the
+    Top-30 book of the same as-of in place, so a second variant on the same copy would silently
+    reuse the first one's ranking/book."""
+    dates = sorted(set(warmup) | {rebalance.decision_date for rebalance in decisions})
+    if not dates:
+        return
+    replay = [
+        day
+        for day in dates
+        if conn.execute(
+            "SELECT 1 FROM cycle_run WHERE cycle_type = 'REPLAY' AND cycle_date = ?",
+            (day,),
+        ).fetchone()
+        is not None
+    ]
+    if replay:
+        raise BacktestError(
+            "cycle REPLAY run(s) already exist at "
+            + ", ".join(replay)
+            + "; use a fresh copy of the input database for each backtest run"
+        )
+    books = [
+        day
+        for day in dates
+        if conn.execute(
+            "SELECT 1 FROM quant_portfolio WHERE kind = 'min_var_topn' AND as_of = ?",
+            (day,),
+        ).fetchone()
+        is not None
+    ]
+    if books:
+        raise BacktestError(
+            "a min_var_topn book already exists at "
+            + ", ".join(books)
+            + "; use a fresh copy of the input database for each backtest run"
+        )
+
+
 def _guard_params(raw: Mapping[str, Any], code: str) -> GuardParams:
     try:
         layers = frozenset(int(x) for x in raw["layers"])
@@ -1290,6 +1333,7 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
         # in params_json) rather than running on old table shapes.
         applied = kg_schema.ensure(conn, run_migrations=True)
         require_migrated(conn)
+        _refuse_reused_database(conn, warmup, schedule)
         run_id = _open_run(conn, window, params, warmup_steps, input_sha, applied)
         payload: dict[str, Any] = {}
         try:

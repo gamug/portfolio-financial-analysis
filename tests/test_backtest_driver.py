@@ -352,6 +352,65 @@ def test_an_unmigrated_scratch_copy_is_refused(tmp_path: Path) -> None:
     conn.close()
 
 
+@pytest.mark.parametrize("which", ["warmup", "decision"])
+def test_a_reused_database_with_a_replay_at_a_run_date_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, which: str
+) -> None:
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    schedule = driver.schedule_for(driver.window_spec("PX"))
+    warmup = driver.warmup_dates(schedule[0].decision_date, 2)
+    cycle_date = warmup[-1] if which == "warmup" else schedule[0].decision_date
+
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO cycle_run (cycle_type, cycle_date, started_at, status) "
+        "VALUES ('REPLAY', ?, ?, 'completed')",
+        (cycle_date, _now()),
+    )
+    conn.commit()
+    with pytest.raises(BacktestError, match="fresh copy of the input database"):
+        run_backtest(
+            window_id="PX",
+            db_path=db_path,
+            universe_db_path=universe_path,
+            params_path=params_path,
+            warmup_steps=2,
+        )
+    # The refusal happens before the run writes anything.
+    assert conn.execute("SELECT COUNT(*) FROM backtest_run").fetchone()[0] == 0
+    conn.close()
+
+
+def test_a_reused_database_with_a_topn_book_at_a_decision_date_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    schedule = driver.schedule_for(driver.window_spec("PX"))
+
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO quant_portfolio (model_id, as_of, kind, objective, solver, status, "
+        "n_positions, engine_version, computed_at) VALUES (NULL, ?, 'min_var_topn', "
+        "'min_var', 'CLARABEL', 'optimal', 2, 'opt-v2', ?)",
+        (schedule[0].decision_date, _now()),
+    )
+    conn.commit()
+    with pytest.raises(BacktestError, match="fresh copy of the input database"):
+        run_backtest(
+            window_id="PX",
+            db_path=db_path,
+            universe_db_path=universe_path,
+            params_path=params_path,
+            warmup_steps=2,
+        )
+    assert conn.execute("SELECT COUNT(*) FROM backtest_run").fetchone()[0] == 0
+    conn.close()
+
+
 def test_a_missing_database_is_refused(tmp_path: Path) -> None:
     with pytest.raises(BacktestError, match="does not exist"):
         run_backtest(
