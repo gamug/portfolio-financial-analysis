@@ -1444,6 +1444,10 @@ def _is_inventory_concept(concept: str) -> bool:
         return False
     spelled = concept.replace(":", "_", 1)
     local = spelled.split("_", 1)[-1].lower()
+    if "otherthaninventor" in local:
+        # audit round #11: the two ASU 2016-16 tax elements "...IntraEntityTransferAssetOtherThanInventory" name assets
+        # other than inventory (ADBE's 10-Ks) -- the only us-gaap 2026 names with "inventor" that deny it
+        return False
     return spelled in INVENTORY_CONCEPTS or "inventor" in local
 
 

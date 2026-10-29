@@ -285,3 +285,14 @@ def test_without_the_filings_filed_facts_inventory_is_not_read_as_zero() -> None
     stmts = _operating_stmts(facts=[])
     assert stmts.no_inventory_lines() is False
     assert _ratios(stmts)["quick_ratio"].value is None
+
+
+def test_an_other_than_inventory_tax_element_is_not_inventory() -> None:
+    """ADBE's 10-Ks file ``DeferredTaxAssetIntraEntityTransferAssetOtherThanInventory`` (ASU 2016-16): not inventory."""
+    stmts = _operating_stmts(
+        facts=[
+            *BASE_FACTS,
+            _fact("DeferredTaxAssetIntraEntityTransferAssetOtherThanInventory", 50.0),
+        ]
+    )
+    assert stmts.no_inventory_lines() is True
