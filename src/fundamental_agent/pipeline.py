@@ -51,7 +51,7 @@ from fundamental_agent.fiscal import (
 from fundamental_agent.metrics.base import TTMFlow
 from fundamental_agent.pricing import close_on_or_before
 from fundamental_agent.sections import split_sections
-from fundamental_agent.statements import Period, Statements, iter_facts
+from fundamental_agent.statements import EBIT_DERIVED_HOW, Period, Statements, iter_facts
 from kg_schema import connect, identity, rundate, ticker_history
 from kg_schema.market_cap import market_caps_as_of
 from kg_schema.provenance import DirtyTree, code_version, dirty_tree_reason
@@ -1189,6 +1189,12 @@ def _ttm_flows(
         current=current,
         ytd=ytd,
         accession=accession,
+        # D-17 (audit round #11): the TTM's one-method rule for a derived operating income
+        derived=frozenset(
+            item
+            for item in ("operating_income",)
+            if stmts.resolve(item, target.period.key).how == EBIT_DERIVED_HOW
+        ),
     )
 
 

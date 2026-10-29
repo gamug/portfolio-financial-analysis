@@ -1408,6 +1408,203 @@ NET_INTEREST_ELEMENTS: tuple[str, ...] = (
     G + "InterestIncomeExpenseNet",
     G + "InterestRevenueExpenseNet",
 )
+# D-17 (audit round #11, the user and reviewer A): operating income derived when the income statement prints no
+# operating-income line -- pre-tax income + the gross interest expense - the non-operating lines (S-X 5-03 items 7-9,
+# C7 p.8). The non-operating lines: the elements of the US-GAAP 2026 calculation tree of pre-tax income outside the
+# OperatingIncomeLoss subtree (us-gaap-stm-soi-cal-2026.xml) that the control filings (they print the line) present
+# below operating income in >= 90 % of >= 5 appearances (audit/r11/ebit_variants2.py). Value: the element's direction
+# into pre-tax income (+1 a credit element, -1 a debit one; us-gaap-2026.xsd balance).
+_EBIT_NONOPERATING: dict[str, int] = {
+    G + concept: sign
+    for concept, sign in {
+        "BusinessCombinationBargainPurchaseGainRecognizedAmount": 1,
+        "DerivativeInstrumentsNotDesignatedAsHedgingInstrumentsGainLossNet": 1,
+        "EquityMethodInvestmentRealizedGainLossOnDisposal": 1,
+        "GainLossOnDerivativeInstrumentsNetPretax": 1,
+        "GainLossOnInvestments": 1,
+        "GainLossOnRepurchaseOfDebtInstrument": 1,
+        "GainLossOnSaleOfStockInSubsidiaryOrEquityMethodInvestee": 1,
+        "GainsLossesOnExtinguishmentOfDebt": 1,
+        "GainsLossesOnExtinguishmentOfDebtBeforeWriteOffOfDeferredDebtIssuanceCost": 1,
+        "GainsLossesOnRestructuringOfDebt": 1,
+        "InterestAndOtherIncome": 1,
+        "InterestIncomeDepositsWithFinancialInstitutions": 1,
+        "InterestIncomeOther": 1,
+        "InvestmentIncomeDividend": 1,
+        "InvestmentIncomeInterest": 1,
+        "InvestmentIncomeInterestAndDividend": 1,
+        "InvestmentIncomeNet": 1,
+        "InvestmentIncomeNonoperating": 1,
+        "NetPeriodicDefinedBenefitsExpenseReversalOfExpenseExcludingServiceCostComponent": -1,
+        "NonoperatingGainsLosses": 1,
+        "NonoperatingIncomeExpense": 1,
+        "OtherNonoperatingExpense": -1,
+        "OtherNonoperatingGainsLosses": 1,
+        "OtherNonoperatingIncome": 1,
+        "OtherNonoperatingIncomeExpense": 1,
+        "PublicUtilitiesAllowanceForFundsUsedDuringConstructionAdditions": 1,
+        "PublicUtilitiesAllowanceForFundsUsedDuringConstructionCapitalizedCostOfEquity": 1,
+        "WriteOffOfDeferredDebtIssuanceCost": -1,
+    }.items()
+}
+# D-17: a non-operating line inside another one on the face is read once (its ancestors in the calculation tree).
+_INVESTMENT = ("InvestmentIncomeNonoperating", "NonoperatingIncomeExpense")
+_GAINS = ("NonoperatingGainsLosses", *_INVESTMENT)
+_EBIT_NONOPERATING_PARENTS: dict[str, tuple[str, ...]] = {
+    G + child: tuple(G + p for p in parents)
+    for child, parents in {
+        "BusinessCombinationBargainPurchaseGainRecognizedAmount": _GAINS,
+        "DerivativeInstrumentsNotDesignatedAsHedgingInstrumentsGainLossNet": (
+            "GainLossOnDerivativeInstrumentsNetPretax",
+            *_GAINS,
+        ),
+        "EquityMethodInvestmentRealizedGainLossOnDisposal": (
+            "GainLossOnSaleOfStockInSubsidiaryOrEquityMethodInvestee",
+            *_GAINS,
+        ),
+        "GainLossOnDerivativeInstrumentsNetPretax": _GAINS,
+        "GainLossOnInvestments": _GAINS,
+        "GainLossOnSaleOfStockInSubsidiaryOrEquityMethodInvestee": _GAINS,
+        "GainsLossesOnExtinguishmentOfDebtBeforeWriteOffOfDeferredDebtIssuanceCost": (
+            "GainsLossesOnExtinguishmentOfDebt",
+        ),
+        "InvestmentIncomeDividend": (
+            "InvestmentIncomeInterestAndDividend",
+            "InvestmentIncomeNet",
+            *_INVESTMENT,
+        ),
+        "InvestmentIncomeInterest": (
+            "InvestmentIncomeInterestAndDividend",
+            "InvestmentIncomeNet",
+            *_INVESTMENT,
+        ),
+        "InvestmentIncomeInterestAndDividend": ("InvestmentIncomeNet", *_INVESTMENT),
+        "InvestmentIncomeNet": _INVESTMENT,
+        "InvestmentIncomeNonoperating": ("NonoperatingIncomeExpense",),
+        "NetPeriodicDefinedBenefitsExpenseReversalOfExpenseExcludingServiceCostComponent": (
+            "NonoperatingIncomeExpense",
+        ),
+        "NonoperatingGainsLosses": _INVESTMENT,
+        "OtherNonoperatingExpense": ("NonoperatingIncomeExpense", "OtherNonoperatingIncomeExpense"),
+        "OtherNonoperatingGainsLosses": _GAINS,
+        "OtherNonoperatingIncome": ("NonoperatingIncomeExpense", "OtherNonoperatingIncomeExpense"),
+        "OtherNonoperatingIncomeExpense": ("NonoperatingIncomeExpense",),
+        "PublicUtilitiesAllowanceForFundsUsedDuringConstructionAdditions": (
+            "NonoperatingIncomeExpense",
+        ),
+        "PublicUtilitiesAllowanceForFundsUsedDuringConstructionCapitalizedCostOfEquity": (
+            "NonoperatingIncomeExpense",
+        ),
+        "WriteOffOfDeferredDebtIssuanceCost": ("GainsLossesOnExtinguishmentOfDebt",),
+    }.items()
+}
+# D-17: the interest lines (S-X 5-03 item 8; the calculation tree's InterestAndDebtExpense, the registry's interest
+# elements and face-line allowlist, the net-interest elements), with their direction into pre-tax income. They are
+# never eliminated as non-operating: the registry's gross interest expense is added back instead (reviewer A: never
+# a net element). Inside the filer's own non-operating total they are taken back out of it.
+_EBIT_INTEREST: dict[str, int] = {
+    **{
+        G + concept: sign
+        for concept, sign in {
+            "AmortizationOfDebtDiscountPremium": -1,
+            "AmortizationOfFinancingCosts": -1,
+            "DebtRelatedCommitmentFeesAndDebtIssuanceCosts": -1,
+            "FinanceLeaseInterestExpense": -1,
+            "InterestAndDebtExpense": -1,
+            "InterestCostsCapitalizedAdjustment": 1,
+            "InterestCostsIncurred": -1,
+            "InterestExpense": -1,
+            "InterestExpenseBorrowings": -1,
+            "InterestExpenseCustomerDeposits": -1,
+            "InterestExpenseDebt": -1,
+            "InterestExpenseMandatorilyRedeemableFinancialInstrumentLiabilityClassified": -1,
+            "InterestExpenseNonoperating": -1,
+            "InterestExpenseOperating": -1,
+            "InterestExpenseOther": -1,
+            "InterestExpenseRelatedParty": -1,
+            "InterestIncomeExpenseNet": 1,
+            "InterestIncomeExpenseNonoperatingNet": 1,
+            "InterestRevenueExpenseNet": 1,
+            "InvestmentIncomeInvestmentExpense": -1,
+            "PaidInKindInterest": -1,
+        }.items()
+    },
+    **{
+        concept: -1
+        for concept in (
+            "awk_InterestExpenseNonoperating",
+            "cnp_InterestAndDebtExpenseAndOtherCharges",
+            "deck_InterestAndOtherExpense",
+            "dish_InterestExpenseNetOfAmountCapitalized",
+            "exr_InterestExpenseExcludingAmortizationOfDebtDiscountPremium",
+            "nee_InterestExpenseAggregateExpenses",
+            "sats_InterestExpenseNetOfAmountCapitalized",
+        )
+    },
+}
+# D-17: the other non-operating elements of the calculation tree -- not eliminated (the controls place them above
+# operating income too often), but their direction is known when a filer's own total is split into its lines.
+_EBIT_OTHER_DIRECTION: dict[str, int] = {
+    G + concept: sign
+    for concept, sign in {
+        "BankOwnedLifeInsuranceIncome": 1,
+        "DeconsolidationGainOrLossAmount": 1,
+        "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal": 1,
+        "ForeignCurrencyTransactionGainLossBeforeTax": 1,
+        "ForeignCurrencyTransactionGainLossRealized": 1,
+        "ForeignCurrencyTransactionGainLossUnrealized": 1,
+        "GainLossOnContractTermination": 1,
+        "GainsLossesOnSalesOfOtherRealEstate": 1,
+        "GovernmentAssistanceNonoperatingIncome": 1,
+        "InducedConversionOfConvertibleDebtExpense": -1,
+        "LossFromCatastrophes": -1,
+        "ProfitLossFromRealEstateOperations": 1,
+        "RentalIncomeNonoperating": 1,
+        "RoyaltyIncomeNonoperating": 1,
+        "UnusualOrInfrequentItemGainGross": 1,
+        "UnusualOrInfrequentItemLossGross": -1,
+        "UnusualOrInfrequentItemNetGainLoss": -1,
+    }.items()
+}
+# D-17: the operating totals that end the walk up from the filer's non-operating total.
+_EBIT_WALK_ENDS = frozenset(
+    G + c
+    for c in (
+        "OperatingIncomeLoss",
+        "CostsAndExpenses",
+        "OperatingExpenses",
+        "OperatingCostsAndExpenses",
+        "CostOfRevenue",
+        "CostOfGoodsAndServicesSold",
+        "GrossProfit",
+        "Revenues",
+        "BenefitsLossesAndExpenses",
+    )
+)
+_EBIT_TOTAL = G + "NonoperatingIncomeExpense"
+# D-17: at most this many lines of unknown direction are tried both ways when the filer's total is split.
+_EBIT_MAX_UNKNOWN_LINES = 3
+# D-17: the tier name of a derived operating income, and the audit input that marks it on a metric row (the TTM's
+# one-method rule reads it back from the prior filings' rows: db.ttm_detail).
+EBIT_DERIVED_HOW = "derived_ebit"
+EBIT_DERIVED_INPUT = "flag_operating_income_ebit_derived"
+_EBIT_EQUITY_METHOD = G + "IncomeLossFromEquityMethodInvestments"
+_EBIT_PRETAX = (
+    G
+    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    G
+    + "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+)
+# D-17: APP-00's financial types (and the multi-sector holding) get no derived operating income.
+_EBIT_EXCLUDED_TYPES = frozenset(
+    {"article_9", "article_7", "other_financial", "multi_sector_holding"}
+)
+# D-17: a company-extension line between revenue and pre-tax income whose caption reads non-operating is not read;
+# it is counted (flag ``ebit_extension_line_not_read``).
+_EBIT_EXTENSION_CAPTION_RE = re.compile(
+    r"\b(other|non-?operating|investment|interest)\b.*\b(income|expense|gains?|loss(es)?|deductions?)\b",
+    re.IGNORECASE,
+)
 # Q2b (user-approved): D&A presented as its two parts on the cash-flow face -- a depreciation line and amortization
 # line(s) -- is their sum; one part alone when the filing files no amount of the other part. A part's caption names
 # depreciation or amortization (of intangibles, of capitalized software) and nothing else: a line that adds
@@ -1864,6 +2061,10 @@ class Statements:
     # the code cannot know it here (D13). ``None`` in a hermetic fixture.
     sector: str | None = None
     sub_industry: str | None = None
+    # D-18 (audit round #11): the company's APP-00 base type (``profile.type``) -- the type, never
+    # the GICS sector, which says nothing about whether a balance sheet is a classified one.
+    # ``None`` in a hermetic fixture or when the CIK holds no profile.
+    company_type: str | None = None
     # T-151 part 3 (D14): the filing's accession, recorded in every metric's ``provenance`` block.
     # Set by the pipeline / recompute (:func:`fundamental_agent.db.attach_context`).
     accession: str | None = None
@@ -2039,7 +2240,7 @@ class Statements:
 
     # -- resolution ------------------------------------------------------------------------------
 
-    def resolve(self, item: str, period_key: str) -> Resolution:  # noqa: C901 - one tier per line
+    def resolve(self, item: str, period_key: str) -> Resolution:  # noqa: C901, PLR0912 - one tier per line
         """Registry *item* for *period_key*: its value and where the value came from.
 
         ``concept`` is the concept the value was read from (``a + b`` for a map, ``None`` for a
@@ -2072,6 +2273,12 @@ class Statements:
                 net = self._net_interest_row(spec, column)
                 if net is not None:
                     value, concept, how = net
+            if value is None and spec.name == "operating_income":
+                # D-17 (audit round #11): no operating-income line on the face -- derived from pre-tax income
+                derived = self._derived_operating_income(column)
+                if derived is not None:
+                    value, concept, how = derived, None, EBIT_DERIVED_HOW
+                    self._flag("ebit_derived")
             if value is None and spec.name == "revenue":
                 # F-A13: a dropped revenue row whose value equals another own revenue concept's
                 # filed fact (YUM: the face row ``RevenueFromContract...``, the filed ``Revenues``).
@@ -3090,6 +3297,144 @@ class Statements:
             ):
                 return True
         return False
+
+    def _derived_operating_income(  # noqa: C901, PLR0912 - one guard per D-17 condition
+        self, column: str
+    ) -> float | None:
+        """D-17 (audit round #11): operating income when the income statement prints no operating-income line.
+
+        Pre-tax income + the registry's gross interest expense - the non-operating lines (:data:`_EBIT_NONOPERATING`)
+        between the revenue line and the pre-tax line - the equity-method income above the pre-tax line (C7 p.46).
+        The filer's own ``NonoperatingIncomeExpense`` total is split by arithmetic into the lines directly above it
+        (:meth:`_ebit_total_parts`); the interest lines it holds are taken back out of it, since the interest is added
+        back gross. ``None`` -- the item stays empty -- for an APP-00 financial type or an unknown type, when an
+        ``OperatingIncomeLoss`` line with a value is on the face, when pre-tax income or the gross interest expense
+        is missing (a net interest line is never the interest: reviewer A), or when no pre-tax line places the lines.
+        """
+        if self.company_type is None or self.company_type in _EBIT_EXCLUDED_TYPES:
+            return None
+        rows = [
+            row
+            for row in self.raw.get("income_statement", [])
+            if not row.get("abstract") and not row.get("dimension")
+        ]
+        for row in rows:
+            if row.get("concept") == G + "OperatingIncomeLoss" and any(
+                _parse_period(str(key)) is not None and _numeric(cell) is not None
+                for key, cell in row.items()
+            ):
+                return None
+        pretax = self.resolve("pretax_income", column).value
+        interest = self.resolve("interest_expense", column)
+        if pretax is None or interest.value is None or interest.how == "net_interest":
+            return None
+        revenue = self.resolve("revenue", column).value
+        tol = max(1.0, 0.0005 * abs(revenue if revenue is not None else pretax))
+        values = [_filed_or_displayed(row, column) for row in rows]
+        concepts = [str(row.get("concept") or "") for row in rows]
+        # the pre-tax line: a pre-tax element with the value, else the first line with the value (COST tags it
+        # IncomeLossAttributableToParent), else the first pre-tax element
+        matches = [k for k, v in enumerate(values) if v is not None and abs(v - pretax) <= tol]
+        pre = next(
+            (k for k in matches if concepts[k] in _EBIT_PRETAX),
+            next(
+                iter(matches),
+                next(
+                    (
+                        k
+                        for k, c in enumerate(concepts)
+                        if c in _EBIT_PRETAX and values[k] is not None
+                    ),
+                    None,
+                ),
+            ),
+        )
+        if pre is None:
+            return None
+        lo = -1
+        if revenue is not None:
+            lo = max(
+                (k for k in range(pre) if (v := values[k]) is not None and abs(v - revenue) <= tol),
+                default=-1,
+            )
+        nonoperating, skip = 0.0, set()
+        if _EBIT_TOTAL in concepts[lo + 1 : pre]:
+            ti = concepts.index(_EBIT_TOTAL, lo + 1)
+            total = values[ti]
+            if total is not None:
+                nonoperating += total
+                skip.add(ti)
+                parts = self._ebit_total_parts(concepts, values, ti, lo, tol)
+                if parts is not None:
+                    run, directions = parts
+                    skip |= set(run)
+                    for j in run:
+                        if concepts[j] in _EBIT_INTEREST:
+                            nonoperating -= directions[j] * (values[j] or 0.0)
+        present = {concepts[k] for k in range(lo + 1, pre) if k not in skip}
+        for k in range(lo + 1, pre):
+            value = values[k]
+            if k in skip or value is None:
+                continue
+            concept = concepts[k]
+            if concept in _EBIT_NONOPERATING:
+                if any(parent in present for parent in _EBIT_NONOPERATING_PARENTS.get(concept, ())):
+                    continue
+                nonoperating += _EBIT_NONOPERATING[concept] * value
+            elif (
+                not concept.startswith(G)
+                and concept not in _EBIT_INTEREST
+                and _EBIT_EXTENSION_CAPTION_RE.search(self._face_caption(rows[k]))
+            ):
+                self._flag("ebit_extension_line_not_read")
+        derived = pretax + interest.value - nonoperating
+        equity = next((k for k in range(lo + 1, pre) if concepts[k] == _EBIT_EQUITY_METHOD), None)
+        equity_value = values[equity] if equity is not None and equity not in skip else None
+        if equity_value is not None:
+            derived -= equity_value
+        return derived
+
+    @staticmethod
+    def _ebit_total_parts(
+        concepts: list[str], values: list[float | None], ti: int, lo: int, tol: float
+    ) -> tuple[list[int], dict[int, int]] | None:
+        """D-17: the lines directly above the filer's ``NonoperatingIncomeExpense`` total (row *ti*) that add up to
+        it, and each one's direction into pre-tax income -- ``None`` when no unique set does. A line of a known
+        direction (:data:`_EBIT_NONOPERATING`, :data:`_EBIT_INTEREST`, :data:`_EBIT_OTHER_DIRECTION`, the
+        equity-method line) counts as it is; any other line is tried both ways (at most three such lines: NEE's
+        extension and pension lines). The revenue line, an operating total or a pre-tax line ends the walk."""
+        known = {
+            **_EBIT_OTHER_DIRECTION,
+            **_EBIT_NONOPERATING,
+            **_EBIT_INTEREST,
+            _EBIT_EQUITY_METHOD: 1,
+        }
+        target = values[ti]
+        if target is None:
+            return None
+        run: list[int] = []
+        for k in range(ti - 1, max(lo, ti - 12), -1):
+            concept = concepts[k]
+            if concept in _EBIT_PRETAX or concept in _EBIT_WALK_ENDS:
+                return None
+            if values[k] is None:
+                continue
+            run.append(k)
+            unknown = [j for j in run if concepts[j] not in known]
+            if len(unknown) > _EBIT_MAX_UNKNOWN_LINES:
+                return None
+            hits = []
+            for signs in itertools.product((1, -1), repeat=len(unknown)):
+                directions = {j: known.get(concepts[j], 0) for j in run} | dict(
+                    zip(unknown, signs, strict=True)
+                )
+                if abs(sum(directions[j] * (values[j] or 0.0) for j in run) - target) <= tol:
+                    hits.append(directions)
+            if len(hits) == 1:
+                return list(run), hits[0]
+            if hits:
+                return None
+        return None
 
     def _net_interest_row(  # noqa: C901 - the sign from the fact, else the row
         self, spec: LineItem, column: str
@@ -5819,6 +6164,16 @@ def _parse_period(column: str) -> Period | None:
     if instant:
         return Period(key=column, date=instant["date"], tag=INSTANT)
     return None
+
+
+def _filed_or_displayed(row: dict[str, Any], column: str) -> float | None:
+    """D-17: *row*'s value in *column* in the filed sign (the displayed value times ``preferred_sign``), or as
+    displayed when the row carries no sign hint -- read without :meth:`Statements._read`'s flags."""
+    displayed = _numeric(row.get(column))
+    if displayed is None:
+        return None
+    sign = _preferred_sign(row)
+    return displayed * sign if sign is not None else displayed
 
 
 def _names_nci_income(row: dict[str, Any]) -> bool:

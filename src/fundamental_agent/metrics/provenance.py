@@ -31,7 +31,14 @@ from typing import Any
 
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.growth import LENDER_SUB_INDUSTRIES
-from fundamental_agent.statements import REGISTRY, Capital, Resolution, Statements
+from fundamental_agent.statements import (
+    EBIT_DERIVED_HOW,
+    EBIT_DERIVED_INPUT,
+    REGISTRY,
+    Capital,
+    Resolution,
+    Statements,
+)
 
 # The fixed list of empty-reason codes (D14; G4's precedence is applied by :func:`_empty_reason`).
 MISSING_INPUT = "missing_input"
@@ -797,9 +804,13 @@ def attach(
     Each result gets its own copy of the inputs dict: a metric group shares one dict across its
     metrics, so writing the block in place would leave every row of the group carrying the last
     metric's provenance. ``MetricResult`` is frozen, so the list entry is replaced."""
+    ebit_derived = stmts.resolve("operating_income", period_key).how == EBIT_DERIVED_HOW
     for index, (group, result) in enumerate(results):
         inputs = dict(result.inputs)
-        inputs["provenance"] = build(stmts, period_key, result, ttm_flows)
+        if ebit_derived and "operating_income" in ITEMS.get(result.name, {}):
+            # D-17 (audit round #11): the metric reads the derived operating income -- flagged on the metric
+            inputs[EBIT_DERIVED_INPUT] = 1.0
+        inputs["provenance"] = build(stmts, period_key, replace(result, inputs=inputs), ttm_flows)
         results[index] = (group, replace(result, inputs=inputs))
 
 

@@ -24,7 +24,13 @@ from portfolio_common.db import Database, Row
 import kg_schema
 from fundamental_agent import fiscal
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
+from fundamental_agent.statements import (
+    EBIT_DERIVED_INPUT,
+    REGISTRY,
+    Capital,
+    CoverShares,
+    Statements,
+)
 from kg_schema import identity, migrations, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
@@ -923,6 +929,45 @@ def _recorded_input(
     return float(value)
 
 
+def _ebit_derived_at(conn: Database, filing_id: int, engine_version: str) -> bool | None:
+    """D-17 (audit round #11): whether the operating income a filing recorded was derived (its TTM anchor row carries
+    :data:`~fundamental_agent.statements.EBIT_DERIVED_INPUT`), ``None`` when the filing has no such row."""
+    group, name = _TTM_FLOW_SOURCE["operating_income"]
+    row = conn.execute(
+        """
+        SELECT inputs_json FROM fundamental_metrics
+        WHERE filing_id = ? AND metric_group = ? AND metric_name = ? AND engine_version = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (filing_id, group, name, engine_version),
+    ).fetchone()
+    if row is None:
+        return None
+    return bool(json.loads(row["inputs_json"] or "{}").get(EBIT_DERIVED_INPUT) == 1.0)
+
+
+def _quarter_filings(conn: Database, asset_id: int, period_end: str) -> list[int]:
+    """D-17: the filings the three quarters before *period_end* are read from -- a quarter's 10-Q, else the 10-K of
+    its fiscal year and that year's 10-Qs (a fiscal Q4 is the FY less the nine months, PER-05)."""
+    out: list[int] = []
+    for k in (1, 2, 3):
+        end = _months_before(period_end, _QUARTER_MONTHS * k)
+        quarter = _filing_near(conn, asset_id, "10-Q", end)
+        if quarter is not None:
+            out.append(quarter[0])
+            continue
+        fiscal_year = _filing_near(conn, asset_id, "10-K", end)
+        if fiscal_year is None:
+            continue
+        out.append(fiscal_year[0])
+        for months in (_QUARTER_MONTHS, _QUARTER_MONTHS * 2, _QUARTER_MONTHS * 3):
+            q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
+            if q is not None:
+                out.append(q[0])
+    return out
+
+
 def _quarter_flow_ending(
     conn: Database,
     asset_id: int,
@@ -1023,7 +1068,7 @@ def _fy_item_concept(conn: Database, filing_id: int, item: str, engine_version: 
     return None
 
 
-def _perimeter_mixed(  # noqa: PLR0913 - the identity's parts and the version pin
+def _perimeter_mixed(  # noqa: C901, PLR0911, PLR0913, PLR0917 - the identity's parts and the version pin
     conn: Database,
     asset_id: int,
     item: str,
@@ -1096,7 +1141,7 @@ def _period_sum(conn: Database, filing_id: int, key: str, parts: list[str]) -> f
     return sum(values.values()) if len(values) == len(parts) else None
 
 
-def _recast_within_year(  # noqa: PLR0913 - the identity's parts
+def _recast_within_year(  # noqa: PLR0913, PLR0917 - the identity's parts
     conn: Database, asset_id: int, fy_end: str, period_end: str, parts: list[str], fy: float
 ) -> bool:
     """Audit F-A11, no lookahead: whether a 10-Q of the current fiscal year (after the 10-K) recast
@@ -1173,7 +1218,7 @@ def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str)
     return int(row["id"]) if row else None
 
 
-def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the version pin
+def ttm_detail(  # noqa: C901, PLR0912, PLR0913 - the filing's identity, its flows, the version pin; one branch per method
     conn: Database,
     asset_id: int,
     *,
@@ -1182,6 +1227,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     ytd: dict[str, YTDPair] | None = None,
     engine_version: str = METRICS_ENGINE_VERSION,
     accession: str | None = None,
+    derived: frozenset[str] = frozenset(),
 ) -> dict[str, TTMFlow]:
     """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
 
@@ -1197,7 +1243,11 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     the filing's own restated comparative, so it survives a restated prior year that the
     as-filed quarters do not (AT&T's WarnerMedia spin-off, see
     :func:`fundamental_agent.quality.record_ttm_crosscheck`). Every recorded value read is of
-    *engine_version* only."""
+    *engine_version* only.
+
+    D-17 (audit round #11): *derived* names the items whose value on this filing was derived (the operating income
+    of a filing that prints no operating-income line). The operating income's terms are read by one method: a prior
+    10-K or a prior quarter recorded the other way refuses the TTM (``ttm_ebit_method_mixed``) -- never ``x4``."""
     out: dict[str, TTMFlow] = {}
     for item in sorted(set(current) | set(ytd or {})):
         summed = (
@@ -1224,6 +1274,16 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 # the old perimeter -- FY(old) - YTD(new) + YTD(new) mixes the two.
                 out[item] = TTMFlow(
                     0.0, "refused", ytd=pair.current, flags=("ttm_perimeter_change",)
+                )
+                continue
+            if (
+                fy is not None
+                and fy_filing is not None
+                and item == "operating_income"
+                and _ebit_derived_at(conn, fy_filing, engine_version) != (item in derived)
+            ):
+                out[item] = TTMFlow(
+                    0.0, "refused", ytd=pair.current, flags=("ttm_ebit_method_mixed",)
                 )
                 continue
             if fy is not None:
@@ -1274,6 +1334,22 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                         flow_flags = ("da_amortization_only_refused",)
         ytd_now = pair.current if pair else None
         quarters = _quarter_columns(conn, asset_id, period_end)
+        if (
+            summed is not None
+            and item == "operating_income"
+            and any(
+                _ebit_derived_at(conn, filing, engine_version) != (item in derived)
+                for filing in _quarter_filings(conn, asset_id, period_end)
+            )
+        ):
+            out[item] = TTMFlow(
+                0.0,
+                "refused",
+                ytd=ytd_now,
+                flags=("ttm_ebit_method_mixed",),
+                columns=tuple(quarters),
+            )
+            continue
         if summed is not None:
             out[item] = TTMFlow(
                 summed, "quarters", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
@@ -2021,6 +2097,8 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     if profile is not None:
         stmts.sector = profile.sector
         stmts.sub_industry = profile.sub_industry
+        # D-18: the APP-00 type itself, which the quick ratio's no-inventory reading needs.
+        stmts.company_type = profile.type
     else:
         stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
     stmts.accession = accession
