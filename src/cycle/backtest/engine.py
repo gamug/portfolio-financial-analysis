@@ -278,13 +278,17 @@ def _benchmark_returns(inp: EngineInput, sessions: Sequence[str]) -> dict[str, f
 
 
 def _aligned_returns(inp: EngineInput) -> dict[int, list[float]]:
-    """Per-asset simple returns aligned to ``inp.sessions`` (0.0 where the asset has no row)."""
+    """Per-asset simple returns aligned to ``inp.sessions``.
+
+    A session with no row for the asset is ``float('nan')``, never 0.0: the GUARD core treats a
+    non-finite return as "no signal", so a name with fewer than ``J`` real observations cannot
+    arm a stop-loss on invented zeros."""
     aligned: dict[int, list[float]] = {}
     for index, date in enumerate(inp.sessions):
         for asset_id, ret in inp.returns.get(date, {}).items():
             series = aligned.get(int(asset_id))
             if series is None:
-                series = [0.0] * len(inp.sessions)
+                series = [math.nan] * len(inp.sessions)
                 aligned[int(asset_id)] = series
             series[index] = float(ret)
     return aligned
@@ -293,10 +297,22 @@ def _aligned_returns(inp: EngineInput) -> dict[int, list[float]]:
 def _reference_returns(
     ref: Mapping[int, float], aligned: Mapping[int, Sequence[float]], index: int, window: int
 ) -> list[float]:
+    """The last ``window`` returns of the reference book held fixed.
+
+    A held name with no return on a session contributes 0.0 (its weight is moved to cash at
+    that close), so this series stays finite even though the per-asset windows carry NaN."""
     start = max(0, index - window + 1)
     out: list[float] = []
     for i in range(start, index + 1):
-        out.append(sum(w * aligned[a][i] for a, w in ref.items() if a in aligned))
+        total = 0.0
+        for asset_id, weight in ref.items():
+            series = aligned.get(asset_id)
+            if series is None:
+                continue
+            value = float(series[i])
+            if math.isfinite(value):
+                total += weight * value
+        out.append(total)
     return out
 
 

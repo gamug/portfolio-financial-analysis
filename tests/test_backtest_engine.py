@@ -280,6 +280,30 @@ def test_layer1_stop_cuts_to_cash_and_reentry_returns_to_the_reference_weight() 
     assert by_date[T4].final_target == pytest.approx({1: 1.0})
 
 
+def test_an_asset_with_fewer_than_j_real_returns_raises_no_l1_signal() -> None:
+    # Asset 1 enters the panel only at T2: its window is [NaN, NaN, -0.50] for J=3, not
+    # [0, 0, -0.50], so it cannot arm a stop-loss on invented zeros.
+    sessions = [D0, FORMATION, T1, T2, T3]
+    returns = {
+        D0: {1: 0.0, 2: 0.0},
+        FORMATION: {2: 0.0},
+        T1: {2: 0.0},
+        T2: {1: -0.50, 2: 0.0},
+        T3: {1: 0.0, 2: 0.0},
+    }
+    targets = {ARM_TOPN_NOGUARD: {D0: {2: 1.0}, T2: {1: 1.0}}}
+    inp = _input(
+        sessions=sessions,
+        returns=returns,
+        targets=targets,
+        arms=_base_arms(_params(layers=frozenset({1}), J=3, gamma=0.05, delta=0.02)),
+        decisions=[D0, T2],
+    )
+    guard = simulate(inp).arms[ARM_TOPN_GUARD]
+    assert [e for e in guard.guard_events if e.alert.layer == 1] == []
+    assert {w.date: w for w in guard.weights}[T3].final_target == pytest.approx({1: 1.0})
+
+
 def test_noguard_records_the_alerts_it_would_have_raised_as_arm_disabled() -> None:
     sessions = [D0, FORMATION, T1, T2]
     returns = {D0: {1: 0.0}, FORMATION: {1: -0.03}, T1: {1: -0.03}, T2: {1: 0.0}}
