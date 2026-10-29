@@ -1416,6 +1416,8 @@ _INVENTORY_RESERVE_CONCEPTS: frozenset[str] = frozenset(
 )
 INVENTORY_CONCEPTS: frozenset[str] = frozenset(
     {
+        G + "MaterialsSuppliesAndOther",
+        G + "Supplies",
         *REGISTRY["inventory"].concepts,
         *REGISTRY["inventory"].nonnegative,
         *INVENTORY_SUBSTITUTES,
@@ -1426,7 +1428,12 @@ INVENTORY_CONCEPTS: frozenset[str] = frozenset(
     }
 )
 # D-18: a face caption that names inventory, whatever the row's concept.
-_INVENTORY_CAPTION_RE = re.compile(r"inventor", re.IGNORECASE)
+# Audit round #11 (reviewer B, reading D-18's zeros): S-X 5-02 item 6's inventories include supplies -- a materials /
+# supplies / spare parts / merchandise / stockpile line proves inventory as well (UNP's, CSX's and NSC's
+# MaterialsSuppliesAndOther, WM's and UHS's Supplies, FDX's "Spare parts, supplies, and fuel").
+_INVENTORY_CAPTION_RE = re.compile(
+    r"inventor|\bsupplies\b|\bspare parts\b|\bmerchandise\b|\bstockpiles?\b", re.IGNORECASE
+)
 
 
 def _is_inventory_concept(concept: str) -> bool:

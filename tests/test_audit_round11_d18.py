@@ -153,6 +153,21 @@ def test_a_row_captioned_inventories_proves_inventory_whatever_its_concept() -> 
     assert _ratios(stmts)["quick_ratio"].value is None
 
 
+@pytest.mark.parametrize(
+    ("concept", "caption"),
+    [
+        ("MaterialsSuppliesAndOther", "Materials and supplies"),  # UNP, CSX, NSC
+        ("Supplies", "Parts and supplies"),  # WM, UHS
+        ("fdx_SparePartsSuppliesAndFuelLessAllowances", "Spare parts, supplies, and fuel"),  # FDX
+    ],
+)
+def test_a_supplies_line_proves_inventory(concept: str, caption: str) -> None:
+    """Audit round #11 (reviewer B): S-X 5-02 item 6's inventories include supplies -- the zero is not proven."""
+    stmts = _operating_stmts(balance=[*_classified(), _row(concept, caption, COL, 40.0)])
+    assert stmts.no_inventory_lines() is False
+    assert _ratios(stmts)["quick_ratio"].value is None
+
+
 def test_a_dimensional_inventory_row_proves_inventory() -> None:
     """A dimensional row is not read by the metrics, but it still proves the filing has inventory."""
     dimensional = _row("InventoryNet", "Inventories", COL, 40.0)
