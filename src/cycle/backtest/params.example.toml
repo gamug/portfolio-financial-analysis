@@ -1,0 +1,55 @@
+# Backtest params TOML -- the schema the WP-A driver reads.
+#
+# The GUARD numbers below are PLACEHOLDERS: WP-G freezes them on 2019-2021 before any window
+# is run. Changing any value changes the run, and its sha256 is recorded in
+# backtest_run.params_json.
+#
+#   python -m cycle.backtest run --window P1 \
+#     --db /workspaces/thesis/scratch/bt/engine-data/financial.db \
+#     --universe-db /workspaces/thesis/data/universe.db \
+#     --params src/cycle/backtest/params.example.toml
+
+[run]
+cost_bps = 10.0                 # one-way, charged on sum |w_target - w_drifted|
+top_n = 30
+lookback = 756                  # quant build-risk-model --lookback
+min_history = 740               # quant build-risk-model --min-history (the 740-observation floor)
+cov_estimator = "ledoit_wolf_cc"
+returns_engine_version = "qret-v2"
+rf_curve = "FF_RF_DAILY"        # written by `python -m quant load-rf`
+# news_db = "/workspaces/thesis/data/nlp.db"   # layer 2; absent -> arm 3 is not run
+# news_model = "gamug/FinBERT-financial-news"
+
+[guard]
+# Which GUARD arm's params the NOGUARD twin replays as ARM_DISABLED alerts.
+shadow_from = "TOPN_MV_GUARD"
+
+[guard.arms.TOPN_MV_GUARD]
+layers = [1, 2, 3, 4]
+J = 21
+gamma = 0.10
+delta = 0.03
+sigma_star = 0.15
+m = 2.0
+alpha = 0.85
+vol_window = 21
+periods_per_year = 252
+
+[guard.arms.TOPN_MV_GUARD.news]
+k = 1
+tau = 0.60
+tau_exit = 0.40
+n_min = 3
+cooldown = 5
+trim_fraction = 1.0
+
+[guard.arms.TOPN_MV_GUARD_NO_NLP]
+layers = [1, 3, 4]
+J = 21
+gamma = 0.10
+delta = 0.03
+sigma_star = 0.15
+m = 2.0
+alpha = 0.85
+vol_window = 21
+periods_per_year = 252

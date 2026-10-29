@@ -37,7 +37,7 @@ from . import identity as _identity
 from . import queries as _queries
 from . import ticker_history as _ticker_history
 from .db import connect, connect_ro
-from .ddl import ADDITIVE_DDL, REQUIRED_COLUMNS
+from .ddl import ADDITIVE_DDL, BACKTEST_DDL, REQUIRED_COLUMNS
 from .env import (
     DB_ENV_VAR,
     LEGACY_DB_ENV_VAR,
@@ -106,6 +106,7 @@ def ensure(db: Database, *, run_migrations: bool = False) -> list[int]:
     database that was born at the current shape applies nothing."""
     _queries.ensure(db)
     db.create_schema(ADDITIVE_DDL)
+    db.create_schema(BACKTEST_DDL)  # m018's tables; a no-op once they exist
     db.commit()
     _add_missing_columns(db)
     _ensure_veto_indexes(db)
