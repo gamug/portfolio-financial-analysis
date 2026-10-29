@@ -3445,6 +3445,10 @@ class Statements:
                 if any(parent in present for parent in _EBIT_NONOPERATING_PARENTS.get(concept, ())):
                     continue
                 nonoperating += _EBIT_NONOPERATING[concept] * value
+            elif concept in _EBIT_OTHER_DIRECTION:
+                # a non-operating element of the calculation tree the controls do not place below operating income
+                # often enough (HON's deconsolidation gain): kept in, flagged
+                self._flag("ebit_tree_element_kept")
             elif (
                 not concept.startswith(G)
                 and concept not in _EBIT_INTEREST

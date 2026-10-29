@@ -166,7 +166,8 @@ def test_a_line_inside_revenue_and_an_operating_cost_element_are_not_eliminated(
             180.0,
         ),
     ]
-    assert _stmts(income).resolve("operating_income", FY).value == 210.0
+    res = _stmts(income).resolve("operating_income", FY)
+    assert res.value == 210.0 and "ebit_tree_element_kept" in res.flags
 
 
 def test_an_extension_non_operating_line_is_counted_not_read() -> None:
