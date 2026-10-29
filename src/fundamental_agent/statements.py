@@ -1468,6 +1468,9 @@ _EBIT_NONOPERATING: dict[str, int] = {
     G + concept: sign
     for concept, sign in {
         "BusinessCombinationBargainPurchaseGainRecognizedAmount": 1,
+        # reviewer A (round #11): a one-time item (C7 p.37), of GainLossOnSaleOfStockInSubsidiary...'s nature; the
+        # controls place it below operating income 3 of 5 times (CVS x2, ECHO; APTV's two are 0 in the column)
+        "DeconsolidationGainOrLossAmount": 1,
         "DerivativeInstrumentsNotDesignatedAsHedgingInstrumentsGainLossNet": 1,
         "EquityMethodInvestmentRealizedGainLossOnDisposal": 1,
         "GainLossOnDerivativeInstrumentsNetPretax": 1,
@@ -1504,6 +1507,7 @@ _EBIT_NONOPERATING_PARENTS: dict[str, tuple[str, ...]] = {
     G + child: tuple(G + p for p in parents)
     for child, parents in {
         "BusinessCombinationBargainPurchaseGainRecognizedAmount": _GAINS,
+        "DeconsolidationGainOrLossAmount": _GAINS,
         "DerivativeInstrumentsNotDesignatedAsHedgingInstrumentsGainLossNet": (
             "GainLossOnDerivativeInstrumentsNetPretax",
             *_GAINS,
@@ -1598,7 +1602,6 @@ _EBIT_OTHER_DIRECTION: dict[str, int] = {
     G + concept: sign
     for concept, sign in {
         "BankOwnedLifeInsuranceIncome": 1,
-        "DeconsolidationGainOrLossAmount": 1,
         "DisposalGroupNotDiscontinuedOperationGainLossOnDisposal": 1,
         "ForeignCurrencyTransactionGainLossBeforeTax": 1,
         "ForeignCurrencyTransactionGainLossRealized": 1,
@@ -1632,12 +1635,18 @@ _EBIT_WALK_ENDS = frozenset(
     )
 )
 _EBIT_TOTAL = G + "NonoperatingIncomeExpense"
+# D-17 (b): an element that names an interest expense, interest paid or interest cost proves interest.
+_EBIT_INTEREST_NAME_RE = re.compile(r"Interest(Expense|Paid|Costs|AndDebtExpense|IncomeExpense)")
 # D-17: at most this many lines of unknown direction are tried both ways when the filer's total is split.
 _EBIT_MAX_UNKNOWN_LINES = 3
 # D-17: the tier name of a derived operating income, and the audit input that marks it on a metric row (the TTM's
 # one-method rule reads it back from the prior filings' rows: db.ttm_detail).
 EBIT_DERIVED_HOW = "derived_ebit"
 EBIT_DERIVED_INPUT = "flag_operating_income_ebit_derived"
+# D-17 (reviewer A, round #11): the metric reads a derived operating income whose interest was the net line / was
+# proven 0.
+EBIT_NET_INTEREST_INPUT = "flag_ebit_net_interest"
+EBIT_ZERO_INTEREST_INPUT = "flag_ebit_zero_interest_proven"
 # D-18 (audit round #11): the quick ratio refused its zero because the previous 10-K recorded an inventory (carried on
 # so the next filing reads the same).
 PRIOR_ANNUAL_INVENTORY_FLAG = "flag_quick_ratio_prior_annual_inventory"
@@ -3455,8 +3464,19 @@ class Statements:
         pretax_read = self.resolve("pretax_income", column)
         pretax = pretax_read.value
         interest = self.resolve("interest_expense", column)
-        if pretax is None or interest.value is None or interest.how == "net_interest":
+        if pretax is None:
             return None
+        interest_value = interest.value
+        if interest_value is None:
+            if not self._interest_zero_proven(column):
+                return None
+            # reviewer A (b): no interest anywhere and the debt proven 0 (ID-02b) -- the interest is 0
+            interest_value = 0.0
+            self._flag("ebit_zero_interest_proven")
+        elif interest.how == "net_interest":
+            # reviewer A (a), C7 p.9: the net interest line taken out whole is the gross interest added back and the
+            # interest income (S-X 5-03 item 7) taken out
+            self._flag("ebit_net_interest")
         revenue = self.resolve("revenue", column).value
         tol = max(1.0, 0.0005 * abs(revenue if revenue is not None else pretax))
         values = [_filed_or_displayed(row, column) for row in rows]
@@ -3498,12 +3518,13 @@ class Statements:
             # review B3: no revenue line places the non-operating window -- the whole statement is not read as one
             self._flag("ebit_no_revenue_line")
             return None
-        nonoperating, skip = 0.0, set()
+        nonoperating, skip, eliminated = 0.0, set(), False
         if _EBIT_TOTAL in concepts[lo + 1 : pre]:
             ti = concepts.index(_EBIT_TOTAL, lo + 1)
             total = values[ti]
             if total is not None:
                 nonoperating += total
+                eliminated = True
                 skip.add(ti)
                 parts = self._ebit_total_parts(concepts, values, ti, lo, tol)
                 if parts is not None:
@@ -3524,6 +3545,7 @@ class Statements:
                 if any(parent in present for parent in _EBIT_NONOPERATING_PARENTS.get(concept, ())):
                     continue
                 nonoperating += _EBIT_NONOPERATING[concept] * value
+                eliminated = True
             elif concept in _EBIT_OTHER_DIRECTION:
                 # a non-operating element of the calculation tree the controls do not place below operating income
                 # often enough (HON's deconsolidation gain): kept in, flagged
@@ -3534,7 +3556,15 @@ class Statements:
                 and _EBIT_EXTENSION_CAPTION_RE.search(self._face_caption(rows[k]))
             ):
                 self._flag("ebit_extension_line_not_read")
-        derived = pretax + interest.value - nonoperating
+        face_interest = any(
+            concepts[k] in _EBIT_INTEREST and values[k] is not None for k in range(lo + 1, pre)
+        )
+        if interest_value and not face_interest and eliminated:
+            # E11-2 (PFE FY2021): the interest read from the notes sits inside a non-operating line taken out whole
+            # ("Other (income)/deductions -- net") -- adding it back would count it twice
+            interest_value = 0.0
+            self._flag("ebit_interest_inside_nonoperating")
+        derived = pretax + interest_value - nonoperating
         # C7 p.46 / reviewer A: the equity-method income anywhere above the pre-tax line -- inside revenue's section too
         # (XOM's "Total revenues and other income"); measured on the controls: no accuracy change
         equity = next((k for k in range(pre) if concepts[k] == _EBIT_EQUITY_METHOD), None)
@@ -3542,6 +3572,27 @@ class Statements:
         if equity_value is not None:
             derived -= equity_value
         return derived
+
+    def _interest_zero_proven(self, column: str) -> bool:
+        """D-17 (b), reviewer A: the interest is 0 only with D-18's kind of proof -- the filing's own filed facts are
+        there, none of them and no row of any statement is an interest-expense concept, and the debt is proven 0
+        (ID-02b, ``no_debt_lines``). Any debt leaves the value empty."""
+        if not self.filed_facts:
+            return False
+        for fact in self.filed_facts:
+            local = fact.concept.split(":", 1)[-1]
+            if G + local in _EBIT_INTEREST or _EBIT_INTEREST_NAME_RE.search(local):
+                return False
+        for statement in STATEMENT_KEYS:
+            for row in self.raw.get(statement) or []:
+                concept = str(row.get("concept") or "")
+                if (
+                    concept in _EBIT_INTEREST
+                    or _EBIT_INTEREST_NAME_RE.search(concept.split("_", 1)[-1])
+                ) and (self._row_has_value(row)):
+                    return False
+        debt = self.total_debt(column)
+        return debt.value == 0.0 and "no_debt_lines" in debt.flags
 
     @staticmethod
     def _ebit_total_parts(

@@ -100,17 +100,23 @@ def test_financial_and_unknown_company_types_get_no_derived_operating_income() -
         assert _stmts(SINGLE_STEP, company_type).resolve("operating_income", FY).value is None
 
 
-def test_no_interest_expense_or_only_a_net_interest_line_leaves_it_empty() -> None:
-    """Reviewer A: empty when the interest is missing; a net interest line is never the gross interest."""
+def test_no_interest_expense_and_debt_not_proven_zero_leaves_it_empty() -> None:
+    """Reviewer A (b): with no interest anywhere the interest is 0 only when the debt is proven 0 -- not here."""
     no_interest = [r for r in SINGLE_STEP if r["concept"] != G + "InterestExpense"]
     assert _stmts(no_interest).resolve("operating_income", FY).value is None
+
+
+def test_a_net_interest_line_is_taken_out_whole() -> None:
+    """Reviewer A (a), C7 p.9: "Interest expense, net" -30 (income 5 - expense 35) -- the whole line is taken out:
+    180 + 30 - 10 = 200, flagged ``ebit_net_interest``."""
     net_only = [
         _row("InterestIncomeExpenseNonoperatingNet", "Interest expense, net", -30.0)
         if r["concept"] == G + "InterestExpense"
         else r
         for r in SINGLE_STEP
     ]
-    assert _stmts(net_only).resolve("operating_income", FY).value is None
+    res = _stmts(net_only).resolve("operating_income", FY)
+    assert res.value == 200.0 and "ebit_net_interest" in res.flags
 
 
 def test_the_filers_total_is_split_and_its_interest_taken_back_out() -> None:
@@ -430,3 +436,107 @@ def test_a_noncurrent_net_of_reserves_element_is_not_a_component() -> None:
         _row("OtherAssetsCurrent", "Other current assets", 10.0, column=COL),
     ]
     assert _balance(rows).resolve("inventory", COL).value != 80.0
+
+
+def test_an_interest_read_from_the_notes_inside_the_other_line_is_not_added_back() -> None:
+    """E11-2 (PFE FY2021): no interest line on the face, the notes' 1,291 sits inside "Other (income)/deductions -- net"
+    (income 4,878 net) -- 24,311 - 4,878 = 19,433, not 20,724."""
+    income = [
+        _row("RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", 81_288.0),
+        _row("CostOfGoodsAndServicesSold", "Cost of sales", 30_821.0),
+        _row(
+            "SellingGeneralAndAdministrativeExpense",
+            "Selling, informational and administrative",
+            12_703.0,
+        ),
+        _row(
+            "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost",
+            "Research and development",
+            13_829.0,
+        ),
+        _row("pfe_AmortizationOfIntangibleAssets", "Amortization of intangible assets", 3_700.0),
+        _row("pfe_RestructuringCharges", "Restructuring charges", 802.0),
+        _row("OtherNonoperatingIncomeExpense", "Other (income)/deductions--net", 4_878.0),
+        _row(
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+            "Income from continuing operations before provision for taxes on income",
+            24_311.0,
+        ),
+    ]
+    stmts = Statements.from_payload(
+        {
+            "income_statement": income,
+            "balance_sheet": [],
+            "cash_flow": [],
+            "corrections": [],
+            "filed_facts": [
+                {
+                    "concept": "us-gaap:InterestExpense",
+                    "value": 1_291.0,
+                    "unit": "USD",
+                    "period_start": "2021-01-01",
+                    "period_end": COL,
+                },
+            ],
+        }
+    )
+    stmts.company_type = "operating"
+    res = stmts.resolve("operating_income", FY)
+    assert res.value == 19_433.0 and "ebit_interest_inside_nonoperating" in res.flags
+
+
+def test_a_deconsolidation_gain_is_taken_out() -> None:
+    """Reviewer A: DeconsolidationGainOrLossAmount is a one-time item (C7 p.37) like the sale of a subsidiary's stock."""
+    income = [
+        *SINGLE_STEP[:4],
+        _row("DeconsolidationGainOrLossAmount", "Gain on deconsolidation of subsidiary", 600.0),
+    ]
+    income.append(SINGLE_STEP[5] | {FY: 770.0})
+    res = _stmts(income).resolve("operating_income", FY)
+    assert res.value == 200.0 and "ebit_tree_element_kept" not in res.flags
+
+
+def test_no_interest_anywhere_and_debt_proven_zero_reads_the_interest_as_zero() -> None:
+    """Reviewer A (b): no interest concept in the facts or the rows and the debt proven 0 (ID-02b) -- 170 - 10 = 160,
+    flagged ``ebit_zero_interest_proven``; with any debt line the value stays empty."""
+    income = [r for r in SINGLE_STEP if r["concept"] != G + "InterestExpense"]
+    income[-1] = income[-1] | {FY: 170.0}
+    balance = [
+        _row("CashAndCashEquivalentsAtCarryingValue", "Cash", 300.0, column=COL),
+        _row("Assets", "Total assets", 1_000.0, column=COL),
+        _row("StockholdersEquity", "Total equity", 800.0, column=COL),
+        _row(
+            "LiabilitiesAndStockholdersEquity", "Total liabilities and equity", 1_000.0, column=COL
+        ),
+    ]
+    facts = [
+        {
+            "concept": "us-gaap:Revenues",
+            "value": 1_000.0,
+            "unit": "USD",
+            "period_start": "2025-01-01",
+            "period_end": COL,
+        }
+    ]
+    payload = {
+        "income_statement": income,
+        "balance_sheet": balance,
+        "cash_flow": [],
+        "corrections": [],
+        "filed_facts": facts,
+    }
+    stmts = Statements.from_payload(payload)
+    stmts.company_type = "operating"
+    res = stmts.resolve("operating_income", FY)
+    assert res.value == 160.0 and "ebit_zero_interest_proven" in res.flags
+    with_debt = Statements.from_payload(
+        payload
+        | {
+            "balance_sheet": [
+                *balance,
+                _row("LongTermDebtNoncurrent", "Long-term debt", 100.0, column=COL),
+            ]
+        }
+    )
+    with_debt.company_type = "operating"
+    assert with_debt.resolve("operating_income", FY).value is None

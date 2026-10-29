@@ -34,6 +34,8 @@ from fundamental_agent.metrics.growth import LENDER_SUB_INDUSTRIES
 from fundamental_agent.statements import (
     EBIT_DERIVED_HOW,
     EBIT_DERIVED_INPUT,
+    EBIT_NET_INTEREST_INPUT,
+    EBIT_ZERO_INTEREST_INPUT,
     REGISTRY,
     Capital,
     Resolution,
@@ -804,12 +806,17 @@ def attach(
     Each result gets its own copy of the inputs dict: a metric group shares one dict across its
     metrics, so writing the block in place would leave every row of the group carrying the last
     metric's provenance. ``MetricResult`` is frozen, so the list entry is replaced."""
-    ebit_derived = stmts.resolve("operating_income", period_key).how == EBIT_DERIVED_HOW
+    operating = stmts.resolve("operating_income", period_key)
+    ebit_derived = operating.how == EBIT_DERIVED_HOW
     for index, (group, result) in enumerate(results):
         inputs = dict(result.inputs)
         if ebit_derived and "operating_income" in ITEMS.get(result.name, {}):
             # D-17 (audit round #11): the metric reads the derived operating income -- flagged on the metric
             inputs[EBIT_DERIVED_INPUT] = 1.0
+            if "ebit_net_interest" in operating.flags:
+                inputs[EBIT_NET_INTEREST_INPUT] = 1.0
+            if "ebit_zero_interest_proven" in operating.flags:
+                inputs[EBIT_ZERO_INTEREST_INPUT] = 1.0
         inputs["provenance"] = build(stmts, period_key, replace(result, inputs=inputs), ttm_flows)
         results[index] = (group, replace(result, inputs=inputs))
 
