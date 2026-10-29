@@ -5,7 +5,8 @@ mutated. The four public functions are the fixed interface WP-A calls:
 
 * :func:`summarize` -- the per-arm, per-segment performance summary.
 * :func:`memmel_jk` -- Jobson & Korkie (1981) test of equal Sharpe ratios, Memmel (2003) corrected.
-* :func:`ledoit_wolf_sharpe_diff` -- Ledoit & Wolf (2008) studentized circular block bootstrap.
+* :func:`ledoit_wolf_sharpe_diff` -- a studentized circular block bootstrap in the structure of
+  Ledoit & Wolf (2008), with a Newey-West HAC standard error.
 * :func:`hac_mean_diff` -- Newey & West (1987) HAC t-test on the mean return difference.
 
 Conventions that hold everywhere in this module
@@ -288,7 +289,11 @@ def ledoit_wolf_sharpe_diff(  # noqa: PLR0913 - the signature is fixed by BACKTE
     n_boot: int = 4999,
     seed: int = 20261028,
 ) -> tuple[float, float]:
-    """Two-sided Ledoit & Wolf (2008) studentized circular block bootstrap for ``H0: SR_a = SR_b``.
+    """A studentized circular block bootstrap in the structure of Ledoit & Wolf (2008).
+
+    Two-sided test of ``H0: SR_a = SR_b`` by a studentized circular block bootstrap in the
+    structure of Ledoit & Wolf (2008), with Newey-West HAC studentization in the original
+    sample and in the bootstrap samples (not LW's own bootstrap standard error).
 
     Ledoit, O. & Wolf, M. (2008), "Robust performance hypothesis testing with the Sharpe ratio",
     *Journal of Empirical Finance* 15(5), 850-859. CANDIDATE — verify page.
