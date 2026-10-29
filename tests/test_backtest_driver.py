@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -279,6 +280,7 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
     assert run["formation_date"] == "2022-01-03"
     params = json.loads(str(run["params_json"]))
     assert params["params_sha256"] == load_params(params_path).sha256
+    assert 18 in params["migrations_applied"]  # a fresh fixture has no floor, so ensure migrates it
     assert params["arms"] == [
         "MARKOWITZ_BASE",
         "TOPN_MV_NOGUARD",
@@ -349,6 +351,16 @@ def test_the_driver_refuses_a_production_database() -> None:
         refuse_production_db(Path("/workspaces/thesis/data/financial.db"))
 
 
+def test_an_unmigrated_scratch_copy_is_refused(tmp_path: Path) -> None:
+    db_path, _universe = _fixture(tmp_path)
+    conn = connect(db_path)
+    conn.execute("DELETE FROM schema_version WHERE version >= 14")
+    conn.commit()
+    with pytest.raises(BacktestError, match="migrate"):
+        driver.require_migrated(conn)
+    conn.close()
+
+
 def test_a_missing_database_is_refused(tmp_path: Path) -> None:
     with pytest.raises(BacktestError, match="does not exist"):
         run_backtest(
@@ -368,3 +380,101 @@ def test_the_example_params_file_is_valid() -> None:
     assert params.guard["TOPN_MV_GUARD"].news is not None
     assert 2 in params.guard["TOPN_MV_GUARD"].layers
     assert 2 not in params.guard["TOPN_MV_GUARD_NO_NLP"].layers
+
+
+# -- data readers ---------------------------------------------------------------------
+
+
+def test_load_rf_carries_the_last_observation_and_counts_the_carries(tmp_path: Path) -> None:
+    db_path = tmp_path / "rf.db"
+    conn = connect(db_path)
+    fundamental_db.ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO risk_free_rate (curve, rate_date, annualized_rate, source, "
+        "engine_version, ingested_at) VALUES "
+        "('FF_RF_DAILY', '2022-01-03', 0.0252, 'french-ff3-daily', 'rf-v2', 'now'), "
+        "('FF_RF_DAILY', '2022-01-10', 0.0504, 'french-ff3-daily', 'rf-v2', 'now')"
+    )
+    conn.commit()
+    sessions = ["2022-01-03", "2022-01-04", "2022-01-10"]
+    daily, carried = driver.load_rf(conn, "FF_RF_DAILY", sessions)
+    assert daily == {
+        "2022-01-03": 0.0001,
+        "2022-01-04": 0.0001,
+        "2022-01-10": 0.0002,
+    }
+    assert carried == 1
+    with pytest.raises(BacktestError, match="load-rf"):
+        driver.load_rf(conn, "US3M", sessions)
+    conn.close()
+
+
+def test_load_returns_converts_the_stored_log_return(tmp_path: Path) -> None:
+    db_path = tmp_path / "returns.db"
+    conn = connect(db_path)
+    fundamental_db.ensure_schema(conn)
+    conn.execute("INSERT INTO assets (id, ticker, company_name) VALUES (1, 'AAA', 'Alpha')")
+    for session, log_return in (("2022-01-03", 0.0), ("2022-01-04", 0.1)):
+        conn.execute(
+            "INSERT INTO quant_return_daily (asset_id, obs_date, close_split_adj, adj_close, "
+            "tr_index, tr_log_return, source, engine_version, computed_at) VALUES "
+            "(1, ?, 100.0, 100.0, 110.0, ?, 'quant-tr-v1', 'qret-v2', 'now')",
+            (session, log_return),
+        )
+    conn.commit()
+    returns = driver.load_returns(conn, "qret-v2", "2022-01-03", "2022-01-04")
+    assert returns["2022-01-03"] == {1: 0.0}
+    assert returns["2022-01-04"][1] == pytest.approx(math.expm1(0.1))
+    with pytest.raises(BacktestError, match="build-returns"):
+        driver.load_returns(conn, "qret-v1", "2022-01-03", "2022-01-04")
+    conn.close()
+
+
+def test_load_news_counts_unique_articles_inside_the_close_to_close_window(
+    tmp_path: Path,
+) -> None:
+    news_path = tmp_path / "nlp.db"
+    news = connect(news_path)
+    news.create_schema(
+        "CREATE TABLE articles (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL, "
+        "pub_date TEXT NOT NULL);"
+        "CREATE TABLE article_sentiment (article_id INTEGER PRIMARY KEY, label TEXT NOT NULL, "
+        "model_name TEXT NOT NULL);"
+    )
+    articles = [
+        (1, "AAA", "2022-01-06T14:00:00Z", "negative"),
+        (2, "AAA", "2022-01-06T15:00:00Z", "positive"),
+        (3, "AAA", "2022-01-06T23:00:00Z", "negative"),  # after the 16:00 ET close
+        (4, "BBB", "2022-01-06T14:00:00Z", "negative"),
+        (5, "AAA", "2022-01-05T14:00:00Z", "negative"),  # the previous window
+    ]
+    for article_id, ticker, published, label in articles:
+        news.execute(
+            "INSERT INTO articles (id, ticker, pub_date) VALUES (?, ?, ?)",
+            (article_id, ticker, published),
+        )
+        news.execute(
+            "INSERT INTO article_sentiment (article_id, label, model_name) VALUES (?, ?, ?)",
+            (article_id, label, "test-model"),
+        )
+    news.commit()
+    news.close()
+
+    db_path = tmp_path / "financial.db"
+    conn = connect(db_path)
+    fundamental_db.ensure_schema(conn)
+    conn.execute(
+        "INSERT INTO assets (id, ticker, company_name, cik) VALUES "
+        "(1, 'AAA', 'Alpha', '0000000001'), (2, 'BBB', 'Beta', '0000000002')"
+    )
+    conn.commit()
+    sessions = ["2022-01-04", "2022-01-05", "2022-01-06"]
+    counts = driver.load_news(news_path, "test-model", conn, sessions, 1, 1)
+    assert counts["2022-01-05"] == {1: driver.NewsCounts(n_articles=1, n_negative=1)}
+    assert counts["2022-01-06"] == {
+        1: driver.NewsCounts(n_articles=2, n_negative=1),
+        2: driver.NewsCounts(n_articles=1, n_negative=1),
+    }
+    with pytest.raises(BacktestError, match="no 'other-model'"):
+        driver.load_news(news_path, "other-model", conn, sessions, 1, 1)
+    conn.close()

@@ -342,7 +342,9 @@ def test_scale_is_the_minimum_not_the_product() -> None:
     s_sigma = next(e.alert.value for e in scale_alerts if e.alert.layer == 3)
     s_dd = next(e.alert.value for e in scale_alerts if e.alert.layer == 4)
     assert s_sigma == pytest.approx(0.5)
-    assert s_dd == pytest.approx(0.5, abs=1e-3)
+    # The drawdown is measured from NAV 1.0 (the entry cost included), so s_dd is just under
+    # 0.5; the point is that the scale is the minimum, never 0.5 x 0.495 = 0.247.
+    assert 0.45 < s_dd < 0.55
     assert at_t1.final_target == pytest.approx({1: min(s_sigma, s_dd)})
     assert at_t1.cash_weight == pytest.approx(1 - min(s_sigma, s_dd))
 
@@ -432,3 +434,32 @@ def test_formation_must_be_a_simulated_session() -> None:
     )
     with pytest.raises(EngineError, match="formation date"):
         simulate(inp)
+
+
+def test_the_guard_evaluates_the_formation_target_at_the_decision_close() -> None:
+    """A stop already visible at the formation decision cuts the formation order itself: the
+    GUARD book does not spend its first session holding a name it would have stopped."""
+    sessions = [D0, FORMATION, T1]
+    returns = {D0: {1: -0.10}, FORMATION: {1: 0.0}, T1: {1: 0.0}}
+    targets = {ARM_TOPN_NOGUARD: {D0: {1: 1.0}}}
+    inp = _input(
+        sessions=sessions,
+        returns=returns,
+        targets=targets,
+        arms=_base_arms(_params(layers=frozenset({1}), J=1, gamma=0.05, delta=0.03)),
+        decisions=[D0],
+    )
+    result = simulate(inp)
+    guard = result.arms[ARM_TOPN_GUARD]
+    noguard = result.arms[ARM_TOPN_NOGUARD]
+    assert guard.weights[0].date == FORMATION
+    assert guard.weights[0].final_target == {}  # the formation order was already cut
+    assert noguard.weights[0].final_target == pytest.approx({1: 1.0})
+    first = next(iter(guard.guard_events))
+    assert (first.date, first.alert.rule_id, first.status) == (
+        D0,
+        "L1_STOP_LOSS",
+        "APPLIED",
+    )
+    assert guard.performance[1].gross_return == pytest.approx(0.0)
+    assert noguard.performance[1].gross_return == pytest.approx(0.0)

@@ -56,6 +56,9 @@ DEFAULT_WARMUP_STEPS = 12
 RETURNS_FROM = "2019-01-02"
 #: The production data root no run may write under.
 DATA_ROOT = Path("/workspaces/thesis/data")
+#: The last migration that rebuilds a table (m014). m015-m018 are additive/markers and are
+#: created by ``ensure``, so a copy at this floor or above is safe to run on.
+MIN_SCHEMA_VERSION = 14
 #: P2's two reporting cuts (reporting only -- one continuous run).
 P2_CUT_DATE = "2025-05-06"
 
@@ -105,6 +108,21 @@ class BacktestParams:
     shadow_from: str | None
     guard: dict[str, GuardParams]
     raw: dict[str, Any]
+
+
+def require_migrated(conn: Database) -> None:
+    """Refuse a scratch copy that predates the last rebuilding migration.
+
+    ``ensure`` creates every additive table/column, but the non-additive rebuilds (m009's veto
+    stints, m014's AUTOINCREMENT run tables) only run through ``migrate``. Running on an older
+    copy would silently use the old shapes; name the command instead."""
+    current = queries.current_version(conn)
+    if current < MIN_SCHEMA_VERSION:
+        raise BacktestError(
+            f"the scratch copy is at schema_version {current}, below {MIN_SCHEMA_VERSION}: run "
+            "`python -m fundamental_agent migrate` (or `python -m quant migrate`) on the copy "
+            "first"
+        )
 
 
 def _sha256_file(path: Path) -> str:
@@ -442,7 +460,7 @@ def _session_close(day: str) -> datetime:
     )
 
 
-def load_news(  # noqa: PLR0913, PLR0917 - the reader's inputs, all named
+def load_news(  # noqa: C901, PLR0913, PLR0917 - the reader's inputs, all named
     news_db: Path,
     news_model: str,
     finance: Database,
@@ -491,6 +509,8 @@ def load_news(  # noqa: PLR0913, PLR0917 - the reader's inputs, all named
             continue
         negative = 1 if str(row["label"]).strip().lower() == "negative" else 0
         per_asset.setdefault(asset_id, []).append((published, negative))
+    for rows_for_asset in per_asset.values():
+        rows_for_asset.sort()
     times = {asset_id: [dt for dt, _ in rows] for asset_id, rows in per_asset.items()}
     prefix_negative = {
         asset_id: [0] + [cumulative for cumulative in _cumulative(negative for _, negative in rows)]
@@ -741,18 +761,20 @@ def _pipeline(  # noqa: C901, PLR0913 - one linear per-date pipeline (spec §2)
 # -- persistence ----------------------------------------------------------------------
 
 
-def _open_run(
+def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     conn: Database,
     window: WindowSpec,
     params: BacktestParams,
     warmup_steps: int,
     input_sha: str,
+    migrations_applied: Sequence[int],
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
         "params_path": str(params.path),
         "params_sha256": params.sha256,
         "window": window.window_id,
+        "migrations_applied": list(migrations_applied),
         "d_start": window.d_start,
         "d_end": window.d_end,
         "warmup_steps": warmup_steps,
@@ -1240,8 +1262,11 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
     conn = connect(database)
     universe_conn = connect_ro(universe)
     try:
-        kg_schema.ensure(conn)
-        run_id = _open_run(conn, window, params, warmup_steps, input_sha)
+        # The scratch copy may predate the current migration floor: migrate it here (recorded
+        # in params_json) rather than running on old table shapes.
+        applied = kg_schema.ensure(conn, run_migrations=True)
+        require_migrated(conn)
+        run_id = _open_run(conn, window, params, warmup_steps, input_sha, applied)
         payload: dict[str, Any] = {}
         try:
             run_quant(

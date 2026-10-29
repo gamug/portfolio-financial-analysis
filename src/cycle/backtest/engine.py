@@ -360,6 +360,74 @@ def _guard_event_weight(alert: Alert, before: Weights, after: Weights) -> tuple[
     return _weight_of(before, alert.asset_id), _weight_of(after, alert.asset_id)
 
 
+def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
+    book: _Book,
+    reference: Weights,
+    date: str,
+    index: int,
+    aligned: Mapping[int, Sequence[float]],
+    inp: EngineInput,
+    params: GuardParams,
+) -> GuardInput:
+    tracked = set(reference) | set(book.out_assets)
+    return GuardInput(
+        date=date,
+        reference_weights=dict(reference),
+        asset_returns={
+            asset_id: _asset_return_window(asset_id, aligned, index, params.J)
+            for asset_id in tracked
+        },
+        reference_returns=_reference_returns(reference, aligned, index, params.vol_window),
+        nav=book.nav,
+        news=inp.news.get(date),
+    )
+
+
+def _apply_guard(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
+    book: _Book,
+    reference: Weights,
+    date: str,
+    index: int,
+    aligned: Mapping[int, Sequence[float]],
+    inp: EngineInput,
+    params: GuardParams,
+) -> dict[int, float]:
+    """Evaluate the overlay and record its actions; returns the target for the next close."""
+    assert book.guard_state is not None
+    out = evaluate(
+        book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
+    )
+    book.guard_state = out.state
+    book.out_assets = out.cut_assets
+    final = dict(out.weights)
+    for alert in out.alerts:
+        status = _action_status(book.spec, alert, out.cut_assets, out.scale, reference)
+        before, after = _guard_event_weight(alert, reference, final)
+        book.events_out.append(GuardEvent(date, alert, status, before, after))
+    return final
+
+
+def _record_shadow(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
+    book: _Book,
+    reference: Weights,
+    date: str,
+    index: int,
+    aligned: Mapping[int, Sequence[float]],
+    inp: EngineInput,
+    params: GuardParams,
+) -> None:
+    """Evaluate the twin's overlay on a NOGUARD book without ever applying it."""
+    assert book.guard_state is not None
+    out = evaluate(
+        book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
+    )
+    book.guard_state = out.state
+    book.out_assets = out.cut_assets
+    for alert in out.alerts:
+        before, after = _guard_event_weight(alert, reference, reference)
+        book.events_out.append(GuardEvent(date, alert, "ARM_DISABLED", before, after))
+
+
 def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
     """Run the whole window. Pure: *inp* is never mutated.
 
@@ -410,17 +478,50 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
     aligned = _aligned_returns(inp)
     benchmark = _benchmark_returns(inp, sessions[formation_index:])
 
-    # The formation order was formed at the close of the last decision before formation.
+    # The formation order was formed at the close of the last decision before formation; the
+    # GUARD arms evaluate that proposed target there, exactly as on any later decision date.
+    decision_index = formation_index - 1
+    if decision_index < 0:
+        raise EngineError("the formation date needs a decision session before it")
+    first_decision = sessions[decision_index]
     for book in books.values():
         target_dates = [d for d in inp.targets[book.spec.target_source] if d < inp.formation_date]
         if not target_dates:
             raise EngineError(f"{book.spec.code}: no target before formation")
         first = max(target_dates)
+        if first != first_decision:
+            raise EngineError(
+                f"{book.spec.code}: the formation decision {first} is not the session before "
+                f"formation ({first_decision})"
+            )
         target = _validate_target(
             inp.targets[book.spec.target_source][first], f"{book.spec.code}@{first}"
         )
         book.pending = target
         book.markowitz = target
+    for code in order:
+        book = books[code]
+        spec = book.spec
+        if spec.guard is not None:
+            book.pending = _apply_guard(
+                book,
+                dict(book.pending or {}),
+                first_decision,
+                decision_index,
+                aligned,
+                inp,
+                spec.guard,
+            )
+        elif spec.shadow_guard is not None:
+            _record_shadow(
+                book,
+                dict(book.pending or {}),
+                first_decision,
+                decision_index,
+                aligned,
+                inp,
+                spec.shadow_guard,
+            )
 
     for index in range(formation_index, len(sessions)):
         date = sessions[index]
@@ -492,31 +593,8 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                         f"{code}: twin {twin_book.spec.code} was not simulated at {date}"
                     )
                 ref = twin_book.weights_out[-1].final_target
-                tracked = set(ref) | set(book.out_assets)
-                asset_returns = {
-                    asset_id: _asset_return_window(asset_id, aligned, index, spec.guard.J)
-                    for asset_id in tracked
-                }
-                inp_guard = GuardInput(
-                    date=date,
-                    reference_weights=dict(ref),
-                    asset_returns=asset_returns,
-                    reference_returns=_reference_returns(
-                        ref, aligned, index, spec.guard.vol_window
-                    ),
-                    nav=book.nav,
-                    news=inp.news.get(date),
-                )
-                assert book.guard_state is not None
-                out = evaluate(book.guard_state, inp_guard, spec.guard)
-                book.guard_state = out.state
-                book.out_assets = out.cut_assets
                 pre_guard = dict(ref)
-                final = dict(out.weights)
-                for alert in out.alerts:
-                    status = _action_status(spec, alert, out.cut_assets, out.scale, ref)
-                    before, after = _guard_event_weight(alert, ref, final)
-                    book.events_out.append(GuardEvent(date, alert, status, before, after))
+                final = _apply_guard(book, ref, date, index, aligned, inp, spec.guard)
                 current = dict(book.weights)
                 if (
                     any(
@@ -528,28 +606,7 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                     book.pending = final
 
             if spec.shadow_guard is not None:
-                ref = final
-                tracked = set(ref) | set(book.out_assets)
-                shadow_in = GuardInput(
-                    date=date,
-                    reference_weights=dict(ref),
-                    asset_returns={
-                        a: _asset_return_window(a, aligned, index, spec.shadow_guard.J)
-                        for a in tracked
-                    },
-                    reference_returns=_reference_returns(
-                        ref, aligned, index, spec.shadow_guard.vol_window
-                    ),
-                    nav=book.nav,
-                    news=inp.news.get(date),
-                )
-                assert book.guard_state is not None
-                shadow = evaluate(book.guard_state, shadow_in, spec.shadow_guard)
-                book.guard_state = shadow.state
-                book.out_assets = shadow.cut_assets
-                for alert in shadow.alerts:
-                    before, after = _guard_event_weight(alert, ref, ref)
-                    book.events_out.append(GuardEvent(date, alert, "ARM_DISABLED", before, after))
+                _record_shadow(book, final, date, index, aligned, inp, spec.shadow_guard)
 
             book.weights_out.append(
                 DayWeights(
