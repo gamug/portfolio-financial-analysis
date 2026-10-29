@@ -1401,6 +1401,44 @@ _INVENTORY_COMPONENT_PREFIXES: tuple[str, ...] = (
 _NOT_AN_INVENTORY_COMPONENT_RE = re.compile(
     r"Equalization|Noncurrent|Deferred|Reserve|LIFO|Valuation|Gross", re.IGNORECASE
 )
+# D-18 (audit round #11, reviewer B): the concepts that prove a filing has an inventory line -- what
+# the registry item reads (its ``concepts``, its ``nonnegative`` elements and its substitute
+# ``totals``/``families``), the inventory face-line allowlist, the two inventory reserve lines of
+# ``_FACE_LINE_RESERVES`` and the component prefixes (each names the us-gaap element of the same local
+# name; their ``...NetOfReserves`` variants are covered by the local-name test in
+# :meth:`Statements.no_inventory_lines`). Built from the constants so a later registry change follows.
+_INVENTORY_RESERVE_CONCEPTS: frozenset[str] = frozenset(
+    concept
+    for key, reserve in _FACE_LINE_RESERVES.items()
+    for concept in (key, reserve)
+    if "inventor" in key.lower() or "inventor" in reserve.lower()
+)
+INVENTORY_CONCEPTS: frozenset[str] = frozenset(
+    {
+        *REGISTRY["inventory"].concepts,
+        *REGISTRY["inventory"].nonnegative,
+        *INVENTORY_SUBSTITUTES,
+        *INVENTORY_FAMILIES,
+        *_FACE_LINE_ELEMENTS["inventory"],
+        *_INVENTORY_RESERVE_CONCEPTS,
+        *(G + prefix for prefix in _INVENTORY_COMPONENT_PREFIXES),
+    }
+)
+# D-18: a face caption that names inventory, whatever the row's concept.
+_INVENTORY_CAPTION_RE = re.compile(r"inventor", re.IGNORECASE)
+
+
+def _is_inventory_concept(concept: str) -> bool:
+    """Whether *concept* is an inventory concept (D-18): one of :data:`INVENTORY_CONCEPTS`, or any
+    concept -- us-gaap or a company extension -- whose local name contains ``inventor``. Accepts the
+    payload spelling (``us-gaap_X``) and the filed-fact one (``us-gaap:X``)."""
+    if not concept:
+        return False
+    spelled = concept.replace(":", "_", 1)
+    local = spelled.split("_", 1)[-1].lower()
+    return spelled in INVENTORY_CONCEPTS or "inventor" in local
+
+
 # Q1 (user-approved): the net interest line the filer presents as its interest line ("Interest expense, net"), read
 # only when no gross interest expense is filed anywhere (statements, then the notes) -- flagged ``interest_net``.
 NET_INTEREST_ELEMENTS: tuple[str, ...] = (
@@ -2143,6 +2181,32 @@ class Statements:
         resolvers name it, so the classifier can call it retryable.
         """
         return not any(self.raw.values())
+
+    def no_inventory_lines(self) -> bool:
+        """D-18: whether the filing shows no inventory line at all (S-X 5-02 item 6).
+
+        True when no row of any statement -- dimensional rows included, every column and every
+        period -- carries an inventory concept (:data:`INVENTORY_CONCEPTS`) or a caption naming
+        inventory with a number, and no filed fact of the filing is an inventory concept. A header
+        or abstract row without a number is not a line; a zero is.
+        """
+        for statement in STATEMENT_KEYS:
+            for row in self.raw.get(statement) or []:
+                if not self._row_has_value(row):
+                    continue
+                if _is_inventory_concept(str(row.get("concept") or "")):
+                    return False
+                if _INVENTORY_CAPTION_RE.search(self._face_caption(row)):
+                    return False
+        return not any(_is_inventory_concept(fact.concept) for fact in self.filed_facts)
+
+    @staticmethod
+    def _row_has_value(row: dict[str, Any]) -> bool:
+        """Whether any period column of *row* carries a number (zero included)."""
+        return any(
+            _parse_period(str(column)) is not None and _numeric(value) is not None
+            for column, value in row.items()
+        )
 
     def instant_periods(self) -> list[Period]:
         return [p for p in self.periods if p.is_instant]
