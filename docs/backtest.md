@@ -37,6 +37,13 @@ The three windows are run in the order P1, P3, P2. Warm-up: cycle REPLAY on the 
 grid for `W = 12` steps before the first decision date (T5 compares `W = 12` with `W = 6`); a
 warm-up step refused by cycle's coverage brake is recorded and skipped.
 
+**The W = 6 comparison is exactly zero in these windows.** All 27 summary rows (3 arms × 9
+segments) compare equal between `rule_*` and `w6_*` in all three windows (0 of 27 differ, tested
+with exact float equality): each decision
+date's REPLAY recomputes its ranking from that day's data, and no veto raised only during the six
+extra warm-up steps survives to a decision. `w6_P1` is the one run whose warm-up no longer contains
+2021-06-03 (the 6.05 % refusal), and it too lands on the same books.
+
 ## 3. Arms
 
 One shared selection and one shared Markowitz target per decision date:
@@ -379,11 +386,11 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
     AND (BRK or V selected in a Top-30 book)`. The **first** clause is false — neither name is
     understated — so `excl_*` does not run whatever the selection does. For the record, `BRK.B` is
     selected in **5** of P1's 10 decisions (2022-03-03, 2022-04-01, 2022-05-03, 2022-06-02,
-    2022-07-05) and **6** of P3's 10 (2023-10-26, 2023-12-27, 2024-01-29, 2024-02-28, 2024-03-28,
-    2024-04-29); `V` is selected in none of the 20. At those decisions BRK.B's cap uses the
-    converted class A count, which is precisely why the trigger's first clause is false. Because
-    `excl_*` is not run, the Top-30 arms are unaffected by L-43 (P2's counts are in
-    `backtest_results.md`).
+    2022-07-05), **6** of P3's 10 (2023-10-26, 2023-12-27, 2024-01-29, 2024-02-28, 2024-03-28,
+    2024-04-29) and **3** of P2's 8; `V` is selected in **none** of the 28 decisions of the three
+    windows. At those decisions BRK.B's cap uses the converted class A count, which is precisely
+    why the trigger's first clause is false. Because `excl_*` is not run, the Top-30 arms are
+    unaffected by L-43; `backtest_results.md` shows the books those decisions produced.
 12. **L-44 (missing filings)**, as measured here: GAP has 4 filings in 2020, 4 in 2021 and 0 in
     2022, and it *is* scored at P1's k = 0 and k = 1 (newest score event 2021-10-30); ICE, INCY and
     DELL have 4 filings in each of 2020, 2021 and 2022 after FIXES #14 loaded the missing 2020
