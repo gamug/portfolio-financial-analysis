@@ -34,6 +34,26 @@ def nearest_psd(sigma: Mat, *, eig_floor: float = 1e-10) -> Mat:
     return 0.5 * (out + out.T)
 
 
+PSD_REL_TOL = 1e-8  # a stored covariance may sit on the PSD boundary by solver/rounding noise
+
+
+def psd_violation(sigma: Mat, *, rel_tol: float = PSD_REL_TOL) -> float | None:
+    """How far *sigma* falls below positive semidefinite, or ``None`` when it does not.
+
+    A stored covariance is symmetrized by :func:`nearest_psd` when it is built, so a sub-matrix
+    of it is PSD up to round-off. The optimizer would silently *repair* a broken matrix
+    (``nearest_psd`` floors the eigenvalues), which is exactly what a caller reading a stored
+    covariance must not let happen unnoticed: the violation is reported here, and the caller
+    decides. The tolerance is relative to the matrix's largest absolute eigenvalue, so it means
+    the same on an annualized covariance (eigenvalues ~1e-2) and on any other scale.
+    """
+    s = 0.5 * (np.asarray(sigma, dtype=np.float64) + np.asarray(sigma, dtype=np.float64).T)
+    eig = np.linalg.eigvalsh(s)
+    scale = max(1.0, float(np.abs(eig).max())) if eig.size else 1.0
+    below = float(-eig.min()) if eig.size and eig.min() < 0.0 else 0.0
+    return below if below > rel_tol * scale else None
+
+
 def sample_covariance(returns: Mat, *, annualize: bool = True, periods_per_year: int = 252) -> Mat:
     x = np.asarray(returns, dtype=np.float64)
     xc = x - x.mean(axis=0, keepdims=True)

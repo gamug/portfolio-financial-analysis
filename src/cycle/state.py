@@ -167,6 +167,54 @@ def check_score_weights(
     )
 
 
+class ReplayInputsMismatch(RuntimeError):
+    """A ``cycle_run`` for this (type, date) recorded another selection cut (WP-C)."""
+
+
+def check_replay_inputs(
+    conn: Database,
+    cycle_type: str,
+    cycle_date: str,
+    *,
+    risk_model_id: int | None,
+    veto_cutoff_same_day: bool,
+) -> None:
+    """Refuse to resume an existing run under another selection cut (WP-C).
+
+    A REPLAY run is unique per (type, date) and ``rank``/``positions`` write its ranking and its
+    book in place, so a second run at the same date under a different ``risk_model_id`` (the
+    Top-N cohort restricted to a model's panel) or ``veto_cutoff_same_day`` (the T-1 contagion lag
+    or not) would silently replace the first run's cohort. ``open_cycle`` records both once, when
+    the run is first created, and a resume never rewrites them -- the same hazard
+    :func:`check_manifest` refuses for input versions and :func:`check_score_weights` for the
+    blend. A run recorded before this change has neither key; its behaviour was exactly
+    ``risk_model_id=None`` with the T-1 cutoff, so that is what an absent key means here. Call
+    this *before* :func:`open_cycle`, which flips an existing run to ``running``."""
+    row = conn.execute(
+        "SELECT params_json FROM cycle_run WHERE cycle_type = ? AND cycle_date = ?",
+        (cycle_type, cycle_date),
+    ).fetchone()
+    if row is None or not row["params_json"]:
+        return
+    try:
+        recorded = json.loads(row["params_json"])
+    except (TypeError, ValueError):
+        return
+    if not isinstance(recorded, dict):
+        return
+    was_model = recorded.get("risk_model_id")
+    was_cutoff = bool(recorded.get("veto_cutoff_same_day", False))
+    if was_model == risk_model_id and was_cutoff == bool(veto_cutoff_same_day):
+        return
+    raise ReplayInputsMismatch(
+        f"the {cycle_type} run for {cycle_date} selected under risk_model_id = {was_model!r} "
+        f"and veto_cutoff_same_day = {was_cutoff!r}; this run asks for "
+        f"risk_model_id = {risk_model_id!r} and veto_cutoff_same_day = "
+        f"{bool(veto_cutoff_same_day)!r}. Resuming would replace that run's cohort -- rerun with "
+        "the recorded cut, or reset the run (a different date, or `cycle backfill --force`)"
+    )
+
+
 def merge_params(conn: Database, cycle_run_id: int, updates: dict[str, Any]) -> None:
     """Merge *updates* into ``cycle_run.params_json`` (top-level keys; secrets stay redacted)."""
     row = conn.execute("SELECT params_json FROM cycle_run WHERE id = ?", (cycle_run_id,)).fetchone()

@@ -175,7 +175,10 @@ def _is_excluded_cover_member(member: str) -> bool:
 
 
 def cover_total(
-    entries: Iterable[tuple[str, float, str]], *, cik: str | None = None
+    entries: Iterable[tuple[str, float, str]],
+    *,
+    cik: str | None = None,
+    rates: dict[str, float] | None = None,
 ) -> ShareCount | None:
     """One filing's count from its cover entries ``(class_member, value, as_of_date)``: the filer's
     own total (class ``""``, its newest) when it filed one, else each class's newest value, converted
@@ -184,7 +187,8 @@ def cover_total(
     ``None`` for no entries.
 
     The one aggregation the stored valuation metric and the as-of reader share, so the two cannot
-    disagree on what a dual-class filer's count is."""
+    disagree on what a dual-class filer's count is. *rates* are the filing's own conversion rates
+    (L-43, ``cover_class_conversion``); they take precedence over :data:`CLASS_CONVERSION`."""
     items = list(entries)
     totals = [e for e in items if not e[0]]
     if totals:
@@ -200,7 +204,7 @@ def cover_total(
             newest[e[0]] = e
     if not newest:
         return None
-    factor = _conversion(cik)
+    factor = {**_conversion(cik), **(rates or {})}
     n_excluded = len(excluded_members)
     return ShareCount(
         sum(e[1] * factor.get(e[0], 1.0) for e in newest.values()),
@@ -222,10 +226,14 @@ class _Count:
     entries: tuple[tuple[str, float, str], ...] = ()
     n_excluded: int = 0
     cover_member_not_common_excluded: bool = False
+    rates: tuple[tuple[str, float], ...] = ()  # the filing's own conversion rates (L-43)
 
 
-def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
-    """Per asset, each usable filing's share count (:func:`cover_total`)."""
+def _filing_counts(
+    rows: Iterable[Any], rates: dict[int, dict[str, float]] | None = None
+) -> dict[int, list[_Count]]:
+    """Per asset, each usable filing's share count (:func:`cover_total`), with the filing's own
+    conversion rates when ``cover_class_conversion`` records them (L-43)."""
     by_filing: dict[tuple[int, int], list[Any]] = defaultdict(list)
     for r in rows:
         by_filing[(int(r["asset_id"]), int(r["filing_id"]))].append(r)
@@ -234,7 +242,8 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
         raw_entries = tuple(
             (str(e["class_member"]), float(e["value"]), str(e["as_of_date"])) for e in entries
         )
-        total = cover_total(raw_entries, cik=entries[0]["cik"])
+        conv = (rates or {}).get(filing_id, {})
+        total = cover_total(raw_entries, cik=entries[0]["cik"], rates=conv)
         if total is not None:
             out[asset_id].append(
                 _Count(
@@ -247,9 +256,16 @@ def _filing_counts(rows: Iterable[Any]) -> dict[int, list[_Count]]:
                     raw_entries,
                     n_excluded=total.n_excluded,
                     cover_member_not_common_excluded=total.cover_member_not_common_excluded,
+                    rates=tuple(sorted(conv.items())),
                 )
             )
     return out
+
+
+def _counts_as_of(db: Database, asset_ids: list[int], as_of: str) -> dict[int, list[_Count]]:
+    """The usable cover counts on *as_of*, each with its filing's own conversion rates (L-43)."""
+    rows = queries.cover_share_rows(db, asset_ids, as_of)
+    return _filing_counts(rows, queries.cover_class_rates(db, [int(r["filing_id"]) for r in rows]))
 
 
 def _latest(counts: list[_Count]) -> _Count:
@@ -361,7 +377,7 @@ def _class_by_class_val(  # noqa: C901, PLR0913, PLR0917
     close is missing."""
     cik_norm = str(count.cik).zfill(10) if count.cik else ""
     class_map = CLASS_LISTING.get(cik_norm, {})
-    conv_map = CLASS_CONVERSION.get(cik_norm, {})
+    conv_map = {**CLASS_CONVERSION.get(cik_norm, {}), **dict(count.rates)}
     newest: dict[str, tuple[str, float, str]] = {}
     for e in count.entries:
         if _is_excluded_cover_member(e[0]):
@@ -410,7 +426,7 @@ def _is_incomplete_classes(count: _Count) -> bool:
     if count.n_classes <= 1:
         return False
     cik_norm = str(count.cik).zfill(10) if count.cik else ""
-    conv_map = CLASS_CONVERSION.get(cik_norm, {})
+    conv_map = {**CLASS_CONVERSION.get(cik_norm, {}), **dict(count.rates)}
     newest: dict[str, tuple[str, float, str]] = {}
     for e in count.entries:
         if _is_excluded_cover_member(e[0]):
@@ -445,7 +461,7 @@ def market_caps_as_of(  # noqa: C901, PLR0913 - keyword-only knobs with defaults
     ticker_to_asset, _ = queries.resolve_asset_ids(db, listing_members, as_of=as_of)
     all_needed_assets = sorted(set(wanted) | set(ticker_to_asset.values()))
 
-    counts = _filing_counts(queries.cover_share_rows(db, wanted, as_of))
+    counts = _counts_as_of(db, wanted, as_of)
     floor = (date.fromisoformat(as_of) - timedelta(days=max_price_age_days)).isoformat()
     closes = {
         int(r["asset_id"]): (str(r["date"]), float(r["close"]), r["source"])

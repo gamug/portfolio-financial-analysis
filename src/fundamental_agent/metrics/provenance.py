@@ -31,13 +31,24 @@ from typing import Any
 
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
 from fundamental_agent.metrics.growth import LENDER_SUB_INDUSTRIES
-from fundamental_agent.statements import REGISTRY, Capital, Resolution, Statements
+from fundamental_agent.statements import (
+    EBIT_DERIVED_HOW,
+    EBIT_DERIVED_INPUT,
+    EBIT_NET_INTEREST_INPUT,
+    EBIT_ZERO_INTEREST_INPUT,
+    REGISTRY,
+    Capital,
+    Resolution,
+    Statements,
+)
 
 # The fixed list of empty-reason codes (D14; G4's precedence is applied by :func:`_empty_reason`).
 MISSING_INPUT = "missing_input"
 NOT_APPLICABLE = "not_applicable"
 NOT_REPORTED = "not_reported"
 DENOMINATOR_NOT_POSITIVE = "denominator_not_positive"
+# D-14 (audit round #10): a positive denominator too small to carry the ratio (ROIC on invested capital < 5 % of assets).
+DENOMINATOR_NOT_MEANINGFUL = "denominator_not_meaningful"
 GROWTH_BASE_NOT_POSITIVE = "growth_base_not_positive"
 CAPTURE_FAILURE = "capture_failure"
 PRIOR_YEAR_MISSING = "prior_year_missing"
@@ -50,6 +61,7 @@ EMPTY_REASONS = (
     GROWTH_BASE_NOT_POSITIVE,
     CAPTURE_FAILURE,
     PRIOR_YEAR_MISSING,
+    DENOMINATOR_NOT_MEANINGFUL,
 )
 
 # The basis of each item a metric reads (G2): "period" (the filing's own period column), "ttm" (the
@@ -321,6 +333,7 @@ _FLAG_REASONS: tuple[tuple[str, str], ...] = (
     ("denominator_not_positive", DENOMINATOR_NOT_POSITIVE),
     ("denominator_negative", DENOMINATOR_NOT_POSITIVE),
     ("invested_capital_not_positive", DENOMINATOR_NOT_POSITIVE),
+    ("invested_capital_not_meaningful", DENOMINATOR_NOT_MEANINGFUL),
     ("capture_failure", CAPTURE_FAILURE),
     ("refused", CAPTURE_FAILURE),
     ("unclassified_balance_sheet", CAPTURE_FAILURE),
@@ -536,7 +549,11 @@ def _empty_reason(  # noqa: C901, PLR0911, PLR0912 - G4's precedence, one linear
     if NOT_APPLICABLE in own:
         return NOT_APPLICABLE
     for reason in own:
-        if reason in (DENOMINATOR_NOT_POSITIVE, GROWTH_BASE_NOT_POSITIVE):
+        if reason in (
+            DENOMINATOR_NOT_POSITIVE,
+            GROWTH_BASE_NOT_POSITIVE,
+            DENOMINATOR_NOT_MEANINGFUL,
+        ):
             return reason
     # 2. a current-period numerator/denominator input that is not filed
     unclassified = any("unclassified_balance_sheet" in key for key in result.inputs)
@@ -758,6 +775,15 @@ def build(
         if result.value is not None
         else _empty_reason(stmts, period_key, result, ttm_flows),
     }
+    if (
+        result.inputs.get("flag_free_cash_flow_growth_quarter_derived")
+        and result.name == "free_cash_flow_growth"
+    ):
+        # Q8 (audit round #10): the quarter derived from the year-to-date columns of this 10-Q and the previous one
+        for item in ("operating_cash_flow", "capital_expenditure"):
+            for entry in block["items"].get(item, []):
+                if entry.get("basis") == "period" and entry.get("how") is None:
+                    entry["how"] = "quarter_derived"
     if result.name == "market_capitalization":
         block["market_cap"] = _market_cap_provenance(result)
     # T-071 part 1 (P4): the rule the applicability matrix's NA/ADJ cell was decided by, when the
@@ -780,9 +806,18 @@ def attach(
     Each result gets its own copy of the inputs dict: a metric group shares one dict across its
     metrics, so writing the block in place would leave every row of the group carrying the last
     metric's provenance. ``MetricResult`` is frozen, so the list entry is replaced."""
+    operating = stmts.resolve("operating_income", period_key)
+    ebit_derived = operating.how == EBIT_DERIVED_HOW
     for index, (group, result) in enumerate(results):
         inputs = dict(result.inputs)
-        inputs["provenance"] = build(stmts, period_key, result, ttm_flows)
+        if ebit_derived and "operating_income" in ITEMS.get(result.name, {}):
+            # D-17 (audit round #11): the metric reads the derived operating income -- flagged on the metric
+            inputs[EBIT_DERIVED_INPUT] = 1.0
+            if "ebit_net_interest" in operating.flags:
+                inputs[EBIT_NET_INTEREST_INPUT] = 1.0
+            if "ebit_zero_interest_proven" in operating.flags:
+                inputs[EBIT_ZERO_INTEREST_INPUT] = 1.0
+        inputs["provenance"] = build(stmts, period_key, replace(result, inputs=inputs), ttm_flows)
         results[index] = (group, replace(result, inputs=inputs))
 
 
