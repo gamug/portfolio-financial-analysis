@@ -19,6 +19,9 @@ returns_engine_version = "qret-v2"
 rf_curve = "FF_RF_DAILY"        # written by `python -m quant load-rf`
 # news_db = "/workspaces/thesis/data/nlp.db"   # layer 2; absent -> arm 3 is not run
 # news_model = "gamug/FinBERT-financial-news"
+# unscored_max_share = 0.06     # optional; absent -> CycleSettings' 0.05. Case B of
+#                               # FINISH_REPO section 5 step 7 writes the measured value here.
+# exclude_tickers = ["BRK.B", "V"]   # optional; the conditional L-43 runs' names (default empty).
 
 [guard]
 # Which GUARD arm's params the NOGUARD twin replays as ARM_DISABLED alerts.

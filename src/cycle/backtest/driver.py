@@ -34,6 +34,7 @@ from portfolio_common.db import Database
 
 import kg_schema
 from cycle import data as cycle_data
+from cycle.backtest import calibrate as guard_calibration
 from cycle.backtest import engine
 from cycle.config import CycleSettings
 from cycle.guard import GuardParams, NewsCounts, NewsParams
@@ -108,6 +109,11 @@ class BacktestParams:
     shadow_from: str | None
     guard: dict[str, GuardParams]
     raw: dict[str, Any]
+    #: Case B of FINISH_REPO section 5 step 7: the measured `unscored_max_share` (None -> the
+    #: CycleSettings default, 0.05). Recorded in params_json.
+    unscored_max_share: float | None = None
+    #: The conditional L-43 runs: tickers cycle's selection must never select.
+    exclude_tickers: tuple[str, ...] = ()
 
 
 def require_migrated(conn: Database) -> None:
@@ -260,7 +266,28 @@ def load_params(path: str | Path) -> BacktestParams:
         shadow_from=guard_raw.get("shadow_from"),
         guard=guard,
         raw=raw,
+        unscored_max_share=_unscored_max_share(run),
+        exclude_tickers=_exclude_tickers(run),
     )
+
+
+def _unscored_max_share(run: dict[str, Any]) -> float | None:
+    """``[run] unscored_max_share`` -- Case B's measured value; absent means CycleSettings' 0.05."""
+    value = run.get("unscored_max_share")
+    if value is None:
+        return None
+    share = float(value)
+    if not 0.0 < share <= 1.0:
+        raise BacktestError(f"[run] unscored_max_share must be in (0, 1], got {share}")
+    return share
+
+
+def _exclude_tickers(run: dict[str, Any]) -> tuple[str, ...]:
+    """``[run] exclude_tickers`` -- the conditional L-43 runs' names, upper-cased."""
+    value = run.get("exclude_tickers", [])
+    if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
+        raise BacktestError("[run] exclude_tickers must be a list of ticker strings")
+    return tuple(sorted({v.strip().upper() for v in value if v.strip()}))
 
 
 def window_spec(window_id: str) -> WindowSpec:
@@ -866,6 +893,8 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "news_db": params.news_db,
         "news_model": params.news_model,
         "shadow_from": params.shadow_from,
+        "unscored_max_share": params.unscored_max_share,
+        "exclude_tickers": list(params.exclude_tickers),
         "guard": {
             code: {
                 "layers": sorted(g.layers),
@@ -1312,6 +1341,22 @@ def _arm_specs(
 # -- the run --------------------------------------------------------------------------
 
 
+def _cycle_settings(database: Path, universe: Path, params: BacktestParams) -> CycleSettings:
+    """The cycle settings the driver runs under; the two optional `[run]` keys are honoured."""
+    extra: dict[str, Any] = {}
+    if params.unscored_max_share is not None:
+        extra["unscored_max_share"] = params.unscored_max_share
+    if params.exclude_tickers:
+        extra["exclude"] = params.exclude_tickers
+    return CycleSettings(
+        db_path=database,
+        universe_db_path=universe,
+        top_n=params.top_n,
+        max_sector_weight=0.30,
+        **extra,
+    )
+
+
 def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestration
     *,
     window_id: str,
@@ -1355,12 +1400,7 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
                 universe,
             )
             _build_returns_version(returns_report, params.returns_engine_version)
-            settings = CycleSettings(
-                db_path=database,
-                universe_db_path=universe,
-                top_n=params.top_n,
-                max_sector_weight=0.30,
-            )
+            settings = _cycle_settings(database, universe, params)
             pipeline = _pipeline(
                 conn,
                 db_path=database,
@@ -1535,11 +1575,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated arm codes (default: BASE, NOGUARD and every GUARD arm the "
         "params define)",
     )
+    calib = sub.add_parser(
+        "calibrate-guard", help="calibrate and freeze the GUARD parameters on 2019-2021"
+    )
+    calib.add_argument("--db", required=True, help="a scratch copy of the financial database")
+    calib.add_argument("--universe-db", required=True, help="the read-only universe database")
+    calib.add_argument("--from", dest="date_from", default="2019-01-02")
+    calib.add_argument("--to", dest="date_to", default="2021-12-31")
+    calib.add_argument("--out", required=True, help="the params TOML to write")
+    calib.add_argument(
+        "--unscored-max-share",
+        type=float,
+        default=None,
+        help="write the [run] unscored_max_share key (Case B of FINISH_REPO section 5 step 7)",
+    )
+    calib.add_argument(
+        "--no-leavers", action="store_true", help="ignore the optional leaver calibration files"
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "calibrate-guard":
+        return guard_calibration.main(
+            [
+                "--db",
+                args.db,
+                "--universe-db",
+                args.universe_db,
+                "--from",
+                args.date_from,
+                "--to",
+                args.date_to,
+                "--out",
+                args.out,
+                *(
+                    ["--unscored-max-share", str(args.unscored_max_share)]
+                    if args.unscored_max_share is not None
+                    else []
+                ),
+                *(["--no-leavers"] if args.no_leavers else []),
+            ]
+        )
     arms = args.arms.split(",") if args.arms else None
     try:
         result = run_backtest(

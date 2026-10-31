@@ -644,3 +644,68 @@ def test_load_news_counts_unique_articles_inside_the_close_to_close_window(
     with pytest.raises(BacktestError, match="no 'other-model'"):
         driver.load_news(news_path, "other-model", conn, sessions, 1, 1)
     conn.close()
+
+
+def test_the_default_unscored_max_share_is_cycle_settings(tmp_path: Path) -> None:
+    """Case A: without the key, CycleSettings' own 0.05 stays in force (unchanged default)."""
+    params = load_params(_params_file(tmp_path))
+    assert params.unscored_max_share is None
+    settings = driver._cycle_settings(tmp_path / "f.db", tmp_path / "u.db", params)
+    assert settings.unscored_max_share == 0.05
+    assert settings.exclude == ()
+
+
+def test_the_two_optional_run_keys_are_refused_when_malformed(tmp_path: Path) -> None:
+    text = _params_file(tmp_path).read_text()
+    bad_share = tmp_path / "bad_share.toml"
+    bad_share.write_text(text.replace("top_n = 2", "top_n = 2\nunscored_max_share = 0.0"))
+    with pytest.raises(BacktestError, match="unscored_max_share"):
+        load_params(bad_share)
+    bad_exclude = tmp_path / "bad_exclude.toml"
+    bad_exclude.write_text(text.replace("top_n = 2", "top_n = 2\nexclude_tickers = 'V'"))
+    with pytest.raises(BacktestError, match="exclude_tickers"):
+        load_params(bad_exclude)
+
+
+def test_the_two_optional_run_keys_reach_cycle_and_params_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Case B: the measured 0.06 and the L-43 exclusions are honoured by the driver."""
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    params_path.write_text(
+        params_path.read_text().replace(
+            "rf_curve = 'FF_RF_DAILY'",
+            "rf_curve = 'FF_RF_DAILY'\nunscored_max_share = 0.06\nexclude_tickers = ['aaa']",
+        )
+    )
+    conn = connect(db_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    fake = _fake_replay(conn)
+    seen: list[Any] = []
+
+    def capture(settings: Any, *args: Any, **kwargs: Any) -> Any:
+        seen.append(settings)
+        return fake(settings, *args, **kwargs)
+
+    monkeypatch.setattr(driver, "run_replay", capture)
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+    )
+    assert seen and all(s.unscored_max_share == 0.06 for s in seen)
+    assert all(s.exclude == ("AAA",) for s in seen)
+    run = (
+        connect(db_path)
+        .execute("SELECT params_json FROM backtest_run WHERE id = ?", (result["backtest_run_id"],))
+        .fetchone()
+    )
+    payload = json.loads(str(run["params_json"]))
+    assert payload["unscored_max_share"] == 0.06
+    assert payload["exclude_tickers"] == ["AAA"]
