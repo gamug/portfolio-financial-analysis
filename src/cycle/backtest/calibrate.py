@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -106,7 +107,8 @@ class Calibration:
     ew_sessions: int
     ew_cumulative: float
     ew_max_drawdown: float
-    missing_members_by_year: dict[str, int]
+    missing_assets_by_year: dict[str, int]
+    missing_return_by_year: dict[str, int]
     pit_members_by_year: dict[str, int]
     leaver_source: str
     leaver_series: int
@@ -129,7 +131,8 @@ class Calibration:
             "ew_sessions": self.ew_sessions,
             "ew_cumulative_return": round(self.ew_cumulative, 6),
             "ew_max_drawdown": round(self.ew_max_drawdown, 6),
-            "missing_members_by_year": self.missing_members_by_year,
+            "missing_assets_by_year": self.missing_assets_by_year,
+            "missing_return_by_year": self.missing_return_by_year,
             "pit_members_by_year": self.pit_members_by_year,
             "leaver_source": self.leaver_source,
             "leaver_series": self.leaver_series,
@@ -224,24 +227,25 @@ def _member_rows(
     sessions: Sequence[str],
     row_of_asset: dict[int, int],
     leaver_row: dict[str, int],
-) -> tuple[list[list[int]], dict[str, int], dict[str, int]]:
+) -> tuple[list[list[int]], list[int], dict[str, int]]:
     """Per session, the matrix rows of its members, resolved as the driver resolves them.
 
-    Returns ``(member_rows, pit_by_year, missing_by_year)``. A member the database has no asset
-    row for -- the L-42 leavers, which is what WP-G's files exist for -- falls back to its leaver
-    matrix row.
+    Returns ``(member_rows, pit_per_session, missing_assets_by_year)``. A member the database has
+    no asset row for -- the L-42 leavers, which is what WP-G's files exist for -- is resolved from
+    ``resolve_asset_ids``' *missing* list, never from *mapping* (no leaver has an ``assets`` row),
+    and falls back to its leaver matrix row.
     """
     rows: list[list[int]] = []
-    pit_by_year: dict[str, int] = {}
-    missing_by_year: dict[str, int] = {}
+    pit_per_session: list[int] = []
+    missing_assets_by_year: dict[str, int] = {}
     for session in sessions:
         members = queries.members_asof(universe, session)
         mapping, missing = queries.resolve_asset_ids(
             conn, [(m.symbol, m.cik) for m in members], as_of=session
         )
         year = session[:4]
-        pit_by_year[year] = pit_by_year.get(year, 0) + len(members)
-        missing_by_year[year] = missing_by_year.get(year, 0) + len(missing)
+        pit_per_session.append(len(members))
+        missing_assets_by_year[year] = missing_assets_by_year.get(year, 0) + len(missing)
         picks: list[int] = []
         for symbol, asset_id in mapping.items():
             row = row_of_asset.get(asset_id)
@@ -249,8 +253,14 @@ def _member_rows(
                 picks.append(row)
             elif symbol in leaver_row:
                 picks.append(leaver_row[symbol])
+        # Every L-42 leaver lands in `missing` (it has no `assets` row): without this loop the
+        # 9,167 calibration returns would fill the matrix but never enter the panel.
+        for symbol in missing:
+            key = symbol.upper()
+            if key in leaver_row:
+                picks.append(leaver_row[key])
         rows.append(sorted(set(picks)))
-    return rows, pit_by_year, missing_by_year
+    return rows, pit_per_session, missing_assets_by_year
 
 
 def _matrix(
@@ -373,6 +383,14 @@ def _validate(values: dict[str, float]) -> None:
         raise CalibrationError(f"alpha = {values['alpha']} is not in (0, 1)")
     if values["m"] <= 0:
         raise CalibrationError(f"m = {values['m']} is not > 0")
+    # AVANCE E1 on the *rounded* values: s_dd must be exactly 1.0 at a new maximum (nav == peak).
+    # The frozen file publishes the rounded numbers, so the check reads them, not the raw ones.
+    product = values["m"] * (1.0 - values["alpha"])
+    if product < 1.0 - 1e-9:
+        raise CalibrationError(
+            f"m x (1 - alpha) = {product:.12f} < 1 on the rounded values: AVANCE E1's "
+            "s_dd(nav = peak) = 1 would not hold"
+        )
 
 
 def _check_inputs(db_path: Path, universe_db_path: Path, date_from: str, date_to: str) -> None:
@@ -418,12 +436,20 @@ def calibrate(
         leaver_row = {symbol: int(n_assets) + k for k, symbol in enumerate(leaver_symbols)}
         matrix, row_of_asset = _matrix(conn, sessions, leaver_row)
         leaver_pairs = _leaver_rows(matrix, sessions, leaver_row, leavers)
-        member_rows, pit_by_year, missing_by_year = _member_rows(
+        member_rows, pit_per_session, missing_assets_by_year = _member_rows(
             conn, universe, sessions, row_of_asset, leaver_row
         )
     finally:
         conn.close()
         universe.close()
+
+    missing_return_by_year: dict[str, int] = {}
+    for j, rows in enumerate(member_rows):
+        have = sum(1 for i in rows if math.isfinite(float(matrix[i, j])))
+        year = sessions[j][:4]
+        missing_return_by_year[year] = missing_return_by_year.get(year, 0) + (
+            pit_per_session[j] - have
+        )
 
     s_matrix = _rolling_sums(matrix, J)
     s_all, r_all, member_sessions = _pools(matrix, s_matrix, member_rows)
@@ -439,12 +465,19 @@ def calibrate(
     if not 0.0 < alpha < 1.0:
         raise CalibrationError(f"alpha = {alpha} is outside (0, 1): the EW drawdown is degenerate")
 
+    alpha_rounded = round(alpha, NDIGITS)
+    # m = 1/(1 - alpha) on the raw alpha (the rule's literal form), rounded to 4 decimals, then
+    # raised by 1e-4 steps until the *rounded* pair satisfies m x (1 - alpha) >= 1: AVANCE E1
+    # requires s_dd = 1 exactly at a new maximum, and rounding m can otherwise fall just below.
+    m_rounded = round(1.0 / (1.0 - alpha), NDIGITS)
+    while m_rounded * (1.0 - alpha_rounded) < 1.0:
+        m_rounded = round(m_rounded + 10.0**-NDIGITS, NDIGITS)
     values = {
         "gamma": round(-float(np.quantile(s_all, 0.05, method="linear")), NDIGITS),
         "delta": round(float(np.quantile(r_all, 0.75, method="linear")), NDIGITS),
         "sigma_star": round(sigma_star, NDIGITS),
-        "alpha": round(alpha, NDIGITS),
-        "m": round(1.0 / (1.0 - alpha), NDIGITS),
+        "alpha": alpha_rounded,
+        "m": m_rounded,
     }
     _validate(values)
 
@@ -463,8 +496,16 @@ def calibrate(
         ew_sessions=int(ew.size),
         ew_cumulative=float(np.cumprod(1.0 + ew)[-1] - 1.0),
         ew_max_drawdown=max_drawdown,
-        missing_members_by_year=dict(sorted(missing_by_year.items())),
-        pit_members_by_year=dict(sorted(pit_by_year.items())),
+        missing_assets_by_year=dict(sorted(missing_assets_by_year.items())),
+        missing_return_by_year=dict(sorted(missing_return_by_year.items())),
+        pit_members_by_year={
+            year: sum(
+                count
+                for session, count in zip(sessions, pit_per_session, strict=True)
+                if session[:4] == year
+            )
+            for year in sorted({session[:4] for session in sessions})
+        },
         leaver_source=str(leavers.path) if leavers is not None else "none",
         leaver_series=leavers.series if leavers is not None else 0,
         leaver_pairs=leaver_pairs,
@@ -497,8 +538,9 @@ def render_params(calib: Calibration, *, unscored_max_share: float | None = None
         f"#   {calib.ew_sessions} EW-portfolio sessions, EW cumulative "
         f"{calib.ew_cumulative:+.6f}, EW MDD {calib.ew_max_drawdown:.6f}.",
         f"#   PIT members per year: {calib.pit_members_by_year}",
-        f"#   PIT members with no return per year (declared limitation of C): "
-        f"{calib.missing_members_by_year}",
+        f"#   PIT member-sessions with no assets row per year: {calib.missing_assets_by_year}",
+        f"#   PIT member-sessions still without a return after the leaver files (declared "
+        f"limitation of C): {calib.missing_return_by_year}",
         f"#   Leaver series: {calib.leaver_series} from {calib.leaver_source} "
         f"({calib.leaver_pairs} (series, session) returns).",
         "",

@@ -23,7 +23,7 @@ With ``J = 2`` (monkeypatched; the frozen value is 21):
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -139,7 +139,7 @@ def test_hand_computed_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert calib.delta == pytest.approx(0.045, abs=1e-12)
     assert calib.sigma_star == pytest.approx(0.9073, abs=5e-5)
     assert calib.alpha == pytest.approx(0.91, abs=1e-12)
-    assert calib.m == pytest.approx(11.1111, abs=1e-9)
+    assert calib.m == pytest.approx(11.1112, abs=1e-9)
     assert calib.ew_max_drawdown == pytest.approx(0.09, abs=1e-12)
 
 
@@ -156,6 +156,75 @@ def test_ew_vol_and_mdd_by_hand(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         db_path, universe_path, date_from=sessions[0], date_to=sessions[-1], leavers_dir=None
     )
     assert calib.sigma_star == pytest.approx(float(np.std(ew, ddof=1) * np.sqrt(252)), abs=5e-5)
+
+
+def _leavers_dir(tmp_path: Path, sessions: list[str]) -> Path:
+    """A WP-G-style calibration pair for a member the database has no asset row for (L-42)."""
+    path = tmp_path / "leavers"
+    path.mkdir()
+    dates = [_previous_session(sessions[0]), *sessions]
+    closes = [100.0, 101.0, 103.0, 102.0, 104.0, 105.0]
+    lines = ["cik,symbol,date,open,high,low,close,volume,source"]
+    for day, close in zip(dates, closes, strict=True):
+        lines.append(f"0000000009,LVR,{day},{close},{close},{close},{close},1000,yfinance")
+    (path / "prices.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (path / "actions.csv").write_text("cik,symbol,action_type,ex_date,value\n", encoding="utf-8")
+    return path
+
+
+def _previous_session(session: str) -> str:
+    return trading_calendar.last_session_on_or_before(
+        date.fromisoformat(session) - timedelta(days=1)
+    ).isoformat()
+
+
+def _add_universe_leaver(universe_path: Path) -> None:
+    """One PIT member with no row in ``assets`` -- the L-42 case the calibration files cover."""
+    universe = connect(universe_path)
+    universe.execute(
+        "INSERT INTO universe_membership (symbol, security, cik, valid_from, detected_at, "
+        "source) VALUES ('LVR', 'Leaver Inc.', '0000000009', '2020-01-01', ?, 'test')",
+        ("2020-01-01",),
+    )
+    universe.commit()
+    universe.close()
+
+
+def test_a_leaver_with_no_assets_row_enters_the_panel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-1.1: a PIT member absent from ``assets`` but present in the leaver files is used."""
+    db_path, universe_path = _fixture(tmp_path)
+    monkeypatch.setattr(calibrate, "J", 2)
+    _add_universe_leaver(universe_path)
+    sessions = _sessions(5)
+    leavers = _leavers_dir(tmp_path, sessions)
+
+    without = calibrate.calibrate(
+        db_path, universe_path, date_from=sessions[0], date_to=sessions[-1], leavers_dir=None
+    )
+    assert without.member_sessions == 10
+    assert without.s_values == 8
+    assert without.missing_assets_by_year == {sessions[0][:4]: 5}
+
+    with_leavers = calibrate.calibrate(
+        db_path,
+        universe_path,
+        date_from=sessions[0],
+        date_to=sessions[-1],
+        leavers_dir=leavers,
+    )
+    # Five more member-sessions (one per session) and four more S(2) windows.
+    assert with_leavers.member_sessions == 15
+    assert with_leavers.s_values == 12
+    assert with_leavers.delta_values == 15
+    assert with_leavers.leaver_series == 1
+    assert with_leavers.leaver_pairs == 5
+    assert with_leavers.ew_sessions == 4
+    # After the files, no member-session of the sample is left without a return.
+    assert with_leavers.missing_return_by_year == {sessions[0][:4]: 0}
+    # The leaver's returns move the calibrated values (they are not silently dropped).
+    assert with_leavers.delta != without.delta
 
 
 def test_refuses_a_range_reaching_p1(tmp_path: Path) -> None:
@@ -195,7 +264,7 @@ def test_output_toml_loads_and_builds_guard_params(
     assert guard.delta == pytest.approx(0.045)
     assert guard.sigma_star == pytest.approx(0.9073)
     assert guard.alpha == pytest.approx(0.91)
-    assert guard.m == pytest.approx(11.1111)
+    assert guard.m == pytest.approx(11.1112)
 
 
 def test_unscored_max_share_is_optional(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
