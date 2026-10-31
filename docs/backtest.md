@@ -120,10 +120,12 @@ rest goes to cash; (4) caps are never relaxed. AVANCE E1's adaptation (`m(1 − 
 makes the exposure exactly 1 at a new maximum.
 
 Layer 3's `σ̂₂₁` is measured on the **reference weights** — the NOGUARD twin's weights for `t+1`
-(BACKTEST_SPEC §8.1), i.e. its drifted weights on an ordinary session and the new Markowitz target
-on a decision date. It is not the arm's own drifted post-GUARD book; the difference was at most
-`|σ₂₁(markowitz target) − σ₂₁(twin drifted)| = 0.005573` in `rule_P1` and is declared here so the
-series is traceable.
+(BACKTEST_SPEC §8.1): its drifted weights on an ordinary session, the new Markowitz target on a
+decision date (when the twin's own final target for `t+1` is the target it just formed). It is
+therefore *not* the arm's own realized post-GUARD book: on a rebalance date the reference is the
+target while the arm still holds the pre-trade book until the close, and a name cut by layer 1
+leaves the reference too. This is the declared, spec-fixed definition of the denominator; it is
+stated here so a reader of the series knows which weights it used.
 
 Output per session: the alerts (layer, asset or portfolio, value, threshold, state change) and the
 action per arm (`APPLIED` | `ARM_DISABLED` | `NOT_HELD` | `SUPERSEDED`), persisted in
