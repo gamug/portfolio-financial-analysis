@@ -396,12 +396,13 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
 12. **L-44 (missing filings)**, as measured here: GAP has 4 filings in 2020, 4 in 2021 and 0 in
     2022, and it *is* scored at P1's k = 0 and k = 1 (newest score event 2021-10-30); ICE, INCY and
     DELL have 4 filings in each of 2020, 2021 and 2022 after FIXES #14 loaded the missing 2020
-    quarters. Of the ID-07 skips, **DRE 2022-Q1/Q2 and ENPH 2022-Q1 fall inside P1**
-    (2022-01-03..2022-10-12), **KVUE 2023-Q3 straddles P3's start** (its period ends 2023-09-30,
-    before P3's first session, so the filing would be read at P3's early decisions and is not
-    stored) and **SKYD 2025-Q3 falls inside P2** (2025-02-19..2025-09-23); only **BXP 2026-Q1/Q2
-    and SKYD FY2025** fall outside every window. The L-36 filings that remain missing are listed in
-    reviewer B's `LIMITATIONS.md`.
+    quarters. Of the ID-07 skips listed in L-44, **FIXES #14 loaded DRE 2022-Q1/Q2, ENPH 2022-Q1,
+    KVUE 2023-Q3 and BXP 2026-Q1/Q2** — all four are stored, and the first three are read inside the
+    windows (DRE's and ENPH's at P1's decisions from 2022-05-03, KVUE's at P3's from 2023-11-27).
+    Only **SKYD 2025-Q3 and FY2025** stay out (PER-08: the successor's stub periods, 54 and 146
+    days), and neither can be read inside P2: SKYD's stored FY2024 and 2025-Q1/Q2 are, and the two
+    missing periods end on 2025-09-30 and 2025-12-31, after P2's last decision (2025-09-23). The
+    L-36 filings that remain missing are listed in reviewer B's `LIMITATIONS.md`.
 13. **Reviewer B's limitations** are copied below, one line each (L-1 … L-44).
 14. **One fresh database copy per run.** Two windows never share a copy (P2's warm-up starts before
     P3's last decision, and cycle refuses a REPLAY dated before one already recorded), and neither
