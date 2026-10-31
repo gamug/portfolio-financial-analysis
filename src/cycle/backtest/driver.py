@@ -36,6 +36,7 @@ import kg_schema
 from cycle import data as cycle_data
 from cycle.backtest import calibrate as guard_calibration
 from cycle.backtest import engine
+from cycle.backtest import export as export_module
 from cycle.config import CycleSettings
 from cycle.guard import GuardParams, NewsCounts, NewsParams
 from cycle.orchestrator import run_replay
@@ -1581,6 +1582,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="comma-separated arm codes (default: BASE, NOGUARD and every GUARD arm the "
         "params define)",
     )
+    export = sub.add_parser("export", help="export run copies to the results md and json")
+    export.add_argument(
+        "--db", action="append", required=True, help="a run copy (repeat for several runs)"
+    )
+    export.add_argument("--out-md", required=True)
+    export.add_argument("--out-json", required=True)
     calib = sub.add_parser(
         "calibrate-guard", help="calibrate and freeze the GUARD parameters on 2019-2021"
     )
@@ -1603,6 +1610,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "export":
+        return export_module.main(
+            [
+                *[arg for db in args.db for arg in ("--db", db)],
+                "--out-md",
+                args.out_md,
+                "--out-json",
+                args.out_json,
+            ]
+        )
     if args.command == "calibrate-guard":
         return guard_calibration.main(
             [
