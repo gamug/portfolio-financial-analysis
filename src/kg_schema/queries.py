@@ -46,6 +46,7 @@ Business logic that consumes these queries' results
 
 from __future__ import annotations
 
+import contextlib
 import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
@@ -337,7 +338,7 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
     count's own ``as_of_date`` are both on or before it (T-107, no lookahead). Empty when the
     table does not exist yet (a database no ingest has touched)."""
     try:
-        return db.execute(
+        rows = db.execute(
             """
             SELECT sf.asset_id, a.cik, sf.id AS filing_id, sf.available_at,
                    c.class_member, c.value, c.as_of_date
@@ -351,6 +352,45 @@ def cover_share_rows(db: Database, asset_ids: list[int], as_of: str) -> list[Row
         ).fetchall()
     except DatabaseError:
         return []
+    with contextlib.suppress(DatabaseError):
+        # Audit F-A12 (MKT-01): the cover count of the company's last filing **before** its first
+        # stored one, from the SEC's own dei fact (filed on or before *as_of* -- no lookahead). A
+        # negative id, so it never collides with a stored filing.
+        rows += db.execute(
+            """
+            SELECT p.asset_id, a.cik, -p.id AS filing_id, p.available_at,
+                   '' AS class_member, p.value, p.as_of_date
+            FROM audit_prior_cover_shares p JOIN assets a ON a.id = p.asset_id
+            WHERE p.asset_id IN (SELECT value FROM json_each(?))
+              AND p.available_at <= ? AND p.as_of_date <= ?
+            """,
+            (json.dumps(sorted(set(asset_ids))), as_of, as_of),
+        ).fetchall()
+    return rows
+
+
+def cover_class_rates(db: Database, filing_ids: Iterable[int]) -> dict[int, dict[str, float]]:
+    """L-43 (MKT-03, reviewer A 2026-10-29): per stored filing, the rate at which each unlisted class converts into
+    the traded class as that filing itself prints it, from ``cover_class_conversion`` (keyed by accession; the
+    citing accession and text are recorded there). Empty when the table does not exist (a database no audit wrote)."""
+    ids = sorted({int(i) for i in filing_ids if int(i) > 0})
+    if not ids:
+        return {}
+    try:
+        rows = db.execute(
+            """
+            SELECT sf.id AS filing_id, r.class_member, r.rate
+            FROM cover_class_conversion r JOIN sec_filings sf ON sf.accession_number = r.accession
+            WHERE sf.id IN (SELECT value FROM json_each(?))
+            """,
+            (json.dumps(ids),),
+        ).fetchall()
+    except DatabaseError:
+        return {}
+    out: dict[int, dict[str, float]] = {}
+    for r in rows:
+        out.setdefault(int(r["filing_id"]), {})[str(r["class_member"])] = float(r["rate"])
+    return out
 
 
 def last_closes(db: Database, asset_ids: list[int], *, as_of: str, floor: str) -> list[Row]:

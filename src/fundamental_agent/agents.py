@@ -20,7 +20,7 @@ from strands import Agent, tool
 from strands.models.openai import OpenAIModel
 
 from fundamental_agent import pillars, quality
-from fundamental_agent.applicability import apply_applicability
+from fundamental_agent.applicability import apply_applicability, profile_for_period
 from fundamental_agent.config import Settings
 from fundamental_agent.metrics import (
     CORE_GROUPS,
@@ -40,7 +40,6 @@ from fundamental_agent.skills import (
 )
 from fundamental_agent.statements import Statements
 from kg_schema import corporate_actions
-from kg_schema.company_profile import profile_as_of
 from kg_schema.market_cap import MarketCap
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -359,6 +358,9 @@ class FilingContext:
     # docs/model_fixes.md; fundamental_agent.db.ttm_detail). Empty for a 10-K, which already
     # reports annual flows.
     ttm_flows: dict[str, TTMFlow] = field(default_factory=dict)
+    # Audit round #10 (Q8): {item: (this quarter, the prior-year quarter)} derived from year-to-date columns when a 10-Q
+    # files its cash flow year to date only (``fundamental_agent.pipeline._derived_quarter_flows``).
+    derived_quarter: dict[str, tuple[float, float]] = field(default_factory=dict)
     # the issuer's zero-padded CIK: a multi-class share count is converted to the traded class by
     # `kg_schema.market_cap.CLASS_CONVERSION` (T-132: BRK's A = 1,500 B)
     cik: str | None = None
@@ -419,6 +421,11 @@ def _group_ttm(group: str, ctx: FilingContext) -> dict[str, float] | None:
         flow = ctx.ttm_flows.get(item)
         if flow is not None and flow.method in ("x4", "refused"):
             res[f"flag_{item}_ttm_not_built"] = 1.0
+    if group == "growth":
+        # Q8: the derived quarter flows the growth group reads when the filing's quarter column has none
+        for item, (current, prior) in ctx.derived_quarter.items():
+            res[f"quarter_derived_{item}"] = current
+            res[f"quarter_derived_{item}_prior"] = prior
     if group == "leverage":
         da_flow = ctx.ttm_flows.get("depreciation_amortization")
         if da_flow and "depreciation_only_not_da" in da_flow.flags:
@@ -550,7 +557,8 @@ def compute_metrics(ctx: FilingContext) -> list[tuple[str, MetricResult]]:
     # before `provenance.attach`, so the empty reason reads the NA cell. A filing with no CIK at
     # all (a hermetic fixture) carries no profile: the layer is skipped, never guessed.
     if ctx.cik:
-        apply_applicability(out, profile_as_of(ctx.cik, ctx.period_key[:10]))
+        profile, window_start = profile_for_period(ctx.cik, ctx.period_key)
+        apply_applicability(out, profile, window_start=window_start)
     # T-151 part 3 (D14): the provenance block on every metric, in one place (G2: the TTM
     # method and columns come from the filing's own flows).
     provenance.attach(out, ctx.stmts, ctx.period_key, ctx.ttm_flows)

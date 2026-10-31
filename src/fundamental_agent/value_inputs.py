@@ -120,7 +120,8 @@ def build(computed: list[tuple[str, MetricResult]]) -> MetricResult:
     ev_inputs: dict[str, Any] = dict(ev.inputs) if ev is not None else {}
 
     net_income = None
-    if ni is not None and not ni.inputs.get("annualized_x4"):
+    annualized = ni is not None and bool(ni.inputs.get("annualized_x4"))
+    if ni is not None and not annualized:
         net_income = _number(ni.inputs.get(VALUE_INPUTS_NET_INCOME))
 
     inputs: dict[str, Any] = {
@@ -143,6 +144,9 @@ def build(computed: list[tuple[str, MetricResult]]) -> MetricResult:
     missing = {
         key: _reason(carriers[_CARRIER_OF[key]]) for key, value in inputs.items() if value is None
     }
+    if net_income is None and annualized:
+        # audit round #11 (Part 2): a trailing year built as x4 was not formed -- the prior terms are missing (H2)
+        missing[VALUE_INPUTS_NET_INCOME] = "prior_year_missing"
     if missing:
         inputs[VALUE_INPUTS_MISSING] = missing
     flags = {
@@ -150,6 +154,9 @@ def build(computed: list[tuple[str, MetricResult]]) -> MetricResult:
     }
     if flags:
         inputs[VALUE_INPUTS_FLAGS] = flags
+    if net_income is None:
+        # audit round #11 (Part 2): the row's own value is the trailing-year net income -- its reason is that input's
+        inputs["provenance"] = {"empty_reason": missing[VALUE_INPUTS_NET_INCOME]}
     return MetricResult(NAME, net_income, "usd", inputs)
 
 

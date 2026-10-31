@@ -9,6 +9,8 @@ never the label (T-140) -- see :func:`completed_units`.
 
 from __future__ import annotations
 
+import ast
+import itertools
 import json
 import math
 import statistics
@@ -21,8 +23,16 @@ from portfolio_common.db import Database, Row
 
 import kg_schema
 from fundamental_agent import fiscal
+from fundamental_agent.applicability import profile_for_period
 from fundamental_agent.metrics.base import MetricResult, TTMFlow
-from fundamental_agent.statements import REGISTRY, Capital, CoverShares, Statements
+from fundamental_agent.statements import (
+    EBIT_DERIVED_INPUT,
+    PRIOR_ANNUAL_INVENTORY_FLAG,
+    REGISTRY,
+    Capital,
+    CoverShares,
+    Statements,
+)
 from kg_schema import identity, migrations, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
@@ -921,6 +931,63 @@ def _recorded_input(
     return float(value)
 
 
+def _ebit_derived_at(conn: Database, filing_id: int, engine_version: str) -> bool | None:
+    """D-17 (audit round #11): whether the operating income a filing recorded was derived (its TTM anchor row carries
+    :data:`~fundamental_agent.statements.EBIT_DERIVED_INPUT`), ``None`` when the filing has no such row."""
+    group, name = _TTM_FLOW_SOURCE["operating_income"]
+    row = conn.execute(
+        """
+        SELECT inputs_json FROM fundamental_metrics
+        WHERE filing_id = ? AND metric_group = ? AND metric_name = ? AND engine_version = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (filing_id, group, name, engine_version),
+    ).fetchone()
+    if row is None:
+        return None
+    return bool(json.loads(row["inputs_json"] or "{}").get(EBIT_DERIVED_INPUT) == 1.0)
+
+
+def _quarter_filings(
+    conn: Database, asset_id: int, period_end: str, engine_version: str
+) -> list[int]:
+    """D-17: the filings the three quarters before *period_end* are read from, as :func:`_quarter_flow_ending` reads
+    them -- a quarter's 10-Q, else the 10-K of its fiscal year and the third quarter's 10-Q (FY less the nine months,
+    PER-05), or the year's three 10-Qs when that 10-Q recorded no nine months."""
+    out: list[int] = []
+    for k in (1, 2, 3):
+        end = _months_before(period_end, _QUARTER_MONTHS * k)
+        quarter = _filing_near(conn, asset_id, "10-Q", end)
+        if quarter is not None:
+            out.append(quarter[0])
+            continue
+        fiscal_year = _filing_near(conn, asset_id, "10-K", end)
+        if fiscal_year is None:
+            continue
+        out.append(fiscal_year[0])
+        nine = _nine_month_ytd(conn, asset_id, fiscal_year[1], "operating_income", engine_version)
+        months_read = (
+            (_QUARTER_MONTHS,)
+            if nine is not None
+            else (_QUARTER_MONTHS * 3, _QUARTER_MONTHS * 2, _QUARTER_MONTHS)
+        )
+        for months in months_read:
+            q = _filing_near(conn, asset_id, "10-Q", _months_before(fiscal_year[1], months))
+            if q is not None:
+                out.append(q[0])
+    return out
+
+
+def _ebit_method_differs(
+    conn: Database, filing_id: int, engine_version: str, derived_now: bool
+) -> bool:
+    """D-17: whether *filing_id* recorded its operating income by the other method -- never for a filing that
+    recorded no anchor row (it supplied no term)."""
+    recorded = _ebit_derived_at(conn, filing_id, engine_version)
+    return recorded is not None and recorded != derived_now
+
+
 def _quarter_flow_ending(
     conn: Database,
     asset_id: int,
@@ -994,6 +1061,160 @@ def _quarter_columns(
     return tuple(out)
 
 
+def _fy_item_concept(conn: Database, filing_id: int, item: str, engine_version: str) -> str | None:
+    """The concept the 10-K's own rows resolved *item* to. The ``_TTM_FLOW_SOURCE`` row first,
+    then any other row of the filing: the source row's provenance does not always list the item
+    (``return_on_assets`` names neither revenue nor net income -- audit F-A11, APP 2025-Q2)."""
+    group, name = _TTM_FLOW_SOURCE[item]
+    rows = conn.execute(
+        "SELECT metric_group, metric_name, inputs_json FROM fundamental_metrics "
+        "WHERE filing_id = ? AND engine_version = ? ORDER BY id DESC",
+        (filing_id, engine_version),
+    ).fetchall()
+    rows = sorted(rows, key=lambda r: (r["metric_group"], r["metric_name"]) != (group, name))
+    for row in rows:
+        if not row["inputs_json"]:
+            continue
+        provenance = json.loads(row["inputs_json"]).get("provenance")
+        if isinstance(provenance, str):
+            try:
+                provenance = ast.literal_eval(provenance)
+            except (ValueError, SyntaxError):
+                continue
+        entries = ((provenance or {}).get("items") or {}).get(item) or []
+        concept = next((e.get("concept") for e in entries if e.get("concept")), None)
+        if concept:
+            return str(concept)
+    return None
+
+
+def _perimeter_mixed(  # noqa: C901, PLR0911, PLR0913, PLR0917 - the identity's parts and the version pin
+    conn: Database,
+    asset_id: int,
+    item: str,
+    pair: YTDPair,
+    fy_filing: int | None,
+    engine_version: str,
+    fy: float,
+    period_end: str,
+) -> bool:
+    """Audit F-A11, without lookahead: the YTD identity's terms come from two perimeters.
+
+    True when (a) this 10-Q's prior-year YTD differs by more than 2 % from the YTD the prior-year
+    10-Q itself reported (the company recast that year), **and** (b) the 10-K that supplies the prior
+    fiscal year did **not** restate its own comparative year (its prior-year column equals the year
+    the previous 10-K reported, within 0.5 %): the recast came after that 10-K, so its FY is still on
+    the old perimeter -- or it did, but a 10-Q of the current year recast again
+    (:func:`_recast_within_year`). With no previous 10-K stored (the first year), (b) cannot be shown
+    and the observed recast decides. No prior-year 10-Q or no comparative column: not called mixed."""
+    if fy_filing is None or pair.prior is None or not pair.prior_end:
+        return False
+    old_q = _filing_near(conn, asset_id, "10-Q", date.fromisoformat(pair.prior_end))
+    if old_q is None:
+        return False
+    original = _recorded_ytd(conn, old_q[0], item, engine_version)
+    if original is None or original == 0 or abs(pair.prior - original) <= 0.02 * abs(original):
+        return False
+    if abs(pair.prior - original) < 0.01 * abs(fy):
+        return False  # immaterial against the year (ABNB 2023: thousands -> millions rounding)
+    fy_end = _filing_period_end(conn, fy_filing)
+    if not fy_end:
+        return False
+    previous = _filing_near(conn, asset_id, "10-K", _months_before(fy_end, 12))
+    if previous is None:
+        # the company's first stored year: (b) cannot be tested, and the recast is observed -- the
+        # identity's FY is not shown to be on the new perimeter (audit: 27 mixed / 17 consistent)
+        return True
+    previous_fy = _recorded_flow(conn, previous[0], item, engine_version)
+    if previous_fy is None or previous_fy == 0:
+        return False
+    concept = _fy_item_concept(conn, fy_filing, item, engine_version)
+    if not concept:
+        return False
+    parts = [c.strip() for c in str(concept).split(" + ")]
+    comparative = 0.0
+    found = set()
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (fy_filing, f"{previous[1]} (FY)"),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in found and fact["value"] is not None:
+            found.add(fact["concept"])
+            comparative += float(fact["value"])
+    if found != set(parts):
+        return False
+    if abs(abs(comparative) - abs(previous_fy)) <= 0.005 * abs(previous_fy):
+        return True
+    # the 10-K restated its comparative year -- for a change up to the 10-K. A recast a later 10-Q
+    # of the same year shows (GE's Vernova spin after the GEHC-restated FY2023 10-K) is not in it.
+    return _recast_within_year(conn, asset_id, fy_end, period_end, parts, fy)
+
+
+def _period_sum(conn: Database, filing_id: int, key: str, parts: list[str]) -> float | None:
+    values: dict[str, float] = {}
+    for fact in conn.execute(
+        "SELECT concept, value FROM financial_facts WHERE filing_id = ? AND period_key = ?",
+        (filing_id, key),
+    ):
+        if fact["concept"] in parts and fact["concept"] not in values and fact["value"] is not None:
+            values[fact["concept"]] = float(fact["value"])
+    return sum(values.values()) if len(values) == len(parts) else None
+
+
+def _recast_within_year(  # noqa: PLR0913, PLR0917 - the identity's parts
+    conn: Database, asset_id: int, fy_end: str, period_end: str, parts: list[str], fy: float
+) -> bool:
+    """Audit F-A11, no lookahead: whether a 10-Q of the current fiscal year (after the 10-K) recast
+    the prior year again. For each two consecutive 10-Qs after the fiscal year end, up to and
+    including this one (its facts are stored before its metrics), the later one's prior-year YTD
+    minus its prior-year quarter is the prior-year YTD through the earlier quarter on the later
+    basis; it must equal what the earlier 10-Q itself showed (within 2 %, or under 1 % of the year).
+    Measured on the audit's labelled TTMs: 21 mixed found, 0 of 409 consistent flagged."""
+    chain = [
+        int(r["id"])
+        for r in conn.execute(
+            "SELECT id FROM sec_filings WHERE asset_id = ? AND form = '10-Q' "
+            "AND period_end > ? AND period_end <= ? ORDER BY period_end",
+            (asset_id, fy_end, period_end),
+        ).fetchall()
+    ]
+    for earlier, later in itertools.pairwise(chain):
+        keys1 = sorted(
+            k
+            for k in _period_keys(conn, earlier)
+            if k[:10] <= fy_end and k.endswith(("(YTD)", "(Q1)"))
+        )
+        keys2 = _period_keys(conn, later)
+        ytd2 = sorted(k for k in keys2 if k.endswith("(YTD)") and k[:10] <= fy_end)
+        if not keys1 or not ytd2:
+            continue
+        q2 = sorted(
+            k
+            for k in keys2
+            if "(" in k and not k.endswith(("(YTD)", "(FY)")) and keys1[-1][:10] < k[:10] <= fy_end
+        )
+        if not q2:
+            continue
+        a = _period_sum(conn, earlier, keys1[-1], parts)
+        b = _period_sum(conn, later, ytd2[-1], parts)
+        c = _period_sum(conn, later, q2[-1], parts)
+        if a is None or b is None or c is None or a == 0:
+            continue
+        implied = b - c
+        if abs(implied - a) > 0.02 * abs(a) and abs(implied - a) >= 0.01 * abs(fy):
+            return True
+    return False
+
+
+def _period_keys(conn: Database, filing_id: int) -> list[str]:
+    return [
+        str(r["period_key"])
+        for r in conn.execute(
+            "SELECT DISTINCT period_key FROM financial_facts WHERE filing_id = ?", (filing_id,)
+        ).fetchall()
+    ]
+
+
 def _filing_period_end(conn: Database, filing_id: int) -> str | None:
     row = conn.execute("SELECT period_end FROM sec_filings WHERE id = ?", (filing_id,)).fetchone()
     return str(row["period_end"]) if row and row["period_end"] else None
@@ -1017,7 +1238,7 @@ def _fiscal_year_between(conn: Database, asset_id: int, after: str, before: str)
     return int(row["id"]) if row else None
 
 
-def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the version pin
+def ttm_detail(  # noqa: C901, PLR0912, PLR0913 - the filing's identity, its flows, the version pin; one branch per method
     conn: Database,
     asset_id: int,
     *,
@@ -1026,6 +1247,7 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     ytd: dict[str, YTDPair] | None = None,
     engine_version: str = METRICS_ENGINE_VERSION,
     accession: str | None = None,
+    derived: frozenset[str] = frozenset(),
 ) -> dict[str, TTMFlow]:
     """Each flow's trailing-twelve-month value on a 10-Q, by the first method that works:
 
@@ -1041,7 +1263,11 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
     the filing's own restated comparative, so it survives a restated prior year that the
     as-filed quarters do not (AT&T's WarnerMedia spin-off, see
     :func:`fundamental_agent.quality.record_ttm_crosscheck`). Every recorded value read is of
-    *engine_version* only."""
+    *engine_version* only.
+
+    D-17 (audit round #11): *derived* names the items whose value on this filing was derived (the operating income
+    of a filing that prints no operating-income line). The operating income's terms are read by one method: a prior
+    10-K or a prior quarter recorded the other way refuses the TTM (``ttm_ebit_method_mixed``) -- never ``x4``."""
     out: dict[str, TTMFlow] = {}
     for item in sorted(set(current) | set(ytd or {})):
         summed = (
@@ -1060,6 +1286,26 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                 if fy_filing is not None
                 else None
             )
+            if fy is not None and _perimeter_mixed(
+                conn, asset_id, item, pair, fy_filing, engine_version, fy, period_end
+            ):
+                # Audit F-A11 (T-161's rule: never store a mixed value): this 10-Q recast its prior
+                # year (a divestiture, discontinued operations) after the 10-K, whose FY still holds
+                # the old perimeter -- FY(old) - YTD(new) + YTD(new) mixes the two.
+                out[item] = TTMFlow(
+                    0.0, "refused", ytd=pair.current, flags=("ttm_perimeter_change",)
+                )
+                continue
+            if (
+                fy is not None
+                and fy_filing is not None
+                and item == "operating_income"
+                and _ebit_method_differs(conn, fy_filing, engine_version, item in derived)
+            ):
+                out[item] = TTMFlow(
+                    0.0, "refused", ytd=pair.current, flags=("ttm_ebit_method_mixed",)
+                )
+                continue
             if fy is not None:
                 # H4: the terms and the columns the identity combined, with the accession of the
                 # filing that supplied each (the prior 10-K, then this filing's own two columns).
@@ -1108,6 +1354,22 @@ def ttm_detail(  # noqa: PLR0913 - the filing's identity, its flows, and the ver
                         flow_flags = ("da_amortization_only_refused",)
         ytd_now = pair.current if pair else None
         quarters = _quarter_columns(conn, asset_id, period_end)
+        if (
+            summed is not None
+            and item == "operating_income"
+            and any(
+                _ebit_method_differs(conn, filing, engine_version, item in derived)
+                for filing in _quarter_filings(conn, asset_id, period_end, engine_version)
+            )
+        ):
+            out[item] = TTMFlow(
+                0.0,
+                "refused",
+                ytd=ytd_now,
+                flags=("ttm_ebit_method_mixed",),
+                columns=tuple(quarters),
+            )
+            continue
         if summed is not None:
             out[item] = TTMFlow(
                 summed, "quarters", ytd=ytd_now, flags=flow_flags, columns=tuple(quarters)
@@ -1833,6 +2095,33 @@ def prior_capital(
         )
 
 
+def prior_annual_inventory(
+    conn: Database, asset_id: int, period_end: str, engine_version: str = METRICS_ENGINE_VERSION
+) -> bool:
+    """D-18 (audit round #11): whether the company's previous 10-K (period end before *period_end*) recorded an
+    inventory -- its quick-ratio row carries an ``inventory`` above 0, or was itself refused D-18's zero for this
+    reason. A 10-Q silent on inventory proves nothing when the last annual report showed one (ORCL's and UNH's 10-Ks
+    disclose it in the notes, their 10-Qs do not)."""
+    row = conn.execute(
+        """
+        SELECT m.inputs_json FROM fundamental_metrics m JOIN sec_filings f ON f.id = m.filing_id
+        WHERE f.asset_id = ? AND f.form = '10-K' AND f.period_end < ? AND m.metric_group = 'liquidity'
+          AND m.metric_name = 'quick_ratio' AND m.engine_version = ?
+        ORDER BY f.period_end DESC, m.id DESC
+        LIMIT 1
+        """,
+        (asset_id, period_end, engine_version),
+    ).fetchone()
+    if row is None or not row["inputs_json"]:
+        return False
+    inputs = json.loads(row["inputs_json"])
+    inventory = inputs.get("inventory")
+    has_value = (
+        isinstance(inventory, (int, float)) and not isinstance(inventory, bool) and inventory > 0
+    )
+    return bool(has_value or inputs.get(PRIOR_ANNUAL_INVENTORY_FLAG))
+
+
 def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements it enriches
     conn: Database,
     asset_id: int,
@@ -1851,11 +2140,15 @@ def attach_context(  # noqa: PLR0913 - the filing's identity plus the statements
     does not hold -- never a guessed type. The two agree on every pilot asset."""
     row = conn.execute("SELECT cik FROM assets WHERE id = ?", (asset_id,)).fetchone()
     cik = str(row["cik"]) if row and row["cik"] else None
-    profile = profile_as_of(cik, period_key[:10]) if cik else None
+    # D-19: a period ending before the profile's interval reads it at the interval's start.
+    profile = profile_for_period(cik, period_key)[0] if cik else None
     if profile is not None:
         stmts.sector = profile.sector
         stmts.sub_industry = profile.sub_industry
+        # D-18: the APP-00 type itself, which the quick ratio's no-inventory reading needs.
+        stmts.company_type = profile.type
     else:
         stmts.sector, stmts.sub_industry = company_profile(conn, asset_id)
     stmts.accession = accession
+    stmts.prior_annual_inventory = prior_annual_inventory(conn, asset_id, period_key[:10])
     prior_capital(conn, asset_id, form, period_key, stmts)
