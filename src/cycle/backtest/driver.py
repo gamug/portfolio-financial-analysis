@@ -761,6 +761,10 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
                 "--cov",
                 params.cov_estimator,
                 "--include-hard-vetoed",
+                # T-132: the panel holds members with no cover shares on the date (the L-44
+                # gaps). quant refuses by default; the flag weights them 0 in the equilibrium
+                # market portfolio and names them on the run, rather than dropping them.
+                "--allow-missing-caps",
             ],
             db_path,
             universe_db_path,
@@ -808,6 +812,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
                 "--objectives",
                 "min_var",
                 "--include-hard-vetoed",
+                "--allow-missing-caps",
                 "--top-n",
                 str(params.top_n),
             ],
@@ -822,6 +827,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
                 "--objectives",
                 "min_var",
                 "--include-hard-vetoed",
+                "--allow-missing-caps",
                 "--top-n",
                 str(params.top_n),
                 "--cycle-run-id",

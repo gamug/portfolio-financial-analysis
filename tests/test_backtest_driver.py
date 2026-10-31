@@ -259,9 +259,12 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
     # The pipeline passed the §8 flags: --include-hard-vetoed on both, --cycle-run-id +
     # --risk-model-id on the Top-N book, one build-returns for the window.
     assert sum(1 for c in calls if c[0] == "build-returns") == 1
+    # T-132: a member with no cover shares must not silently drop out of the panel.
+    assert all("--allow-missing-caps" in c for c in calls if c[0] == "build-risk-model")
     optimizes = [c for c in calls if c[0] == "optimize"]
     assert len(optimizes) == 2 * 3  # 3 decision dates x (base, top-n)
     assert all("--include-hard-vetoed" in c for c in optimizes)
+    assert all("--allow-missing-caps" in c for c in optimizes)
     assert sum(1 for c in optimizes if "--cycle-run-id" in c) == 3
 
     conn = connect(db_path)
