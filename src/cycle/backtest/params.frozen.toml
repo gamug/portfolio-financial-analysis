@@ -15,11 +15,12 @@
 # values rounded to 4 decimals and frozen.
 #
 # Input database sha256: 0692423ebb1e7e12a7b85cda37d7d2f40939152cf9d3dd9754a7481bf1766f76
-# Sample: 757 sessions, 320510 member-sessions,
-#   312451 S(21) values, 320510 one-session returns,
-#   756 EW-portfolio sessions, EW cumulative +1.024292, EW MDD 0.385352.
+# Sample: 757 sessions, 329677 member-sessions,
+#   321102 S(21) values, 329677 one-session returns,
+#   756 EW-portfolio sessions, EW cumulative +0.964780, EW MDD 0.392666.
 #   PIT members per year: {'2019': 127117, '2020': 127768, '2021': 127261}
-#   PIT members with no return per year (declared limitation of C): {'2019': 11820, '2020': 6670, '2021': 2331}
+#   PIT member-sessions with no assets row per year: {'2019': 11820, '2020': 6670, '2021': 2331}
+#   PIT member-sessions still without a return after the leaver files (declared limitation of C): {'2019': 20125, '2020': 16612, '2021': 15732}
 #   Leaver series: 26 from /workspaces/thesis/data/calibration/leavers_2019_2021_gateway (9167 (series, session) returns).
 
 [run]
@@ -38,10 +39,10 @@ shadow_from = "TOPN_MV_GUARD_NO_NLP"
 [guard.arms.TOPN_MV_GUARD_NO_NLP]
 layers = [1, 3, 4]   # layer 2 (news) is off: F1, no admissible sentiment model
 J = 21
-gamma = 0.119
+gamma = 0.1229
 delta = 0.0108
-sigma_star = 0.2423
-m = 2.595
-alpha = 0.6146
+sigma_star = 0.2455
+m = 2.5467
+alpha = 0.6073
 vol_window = 21
 periods_per_year = 252
