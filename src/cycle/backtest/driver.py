@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
 import sys
 import tomllib
@@ -395,10 +396,15 @@ def run_quant(args: Sequence[str], db: Path, universe_db: Path) -> dict[str, Any
         "--universe-db",
         str(universe_db),
     ]
-    # argv is our own fixed module invocation, never a shell string (the flags are validated
-    # by the parser / typed above); S603's "untrusted input" does not apply.
+    # The subprocess must be reproducible in a clean environment (CI runs with the DB
+    # variables unset): quant's `Settings.load()` reads them before it applies `--db`, so pin
+    # both to the paths this run was given -- never to whatever the caller's shell holds (a
+    # stale production path there would be read first). argv is our own fixed module
+    # invocation, never a shell string (the flags are validated by the parser / typed above);
+    # S603's "untrusted input" does not apply.
+    env = {**os.environ, "KG_FINANCIAL_DB": str(db), "KG_UNIVERSE_DB": str(universe_db)}
     completed = subprocess.run(  # noqa: S603
-        command, capture_output=True, text=True, check=False
+        command, capture_output=True, text=True, check=False, env=env
     )
     if completed.returncode != 0:
         tail = (completed.stderr or completed.stdout).strip()[-2000:]

@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cycle.backtest import driver
 from cycle.backtest.driver import (
     BacktestError,
     _build_returns_version,
@@ -120,3 +121,26 @@ def test_optimize_cycle_run_ends_with_the_topn_portfolio_id(
     assert _topn_portfolio_id(payload) == 21
     with pytest.raises(BacktestError, match="no portfolio_id"):
         _topn_portfolio_id({"portfolio_ids": {"min_var": 21}})
+
+
+def test_run_quant_pins_the_database_environment_for_the_subprocess(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-1.4: quant's ``Settings.load()`` runs before ``--db``, so the driver must pin both DB
+    paths in the subprocess environment -- CI runs with ``KG_FINANCIAL_DB`` unset."""
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
+        captured["command"] = command
+        captured["env"] = kwargs.get("env")
+        return SimpleNamespace(returncode=0, stdout='{"engine_version": "qret-v2"}\n', stderr="")
+
+    monkeypatch.delenv("KG_FINANCIAL_DB", raising=False)
+    monkeypatch.delenv("KG_UNIVERSE_DB", raising=False)
+    monkeypatch.setattr(driver.subprocess, "run", fake_run)
+    payload = driver.run_quant(["build-returns"], Path("/tmp/x/fin.db"), Path("/tmp/x/u.db"))
+    assert payload == {"engine_version": "qret-v2"}
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["KG_FINANCIAL_DB"] == "/tmp/x/fin.db"
+    assert env["KG_UNIVERSE_DB"] == "/tmp/x/u.db"
