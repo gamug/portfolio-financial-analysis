@@ -67,10 +67,10 @@ valid candidates (`cycle_ranking.selected = 1`, all in `ids(model_id)`; a shortf
 min-variance problem on that 30 × 30 sub-covariance with **upper** bounds only
 (`0 ≤ w_i ≤ 0.05`, sector `≤ 0.30`, `min_name_weight = 0.0`, no floor). A corner solution assigns
 exactly zero to some selected names, so the book holds the **positive** weights of the 30-name
-sub-covariance — 20–23 names in the rule-based runs. This is the approved reading of FINISH_REPO
-§8/§12.8 (decision 2026-10-31: keep quant's formulation, no floor); it is checked as
-"30 selected candidates, `min_var_topn` optimized over their sub-covariance" and not as
-"30 positive weights in `quant_position`".
+sub-covariance — 20–24 names in the rule-based runs (20–23 in P1, 21–24 in P3, 23–24 in P2).
+This is the approved reading of FINISH_REPO §8/§12.8 (decision 2026-10-31: keep quant's
+formulation, no floor); it is checked as "30 selected candidates, `min_var_topn` optimized over
+their sub-covariance" and not as "30 positive weights in `quant_position`".
 
 ### Formation rule
 

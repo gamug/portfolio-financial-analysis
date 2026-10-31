@@ -2974,4 +2974,4 @@ Evidence for every number: `/workspaces/thesis/scratch/final/REPORT.md`.
       `python -m cycle.backtest export` from the run copies and regenerate byte-identically
       (`tests/test_backtest_export.py`); `docs/backtest.md`, `docs/model_fixes.md` (REPLAY),
       `docs/cycle.md` and `docs/kg_schema.md` carry the method, the limitations and the views.
-      → `PLAN.md` Work item 21.
+      → `PLAN.md` Work item 22.

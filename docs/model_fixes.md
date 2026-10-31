@@ -11146,7 +11146,7 @@ table and recorded in every run's `params_json`. Default unchanged (0.05); the k
 (`tests/test_backtest_driver.py`).
 
 **Verification (real data)**: the 64-date table (`docs/backtest.md` §8) has P1 k0/k1 at 0.0574 and
-every other decision date at or below 0.0298 (max outside P1's first two: 0.0298). With 0.060 no
+every other decision date at or below 0.0258 (max outside P1's first two: 0.0258; the 0.0298 row is P3's k = -2 warm-up, 2023-08-28, which never enters u*). With 0.060 no
 decision date refuses on coverage (all six runs form at k = 0); with 0.050 P1 would have formed at
 k = 2 instead of k = 0 and lost 2 rebalances.
 
