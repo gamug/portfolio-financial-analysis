@@ -401,6 +401,19 @@ Published by the API as `GET /api/v1/contract` and `/contract/database` (`docs/a
   stay in `v_veto`, it subtracts nothing); `null` on a HARD rule (it excludes instead). A rule absent from
   the catalog costs the run's `soft_veto_penalty`. So the penalty is no longer "15 × the number of SOFT
   vetoes" (`tests/test_kg_view_contract.py` pins the identity with a `BREAK_TREND_200` hit).
+- **The backtest views** (`m018`, FR-016 / FR-017): `v_book` (one row per `strategy_book` with
+  its run's window, formation date and status), `v_book_rebalance` (decision and execution date per
+  rebalance), `v_guard_alert` (layer, rule, value, threshold, state; `value` is NULL for layer 1),
+  `v_guard_action` (the action a book took: `APPLIED` | `ARM_DISABLED` | `NOT_HELD` |
+  `SUPERSEDED`; `weight_before`/`weight_after` are NULL for asset-level actions), `v_book_weight_daily`
+  (the holdings; `markowitz_target_weight` and `final_target_weight` are NULL unless the row's date is
+  that book's decision or execution date), `v_book_daily_performance` (the portfolio-level columns:
+  gross/net return, turnover, cost, NAV, drawdown, cash weight, number of equities and the
+  `SP500_EW_INTERNAL` benchmark return), `v_portfolio_period_summary` (the `backtest_summary` rows per
+  arm and segment) and `v_backtest_test` (the paired statistics). Every view carries `knowledge_date`.
+  **No backtest view exposes a single asset's price or return:** the only per-asset value any of them
+  returns is a weight (a portfolio share), and the daily weight rows deliberately do not reveal a
+  return — `book_weight_daily`'s daily drift is masked outside a book's decision/execution dates.
 - **`v_ticker_history`** (`T-153` part 2): `cik`, `symbol`, `valid_from`, `valid_to`,
   `canonical_symbol`, `asset_id` (the one asset the line resolves to), `evidence_url`,
   `evidence_date`, `rules`. One row per symbol of a company's line; `valid_to` is the symbol's last

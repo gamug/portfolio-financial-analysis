@@ -54,6 +54,17 @@ the previous session that are priced on the session.
 Core: min-variance, `cov_estimator = ledoit_wolf_cc`, `lookback 756`, floor 740 observations, top-30,
 name cap `1.5/n_held`, sector cap 0.30, no turnover cap, fully invested at the decision (cash 0).
 
+**What "30 names" means here (the fixed invariant).** At every decision `cycle` selects exactly 30
+valid candidates (`cycle_ranking.selected = 1`, all in `ids(model_id)`; a shortfall raises
+`TooFewCandidates` and aborts). `quant optimize --cycle-run-id` then solves the long-only
+min-variance problem on that 30 × 30 sub-covariance with **upper** bounds only
+(`0 ≤ w_i ≤ 0.05`, sector `≤ 0.30`, `min_name_weight = 0.0`, no floor). A corner solution assigns
+exactly zero to some selected names, so the book holds the **positive** weights of the 30-name
+sub-covariance — 20–23 names in the rule-based runs. This is the approved reading of FINISH_REPO
+§8/§12.8 (decision 2026-10-31: keep quant's formulation, no floor); it is checked as
+"30 selected candidates, `min_var_topn` optimized over their sub-covariance" and not as
+"30 positive weights in `quant_position`".
+
 ### Formation rule
 
 The book forms at the first scheduled decision date whose cycle selection succeeds with 30 valid
@@ -101,9 +112,17 @@ equity weights are scaled by `s = min(1, s_σ, s_DD)` — the **minimum, never t
 rest goes to cash; (4) caps are never relaxed. AVANCE E1's adaptation (`m(1 − α) ≥ 1`) is what
 makes the exposure exactly 1 at a new maximum.
 
+Layer 3's `σ̂₂₁` is measured on the **reference weights** — the NOGUARD twin's weights for `t+1`
+(BACKTEST_SPEC §8.1), i.e. its drifted weights on an ordinary session and the new Markowitz target
+on a decision date. It is not the arm's own drifted post-GUARD book; the difference was at most
+`|σ₂₁(markowitz target) − σ₂₁(twin drifted)| = 0.005573` in `rule_P1` and is declared here so the
+series is traceable.
+
 Output per session: the alerts (layer, asset or portfolio, value, threshold, state change) and the
 action per arm (`APPLIED` | `ARM_DISABLED` | `NOT_HELD` | `SUPERSEDED`), persisted in
-`guard_alert` / `guard_action`.
+`guard_alert` / `guard_action`. When layers 3 and 4 both emit a `SCALE` alert on the same session,
+**both** rows are recorded `APPLIED` even though only the smaller of the two is the binding term of
+`s = min(s_σ, s_DD)`; `n_guard_actions` therefore counts alerts applied, not binding constraints.
 
 ## 6. Statistics
 
@@ -119,6 +138,12 @@ GUARD_NO_NLP vs NOGUARD:
 - **Newey–West HAC** t-test on the daily return difference (`hac_mean_diff`).
 
 ### Low power, stated in advance
+
+The exported `SP500_EW_INTERNAL` Sharpe is computed on excess returns over a **zero** risk-free
+rate, because the export's read contract (FINISH_REPO §9.1) covers only the m018 tables and
+`book_daily_performance` does not persist `rf`; the three strategy arms subtract `FF_RF_DAILY`.
+The two Sharpes are therefore not directly comparable and the results file repeats this note under
+every table.
 
 Each window holds **150–196 daily returns** per arm (P2 150, P3 192, P1 196). A Sharpe difference of
 0.3 on a 150-session sample is not distinguishable from zero at conventional levels; the paired
@@ -137,19 +162,32 @@ copy. The command is `python -m cycle.backtest calibrate-guard`
 | parameter | value | rule |
 |---|---|---|
 | `J` | 21 | one D1 rebalance interval (design choice) |
-| `gamma` | **0.1190** | −Q₀.₀₅ of every `S_i,t(21)` in C (312,451 values over 320,510 member-sessions) |
+| `gamma` | **0.1229** | −Q₀.₀₅ of every `S_i,t(21)` in C (321,102 values over 329,677 member-sessions) |
 | `delta` | **0.0108** | Q₀.₇₅ of every one-session member return in C |
-| `sigma_star` | **0.2423** | annualized std (ddof = 1) of the equal-weight member portfolio over C (declared proxy) |
-| `alpha` | **0.6146** | 1 − MDD of that EW portfolio over C (MDD 0.3854, the 2020 drawdown) |
-| `m` | **2.5950** | 1/(1 − α) |
+| `sigma_star` | **0.2455** | annualized std (ddof = 1) of the equal-weight member portfolio over C (declared proxy) |
+| `alpha` | **0.6073** | 1 − MDD of that EW portfolio over C (MDD 0.3927, the 2020 drawdown) |
+| `m` | **2.5467** | 1/(1 − α); `m(1 − α) = 1.000089 ≥ 1` on the rounded values (AVANCE E1) |
 | `vol_window` | 21 | BACKTEST_SPEC §0 |
 
 Quantiles use `numpy.quantile(..., method="linear")` pooled over all (member, session) pairs, and the
-rounded values are frozen. The panel adds the 26 index-leaver calibration series the director placed
-under `/workspaces/thesis/data/calibration/leavers_2019_2021_gateway/` (9,167 session returns); the
-PIT members that still lack a return are counted per year in the frozen file's comments
-(2019: 11,820 member-sessions; 2020: 6,670; 2021: 2,331). The frozen file is committed **before**
-the first window run (limitation 14 records the freeze commit).
+rounded values are frozen. The panel includes the 26 index-leaver calibration series the director
+placed under `/workspaces/thesis/data/calibration/leavers_2019_2021_gateway/`: **9,167** of their
+(series, session) returns enter the panel, none of them has an `assets` row (they are the L-42
+leavers), and they raise `member_sessions` from 320,510 to **329,677** and the `S(21)` pool from
+312,451 to **321,102**.
+
+The frozen file reports two different gaps per year, because they have different causes:
+
+| year | PIT member-sessions | with no `assets` row | still without a return after the leaver files |
+|---|---|---|---|
+| 2019 | 127,117 | 11,820 | 20,125 |
+| 2020 | 127,768 | 6,670 | 16,612 |
+| 2021 | 127,261 | 2,331 | 15,732 |
+
+The first column is the mapping gap (a member symbol the database never stored); the last is what
+the calibration panel actually loses — members with an asset row but no total return on the session
+(a halt, a missing bar), which is the declared limitation of C. The frozen file is committed
+**before** the first window run (limitation 14 records the freeze commit).
 
 ## 8. The coverage brake (`unscored_max_share`)
 
@@ -244,6 +282,15 @@ From the input database's sha256 (`851b0e20…50e90`), inside the dev container,
 # 1. the base copy, migrated, with returns and the risk-free curve
 cp /workspaces/thesis/data/pilot_a3/financial.db base.db && chmod u+w base.db
 uv run python -m fundamental_agent migrate --db base.db
+
+# The score command plans every selected filing in memory before it writes (~0.9 s per filing
+# on the 512k-row availability scan, ~2.2 GB for 14,639 filings). This scratch-only index makes
+# `availability.require` a partial-index lookup (0.90 s -> 0.002 s per market-cap read). It
+# changes no result -- the count it accelerates is zero -- but it is part of reproducing this
+# run's `input_db_sha256` (0692423e...) and the timings.
+uv run python -c "import sqlite3; c = sqlite3.connect('base.db'); \
+    c.execute('CREATE INDEX IF NOT EXISTS ix_fm_available_at ON fundamental_metrics(available_at)'); \
+    c.commit(); c.close()"
 uv run python -m quant load-rf --db base.db
 uv run python -m quant build-returns --db base.db \
     --universe-db /workspaces/thesis/data/universe_history_gics.db --from 2019-01-02 --to 2025-09-23
@@ -252,7 +299,9 @@ uv run python -m quant build-returns --db base.db \
 cp base.db scored_rule.db
 uv run python -m fundamental_agent score --db scored_rule.db \
     --universe-db /workspaces/thesis/data/universe_history_gics.db --rule-based
-    # --for-dates dates_all.txt first, then the whole database (the command is idempotent)
+    # --for-dates dates_all.txt first, then the whole database (the command is idempotent).
+    # The command plans every selected filing in memory, so on a 2 GB container run it in
+    # batches (6 dates / 2,500 accessions at a time): same selectors, same filings, idempotent.
 
 # 3. the frozen GUARD parameters (2019-2021 only; refuses any later range)
 uv run python -m cycle.backtest calibrate-guard --db base.db \
@@ -261,6 +310,8 @@ uv run python -m cycle.backtest calibrate-guard --db base.db \
     --out src/cycle/backtest/params.frozen.toml
 
 # 4. one fresh copy per run, one run per copy
+#    No KG_FINANCIAL_DB / KG_UNIVERSE_DB is needed: the driver pins both in the quant
+#    subprocess's environment (`run_quant`), so a clean shell reproduces the run.
 cp scored_rule.db runs/rule_P1.db
 uv run python -m cycle.backtest run --window P1 --db runs/rule_P1.db \
     --universe-db /workspaces/thesis/data/universe_history_gics.db \
@@ -299,10 +350,13 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
 6. **The 10 bps cost is the project's "by definition" value** (G2, no source found). It is a
    one-way cost on the traded fraction; at the observed turnover it costs each arm the amount in
    the `Cost bps` column of the results file.
-7. **The calibration sample has little stress outside 2020** and lacks the L-42 leavers that the
-   gateway no longer serves (2019: 11,820 PIT member-sessions without a return, 2020: 6,670,
-   2021: 2,331). `gamma` is therefore measured on a panel that is ~9 % smaller in 2019 than the true
-   index.
+7. **The calibration sample has little stress outside 2020** and still loses PIT member-sessions
+   to missing returns. After the 26 L-42 leaver series are applied, the panel has no total return
+   for **20,125 / 16,612 / 15,732** PIT member-sessions in 2019 / 2020 / 2021 (15.8 %, 13.0 % and
+   12.4 % of the PIT membership); **11,820 / 6,670 / 2,331** of those have no `assets` row at all,
+   the rest have a row but no return on the session (a halt or a missing bar). `gamma` is therefore
+   measured on a panel that loses about a sixth of 2019. The leaver files restore 9,167 of the
+   leaver returns; companies the gateway no longer serves and that are not in those files stay out.
 8. **σ\* uses the equal-weight member portfolio as its proxy** for the Top-30 min-variance book,
    which cannot be formed before late 2021 (no risk model) or 2020 (no FUNDAMENTAL scores). If the
    Top-30 book is less volatile than the EW panel, layer 3 scales less often than it would with the
@@ -314,19 +368,31 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
 10. **`unscored_max_share = 0.060`** instead of the 0.05 default, because P1's first two decisions
     carry 0.0574 (the table in §8). Effect: P1 forms at k = 0 instead of being refused; every other
     decision date is below 0.05 anyway.
-11. **L-43 (multi-class market caps)**: the market-cap reader now honours `cover_class_conversion`
+11. **L-43 (multi-class market caps)**: the market-cap reader honours `cover_class_conversion`
     (reviewer B's `r11-d17`). Measured on the final database: Berkshire Hathaway's stored cap is
     1.5318–1.7546 × (class B count × class B close), i.e. class A is converted at 1500 (correct per
     MKT-03), not counted 1:1; Visa is **not** flagged `market_cap_incomplete_classes` in any of its
     27 stored values, and its own rates (class B 1.6181, class C 4.0) raise its share count 9.6 %
-    above the raw sum of classes. Because neither name is understated, the conditional `excl_*` runs
-    are triggered only if one of them is selected in a Top-30 book — see `backtest_results.md`.
+    above the raw sum of classes.
+
+    The `excl_*` trigger of FINISH_REPO §8 is a conjunction: `(BRK understated OR Visa flagged)
+    AND (BRK or V selected in a Top-30 book)`. The **first** clause is false — neither name is
+    understated — so `excl_*` does not run whatever the selection does. For the record, `BRK.B` is
+    selected in **5** of P1's 10 decisions (2022-03-03, 2022-04-01, 2022-05-03, 2022-06-02,
+    2022-07-05) and **6** of P3's 10 (2023-10-26, 2023-12-27, 2024-01-29, 2024-02-28, 2024-03-28,
+    2024-04-29); `V` is selected in none of the 20. At those decisions BRK.B's cap uses the
+    converted class A count, which is precisely why the trigger's first clause is false. Because
+    `excl_*` is not run, the Top-30 arms are unaffected by L-43 (P2's counts are in
+    `backtest_results.md`).
 12. **L-44 (missing filings)**, as measured here: GAP has 4 filings in 2020, 4 in 2021 and 0 in
     2022, and it *is* scored at P1's k = 0 and k = 1 (newest score event 2021-10-30); ICE, INCY and
     DELL have 4 filings in each of 2020, 2021 and 2022 after FIXES #14 loaded the missing 2020
-    quarters. The ID-07 skips (BXP 2026, DRE 2022, ENPH 2022-Q1, KVUE 2023-Q3, SKYD 2025-Q3/FY2025)
-    fall outside every window except none; the L-36 filings that remain missing are listed in
-    reviewer B's LIMITATIONS.md.
+    quarters. Of the ID-07 skips, **DRE 2022-Q1/Q2 and ENPH 2022-Q1 fall inside P1**
+    (2022-01-03..2022-10-12), **KVUE 2023-Q3 straddles P3's start** (its period ends 2023-09-30,
+    before P3's first session, so the filing would be read at P3's early decisions and is not
+    stored) and **SKYD 2025-Q3 falls inside P2** (2025-02-19..2025-09-23); only **BXP 2026-Q1/Q2
+    and SKYD FY2025** fall outside every window. The L-36 filings that remain missing are listed in
+    reviewer B's `LIMITATIONS.md`.
 13. **Reviewer B's limitations** are copied below, one line each (L-1 … L-44).
 14. **One fresh database copy per run.** Two windows never share a copy (P2's warm-up starts before
     P3's last decision, and cycle refuses a REPLAY dated before one already recorded), and neither

@@ -588,3 +588,15 @@ made the old `target_weights` return `{}` and `sync_positions` **close every ope
   `(asset, score_type, day)`, so same-day re-runs upsert rather than duplicate.
 - The `_run` function is deliberately one long linear sequence (`# noqa: C901`);
   its structure is the step list, and `cycle_checkpoint` makes it restartable.
+
+## Backtest and GUARD
+
+`cycle` is also the selection step of the daily backtest: `python -m cycle.backtest run` drives
+`run_replay` on the D1 calendar, builds the Top-30 arm from the cycle ranking, and measures GUARD on
+top of it. Two REPLAY-only cuts exist for it (both recorded in the run's `params_json`, and the live
+`select` behaviour is unchanged): `risk_model_id` skips a ranked name outside the quant risk model
+(`NO_RISK_MODEL`, never selected) and `veto_cutoff_same_day` filters HARD and SOFT vetoes as of the
+cycle date itself instead of the live book's T-1 lag. The coverage brake's `unscored_max_share` is
+set by the run's params (`[run] unscored_max_share`, 0.060 in the frozen file). The method, the
+GUARD layers and every limitation are in [backtest.md](backtest.md); the results are in
+[backtest_results.md](backtest_results.md).

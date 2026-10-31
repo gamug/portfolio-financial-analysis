@@ -275,8 +275,13 @@ def render_markdown(runs: Sequence[RunSection]) -> str:  # noqa: C901 - one docu
         "",
         "Segments: P1 / P3 / P2 are the windows; P2a (to 2025-05-06) and P2b (after) are reporting",
         "cuts of the one continuous P2 run. The benchmark rows are `SP500_EW_INTERNAL` (an equal-",
-        "weight member portfolio, context only). Its Sharpe is computed on excess returns over a",
-        "zero risk-free rate: the export reads no `risk_free_rate` row (the read contract above).",
+        "weight member portfolio, context only).",
+        "",
+        "**Risk-free rate in the Sharpe column.** The three strategy arms subtract the run's daily",
+        "`FF_RF_DAILY` rate, as `backtest_summary` stores it. The `SP500_EW_INTERNAL` row's Sharpe is",
+        "computed on excess returns over a **zero** risk-free rate, because this export may read only",
+        "the m018 tables and `book_daily_performance` does not persist `rf`. The benchmark's Sharpe is",
+        "therefore not directly comparable with the arms' and is context only.",
         "",
     ]
     for label, group_runs in _grouped(runs):
@@ -348,7 +353,9 @@ def build(databases: Sequence[str | Path]) -> tuple[dict[str, Any], str]:
         "generated_by": "python -m cycle.backtest export",
         "benchmark": BENCHMARK,
         "benchmark_sharpe_note": (
-            "excess over a zero risk-free rate: the export reads no risk_free_rate row"
+            "SP500_EW_INTERNAL's ex-post Sharpe uses excess returns over a zero risk-free rate "
+            "(the export reads no risk_free_rate row); the strategy arms subtract the run's "
+            "FF_RF_DAILY rate, as backtest_summary stores it"
         ),
         "runs": [run.as_dict() for run in runs],
     }

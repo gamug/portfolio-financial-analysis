@@ -2455,3 +2455,12 @@ this document.** Their internal sequencing:
 - **Work item 12 (`T-143` then `T-100`, the full-universe production run) runs last of all**, after every other task in this file that is not deferred or superseded — current and future — so after Work item 8 (… → `T-071`), `T-153`, Work item 19 and Work item 2. `T-100` keeps `T-153` as a prerequisite.
 
 See `TASKS.md` for the discrete, checkable task breakdown.
+
+## Work item 22 — Daily backtest and GUARD (FR-016 / FR-017) — CLOSED 2026-10-31
+
+Built and closed in one change (`T-163`, PR #188): the daily backtest (`cycle.backtest` engine,
+driver, m018 and its eight views), GUARD frozen on 2019-2021 before any window run, the six rule-based
+runs (P1, P3, P2 at W = 12 and W = 6), the export command and the results files, and the docs
+(`docs/backtest.md`, SPEC FR-016/FR-017, `docs/model_fixes.md` REPLAY entries, `docs/cycle.md`,
+`docs/kg_schema.md`). U1 = no (user, 2026-10-31). Acceptance: `docs/backtest.md` §10 and
+`/workspaces/thesis/scratch/final/REPORT.md`. Tasks and their acceptance criteria: `CHANGELOG.md`.

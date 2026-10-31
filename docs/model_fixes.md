@@ -11070,3 +11070,128 @@ values on the stored rows 74,012 → 55,399. The values the user checked on EDGA
 
 `tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_d19.py`,
 `tests/test_audit_round11_reasons.py`; the full suite passes (3,285).
+
+## REPLAY — the backtest's methodology decisions (2026-10-31)
+
+The daily backtest (`FR-016`/`FR-017`, `docs/backtest.md`) changes four deterministic behaviours of
+the selection path and adds one data-gap decision to `quant`. Each is recorded here with its real-data
+verification, as constitution AI behavior #12 requires. Unless stated otherwise the evidence is the
+rule-based runs on the final pilot database (`pilot_a3`, sha256 `851b0e20…`), read back from
+`runs/rule_P1.db` and `runs/rule_P3.db` (10 + 10 decisions) and logged in
+`/workspaces/thesis/scratch/final/out/phase3_replay_facts.txt`.
+
+### REPLAY-1 — a replay cuts the vetoes at the decision date R, not at R−1
+
+**Status**: built (WP-C, `run_replay(..., veto_cutoff_same_day=True)`), used by every run.
+
+**Symptom**: the live `select` applies the T-1 contagion lag (T-070): a veto raised on date N affects
+the ranking from N+1. A *replay* of a historical decision date is not the live book, and the backtest
+spec fixes its cutoff at R (`BACKTEST_SPEC` §0: "Veto cutoff in REPLAY = R (not R−1). Live `select`
+keeps R−1").
+
+**Root cause**: the lag is a live-trading property (the order is placed before the day's information
+exists); at a replay's close-of-R decision the R-day vetoes are already public.
+
+**Reference**: `BACKTEST_SPEC.md` §0 (reviewer A's design decision); `docs/checklist_sec` T-070 for
+the live lag, unchanged.
+
+**Fix**: `run_replay(..., veto_cutoff_same_day=True)` filters `hard_vetoed_as_of`/`active_soft_vetoes`
+at `cycle_date`; `select` keeps `_t_minus_1`. The flag is recorded in `cycle_run.params_json`, and a
+resume under the other value is refused.
+
+**Verification (real data)**: at the 20 decisions of P1 and P3, the ranking holds **629** and **731**
+rows carrying a HARD veto under the R cutoff. The stints that could only exist because the cutoff is
+R — HARD vetoes whose `raised_on` is the decision date itself — are **81** in P1 and **165** in P3
+(13 % and 23 % of the HARD rows). Live `select` is unchanged: `tests/test_cycle_backtest_selection.py`
+pins R vs R−1 and the live path.
+
+### REPLAY-2 — a restricted selection raises `TooFewCandidates` instead of building a short book
+
+**Status**: built (WP-C), used by every run.
+
+**Symptom**: the Top-N arm must hold exactly `top_n` names; a selection that runs out of ranked names
+because the risk model does not cover them would otherwise build a shorter book and silently change
+the arm.
+
+**Root cause**: the selection loop's shortfall path was written for the live book, where holding what
+is eligible is correct (T-134/T-136). The backtest needs the opposite: a data problem to report.
+
+**Reference**: `BACKTEST_SPEC.md` §8.3; `docs/cycle.md`.
+
+**Fix**: with `risk_model_id` set, `rank` marks names outside the model `NO_RISK_MODEL`, keeps
+descending under the same sector cap, and raises `cycle.data.TooFewCandidates` when it cannot reach
+`top_n`. The driver records and skips a refusal *before* formation and aborts *after* it.
+
+**Verification (real data)**: **0** `TooFewCandidates` aborts in the six runs; every one of the 28
+decisions selects exactly **30** names (`cycle_ranking.selected = 1`, all in the risk model's ids).
+`tests/test_cycle_backtest_selection.py` and `tests/test_backtest_driver.py` pin the raise and both
+driver behaviours.
+
+### REPLAY-3 — `unscored_max_share = 0.060` for these runs (declared deviation)
+
+**Status**: built (driver `[run] unscored_max_share` -> `CycleSettings`), used by every run.
+
+**Symptom**: with the project's 0.05 default, P1's first two decision dates (2021-12-31 and
+2022-02-01) are refused by cycle's coverage brake: 29 of 505 members unrankable = **0.0574**.
+
+**Root cause**: 27 members have no FUNDAMENTAL score at all and 2 have no close on the session
+(the L-42 leaver gap before 2022); the share is 0.0574, above the default.
+
+**Reference**: `FINISH_REPO.md` §5 step 7 — a project gate from T-119 with no literature source,
+treated as checklist Annex A's project gates: a declared value with its measured effect.
+
+**Fix**: Case B of that rule — u\* = the maximum share over all decision dates (k≥0) of the three
+windows = 0.0574, rounded up to the next 0.005 = **0.060**, written in `params.frozen.toml`'s `[run]`
+table and recorded in every run's `params_json`. Default unchanged (0.05); the key is honoured
+(`tests/test_backtest_driver.py`).
+
+**Verification (real data)**: the 64-date table (`docs/backtest.md` §8) has P1 k0/k1 at 0.0574 and
+every other decision date at or below 0.0298 (max outside P1's first two: 0.0298). With 0.060 no
+decision date refuses on coverage (all six runs form at k = 0); with 0.050 P1 would have formed at
+k = 2 instead of k = 0 and lost 2 rebalances.
+
+### REPLAY-4 — `exclude_tickers` (built, not used: the L-43 trigger is false)
+
+**Status**: built (driver `[run] exclude_tickers` -> `CycleSettings.exclude`, with a test), **not
+used** in these runs.
+
+**Symptom**: FINISH_REPO §8's conditional runs exist for a multi-class market cap that is
+understated: BRK counted 1:1 (ratio ≈ 1.0) or Visa flagged `market_cap_incomplete_classes`, *and*
+either name selected in a Top-30 book.
+
+**Root cause of not using it**: the first clause is false. Measured on the final database, BRK's
+stored cap is 1.5318–1.7546 × (class B count × class B close) — class A converted at 1500 (MKT-03) —
+and Visa carries the flag on 0 of 27 values, its own rates (B 1.6181, C 4.0) raising its share count
+9.6 % above the raw class sum.
+
+**Reference**: `FINISH_REPO.md` §8 (L-43); `FINAL_DB_HANDOFF.md` §4.
+
+**Fix**: none applied to the books; the key and its test exist for a future case.
+
+**Verification (real data)**: BRK.B is selected in 5 of P1's 10 decisions (2022-03-03 … 2022-07-05)
+and is never understated; the conjunction's first clause is false, so no `excl_*` run exists. The
+counts per window are in `docs/backtest.md` limitation 11.
+
+### REPLAY-5 — the risk-model build weights L-44 members with no cover shares at 0
+
+**Status**: built (`--allow-missing-caps` passed by the driver, commit `3598932`), used by every run.
+
+**Symptom**: the first real P1 run aborted at formation: `quant build-risk-model` refused 5 of 483
+panel assets "no market cap as of 2021-12-31".
+
+**Root cause**: the L-44 filing gaps — five members have no cover-share row on that date, so no
+market cap exists. Dropping them would silently shrink the universe; the cap only feeds the
+equilibrium prior, which no min-variance book uses.
+
+**Reference**: `quant`'s T-132 (the flag's own rule: weight them 0 and name them on the run);
+`LIMITATIONS.md` L-44.
+
+**Fix**: the driver passes `--allow-missing-caps` to `build-risk-model` and `optimize`; quant records
+the names in the run's `market_caps` block.
+
+**Verification (real data)**: P1's ten models have 5, 5, 6, 7, 6, 6, 6, 6, 6, 7 missing caps of
+483–497 panel assets (9 distinct assets over the window); P3's have 5, 6, 5, 5, 4, 4, 4, 4, 4, 5
+(7 distinct). All are `no_cover_shares`, none is a price problem. The covariance and the min-variance
+targets are unchanged by the flag (the prior is not an input to `min_var`), and the run records
+`allow_missing_caps: true`.
+
