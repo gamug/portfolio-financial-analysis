@@ -27,7 +27,7 @@ integrity and foreign keys ok. The independent recomputation of every metric is 
 
 | script | archived at | sha256 |
 |---|---|---|
-| `apply_plan.py` | `audit/apply_plan.py` | `21c71efb0d9c3e6fa5c8afa04c5fdcd96cd0cec6148b4e008b43cf8d866ec1b7` |
+| `apply_plan.py` | `audit/r11/apply_plan.py` | `21c71efb0d9c3e6fa5c8afa04c5fdcd96cd0cec6148b4e008b43cf8d866ec1b7` |
 | `check_apply11.py` | `audit/r11/check_apply11.py` | `d39c116dd3131c6fd96367bda3fef8b2df62105f5ab313be9971737b06ca26ec` |
 | `compact11.py` | `audit/r11/compact11.py` | `d2b5410891aad71e6e2993f61590f640de30789aaee14c1be41ed7a16e2b6d1b` |
 | `fix12_apply.py` | `audit/r11/fix12_apply.py` | `de381c722aa688d41d469b96631873b872aadbedd325b9b538bbb1d304e6b202` |

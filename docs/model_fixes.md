@@ -11113,7 +11113,7 @@ the original's `available_at`, a few days before the amendment that states it wa
 2023-08-02 … 2023-08-06. SNDK, the 10-Q for 2024-12-27: filed 2025-03-07 (available 2025-03-10) and its 10-Q/A
 `0002023554-25-000016` filed 2025-03-17 (available 2025-03-18), so the gap is 2025-03-10 … 2025-03-17. No backtest decision
 date falls in either gap (P1 2021-12-31 … 2022-10-03, P3 2023-10-26 … 2024-07-30, P2 2025-02-18 … 2025-09-18 in 21-session steps;
-the P2 decision after 2025-02-18 is 2025-03-18), so no decision reads a count before the amendment was public (D-20, MKT-01,
+the P2 decision after 2025-02-18 is 2025-03-19), so no decision reads a count before the amendment was public (D-20, MKT-01,
 PER-01). The seed file records the amendment's accession as the source of each correction.
 
 ### Not reproduced by a run
