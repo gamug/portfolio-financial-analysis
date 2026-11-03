@@ -11103,7 +11103,18 @@ The market cap is `close × the latest cover count` (MKT-01). Three defects sat 
 * `fundamental_agent.db.insert_cover_shares` calls `cover_audit.correct_filing_covers`: a cover row that still holds the
   recorded old value is corrected (or removed, for a shell) as it is written and logged in `audit_cover_corrections`.
 * `kg_schema.queries.cover_class_rates` and `market_cap.cover_total(..., rates=...)` (commit 719d30f) read the table.
-* The scripts that applied #11–#15 to the database are kept as they ran in `scripts/pilot_a/final_db/` (see its README).
+* The scripts that applied #11–#15 to the database are archived as they ran, outside the repository; `scripts/pilot_a/final_db/README.md` lists them with their sha256 and says why they are not here.
+
+### Availability of the two corrections that come from a 10-Q/A (D-20)
+
+`correct_filing_covers` applies a correction to the row of the **original** 10-Q, so the corrected count is available from
+the original's `available_at`, a few days before the amendment that states it was public. WFC 2023-Q2: the 10-Q was filed
+2023-08-01 (available 2023-08-02) and its 10-Q/A `0000072971-23-000142` was filed 2023-08-04 (available 2023-08-07), so the gap is
+2023-08-02 … 2023-08-06. SNDK, the 10-Q for 2024-12-27: filed 2025-03-07 (available 2025-03-10) and its 10-Q/A
+`0002023554-25-000016` filed 2025-03-17 (available 2025-03-18), so the gap is 2025-03-10 … 2025-03-17. No backtest decision
+date falls in either gap (P1 2021-12-31 … 2022-10-03, P3 2023-10-26 … 2024-07-30, P2 2025-02-18 … 2025-09-18 in 21-session steps;
+the P2 decision after 2025-02-18 is 2025-03-18), so no decision reads a count before the amendment was public (D-20, MKT-01,
+PER-01). The seed file records the amendment's accession as the source of each correction.
 
 ### Not reproduced by a run
 

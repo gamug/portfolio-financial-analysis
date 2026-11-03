@@ -103,13 +103,6 @@ known-third-party = ["fastapi", "pydantic"]
 # B008: FastAPI's whole DI model is `param = Depends(...)` / `Query(...)` in the
 # signature default -- the function call there is the intended API, not a bug.
 "src/api/**" = ["B008"]
-# The scripts that applied FIXES #11-#15 to the final pilot database are kept exactly as they ran
-# (the record of how the database was built), so their one-off style is not reworked: terse SQL
-# strings (S608), literal expected counts (PLR2004), local files opened once (SIM115, S310).
-"scripts/pilot_a/final_db/**" = [
-    "B007", "B905", "E741", "PLC0206", "PLR2004", "PLW2901", "RUF001", "RUF005",
-    "S110", "S310", "S608", "SIM105", "SIM115",
-]
 # The pilot's evidence scripts (T-143 part A, the empty-value finding) are reviewer's working
 # scripts, collected verbatim: they read a database and print a table, and their style is the
 # reviewer's, not the repository's.
