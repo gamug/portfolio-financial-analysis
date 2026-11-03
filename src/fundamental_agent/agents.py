@@ -11,9 +11,10 @@ import hashlib
 import json
 import logging
 import re
+import urllib.request
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import BaseModel, Field, ValidationError
 from strands import Agent, tool
@@ -49,6 +50,39 @@ _HIGH_LEVERAGE = 3.0
 _HIGH_LEVERAGE_PENALTY = 12.0
 
 log = logging.getLogger(__name__)
+
+#: A-1.3 (LLM pilot, user-approved): every text sent to the model is anonymized -- no ticker,
+#: company name, CIK, fiscal period, calendar date or absolute currency amount that is not a
+#: pillar metric. The version enters the prompt-version hash, so a change here is a new procedure.
+ANONYMIZATION_VERSION = "anon-v1"
+
+_MONTH_NAMES = (
+    "January|February|March|April|May|June|July|August|September|October|November|December"
+)
+_ANON_ISO_DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
+_ANON_MONTH_DATE_RE = re.compile(
+    rf"\b(?:{_MONTH_NAMES})\s+\d{{1,2}}(?:,\s*(?:19|20)\d{{2}})?\b", re.IGNORECASE
+)
+# A 4-digit year, but not the integer part of a decimal metric value (``2018.5``).
+_ANON_YEAR_RE = re.compile(r"(?<![\d.])(?:19|20)\d{2}(?![\d.])")
+
+
+def _anonymize(text: str) -> str:
+    """Remove dates and 4-digit years from a text sent to the model (A-1.3)."""
+    text = _ANON_ISO_DATE_RE.sub("DATE", text)
+    text = _ANON_MONTH_DATE_RE.sub("DATE", text)
+    return _ANON_YEAR_RE.sub("YEAR", text)
+
+
+def _is_anonymous_currency(result: MetricResult) -> bool:
+    """An absolute currency amount that is not a pillar reading: dropped from every prompt.
+
+    The four USD metrics of the metric dictionary are ``leverage.ebitda``, ``roic.nopat``,
+    ``valuation.market_capitalization`` and ``valuation.enterprise_value``; none is in
+    ``pillars.PILLAR_OF_METRIC`` (the pillars are ratios). A USD value that ever becomes a pillar
+    metric would be kept."""
+    return result.unit == "usd" and result.name not in pillars.PILLAR_OF_METRIC
+
 
 _ALL_GROUPS = (*CORE_GROUPS, *OPTIONAL_GROUPS)
 # valuation needs a market price, so it is computed outside the uniform group loop;
@@ -129,6 +163,10 @@ def _metric_lines(
     rule quarantines is withheld from the model rather than read (T-076, D5)."""
     lines: list[str] = []
     for result in results:
+        if _is_anonymous_currency(result):
+            # A-1.3: an absolute currency amount is not a pillar reading and can identify the
+            # company by its size; it is omitted from every prompt, value or no value.
+            continue
         rule = (withheld or {}).get((group, result.name))
         if rule is not None:
             lines.append(f"{result.name}: withheld ({rule})")
@@ -260,7 +298,9 @@ def _specialist_system_prompt(group: str) -> str:
     sop = load_skill(group)
     if sop is not None:
         parts.append(f"--- SKILL: {group} ---\n{sop}")
-    return "\n\n".join(parts)
+    # A-1.3: the skills carry publication years in their citations; no text sent to the model
+    # may carry a date, so the assembled prompt is sanitized as a whole.
+    return _anonymize("\n\n".join(parts))
 
 
 _SYNTHESIS_PROMPT = """Produce the final fundamental assessment for this filing.
@@ -286,7 +326,7 @@ def synthesis_prompt(pillars_to_rate: Sequence[str]) -> str:
     Only the *prompt* is per filing: ``_prompt_version_hash`` hashes the template above, so the
     version a row records stays constant across every filing of a run (T-113)."""
     named = ", ".join(f'"{pillar}"' for pillar in pillars_to_rate)
-    return _SYNTHESIS_PROMPT.format(pillars=named or "none")
+    return _anonymize(_SYNTHESIS_PROMPT.format(pillars=named or "none"))
 
 
 # (flat metric key, low bound, high bound, points) -- score nudges for the offline
@@ -478,6 +518,9 @@ class AnalysisResult:
     prompt_hash: str
     # T-073 (D4): the pillar block stored with the row, inside `score_snapshot.inputs_json`.
     pillars: dict[str, Any] = field(default_factory=dict)
+    # A-1.2: the resolved model and the thinking mode/effort, stored under "llm" in
+    # `score_snapshot.inputs_json` (every row, fallback and unscored included).
+    llm_meta: dict[str, Any] = field(default_factory=dict)
 
 
 # T-113 (PR #91 review): temperature=0/seed=0 reduce run-to-run variance -- no LLM provider
@@ -487,37 +530,135 @@ _SEED = 0
 _MAX_TOKENS = 1500
 
 
+@dataclass(frozen=True)
+class LlmMetadata:
+    """The resolved model and the explicit thinking configuration of one scoring run.
+
+    ``resolved`` is the model's name in ``GET /models`` (not the moving alias), ``model_id``
+    its id there, and ``response_model`` the ``model`` field of the same response when the
+    endpoint prints one. The row label names the version and the mode, never the alias alone.
+    """
+
+    requested: str
+    resolved: str
+    response_model: str | None
+    thinking: str
+    reasoning_effort: str
+    model_id: str | None = None
+    source: str = "models"
+
+    @property
+    def label(self) -> str:
+        if self.thinking == "enabled":
+            return f"{self.resolved} [thinking=enabled, effort={self.reasoning_effort}]"
+        return f"{self.resolved} [thinking=disabled]"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "requested": self.requested,
+            "resolved": self.resolved,
+            "model_id": self.model_id,
+            "response_model": self.response_model,
+            "thinking": self.thinking,
+            "reasoning_effort": self.reasoning_effort,
+            "reasoning_effort_used": self.thinking == "enabled",
+            "source": self.source,
+        }
+
+
+def _fetch_models(settings: Settings) -> dict[str, Any]:
+    """``GET {LLM_URL}/models`` once (A-1.2). Kept separate so tests can replace it."""
+    url = settings.llm_url.rstrip("/") + "/models"
+    request = urllib.request.Request(  # noqa: S310 - fixed https scheme
+        url,
+        headers={
+            "Authorization": f"Bearer {settings.llm_api_key}",
+            "Accept": "application/json",
+            "User-Agent": "research@example.com",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310
+        return cast(dict[str, Any], json.loads(response.read().decode()))
+
+
+def resolve_llm_model(settings: Settings) -> LlmMetadata:
+    """Resolve ``LLM_MODEL`` against the endpoint's model list (A-1.2).
+
+    The alias moves, so the scoring run records the name the endpoint reports today, plus the
+    thinking mode and effort its request will use. An alias the endpoint does not list is an
+    error: scoring under an unresolved name would make the row label a guess.
+    """
+    payload = _fetch_models(settings)
+    entries = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise TypeError(f"{settings.llm_url}/models returned no data list")
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("id") == settings.llm_model:
+            resolved = entry.get("name") or entry.get("model") or str(entry["id"])
+            return LlmMetadata(
+                requested=settings.llm_model,
+                resolved=str(resolved),
+                response_model=(str(entry["model"]) if entry.get("model") is not None else None),
+                thinking=settings.llm_thinking,
+                reasoning_effort=settings.llm_reasoning_effort,
+                model_id=str(entry["id"]),
+            )
+    ids = [str(entry.get("id")) for entry in entries if isinstance(entry, dict)]
+    raise RuntimeError(f"{settings.llm_model} is not in {settings.llm_url}/models: {ids}")
+
+
 def build_model(settings: Settings) -> OpenAIModel:
     """Point Strands' OpenAI provider at the configured (DeepSeek) endpoint.
 
     T-113: ``temperature = 0`` (was ``0.2``, an unexplained source of run-to-run variance);
-    ``seed`` is the standard OpenAI-schema field for a deterministic sample -- passed
-    optimistically (forwarded verbatim to the client, never validated against a strict
-    schema), honoured or silently ignored depending on whether the configured endpoint's
-    backend supports it (unverified against the live DeepSeek endpoint -- this environment's
-    network egress policy blocks reaching it; confirm before `T-079`)."""
+    ``seed`` is the standard OpenAI-schema field for a deterministic sample.
+
+    A-1.1: thinking is explicit. With ``LLM_THINKING=disabled`` the request carries
+    ``temperature = 0`` and ``extra_body.thinking.type = disabled``; with ``enabled`` it carries
+    ``reasoning_effort`` and ``extra_body.thinking.type = enabled`` and no temperature (DeepSeek
+    ignores temperature in thinking mode, so passing it would only mislead a reader).
+    """
+    params: dict[str, Any] = {"seed": _SEED, "max_tokens": _MAX_TOKENS}
+    if settings.llm_thinking == "enabled":
+        params["reasoning_effort"] = settings.llm_reasoning_effort
+        params["extra_body"] = {"thinking": {"type": "enabled"}}
+    else:
+        params["temperature"] = _TEMPERATURE
+        params["extra_body"] = {"thinking": {"type": "disabled"}}
     return OpenAIModel(
         client_args={"api_key": settings.llm_api_key, "base_url": settings.llm_url},
         model_id=settings.llm_model,
-        params={"temperature": _TEMPERATURE, "seed": _SEED, "max_tokens": _MAX_TOKENS},
+        params=params,
     )
 
 
-def _prompt_version_hash(model_name: str) -> str:
+def _prompt_version_hash(
+    model_name: str,
+    *,
+    resolved_model: str | None = None,
+    thinking: str = "disabled",
+    reasoning_effort: str = "high",
+) -> str:
     """sha256 of everything that determines what gets sent to the LLM for *every* filing:
-    the prompt templates themselves and the model config -- not any one filing's own
-    transcript (T-113, PR #91 review: a per-filing hash is unique per row, unverifiable
-    since the transcript itself isn't stored, and can't group scores by the prompt version
-    that produced them, which is what `T-079` needs to separate scores from before/after a
-    prompt edit). Constant across every filing scored under the same code/skills/model
-    config; changes only when a prompt, a skill SOP file, or the model config changes."""
+    the prompt templates, the anonymization version and the model config -- not any one
+    filing's own transcript (T-113, PR #91 review: a per-filing hash is unique per row,
+    unverifiable since the transcript itself isn't stored, and can't group scores by the
+    prompt version that produced them, which is what `T-079` needs to separate scores from
+    before/after a prompt edit). Constant across every filing scored under the same
+    code/skills/model/mode config; changes only when one of them changes."""
     payload = {
-        "master_prompt": MASTER_PROMPT,
+        "master_prompt": _anonymize(MASTER_PROMPT),
         "specialist_prompts": {g: _specialist_system_prompt(g) for g in _SPECIALIST_GROUPS},
-        "synthesis_prompt": _SYNTHESIS_PROMPT,
-        "repair_prompt": _REPAIR_PROMPT,
+        "synthesis_prompt": _anonymize(_SYNTHESIS_PROMPT),
+        "repair_prompt": _anonymize(_REPAIR_PROMPT),
+        "anonymization": ANONYMIZATION_VERSION,
         "model_id": model_name,
-        "temperature": _TEMPERATURE,
+        "resolved_model": resolved_model or model_name,
+        "thinking": thinking,
+        "reasoning_effort": reasoning_effort if thinking == "enabled" else None,
+        "temperature": _TEMPERATURE if thinking == "disabled" else None,
         "seed": _SEED,
         "max_tokens": _MAX_TOKENS,
     }
@@ -568,12 +709,32 @@ def compute_metrics(ctx: FilingContext) -> list[tuple[str, MetricResult]]:
 class FundamentalAnalyst:
     """Runs the orchestrator + synthesis for one filing at a time."""
 
-    def __init__(self, model: OpenAIModel | None, model_name: str) -> None:
+    def __init__(
+        self,
+        model: OpenAIModel | None,
+        model_name: str,
+        llm_meta: LlmMetadata | None = None,
+    ) -> None:
         # ``model`` is None for the deterministic path (``_compute_all`` and the recompute script,
         # which never call the LLM); ``analyze`` needs a real model.
-        self.prompt_hash = _prompt_version_hash(model_name)
+        self.llm_meta = llm_meta or LlmMetadata(
+            requested=model_name,
+            resolved=model_name,
+            response_model=None,
+            thinking="disabled",
+            reasoning_effort="high",
+            source="unresolved",
+        )
+        self.prompt_hash = _prompt_version_hash(
+            self.llm_meta.resolved,
+            resolved_model=self.llm_meta.resolved,
+            thinking=self.llm_meta.thinking,
+            reasoning_effort=self.llm_meta.reasoning_effort,
+        )
         self._model = model
-        self.model_name = model_name
+        # A-1.2: a real model's row label names the resolved version and the mode, never the
+        # moving alias alone. The deterministic paths keep their own fixed labels.
+        self.model_name = self.llm_meta.label if model is not None else model_name
 
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
         """Compute this filing's metrics, then score them (the run's own path)."""
@@ -599,7 +760,7 @@ class FundamentalAnalyst:
         withheld = withheld_map(ctx, computed)
         orchestrator = Agent(
             model=self._model,
-            system_prompt=MASTER_PROMPT,
+            system_prompt=_anonymize(MASTER_PROMPT),
             callback_handler=None,
             tools=[
                 self._make_specialist(name, by_group.get(name, []), ctx, withheld)
@@ -638,6 +799,7 @@ class FundamentalAnalyst:
             used_fallback=verdict.used_fallback,
             prompt_hash=self.prompt_hash,
             pillars=verdict.pillars,
+            llm_meta=self.llm_meta.as_dict(),
         )
 
     def _compute_all(self, ctx: FilingContext) -> list[tuple[str, MetricResult]]:
@@ -666,14 +828,16 @@ class FundamentalAnalyst:
                 system_prompt=_specialist_system_prompt(group),
                 callback_handler=None,
             )
-            prompt = "\n\n".join(
-                part
-                for part in (
-                    f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}",
-                    paragraph,
-                    f"{group}:\n" + "\n".join(lines),
+            prompt = _anonymize(
+                "\n\n".join(
+                    part
+                    for part in (
+                        f"Filing: {ctx.form}",
+                        paragraph,
+                        f"{group}:\n" + "\n".join(lines),
+                    )
+                    if part
                 )
-                if part
             )
             try:
                 return str(reader(prompt)).strip()
@@ -750,14 +914,16 @@ def estimated_prompt_chars(
         if not any(result.value is not None for result in results):
             continue
         paragraph = basis_paragraph(group, results) if ctx.form == "10-Q" else ""
-        prompt = "\n\n".join(
-            part
-            for part in (
-                f"{ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}",
-                paragraph,
-                f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)),
+        prompt = _anonymize(
+            "\n\n".join(
+                part
+                for part in (
+                    f"Filing: {ctx.form}",
+                    paragraph,
+                    f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)),
+                )
+                if part
             )
-            if part
         )
         total += len(_specialist_system_prompt(group)) + len(prompt)
     return total
@@ -782,14 +948,17 @@ def _brief(
     by_group: dict[str, list[MetricResult]],
     withheld: Mapping[tuple[str, str], str] | None = None,
 ) -> str:
-    parts = [f"Filing: {ctx.ticker} ({ctx.company_name}) {ctx.form} {ctx.fiscal_period}"]
+    # A-1.3: the form is kept; the ticker, company name, fiscal period (which carries the year)
+    # and every other date are removed. The metric lines carry no calendar data, and the
+    # absolute-currency lines are dropped in `_metric_lines`.
+    parts = [f"Filing: {ctx.form}"]
     for group, results in by_group.items():
         if ctx.form == "10-Q":
             paragraph = basis_paragraph(group, results)
             if paragraph:
                 parts.append(paragraph)
         parts.append(f"{group}:\n" + "\n".join(_metric_lines(group, results, withheld)))
-    return "\n\n".join(parts)
+    return _anonymize("\n\n".join(parts))
 
 
 def _round(value: Any) -> Any:

@@ -173,6 +173,8 @@ class SnapshotRow:
     # T-073 (D4): the pillar block (`pillars`, `pillar_weights`, `pillar_weights_version`,
     # `coverage`), stored beside the flat metrics inside `score_snapshot.inputs_json`.
     pillars: dict[str, Any] = field(default_factory=dict)
+    # A-1.2: the resolved LLM name and its thinking mode/effort, under "llm" in `inputs_json`.
+    llm: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -1859,6 +1861,8 @@ def insert_snapshot(conn: Database, row: SnapshotRow, *, run_id: int | None = No
     pillar block beside them (D4) -- no schema change."""
     inputs: dict[str, Any] = dict(row.metrics)
     inputs.update(row.pillars)
+    if row.llm:
+        inputs["llm"] = row.llm
     conn.execute(
         """
         INSERT INTO score_snapshot

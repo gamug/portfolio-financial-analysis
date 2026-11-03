@@ -41,7 +41,11 @@ Because `planned_units` and the other three use different units, `completed_unit
 
 `Settings.load()` requires `KG_FINANCIAL_DB` (via `kg_schema.env.database_path`,
 which also still honours the old misspelled `KG_FINANTIAL_DB`), `LLM_API_KEY`,
-`LLM_MODEL`, `LLM_URL`. Optional: `KG_UNIVERSE_DB` (via
+`LLM_MODEL`, `LLM_URL`. The LLM's thinking mode is explicit: `LLM_THINKING`
+(`disabled` default, or `enabled`) and, only when enabled, `LLM_REASONING_EFFORT`
+(`low` / `high` / `max`, default `high`). A scoring run resolves `LLM_MODEL` once against
+`GET {LLM_URL}/models` and records the resolved name with the mode and effort; the row's model
+label names the resolved version, not the moving alias. Optional: `KG_UNIVERSE_DB` (via
 `kg_schema.env.universe_database_path`; default `/workspaces/thesis/data/universe.db`),
 `EDGAR_BASE_URL` (default `http://host.docker.internal:8000/edgar/edgar` — the
 doubled `/edgar` is intentional), `SEC_USER_AGENT`.

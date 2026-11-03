@@ -74,8 +74,10 @@ def _fake_agent(calls: list[str], ratings: int = 70) -> type:
     """A Strands-agent stand-in: JSON for the synthesis prompt, a reading for a specialist."""
 
     class _Agent:
-        def __init__(self, **_kwargs: object) -> None:
-            pass
+        def __init__(self, **kwargs: object) -> None:
+            system_prompt = kwargs.get("system_prompt")
+            if isinstance(system_prompt, str):
+                calls.append(system_prompt)
 
         def __call__(self, prompt: str) -> str:
             calls.append(prompt)
@@ -286,7 +288,7 @@ def test_the_rule_based_row_is_the_row_a_runs_fallback_writes(
     monkeypatch.setattr(
         pipeline,
         "FundamentalAnalyst",
-        lambda _model, _name: FundamentalAnalyst(None, FALLBACK_MODEL_LABEL),
+        lambda _model, _name, _meta=None: FundamentalAnalyst(None, FALLBACK_MODEL_LABEL),
     )
     monkeypatch.setattr(agents, "Agent", _DeadAgent)
     params = RunParams(forms=["10-Q"], since_year=2023, until_year=2023)
@@ -476,13 +478,21 @@ def test_the_llm_path_scores_through_the_monkeypatched_model(
     assert (report.scored, report.failed) == (1, 0)
     row = _rows(settings)[0]
     assert row["raw_value"] == 70.0
-    assert row["model"] == "deepseek-chat"
+    assert row["model"] == "deepseek-chat [thinking=disabled]"
     assert row["prompt_hash"] == _prompt_version_hash("deepseek-chat")
     assert len(calls) >= 2  # the brief and the synthesis prompt
-    assert "AAPL (Apple Inc.) 10-K FY2023" in calls[0]
+    assert any("Filing: 10-K" in call for call in calls)
+    inputs = json.loads(row["inputs_json"])
+    assert inputs["llm"]["requested"] == "deepseek-chat"
+    assert inputs["llm"]["resolved"] == "deepseek-chat"
+    assert inputs["llm"]["thinking"] == "disabled"
     conn = sqlite3.connect(settings.db_path)
     try:
         assert conn.execute("SELECT fallback_units FROM analysis_run").fetchone()[0] == 0
+        run_params = json.loads(conn.execute("SELECT params_json FROM analysis_run").fetchone()[0])
+        assert run_params["llm"]["resolved"] == "deepseek-chat"
+        assert run_params["llm"]["thinking"] == "disabled"
+        assert run_params["prompt_hash"] == row["prompt_hash"]
     finally:
         conn.close()
 
@@ -621,3 +631,26 @@ def test_a_dry_run_marks_a_filing_that_will_be_unscored(
     out = capsys.readouterr().out
     assert "unscored (D1): no model call" in out
     assert "prompt~" not in out
+
+
+def test_every_prompt_of_a_scoring_run_is_anonymized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A-1.3: every text the scoring run sends -- master, each specialist system prompt, the
+    brief, the research prompts and the synthesis prompt -- carries no identity and no year."""
+    calls: list[str] = []
+    monkeypatch.setattr(agents, "Agent", _fake_agent(calls))
+    settings = _seed_db(tmp_path)
+    assert run_score(settings, ScoreParams()).scored == 1
+    conn = sqlite3.connect(settings.db_path)
+    try:
+        cik = conn.execute("SELECT cik FROM assets WHERE ticker = 'AAPL'").fetchone()[0]
+    finally:
+        conn.close()
+    prompt_text = "\n".join(calls)
+    for forbidden in ("AAPL", "Apple", str(cik)):
+        assert forbidden not in prompt_text, forbidden
+    assert "Filing: 10-K" in prompt_text
+    assert not any(1900 <= int(year) <= 2099 for year in re.findall(r"\b\d{4}\b", prompt_text)), [
+        year for year in re.findall(r"\b\d{4}\b", prompt_text) if 1900 <= int(year) <= 2099
+    ]

@@ -16,6 +16,7 @@ import pytest
 from french_support import copy_fixture
 from portfolio_common.db import Database
 
+from fundamental_agent import agents as agent_layer
 from fundamental_agent import db, pipeline
 from fundamental_agent.statements import Statements
 from kg_schema import provenance
@@ -38,6 +39,20 @@ def _no_retry_waits() -> Iterator[None]:
     pipeline.RETRY_WAITS_SECONDS = (0.0, 0.0, 0.0)
     yield
     pipeline.RETRY_WAITS_SECONDS = original
+
+
+@pytest.fixture(autouse=True)
+def _fake_llm_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reaches ``{LLM_URL}/models``: the resolver parses this local payload instead.
+
+    A test of the resolver itself replaces ``_fetch_models`` again with the response it needs.
+    """
+
+    def fake(settings: object) -> dict[str, object]:
+        model = str(getattr(settings, "llm_model", "test-model"))
+        return {"data": [{"id": model, "object": "model", "name": model}]}
+
+    monkeypatch.setattr(agent_layer, "_fetch_models", fake)
 
 
 @pytest.fixture(autouse=True, scope="session")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal, cast
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -27,6 +28,11 @@ class Settings(BaseModel):
     llm_api_key: str
     llm_model: str
     llm_url: str
+    # A-1.1 (LLM pilot): DeepSeek's thinking mode is explicit, never the provider default.
+    # `LLM_REASONING_EFFORT` is read only when thinking is enabled; with thinking disabled the
+    # request keeps `temperature = 0` (the provider ignores temperature in thinking mode).
+    llm_thinking: Literal["disabled", "enabled"] = "disabled"
+    llm_reasoning_effort: Literal["low", "high", "max"] = "high"
     edgar_base_url: str = DEFAULT_EDGAR_BASE_URL
     # T-114: a run refuses to write analysis_run/score_snapshot rows when code_version() is
     # dirty (uncommitted changes) -- its results would come from code HEAD alone can't
@@ -62,5 +68,13 @@ class Settings(BaseModel):
             llm_api_key="" if metrics_only else os.environ["LLM_API_KEY"],
             llm_model="" if metrics_only else os.environ["LLM_MODEL"],
             llm_url="" if metrics_only else os.environ["LLM_URL"],
+            llm_thinking=cast(
+                "Literal['disabled', 'enabled']",
+                "disabled" if metrics_only else os.environ.get("LLM_THINKING", "disabled"),
+            ),
+            llm_reasoning_effort=cast(
+                "Literal['low', 'high', 'max']",
+                "high" if metrics_only else os.environ.get("LLM_REASONING_EFFORT", "high"),
+            ),
             edgar_base_url=os.environ.get("EDGAR_BASE_URL", DEFAULT_EDGAR_BASE_URL),
         )

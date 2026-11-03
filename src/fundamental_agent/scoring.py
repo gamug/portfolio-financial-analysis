@@ -32,6 +32,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
+from fundamental_agent import agents as agent_layer
 from fundamental_agent import db
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
@@ -620,7 +621,13 @@ def _score_all(writer: _Writer, scorer: _Scorer, planned: Sequence[_Planned]) ->
             writer.store(entry, result)
 
 
-def _params(params: ScoreParams, resolution: MetricVersions) -> dict[str, Any]:
+def _params(
+    params: ScoreParams,
+    resolution: MetricVersions,
+    *,
+    llm: dict[str, Any] | None,
+    prompt_hash: str | None,
+) -> dict[str, Any]:
     return {
         "command": "score",
         "rule_based": params.rule_based,
@@ -630,6 +637,8 @@ def _params(params: ScoreParams, resolution: MetricVersions) -> dict[str, Any]:
         "limit": params.limit,
         "metrics_version": params.metrics_version,
         "metrics_versions": resolution.manifest(),
+        "llm": llm,
+        "prompt_hash": prompt_hash,
     }
 
 
@@ -640,6 +649,9 @@ def _start_run(  # noqa: PLR0913, PLR0917 - the run row's whole provenance
     resolution: MetricVersions,
     filings: int,
     planned: int,
+    *,
+    llm: dict[str, Any] | None,
+    prompt_hash: str | None,
 ) -> int:
     """Refuse a dirty tree (T-114), then open the run row. Returns its id."""
     cv = code_version()
@@ -650,7 +662,10 @@ def _start_run(  # noqa: PLR0913, PLR0917 - the run row's whole provenance
         )
     run_id = db.start_run(
         conn,
-        params={**_params(params, resolution), "dirty_tree_bypassed": dirty},
+        params={
+            **_params(params, resolution, llm=llm, prompt_hash=prompt_hash),
+            "dirty_tree_bypassed": dirty,
+        },
         as_of=None,
         code_version=cv,
     )
@@ -691,13 +706,26 @@ def run_score(settings: Settings, params: ScoreParams) -> ScoreReport:
             report.failed = len(rejected)
             report.seconds = time.monotonic() - started
             return report
-        run_id = _start_run(conn, settings, params, scope.resolution, len(filings), len(planned))
-        report.run_id = run_id
-        analyst = (
-            FundamentalAnalyst(None, FALLBACK_MODEL_LABEL)
-            if params.rule_based
-            else FundamentalAnalyst(build_model(settings), settings.llm_model)
+        if params.rule_based:
+            analyst = FundamentalAnalyst(None, FALLBACK_MODEL_LABEL)
+        else:
+            llm_model = build_model(settings)
+            # A-1.2: resolve the moving alias once, before the run row is opened, and carry the
+            # resolved name + thinking mode/effort into the run record and every row.
+            llm_meta = agent_layer.resolve_llm_model(settings) if llm_model is not None else None
+            analyst = FundamentalAnalyst(llm_model, settings.llm_model, llm_meta)
+        report.model = analyst.model_name
+        run_id = _start_run(
+            conn,
+            settings,
+            params,
+            scope.resolution,
+            len(filings),
+            len(planned),
+            llm=None if params.rule_based else analyst.llm_meta.as_dict(),
+            prompt_hash=analyst.prompt_hash,
         )
+        report.run_id = run_id
         writer = _Writer(conn=conn, run_id=run_id, scoring_model=analyst.model_name, report=report)
         scorer = _Scorer(analyst=analyst, rule_based=params.rule_based, workers=params.workers)
         try:

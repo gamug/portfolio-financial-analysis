@@ -463,7 +463,9 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
     output (status, counts, test statistics) had been read before the re-freeze, but no parameter
     was chosen or changed from its results.
 15. **GUARD's measured behaviour** (§5): layer 4 is active on 195/196, 156/192 and 148/150
-    sessions because the formation cost puts the arm below its high-water mark at the first close;
+    sessions because with `m = 1/(1 − α)` the exposure is 1 only at a new NAV maximum, so every
+    session below the running maximum is scaled down; the formation cost alone puts the arm below
+    its maximum at the first close;
     layer 1 whipsaws (P1 142/110/76, P3 24/14/10, P2 52/38/24 APPLIED re-entries / a later stop /
     a stop within two sessions); GUARD trades on 186 / 182 / 142 sessions on which NOGUARD has no
     turnover, adding 12.79 / 4.37 / 5.48 turnover and 127.9 / 43.7 / 54.8 bps. In P1 every arm's

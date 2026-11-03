@@ -3,13 +3,16 @@ produced a score -- constant across every filing in a run, not a per-filing tran
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from fundamental_agent import agents
 from fundamental_agent.agents import FundamentalAnalyst, _prompt_version_hash
+from fundamental_agent.config import Settings
 from fundamental_agent.metrics import provenance
 from fundamental_agent.metrics.base import MetricResult
 from fundamental_agent.pricing import ClosePrice
@@ -245,15 +248,14 @@ def test_a_tiingo_close_withholds_every_valuation_value_from_the_prompt(
         assert "withheld (TIINGO_CLOSE)" in prompt
         for value in ("2700000000000", "2800000000000", "0.031", "0.028", "0.024"):
             assert value not in prompt, (value, prompt)
-    # every present valuation metric is withheld; an empty one keeps its own reason
-    assert valuation[:5] == [
-        "market_capitalization: withheld (TIINGO_CLOSE)",
-        "enterprise_value: withheld (TIINGO_CLOSE)",
+        # A-1.3: the absolute USD lines are dropped from every prompt, not merely withheld.
+        assert "market_capitalization" not in prompt
+        assert "enterprise_value" not in prompt
+    assert valuation == [
         "free_cash_flow_yield: withheld (TIINGO_CLOSE)",
         "sbc_adjusted_fcf_yield: withheld (TIINGO_CLOSE)",
         "enterprise_fcf_yield: withheld (TIINGO_CLOSE)",
     ]
-    assert "market_capitalization_empty: empty (missing_input)" in valuation
     assert "net_margin: 0.25" in brief  # a non-valuation metric is untouched
 
 
@@ -309,3 +311,108 @@ def test_the_tiingo_map_never_changes_which_metrics_the_hard_rules_withhold() ->
     assert agents._metric_lines("profitability", [rule], merged) == [
         "net_margin: withheld (DQ_MARGIN)"
     ]
+
+
+# -- LLM pilot Part 1: explicit thinking, resolved model, anonymized prompts -----------------
+
+
+def _settings(**overrides: Any) -> Settings:
+    base: dict[str, Any] = {
+        "db_path": Path(":memory:"),
+        "llm_api_key": "k",
+        "llm_model": "deepseek-flash",
+        "llm_url": "https://api.deepseek.com",
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_build_model_sends_explicit_thinking_disabled_and_temperature_zero() -> None:
+    model = agents.build_model(_settings(llm_thinking="disabled"))
+    params = cast(dict[str, Any], model.config["params"])
+    assert params["temperature"] == 0
+    assert params["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "reasoning_effort" not in params
+
+
+@pytest.mark.parametrize("effort", ["low", "high", "max"])
+def test_build_model_sends_the_enabled_thinking_mode_and_effort(effort: str) -> None:
+    model = agents.build_model(_settings(llm_thinking="enabled", llm_reasoning_effort=effort))
+    params = cast(dict[str, Any], model.config["params"])
+    assert "temperature" not in params
+    assert params["reasoning_effort"] == effort
+    assert params["extra_body"] == {"thinking": {"type": "enabled"}}
+
+
+def test_resolve_llm_model_records_the_name_and_the_response_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        agents,
+        "_fetch_models",
+        lambda _settings: {
+            "data": [
+                {
+                    "id": "deepseek-flash",
+                    "name": "DeepSeek-V4.1-Flash",
+                    "model": "DeepSeek-V4.1-Flash-1017",
+                }
+            ]
+        },
+    )
+    meta = agents.resolve_llm_model(_settings(llm_thinking="enabled", llm_reasoning_effort="max"))
+    assert (meta.requested, meta.resolved, meta.model_id) == (
+        "deepseek-flash",
+        "DeepSeek-V4.1-Flash",
+        "deepseek-flash",
+    )
+    assert meta.response_model == "DeepSeek-V4.1-Flash-1017"
+    assert meta.label == "DeepSeek-V4.1-Flash [thinking=enabled, effort=max]"
+    assert meta.as_dict()["thinking"] == "enabled"
+    assert meta.as_dict()["reasoning_effort_used"] is True
+
+
+def test_an_unknown_alias_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(agents, "_fetch_models", lambda _settings: {"data": [{"id": "other"}]})
+    with pytest.raises(RuntimeError, match="not in"):
+        agents.resolve_llm_model(_settings())
+
+
+def test_the_brief_and_every_specialist_prompt_carry_no_identity_or_year(
+    aapl_10k: Statements,
+) -> None:
+    ctx = agents.FilingContext(
+        "AAPL",
+        "Apple Inc.",
+        "10-K",
+        "FY2023",
+        aapl_10k,
+        "2023-09-30 (FY)",
+        None,
+        cik="0000320193",
+    )
+    results = {"profitability": [MetricResult("net_margin", 0.2, "ratio", {})]}
+    prompts = [agents._brief(ctx, results)]
+    prompts += [agents._specialist_system_prompt(group) for group in agents._SPECIALIST_GROUPS]
+    for prompt in prompts:
+        for forbidden in ("AAPL", "Apple", "0000320193"):
+            assert forbidden not in prompt, forbidden
+        assert not any(1900 <= int(year) <= 2099 for year in re.findall(r"\b\d{4}\b", prompt))
+
+
+def test_absolute_usd_amounts_are_dropped_from_the_prompt() -> None:
+    results = [
+        MetricResult("ebitda", 123.0, "usd", {}),
+        MetricResult("nopat", 45.0, "usd", {}),
+        MetricResult("market_capitalization", 10.0, "usd", {}),
+        MetricResult("enterprise_value", 11.0, "usd", {}),
+        MetricResult("debt_to_equity", 0.5, "x", {}),
+    ]
+    assert agents._metric_lines("leverage", results) == ["debt_to_equity: 0.5"]
+
+
+def test_the_prompt_hash_changes_with_the_thinking_mode_and_effort() -> None:
+    disabled = _prompt_version_hash("deepseek-flash", thinking="disabled")
+    high = _prompt_version_hash("deepseek-flash", thinking="enabled", reasoning_effort="high")
+    maximum = _prompt_version_hash("deepseek-flash", thinking="enabled", reasoning_effort="max")
+    assert len({disabled, high, maximum}) == 3

@@ -19,6 +19,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
+from fundamental_agent import agents as agent_layer
 from fundamental_agent import db, quality, utility_coverage, value_inputs
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
@@ -159,7 +160,7 @@ class _Engine:
     completed_accessions: set[str] = field(default_factory=set)
 
 
-def run(settings: Settings, params: RunParams) -> RunReport:
+def run(settings: Settings, params: RunParams) -> RunReport:  # noqa: PLR0915 - one driver
     """Execute a batch run and return its report."""
     conn = connect(settings.db_path)
     try:
@@ -213,9 +214,22 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise DirtyTree(
                 f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
             )
+        analyst: FundamentalAnalyst | None = None
+        llm_meta = None
+        if not params.metrics_only:
+            model = build_model(settings)
+            # A-1.2: resolve the moving alias once, before the run row, and record it with the
+            # explicit thinking mode/effort in the run and every score row.
+            llm_meta = agent_layer.resolve_llm_model(settings) if model is not None else None
+            analyst = FundamentalAnalyst(model, settings.llm_model, llm_meta)
         run_id = db.start_run(
             conn,
-            params={**_params_dict(params), "dirty_tree_bypassed": dirty_reason},
+            params={
+                **_params_dict(params),
+                "llm": llm_meta.as_dict() if llm_meta is not None else None,
+                "prompt_hash": analyst.prompt_hash if analyst is not None else None,
+                "dirty_tree_bypassed": dirty_reason,
+            },
             as_of=params.analysis_date,
             code_version=cv,
         )
@@ -223,11 +237,6 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
 
         try:
-            analyst = (
-                None
-                if params.metrics_only
-                else FundamentalAnalyst(build_model(settings), settings.llm_model)
-            )
             with EdgarClient(settings.edgar_base_url) as edgar:
                 engine = _Engine(
                     conn, edgar, analyst, params, report, completed, completed_accessions=accessions
@@ -1378,6 +1387,7 @@ def store_score(  # noqa: PLR0913 - the row's identity, its result and the run t
             event_time=event_time,
             prompt_hash=result.prompt_hash,
             pillars=result.pillars,
+            llm=dict(result.llm_meta),
         ),
         run_id=run_id,
     )
