@@ -133,6 +133,41 @@ action per arm (`APPLIED` | `ARM_DISABLED` | `NOT_HELD` | `SUPERSEDED`), persist
 **both** rows are recorded `APPLIED` even though only the smaller of the two is the binding term of
 `s = min(s_σ, s_DD)`; `n_guard_actions` therefore counts alerts applied, not binding constraints.
 
+### What GUARD did in these runs (measured)
+
+The numbers below are recomputed from the run copies by `scripts/backtest_guard_behaviour.py`
+(aggregates only; evidence `out/a1/a14_guard_behaviour.log`).
+
+**Layer 4 is active on almost every session.** With `m = 1/(1 − α)` the exposure is exactly 1 only
+at a new NAV maximum, and the formation cost alone puts the arm below its maximum at the first
+close. Sessions with `s_DD < 1`: **P1 195/196, P3 156/192, P2 148/150**. The arm is below its
+initial capital, before the first close above it, for **1, 1 and 141 sessions** of P1, P3 and P2
+respectively; every one of those has `s_DD < 1`. The stored value matches
+`m(W − α M)/W` with a maximum absolute error of **0.0** in every run.
+
+**Layer 1 whipsaws by construction.** A re-entry needs one session's return `≥ δ` while the same
+name's `S(21)` can still be `< −γ`, so the next session can stop it again. APPLIED re-entries /
+followed by another stop at any later session / followed by another stop within two sessions:
+**P1 142/110/76 · P3 24/14/10 · P2 52/38/24**. This is Kaminski & Lo's Def. 1 (a one-period
+re-entry condition) as specified, applied every session; it is a property of the daily overlay,
+not a coding defect. The state outlives the reference: a name stopped before a rebalance drops it
+keeps its return history, its re-entry is recorded `NOT_HELD`, and if it returns it is held at its
+reference weight (`docs/model_fixes.md` REPLAY-6).
+
+**GUARD's own trades.** Sessions on which NOGUARD has no turnover but GUARD trades: **P1 186,
+P3 182, P2 142**; the extra turnover is **12.79 / 4.37 / 5.48** and the cost **127.9 / 43.7 /
+54.8 bps** over the window. There is no no-trade band: an order is sent whenever a target weight
+moves by more than `1e-12` (BACKTEST_SPEC §4), so a re-entry or a scaler change on an otherwise
+quiet session is traded.
+
+**A negative mean makes a low-volatility arm's Sharpe worse.** In P1 every arm's mean daily excess
+return is negative (BASE −6.04e−4, NOGUARD −1.03e−3, GUARD −1.16e−3); with a negative numerator a
+lower volatility gives a more negative Sharpe, not a better one. GUARD's annualized volatility is
+**14.97 %** against NOGUARD's **21.37 %**, and its Sharpe **−1.95** against **−1.22**; the P1 paired
+Sharpe tests (Ledoit–Wolf p = **0.0084**, Jobson–Korkie/Memmel p = **0.0198**) therefore rank the
+lower-volatility GUARD arm as worse. The protection measures are the volatility and drawdown
+columns (P1 MDD 22.27 % against NOGUARD's 24.92 %), not the Sharpe comparison.
+
 ## 6. Statistics
 
 Per arm and segment (P1, P3, P2, P2a, P2b): cumulative return, annualized return (geometric),
@@ -148,11 +183,10 @@ GUARD_NO_NLP vs NOGUARD:
 
 ### Low power, stated in advance
 
-The exported `SP500_EW_INTERNAL` Sharpe is computed on excess returns over a **zero** risk-free
-rate, because the export's read contract (FINISH_REPO §9.1) covers only the m018 tables and
-`book_daily_performance` does not persist `rf`; the three strategy arms subtract `FF_RF_DAILY`.
-The two Sharpes are therefore not directly comparable and the results file repeats this note under
-every table.
+Every Sharpe in the results file, the `SP500_EW_INTERNAL` benchmark included, subtracts the run's
+daily `FF_RF_DAILY` rate: the arms from `backtest_summary`, the benchmark from the run copy's own
+`risk_free_rate` rows (same curve, annualized rate / 252, carried forward — the rule the driver
+used for the arms). The benchmark and the arms are therefore on the same excess-return basis.
 
 Each window holds **150–196 daily returns** per arm (P2 150, P3 192, P1 196). A Sharpe difference of
 0.3 on a 150-session sample is not distinguishable from zero at conventional levels; the paired
@@ -195,8 +229,22 @@ The frozen file reports two different gaps per year, because they have different
 
 The first column is the mapping gap (a member symbol the database never stored); the last is what
 the calibration panel actually loses — members with an asset row but no total return on the session
-(a halt, a missing bar), which is the declared limitation of C. The frozen file is committed
-**before** the first window run (limitation 14 records the freeze commit).
+(a halt, a missing bar), which is the declared limitation of C.
+
+**The freeze has two commits, and the first is superseded.** `f9d7095` (2026-10-31 17:40Z) froze
+`gamma = 0.1190`, `delta = 0.0108`, `sigma_star = 0.2423`, `alpha = 0.6146`, `m = 2.5950` on a panel
+that **dropped the 26 L-42 leaver series** the plan required: the calibration loop read only the
+members with an `assets` row, so the leaver files it had loaded never entered the panel (R-1.1).
+The first `rule_P1` run was executed under that file; its checks output
+(`out/phase3_rule_P1_checks.*`, 2026-10-31 17:47Z) records its status, counts and six test
+statistics, and was produced and examined before the re-freeze. The re-freeze was **not** driven by
+those results:
+the cause was the calibration-input defect, and the final file is the same rule's output on the
+corrected panel (the 9,167 leaver returns included) — `1303769` (2026-10-31 19:28Z), the file every
+reported run uses. Values before → after: `gamma` 0.1190 → 0.1229, `sigma_star` 0.2423 → 0.2455,
+`alpha` 0.6146 → 0.6073, `m` 2.5950 → 2.5467; `delta` 0.0108 and `J` 21 unchanged. The superseded
+run and its copy were discarded, and the six reported runs were executed after `1303769`
+(limitation 14).
 
 ## 8. The coverage brake (`unscored_max_share`)
 
@@ -215,55 +263,55 @@ is written in `params.frozen.toml`'s `[run]` table, and each run records it in `
 
 | date | window | k | universe | unscored | unpriced | share |
 |---|---|---|---|---|---|---|
-| 2020-12-31 | P1 | −12 | 486 | 23 | 2 | 0.0514 |
-| 2021-02-02 | P1 | −11 | 488 | 23 | 2 | 0.0512 |
-| 2021-03-04 | P1 | −10 | 489 | 16 | 2 | 0.0368 |
-| 2021-04-05 | P1 | −9 | 493 | 19 | 2 | 0.0426 |
-| 2021-05-04 | P1 | −8 | 494 | 24 | 2 | 0.0526 |
-| 2021-06-03 | P1 | −7 | 496 | 28 | 2 | 0.0605 |
-| 2021-07-02 | P1 | −6 | 496 | 26 | 2 | 0.0565 |
-| 2021-08-03 | P1 | −5 | 497 | 25 | 2 | 0.0543 |
-| 2021-09-01 | P1 | −4 | 498 | 25 | 2 | 0.0542 |
-| 2021-10-01 | P1 | −3 | 501 | 24 | 2 | 0.0519 |
-| 2021-11-01 | P1 | −2 | 501 | 26 | 2 | 0.0559 |
-| 2021-12-01 | P1 | −1 | 501 | 26 | 2 | 0.0559 |
-| 2021-12-31 | P1 | 0 | 505 | 27 | 2 | **0.0574** |
-| 2022-02-01 | P1 | 1 | 505 | 27 | 2 | **0.0574** |
-| 2022-03-03 | P1 | 2 | 505 | 8 | 1 | 0.0178 |
-| 2022-04-01 | P1 | 3 | 505 | 9 | 1 | 0.0198 |
-| 2022-05-03 | P1 | 4 | 504 | 8 | 1 | 0.0179 |
-| 2022-06-02 | P1 | 5 | 504 | 11 | 1 | 0.0238 |
-| 2022-07-05 | P1 | 6 | 503 | 9 | 1 | 0.0199 |
-| 2022-08-03 | P1 | 7 | 503 | 11 | 1 | 0.0239 |
-| 2022-09-01 | P1 | 8 | 503 | 12 | 1 | 0.0258 |
-| 2022-10-03 | P1 | 9 | 503 | 12 | 1 | 0.0258 |
-| 2022-10-25 | P3 | −12 | 503 | 10 | 1 | 0.0219 |
-| 2022-11-23 | P3 | −11 | 503 | 10 | 1 | 0.0219 |
-| 2022-12-23 | P3 | −10 | 503 | 10 | 1 | 0.0219 |
-| 2023-01-26 | P3 | −9 | 503 | 11 | 1 | 0.0239 |
-| 2023-02-27 | P3 | −8 | 503 | 9 | 1 | 0.0199 |
-| 2023-03-28 | P3 | −7 | 503 | 9 | 1 | 0.0199 |
-| 2023-04-27 | P3 | −6 | 503 | 11 | 1 | 0.0239 |
-| 2023-05-26 | P3 | −5 | 503 | 9 | 1 | 0.0199 |
-| 2023-06-28 | P3 | −4 | 503 | 9 | 1 | 0.0199 |
-| 2023-07-28 | P3 | −3 | 503 | 12 | 1 | 0.0258 |
-| 2023-08-28 | P3 | −2 | 503 | 14 | 1 | 0.0298 |
-| 2023-09-27 | P3 | −1 | 503 | 13 | 1 | 0.0278 |
-| 2023-10-26 | P3 | 0 | 503 | 11 | 1 | 0.0239 |
-| 2023-11-27 | P3 | 1 | 503 | 12 | 1 | 0.0258 |
-| 2023-12-27 | P3 | 2 | 503 | 12 | 1 | 0.0258 |
-| 2024-01-29 | P3 | 3 | 503 | 12 | 1 | 0.0258 |
-| 2024-02-28 | P3 | 4 | 503 | 5 | 1 | 0.0119 |
-| 2024-03-28 | P3 | 5 | 503 | 5 | 1 | 0.0119 |
-| 2024-04-29 | P3 | 6 | 503 | 7 | 1 | 0.0159 |
-| 2024-05-29 | P3 | 7 | 503 | 8 | 1 | 0.0179 |
-| 2024-06-28 | P3 | 8 | 503 | 7 | 1 | 0.0159 |
+| 2020-12-31 | P1 | −12 | 486 | 23 (FRC) | 2 (INFO, WRK) | 0.0514 |
+| 2021-02-02 | P1 | −11 | 488 | 23 (FRC) | 2 (INFO, WRK) | 0.0512 |
+| 2021-03-04 | P1 | −10 | 489 | 16 (FRC) | 2 (INFO, WRK) | 0.0368 |
+| 2021-04-05 | P1 | −9 | 493 | 19 (FRC) | 2 (INFO, WRK) | 0.0426 |
+| 2021-05-04 | P1 | −8 | 494 | 24 (FRC) | 2 (INFO, WRK) | 0.0526 |
+| 2021-06-03 | P1 | −7 | 496 | 28 (FRC) | 2 (INFO, WRK) | 0.0605 |
+| 2021-07-02 | P1 | −6 | 496 | 26 (FRC) | 2 (INFO, WRK) | 0.0565 |
+| 2021-08-03 | P1 | −5 | 497 | 25 (FRC) | 2 (INFO, WRK) | 0.0543 |
+| 2021-09-01 | P1 | −4 | 498 | 25 (FRC) | 2 (INFO, WRK) | 0.0542 |
+| 2021-10-01 | P1 | −3 | 501 | 24 (FRC) | 2 (INFO, WRK) | 0.0519 |
+| 2021-11-01 | P1 | −2 | 501 | 26 (FRC) | 2 (INFO, WRK) | 0.0559 |
+| 2021-12-01 | P1 | −1 | 501 | 26 (FRC) | 2 (INFO, WRK) | 0.0559 |
+| 2021-12-31 | P1 | 0 | 505 | 27 (FRC, SBNY) | 2 (INFO, WRK) | **0.0574** |
+| 2022-02-01 | P1 | 1 | 505 | 27 (FRC, SBNY) | 2 (INFO, WRK) | **0.0574** |
+| 2022-03-03 | P1 | 2 | 505 | 8 (FRC, SBNY) | 1 (WRK) | 0.0178 |
+| 2022-04-01 | P1 | 3 | 505 | 9 (FRC, SBNY) | 1 (WRK) | 0.0198 |
+| 2022-05-03 | P1 | 4 | 504 | 8 (FRC, SBNY) | 1 (WRK) | 0.0179 |
+| 2022-06-02 | P1 | 5 | 504 | 11 (FRC, SBNY) | 1 (WRK) | 0.0238 |
+| 2022-07-05 | P1 | 6 | 503 | 9 (FRC, SBNY) | 1 (WRK) | 0.0199 |
+| 2022-08-03 | P1 | 7 | 503 | 11 (FRC, SBNY) | 1 (WRK) | 0.0239 |
+| 2022-09-01 | P1 | 8 | 503 | 12 (FRC, SBNY) | 1 (WRK) | 0.0258 |
+| 2022-10-03 | P1 | 9 | 503 | 12 (FRC, SBNY) | 1 (WRK) | 0.0258 |
+| 2022-10-25 | P3 | −12 | 503 | 10 (FRC, SBNY) | 1 (WRK) | 0.0219 |
+| 2022-11-23 | P3 | −11 | 503 | 10 (FRC, SBNY) | 1 (WRK) | 0.0219 |
+| 2022-12-23 | P3 | −10 | 503 | 10 (FRC, SBNY) | 1 (WRK) | 0.0219 |
+| 2023-01-26 | P3 | −9 | 503 | 11 (FRC, SBNY) | 1 (WRK) | 0.0239 |
+| 2023-02-27 | P3 | −8 | 503 | 9 (FRC, SBNY) | 1 (WRK) | 0.0199 |
+| 2023-03-28 | P3 | −7 | 503 | 9 (FRC) | 1 (WRK) | 0.0199 |
+| 2023-04-27 | P3 | −6 | 503 | 11 (FRC) | 1 (WRK) | 0.0239 |
+| 2023-05-26 | P3 | −5 | 503 | 9 | 1 (WRK) | 0.0199 |
+| 2023-06-28 | P3 | −4 | 503 | 9 | 1 (WRK) | 0.0199 |
+| 2023-07-28 | P3 | −3 | 503 | 12 | 1 (WRK) | 0.0258 |
+| 2023-08-28 | P3 | −2 | 503 | 14 | 1 (WRK) | 0.0298 |
+| 2023-09-27 | P3 | −1 | 503 | 13 | 1 (WRK) | 0.0278 |
+| 2023-10-26 | P3 | 0 | 503 | 11 | 1 (WRK) | 0.0239 |
+| 2023-11-27 | P3 | 1 | 503 | 12 | 1 (WRK) | 0.0258 |
+| 2023-12-27 | P3 | 2 | 503 | 12 | 1 (WRK) | 0.0258 |
+| 2024-01-29 | P3 | 3 | 503 | 12 | 1 (WRK) | 0.0258 |
+| 2024-02-28 | P3 | 4 | 503 | 5 | 1 (WRK) | 0.0119 |
+| 2024-03-28 | P3 | 5 | 503 | 5 | 1 (WRK) | 0.0119 |
+| 2024-04-29 | P3 | 6 | 503 | 7 | 1 (WRK) | 0.0159 |
+| 2024-05-29 | P3 | 7 | 503 | 8 | 1 (WRK) | 0.0179 |
+| 2024-06-28 | P3 | 8 | 503 | 7 | 1 (WRK) | 0.0159 |
 | 2024-07-30 | P3 | 9 | 503 | 11 | 0 | 0.0219 |
-| 2024-02-14 | P2 | −12 | 503 | 8 | 1 | 0.0179 |
-| 2024-03-15 | P2 | −11 | 503 | 4 | 1 | 0.0099 |
-| 2024-04-16 | P2 | −10 | 503 | 7 | 1 | 0.0159 |
-| 2024-05-15 | P2 | −9 | 503 | 8 | 1 | 0.0179 |
-| 2024-06-14 | P2 | −8 | 503 | 7 | 1 | 0.0159 |
+| 2024-02-14 | P2 | −12 | 503 | 8 | 1 (WRK) | 0.0179 |
+| 2024-03-15 | P2 | −11 | 503 | 4 | 1 (WRK) | 0.0099 |
+| 2024-04-16 | P2 | −10 | 503 | 7 | 1 (WRK) | 0.0159 |
+| 2024-05-15 | P2 | −9 | 503 | 8 | 1 (WRK) | 0.0179 |
+| 2024-06-14 | P2 | −8 | 503 | 7 | 1 (WRK) | 0.0159 |
 | 2024-07-17 | P2 | −7 | 503 | 10 | 0 | 0.0199 |
 | 2024-08-15 | P2 | −6 | 503 | 11 | 0 | 0.0219 |
 | 2024-09-16 | P2 | −5 | 503 | 10 | 0 | 0.0199 |
@@ -281,7 +329,8 @@ is written in `params.frozen.toml`'s `[run]` table, and each run records it in `
 | 2025-09-18 | P2 | 7 | 503 | 10 | 0 | 0.0199 |
 
 Warm-up rows are shown for completeness; a warm-up refusal is recorded and skipped, and never
-enters the maximum.
+enters the maximum. The parentheses in the `unscored` / `unpriced` columns name only the four
+members of limitation 16 that the count contains; the number itself is the full count.
 
 ## 9. Reproduction
 
@@ -404,9 +453,34 @@ uv run python -m cycle.backtest export --db runs/rule_P1.db --db runs/rule_P3.db
     missing periods end on 2025-09-30 and 2025-12-31, after P2's last decision (2025-09-23). The
     L-36 filings that remain missing are listed in reviewer B's `LIMITATIONS.md`.
 13. **Reviewer B's limitations** are copied below, one line each (L-1 … L-44).
-14. **One fresh database copy per run.** Two windows never share a copy (P2's warm-up starts before
-    P3's last decision, and cycle refuses a REPLAY dated before one already recorded), and neither
-    do two variants; the driver refuses a reused copy before it writes anything.
+14. **One fresh database copy per run, and one superseded GUARD freeze.** Two windows never share a
+    copy (P2's warm-up starts before P3's last decision, and cycle refuses a REPLAY dated before one
+    already recorded), and neither do two variants; the driver refuses a reused copy before it
+    writes anything. The freeze file has two commits: `f9d7095` (`gamma` 0.1190, `sigma_star`
+    0.2423, `alpha` 0.6146, `m` 2.5950, on the panel without the 26 L-42 leaver series) and the
+    final `1303769` (`gamma` 0.1229, `sigma_star` 0.2455, `alpha` 0.6073, `m` 2.5467, the same rule
+    on the corrected panel). The first `rule_P1` run under `f9d7095` was discarded; its checks
+    output (status, counts, test statistics) had been read before the re-freeze, but no parameter
+    was chosen or changed from its results.
+15. **GUARD's measured behaviour** (§5): layer 4 is active on 195/196, 156/192 and 148/150
+    sessions because the formation cost puts the arm below its high-water mark at the first close;
+    layer 1 whipsaws (P1 142/110/76, P3 24/14/10, P2 52/38/24 APPLIED re-entries / a later stop /
+    a stop within two sessions); GUARD trades on 186 / 182 / 142 sessions on which NOGUARD has no
+    turnover, adding 12.79 / 4.37 / 5.48 turnover and 127.9 / 43.7 / 54.8 bps. In P1 every arm's
+    mean excess return is negative, so GUARD's lower volatility makes its Sharpe more negative
+    (−1.95 against −1.22) and the P1 paired Sharpe tests rank it worse; volatility and drawdown,
+    not that Sharpe comparison, are the protection measures.
+16. **Four members with no data.** WRK (asset 575) and INFO (285) have no `price_daily` row at all;
+    FRC (229) and SBNY (469) have no `sec_filings` row. They are excluded — never renamed or
+    imputed — from selection, MARKOWITZ_BASE and the benchmark on these dates: **WRK**, every P1
+    decision (2021-12-31 … 2022-10-03), P3's decisions to 2024-06-28 (k = 0 … 8), and the warm-ups
+    before 2024-07-07 (all P1/P3 warm-ups and P2's k = −12 … −8); **INFO**, P1's first two decisions
+    (2021-12-31, 2022-02-01) and all P1 warm-ups; **FRC**, every P1 decision and warm-up and P3's
+    warm-ups through 2023-04-27; **SBNY**, every P1 decision and P3's warm-ups through 2023-02-27
+    (its membership starts 2021-12-20, after P1's warm-ups). EDGAR's submissions for the stored
+    CIKs (0001132979, 0001288784) list 43 and 41 filings, none a 10-K or 10-Q: there is no
+    10-K/10-Q on EDGAR for those CIKs, and a bank-regulator-only filing claim was not verified. The
+    direction and size of the effect on the reported aggregates are not measured.
 
 ### Reviewer B's limitations (IDs and one line each)
 

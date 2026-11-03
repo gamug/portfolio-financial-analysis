@@ -11195,3 +11195,63 @@ the names in the run's `market_caps` block.
 targets are unchanged by the flag (the prior is not an input to `min_var`), and the run records
 `allow_missing_caps: true`.
 
+
+### REPLAY-6 — layer 1 keeps tracking a stopped name that a rebalance drops from the reference
+
+**Status**: fixed 2026-11-03 (commit `fcb77e4`), used by the six re-executed runs in `runs_a1/`.
+
+**Symptom** (reviewer A, round 3): the engine built `GuardInput.asset_returns` for
+`set(reference_weights) | book.out_assets`, and `book.out_assets` was `GuardOutput.cut_assets` —
+only the names cut *inside the current reference*. A name stopped by layer 1 and then dropped by a
+rebalance was no longer given a return history, so its one-session `delta` re-entry was never
+evaluated; if it came back into the Top-30 it was cut at once, even when it had met `delta` while
+out.
+
+**Root cause**: the tracked set used the day's cut set, not layer 1's own OUT state, although
+`GuardState.l1_out` already held every name out.
+
+**Reference**: `BACKTEST_SPEC.md` §4 layer 1 ("While OUT the asset's return is tracked") and §8.1
+(`GuardInput.asset_returns` "for every asset in reference_weights and every asset currently OUT").
+
+**Fix**: `GuardOutput` now exposes `l1_out`, the full post-session OUT set (`GuardState` stays
+immutable and unchanged); the engine passes it as `book.out_assets` for the GUARD arm **and** for
+its NOGUARD shadow. A re-entry of a name not in the reference is recorded `NOT_HELD`; the shadow
+arm never applies anything, so its rows carry the fixed `ARM_DISABLED` status.
+
+**Verification (real data)**: reviewer A's spec-machine replay (`review-a/verify_runs.py`) reports
+**37** sessions in `rule_P1` and **37** in `rule_P3` where the spec evaluates a re-entry the old
+run did not, and **0** in P2; our rerun of the same script on `runs/` reproduces 37/37/0
+(`out/a1/a11_verify_old_runs.log`). All six runs were re-executed on new fresh copies of
+`scored_rule.db` (`runs_a1/`): `backtest_summary` (3 / 3 / 3 rows), `backtest_test` (6 / 6 / 18) and
+`book_daily_performance` (588 / 576 / 450) are exactly equal to the old runs, bit for bit, so
+`n_guard_actions` does not move; `guard_alert`/`guard_action` differ only by **6 added alert/action
+pairs in each of P1 and P3** (all `L1_REENTRY`: 3 `NOT_HELD` on the GUARD arm, 3 `ARM_DISABLED` on
+its shadow), no removals, and **0** added pairs in P2 (`out/a1/a11_compare_batch1.log`). The cut
+set inside the reference is identical on every session (`review-a/l1_impact.py`: 0 sessions differ,
+0 weight affected). The hand-computed scenario in `tests/test_backtest_known_answers.py` fails on
+the old code (`out/a1/a11_test_before_fix.log`) and passes after (`out/a1/a11_test_after_fix.log`).
+
+### REPLAY-7 — the benchmark's Sharpe subtracts the run's risk-free rate
+
+**Status**: fixed 2026-11-03 (commit `fcb77e4`), used by `docs/backtest_results.md` / `.json`.
+
+**Symptom**: the export computed `SP500_EW_INTERNAL`'s ex-post Sharpe on excess returns over a
+**zero** risk-free rate, while the three arms subtracted `FF_RF_DAILY`; the benchmark row was
+therefore not comparable with the arms. The declared cause was FINISH_REPO §9.1's read contract,
+which did not include `risk_free_rate`.
+
+**Reference**: A-1.2 amends §9.1: the export may also read `risk_free_rate` from each run copy, the
+same rows the run used, and nothing else beyond the list. The estimator is unchanged
+(`stats.summarize`).
+
+**Fix**: `cycle.backtest export` reads the curve named in the run's `params_json` (`FF_RF_DAILY`),
+converts the annualized rate to a daily fraction (`/ 252`) and carries the last observation forward
+— exactly `driver.load_rf`'s rule — and passes those values to `stats.summarize` for the benchmark's
+segment dates. The arms still come from `backtest_summary`. No other input changes.
+
+**Verification (real data)**: on the old run copies the benchmark Sharpe moves from **−1.0953 to
+−1.1240** (P1), **2.7350 to 2.3102** (P3) and **0.5215 to 0.2774** (P2); the benchmark's cumulative
+return and volatility are unchanged, and the change is the subtraction of the same daily risk-free
+rate the arms use (`out/a1/a12_benchmark_rf_effect.log`). `tests/test_backtest_export.py` pins the
+benchmark Sharpe against `stats.summarize` with the run's RF and a zero-RF control, and refuses a
+run copy with no `risk_free_rate` rows.
