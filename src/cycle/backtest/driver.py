@@ -1407,6 +1407,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     arms: Sequence[str] | None = None,
     blend: str = "B0",
     tilt: str = "T0",
+    market_series_path: str | Path | None = None,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1451,13 +1452,24 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             lookback_start = schedule[0].decision_date
             for _ in range(defensive.BETA_WINDOW):
                 lookback_start = previous_session(lookback_start)
-            lookback_sessions = sessions_between(lookback_start, window.d_end)
-            market_returns = defensive.market_index_returns(
-                conn,
-                universe_conn,
-                lookback_sessions,
-                engine_version=params.returns_engine_version,
-            )
+            market_sha: str | None = None
+            if market_series_path is not None:
+                series_file = Path(market_series_path).expanduser().resolve()
+                if not series_file.is_file():
+                    raise BacktestError(f"--market-series {series_file} does not exist")  # noqa: TRY301
+                market_returns = {
+                    str(day): float(value)
+                    for day, value in json.loads(series_file.read_text()).items()
+                }
+                market_sha = _sha256_file(series_file)
+            else:
+                lookback_sessions = sessions_between(lookback_start, window.d_end)
+                market_returns = defensive.market_index_returns(
+                    conn,
+                    universe_conn,
+                    lookback_sessions,
+                    engine_version=params.returns_engine_version,
+                )
             price_returns = load_returns(
                 conn, params.returns_engine_version, lookback_start, window.d_end
             )
@@ -1495,6 +1507,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             ).fetchone()
             run_params = json.loads(run_row["params_json"])
             run_params["tilt_triggers"] = tilt_triggers
+            if market_sha is not None:
+                run_params["market_series_sha256"] = market_sha
+                run_params["market_series_path"] = str(market_series_path)
             conn.execute(
                 "UPDATE backtest_run SET params_json = ? WHERE id = ?",
                 (json.dumps(run_params, sort_keys=True), run_id),
@@ -1661,11 +1676,26 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--blend", default="B0", choices=sorted(defensive.BLENDS))
     run.add_argument("--tilt", default="T0", choices=sorted(defensive.TILTS))
     run.add_argument(
+        "--market-series",
+        default=None,
+        help="a precomputed {session: EW member return} JSON (from `market-series`); "
+        "omitted, the driver computes it from quant_return_daily",
+    )
+    run.add_argument(
         "--arms",
         default=None,
         help="comma-separated arm codes (default: BASE, NOGUARD and every GUARD arm the "
         "params define)",
     )
+    series = sub.add_parser(
+        "market-series", help="write the EW member market index the defensive tilt reads"
+    )
+    series.add_argument("--db", required=True, help="a scratch copy of the financial database")
+    series.add_argument("--universe-db", required=True, help="the read-only universe database")
+    series.add_argument("--from", dest="date_from", required=True)
+    series.add_argument("--to", dest="date_to", required=True)
+    series.add_argument("--engine-version", default="qret-v2")
+    series.add_argument("--out", required=True)
     export = sub.add_parser("export", help="export run copies to the results md and json")
     export.add_argument(
         "--db", action="append", required=True, help="a run copy (repeat for several runs)"
@@ -1694,6 +1724,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "market-series":
+        conn = connect_ro(Path(args.db).expanduser().resolve())
+        uconn = connect_ro(Path(args.universe_db).expanduser().resolve())
+        try:
+            sessions = sessions_between(args.date_from, args.date_to)
+            market = defensive.market_index_returns(
+                conn, uconn, sessions, engine_version=args.engine_version
+            )
+        finally:
+            conn.close()
+            uconn.close()
+        Path(args.out).write_text(json.dumps(market, sort_keys=True, indent=1) + "\n")
+        return 0
     if args.command == "export":
         return export_module.main(
             [
@@ -1736,6 +1779,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             arms=arms,
             blend=args.blend,
             tilt=args.tilt,
+            market_series_path=args.market_series,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)
