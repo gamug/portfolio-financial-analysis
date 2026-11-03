@@ -289,9 +289,12 @@ def _value_applicability(
 
 
 def _fundamental_normalization(
-    conn: Database, cycle_date: str, weights: Mapping[str, float]
+    conn: Database,
+    cycle_date: str,
+    weights: Mapping[str, float],
+    member_ids: set[int],
 ) -> tuple[list[Row], list[float]]:
-    """``(rows, normalized)`` for each asset's newest scored FUNDAMENTAL row usable on *cycle_date*.
+    """``(rows, normalized)`` for each **universe member's** newest scored FUNDAMENTAL row on *cycle_date*.
 
     T-073 (D4) decides a row's total under *weights* (:func:`data.fundamental_value_under`); this
     normalizes those totals across the cohort. **One function for both the ``normalize`` writer and
@@ -299,8 +302,17 @@ def _fundamental_normalization(
     not whatever the shared filing snapshot row's ``normalized_score`` holds -- a run resumed at
     ``rank`` after another cycle date ran in between would otherwise blend the other date's value
     (``cycle backfill`` resumes from checkpoints, so this happens). It is deterministic, so a fresh
-    run and a resumed one get the same numbers."""
-    rows = [r for r in data.latest_fundamental_rows(conn, cycle_date) if r["raw_value"] is not None]
+    run and a resumed one get the same numbers.
+
+    A-2 cohort fix: only the date's universe members enter the cohort. A non-member row is a
+    future member (lookahead) or a stale former member, and is neither normalized nor written;
+    TECHNICAL and VALORIZATION already normalize over member rows only. The member ids are the
+    same ``data.active_universe`` result the run ranks, passed by the caller."""
+    rows = [
+        r
+        for r in data.latest_fundamental_rows(conn, cycle_date)
+        if r["raw_value"] is not None and int(r["asset_id"]) in member_ids
+    ]
     if not rows:
         return [], []
     normalized = normalized_scores([data.fundamental_value_under(r, weights) for r in rows])
@@ -597,7 +609,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # (T-106), and the value lands on that snapshot row alone -- by id, not on every
             # row of the asset that happens to share its raw score.
             frows, fn = _fundamental_normalization(
-                conn, cycle_date, settings.fundamental_pillar_weights
+                conn, cycle_date, settings.fundamental_pillar_weights, set(asset_ids)
             )
             if frows:
                 conn.executemany(
@@ -730,7 +742,7 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # The `normalize` step still writes the column, for the contract (the stored value is
             # the last cycle's; the per-cycle value is `v_cycle_ranking_component.component_value`).
             frows, fn = _fundamental_normalization(
-                conn, cycle_date, settings.fundamental_pillar_weights
+                conn, cycle_date, settings.fundamental_pillar_weights, set(asset_ids)
             )
             fundamental: dict[int, float | None] = {
                 int(frows[i]["asset_id"]): fn[i] for i in range(len(frows))

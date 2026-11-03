@@ -11255,3 +11255,32 @@ return and volatility are unchanged, and the change is the subtraction of the sa
 rate the arms use (`out/a1/a12_benchmark_rf_effect.log`). `tests/test_backtest_export.py` pins the
 benchmark Sharpe against `stats.summarize` with the run's RF and a zero-RF control, and refuses a
 run copy with no `risk_free_rate` rows.
+
+### REPLAY-8 — the FUNDAMENTAL normalization cohort is the decision date's universe members
+
+**Status**: fixed 2026-11-04, this commit; used by every Round A-2 run.
+
+**Symptom**: `_fundamental_normalization` z-scored the FUNDAMENTAL totals over every asset that
+had a latest usable row, not only the decision date's universe members. At the P1/P2a decision
+dates 58–66 (P1) and 75 (P2a) rows were non-members: 50–56 future members per P1 date and 25–29 per
+P2a date (lookahead), the rest former members whose period end was up to 1,265 days old (stale
+values). TECHNICAL and VALORIZATION already normalized over member rows only, and SPEC.md's
+"Cross-sectional normalization" bullet says the z-score is taken "against the live cohort".
+
+**Fix**: `_fundamental_normalization` takes the member ids the run's own
+`data.active_universe` resolved and keeps only their rows. Both the `normalize` writer and the
+`rank` reader call it with that set (they still share one function), so a non-member row is
+neither normalized nor written. Other readers: `last_fundamental_dates` /
+`latest_fundamental_score` are filtered by their callers to the member list, so extra keys are
+inert; `cycle.backtest` does not read `score_snapshot.normalized_score` (it reads the per-cycle
+`v_cycle_ranking_component.component_value`); `v_score_snapshot.normalized_score` keeps the last
+cycle's writer value and may therefore be older for a non-member — it is informational, never a
+ranking input.
+
+**Per-date counts** (`out/a2_cohort_counts_p1.log`, `out/a2_cohort_counts_p2a.log`): P1 58–66
+non-members per date (future 50–56, former 6–16); P2a 75 (future 25–29, former 46–50; oldest
+period end 1,265 days). GUARD's frozen parameters are unchanged: they were calibrated on 2019–2021
+member returns, not on scores.
+
+**Measured effect**: the P1/P2a official runs before/after this fix are compared in REPORT.md §17
+(Step 3 of Round A-2); the numbers are in `out/a2/`.
