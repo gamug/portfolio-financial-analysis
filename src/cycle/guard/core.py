@@ -217,14 +217,17 @@ class GuardOutput:
 
     ``weights`` are the post-GUARD equity weights (zeros omitted; cash is
     ``1 - sum(weights)`` at the caller), ``cut_assets`` the names at zero because of
-    layers 1 and 2, ``scale`` ``min(1, s_sigma, s_dd)``, and ``alerts`` this session's
-    state changes, ongoing trims and active scalers. The output never mutates the
-    input; the returned ``weights`` dict is new and belongs to the caller.
+    layers 1 and 2, ``l1_out`` every name currently out under layer 1 (including names
+    no longer in the reference -- the caller must keep passing their returns), ``scale``
+    ``min(1, s_sigma, s_dd)``, and ``alerts`` this session's state changes, ongoing trims
+    and active scalers. The output never mutates the input; the returned ``weights`` dict
+    is new and belongs to the caller.
     """
 
     state: GuardState
     weights: dict[int, float]
     cut_assets: frozenset[int]
+    l1_out: frozenset[int]
     scale: float
     s_sigma: float | None
     s_dd: float | None
@@ -620,6 +623,7 @@ def evaluate(state: GuardState, inp: GuardInput, params: GuardParams) -> GuardOu
         state=GuardState(l1_out=l1_out, l2=l2_state, nav_max=nav_max),
         weights=weights,
         cut_assets=cut_assets,
+        l1_out=l1_out if _LAYER_STOP_LOSS in params.layers else frozenset(),
         scale=scale,
         s_sigma=s_sigma,
         s_dd=s_dd,

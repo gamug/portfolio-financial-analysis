@@ -240,6 +240,64 @@ def test_layer_one_stop_fires_on_the_specified_session_and_reenters_on_delta() -
     assert perf[sessions[8]].gross_return == pytest.approx(0.10, abs=1e-12)
 
 
+def test_layer_one_holds_a_stopped_name_that_left_and_re_entered_before_returning() -> None:
+    """A name stopped by L1 stays tracked while it is out, even when a rebalance drops it.
+
+    Hand-computed scenario (J = 3, gamma = 0.05, delta = 0.02):
+      * asset 1 is in the reference at s0-s5; its last three returns at s4 are
+        -0.02, -0.02, -0.03, so S(3) = -0.07 < -0.05 and it is stopped at the s4 close;
+      * it is still out and still in the reference at s5 (latest return 0.0 < delta);
+      * the s6 decision drops it from the reference ({2: 1.0}), so s6 is the first close at
+        which the name is out *and* absent from the reference;
+      * its own s7 return is +0.03 >= delta, so the re-entry rule is met while it is out:
+        the alert is recorded NOT_HELD (it is not in the reference), but the name is back IN;
+      * the s8 decision brings it back at 0.5 and its s8 return is 0.0 < delta: because it
+        re-entered at s7, it is held at its reference weight, not cut again.
+    """
+    sessions = _sessions(10)
+    path = [0.0, 0.0, -0.02, -0.02, -0.03, 0.0, 0.0, 0.03, 0.0, 0.0]
+    returns = {session: {1: path[i], 2: 0.0} for i, session in enumerate(sessions)}
+    targets = _both(
+        {
+            sessions[0]: {1: 0.5, 2: 0.5},
+            sessions[6]: {2: 1.0},
+            sessions[8]: {1: 0.5, 2: 0.5},
+        }
+    )
+    arms = [
+        engine.ArmSpec(NOGUARD, BASE),
+        engine.ArmSpec(GUARD, NOGUARD, guard=_guard(layers={1}, J=3, gamma=0.05, delta=0.02)),
+    ]
+    result = _run(
+        sessions,
+        returns,
+        targets,
+        arms,
+        formation=sessions[1],
+        decision_dates=[sessions[0], sessions[6], sessions[8]],
+    )
+    weights = _by_date(result, GUARD)
+
+    # The stop fires at the s4 close: the target for s5 has no asset 1, and it stays out at s5.
+    assert weights[sessions[4]].final_target.get(1, 0.0) == pytest.approx(0.0, abs=1e-12)
+    assert weights[sessions[5]].final_target.get(1, 0.0) == pytest.approx(0.0, abs=1e-12)
+    # s6 is out of the reference; the name's own +3 % at s7 meets delta and is recorded NOT_HELD.
+    assert weights[sessions[6]].pre_guard.keys() == {2}
+    assert (
+        sessions[7],
+        "L1_REENTRY",
+        "NOT_HELD",
+        1,
+    ) in [
+        (event.date, event.alert.rule_id, event.status, event.alert.asset_id)
+        for event in result.arms[GUARD].guard_events
+    ]
+    # s8 brings it back with a 0 % own return; the reference weight is held, not cut.
+    assert _by_date(result, NOGUARD)[sessions[8]].final_target[1] == pytest.approx(0.5, abs=1e-12)
+    assert weights[sessions[8]].final_target[1] == pytest.approx(0.5, abs=1e-12)
+    assert weights[sessions[8]].cash_weight == pytest.approx(0.0, abs=1e-12)
+
+
 def test_layer_one_never_fires_on_a_name_with_fewer_than_j_real_returns() -> None:
     sessions = _sessions(8)
     # Asset 2 is priced on s3 (so the book can buy it) and crashes on s4: two real returns,

@@ -4,18 +4,21 @@
     --out-md docs/backtest_results.md --out-json docs/backtest_results.json``
 
 Read-only. It reads only ``backtest_run``, ``strategy_book``, ``backtest_summary``,
-``backtest_test``, the run's ``params_json`` and the portfolio-level columns of
-``book_daily_performance`` (``benchmark_return`` for the benchmark, and the dates of a segment).
-No per-asset row is read or written: every number is a portfolio aggregate.
+``backtest_test``, the run's ``params_json``, the portfolio-level columns of
+``book_daily_performance`` (``benchmark_return`` for the benchmark, and the dates of a segment)
+and the run copy's ``risk_free_rate`` rows for the run's curve (A-1.2's amendment of
+FINISH_REPO §9.1: the same rows the run used, so the benchmark's Sharpe subtracts the same
+daily rate as the arms). No per-asset row is read or written: every number is a portfolio
+aggregate.
 
 Per run, segment and arm it writes the ``backtest_summary`` columns; per test the statistic, the
 p-value, ``n_obs`` and the test's parameters; per run the formation date, the warm-up refusals,
 the input sha256, the params sha256 and the code version. The ``SP500_EW_INTERNAL`` benchmark is
 summarized with :func:`cycle.backtest.stats.summarize` over the same segment dates.
 
-Declared convention: the export may not read ``risk_free_rate`` (the read contract above), so the
-benchmark's ex-post Sharpe is computed on excess returns over a **zero** risk-free rate. The arms'
-Sharpe comes from ``backtest_summary``, which the driver computed with the run's French RF.
+The benchmark's ex-post Sharpe subtracts the run's own daily ``risk_free_rate`` (curve from the
+run's ``params_json``, annualized rate / 252, carried forward) -- the same rows and rule
+``driver.load_rf`` used for the arms' ``backtest_summary``.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -133,10 +137,33 @@ def _summary_row(row: Any) -> dict[str, float | None]:
     return out
 
 
+def _risk_free_series(conn: Any, curve: str) -> tuple[list[str], list[float]]:
+    """The run's ``risk_free_rate`` rows for *curve*, as (dates, daily fractions).
+
+    This is ``driver.load_rf``'s rule: every row of the curve, the annualized rate / 252, and
+    a session with no row of its own carries the last observation.
+    """
+    rows = conn.execute(
+        "SELECT rate_date, annualized_rate FROM risk_free_rate WHERE curve = ? ORDER BY rate_date",
+        (curve,),
+    ).fetchall()
+    if not rows:
+        raise ExportError(f"risk_free_rate has no {curve} rows")
+    return (
+        [str(r["rate_date"]) for r in rows],
+        [float(r["annualized_rate"]) / 252.0 for r in rows],
+    )
+
+
 def _benchmark_summary(
-    conn: Any, book_id: int, date_from: str, date_to: str
+    conn: Any,
+    book_id: int,
+    date_from: str,
+    date_to: str,
+    rf: tuple[Sequence[str], Sequence[float]],
 ) -> dict[str, float | None]:
-    """``stats.summarize`` over the benchmark column of one book's segment."""
+    """``stats.summarize`` over the benchmark column of one book's segment, with the run's RF."""
+    rf_dates, rf_daily = rf
     rows = conn.execute(
         "SELECT date, benchmark_return FROM book_daily_performance "
         "WHERE book_id = ? AND date >= ? AND date <= ? ORDER BY date",
@@ -147,8 +174,16 @@ def _benchmark_summary(
         raise ExportError(
             f"book {book_id}: the benchmark column is missing between {date_from} and {date_to}"
         )
+    rf_values: list[float] = []
+    for row in rows:
+        index = bisect_right(rf_dates, str(row["date"])) - 1
+        if index < 0:
+            raise ExportError(
+                f"risk_free_rate has no observation on or before {row['date']} (book {book_id})"
+            )
+        rf_values.append(float(rf_daily[index]))
     zeros = [0.0] * len(values)
-    summary: dict[str, float | None] = dict(stats.summarize(values, zeros, zeros, zeros))
+    summary: dict[str, float | None] = dict(stats.summarize(values, rf_values, zeros, zeros))
     return summary
 
 
@@ -165,6 +200,7 @@ def read_run(db_path: str | Path, *, name: str | None = None) -> RunSection:
         if str(run["status"]) != "completed":
             raise ExportError(f"{path}: the latest run is {run['status']}, not completed")
         params = json.loads(str(run["params_json"]))
+        rf_dates, rf_daily = _risk_free_series(conn, str(params.get("rf_curve") or "FF_RF_DAILY"))
         books = {
             str(row["arm_code"]): int(row["id"])
             for row in conn.execute(
@@ -189,7 +225,9 @@ def read_run(db_path: str | Path, *, name: str | None = None) -> RunSection:
         first_book = next(iter(books.values()))
         for segment, (date_from, date_to) in dates.items():
             # The benchmark is one series: take it from any book (the driver writes it on each).
-            benchmark[segment] = _benchmark_summary(conn, first_book, date_from, date_to)
+            benchmark[segment] = _benchmark_summary(
+                conn, first_book, date_from, date_to, (rf_dates, rf_daily)
+            )
         ordered = {s: summaries[s] for s in SEGMENT_ORDER if s in summaries}
         for segment, arms in summaries.items():
             ordered.setdefault(segment, arms)
@@ -277,11 +315,9 @@ def render_markdown(runs: Sequence[RunSection]) -> str:  # noqa: C901 - one docu
         "cuts of the one continuous P2 run. The benchmark rows are `SP500_EW_INTERNAL` (an equal-",
         "weight member portfolio, context only).",
         "",
-        "**Risk-free rate in the Sharpe column.** The three strategy arms subtract the run's daily",
-        "`FF_RF_DAILY` rate, as `backtest_summary` stores it. The `SP500_EW_INTERNAL` row's Sharpe is",
-        "computed on excess returns over a **zero** risk-free rate, because this export may read only",
-        "the m018 tables and `book_daily_performance` does not persist `rf`. The benchmark's Sharpe is",
-        "therefore not directly comparable with the arms' and is context only.",
+        "**Risk-free rate in the Sharpe column.** Every row, the benchmark included, subtracts the",
+        "run's daily `FF_RF_DAILY` rate: the arms as `backtest_summary` stores them, the benchmark",
+        "from the run copy's own `risk_free_rate` rows (same curve, same carry-forward rule).",
         "",
     ]
     for label, group_runs in _grouped(runs):
@@ -353,9 +389,8 @@ def build(databases: Sequence[str | Path]) -> tuple[dict[str, Any], str]:
         "generated_by": "python -m cycle.backtest export",
         "benchmark": BENCHMARK,
         "benchmark_sharpe_note": (
-            "SP500_EW_INTERNAL's ex-post Sharpe uses excess returns over a zero risk-free rate "
-            "(the export reads no risk_free_rate row); the strategy arms subtract the run's "
-            "FF_RF_DAILY rate, as backtest_summary stores it"
+            "SP500_EW_INTERNAL's ex-post Sharpe subtracts the run's daily FF_RF_DAILY rate, the "
+            "same rows and carry-forward rule as the strategy arms"
         ),
         "runs": [run.as_dict() for run in runs],
     }

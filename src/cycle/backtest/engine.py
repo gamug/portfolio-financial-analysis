@@ -414,7 +414,10 @@ def _apply_guard(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
         book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
     )
     book.guard_state = out.state
-    book.out_assets = out.cut_assets
+    # Every name out under layer 1, not only the ones cut inside today's reference: a name
+    # stopped before a rebalance dropped it must keep its return history so its delta
+    # re-entry is still evaluated (BACKTEST_SPEC §4, §8.1).
+    book.out_assets = out.l1_out
     final = dict(out.weights)
     for alert in out.alerts:
         status = _action_status(book.spec, alert, out.cut_assets, out.scale, reference)
@@ -438,7 +441,7 @@ def _record_shadow(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
         book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
     )
     book.guard_state = out.state
-    book.out_assets = out.cut_assets
+    book.out_assets = out.l1_out
     for alert in out.alerts:
         before, after = _guard_event_weight(alert, reference, reference)
         book.events_out.append(GuardEvent(date, alert, "ARM_DISABLED", before, after))

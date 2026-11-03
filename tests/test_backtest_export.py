@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from cycle.backtest import export
+from cycle.backtest import export, stats
 from kg_schema import connect, ensure
 from kg_schema.db import connect_ro
 
@@ -44,6 +44,7 @@ def _run_copy(path: Path, name: str, window: str, *, window_id: int) -> Path:
             json.dumps(
                 {
                     "params_sha256": "sha-params",
+                    "rf_curve": "FF_RF_DAILY",
                     "warmup_refused": [
                         {"decision_date": "2021-12-01", "reason": "TooManyUnscored"}
                     ],
@@ -51,6 +52,18 @@ def _run_copy(path: Path, name: str, window: str, *, window_id: int) -> Path:
                 }
             ),
         ),
+    )
+    # The run's own RF: one row before the window (carried) and then every other session.
+    for index, session in enumerate(sessions):
+        if index % 2 == 0:
+            conn.execute(
+                "INSERT INTO risk_free_rate (curve, rate_date, annualized_rate, source, "
+                "engine_version, ingested_at) VALUES ('FF_RF_DAILY', ?, ?, 'test', 'rf-v2', 'now')",
+                (session, 0.02 + 0.001 * index),
+            )
+    conn.execute(
+        "INSERT INTO risk_free_rate (curve, rate_date, annualized_rate, source, engine_version, "
+        "ingested_at) VALUES ('FF_RF_DAILY', '2000-01-03', 0.01, 'test', 'rf-v2', 'now')"
     )
     books = {}
     for arm in ("MARKOWITZ_BASE", "TOPN_MV_NOGUARD", "TOPN_MV_GUARD_NO_NLP"):
@@ -120,6 +133,36 @@ def test_export_writes_aggregates_grouped_main_first(tmp_path: Path) -> None:
     assert "asset_id" not in lowered
 
 
+def test_benchmark_sharpe_uses_the_runs_risk_free_rate(tmp_path: Path) -> None:
+    """A-1.2: the benchmark subtracts the run's own FF_RF_DAILY rows, like the arms."""
+    rule = _run_copy(tmp_path / "rule_P1.db", "rule_P1", "P1", window_id=1)
+    payload, markdown = export.build([rule])
+    segment = payload["runs"][0]["segments"]["P1"]
+    benchmark = [0.001 * (1 if index % 2 else -1) for index in range(40)]
+    rf = [
+        0.02 + 0.001 * index if index % 2 == 0 else 0.02 + 0.001 * (index - 1)
+        for index in range(40)
+    ]
+    rf_daily = [rate / 252.0 for rate in rf]
+    zeros = [0.0] * 40
+    expected = stats.summarize(benchmark, rf_daily, zeros, zeros)["ex_post_sharpe"]
+    without = stats.summarize(benchmark, zeros, zeros, zeros)["ex_post_sharpe"]
+    assert segment["benchmark"]["ex_post_sharpe"] == pytest.approx(expected, abs=1e-15)
+    # The fixture really binds: a zero rate would give a different number.
+    assert abs(expected - without) > 1e-6
+    assert "zero risk-free rate" not in markdown.lower()
+
+
+def test_export_refuses_a_run_copy_without_its_risk_free_rate(tmp_path: Path) -> None:
+    rule = _run_copy(tmp_path / "rule_P1.db", "rule_P1", "P1", window_id=1)
+    conn = connect(rule)
+    conn.execute("DELETE FROM risk_free_rate")
+    conn.commit()
+    conn.close()
+    with pytest.raises(export.ExportError, match="no FF_RF_DAILY rows"):
+        export.read_run(rule)
+
+
 def test_export_is_deterministic(tmp_path: Path) -> None:
     rule = _run_copy(tmp_path / "rule_P1.db", "rule_P1", "P1", window_id=1)
     first_payload, first_md = export.build([rule])
@@ -139,7 +182,7 @@ def test_export_refuses_a_database_without_a_completed_run(tmp_path: Path) -> No
 
 
 def test_export_reads_nothing_but_the_contract_tables(tmp_path: Path) -> None:
-    """The read set is the five tables of section 9.1 -- a numeric column elsewhere is not read."""
+    """The read set is §9.1's tables plus the run's risk_free_rate rows (A-1.2)."""
     rule = _run_copy(tmp_path / "rule_P1.db", "rule_P1", "P1", window_id=1)
     conn = connect_ro(rule)
     tables = {
