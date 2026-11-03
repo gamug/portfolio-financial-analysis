@@ -8,11 +8,9 @@ Segments: P1 / P3 / P2 are the windows; P2a (to 2025-05-06) and P2b (after) are 
 cuts of the one continuous P2 run. The benchmark rows are `SP500_EW_INTERNAL` (an equal-
 weight member portfolio, context only).
 
-**Risk-free rate in the Sharpe column.** The three strategy arms subtract the run's daily
-`FF_RF_DAILY` rate, as `backtest_summary` stores it. The `SP500_EW_INTERNAL` row's Sharpe is
-computed on excess returns over a **zero** risk-free rate, because this export may read only
-the m018 tables and `book_daily_performance` does not persist `rf`. The benchmark's Sharpe is
-therefore not directly comparable with the arms' and is context only.
+**Risk-free rate in the Sharpe column.** Every row, the benchmark included, subtracts the
+run's daily `FF_RF_DAILY` rate: the arms as `backtest_summary` stores them, the benchmark
+from the run copy's own `risk_free_rate` rows (same curve, same carry-forward rule).
 
 ## Main run
 
@@ -21,7 +19,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2022-01-03
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 1
 - pre-formation decision refusals: 0
 
@@ -32,7 +30,7 @@ therefore not directly comparable with the arms' and is context only.
 | P1 | MARKOWITZ_BASE | 2022-01-03..2022-10-12 | -0.1150 | -0.1453 | 0.1520 | -1.001 | 0.1621 | 2.2583 | 22.6 | 10 | 0 |
 | P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2061 | -0.2567 | 0.1497 | -1.950 | 0.2227 | 18.1481 | 181.5 | 10 | 535 |
 | P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.1935 | -0.2416 | 0.2137 | -1.218 | 0.2492 | 7.2444 | 72.4 | 10 | 0 |
-| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.095 | 0.2072 | — | — | — | — |
+| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.124 | 0.2072 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
@@ -48,7 +46,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2025-02-19
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -57,15 +55,15 @@ therefore not directly comparable with the arms' and is context only.
 | P2 | MARKOWITZ_BASE | 2025-02-19..2025-09-23 | 0.0688 | 0.1183 | 0.1284 | 0.542 | 0.0764 | 2.8108 | 28.1 | 8 | 0 |
 | P2 | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-09-23 | 0.0080 | 0.0135 | 0.1385 | -0.197 | 0.1313 | 10.5873 | 105.9 | 8 | 279 |
 | P2 | TOPN_MV_NOGUARD | 2025-02-19..2025-09-23 | 0.0351 | 0.0596 | 0.1778 | 0.130 | 0.1463 | 5.7840 | 57.8 | 8 | 0 |
-| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.522 | 0.1581 | — | — | — | — |
+| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.277 | 0.1581 | — | — | — | — |
 | P2a | MARKOWITZ_BASE | 2025-02-19..2025-05-06 | 0.0172 | 0.0829 | 0.1783 | 0.252 | 0.0764 | 1.6588 | 16.6 | 3 | 0 |
 | P2a | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-05-06 | -0.0716 | -0.2929 | 0.1999 | -1.886 | 0.1313 | 5.6043 | 56.0 | 3 | 169 |
 | P2a | TOPN_MV_NOGUARD | 2025-02-19..2025-05-06 | -0.0545 | -0.2301 | 0.2702 | -1.021 | 0.1463 | 2.5425 | 25.4 | 3 | 0 |
-| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.812 | 0.1581 | — | — | — | — |
+| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.977 | 0.1581 | — | — | — | — |
 | P2b | MARKOWITZ_BASE | 2025-05-07..2025-09-23 | 0.0507 | 0.1387 | 0.0902 | 0.925 | 0.0364 | 1.1520 | 11.5 | 5 | 0 |
 | P2b | TOPN_MV_GUARD_NO_NLP | 2025-05-07..2025-09-23 | 0.0858 | 0.2411 | 0.0858 | 1.973 | 0.0184 | 4.9830 | 49.8 | 5 | 110 |
 | P2b | TOPN_MV_NOGUARD | 2025-05-07..2025-09-23 | 0.0947 | 0.2681 | 0.0924 | 2.071 | 0.0200 | 3.2414 | 32.4 | 5 | 0 |
-| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.518 | 0.0327 | — | — | — | — |
+| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.105 | 0.0327 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
@@ -93,7 +91,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2023-10-27
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -102,7 +100,7 @@ therefore not directly comparable with the arms' and is context only.
 | P3 | MARKOWITZ_BASE | 2023-10-27..2024-08-02 | 0.2105 | 0.2850 | 0.0872 | 2.342 | 0.0435 | 2.2260 | 22.3 | 10 | 0 |
 | P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1804 | 0.2432 | 0.1080 | 1.603 | 0.0678 | 11.3773 | 113.8 | 10 | 209 |
 | P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.1927 | 0.2603 | 0.1130 | 1.658 | 0.0713 | 7.3778 | 73.8 | 10 | 0 |
-| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.735 | 0.0594 | — | — | — | — |
+| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.310 | 0.0594 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
@@ -120,7 +118,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2022-01-03
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -129,7 +127,7 @@ therefore not directly comparable with the arms' and is context only.
 | P1 | MARKOWITZ_BASE | 2022-01-03..2022-10-12 | -0.1150 | -0.1453 | 0.1520 | -1.001 | 0.1621 | 2.2583 | 22.6 | 10 | 0 |
 | P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2061 | -0.2567 | 0.1497 | -1.950 | 0.2227 | 18.1481 | 181.5 | 10 | 535 |
 | P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.1935 | -0.2416 | 0.2137 | -1.218 | 0.2492 | 7.2444 | 72.4 | 10 | 0 |
-| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.095 | 0.2072 | — | — | — | — |
+| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.124 | 0.2072 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
@@ -145,7 +143,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2025-02-19
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -154,15 +152,15 @@ therefore not directly comparable with the arms' and is context only.
 | P2 | MARKOWITZ_BASE | 2025-02-19..2025-09-23 | 0.0688 | 0.1183 | 0.1284 | 0.542 | 0.0764 | 2.8108 | 28.1 | 8 | 0 |
 | P2 | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-09-23 | 0.0080 | 0.0135 | 0.1385 | -0.197 | 0.1313 | 10.5873 | 105.9 | 8 | 279 |
 | P2 | TOPN_MV_NOGUARD | 2025-02-19..2025-09-23 | 0.0351 | 0.0596 | 0.1778 | 0.130 | 0.1463 | 5.7840 | 57.8 | 8 | 0 |
-| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.522 | 0.1581 | — | — | — | — |
+| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.277 | 0.1581 | — | — | — | — |
 | P2a | MARKOWITZ_BASE | 2025-02-19..2025-05-06 | 0.0172 | 0.0829 | 0.1783 | 0.252 | 0.0764 | 1.6588 | 16.6 | 3 | 0 |
 | P2a | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-05-06 | -0.0716 | -0.2929 | 0.1999 | -1.886 | 0.1313 | 5.6043 | 56.0 | 3 | 169 |
 | P2a | TOPN_MV_NOGUARD | 2025-02-19..2025-05-06 | -0.0545 | -0.2301 | 0.2702 | -1.021 | 0.1463 | 2.5425 | 25.4 | 3 | 0 |
-| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.812 | 0.1581 | — | — | — | — |
+| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.977 | 0.1581 | — | — | — | — |
 | P2b | MARKOWITZ_BASE | 2025-05-07..2025-09-23 | 0.0507 | 0.1387 | 0.0902 | 0.925 | 0.0364 | 1.1520 | 11.5 | 5 | 0 |
 | P2b | TOPN_MV_GUARD_NO_NLP | 2025-05-07..2025-09-23 | 0.0858 | 0.2411 | 0.0858 | 1.973 | 0.0184 | 4.9830 | 49.8 | 5 | 110 |
 | P2b | TOPN_MV_NOGUARD | 2025-05-07..2025-09-23 | 0.0947 | 0.2681 | 0.0924 | 2.071 | 0.0200 | 3.2414 | 32.4 | 5 | 0 |
-| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.518 | 0.0327 | — | — | — | — |
+| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.105 | 0.0327 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
@@ -190,7 +188,7 @@ therefore not directly comparable with the arms' and is context only.
 - formation date: 2023-10-27
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `621cd5c`
+- code version: `c04cb38`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -199,7 +197,7 @@ therefore not directly comparable with the arms' and is context only.
 | P3 | MARKOWITZ_BASE | 2023-10-27..2024-08-02 | 0.2105 | 0.2850 | 0.0872 | 2.342 | 0.0435 | 2.2260 | 22.3 | 10 | 0 |
 | P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1804 | 0.2432 | 0.1080 | 1.603 | 0.0678 | 11.3773 | 113.8 | 10 | 209 |
 | P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.1927 | 0.2603 | 0.1130 | 1.658 | 0.0713 | 7.3778 | 73.8 | 10 | 0 |
-| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.735 | 0.0594 | — | — | — | — |
+| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.310 | 0.0594 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|

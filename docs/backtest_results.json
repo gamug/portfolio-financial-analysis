@@ -1,7 +1,7 @@
 {
   "generated_by": "python -m cycle.backtest export",
   "benchmark": "SP500_EW_INTERNAL",
-  "benchmark_sharpe_note": "SP500_EW_INTERNAL's ex-post Sharpe uses excess returns over a zero risk-free rate (the export reads no risk_free_rate row); the strategy arms subtract the run's FF_RF_DAILY rate, as backtest_summary stores it",
+  "benchmark_sharpe_note": "SP500_EW_INTERNAL's ex-post Sharpe subtracts the run's daily FF_RF_DAILY rate, the same rows and carry-forward rule as the strategy arms",
   "runs": [
     {
       "name": "rule_P1",
@@ -19,7 +19,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P1": {
           "date_from": "2022-01-03",
@@ -63,7 +63,7 @@
             "cumulative_return": -0.19586872766771035,
             "annualized_return": -0.2444251220182071,
             "annualized_vol": 0.23137464440309585,
-            "ex_post_sharpe": -1.0953255200009024,
+            "ex_post_sharpe": -1.1240338139476365,
             "max_drawdown": 0.20715762557557948,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -153,7 +153,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P3": {
           "date_from": "2023-10-27",
@@ -197,7 +197,7 @@
             "cumulative_return": 0.2734604628372119,
             "annualized_return": 0.37338855545779603,
             "annualized_vol": 0.11863431501444785,
-            "ex_post_sharpe": 2.735042654689334,
+            "ex_post_sharpe": 2.3102077324000954,
             "max_drawdown": 0.05944529218080552,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -287,7 +287,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P2": {
           "date_from": "2025-02-19",
@@ -331,7 +331,7 @@
             "cumulative_return": 0.0529059598765147,
             "annualized_return": 0.09047195576589018,
             "annualized_vol": 0.20645898420275766,
-            "ex_post_sharpe": 0.5215183986730493,
+            "ex_post_sharpe": 0.277402114779569,
             "max_drawdown": 0.15806350944047598,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -380,7 +380,7 @@
             "cumulative_return": -0.060623147050404835,
             "annualized_return": -0.25311686190758276,
             "annualized_vol": 0.3039654558524533,
-            "ex_post_sharpe": -0.8115771906952213,
+            "ex_post_sharpe": -0.977385505520523,
             "max_drawdown": 0.15806350944047598,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -429,7 +429,7 @@
             "cumulative_return": 0.12085576365911543,
             "annualized_return": 0.3491742371921793,
             "annualized_vol": 0.12192283505748779,
-            "ex_post_sharpe": 2.5179998301144906,
+            "ex_post_sharpe": 2.1046236157553353,
             "max_drawdown": 0.03266808859300496,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -655,7 +655,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P1": {
           "date_from": "2022-01-03",
@@ -699,7 +699,7 @@
             "cumulative_return": -0.19586872766771035,
             "annualized_return": -0.2444251220182071,
             "annualized_vol": 0.23137464440309585,
-            "ex_post_sharpe": -1.0953255200009024,
+            "ex_post_sharpe": -1.1240338139476365,
             "max_drawdown": 0.20715762557557948,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -789,7 +789,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P3": {
           "date_from": "2023-10-27",
@@ -833,7 +833,7 @@
             "cumulative_return": 0.2734604628372119,
             "annualized_return": 0.37338855545779603,
             "annualized_vol": 0.11863431501444785,
-            "ex_post_sharpe": 2.735042654689334,
+            "ex_post_sharpe": 2.3102077324000954,
             "max_drawdown": 0.05944529218080552,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -923,7 +923,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "621cd5c",
+      "code_version": "c04cb38",
       "segments": {
         "P2": {
           "date_from": "2025-02-19",
@@ -967,7 +967,7 @@
             "cumulative_return": 0.0529059598765147,
             "annualized_return": 0.09047195576589018,
             "annualized_vol": 0.20645898420275766,
-            "ex_post_sharpe": 0.5215183986730493,
+            "ex_post_sharpe": 0.277402114779569,
             "max_drawdown": 0.15806350944047598,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -1016,7 +1016,7 @@
             "cumulative_return": -0.060623147050404835,
             "annualized_return": -0.25311686190758276,
             "annualized_vol": 0.3039654558524533,
-            "ex_post_sharpe": -0.8115771906952213,
+            "ex_post_sharpe": -0.977385505520523,
             "max_drawdown": 0.15806350944047598,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
@@ -1065,7 +1065,7 @@
             "cumulative_return": 0.12085576365911543,
             "annualized_return": 0.3491742371921793,
             "annualized_vol": 0.12192283505748779,
-            "ex_post_sharpe": 2.5179998301144906,
+            "ex_post_sharpe": 2.1046236157553353,
             "max_drawdown": 0.03266808859300496,
             "total_turnover": 0.0,
             "total_cost_bps": 0.0,
