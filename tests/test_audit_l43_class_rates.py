@@ -19,12 +19,6 @@ def conn(memory_quant_db: Database) -> Database:
     return memory_quant_db
 
 
-TABLE = (
-    "CREATE TABLE cover_class_conversion (accession TEXT NOT NULL, class_member TEXT NOT NULL, rate REAL NOT NULL, "
-    "source_accession TEXT NOT NULL, source_text TEXT NOT NULL, rule TEXT, PRIMARY KEY (accession, class_member))"
-)
-
-
 def _visa_like(conn: Database) -> int:
     conn.execute("INSERT INTO assets (id, ticker, cik) VALUES (30, 'VLIKE', '0001888888')")
     fid = seed_cover_shares(
@@ -57,6 +51,7 @@ def _accession(conn: Database, fid: int) -> str:
 
 
 def test_without_the_table_the_classes_count_one_for_one_and_are_flagged(conn: Database) -> None:
+    conn.execute("DROP TABLE cover_class_conversion")  # a database from before L-43
     _visa_like(conn)
     cap = market_caps_as_of(conn, [30], as_of=AS_OF).caps[30]
     assert cap.value == pytest.approx(1_110.0 * 10.0)
@@ -65,7 +60,6 @@ def test_without_the_table_the_classes_count_one_for_one_and_are_flagged(conn: D
 
 def test_the_filing_s_own_rates_convert_the_classes_and_clear_the_flag(conn: Database) -> None:
     fid = _visa_like(conn)
-    conn.execute(TABLE)
     acc = _accession(conn, fid)
     for member, rate in (("us-gaap:CommonClassBMember", 1.5), ("us-gaap:CommonClassCMember", 4.0)):
         conn.execute(
@@ -84,7 +78,6 @@ def test_the_filing_s_own_rates_convert_the_classes_and_clear_the_flag(conn: Dat
 
 def test_a_class_with_no_cited_rate_keeps_the_flag(conn: Database) -> None:
     fid = _visa_like(conn)
-    conn.execute(TABLE)
     acc = _accession(conn, fid)
     conn.execute(
         "INSERT INTO cover_class_conversion VALUES (?, 'us-gaap:CommonClassBMember', 1.0, ?, 'share for share', 'MKT-03')",
