@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Mapping
+import math
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import date, timedelta
 
@@ -35,7 +36,7 @@ from cycle.rules import (
     seed_catalog,
     soft_penalties,
 )
-from cycle.scores import sector, technical, valorization
+from cycle.scores import defensive, sector, technical, valorization
 from cycle.scores.normalize import normalized_scores
 from cycle.state import (
     check_construction,
@@ -333,6 +334,38 @@ def _blended(
     return (num / den if den else 0.0), parts
 
 
+def _apply_defensive_tilt(
+    settings: CycleSettings,
+    cycle_date: str,
+    asset_ids: Sequence[int],
+    blended: dict[int, float],
+) -> tuple[dict[int, float], bool]:
+    """Apply the preregistered defensive tilt to the blended ranking scores (§3).
+
+    The market index and the per-asset return windows are the causal series the driver loaded
+    from ``quant_return_daily`` (sessions ``<= cycle_date`` only). A name without a beta keeps
+    its blended score."""
+    market = settings.market_returns
+    if not market:
+        raise ValueError(
+            f"tilt {settings.defensive_tilt} needs the driver's market/price return series"
+        )
+    r63, r126 = defensive.r63_r126(market, cycle_date)
+    fired = defensive.trigger_fires(settings.defensive_tilt, r63, r126)
+    if not fired:
+        return blended, False
+    returns = settings.price_returns or {}
+    sessions = sorted(day for day in market if day <= cycle_date)[-defensive.BETA_WINDOW :]
+    betas: dict[int, float] = {}
+    market_values = [market[session] for session in sessions]
+    for asset_id in asset_ids:
+        asset_values = [returns.get(session, {}).get(asset_id, math.nan) for session in sessions]
+        value = defensive.beta(asset_values, market_values)
+        if value is not None:
+            betas[asset_id] = value
+    return defensive.tilted_scores(blended, betas, settings.defensive_tilt, fired=True), True
+
+
 def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequence
     settings: CycleSettings,
     cycle_type: str,
@@ -431,7 +464,16 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
         cycle_date,
         {
             # Preferences are recorded by `positions` once a book is built, with the rest of it.
-            **settings.model_dump(exclude={"pins", "exclude", "exclude_sectors", "only_sectors"}),
+            **settings.model_dump(
+                exclude={
+                    "pins",
+                    "exclude",
+                    "exclude_sectors",
+                    "only_sectors",
+                    "market_returns",
+                    "price_returns",
+                }
+            ),
             "manifest": manifest,
             "manifest_tag": tag,
             "technical_version": technical.VERSION,
@@ -773,11 +815,25 @@ def _run(  # noqa: C901, PLR0913, PLR0915 - one linear, checkpointed step sequen
             # each SOFT rule's own points (BREAK_TREND_200 is flag-only: 0), else the run's default
             default = settings.soft_veto_penalty
             points = soft_penalties(default)
-            scored = []
+            bases: dict[int, float] = {}
+            parts_by_asset: dict[int, dict[str, float | None]] = {}
             for a in asset_ids:
                 base, parts = _blended(per_type, settings.score_weights, a)
+                bases[a] = base
+                parts_by_asset[a] = parts
+            tilt_fired = False
+            if settings.defensive_tilt != "T0":
+                bases, tilt_fired = _apply_defensive_tilt(settings, cycle_date, asset_ids, bases)
+                conn.execute(
+                    "UPDATE cycle_run SET params_json = json_set(params_json, "
+                    "'$.tilt_triggered', ?) WHERE id = ?",
+                    (1 if tilt_fired else 0, run_id),
+                )
+                conn.commit()
+            scored = []
+            for a in asset_ids:
                 penalty = sum(points.get(rid, default) for rid in soft.get(a, []))
-                scored.append((a, base - penalty, parts))
+                scored.append((a, bases[a] - penalty, parts_by_asset[a]))
             scored.sort(key=lambda t: t[1], reverse=True)
             ranked = []
             for rank, (a, blended, parts) in enumerate(scored, start=1):

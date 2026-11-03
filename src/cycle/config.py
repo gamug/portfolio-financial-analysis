@@ -94,6 +94,13 @@ class CycleSettings(BaseModel):
     # veto lag -- but rank refuses outright, rather than silently building a portfolio blind on
     # most of the universe, once more than this share has no score at all.
     unscored_max_share: float = 0.05
+    # A-2 (CHAMPION, preregistration §3): the blend and the defensive tilt the ranking applies.
+    # `T0` is the baseline no-op; `market_returns` / `price_returns` are the causal series the
+    # driver loads once for the run (session -> market return, session -> asset -> return).
+    defensive_tilt: str = "T0"
+    returns_engine_version: str = "qret-v2"
+    market_returns: dict[str, float] | None = None
+    price_returns: dict[str, dict[int, float]] | None = None
 
     @property
     def has_preferences(self) -> bool:
@@ -116,6 +123,7 @@ class CycleSettings(BaseModel):
             "exclude": norm(self.exclude),
             "exclude_sectors": norm(self.exclude_sectors),
             "only_sectors": None if self.only_sectors is None else norm(self.only_sectors),
+            "defensive_tilt": self.defensive_tilt,
         }
 
     @classmethod

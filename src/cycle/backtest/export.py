@@ -38,7 +38,7 @@ from kg_schema import connect_ro
 #: The order the markdown groups the runs in (FINISH_REPO section 9.1).
 GROUP_ORDER = ("main", "robustness", "w6", "excl", "other")
 #: The order the segments are listed in.
-SEGMENT_ORDER = ("P1", "P3", "P2", "P2a", "P2b")
+SEGMENT_ORDER = ("P1", "P3", "P2", "P2a", "P2b", "H1", "H2", "H3")
 #: The benchmark's name (engine.BENCHMARK; not imported to keep this module DB-only).
 BENCHMARK = "SP500_EW_INTERNAL"
 #: The summary columns the md shows, with their header labels and decimal places.

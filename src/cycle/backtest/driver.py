@@ -41,6 +41,7 @@ from cycle.backtest import export as export_module
 from cycle.config import CycleSettings
 from cycle.guard import GuardParams, NewsCounts, NewsParams
 from cycle.orchestrator import run_replay
+from cycle.scores import defensive
 from kg_schema import connect, connect_ro, queries, trading_calendar
 from kg_schema.provenance import code_version
 
@@ -49,6 +50,10 @@ WINDOWS: dict[str, tuple[str, str]] = {
     "P1": ("2022-01-03", "2022-10-12"),
     "P2": ("2025-02-19", "2025-09-23"),
     "P3": ("2023-10-27", "2024-08-02"),
+    # A-2 (CHAMPION, preregistration §1): the three unseen test windows.
+    "H1": ("2022-10-13", "2023-10-26"),
+    "H2": ("2024-08-05", "2025-02-18"),
+    "H3": ("2025-09-24", "2026-10-15"),
 }
 
 #: D1's spacing: one execution every 21 NYSE sessions from the window's first session.
@@ -886,12 +891,16 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     warmup_steps: int,
     input_sha: str,
     migrations_applied: Sequence[int],
+    blend: str = "B0",
+    tilt: str = "T0",
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
         "params_path": str(params.path),
         "params_sha256": params.sha256,
         "window": window.window_id,
+        "blend": blend,
+        "tilt": tilt,
         "migrations_applied": list(migrations_applied),
         "d_start": window.d_start,
         "d_end": window.d_end,
@@ -1354,7 +1363,16 @@ def _arm_specs(
 # -- the run --------------------------------------------------------------------------
 
 
-def _cycle_settings(database: Path, universe: Path, params: BacktestParams) -> CycleSettings:
+def _cycle_settings(  # noqa: PLR0913 - the run inputs, all named
+    database: Path,
+    universe: Path,
+    params: BacktestParams,
+    *,
+    blend: str = "B0",
+    tilt: str = "T0",
+    market_returns: Mapping[str, float] | None = None,
+    price_returns: Mapping[str, Mapping[int, float]] | None = None,
+) -> CycleSettings:
     """The cycle settings the driver runs under; the two optional `[run]` keys are honoured."""
     extra: dict[str, Any] = {}
     if params.unscored_max_share is not None:
@@ -1366,11 +1384,20 @@ def _cycle_settings(database: Path, universe: Path, params: BacktestParams) -> C
         universe_db_path=universe,
         top_n=params.top_n,
         max_sector_weight=0.30,
+        score_weights=dict(defensive.BLENDS[blend]),
+        defensive_tilt=tilt,
+        returns_engine_version=params.returns_engine_version,
+        market_returns=None if market_returns is None else dict(market_returns),
+        price_returns=(
+            None
+            if price_returns is None
+            else {day: dict(values) for day, values in price_returns.items()}
+        ),
         **extra,
     )
 
 
-def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestration
+def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, one orchestration
     *,
     window_id: str,
     db_path: str | Path,
@@ -1378,6 +1405,8 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
     params_path: str | Path,
     warmup_steps: int = DEFAULT_WARMUP_STEPS,
     arms: Sequence[str] | None = None,
+    blend: str = "B0",
+    tilt: str = "T0",
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1388,6 +1417,10 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
     if not universe.is_file():
         raise BacktestError(f"--universe-db {universe} does not exist")
     params = load_params(params_path)
+    if blend not in defensive.BLENDS:
+        raise BacktestError(f"unknown blend {blend!r}: expected one of {sorted(defensive.BLENDS)}")
+    if tilt not in defensive.TILTS:
+        raise BacktestError(f"unknown tilt {tilt!r}: expected one of {sorted(defensive.TILTS)}")
     codes = resolve_arms(arms, params)
     schedule = schedule_for(window)
     if not schedule:
@@ -1404,7 +1437,9 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
         # in params_json) rather than running on old table shapes.
         applied = kg_schema.ensure(conn, run_migrations=True)
         require_migrated(conn)
-        run_id = _open_run(conn, window, params, warmup_steps, input_sha, applied)
+        run_id = _open_run(
+            conn, window, params, warmup_steps, input_sha, applied, blend=blend, tilt=tilt
+        )
         payload: dict[str, Any] = {}
         try:
             returns_report = run_quant(
@@ -1413,7 +1448,28 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
                 universe,
             )
             _build_returns_version(returns_report, params.returns_engine_version)
-            settings = _cycle_settings(database, universe, params)
+            lookback_start = schedule[0].decision_date
+            for _ in range(defensive.BETA_WINDOW):
+                lookback_start = previous_session(lookback_start)
+            lookback_sessions = sessions_between(lookback_start, window.d_end)
+            market_returns = defensive.market_index_returns(
+                conn,
+                universe_conn,
+                lookback_sessions,
+                engine_version=params.returns_engine_version,
+            )
+            price_returns = load_returns(
+                conn, params.returns_engine_version, lookback_start, window.d_end
+            )
+            settings = _cycle_settings(
+                database,
+                universe,
+                params,
+                blend=blend,
+                tilt=tilt,
+                market_returns=market_returns,
+                price_returns=price_returns,
+            )
             pipeline = _pipeline(
                 conn,
                 db_path=database,
@@ -1424,6 +1480,26 @@ def run_backtest(  # noqa: PLR0913, PLR0915 - the run's inputs, one orchestratio
                 warmup=warmup,
                 settings=settings,
             )
+            decisions = {rebalance.decision_date for rebalance in schedule}
+            tilt_triggers = [
+                str(row["cycle_date"])
+                for row in conn.execute(
+                    "SELECT cycle_date FROM cycle_run WHERE cycle_type = 'REPLAY' "
+                    "AND json_extract(params_json, '$.tilt_triggered') = 1"
+                ).fetchall()
+                if str(row["cycle_date"]) in decisions
+            ]
+            tilt_triggers = sorted(set(tilt_triggers))
+            run_row = conn.execute(
+                "SELECT params_json FROM backtest_run WHERE id = ?", (run_id,)
+            ).fetchone()
+            run_params = json.loads(run_row["params_json"])
+            run_params["tilt_triggers"] = tilt_triggers
+            conn.execute(
+                "UPDATE backtest_run SET params_json = ? WHERE id = ?",
+                (json.dumps(run_params, sort_keys=True), run_id),
+            )
+            conn.commit()
             sessions = _engine_sessions(pipeline.formation_date, window.d_end, params)
             formation_index = sessions.index(pipeline.formation_date)
 
@@ -1582,6 +1658,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--universe-db", required=True, help="the read-only universe database")
     run.add_argument("--params", required=True, help="the params TOML")
     run.add_argument("--warmup-steps", type=int, default=DEFAULT_WARMUP_STEPS)
+    run.add_argument("--blend", default="B0", choices=sorted(defensive.BLENDS))
+    run.add_argument("--tilt", default="T0", choices=sorted(defensive.TILTS))
     run.add_argument(
         "--arms",
         default=None,
@@ -1656,6 +1734,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             params_path=args.params,
             warmup_steps=args.warmup_steps,
             arms=arms,
+            blend=args.blend,
+            tilt=args.tilt,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)
