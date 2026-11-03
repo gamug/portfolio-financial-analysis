@@ -24,6 +24,10 @@ GROUP = "roic"
 # Backwards-compatible name for the clamped filing rate (valuation's unlevered-FCF proxy imports it).
 _DEFAULT_TAX_RATE = STATUTORY_TAX_RATE
 _MAX_TAX_RATE = 0.50
+# D-14 (audit round #10, user-approved Q9): invested capital below this share of total assets (both at the prior fiscal
+# year end) is a near-zero base -- cash almost equal to debt + equity (PLTR FY2023: 8.76 M against 3,461 M of total assets gave
+# 1,082 %). ROIC on it is not a return: empty, flagged ``invested_capital_not_meaningful``.
+MIN_INVESTED_CAPITAL_SHARE_OF_ASSETS = 0.05
 
 
 def effective_tax_rate(tax: float | None, pretax: float | None) -> float:
@@ -141,6 +145,17 @@ def compute(
     elif invested.value <= 0.0:
         # N15 / APP-07: ROIC only when invested capital > 0.
         inputs["flag_return_on_invested_capital_invested_capital_not_positive"] = 1.0
+    elif (
+        cap.total_assets.value is not None
+        and cap.total_assets.value > 0.0
+        and invested.value < MIN_INVESTED_CAPITAL_SHARE_OF_ASSETS * cap.total_assets.value
+    ):
+        # D-14: a positive base too small to carry a return.
+        inputs["total_assets_prior"] = cap.total_assets.value
+        inputs["flag_return_on_invested_capital_invested_capital_not_meaningful"] = 1.0
+        inputs["flag_return_on_invested_capital_effective_rate_invested_capital_not_meaningful"] = (
+            1.0
+        )
     else:
         roic = safe_div(nopat_annual, invested.value)
         roic_effective = safe_div(nopat_effective, invested.value)

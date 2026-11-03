@@ -33,6 +33,7 @@ from __future__ import annotations
 from portfolio_common.db import Database
 
 from . import availability as _availability
+from . import cover_audit as _cover_audit
 from . import identity as _identity
 from . import queries as _queries
 from . import ticker_history as _ticker_history
@@ -112,6 +113,7 @@ def ensure(db: Database, *, run_migrations: bool = False) -> list[int]:
     _availability.ensure_triggers(db)
     _identity.ensure_triggers(db)
     _ticker_history.ensure_seeded(db)  # T-153 part 2: the as-of ticker history (L-11)
+    _cover_audit.ensure_seeded(db)  # the cover-count audit layer (L-43, F-A12, D-20)
     ensure_views(db)
     stamp_current_shape(db)  # T-154 (D2): a database born at the current shape records its version
     if run_migrations:

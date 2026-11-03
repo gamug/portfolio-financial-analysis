@@ -310,6 +310,15 @@ def _working_capital(
     return current, ambiguous, ambiguous_concepts
 
 
+def _previous_10k_stored(conn: Database, asset_id: int, before: str) -> bool:
+    """Whether the company has a 10-K stored before *before* (the previous 10-K MET-07 reads)."""
+    row = conn.execute(
+        "SELECT 1 FROM sec_filings WHERE asset_id = ? AND form = '10-K' AND period_end < ? LIMIT 1",
+        (asset_id, before),
+    ).fetchone()
+    return row is not None
+
+
 def _previous_10k_debt(conn: Database, asset_id: int, before: str, target: str) -> float | None:
     """MET-07's debt at *target* (a prior year end) from the company's previous 10-K."""
     row = conn.execute(
@@ -331,6 +340,7 @@ def compute(conn: Database, filing_id: int, asset_id: int, stmts: Statements) ->
         "SELECT period_end FROM sec_filings WHERE id = ?", (filing_id,)
     ).fetchone()
     before = str(filing["period_end"]) if filing else ""
+    reason: str | None = None  # audit round #11 (Part 2): the first failing year's G4 code
     for key in _cash_flow_years(conn, filing_id):
         period_end = key[:10]
         cfo = stmts.resolve("operating_cash_flow", key).value
@@ -341,6 +351,16 @@ def compute(conn: Database, filing_id: int, asset_id: int, stmts: Statements) ->
         if debt is None:
             debt = _previous_10k_debt(conn, asset_id, before, period_end)
             source = "previous 10-K"
+            if debt is None and reason is None and cfo is not None:
+                reason = (
+                    "missing_input"
+                    if _previous_10k_stored(conn, asset_id, before)
+                    else "prior_year_missing"
+                )
+        if reason is None and cfo is None:
+            reason = "missing_input"
+        if reason is None and debt is not None and debt <= 0:
+            reason = "denominator_not_positive"
         working = cfo - current if cfo is not None else None
         working_as_wc = cfo - current - ambiguous if cfo is not None else None
         ratio_in = ratio_wc = None
@@ -385,6 +405,12 @@ def compute(conn: Database, filing_id: int, asset_id: int, stmts: Statements) ->
     }
     if average_in is None or average_wc is None:
         inputs[UTILITY_COVERAGE_MISSING_BOUND_FLAG] = 1.0
+    if average_in is None:
+        # audit round #11 (Part 2): every empty value records why -- fewer than three years on the cash-flow
+        # statement is not reported; else the first year that fails (G4's codes)
+        inputs["provenance"] = {
+            "empty_reason": "not_reported" if len(years) < YEARS else (reason or "missing_input")
+        }
     if (
         average_in is not None
         and average_wc is not None

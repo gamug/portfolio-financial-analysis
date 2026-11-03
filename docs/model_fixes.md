@@ -10950,3 +10950,179 @@ v11 — a full v11 run closes it).
 (spaced GETs) were empty, so it is a per-filing gap, not gateway-wide. The metrics-only rate is
 **36–80 s/filing** vs P2b's 6.2 s/unit; on one NDSN FY2025 10-K the gateway GET is **3.77 s** and
 parse + 221 facts + 38 metrics + gate is **0.12 s** — the gateway, not the compute, is the cost.
+
+## Audit round #11 — derived operating income (D-17), the quick ratio without inventory (D-18), every empty value's reason
+
+Decided by the user with reviewer A (2026-10-29, `pilot_a3/ROUND11_BRIEF.md`, `pilot_a3/DECISIONS.md` D-17 / D-18);
+implemented and measured by reviewer B on the audit worktree (`r11-d17`; the D-18 code is an OpenCode agent's commit
+a9385e5, reviewed and hardened by B). Applied to `pilot_a3/financial.db` through the plan / apply method (FIXES #11).
+
+### Symptom
+
+* **138 companies print no operating-income line** (single-step income statements): the registry reads operating
+  income only from `OperatingIncomeLoss`, so operating margin, operating-income growth, EBITDA, interest coverage, NOPAT,
+  ROIC (both rates), the NOPAT-based return on assets, net debt / EBITDA and the enterprise FCF yield were empty —
+  16,350 empty values listed operating income as not filed.
+* **2,110 quick ratios** were empty only because the filing has no inventory line (software, services, exchanges).
+* **1,154 empty rule-input rows** (`value_inputs` 366, `utility_cash_coverage_3y` 788) recorded no empty reason.
+
+### D-17 — the derivation (`Statements._derived_operating_income`)
+
+Pre-tax income + the registry's gross interest expense − the non-operating lines between the revenue line and the
+pre-tax line − the equity-method income above the pre-tax line (S-X 5-03 items 7–9; C7 p.8 and p.46). The
+non-operating elements (`_EBIT_NONOPERATING`, 28): the US-GAAP 2026 calculation tree of pre-tax income outside the
+`OperatingIncomeLoss` subtree, kept only where the control filings (they print the line) place the element below
+operating income in ≥ 90 % of ≥ 5 appearances — the list and each element's B6 definition are in
+`audit/r11/D17_CONCEPTS.md`. A nested element is read once; the filer's own `NonoperatingIncomeExpense` total is split
+by arithmetic into the lines directly above it (a unique split; lines of unknown direction tried both ways, at most
+three), and the interest lines it holds are taken back out — 1,262 control totals hold the interest, and eliminating
+such a total while adding the interest back counted it twice (NEE, SBAC). Not for an APP-00 financial type or an
+unknown type; empty without pre-tax income or a gross interest expense (a net interest line is never the interest);
+never when an `OperatingIncomeLoss` line is on the face or was dropped from it by the gateway. Flags: `ebit_derived`
+(how `derived_ebit`) on the value, `flag_operating_income_ebit_derived` on every metric that reads it,
+`ebit_extension_line_not_read` (an extension line read as non-operating by its caption: IBM's "Other (income) and
+expense", CVX's equity affiliates), `ebit_tree_element_kept` (a tree element left in: HON's deconsolidation gain). A
+10-Q TTM whose terms mix a printed and a derived operating income is refused (`ttm_ebit_method_mixed`).
+
+**Deviations from the brief, by its own accuracy test:** the REIT real-estate sale gains are **not** removed (the REIT
+controls place the gain inside their printed operating income in 42 of 44 cases; removing it makes Real Estate worse
+than no elimination on the held-out half); the equity-method income is subtracted wherever it sits above the pre-tax
+line, inside revenue's section too (XOM) — no accuracy change on the controls; the revenue line stays the lower bound
+of the other non-operating lines (dropping it worsens Energy's p95 from 2.47 to 26.51 %: the E&Ps' derivative lines).
+
+**Declared accuracy** (the engine's own code on 5,004 control filings, the line removed; |printed − derived| /
+revenue, median / p75 / p90 / p95): **0.00 / 0.00 / 0.93 / 2.15 %** against 0.79 / 2.11 / 4.52 / 7.27 % without
+elimination; within 1 / 2 / 5 % of revenue 90.5 / 94.5 / 97.8 %; better in every sector and APP-00 type at every
+quantile, and on the held-out half of the companies (`audit/r11/ebit_engine_check.json`, `ebit_variants2.json`).
+
+### D-18 — inventory = 0 for the quick ratio only (`Statements.no_inventory_lines`, `metrics/liquidity.py`)
+
+A classified balance sheet (`AssetsCurrent`, `LiabilitiesCurrent`), a known non-financial APP-00 type, and no
+inventory evidence anywhere in the filing: no row (any statement, dimensional rows and every column included), filed
+fact or gateway-dropped row (`corrections`) of an inventory concept — the registry item's concepts, substitutes and
+families, the face-line allowlist and reserves, `MaterialsSuppliesAndOther`, `Supplies`, any concept named
+"inventor…" — and no caption naming inventory, supplies, spare parts, merchandise or stockpiles (S-X 5-02 item 6's
+inventories include supplies: the railroads, WM, UHS, FDX). The quick ratio reads current assets − 0 and carries
+`flag_quick_ratio_no_inventory_lines`; nothing else changes.
+
+### Part 2 — every empty value records its reason; the has_missed read one by one
+
+`value_inputs` and `utility_cash_coverage_3y` now carry `provenance.empty_reason` (G4's codes; a trailing year built
+as x4 is `prior_year_missing`). Of the 88 `has_missed` values: XOM's inventory (two components, one
+`InventoryPartsAndComponentsNetOfReserves`, refused as a "reserve" line) is now summed when the inventory lines form
+one closed block; FCX's block holds an unnamed extension line ("Product") and stays empty; PNC's net income and the
+remaining cases are declared in LIMITATIONS.
+
+### After the independent review (audit/r11/REVIEW11_independent.md) and the reading of D-18's zeros
+
+Several sign choices that fit the filer's total are one split (each takes the same interest back: GPC FY2021, REG
+2021-Q3); no revenue line leaves the value empty; the pre-tax line is the row the pre-tax value was read from. D-18: the
+two ASU 2016-16 `...OtherThanInventory` tax elements are not inventory (ADBE's 10-Ks); no zero without the filing's own
+filed facts, nor when the previous 10-K recorded an inventory (ORCL, UNH: inventory in the 10-K notes, not in the
+10-Qs; `flag_quick_ratio_prior_annual_inventory`). Final accuracy (4,991 controls): **0.00 / 0.00 / 0.73 / 1.82 %**
+against 0.79 / 2.11 / 4.53 / 7.28 % without elimination, within 1 / 2 / 5 % of revenue 91.6 / 95.3 / 98.2 %.
+
+### After the user's EDGAR check and reviewer A's decisions (dc95a0a), and D-19 (71b12a0)
+
+* **E11-2, PFE FY2021 — the interest counted twice.** PFE reports its interest expense only in the notes; on the face
+  it sits inside "Other (income)/deductions—net", which D-17 takes out whole. Adding the notes' interest back counted
+  it a second time (20,724 M; the user's EDGAR figure 19,433 M). When the face shows no interest line and a
+  non-operating line is taken out, the interest is not added back (`ebit_interest_inside_nonoperating`). The v1
+  accuracy check rebuilt the payload from the stored facts alone, without the filing's filed facts, so it never read
+  the notes' interest and could not see this; the declared accuracy is now **v2** (`audit/r11/ebit_engine_check2.py`:
+  the full payload the run reads).
+* **Reviewer A's rule (a) — a net interest line only** (C7 p.9; S-X 5-03 items 7–8): the net line taken out whole is
+  the gross interest added back and the interest income taken out. Adopted on A's test: the 4,827 controls with a gross
+  line, that line and the interest-income lines replaced by one net line — 0.00 / 0.00 / 0.70 / 1.68 % against
+  0.75 / 2.02 / 4.42 / 7.10 % without elimination, no sector, APP-00 type or half worse. Flag `ebit_net_interest` /
+  `flag_ebit_net_interest`.
+* **Rule (b) — no interest expense:** 0 only when the filing's filed facts are there, no interest-expense concept is
+  among them or on any statement row, and the debt is proven 0 (ID-02b); flag `ebit_zero_interest_proven` /
+  `flag_ebit_zero_interest_proven` (OGN 2021-Q1, before its separation debt).
+* **`DeconsolidationGainOrLossAmount` added to the list** (reviewer A; E11-8, HON 2026-Q2's 6,629 M gain): C7 p.37
+  (operating income excludes one-time items) and the nature of `GainLossOnSaleOfStockInSubsidiaryOrEquityMethodInvestee`;
+  3 of its 5 control appearances are below operating income (the 2 inside are APTV's zeros). It changes
+  15 filing-columns in 2 companies and 51 metric values (an exact with / without run, `audit/r11/deconsol_compare.json`) (HON 2026-Q2 8,366 → 1,737 M; PFE's 2019 Consumer Healthcare JV gain:
+  FY2019 13,174 M = revenue − the operating costs on the face).
+* **D-19 — a period before the profile's interval.** The 2020+ load's 487 filings filed in January–March 2020 whose
+  fiscal period ends in 2019 read no company profile (every interval starts 2020-01-01; the lookup is at the period
+  end): their metrics ran under `company_type_unknown`, the APP-00 NA cells unapplied (56 financial-type filings),
+  D-17 / D-18 skipped. `applicability.profile_for_period` reads the profile at the interval's start for such a period
+  (the filing was filed inside the interval: no look-ahead), flag `flag_<metric>_company_type_window_start`; both dated
+  lookups (`db.attach_context`, the applicability layer) use it.
+
+**Declared accuracy (v2, 6,929 controls):** **0.00 / 0.02 / 0.86 / 1.92 %** against 0.69 / 1.91 / 4.37 / 7.11 % without
+elimination; within 1 / 2 / 5 % of revenue 91.0 / 95.1 / 98.0 %; no sector, APP-00 type or half of the companies worse
+at any quantile (`audit/r11/ebit_check2_summary.json`). The user confirmed on EDGAR E11-2 (19,433 M), E11-8 (1,737 M),
+E11-11 (BKR, rule (a), 3,342 M), E11-12 (OGN, rule (b), 467 M), E11-13 (PFE FY2019, 13,174 M).
+
+### Verification on the real data (FIXES #11)
+
+Plan (master `r10_*` vs fixed `b11_*`, one frozen commit 71b12a0): 19,083 value changes on the stored rows — D-17
+12,562, D-D 4,923, D-18 1,276, XOM inventory 74, `no_facts` refresh 13, and 235 TTMs F-A11 now refuses for a
+perimeter change — **0 unexplained**; 4,419 new filings inserted (154,624 metric rows). On the applied copy: only planned
+rows changed, stale flags 0, inputs-only differences all within L-25, V3 511,808 agree / 47 (FOX/NWS, the declared
+class). D-17 fills 17,284 values (12,562 + 4,722 on the new filings; 1,924 filings, 89 companies), rule (a) 2,395 of
+them, rule (b) 4; D-18 1,850; D-19 gives 487 filings their type (17,806 rows no longer `company_type_unknown`); empty
+values on the stored rows 74,012 → 55,399. The values the user checked on EDGAR (E11-1 … E11-13) are the stored ones.
+
+### Tests
+
+`tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_d19.py`,
+`tests/test_audit_round11_reasons.py`; the full suite passes (3,285).
+
+## Final database — cover counts, added filings and class conversion (FIXES #12–#15, D-20, D-21, L-43, L-44)
+
+The pilot database `pilot_a3/financial.db` (sha256 `851b0e20…`, 14,639 filings, 512,683 metric rows) is the real,
+final database; it is not re-run. Rounds #1–#11 are produced by the engine in this branch. FIXES #12–#15 changed the
+stored data directly, on reviewer A's decisions, so this change gives a new run the same result: the engine now carries
+the data files and the write-time rule that were applied by hand.
+
+### Symptom
+
+The market cap is `close × the latest cover count` (MKT-01). Three defects sat in the covers, not in the formula:
+
+* **Wrong counts (FIXES #12, #13, D-20).** 17 cover rows printed a count that the filing's own EDGAR page contradicts:
+  an x1,000 scale (AJG, CCL, …), a lost digit (20,637,666 → 206,376,661), a shell's placeholder 100 (MKT-04, removed),
+  WFC's cover on a 10-Q/A (1,823,028,137 → 3,658,783,337), and SNDK, whose 10-Q/A states that it corrects the cover from
+  114,863,251 to 144,863,251. The 508 covers no selector could test were all read on EDGAR and print the stored count.
+* **Missing filings (FIXES #14, L-44).** 24 filings of 8 companies were absent (GAP 8, ICE 3, INCY 3, DELL 4 from the
+  gateway; BXP 2, DRE 2, ENPH 1, KVUE 1 rebuilt from the SEC's companyfacts). SKYD 2025-Q3 and FY2025 stay out under
+  PER-08 (successor stubs). ID-07 (`dei:DocumentPeriodEndDate` = EDGAR `periodOfReport`) holds for the 8 filings checked.
+* **Multi-class market caps (FIXES #15, L-43, D-21, MKT-03).** An unlisted class was counted one for one. Each filing
+  prints its own conversion rate; 861 rates for 31 companies change 3,510 metric rows (124 values, all Visa, +4.4 % to
+  +9.6 %). Market caps flagged `market_cap_incomplete_classes` fall from 1,148 to 446; 216 market caps of listed classes
+  valued at another class's price are declared.
+
+### The engine, after this change
+
+* `kg_schema/cover_audit.py` and three seed files in `kg_schema/data/` — `cover_class_conversion.csv` (861 rows, each
+  citing the accession that prints the rate), `audit_prior_cover_shares.csv` (503 rows, F-A12), `cover_corrections.csv`
+  (the 17 D-20 corrections, each with the EDGAR page). `kg_schema.ensure` creates the three tables (`ddl.py`) and seeds
+  them; it never changes a row it holds.
+* `fundamental_agent.db.insert_cover_shares` calls `cover_audit.correct_filing_covers`: a cover row that still holds the
+  recorded old value is corrected (or removed, for a shell) as it is written and logged in `audit_cover_corrections`.
+* `kg_schema.queries.cover_class_rates` and `market_cap.cover_total(..., rates=...)` (commit 719d30f) read the table.
+* The scripts that applied #11–#15 to the database are archived as they ran, outside the repository; `scripts/pilot_a/final_db/README.md` lists them with their sha256 and says why they are not here.
+
+### Availability of the two corrections that come from a 10-Q/A (D-20)
+
+`correct_filing_covers` applies a correction to the row of the **original** 10-Q, so the corrected count is available from
+the original's `available_at`, a few days before the amendment that states it was public. WFC 2023-Q2: the 10-Q was filed
+2023-08-01 (available 2023-08-02) and its 10-Q/A `0000072971-23-000142` was filed 2023-08-04 (available 2023-08-07), so the gap is
+2023-08-02 … 2023-08-06. SNDK, the 10-Q for 2024-12-27: filed 2025-03-07 (available 2025-03-10) and its 10-Q/A
+`0002023554-25-000016` filed 2025-03-17 (available 2025-03-18), so the gap is 2025-03-10 … 2025-03-17. No backtest decision
+date falls in either gap (P1 2021-12-31 … 2022-10-03, P3 2023-10-26 … 2024-07-30, P2 2025-02-18 … 2025-09-18 in 21-session steps;
+the P2 decision after 2025-02-18 is 2025-03-19), so no decision reads a count before the amendment was public (D-20, MKT-01,
+PER-01). The seed file records the amendment's accession as the source of each correction.
+
+### Not reproduced by a run
+
+The 24 filings of FIXES #14 come from the gateway or from companyfacts, outside the engine's fetch; a fresh run through the
+gateway still lacks them (L-44, declared). The listed classes valued at another class's price (216 market caps) and the 446
+flagged multi-class caps are declared limitations (L-43), not defects of the formula.
+
+### Tests
+
+`tests/test_cover_audit.py` (seeding, write-time correction and its log, the shell removal, an unrecorded count left
+alone) and `tests/test_audit_l43_class_rates.py`.
