@@ -981,6 +981,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       (the T-132 state, same log); **JPM FY2024 market cap +1.06 %** (restart order; one value;
       DECISIONS row 55); **the TTM tag mix** (→ **T-161**; DECISIONS row 58).
       **Part A done 2026-10-24 (PRs #176, #175, #177–#184).** T-143's box stays open for part B.
+      **Final pilot database (2026-10-30):** audit rounds #3–#15 (`docs/model_fixes.md`, records in
+      `docs/pilot_a3/`) made `pilot_a3/financial.db` the real database; the engine changes, the cover-audit data and the
+      scripts that applied them are one PR (`feat/final-db-engine`). `T-143` part B (the LLM run) and `T-100` are unchanged.
 
       **The declared pilot finding that gates `T-100` (the user's decision, 2026-10-22 — finish the pilot
       first, fix after):** `handoff/T143a_empty_values_finding.md` (v3) — **the filed values the pipeline
