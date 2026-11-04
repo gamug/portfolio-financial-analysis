@@ -1498,8 +1498,13 @@ def _cycle_settings(  # noqa: PLR0913 - the run inputs, all named
     tilt: str = "T0",
     market_returns: Mapping[str, float] | None = None,
     price_returns: Mapping[str, Mapping[int, float]] | None = None,
+    top_n: int | None = None,
 ) -> CycleSettings:
-    """The cycle settings the driver runs under; the two optional `[run]` keys are honoured."""
+    """The cycle settings the driver runs under; the two optional `[run]` keys are honoured.
+
+    ``top_n`` is the round-3 candidate pool (V3 plan §2a): the cycle ranks and selects that many
+    names. It defaults to the params' 30, the v1/v2 path.
+    """
     extra: dict[str, Any] = {}
     if params.unscored_max_share is not None:
         extra["unscored_max_share"] = params.unscored_max_share
@@ -1508,7 +1513,7 @@ def _cycle_settings(  # noqa: PLR0913 - the run inputs, all named
     return CycleSettings(
         db_path=database,
         universe_db_path=universe,
-        top_n=params.top_n,
+        top_n=params.top_n if top_n is None else top_n,
         max_sector_weight=0.30,
         score_weights=dict(defensive.BLENDS[blend]),
         defensive_tilt=tilt,
@@ -1655,6 +1660,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 tilt=tilt,
                 market_returns=market_returns,
                 price_returns=price_returns,
+                top_n=pool_m,
             )
             pipeline = _pipeline(
                 conn,

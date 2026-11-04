@@ -7,9 +7,11 @@ covariance (32 names -> the 30 lowest ids, 1/30 each).
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from cycle.backtest import core
+from cycle.backtest import core, driver
 
 CORE_ID = 100
 
@@ -144,3 +146,16 @@ def test_invalid_round_three_values_are_refused() -> None:
             decision="d0000",
             filter_exit=1.5,
         )
+
+
+def test_the_cycle_settings_size_the_book_to_the_pool(tmp_path: Path) -> None:
+    """V3 plan §2a: the cycle's `top_n` is the candidate pool, not the 30-name satellite."""
+    params = driver.load_params("src/cycle/backtest/params.frozen.toml")
+    settings = driver._cycle_settings(
+        Path(tmp_path) / "x.db", Path(tmp_path) / "u.db", params, top_n=60
+    )
+    assert settings.top_n == 60
+    assert (
+        driver._cycle_settings(Path(tmp_path) / "x.db", Path(tmp_path) / "u.db", params).top_n
+        == params.top_n
+    )
