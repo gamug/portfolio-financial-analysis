@@ -71,7 +71,14 @@ def _config_table(runs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     for config, (stop_rule, weighting) in CONFIGS.items():
         resolved_stop = str(runs["Y4_P1"]["params"]["stop_rule"]) if config == "Y4" else stop_rule
         mdd, cumulative, per_window = [], [], {}
-        bp = {"stop_outs": 0, "bp3": 0, "bp4": 0, "fallbacks": 0, "missing_bars": 0}
+        bp = {
+            "entries": 0,
+            "stop_outs": 0,
+            "bp3": 0,
+            "bp4": 0,
+            "fallbacks": 0,
+            "missing_bars": 0,
+        }
         sessions_out: list[float] = []
         rp_names, rp_max_weight, rp_rrc = [], [], []
         for window in WINDOWS:
@@ -199,6 +206,7 @@ def _grid_md(  # noqa: C901, PLR0912 - one linear document builder
     table: dict[str, Any],
     cross: list[dict[str, Any]],
     identity: dict[str, dict[str, Any]],
+    defective: dict[str, Any] | None = None,
 ) -> str:
     identity_ok = all(row["ok"] for row in identity.values())
     adopted = table["adopted"]
@@ -224,8 +232,8 @@ def _grid_md(  # noqa: C901, PLR0912 - one linear document builder
         "",
         "## 1. Per configuration (TOPN_MV_GUARD_NO_NLP, six windows)",
         "",
-        "| config | stop | weighting | mean MDD | mean cumulative | R | k (lower MDD than Y0) | stop-outs | mean sessions out | BP3 | BP4 | fallbacks | missing bars | rp names | rp max weight | rp max/min RRC |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| config | stop | weighting | mean MDD | mean cumulative | R | k (lower MDD than Y0) | entries | stop-outs | mean sessions out | BP3 | BP4 | fallbacks | missing bars | rp names | rp max weight | rp max/min RRC |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in table["rows"]:
         mark = " **adopted**" if row["configuration"] == adopted else ""
@@ -234,7 +242,7 @@ def _grid_md(  # noqa: C901, PLR0912 - one linear document builder
             f"| {row['configuration']}{mark} | {row['stop_rule']} | "
             f"{row['satellite_weighting']} | {row['mean_mdd']:.6f} | "
             f"{row['mean_cumulative']:.6f} | {row['R']:.4f} | "
-            f"{row['k_lower_mdd_than_y0']} | {row['bp']['stop_outs']} | "
+            f"{row['k_lower_mdd_than_y0']} | {row['bp']['entries']} | {row['bp']['stop_outs']} | "
             f"{'-' if row['mean_sessions_out'] is None else f'{row["mean_sessions_out"]:.2f}'} | "
             f"{row['bp']['bp3']} | {row['bp']['bp4']} | {row['bp']['fallbacks']} | "
             f"{row['bp']['missing_bars']} | {rp_names} | "
@@ -369,6 +377,29 @@ def _grid_md(  # noqa: C901, PLR0912 - one linear document builder
             f"{js['summaries']['equal']} | {js['tests']['equal']} | {js['daily']['equal']} |"
         )
     lines.append("")
+    if defective:
+        lines += [
+            f"## 9. Defective runs ({defective['commit']}, superseded)",
+            "",
+            "**Not entering adoption.** These Y1/Y2/Y4 runs used a defective implementation: the",
+            "Basing Points machine was given the entry date for every session of its tracking",
+            "history, so no rule-3 point in (s0, e] was recognized. They are not new",
+            "configurations in the count ledger and are reported only for the record.",
+            "",
+            "| config | stop | weighting | mean MDD | mean cumulative | R | k | stop-outs | fallbacks |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+        for config in ("Y1", "Y2", "Y4"):
+            row = defective["runs"].get(config)
+            if not row:
+                continue
+            lines.append(
+                f"| {config} | {row['stop_rule']} | {row['satellite_weighting']} | "
+                f"{row['mean_mdd']:.6f} | {row['mean_cumulative']:.6f} | {row['R']:.4f} | "
+                f"{row['k_lower_mdd_than_y0']} | {row['bp']['stop_outs']} | "
+                f"{row['bp']['fallbacks']} |"
+            )
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -389,6 +420,8 @@ def main() -> int:
         window: json.loads((identity_dir / f"identity_{window}.json").read_text())
         for window in WINDOWS
     }
+    defective_path = out_dir / "defective_runs.json"
+    defective = json.loads(defective_path.read_text()) if defective_path.is_file() else None
     payload = {
         "plan": "docs/backtest_v4_experiments_plan.md",
         "scored_llm_sha256": "2187c36bae42296b84d63031e9058df5aba997a77da2a4aa6665279452e184ca",
@@ -419,7 +452,7 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "grid.json").write_text(json.dumps(payload, indent=1) + "\n")
     (out_dir / "choice.json").write_text(json.dumps(table, indent=1) + "\n")
-    markdown = _grid_md(runs, table, cross, identity)
+    markdown = _grid_md(runs, table, cross, identity, defective)
     (out_dir / "grid.md").write_text(markdown + "\n")
     Path(args.docs).expanduser().resolve().write_text(markdown + "\n")
     print(
