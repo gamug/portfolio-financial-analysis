@@ -11,6 +11,7 @@ asset is read or written.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -39,6 +40,22 @@ PARAM_KEYS = (
     "returns_engine_version",
     "rf_curve",
 )
+
+
+def _markowitz_hash(conn: Any) -> str | None:
+    """sha256 of ``MARKOWITZ_BASE``'s target weights: ``(date, holding_key, weight)``, sorted."""
+    rows: list[Any] = conn.execute(
+        "SELECT w.date, w.holding_key, w.markowitz_target_weight "
+        "FROM book_weight_daily w JOIN strategy_book b ON b.id = w.book_id "
+        "WHERE b.arm_code = 'MARKOWITZ_BASE' ORDER BY w.date, w.holding_key"
+    ).fetchall()
+    if not rows:
+        return None
+    payload = [
+        [str(row["date"]), str(row["holding_key"]), float(row["markowitz_target_weight"])]
+        for row in rows
+    ]
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def main(db: str, out: str) -> int:
@@ -76,7 +93,7 @@ def main(db: str, out: str) -> int:
                 benchmark[str(row["date"])] = float(row["benchmark_return"])
         sessions = sorted({day for series in daily.values() for day in series})
         rf, carried = load_rf(conn, str(params["rf_curve"]), sessions)
-        payload = {
+        payload: dict[str, Any] = {
             "run": {
                 "id": int(run["id"]),
                 "status": str(run["status"]),
@@ -94,6 +111,7 @@ def main(db: str, out: str) -> int:
             "daily": daily,
             "rf": rf,
             "benchmark": benchmark,
+            "markowitz_weights_sha256": _markowitz_hash(conn),
         }
     finally:
         conn.close()
