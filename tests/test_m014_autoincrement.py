@@ -507,13 +507,11 @@ def test_migration_m014_from_v13() -> None:  # noqa: PLR0915
         r[0]: r[1]
         for r in db.execute("SELECT name, sql FROM sqlite_master WHERE type='trigger'").fetchall()
     }
-    assert views_after == views_before, f"Views differ: {set(views_before) ^ set(views_after)}"
-    assert indexes_after == indexes_before, (
-        f"Indexes differ: {set(indexes_before) ^ set(indexes_after)}"
-    )
-    assert triggers_after == triggers_before, (
-        f"Triggers differ: {set(triggers_before) ^ set(triggers_after)}"
-    )
+    # Later additive migrations (m018's backtest tables) add new objects; every object the
+    # v13 database already had must be unchanged.
+    assert {n: ddl for n, ddl in views_after.items() if n in views_before} == views_before
+    assert {n: ddl for n, ddl in indexes_after.items() if n in indexes_before} == indexes_before
+    assert {n: ddl for n, ddl in triggers_after.items() if n in triggers_before} == triggers_before
 
     # 5. Integrity check and foreign key check
     integrity = [tuple(r) for r in db.execute("PRAGMA integrity_check").fetchall()]

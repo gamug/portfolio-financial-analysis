@@ -26,9 +26,13 @@ from quant.db import (
     insert_risk_model,
     load_book_weights,
     load_covariance,
+    load_cycle_run,
+    load_cycle_selected_ids,
     load_expected_returns,
+    load_panel_asset_ids,
     load_previous_book,
     load_risk_model,
+    load_risk_model_by_id,
     load_sector_of,
     sync_positions,
 )
@@ -48,6 +52,7 @@ from quant.risk import (
     historical_mean,
     james_stein_mean,
     ledoit_wolf_covariance,
+    psd_violation,
     sample_covariance,
 )
 from quant.state import fail_run, finish_run, merge_run_params, open_run
@@ -270,6 +275,7 @@ def run_build_risk_model(
                 min_history_days=settings.min_history_days,
                 universe_asset_ids=gate.asset_ids,
                 return_engine_version=manifest.return_engine_version,
+                min_coverage=settings.min_coverage,
             )
             sigma, delta = _covariance(settings, panel)
             rf = load_risk_free(settings, as_of=as_of, conn=conn)
@@ -657,6 +663,247 @@ def run_optimize(  # noqa: PLR0915 - one linear orchestration, like run_build_ri
             manifest_tag=manifest.book_tag,
             stale_prices_bypassed=stale_reason,
             dirty_tree_bypassed=dirty_reason,
+        )
+    finally:
+        if owns:
+            conn.close()
+
+
+# -- the backtest's Top-30 book (BACKTEST_SPEC §8.2) --------------------------
+
+TOPN_SELECTION_COUNT = 30  # BACKTEST_SPEC §0: the Top-N arms, fixed for the backtest
+TOPN_KIND = "min_var_topn"
+
+
+class CycleSelectionError(ValueError):
+    """The cycle run / risk-model pair cannot define the Top-30 book (a user-input or integrity
+    error; the CLI prints it and exits 1)."""
+
+
+@dataclass
+class TopnBookResult:
+    portfolio_id: int
+    model_id: int
+    as_of: str
+    cycle_run_id: int
+    kind: str
+    n_positions: int
+    status: str
+    weight_sum: float
+
+
+def _topn_selection(conn: Database, cycle_run_id: int, as_of: str, model: Row) -> list[int]:
+    """The exactly-30 unique names ``cycle_ranking.selected = 1`` of run *cycle_run_id*, checked
+    against the cycle run (stored, completed, dated *as_of*) and against *model*'s asset set."""
+    cycle = load_cycle_run(conn, cycle_run_id)
+    if cycle is None:
+        raise CycleSelectionError(f"cycle run {cycle_run_id} is not stored")
+    if str(cycle["status"]) != "completed":
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} is {cycle['status']}, not completed: its ranking is not "
+            "a selection to size a book on"
+        )
+    if str(cycle["cycle_date"]) != as_of:
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} is dated {cycle['cycle_date']}, not the analysis date "
+            f"{as_of}"
+        )
+    selected = load_cycle_selected_ids(conn, cycle_run_id)
+    if len(set(selected)) != len(selected):
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} repeats an asset id among its selected rows"
+        )
+    if len(selected) != TOPN_SELECTION_COUNT:
+        raise CycleSelectionError(
+            f"cycle run {cycle_run_id} selected {len(selected)} asset(s); the Top-"
+            f"{TOPN_SELECTION_COUNT} book needs exactly {TOPN_SELECTION_COUNT}"
+        )
+    panel = set(load_panel_asset_ids(model))
+    outside = sorted(set(selected) - panel)
+    if outside:
+        shown = ", ".join(str(a) for a in outside[:10])
+        more = f" (+{len(outside) - 10} more)" if len(outside) > 10 else ""  # noqa: PLR2004
+        raise CycleSelectionError(
+            f"risk model {int(model['id'])} does not cover {len(outside)} selected asset(s): "
+            f"{shown}{more}"
+        )
+    return selected
+
+
+def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with explicit refusals
+    settings: QuantSettings,
+    *,
+    as_of: str,
+    cycle_run_id: int,
+    risk_model_id: int,
+    conn: Database | None = None,
+) -> TopnBookResult:
+    """Min-variance over the 30 names a cycle run selected, on a stored risk model's covariance.
+
+    BACKTEST_SPEC §2 step 5 / §8.2: the universe is ``cycle_ranking.selected = 1`` of run
+    ``cycle_run_id`` (read by SQL; ``quant`` never imports ``cycle``), the covariance is the
+    model's stored ``[T, T]`` sub-matrix -- **no re-estimation** -- and the book is persisted as
+    ``kind = 'min_var_topn'`` so it never collides with the plain ``min_var`` book of the same
+    as-of. The caps are today's (name ``1.5 / n_held``, sector 0.30) and there is no turnover cap.
+
+    Everything that makes the pair invalid is refused *before* a run row is written: a stored,
+    completed cycle run dated *as_of*; exactly 30 unique ids, all inside the model's panel; the
+    model dated *as_of* and built on this run's manifest (metric version, return series, and the
+    hard-veto choice when widened); a stored covariance that is PSD within tolerance (the
+    optimizer would otherwise silently repair it).
+    """
+    if settings.turnover_cap is not None:
+        raise CycleSelectionError(
+            "the Top-30 book has no turnover cap (BACKTEST_SPEC §0); drop --turnover-cap"
+        )
+    owns = conn is None
+    conn = conn or connect(settings.db_path)
+    try:
+        ensure_schema(conn)
+        manifest = resolve_quant_manifest(conn, settings, optimize_as_of=as_of)
+        expected_version = _model_version(settings, manifest)
+        model = load_risk_model_by_id(conn, risk_model_id)
+        if model is None:
+            raise CycleSelectionError(f"risk model {risk_model_id} is not stored")
+        if str(model["as_of"]) != as_of:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} is as of {model['as_of']}, not {as_of}: the Top-30 "
+                "book must use the model built for its own decision date"
+            )
+        if str(model["model_version"]) != expected_version:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} was built on different inputs "
+                f"({model['model_version']}) than this run's manifest ({expected_version}); "
+                "rebuild it with the same versions and --include-hard-vetoed, or drop "
+                "--risk-model-id"
+            )
+        selected = _topn_selection(conn, cycle_run_id, as_of, model)
+
+        ids, sigma_full = load_covariance(conn, risk_model_id)
+        if not ids:
+            raise CycleSelectionError(
+                f"no stored covariance for risk model {risk_model_id}; re-run build-risk-model "
+                "without --no-store-cov"
+            )
+        index = {a: i for i, a in enumerate(ids)}
+        missing = [a for a in selected if a not in index]
+        if missing:
+            raise CycleSelectionError(
+                f"risk model {risk_model_id} stores no covariance for {len(missing)} selected "
+                f"asset(s): {missing[:10]}"
+            )
+        sigma = sigma_full[np.ix_([index[a] for a in selected], [index[a] for a in selected])]
+        violation = psd_violation(sigma)
+        if violation is not None:
+            raise CycleSelectionError(
+                f"the stored covariance of risk model {risk_model_id} restricted to the "
+                f"{TOPN_SELECTION_COUNT} selected names is not positive semidefinite "
+                f"(smallest eigenvalue -{violation:.3g}): refusing to let the optimizer repair "
+                "a stored matrix silently"
+            )
+
+        rf = (
+            float(model["rf_annual"]) if model["rf_annual"] is not None else settings.risk_free_rate
+        )
+        mu = _expected_return_vector(conn, model, risk_model_id, selected, settings.ret_estimator)
+        sector_of = load_sector_of(conn, selected)
+        caps = effective_caps(settings, selected, sector_of)
+
+        stale_reason = stale_as_of_reason(conn, as_of)
+        cv = code_version()
+        dirty_reason = dirty_tree_reason(cv)
+        ignored = [o for o in settings.objectives if o != "min_var"]
+        run_id = open_run(
+            conn,
+            "optimize",
+            as_of=as_of,
+            params={
+                **settings.model_dump(mode="json"),
+                "manifest": manifest.record(),
+                "manifest_tag": manifest.book_tag,
+                "stale_as_of_bypassed": stale_reason,
+                "dirty_tree_bypassed": dirty_reason,
+                "cycle_run_id": cycle_run_id,
+                "risk_model_id": risk_model_id,
+                "selection_count": len(selected),
+                "objectives_ignored": ignored,
+            },
+            code_version=cv,
+        )
+        try:
+            if dirty_reason is not None and not settings.allow_dirty:
+                raise DirtyTree(  # noqa: TRY301
+                    f"{dirty_reason}; pass --allow-dirty for a deliberate run from an "
+                    "uncommitted tree"
+                )
+            if stale_reason is not None and not settings.allow_stale_prices:
+                raise StaleAsOf(  # noqa: TRY301
+                    f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
+                    "of the price spine"
+                )
+            cons = Constraints(
+                max_name_weight=caps.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=sector_of,
+                asset_ids=selected,
+            )
+            res = min_variance(sigma, constraints=cons, mu=mu, rf=rf, solver=settings.solver)
+            held = {
+                selected[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS
+            }
+            book_params: dict[str, Any] = {
+                **caps.record(),
+                "ret_estimator": settings.ret_estimator,
+                "cycle_run_id": cycle_run_id,
+                "cycle_date": as_of,
+                "selection_count": len(selected),
+                "risk_model_id": risk_model_id,
+                "turnover": {
+                    "cap_requested": None,
+                    "cap_effective": None,
+                    "applied": False,
+                    "reason_not_applied": "the Top-30 book has no turnover cap (BACKTEST_SPEC §0)",
+                },
+                "objectives_ignored": ignored,
+            }
+            pid = insert_portfolio(
+                conn,
+                PortfolioRow(
+                    as_of=as_of,
+                    kind=TOPN_KIND,
+                    objective=res.objective,
+                    solver=res.solver,
+                    status=res.status,
+                    expected_return=res.expected_return,
+                    expected_vol=res.expected_vol,
+                    sharpe=res.sharpe,
+                    rf_annual=rf,
+                    n_positions=int((np.abs(res.weights) > _W_EPS).sum()),
+                    engine_version=book_engine_version(settings, manifest),
+                    turnover=None,
+                    target_param=None,
+                    model_id=risk_model_id,
+                    quant_run_id=run_id,
+                    manifest_json=_book_manifest_json(manifest, settings),
+                    params_json=json.dumps(book_params, separators=(",", ":")),
+                ),
+            )
+            sync_positions(conn, pid, as_of, held)
+            finish_run(conn, run_id)
+        except BaseException as exc:  # an interrupt too: never leave 'running'
+            conn.rollback()  # drop uncommitted writes: fail_run commits
+            fail_run(conn, run_id, str(exc))
+            raise
+        return TopnBookResult(
+            portfolio_id=pid,
+            model_id=risk_model_id,
+            as_of=as_of,
+            cycle_run_id=cycle_run_id,
+            kind=TOPN_KIND,
+            n_positions=len(held),
+            status=res.status,
+            weight_sum=float(sum(held.values())),
         )
     finally:
         if owns:

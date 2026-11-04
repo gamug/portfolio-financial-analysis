@@ -243,8 +243,9 @@ class _FakeEdgar:
 
 
 class _StubAnalyst:
-    def __init__(self, _model: object, model_name: str) -> None:
+    def __init__(self, _model: object, model_name: str, _llm_meta: object = None) -> None:
         self.model_name = model_name
+        self.prompt_hash = "stub-hash"
 
     def analyze(self, ctx: FilingContext) -> AnalysisResult:
         pairs: list = []

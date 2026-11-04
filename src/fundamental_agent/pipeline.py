@@ -19,6 +19,7 @@ from typing import Any
 from portfolio_common.db import Database, Row
 from tqdm import tqdm
 
+from fundamental_agent import agents as agent_layer
 from fundamental_agent import db, quality, utility_coverage, value_inputs
 from fundamental_agent.agents import (
     FALLBACK_MODEL_LABEL,
@@ -159,7 +160,7 @@ class _Engine:
     completed_accessions: set[str] = field(default_factory=set)
 
 
-def run(settings: Settings, params: RunParams) -> RunReport:
+def run(settings: Settings, params: RunParams) -> RunReport:  # noqa: PLR0915 - one driver
     """Execute a batch run and return its report."""
     conn = connect(settings.db_path)
     try:
@@ -213,9 +214,22 @@ def run(settings: Settings, params: RunParams) -> RunReport:
             raise DirtyTree(
                 f"{dirty_reason}; pass --allow-dirty for a deliberate run from an uncommitted tree"
             )
+        analyst: FundamentalAnalyst | None = None
+        llm_meta = None
+        if not params.metrics_only:
+            model = build_model(settings)
+            # A-1.2: resolve the moving alias once, before the run row, and record it with the
+            # explicit thinking mode/effort in the run and every score row.
+            llm_meta = agent_layer.resolve_llm_model(settings) if model is not None else None
+            analyst = FundamentalAnalyst(model, settings.llm_model, llm_meta)
         run_id = db.start_run(
             conn,
-            params={**_params_dict(params), "dirty_tree_bypassed": dirty_reason},
+            params={
+                **_params_dict(params),
+                "llm": llm_meta.as_dict() if llm_meta is not None else None,
+                "prompt_hash": analyst.prompt_hash if analyst is not None else None,
+                "dirty_tree_bypassed": dirty_reason,
+            },
             as_of=params.analysis_date,
             code_version=cv,
         )
@@ -223,11 +237,6 @@ def run(settings: Settings, params: RunParams) -> RunReport:
         report = RunReport(run_id=run_id, planned=len(tasks), dirty_tree_bypassed=dirty_reason)
 
         try:
-            analyst = (
-                None
-                if params.metrics_only
-                else FundamentalAnalyst(build_model(settings), settings.llm_model)
-            )
             with EdgarClient(settings.edgar_base_url) as edgar:
                 engine = _Engine(
                     conn, edgar, analyst, params, report, completed, completed_accessions=accessions
@@ -1318,11 +1327,43 @@ def _analyze_one(
         # score_snapshot row, not even the fallback (the gate/rule-input writes above stand).
         return
 
+    store_score(
+        engine.conn,
+        asset_id=task.asset_id,
+        form=task.form,
+        fiscal_period=target.fiscal_period,
+        event_time=target.period.date,
+        filing_id=filing_id,
+        result=result,
+        scoring_model=scoring_model,
+        run_id=run_id,
+    )
+
+
+def store_score(  # noqa: PLR0913 - the row's identity, its result and the run that logs it
+    conn: Database,
+    *,
+    asset_id: int,
+    form: str,
+    fiscal_period: str,
+    event_time: str,
+    filing_id: int,
+    result: AnalysisResult,
+    scoring_model: str,
+    run_id: int | None = None,
+) -> str:
+    """Write one filing's FUNDAMENTAL ``score_snapshot`` row from its analysis result.
+
+    The one place the row is written: ``run`` calls it right after the metrics and the
+    ``fundamental_agent score`` command calls it on the metrics a run already stored (WP-F), so the
+    two cannot label or shape a row differently. Returns the ``model`` label it wrote.
+
+    T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
+    production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
+    this way. T-073 (D1): a row whose applicable pillar has no value is not scored at all, and is
+    labelled as such too -- the model was never asked about it.
+    """
     assessment = result.assessment
-    # T-113: a fallback row is labelled as such, never under the LLM's own model_id -- 1 of
-    # production's 377 FUNDAMENTAL scores was previously indistinguishable from real model output
-    # this way. T-073 (D1): a row whose applicable pillar has no value is not scored at all, and is
-    # labelled as such too -- the model was never asked about it.
     if assessment.score is None:
         model = UNSCORED_MODEL_LABEL
     elif result.used_fallback:
@@ -1330,12 +1371,12 @@ def _analyze_one(
     else:
         model = scoring_model
     db.insert_snapshot(
-        engine.conn,
+        conn,
         SnapshotRow(
-            asset_id=task.asset_id,
+            asset_id=asset_id,
             filing_id=filing_id,
-            form=task.form,
-            fiscal_period=target.fiscal_period,
+            form=form,
+            fiscal_period=fiscal_period,
             score=assessment.score,
             rating=assessment.rating,
             narrative=assessment.narrative,
@@ -1343,14 +1384,16 @@ def _analyze_one(
             risks=assessment.risks,
             model=model,
             metrics=result.flat_metrics,
-            event_time=target.period.date,
+            event_time=event_time,
             prompt_hash=result.prompt_hash,
             pillars=result.pillars,
+            llm=dict(result.llm_meta),
         ),
         run_id=run_id,
     )
-    if result.used_fallback:
-        db.bump_run_counter(engine.conn, run_id, "fallback_units")
+    if result.used_fallback and run_id is not None:
+        db.bump_run_counter(conn, run_id, "fallback_units")
+    return model
 
 
 def _params_dict(params: RunParams) -> _Payload:

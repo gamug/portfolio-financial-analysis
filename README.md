@@ -22,6 +22,7 @@ strengths, risks). Each `(asset, form, fiscal_period)` produces one immutable
 | `KG_FINANCIAL_DB` | SQLite path. `assets` / `sectors` are created only if missing and never overwritten; all other tables are owned by this agent. The old misspelled `KG_FINANTIAL_DB` is still read as a fallback. |
 | `KG_UNIVERSE_DB` | Optional; point-in-time S&P 500 membership DB. Defaults to `/workspaces/thesis/data/universe.db`. Every agent reads the universe from here as of its `--analysis-date`. |
 | `LLM_API_KEY` / `LLM_MODEL` / `LLM_URL` | OpenAI-compatible LLM (DeepSeek). Used via Strands' `OpenAIModel`. |
+| `LLM_THINKING` / `LLM_REASONING_EFFORT` | Optional; `disabled` (default) or `enabled`, and `low` / `high` / `max` (default `high`, used only when thinking is enabled). The scoring run records the resolved model and the mode. |
 | `EDGAR_BASE_URL` | Optional; defaults to `http://host.docker.internal:8000/edgar/edgar`. |
 
 ### Run

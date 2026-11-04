@@ -8,6 +8,7 @@ Reads of other packages' tables are plain ``SELECT``s -- no ``cycle`` import.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -619,6 +620,45 @@ def load_risk_model(conn: Database, *, as_of: str, model_version: str) -> Row | 
         (as_of, model_version),
     ).fetchone()
     return row
+
+
+def load_risk_model_by_id(conn: Database, model_id: int) -> Row | None:
+    """The stored risk model *model_id* (``optimize --risk-model-id``), whatever its label."""
+    row: Row | None = conn.execute(
+        "SELECT * FROM quant_risk_model WHERE id = ?", (model_id,)
+    ).fetchone()
+    return row
+
+
+def load_panel_asset_ids(model: Row) -> list[int]:
+    """The asset set a risk model was built over, from its stored ``panel_spec_json``.
+
+    The panel definition (not ``quant_covariance``) is authoritative: a model built with
+    ``--no-store-cov`` still names its universe, and the covariance is checked separately."""
+    spec = json.loads(str(model["panel_spec_json"]))
+    return [int(a) for a in spec["asset_ids"]]
+
+
+def load_cycle_run(conn: Database, cycle_run_id: int) -> Row | None:
+    row: Row | None = conn.execute(
+        "SELECT id, cycle_type, cycle_date, status FROM cycle_run WHERE id = ?",
+        (cycle_run_id,),
+    ).fetchone()
+    return row
+
+
+def load_cycle_selected_ids(conn: Database, cycle_run_id: int) -> list[int]:
+    """The ``cycle_ranking.selected = 1`` asset ids of a cycle run, in rank order.
+
+    Plain SQL on the cycle tables: ``quant`` is a leaf and never imports ``cycle``."""
+    return [
+        int(r["asset_id"])
+        for r in conn.execute(
+            "SELECT asset_id FROM cycle_ranking WHERE cycle_run_id = ? AND selected = 1 "
+            "ORDER BY rank, asset_id",
+            (cycle_run_id,),
+        )
+    ]
 
 
 def load_expected_returns(conn: Database, model_id: int, mu_model: str) -> dict[int, float]:

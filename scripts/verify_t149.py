@@ -255,11 +255,12 @@ class _FactsOnlyAnalyst:
     deterministic rule-based fallback (``agents.facts_only_synthesis``, T-073). No network,
     no spend."""
 
-    def __init__(self, _model: object, model_name: str) -> None:
+    def __init__(self, _model: object, model_name: str, _llm_meta: object = None) -> None:
         self._inner = FundamentalAnalyst.__new__(FundamentalAnalyst)
         self._inner._model = None
         self._inner.model_name = model_name
         self.model_name = model_name
+        self.prompt_hash = "facts-only-no-llm"
 
     def analyze(self, ctx: Any) -> Any:
         computed = self._inner._compute_all(ctx)

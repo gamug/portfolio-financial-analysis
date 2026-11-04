@@ -1162,6 +1162,9 @@ but `quant`'s own `qret-v2`/risk-model chain does not, pending `T-100`.
       first date. `T-153` part 3a's R6 (i) curve (members with no filing public yet) is what to expect
       before it; a share measured on a 2026 date is not, because it depends on the date.
 
+
+**Work item 22 (the daily backtest and GUARD, `T-163`) closed 2026-10-31** — its section was cut to `CHANGELOG.md`; one line only, as constitution AI behavior #13 requires.
+
 ## Status
 
 **🔴 Current priority order (user's, 2026-10-05; Work item 8's part re-set 2026-10-07; `T-144`/`T-152` moved first

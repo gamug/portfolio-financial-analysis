@@ -761,6 +761,97 @@ def test_rank_reads_its_own_cycles_fundamental_normalization(
     assert _ranking(conn) == baseline
 
 
+# -- A-2: the FUNDAMENTAL cohort is the decision date's universe members ---------------
+
+_WEIGHTS = {"profitability": 0.25, "financial_strength": 0.25, "cash_flow": 0.25, "growth": 0.25}
+
+
+def _seed_nonmember_rows(conn: Database) -> None:
+    """One future member and one stale former member, each with a usable FUNDAMENTAL row."""
+    conn.execute("INSERT INTO assets (id, ticker, sector_id) VALUES (6, 'FUT', 1), (7, 'OLD', 2)")
+    for asset_id, raw, period_end, filing_date, available_at in (
+        (6, 100.0, "2025-12-31", "2026-01-30", "2026-02-02"),  # joins after D1
+        (7, -100.0, "2022-12-31", "2023-01-04", "2023-01-05"),  # left long before D1
+    ):
+        filing_id = conn.execute(
+            "INSERT INTO sec_filings (asset_id, form, fiscal_year, fiscal_period, period_end, "
+            "filing_date, available_at, retrieved_at) VALUES (?, '10-K', 2025, 'FY2025', ?, "
+            "?, ?, '2026-02-01T00:00:00Z') RETURNING id",
+            (asset_id, period_end, filing_date, available_at),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO score_snapshot (asset_id, score_type, raw_value, normalized_score, "
+            "event_time, computed_at, model, run_kind, filing_id, available_at) VALUES "
+            "(?, 'FUNDAMENTAL', ?, 777.0, ?, '2026-02-01T00:00:00Z', 'seed', 'analysis', ?, ?)",
+            (asset_id, raw, period_end, filing_id, available_at),
+        )
+    conn.commit()
+
+
+def test_the_fundamental_cohort_is_members_only_hand_computed(cycle_seed: Database) -> None:
+    """(i) A future-member row and a stale former-member row do not enter the cohort: the five
+    members' normalized values are exactly ``normalized_scores([72, 64, 56, 48, 40])``."""
+    conn = cycle_seed
+    _seed_nonmember_rows(conn)
+    rows, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [int(r["asset_id"]) for r in rows] == [1, 2, 3, 4, 5]
+    expected = normalized_scores([72.0, 64.0, 56.0, 48.0, 40.0])
+    assert normalized == pytest.approx(expected, abs=1e-12)
+
+
+def test_the_normalize_writer_and_the_rank_reader_share_the_member_cohort(
+    cycle_seed: Database,
+) -> None:
+    """(ii) The writer (``normalize``) and the reader (``rank``) give the same value, and a
+    non-member row is not written."""
+    conn = cycle_seed
+    _seed_nonmember_rows(conn)
+    run_selection(_settings(conn), D1, conn=conn)
+    stored = {
+        int(r["asset_id"]): r["normalized_score"]
+        for r in conn.execute(
+            "SELECT asset_id, normalized_score FROM score_snapshot "
+            "WHERE score_type = 'FUNDAMENTAL' AND asset_id IN (1, 2, 3, 4, 5, 6, 7)"
+        )
+    }
+    _, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [stored[aid] for aid in (1, 2, 3, 4, 5)] == pytest.approx(normalized, abs=1e-12)
+    # the writer normalized only the members; the non-member rows keep their old value
+    assert stored[6] == 777.0 and stored[7] == 777.0
+
+
+def test_a_member_without_a_fundamental_row_stays_unscored(cycle_seed: Database) -> None:
+    """(iii) A member with no scored FUNDAMENTAL row is out of the cohort and ranked as before
+    (unscored, not carried forward); the other members normalize over themselves."""
+    conn = cycle_seed
+    conn.execute(
+        "UPDATE score_snapshot SET raw_value = NULL "
+        "WHERE asset_id = 5 AND score_type = 'FUNDAMENTAL'"
+    )
+    conn.commit()
+    rows, normalized = cycle_orchestrator._fundamental_normalization(
+        conn, D1, _WEIGHTS, {1, 2, 3, 4, 5}
+    )
+    assert [int(r["asset_id"]) for r in rows] == [1, 2, 3, 4]
+    assert normalized == pytest.approx(normalized_scores([72.0, 64.0, 56.0, 48.0]), abs=1e-12)
+    assert 5 in unscored_assets([1, 2, 3, 4, 5], {int(r["asset_id"]): 0 for r in rows})
+    settings = CycleSettings(db_path=Path(":memory:"), top_n=3, unscored_max_share=0.5)
+    run_selection(settings, D1, conn=conn)
+    # EEE is still ranked (as before) but carries the UNSCORED gap and is not selected.
+    row = conn.execute(
+        "SELECT r.vetoed, r.veto_rules_json, r.selected FROM cycle_ranking r "
+        "JOIN assets a ON a.id = r.asset_id JOIN cycle_run cr ON cr.id = r.cycle_run_id "
+        "WHERE a.ticker = 'EEE' AND cr.cycle_date = ? AND cr.cycle_type = 'SELECTION'",
+        (D1,),
+    ).fetchone()
+    assert row is not None and int(row["selected"]) == 0
+    assert "UNSCORED" in json.loads(row["veto_rules_json"] or "[]")
+
+
 # -- T-097: the out-of-order-cycle guard -------------------------
 
 

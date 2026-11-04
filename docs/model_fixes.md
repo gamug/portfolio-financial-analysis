@@ -11071,6 +11071,225 @@ values on the stored rows 74,012 → 55,399. The values the user checked on EDGA
 `tests/test_audit_round11_d17.py`, `tests/test_audit_round11_d18.py`, `tests/test_audit_round11_d19.py`,
 `tests/test_audit_round11_reasons.py`; the full suite passes (3,285).
 
+## REPLAY — the backtest's methodology decisions (2026-10-31)
+
+The daily backtest (`FR-016`/`FR-017`, `docs/backtest.md`) changes four deterministic behaviours of
+the selection path and adds one data-gap decision to `quant`. Each is recorded here with its real-data
+verification, as constitution AI behavior #12 requires. Unless stated otherwise the evidence is the
+rule-based runs on the final pilot database (`pilot_a3`, sha256 `851b0e20…`), read back from
+`runs/rule_P1.db` and `runs/rule_P3.db` (10 + 10 decisions) and logged in
+`/workspaces/thesis/scratch/final/out/phase3_replay_facts.txt`.
+
+### REPLAY-1 — a replay cuts the vetoes at the decision date R, not at R−1
+
+**Status**: built (WP-C, `run_replay(..., veto_cutoff_same_day=True)`), used by every run.
+
+**Symptom**: the live `select` applies the T-1 contagion lag (T-070): a veto raised on date N affects
+the ranking from N+1. A *replay* of a historical decision date is not the live book, and the backtest
+spec fixes its cutoff at R (`BACKTEST_SPEC` §0: "Veto cutoff in REPLAY = R (not R−1). Live `select`
+keeps R−1").
+
+**Root cause**: the lag is a live-trading property (the order is placed before the day's information
+exists); at a replay's close-of-R decision the R-day vetoes are already public.
+
+**Reference**: `BACKTEST_SPEC.md` §0 (reviewer A's design decision); `docs/checklist_sec` T-070 for
+the live lag, unchanged.
+
+**Fix**: `run_replay(..., veto_cutoff_same_day=True)` filters `hard_vetoed_as_of`/`active_soft_vetoes`
+at `cycle_date`; `select` keeps `_t_minus_1`. The flag is recorded in `cycle_run.params_json`, and a
+resume under the other value is refused.
+
+**Verification (real data)**: at the 20 decisions of P1 and P3, the ranking holds **629** and **731**
+rows carrying a HARD veto under the R cutoff. The stints that could only exist because the cutoff is
+R — HARD vetoes whose `raised_on` is the decision date itself — are **81** in P1 and **165** in P3
+(13 % and 23 % of the HARD rows). Live `select` is unchanged: `tests/test_cycle_backtest_selection.py`
+pins R vs R−1 and the live path.
+
+### REPLAY-2 — a restricted selection raises `TooFewCandidates` instead of building a short book
+
+**Status**: built (WP-C), used by every run.
+
+**Symptom**: the Top-N arm must hold exactly `top_n` names; a selection that runs out of ranked names
+because the risk model does not cover them would otherwise build a shorter book and silently change
+the arm.
+
+**Root cause**: the selection loop's shortfall path was written for the live book, where holding what
+is eligible is correct (T-134/T-136). The backtest needs the opposite: a data problem to report.
+
+**Reference**: `BACKTEST_SPEC.md` §8.3; `docs/cycle.md`.
+
+**Fix**: with `risk_model_id` set, `rank` marks names outside the model `NO_RISK_MODEL`, keeps
+descending under the same sector cap, and raises `cycle.data.TooFewCandidates` when it cannot reach
+`top_n`. The driver records and skips a refusal *before* formation and aborts *after* it.
+
+**Verification (real data)**: **0** `TooFewCandidates` aborts in the six runs; every one of the 28
+decisions selects exactly **30** names (`cycle_ranking.selected = 1`, all in the risk model's ids).
+`tests/test_cycle_backtest_selection.py` and `tests/test_backtest_driver.py` pin the raise and both
+driver behaviours.
+
+### REPLAY-3 — `unscored_max_share = 0.060` for these runs (declared deviation)
+
+**Status**: built (driver `[run] unscored_max_share` -> `CycleSettings`), used by every run.
+
+**Symptom**: with the project's 0.05 default, P1's first two decision dates (2021-12-31 and
+2022-02-01) are refused by cycle's coverage brake: 29 of 505 members unrankable = **0.0574**.
+
+**Root cause**: 27 members have no FUNDAMENTAL score at all and 2 have no close on the session
+(the L-42 leaver gap before 2022); the share is 0.0574, above the default.
+
+**Reference**: `FINISH_REPO.md` §5 step 7 — a project gate from T-119 with no literature source,
+treated as checklist Annex A's project gates: a declared value with its measured effect.
+
+**Fix**: Case B of that rule — u\* = the maximum share over all decision dates (k≥0) of the three
+windows = 0.0574, rounded up to the next 0.005 = **0.060**, written in `params.frozen.toml`'s `[run]`
+table and recorded in every run's `params_json`. Default unchanged (0.05); the key is honoured
+(`tests/test_backtest_driver.py`).
+
+**Verification (real data)**: the 64-date table (`docs/backtest.md` §8) has P1 k0/k1 at 0.0574 and
+every other decision date at or below 0.0258 (max outside P1's first two: 0.0258; the 0.0298 row is P3's k = -2 warm-up, 2023-08-28, which never enters u*). With 0.060 no
+decision date refuses on coverage (all six runs form at k = 0); with 0.050 P1 would have formed at
+k = 2 instead of k = 0 and lost 2 rebalances.
+
+### REPLAY-4 — `exclude_tickers` (built, not used: the L-43 trigger is false)
+
+**Status**: built (driver `[run] exclude_tickers` -> `CycleSettings.exclude`, with a test), **not
+used** in these runs.
+
+**Symptom**: FINISH_REPO §8's conditional runs exist for a multi-class market cap that is
+understated: BRK counted 1:1 (ratio ≈ 1.0) or Visa flagged `market_cap_incomplete_classes`, *and*
+either name selected in a Top-30 book.
+
+**Root cause of not using it**: the first clause is false. Measured on the final database, BRK's
+stored cap is 1.5318–1.7546 × (class B count × class B close) — class A converted at 1500 (MKT-03) —
+and Visa carries the flag on 0 of 27 values, its own rates (B 1.6181, C 4.0) raising its share count
+9.6 % above the raw class sum.
+
+**Reference**: `FINISH_REPO.md` §8 (L-43); `FINAL_DB_HANDOFF.md` §4.
+
+**Fix**: none applied to the books; the key and its test exist for a future case.
+
+**Verification (real data)**: BRK.B is selected in 5 of P1's 10 decisions (2022-03-03 … 2022-07-05)
+and is never understated; the conjunction's first clause is false, so no `excl_*` run exists. The
+counts per window are in `docs/backtest.md` limitation 11.
+
+### REPLAY-5 — the risk-model build weights L-44 members with no cover shares at 0
+
+**Status**: built (`--allow-missing-caps` passed by the driver, commit `3598932`), used by every run.
+
+**Symptom**: the first real P1 run aborted at formation: `quant build-risk-model` refused 5 of 483
+panel assets "no market cap as of 2021-12-31".
+
+**Root cause**: the L-44 filing gaps — five members have no cover-share row on that date, so no
+market cap exists. Dropping them would silently shrink the universe; the cap only feeds the
+equilibrium prior, which no min-variance book uses.
+
+**Reference**: `quant`'s T-132 (the flag's own rule: weight them 0 and name them on the run);
+`LIMITATIONS.md` L-44.
+
+**Fix**: the driver passes `--allow-missing-caps` to `build-risk-model` and `optimize`; quant records
+the names in the run's `market_caps` block.
+
+**Verification (real data)**: P1's ten models have 5, 5, 6, 7, 6, 6, 6, 6, 6, 7 missing caps of
+483–497 panel assets (9 distinct assets over the window); P3's have 5, 6, 5, 5, 4, 4, 4, 4, 4, 5
+(7 distinct). All are `no_cover_shares`, none is a price problem. The covariance and the min-variance
+targets are unchanged by the flag (the prior is not an input to `min_var`), and the run records
+`allow_missing_caps: true`.
+
+
+### REPLAY-6 — layer 1 keeps tracking a stopped name that a rebalance drops from the reference
+
+**Status**: fixed 2026-11-03 (commit `fcb77e4`), used by the six re-executed runs in `runs_a1/`.
+
+**Symptom** (reviewer A, round 3): the engine built `GuardInput.asset_returns` for
+`set(reference_weights) | book.out_assets`, and `book.out_assets` was `GuardOutput.cut_assets` —
+only the names cut *inside the current reference*. A name stopped by layer 1 and then dropped by a
+rebalance was no longer given a return history, so its one-session `delta` re-entry was never
+evaluated; if it came back into the Top-30 it was cut at once, even when it had met `delta` while
+out.
+
+**Root cause**: the tracked set used the day's cut set, not layer 1's own OUT state, although
+`GuardState.l1_out` already held every name out.
+
+**Reference**: `BACKTEST_SPEC.md` §4 layer 1 ("While OUT the asset's return is tracked") and §8.1
+(`GuardInput.asset_returns` "for every asset in reference_weights and every asset currently OUT").
+
+**Fix**: `GuardOutput` now exposes `l1_out`, the full post-session OUT set (`GuardState` stays
+immutable and unchanged); the engine passes it as `book.out_assets` for the GUARD arm **and** for
+its NOGUARD shadow. A re-entry of a name not in the reference is recorded `NOT_HELD`; the shadow
+arm never applies anything, so its rows carry the fixed `ARM_DISABLED` status.
+
+**Verification (real data)**: reviewer A's spec-machine replay (`review-a/verify_runs.py`) reports
+**37** sessions in `rule_P1` and **37** in `rule_P3` where the spec evaluates a re-entry the old
+run did not, and **0** in P2; our rerun of the same script on `runs/` reproduces 37/37/0
+(`out/a1/a11_verify_old_runs.log`). All six runs were re-executed on new fresh copies of
+`scored_rule.db` (`runs_a1/`): `backtest_summary` (3 / 3 / 3 rows), `backtest_test` (6 / 6 / 18) and
+`book_daily_performance` (588 / 576 / 450) are exactly equal to the old runs, bit for bit, so
+`n_guard_actions` does not move; `guard_alert`/`guard_action` differ only by **6 added alert/action
+pairs in each of P1 and P3** (all `L1_REENTRY`: 3 `NOT_HELD` on the GUARD arm, 3 `ARM_DISABLED` on
+its shadow), no removals, and **0** added pairs in P2 (`out/a1/a11_compare_batch1.log`). The cut
+set inside the reference is identical on every session (`review-a/l1_impact.py`: 0 sessions differ,
+0 weight affected). The hand-computed scenario in `tests/test_backtest_known_answers.py` fails on
+the old code (`out/a1/a11_test_before_fix.log`) and passes after (`out/a1/a11_test_after_fix.log`).
+
+### REPLAY-7 — the benchmark's Sharpe subtracts the run's risk-free rate
+
+**Status**: fixed 2026-11-03 (commit `fcb77e4`), used by `docs/backtest_results.md` / `.json`.
+
+**Symptom**: the export computed `SP500_EW_INTERNAL`'s ex-post Sharpe on excess returns over a
+**zero** risk-free rate, while the three arms subtracted `FF_RF_DAILY`; the benchmark row was
+therefore not comparable with the arms. The declared cause was FINISH_REPO §9.1's read contract,
+which did not include `risk_free_rate`.
+
+**Reference**: A-1.2 amends §9.1: the export may also read `risk_free_rate` from each run copy, the
+same rows the run used, and nothing else beyond the list. The estimator is unchanged
+(`stats.summarize`).
+
+**Fix**: `cycle.backtest export` reads the curve named in the run's `params_json` (`FF_RF_DAILY`),
+converts the annualized rate to a daily fraction (`/ 252`) and carries the last observation forward
+— exactly `driver.load_rf`'s rule — and passes those values to `stats.summarize` for the benchmark's
+segment dates. The arms still come from `backtest_summary`. No other input changes.
+
+**Verification (real data)**: on the old run copies the benchmark Sharpe moves from **−1.0953 to
+−1.1240** (P1), **2.7350 to 2.3102** (P3) and **0.5215 to 0.2774** (P2); the benchmark's cumulative
+return and volatility are unchanged, and the change is the subtraction of the same daily risk-free
+rate the arms use (`out/a1/a12_benchmark_rf_effect.log`). `tests/test_backtest_export.py` pins the
+benchmark Sharpe against `stats.summarize` with the run's RF and a zero-RF control, and refuses a
+run copy with no `risk_free_rate` rows.
+
+### REPLAY-8 — the FUNDAMENTAL normalization cohort is the decision date's universe members
+
+**Status**: fixed 2026-11-03 (commit `438584b`, 2026-11-03 23:32 UTC); used by every Round A-2 run.
+
+**Symptom**: `_fundamental_normalization` z-scored the FUNDAMENTAL totals over every asset that
+had a latest usable row, not only the decision date's universe members. At the P1/P2a decision
+dates 58–66 (P1) and 75 (P2a) rows were non-members: 50–56 future members per P1 date and 25–29 per
+P2a date (lookahead), the rest former members whose period end was up to 1,265 days old (stale
+values). TECHNICAL and VALORIZATION already normalized over member rows only, and SPEC.md's
+"Cross-sectional normalization" bullet says the z-score is taken "against the live cohort".
+
+**Fix**: `_fundamental_normalization` takes the member ids the run's own
+`data.active_universe` resolved and keeps only their rows. Both the `normalize` writer and the
+`rank` reader call it with that set (they still share one function), so a non-member row is
+neither normalized nor written. Other readers: `last_fundamental_dates` /
+`latest_fundamental_score` are filtered by their callers to the member list, so extra keys are
+inert; `cycle.backtest` does not read `score_snapshot.normalized_score` (it reads the per-cycle
+`v_cycle_ranking_component.component_value`); `v_score_snapshot.normalized_score` keeps the last
+cycle's writer value and may therefore be older for a non-member — it is informational, never a
+ranking input.
+
+**Per-date counts** (`out/a2_cohort_counts_p1.log`, `out/a2_cohort_counts_p2a.log`): P1 58–66
+non-members per date (future 50–56, former 6–16); P2a 75 (future 25–29, former 46–50; oldest
+period end 1,265 days). GUARD's frozen parameters are unchanged: they were calibrated on 2019–2021
+member returns, not on scores.
+
+**Measured effect** (official configuration B0·T0, LLM scores; before = the stage-1 runs at
+`b5880f8`, after = `runs_a2/` at the grid commit): MARKOWITZ_BASE is unchanged in both segments
+(0.000000 on cumulative return, MDD and Sharpe). P1: NOGUARD cumulative **−0.0081**, MDD
+**+0.0077**, Sharpe **−0.057**; GUARD cumulative **−0.0049**, MDD **+0.0038**, Sharpe **−0.081**.
+P2a: NOGUARD cumulative **−0.0079**, MDD **0.0000**, Sharpe **−0.153**; GUARD cumulative
+**−0.0060**, MDD **0.0000**, Sharpe **−0.150**. The cohort fix therefore moves only the Top-N arms,
+as expected (the base book never reads FUNDAMENTAL scores), and by less than one percentage point
+of cumulative return in these two segments.
 ## Final database — cover counts, added filings and class conversion (FIXES #12–#15, D-20, D-21, L-43, L-44)
 
 The pilot database `pilot_a3/financial.db` (sha256 `851b0e20…`, 14,639 filings, 512,683 metric rows) is the real,

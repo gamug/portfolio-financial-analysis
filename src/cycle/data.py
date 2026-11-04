@@ -470,6 +470,14 @@ class TooManyUnscored(RuntimeError):
     both gaps separately."""
 
 
+class TooFewCandidates(RuntimeError):
+    """Fewer than ``top_n`` ranked names are selectable, so the run refuses to build a short
+    book (WP-C): the backtest's Top-N arm must hold exactly ``top_n`` names, and a shortfall there
+    is a data problem to report, never a smaller book to trade. Raised only when a selection is
+    restricted (``risk_model_id``); an unrestricted cycle still holds what is eligible and records
+    the ``shortfall`` (T-134/T-136)."""
+
+
 def too_many_unscored_reason(
     unscored: list[int], universe_size: int, max_share: float
 ) -> str | None:

@@ -43,7 +43,7 @@ from kg_schema.versions import (
     pick_version,
     recognized_engine_versions,
 )
-from quant.config import QuantSettings
+from quant.config import DEFAULT_MIN_COVERAGE, QuantSettings
 from quant.db import risk_model_versions_at, version_stats
 
 # The metric groups quant reads. A selection naming any other group is rejected as unread.
@@ -63,6 +63,15 @@ class QuantManifest:
     return_engine_version: str
     # optimize only: the risk-model label the books are optimized from (None for build).
     risk_model_version: str | None = None
+    # The Universe gate's hard-veto filter. Only recorded (and only folded into the tag) when the
+    # run widens the universe with ``--include-hard-vetoed``: a model built over the names under a
+    # T-1 HARD veto is a different input set, so it must neither reuse nor overwrite the narrow
+    # model stored at the same as-of. The default keeps every pre-existing tag byte-identical.
+    exclude_hard_vetoed: bool = True
+    # The panel's coverage floor (`build_return_panel`): 0.98 of the lookback window -- 740 of
+    # 756 sessions, the floor the backtest's risk models are built on. Recorded on every
+    # manifest; folded into the tag only when it is not the default, so no stored key moves.
+    min_coverage: float = DEFAULT_MIN_COVERAGE
     # the constraints as given (only the ones set) and the profile they came from.
     constraints: Mapping[str, str] = field(default_factory=dict)
     profile: str | None = None
@@ -70,11 +79,16 @@ class QuantManifest:
     @property
     def inputs(self) -> dict[str, object]:
         """What the risk model is built from; its hash is :attr:`tag`."""
-        return {
+        out: dict[str, object] = {
             "consumer": "quant",
             "metrics": self.metrics.manifest(),
             "returns": self.return_engine_version,
         }
+        if not self.exclude_hard_vetoed:
+            out["exclude_hard_vetoed"] = False
+        if self.min_coverage != DEFAULT_MIN_COVERAGE:
+            out["min_coverage"] = self.min_coverage
+        return out
 
     @property
     def tag(self) -> str:
@@ -95,9 +109,9 @@ class QuantManifest:
 
     def record(self) -> dict[str, object]:
         """The manifest as recorded: :attr:`book_inputs` (so a non-default risk model is named),
-        plus the constraints and profile when set. With none of those it is exactly T-090's
-        manifest, so a run without T-093 flags records what it always did."""
+        plus the panel's coverage floor, and the constraints and profile when set."""
         out: dict[str, object] = dict(self.book_inputs)
+        out["min_coverage"] = self.min_coverage
         if self.constraints:
             out["constraints"] = dict(sorted(self.constraints.items()))
         if self.profile:
@@ -169,12 +183,19 @@ def resolve_quant_manifest(
     returns = resolve_return_engine(conn, settings)
     risk_model: str | None = None
     if optimize_as_of is not None:
-        data_tag = QuantManifest(metrics=metrics, return_engine_version=returns).tag
+        data_tag = QuantManifest(
+            metrics=metrics,
+            return_engine_version=returns,
+            exclude_hard_vetoed=settings.exclude_hard_vetoed,
+            min_coverage=settings.min_coverage,
+        ).tag
         risk_model = _resolve_risk_model(conn, settings, optimize_as_of, data_tag)
     return QuantManifest(
         metrics=metrics,
         return_engine_version=returns,
         risk_model_version=risk_model,
+        exclude_hard_vetoed=settings.exclude_hard_vetoed,
+        min_coverage=settings.min_coverage,
         constraints=_constraints_given(settings, optimize=optimize_as_of is not None),
         profile=settings.version_profile,
     )

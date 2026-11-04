@@ -14,6 +14,9 @@ from quant.caps import DEFAULT_SECTOR_CAP, DEFAULT_TOP_N
 
 _DEFAULT_OBJECTIVES = ["min_var", "tangency", "target_vol", "risk_parity"]
 DEFAULT_PRICING_BASE_URL = "http://host.docker.internal:8000/pricing"
+# The default share of the lookback window an asset must have observations for (`panel.py`).
+# 0.98 x 756 = 740 returns: the effective floor the backtest's risk models are built on.
+DEFAULT_MIN_COVERAGE = 0.98
 
 
 class QuantSettings(BaseModel):
@@ -77,6 +80,11 @@ class QuantSettings(BaseModel):
     lookback_days: int = 756
     periods_per_year: int = 252
     cov_estimator: str = "ledoit_wolf_cc"  # ledoit_wolf_cc | ledoit_wolf_diag | sample
+    # The share of the lookback window an asset must actually have observations for
+    # (`build_return_panel`): at lookback 756 and 0.98 the effective floor is 740 returns, not
+    # `min_history_days`'s 504 (BACKTEST_SPEC §0 "floor 740"). It was a function default; it is a
+    # setting now so the floor a model was built with is recorded on its manifest.
+    min_coverage: float = Field(default=DEFAULT_MIN_COVERAGE, gt=0.0, le=1.0)
     # mu for the return-aware objectives (tangency / target_vol / frontier) and for the
     # expected-return / Sharpe reported on every book. All three estimators are total returns
     # (T-109): `equilibrium` is `rf + delta*Sigma*w_mkt`, not the excess `delta*Sigma*w_mkt`
