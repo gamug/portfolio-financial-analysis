@@ -177,7 +177,7 @@ action per arm (`APPLIED` | `ARM_DISABLED` | `NOT_HELD` | `SUPERSEDED`), persist
 ### What GUARD did in these runs (measured)
 
 The numbers below are recomputed from the run copies by `scripts/backtest_guard_behaviour.py`
-(aggregates only; evidence `out/a1/a14_guard_behaviour.log`).
+(aggregates only; evidence `out/a2/guard_behaviour_llm.log`).
 
 **Layer 4 is active on almost every session.** With `m = 1/(1 − α)` the exposure is exactly 1 only
 at a new NAV maximum, and the formation cost alone puts the arm below its maximum at the first
