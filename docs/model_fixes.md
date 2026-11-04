@@ -11282,5 +11282,11 @@ non-members per date (future 50–56, former 6–16); P2a 75 (future 25–29, fo
 period end 1,265 days). GUARD's frozen parameters are unchanged: they were calibrated on 2019–2021
 member returns, not on scores.
 
-**Measured effect**: the P1/P2a official runs before/after this fix are compared in REPORT.md §17
-(Step 3 of Round A-2); the numbers are in `out/a2/`.
+**Measured effect** (official configuration B0·T0, LLM scores; before = the stage-1 runs at
+`b5880f8`, after = `runs_a2/` at the grid commit): MARKOWITZ_BASE is unchanged in both segments
+(0.000000 on cumulative return, MDD and Sharpe). P1: NOGUARD cumulative **−0.0081**, MDD
+**+0.0077**, Sharpe **−0.057**; GUARD cumulative **−0.0049**, MDD **+0.0038**, Sharpe **−0.081**.
+P2a: NOGUARD cumulative **−0.0079**, MDD **0.0000**, Sharpe **−0.153**; GUARD cumulative
+**−0.0060**, MDD **0.0000**, Sharpe **−0.150**. The cohort fix therefore moves only the Top-N arms,
+as expected (the base book never reads FUNDAMENTAL scores), and by less than one percentage point
+of cumulative return in these two segments.

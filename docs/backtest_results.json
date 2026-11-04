@@ -4,8 +4,8 @@
   "benchmark_sharpe_note": "SP500_EW_INTERNAL's ex-post Sharpe subtracts the run's daily FF_RF_DAILY rate, the same rows and carry-forward rule as the strategy arms",
   "runs": [
     {
-      "name": "rule_P1",
-      "group": "rule",
+      "name": "llm_P1",
+      "group": "llm",
       "window": "P1",
       "backtest_run_id": 1,
       "status": "completed",
@@ -17,9 +17,9 @@
         }
       ],
       "decisions_refused": [],
-      "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
+      "input_db_sha256": "291b514c7763ced986b73f0543afdeb65e7462dc3e247b508ef691c5555c0a6b",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
+      "code_version": "f9679ea",
       "segments": {
         "P1": {
           "date_from": "2022-01-03",
@@ -37,24 +37,24 @@
               "n_guard_actions": 0.0
             },
             "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": -0.20607955556575153,
-              "annualized_return": -0.256738155516815,
-              "annualized_vol": 0.1497346454407468,
-              "ex_post_sharpe": -1.950056676433612,
-              "max_drawdown": 0.22267559696617167,
-              "total_turnover": 18.148085390583425,
-              "total_cost_bps": 181.48085390583424,
+              "cumulative_return": -0.22963161465176685,
+              "annualized_return": -0.28496618481666613,
+              "annualized_vol": 0.13734638025467977,
+              "ex_post_sharpe": -2.4208761513359276,
+              "max_drawdown": 0.24247946014486366,
+              "total_turnover": 17.365971881656524,
+              "total_cost_bps": 173.65971881656526,
               "n_rebalances": 10.0,
-              "n_guard_actions": 535.0
+              "n_guard_actions": 542.0
             },
             "TOPN_MV_NOGUARD": {
-              "cumulative_return": -0.1935315953302995,
-              "annualized_return": -0.24160051203903798,
-              "annualized_vol": 0.21371244931094827,
-              "ex_post_sharpe": -1.2178238884474026,
-              "max_drawdown": 0.2491580999796399,
-              "total_turnover": 7.24442738779457,
-              "total_cost_bps": 72.4442738779457,
+              "cumulative_return": -0.23341268483385602,
+              "annualized_return": -0.28947520690411854,
+              "annualized_vol": 0.20775931214806775,
+              "ex_post_sharpe": -1.5722193920527232,
+              "max_drawdown": 0.27188502436937834,
+              "total_turnover": 7.561128972799388,
+              "total_cost_bps": 75.61128972799388,
               "n_rebalances": 10.0,
               "n_guard_actions": 0.0
             }
@@ -77,8 +77,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "hac_mean_diff",
-          "statistic": -0.36273050998863704,
-          "p_value": 0.7168062060785266,
+          "statistic": -0.0655967948564986,
+          "p_value": 0.947698840953222,
           "n_obs": 196,
           "params": {}
         },
@@ -87,8 +87,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "ledoit_wolf",
-          "statistic": -0.046126329971880806,
-          "p_value": 0.0084,
+          "statistic": -0.05346035079803249,
+          "p_value": 0.0024,
           "n_obs": 196,
           "params": {
             "block": 5,
@@ -101,8 +101,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "memmel_jk",
-          "statistic": -2.3303159641074176,
-          "p_value": 0.01978945762240118,
+          "statistic": -2.809191313935471,
+          "p_value": 0.004966612268389728,
           "n_obs": 196,
           "params": {}
         },
@@ -111,8 +111,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "hac_mean_diff",
-          "statistic": -0.7183949167421295,
-          "p_value": 0.4725138202046969,
+          "statistic": -1.1592567376059495,
+          "p_value": 0.24635155048164348,
           "n_obs": 196,
           "params": {}
         },
@@ -121,8 +121,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "ledoit_wolf",
-          "statistic": -0.013675442044869368,
-          "p_value": 0.7646,
+          "statistic": -0.03600026033770681,
+          "p_value": 0.4516,
           "n_obs": 196,
           "params": {
             "block": 5,
@@ -135,8 +135,649 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "memmel_jk",
-          "statistic": -0.3018513528574687,
-          "p_value": 0.7627653816748223,
+          "statistic": -0.770526297146487,
+          "p_value": 0.44098776200284195,
+          "n_obs": 196,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "name": "llm_P3",
+      "group": "llm",
+      "window": "P3",
+      "backtest_run_id": 1,
+      "status": "completed",
+      "formation_date": "2023-10-27",
+      "warmup_refused": [],
+      "decisions_refused": [],
+      "input_db_sha256": "1598f142c82495db9916013b9b6b943ce8f090660ad44375cfe45ccc90645690",
+      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
+      "code_version": "f9679ea",
+      "segments": {
+        "P3": {
+          "date_from": "2023-10-27",
+          "date_to": "2024-08-02",
+          "arms": {
+            "MARKOWITZ_BASE": {
+              "cumulative_return": 0.21052424160357153,
+              "annualized_return": 0.2849987548207322,
+              "annualized_vol": 0.08720092162016678,
+              "ex_post_sharpe": 2.342412699438826,
+              "max_drawdown": 0.043469234491623654,
+              "total_turnover": 2.226044130734167,
+              "total_cost_bps": 22.26044130734167,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 0.0
+            },
+            "TOPN_MV_GUARD_NO_NLP": {
+              "cumulative_return": 0.19863754706185555,
+              "annualized_return": 0.2684631046067254,
+              "annualized_vol": 0.09995096153102348,
+              "ex_post_sharpe": 1.9258414262245123,
+              "max_drawdown": 0.074876614883858,
+              "total_turnover": 12.096970679831777,
+              "total_cost_bps": 120.9697067983178,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 217.0
+            },
+            "TOPN_MV_NOGUARD": {
+              "cumulative_return": 0.21486651388871403,
+              "annualized_return": 0.2910520064575457,
+              "annualized_vol": 0.10552600976367152,
+              "ex_post_sharpe": 1.9969501988499128,
+              "max_drawdown": 0.07868074899125987,
+              "total_turnover": 8.089684825365552,
+              "total_cost_bps": 80.89684825365553,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 0.0
+            }
+          },
+          "benchmark": {
+            "cumulative_return": 0.2734604628372119,
+            "annualized_return": 0.37338855545779603,
+            "annualized_vol": 0.11863431501444785,
+            "ex_post_sharpe": 2.3102077324000954,
+            "max_drawdown": 0.05944529218080552,
+            "total_turnover": 0.0,
+            "total_cost_bps": 0.0,
+            "n_obs": 192.0
+          }
+        }
+      },
+      "tests": [
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "hac_mean_diff",
+          "statistic": -1.5160085289211465,
+          "p_value": 0.12951719579735738,
+          "n_obs": 192,
+          "params": {}
+        },
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "ledoit_wolf",
+          "statistic": -0.004479431628615416,
+          "p_value": 0.4396,
+          "n_obs": 192,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "memmel_jk",
+          "statistic": -0.787137529513871,
+          "p_value": 0.43120136202332104,
+          "n_obs": 192,
+          "params": {}
+        },
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "hac_mean_diff",
+          "statistic": 0.06963429153163674,
+          "p_value": 0.9444847424807514,
+          "n_obs": 192,
+          "params": {}
+        },
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "ledoit_wolf",
+          "statistic": -0.02176209199658974,
+          "p_value": 0.7318,
+          "n_obs": 192,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P3",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "memmel_jk",
+          "statistic": -0.3641168754543513,
+          "p_value": 0.7157707357601234,
+          "n_obs": 192,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "name": "llm_P2",
+      "group": "llm",
+      "window": "P2",
+      "backtest_run_id": 1,
+      "status": "completed",
+      "formation_date": "2025-02-19",
+      "warmup_refused": [],
+      "decisions_refused": [],
+      "input_db_sha256": "fd4ad5f9ad619484cb572869a15fff4d9707e6a46112b8de4365233732f5ef88",
+      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
+      "code_version": "f9679ea",
+      "segments": {
+        "P2": {
+          "date_from": "2025-02-19",
+          "date_to": "2025-09-23",
+          "arms": {
+            "MARKOWITZ_BASE": {
+              "cumulative_return": 0.06879334339940635,
+              "annualized_return": 0.11825663504592354,
+              "annualized_vol": 0.12844554309878212,
+              "ex_post_sharpe": 0.542094256342522,
+              "max_drawdown": 0.07639426164169527,
+              "total_turnover": 2.8107855500464973,
+              "total_cost_bps": 28.10785550046497,
+              "n_rebalances": 8.0,
+              "n_guard_actions": 0.0
+            },
+            "TOPN_MV_GUARD_NO_NLP": {
+              "cumulative_return": 0.010306165425479907,
+              "annualized_return": 0.01737496261981608,
+              "annualized_vol": 0.1343097170819986,
+              "ex_post_sharpe": -0.17969093883725723,
+              "max_drawdown": 0.11990659722092967,
+              "total_turnover": 10.879550067217403,
+              "total_cost_bps": 108.79550067217403,
+              "n_rebalances": 8.0,
+              "n_guard_actions": 294.0
+            },
+            "TOPN_MV_NOGUARD": {
+              "cumulative_return": 0.02884776701814329,
+              "annualized_return": 0.048938148657055036,
+              "annualized_vol": 0.1639045398383891,
+              "ex_post_sharpe": 0.06551623476871589,
+              "max_drawdown": 0.12635853582609125,
+              "total_turnover": 5.647018722170046,
+              "total_cost_bps": 56.470187221700456,
+              "n_rebalances": 8.0,
+              "n_guard_actions": 0.0
+            }
+          },
+          "benchmark": {
+            "cumulative_return": 0.0529059598765147,
+            "annualized_return": 0.09047195576589018,
+            "annualized_vol": 0.20645898420275766,
+            "ex_post_sharpe": 0.277402114779569,
+            "max_drawdown": 0.15806350944047598,
+            "total_turnover": 0.0,
+            "total_cost_bps": 0.0,
+            "n_obs": 150.0
+          }
+        },
+        "P2a": {
+          "date_from": "2025-02-19",
+          "date_to": "2025-05-06",
+          "arms": {
+            "MARKOWITZ_BASE": {
+              "cumulative_return": 0.017210764597051842,
+              "annualized_return": 0.08289019483801696,
+              "annualized_vol": 0.17827370154133113,
+              "ex_post_sharpe": 0.25220948289370626,
+              "max_drawdown": 0.07639426164169527,
+              "total_turnover": 1.658765027296924,
+              "total_cost_bps": 16.58765027296924,
+              "n_rebalances": 3.0,
+              "n_guard_actions": 0.0
+            },
+            "TOPN_MV_GUARD_NO_NLP": {
+              "cumulative_return": -0.0614194785215888,
+              "annualized_return": -0.25606697375774556,
+              "annualized_vol": 0.1943363035015817,
+              "ex_post_sharpe": -1.6841384141147524,
+              "max_drawdown": 0.11990659722092967,
+              "total_turnover": 5.694242316966313,
+              "total_cost_bps": 56.94242316966314,
+              "n_rebalances": 3.0,
+              "n_guard_actions": 184.0
+            },
+            "TOPN_MV_NOGUARD": {
+              "cumulative_return": -0.05151077111694391,
+              "annualized_return": -0.21869989549832447,
+              "annualized_vol": 0.2466010397989765,
+              "ex_post_sharpe": -1.0836173667777913,
+              "max_drawdown": 0.12635853582609125,
+              "total_turnover": 2.3423972938000057,
+              "total_cost_bps": 23.423972938000055,
+              "n_rebalances": 3.0,
+              "n_guard_actions": 0.0
+            }
+          },
+          "benchmark": {
+            "cumulative_return": -0.060623147050404835,
+            "annualized_return": -0.25311686190758276,
+            "annualized_vol": 0.3039654558524533,
+            "ex_post_sharpe": -0.977385505520523,
+            "max_drawdown": 0.15806350944047598,
+            "total_turnover": 0.0,
+            "total_cost_bps": 0.0,
+            "n_obs": 54.0
+          }
+        },
+        "P2b": {
+          "date_from": "2025-05-07",
+          "date_to": "2025-09-23",
+          "arms": {
+            "MARKOWITZ_BASE": {
+              "cumulative_return": 0.050709823959431244,
+              "annualized_return": 0.13865545544837254,
+              "annualized_vol": 0.09024040829322243,
+              "ex_post_sharpe": 0.925360754208346,
+              "max_drawdown": 0.0363837040764835,
+              "total_turnover": 1.1520205227495732,
+              "total_cost_bps": 11.520205227495731,
+              "n_rebalances": 5.0,
+              "n_guard_actions": 0.0
+            },
+            "TOPN_MV_GUARD_NO_NLP": {
+              "cumulative_return": 0.07641927602981724,
+              "annualized_return": 0.2132529307199047,
+              "annualized_vol": 0.08306149266018101,
+              "ex_post_sharpe": 1.7624345619632247,
+              "max_drawdown": 0.019451532913591696,
+              "total_turnover": 5.18530775025109,
+              "total_cost_bps": 51.8530775025109,
+              "n_rebalances": 5.0,
+              "n_guard_actions": 110.0
+            },
+            "TOPN_MV_NOGUARD": {
+              "cumulative_return": 0.08472266810000328,
+              "annualized_return": 0.2379743013091573,
+              "annualized_vol": 0.08908490060431509,
+              "ex_post_sharpe": 1.8756340259276978,
+              "max_drawdown": 0.020816174625458483,
+              "total_turnover": 3.30462142837004,
+              "total_cost_bps": 33.046214283700394,
+              "n_rebalances": 5.0,
+              "n_guard_actions": 0.0
+            }
+          },
+          "benchmark": {
+            "cumulative_return": 0.12085576365911543,
+            "annualized_return": 0.3491742371921793,
+            "annualized_vol": 0.12192283505748779,
+            "ex_post_sharpe": 2.1046236157553353,
+            "max_drawdown": 0.03266808859300496,
+            "total_turnover": 0.0,
+            "total_cost_bps": 0.0,
+            "n_obs": 96.0
+          }
+        }
+      },
+      "tests": [
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "hac_mean_diff",
+          "statistic": -1.124809914786881,
+          "p_value": 0.2606695921210411,
+          "n_obs": 150,
+          "params": {}
+        },
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "ledoit_wolf",
+          "statistic": -0.01544660002501062,
+          "p_value": 0.1938,
+          "n_obs": 150,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "memmel_jk",
+          "statistic": -0.8620203741639136,
+          "p_value": 0.3886763062713209,
+          "n_obs": 150,
+          "params": {}
+        },
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "hac_mean_diff",
+          "statistic": -0.483978918452152,
+          "p_value": 0.6284008306760988,
+          "n_obs": 150,
+          "params": {}
+        },
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "ledoit_wolf",
+          "statistic": -0.030021593461987288,
+          "p_value": 0.5422,
+          "n_obs": 150,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "memmel_jk",
+          "statistic": -0.5620357509926501,
+          "p_value": 0.574091661248538,
+          "n_obs": 150,
+          "params": {}
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "hac_mean_diff",
+          "statistic": -0.698795741906588,
+          "p_value": 0.48467968999592226,
+          "n_obs": 54,
+          "params": {}
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "ledoit_wolf",
+          "statistic": -0.03782927019794395,
+          "p_value": 0.0336,
+          "n_obs": 54,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "memmel_jk",
+          "statistic": -1.1993255858063994,
+          "p_value": 0.23040137010252837,
+          "n_obs": 54,
+          "params": {}
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "hac_mean_diff",
+          "statistic": -1.1058349573663473,
+          "p_value": 0.2687979613606516,
+          "n_obs": 54,
+          "params": {}
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "ledoit_wolf",
+          "statistic": -0.08414918187794396,
+          "p_value": 0.271,
+          "n_obs": 54,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2a",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "memmel_jk",
+          "statistic": -0.9581608899883249,
+          "p_value": 0.3379816352438606,
+          "n_obs": 54,
+          "params": {}
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "hac_mean_diff",
+          "statistic": -1.3640293133851125,
+          "p_value": 0.17255834004496529,
+          "n_obs": 96,
+          "params": {}
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "ledoit_wolf",
+          "statistic": -0.007130895957043179,
+          "p_value": 0.5222,
+          "n_obs": 96,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "memmel_jk",
+          "statistic": -0.7515000955232535,
+          "p_value": 0.45235174330817096,
+          "n_obs": 96,
+          "params": {}
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "hac_mean_diff",
+          "statistic": 0.8445786859664737,
+          "p_value": 0.39834611347014826,
+          "n_obs": 96,
+          "params": {}
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "ledoit_wolf",
+          "statistic": 0.05986158939335983,
+          "p_value": 0.4452,
+          "n_obs": 96,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P2b",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "memmel_jk",
+          "statistic": 0.9368636946300801,
+          "p_value": 0.34882867635374515,
+          "n_obs": 96,
+          "params": {}
+        }
+      ]
+    },
+    {
+      "name": "rule_P1",
+      "group": "rule",
+      "window": "P1",
+      "backtest_run_id": 1,
+      "status": "completed",
+      "formation_date": "2022-01-03",
+      "warmup_refused": [
+        {
+          "decision_date": "2021-06-03",
+          "reason": "30/496 universe members (6.0%) are unrankable, over the 6% limit: 28 unscored (no FUNDAMENTAL score at all) asset_ids [3, 42, 58, 79, 84, 108, 125, 151, 159, 228, 229, 238, 249, 252, 293, 339, 398, 401, 403, 405, 418, 429, 440, 465, 532, 557, 563, 564]; 2 unpriced (no close on the session) asset_ids [285, 575]"
+        }
+      ],
+      "decisions_refused": [],
+      "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
+      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
+      "code_version": "f9679ea",
+      "segments": {
+        "P1": {
+          "date_from": "2022-01-03",
+          "date_to": "2022-10-12",
+          "arms": {
+            "MARKOWITZ_BASE": {
+              "cumulative_return": -0.11495925707904975,
+              "annualized_return": -0.14530746502031366,
+              "annualized_vol": 0.15197025254078642,
+              "ex_post_sharpe": -1.000732976129797,
+              "max_drawdown": 0.16211546007984245,
+              "total_turnover": 2.258339056029512,
+              "total_cost_bps": 22.583390560295122,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 0.0
+            },
+            "TOPN_MV_GUARD_NO_NLP": {
+              "cumulative_return": -0.20282912065542857,
+              "annualized_return": -0.2528234014412176,
+              "annualized_vol": 0.1508693730325047,
+              "ex_post_sharpe": -1.89945213744847,
+              "max_drawdown": 0.21963344966852594,
+              "total_turnover": 18.32081998952541,
+              "total_cost_bps": 183.20819989525407,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 535.0
+            },
+            "TOPN_MV_NOGUARD": {
+              "cumulative_return": -0.18813070463856152,
+              "annualized_return": -0.23506416404848274,
+              "annualized_vol": 0.2135643324104633,
+              "ex_post_sharpe": -1.1786718733479318,
+              "max_drawdown": 0.24915809997964022,
+              "total_turnover": 7.277700510202429,
+              "total_cost_bps": 72.7770051020243,
+              "n_rebalances": 10.0,
+              "n_guard_actions": 0.0
+            }
+          },
+          "benchmark": {
+            "cumulative_return": -0.19586872766771035,
+            "annualized_return": -0.2444251220182071,
+            "annualized_vol": 0.23137464440309585,
+            "ex_post_sharpe": -1.1240338139476365,
+            "max_drawdown": 0.20715762557557948,
+            "total_turnover": 0.0,
+            "total_cost_bps": 0.0,
+            "n_obs": 196.0
+          }
+        }
+      },
+      "tests": [
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "hac_mean_diff",
+          "statistic": -0.40508478101340706,
+          "p_value": 0.6854151929273591,
+          "n_obs": 196,
+          "params": {}
+        },
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "ledoit_wolf",
+          "statistic": -0.04540488877936859,
+          "p_value": 0.0086,
+          "n_obs": 196,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_GUARD_NO_NLP",
+          "arm_b": "TOPN_MV_NOGUARD",
+          "test": "memmel_jk",
+          "statistic": -2.314004670575003,
+          "p_value": 0.02066746594399953,
+          "n_obs": 196,
+          "params": {}
+        },
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "hac_mean_diff",
+          "statistic": -0.6611481908598268,
+          "p_value": 0.5085172828459743,
+          "n_obs": 196,
+          "params": {}
+        },
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "ledoit_wolf",
+          "statistic": -0.01120909691914923,
+          "p_value": 0.808,
+          "n_obs": 196,
+          "params": {
+            "block": 5,
+            "n_boot": 4999,
+            "seed": 20261028
+          }
+        },
+        {
+          "segment": "P1",
+          "arm_a": "TOPN_MV_NOGUARD",
+          "arm_b": "MARKOWITZ_BASE",
+          "test": "memmel_jk",
+          "statistic": -0.24789700756587169,
+          "p_value": 0.8042140952755654,
           "n_obs": 196,
           "params": {}
         }
@@ -153,7 +794,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
+      "code_version": "f9679ea",
       "segments": {
         "P3": {
           "date_from": "2023-10-27",
@@ -171,24 +812,24 @@
               "n_guard_actions": 0.0
             },
             "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.18037542012879815,
-              "annualized_return": 0.24315836445406802,
-              "annualized_vol": 0.10802493311929348,
-              "ex_post_sharpe": 1.6028905967512541,
-              "max_drawdown": 0.06782082001892076,
-              "total_turnover": 11.377314430894977,
-              "total_cost_bps": 113.77314430894977,
+              "cumulative_return": 0.19532643007777573,
+              "annualized_return": 0.26386608678832046,
+              "annualized_vol": 0.10898398805034841,
+              "ex_post_sharpe": 1.7414502776439935,
+              "max_drawdown": 0.06424679182970672,
+              "total_turnover": 11.381926310158999,
+              "total_cost_bps": 113.81926310158998,
               "n_rebalances": 10.0,
-              "n_guard_actions": 209.0
+              "n_guard_actions": 207.0
             },
             "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.19274739187178747,
-              "annualized_return": 0.2602882121690733,
-              "annualized_vol": 0.11300696174555619,
-              "ex_post_sharpe": 1.6582824437838912,
-              "max_drawdown": 0.07131041840906482,
-              "total_turnover": 7.377837895379312,
-              "total_cost_bps": 73.77837895379312,
+              "cumulative_return": 0.20894977024491213,
+              "annualized_return": 0.2828055711832933,
+              "annualized_vol": 0.11335962118660815,
+              "ex_post_sharpe": 1.809840376036978,
+              "max_drawdown": 0.06568622244968259,
+              "total_turnover": 7.357514741601915,
+              "total_cost_bps": 73.57514741601915,
               "n_rebalances": 10.0,
               "n_guard_actions": 0.0
             }
@@ -211,8 +852,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "hac_mean_diff",
-          "statistic": -1.2540549718420733,
-          "p_value": 0.20982202532367122,
+          "statistic": -1.4728784421165928,
+          "p_value": 0.14078381596430836,
           "n_obs": 192,
           "params": {}
         },
@@ -221,8 +862,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "ledoit_wolf",
-          "statistic": -0.0034893583787830723,
-          "p_value": 0.5426,
+          "statistic": -0.004308171249692266,
+          "p_value": 0.4224,
           "n_obs": 192,
           "params": {
             "block": 5,
@@ -235,8 +876,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "memmel_jk",
-          "statistic": -0.6439470336292026,
-          "p_value": 0.5196097810009973,
+          "statistic": -0.8401038836266004,
+          "p_value": 0.40085014279875,
           "n_obs": 192,
           "params": {}
         },
@@ -245,8 +886,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "hac_mean_diff",
-          "statistic": -0.18206637795548988,
-          "p_value": 0.8555306342017265,
+          "statistic": 0.009857177769363958,
+          "p_value": 0.9921352374068461,
           "n_obs": 192,
           "params": {}
         },
@@ -255,8 +896,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "ledoit_wolf",
-          "statistic": -0.04309615525804755,
-          "p_value": 0.4378,
+          "statistic": -0.03354890292564654,
+          "p_value": 0.5466,
           "n_obs": 192,
           "params": {
             "block": 5,
@@ -269,8 +910,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "memmel_jk",
-          "statistic": -0.6640677300861695,
-          "p_value": 0.5066469627358132,
+          "statistic": -0.5182027326502979,
+          "p_value": 0.604316828389881,
           "n_obs": 192,
           "params": {}
         }
@@ -287,7 +928,7 @@
       "decisions_refused": [],
       "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
       "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
+      "code_version": "f9679ea",
       "segments": {
         "P2": {
           "date_from": "2025-02-19",
@@ -305,24 +946,24 @@
               "n_guard_actions": 0.0
             },
             "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.008036929501239243,
-              "annualized_return": 0.013538905101609267,
-              "annualized_vol": 0.1384997856056378,
-              "ex_post_sharpe": -0.19727715453546207,
-              "max_drawdown": 0.13125330603807184,
-              "total_turnover": 10.587299124289899,
-              "total_cost_bps": 105.87299124289899,
+              "cumulative_return": 0.008036929501235468,
+              "annualized_return": 0.013538905101602827,
+              "annualized_vol": 0.13849978560563803,
+              "ex_post_sharpe": -0.19727715453550887,
+              "max_drawdown": 0.13125330603807484,
+              "total_turnover": 10.5872991242898,
+              "total_cost_bps": 105.87299124289798,
               "n_rebalances": 8.0,
               "n_guard_actions": 279.0
             },
             "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.035055215002923745,
-              "annualized_return": 0.059592095870555584,
-              "annualized_vol": 0.1778228562955563,
-              "ex_post_sharpe": 0.1304312547592354,
-              "max_drawdown": 0.14634193446110544,
-              "total_turnover": 5.783962035450821,
-              "total_cost_bps": 57.83962035450821,
+              "cumulative_return": 0.03505521500291975,
+              "annualized_return": 0.0595920958705487,
+              "annualized_vol": 0.17782285629556116,
+              "ex_post_sharpe": 0.13043125475919617,
+              "max_drawdown": 0.1463419344611112,
+              "total_turnover": 5.7839620354506245,
+              "total_cost_bps": 57.83962035450625,
               "n_rebalances": 8.0,
               "n_guard_actions": 0.0
             }
@@ -354,24 +995,24 @@
               "n_guard_actions": 0.0
             },
             "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": -0.07158566868344396,
-              "annualized_return": -0.2929308318678039,
-              "annualized_vol": 0.19987900368649184,
-              "ex_post_sharpe": -1.8857352156202398,
-              "max_drawdown": 0.13125330603807184,
-              "total_turnover": 5.604277437101999,
-              "total_cost_bps": 56.04277437102,
+              "cumulative_return": -0.07158566868344352,
+              "annualized_return": -0.29293083186780233,
+              "annualized_vol": 0.19987900368649317,
+              "ex_post_sharpe": -1.885735215620217,
+              "max_drawdown": 0.13125330603807484,
+              "total_turnover": 5.604277437102103,
+              "total_cost_bps": 56.04277437102104,
               "n_rebalances": 3.0,
               "n_guard_actions": 169.0
             },
             "TOPN_MV_NOGUARD": {
-              "cumulative_return": -0.054496083264489736,
-              "annualized_return": -0.23010963635978532,
-              "annualized_vol": 0.2702107806681586,
-              "ex_post_sharpe": -1.0213456219574537,
-              "max_drawdown": 0.14634193446110544,
-              "total_turnover": 2.5425254532929595,
-              "total_cost_bps": 25.425254532929596,
+              "cumulative_return": -0.05449608326449029,
+              "annualized_return": -0.23010963635978743,
+              "annualized_vol": 0.2702107806681686,
+              "ex_post_sharpe": -1.021345621957414,
+              "max_drawdown": 0.1463419344611112,
+              "total_turnover": 2.5425254532929475,
+              "total_cost_bps": 25.42525453292948,
               "n_rebalances": 3.0,
               "n_guard_actions": 0.0
             }
@@ -403,24 +1044,24 @@
               "n_guard_actions": 0.0
             },
             "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.08576192277404204,
-              "annualized_return": 0.2410901920227193,
-              "annualized_vol": 0.08582661515004508,
-              "ex_post_sharpe": 1.9728719859325816,
-              "max_drawdown": 0.01840715571438345,
-              "total_turnover": 4.983021687187901,
-              "total_cost_bps": 49.83021687187901,
+              "cumulative_return": 0.08576192277403649,
+              "annualized_return": 0.24109019202270265,
+              "annualized_vol": 0.08582661515004404,
+              "ex_post_sharpe": 1.9728719859324733,
+              "max_drawdown": 0.018407155714382673,
+              "total_turnover": 4.983021687187697,
+              "total_cost_bps": 49.830216871876964,
               "n_rebalances": 5.0,
               "n_guard_actions": 110.0
             },
             "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.09471277345587592,
-              "annualized_return": 0.2681276946104423,
-              "annualized_vol": 0.09244181654422201,
-              "ex_post_sharpe": 2.0713358898919565,
-              "max_drawdown": 0.0199772891088138,
-              "total_turnover": 3.2414365821578612,
-              "total_cost_bps": 32.41436582157861,
+              "cumulative_return": 0.09471277345587192,
+              "annualized_return": 0.26812769461043007,
+              "annualized_vol": 0.09244181654422053,
+              "ex_post_sharpe": 2.0713358898918797,
+              "max_drawdown": 0.01997728910881258,
+              "total_turnover": 3.241436582157678,
+              "total_cost_bps": 32.41436582157677,
               "n_rebalances": 5.0,
               "n_guard_actions": 0.0
             }
@@ -443,8 +1084,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "hac_mean_diff",
-          "statistic": -1.0110200874210866,
-          "p_value": 0.3120068156821647,
+          "statistic": -1.0110200874210034,
+          "p_value": 0.31200681568220456,
           "n_obs": 150,
           "params": {}
         },
@@ -453,7 +1094,7 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "ledoit_wolf",
-          "statistic": -0.02064368936996041,
+          "statistic": -0.020643689369960888,
           "p_value": 0.1532,
           "n_obs": 150,
           "params": {
@@ -467,8 +1108,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "memmel_jk",
-          "statistic": -0.9420229148741357,
-          "p_value": 0.34618090812255453,
+          "statistic": -0.9420229148740892,
+          "p_value": 0.3461809081225783,
           "n_obs": 150,
           "params": {}
         },
@@ -477,8 +1118,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "hac_mean_diff",
-          "statistic": -0.3108347161177798,
-          "p_value": 0.7559262764153031,
+          "statistic": -0.31083471611781743,
+          "p_value": 0.7559262764152744,
           "n_obs": 150,
           "params": {}
         },
@@ -487,7 +1128,7 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "ledoit_wolf",
-          "statistic": -0.02593233157513726,
+          "statistic": -0.02593233157513973,
           "p_value": 0.6508,
           "n_obs": 150,
           "params": {
@@ -501,8 +1142,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "memmel_jk",
-          "statistic": -0.4505138870142601,
-          "p_value": 0.6523399431838042,
+          "statistic": -0.4505138870143051,
+          "p_value": 0.6523399431837718,
           "n_obs": 150,
           "params": {}
         },
@@ -511,8 +1152,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "hac_mean_diff",
-          "statistic": -0.7023755304042889,
-          "p_value": 0.48244500119704203,
+          "statistic": -0.7023755304041963,
+          "p_value": 0.48244500119709965,
           "n_obs": 54,
           "params": {}
         },
@@ -521,7 +1162,7 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "ledoit_wolf",
-          "statistic": -0.05445142620723584,
+          "statistic": -0.05445142620723689,
           "p_value": 0.0332,
           "n_obs": 54,
           "params": {
@@ -535,8 +1176,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "memmel_jk",
-          "statistic": -1.4135254820498906,
-          "p_value": 0.15750127433490324,
+          "statistic": -1.413525482049821,
+          "p_value": 0.15750127433492356,
           "n_obs": 54,
           "params": {}
         },
@@ -545,8 +1186,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "hac_mean_diff",
-          "statistic": -0.8935953183762363,
-          "p_value": 0.3715384521358077,
+          "statistic": -0.8935953183762041,
+          "p_value": 0.37153845213582504,
           "n_obs": 54,
           "params": {}
         },
@@ -555,7 +1196,7 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "ledoit_wolf",
-          "statistic": -0.08022643067554663,
+          "statistic": -0.08022643067554414,
           "p_value": 0.3688,
           "n_obs": 54,
           "params": {
@@ -569,8 +1210,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "memmel_jk",
-          "statistic": -0.8439751017192605,
-          "p_value": 0.39868331896946196,
+          "statistic": -0.8439751017192406,
+          "p_value": 0.39868331896947296,
           "n_obs": 54,
           "params": {}
         },
@@ -579,8 +1220,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "hac_mean_diff",
-          "statistic": -1.7702035964487468,
-          "p_value": 0.07669323044262384,
+          "statistic": -1.7702035964489506,
+          "p_value": 0.07669323044258991,
           "n_obs": 96,
           "params": {}
         },
@@ -589,7 +1230,7 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "ledoit_wolf",
-          "statistic": -0.006202642928406055,
+          "statistic": -0.006202642928408025,
           "p_value": 0.3126,
           "n_obs": 96,
           "params": {
@@ -603,8 +1244,8 @@
           "arm_a": "TOPN_MV_GUARD_NO_NLP",
           "arm_b": "TOPN_MV_NOGUARD",
           "test": "memmel_jk",
-          "statistic": -0.9023583257867256,
-          "p_value": 0.3668665513984217,
+          "statistic": -0.902358325786989,
+          "p_value": 0.36686655139828184,
           "n_obs": 96,
           "params": {}
         },
@@ -613,8 +1254,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "hac_mean_diff",
-          "statistic": 0.9590066571235996,
-          "p_value": 0.33755539152725844,
+          "statistic": 0.9590066571235336,
+          "p_value": 0.33755539152729164,
           "n_obs": 96,
           "params": {}
         },
@@ -623,7 +1264,7 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "ledoit_wolf",
-          "statistic": 0.07218964804005559,
+          "statistic": 0.07218964804005074,
           "p_value": 0.4296,
           "n_obs": 96,
           "params": {
@@ -637,644 +1278,8 @@
           "arm_a": "TOPN_MV_NOGUARD",
           "arm_b": "MARKOWITZ_BASE",
           "test": "memmel_jk",
-          "statistic": 1.071713578356033,
-          "p_value": 0.2838487001037926,
-          "n_obs": 96,
-          "params": {}
-        }
-      ]
-    },
-    {
-      "name": "w6_P1",
-      "group": "w6",
-      "window": "P1",
-      "backtest_run_id": 1,
-      "status": "completed",
-      "formation_date": "2022-01-03",
-      "warmup_refused": [],
-      "decisions_refused": [],
-      "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
-      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
-      "segments": {
-        "P1": {
-          "date_from": "2022-01-03",
-          "date_to": "2022-10-12",
-          "arms": {
-            "MARKOWITZ_BASE": {
-              "cumulative_return": -0.11495925707904975,
-              "annualized_return": -0.14530746502031366,
-              "annualized_vol": 0.15197025254078642,
-              "ex_post_sharpe": -1.000732976129797,
-              "max_drawdown": 0.16211546007984245,
-              "total_turnover": 2.258339056029512,
-              "total_cost_bps": 22.583390560295122,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 0.0
-            },
-            "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": -0.20607955556575153,
-              "annualized_return": -0.256738155516815,
-              "annualized_vol": 0.1497346454407468,
-              "ex_post_sharpe": -1.950056676433612,
-              "max_drawdown": 0.22267559696617167,
-              "total_turnover": 18.148085390583425,
-              "total_cost_bps": 181.48085390583424,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 535.0
-            },
-            "TOPN_MV_NOGUARD": {
-              "cumulative_return": -0.1935315953302995,
-              "annualized_return": -0.24160051203903798,
-              "annualized_vol": 0.21371244931094827,
-              "ex_post_sharpe": -1.2178238884474026,
-              "max_drawdown": 0.2491580999796399,
-              "total_turnover": 7.24442738779457,
-              "total_cost_bps": 72.4442738779457,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 0.0
-            }
-          },
-          "benchmark": {
-            "cumulative_return": -0.19586872766771035,
-            "annualized_return": -0.2444251220182071,
-            "annualized_vol": 0.23137464440309585,
-            "ex_post_sharpe": -1.1240338139476365,
-            "max_drawdown": 0.20715762557557948,
-            "total_turnover": 0.0,
-            "total_cost_bps": 0.0,
-            "n_obs": 196.0
-          }
-        }
-      },
-      "tests": [
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "hac_mean_diff",
-          "statistic": -0.36273050998863704,
-          "p_value": 0.7168062060785266,
-          "n_obs": 196,
-          "params": {}
-        },
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "ledoit_wolf",
-          "statistic": -0.046126329971880806,
-          "p_value": 0.0084,
-          "n_obs": 196,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "memmel_jk",
-          "statistic": -2.3303159641074176,
-          "p_value": 0.01978945762240118,
-          "n_obs": 196,
-          "params": {}
-        },
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "hac_mean_diff",
-          "statistic": -0.7183949167421295,
-          "p_value": 0.4725138202046969,
-          "n_obs": 196,
-          "params": {}
-        },
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "ledoit_wolf",
-          "statistic": -0.013675442044869368,
-          "p_value": 0.7646,
-          "n_obs": 196,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P1",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "memmel_jk",
-          "statistic": -0.3018513528574687,
-          "p_value": 0.7627653816748223,
-          "n_obs": 196,
-          "params": {}
-        }
-      ]
-    },
-    {
-      "name": "w6_P3",
-      "group": "w6",
-      "window": "P3",
-      "backtest_run_id": 1,
-      "status": "completed",
-      "formation_date": "2023-10-27",
-      "warmup_refused": [],
-      "decisions_refused": [],
-      "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
-      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
-      "segments": {
-        "P3": {
-          "date_from": "2023-10-27",
-          "date_to": "2024-08-02",
-          "arms": {
-            "MARKOWITZ_BASE": {
-              "cumulative_return": 0.21052424160357153,
-              "annualized_return": 0.2849987548207322,
-              "annualized_vol": 0.08720092162016678,
-              "ex_post_sharpe": 2.342412699438826,
-              "max_drawdown": 0.043469234491623654,
-              "total_turnover": 2.226044130734167,
-              "total_cost_bps": 22.26044130734167,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 0.0
-            },
-            "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.18037542012879815,
-              "annualized_return": 0.24315836445406802,
-              "annualized_vol": 0.10802493311929348,
-              "ex_post_sharpe": 1.6028905967512541,
-              "max_drawdown": 0.06782082001892076,
-              "total_turnover": 11.377314430894977,
-              "total_cost_bps": 113.77314430894977,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 209.0
-            },
-            "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.19274739187178747,
-              "annualized_return": 0.2602882121690733,
-              "annualized_vol": 0.11300696174555619,
-              "ex_post_sharpe": 1.6582824437838912,
-              "max_drawdown": 0.07131041840906482,
-              "total_turnover": 7.377837895379312,
-              "total_cost_bps": 73.77837895379312,
-              "n_rebalances": 10.0,
-              "n_guard_actions": 0.0
-            }
-          },
-          "benchmark": {
-            "cumulative_return": 0.2734604628372119,
-            "annualized_return": 0.37338855545779603,
-            "annualized_vol": 0.11863431501444785,
-            "ex_post_sharpe": 2.3102077324000954,
-            "max_drawdown": 0.05944529218080552,
-            "total_turnover": 0.0,
-            "total_cost_bps": 0.0,
-            "n_obs": 192.0
-          }
-        }
-      },
-      "tests": [
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "hac_mean_diff",
-          "statistic": -1.2540549718420733,
-          "p_value": 0.20982202532367122,
-          "n_obs": 192,
-          "params": {}
-        },
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "ledoit_wolf",
-          "statistic": -0.0034893583787830723,
-          "p_value": 0.5426,
-          "n_obs": 192,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "memmel_jk",
-          "statistic": -0.6439470336292026,
-          "p_value": 0.5196097810009973,
-          "n_obs": 192,
-          "params": {}
-        },
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "hac_mean_diff",
-          "statistic": -0.18206637795548988,
-          "p_value": 0.8555306342017265,
-          "n_obs": 192,
-          "params": {}
-        },
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "ledoit_wolf",
-          "statistic": -0.04309615525804755,
-          "p_value": 0.4378,
-          "n_obs": 192,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P3",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "memmel_jk",
-          "statistic": -0.6640677300861695,
-          "p_value": 0.5066469627358132,
-          "n_obs": 192,
-          "params": {}
-        }
-      ]
-    },
-    {
-      "name": "w6_P2",
-      "group": "w6",
-      "window": "P2",
-      "backtest_run_id": 1,
-      "status": "completed",
-      "formation_date": "2025-02-19",
-      "warmup_refused": [],
-      "decisions_refused": [],
-      "input_db_sha256": "8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3",
-      "params_sha256": "ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2",
-      "code_version": "c04cb38",
-      "segments": {
-        "P2": {
-          "date_from": "2025-02-19",
-          "date_to": "2025-09-23",
-          "arms": {
-            "MARKOWITZ_BASE": {
-              "cumulative_return": 0.06879334339940635,
-              "annualized_return": 0.11825663504592354,
-              "annualized_vol": 0.12844554309878212,
-              "ex_post_sharpe": 0.542094256342522,
-              "max_drawdown": 0.07639426164169527,
-              "total_turnover": 2.8107855500464973,
-              "total_cost_bps": 28.10785550046497,
-              "n_rebalances": 8.0,
-              "n_guard_actions": 0.0
-            },
-            "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.008036929501239243,
-              "annualized_return": 0.013538905101609267,
-              "annualized_vol": 0.1384997856056378,
-              "ex_post_sharpe": -0.19727715453546207,
-              "max_drawdown": 0.13125330603807184,
-              "total_turnover": 10.587299124289899,
-              "total_cost_bps": 105.87299124289899,
-              "n_rebalances": 8.0,
-              "n_guard_actions": 279.0
-            },
-            "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.035055215002923745,
-              "annualized_return": 0.059592095870555584,
-              "annualized_vol": 0.1778228562955563,
-              "ex_post_sharpe": 0.1304312547592354,
-              "max_drawdown": 0.14634193446110544,
-              "total_turnover": 5.783962035450821,
-              "total_cost_bps": 57.83962035450821,
-              "n_rebalances": 8.0,
-              "n_guard_actions": 0.0
-            }
-          },
-          "benchmark": {
-            "cumulative_return": 0.0529059598765147,
-            "annualized_return": 0.09047195576589018,
-            "annualized_vol": 0.20645898420275766,
-            "ex_post_sharpe": 0.277402114779569,
-            "max_drawdown": 0.15806350944047598,
-            "total_turnover": 0.0,
-            "total_cost_bps": 0.0,
-            "n_obs": 150.0
-          }
-        },
-        "P2a": {
-          "date_from": "2025-02-19",
-          "date_to": "2025-05-06",
-          "arms": {
-            "MARKOWITZ_BASE": {
-              "cumulative_return": 0.017210764597051842,
-              "annualized_return": 0.08289019483801696,
-              "annualized_vol": 0.17827370154133113,
-              "ex_post_sharpe": 0.25220948289370626,
-              "max_drawdown": 0.07639426164169527,
-              "total_turnover": 1.658765027296924,
-              "total_cost_bps": 16.58765027296924,
-              "n_rebalances": 3.0,
-              "n_guard_actions": 0.0
-            },
-            "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": -0.07158566868344396,
-              "annualized_return": -0.2929308318678039,
-              "annualized_vol": 0.19987900368649184,
-              "ex_post_sharpe": -1.8857352156202398,
-              "max_drawdown": 0.13125330603807184,
-              "total_turnover": 5.604277437101999,
-              "total_cost_bps": 56.04277437102,
-              "n_rebalances": 3.0,
-              "n_guard_actions": 169.0
-            },
-            "TOPN_MV_NOGUARD": {
-              "cumulative_return": -0.054496083264489736,
-              "annualized_return": -0.23010963635978532,
-              "annualized_vol": 0.2702107806681586,
-              "ex_post_sharpe": -1.0213456219574537,
-              "max_drawdown": 0.14634193446110544,
-              "total_turnover": 2.5425254532929595,
-              "total_cost_bps": 25.425254532929596,
-              "n_rebalances": 3.0,
-              "n_guard_actions": 0.0
-            }
-          },
-          "benchmark": {
-            "cumulative_return": -0.060623147050404835,
-            "annualized_return": -0.25311686190758276,
-            "annualized_vol": 0.3039654558524533,
-            "ex_post_sharpe": -0.977385505520523,
-            "max_drawdown": 0.15806350944047598,
-            "total_turnover": 0.0,
-            "total_cost_bps": 0.0,
-            "n_obs": 54.0
-          }
-        },
-        "P2b": {
-          "date_from": "2025-05-07",
-          "date_to": "2025-09-23",
-          "arms": {
-            "MARKOWITZ_BASE": {
-              "cumulative_return": 0.050709823959431244,
-              "annualized_return": 0.13865545544837254,
-              "annualized_vol": 0.09024040829322243,
-              "ex_post_sharpe": 0.925360754208346,
-              "max_drawdown": 0.0363837040764835,
-              "total_turnover": 1.1520205227495732,
-              "total_cost_bps": 11.520205227495731,
-              "n_rebalances": 5.0,
-              "n_guard_actions": 0.0
-            },
-            "TOPN_MV_GUARD_NO_NLP": {
-              "cumulative_return": 0.08576192277404204,
-              "annualized_return": 0.2410901920227193,
-              "annualized_vol": 0.08582661515004508,
-              "ex_post_sharpe": 1.9728719859325816,
-              "max_drawdown": 0.01840715571438345,
-              "total_turnover": 4.983021687187901,
-              "total_cost_bps": 49.83021687187901,
-              "n_rebalances": 5.0,
-              "n_guard_actions": 110.0
-            },
-            "TOPN_MV_NOGUARD": {
-              "cumulative_return": 0.09471277345587592,
-              "annualized_return": 0.2681276946104423,
-              "annualized_vol": 0.09244181654422201,
-              "ex_post_sharpe": 2.0713358898919565,
-              "max_drawdown": 0.0199772891088138,
-              "total_turnover": 3.2414365821578612,
-              "total_cost_bps": 32.41436582157861,
-              "n_rebalances": 5.0,
-              "n_guard_actions": 0.0
-            }
-          },
-          "benchmark": {
-            "cumulative_return": 0.12085576365911543,
-            "annualized_return": 0.3491742371921793,
-            "annualized_vol": 0.12192283505748779,
-            "ex_post_sharpe": 2.1046236157553353,
-            "max_drawdown": 0.03266808859300496,
-            "total_turnover": 0.0,
-            "total_cost_bps": 0.0,
-            "n_obs": 96.0
-          }
-        }
-      },
-      "tests": [
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "hac_mean_diff",
-          "statistic": -1.0110200874210866,
-          "p_value": 0.3120068156821647,
-          "n_obs": 150,
-          "params": {}
-        },
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "ledoit_wolf",
-          "statistic": -0.02064368936996041,
-          "p_value": 0.1532,
-          "n_obs": 150,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "memmel_jk",
-          "statistic": -0.9420229148741357,
-          "p_value": 0.34618090812255453,
-          "n_obs": 150,
-          "params": {}
-        },
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "hac_mean_diff",
-          "statistic": -0.3108347161177798,
-          "p_value": 0.7559262764153031,
-          "n_obs": 150,
-          "params": {}
-        },
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "ledoit_wolf",
-          "statistic": -0.02593233157513726,
-          "p_value": 0.6508,
-          "n_obs": 150,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "memmel_jk",
-          "statistic": -0.4505138870142601,
-          "p_value": 0.6523399431838042,
-          "n_obs": 150,
-          "params": {}
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "hac_mean_diff",
-          "statistic": -0.7023755304042889,
-          "p_value": 0.48244500119704203,
-          "n_obs": 54,
-          "params": {}
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "ledoit_wolf",
-          "statistic": -0.05445142620723584,
-          "p_value": 0.0332,
-          "n_obs": 54,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "memmel_jk",
-          "statistic": -1.4135254820498906,
-          "p_value": 0.15750127433490324,
-          "n_obs": 54,
-          "params": {}
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "hac_mean_diff",
-          "statistic": -0.8935953183762363,
-          "p_value": 0.3715384521358077,
-          "n_obs": 54,
-          "params": {}
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "ledoit_wolf",
-          "statistic": -0.08022643067554663,
-          "p_value": 0.3688,
-          "n_obs": 54,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2a",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "memmel_jk",
-          "statistic": -0.8439751017192605,
-          "p_value": 0.39868331896946196,
-          "n_obs": 54,
-          "params": {}
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "hac_mean_diff",
-          "statistic": -1.7702035964487468,
-          "p_value": 0.07669323044262384,
-          "n_obs": 96,
-          "params": {}
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "ledoit_wolf",
-          "statistic": -0.006202642928406055,
-          "p_value": 0.3126,
-          "n_obs": 96,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_GUARD_NO_NLP",
-          "arm_b": "TOPN_MV_NOGUARD",
-          "test": "memmel_jk",
-          "statistic": -0.9023583257867256,
-          "p_value": 0.3668665513984217,
-          "n_obs": 96,
-          "params": {}
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "hac_mean_diff",
-          "statistic": 0.9590066571235996,
-          "p_value": 0.33755539152725844,
-          "n_obs": 96,
-          "params": {}
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "ledoit_wolf",
-          "statistic": 0.07218964804005559,
-          "p_value": 0.4296,
-          "n_obs": 96,
-          "params": {
-            "block": 5,
-            "n_boot": 4999,
-            "seed": 20261028
-          }
-        },
-        {
-          "segment": "P2b",
-          "arm_a": "TOPN_MV_NOGUARD",
-          "arm_b": "MARKOWITZ_BASE",
-          "test": "memmel_jk",
-          "statistic": 1.071713578356033,
-          "p_value": 0.2838487001037926,
+          "statistic": 1.0717135783559777,
+          "p_value": 0.28384870010381746,
           "n_obs": 96,
           "params": {}
         }

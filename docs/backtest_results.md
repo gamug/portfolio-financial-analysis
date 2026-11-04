@@ -14,12 +14,12 @@ from the run copy's own `risk_free_rate` rows (same curve, same carry-forward ru
 
 ## Main run
 
-### rule_P1 — window P1, run 1
+### llm_P1 — window P1, run 1
 
 - formation date: 2022-01-03
-- input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
+- input database sha256: `291b514c7763ced986b73f0543afdeb65e7462dc3e247b508ef691c5555c0a6b`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
+- code version: `f9679ea`
 - warm-up refusals: 1
 - pre-formation decision refusals: 0
 
@@ -28,25 +28,124 @@ from the run copy's own `risk_free_rate` rows (same curve, same carry-forward ru
 | Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | P1 | MARKOWITZ_BASE | 2022-01-03..2022-10-12 | -0.1150 | -0.1453 | 0.1520 | -1.001 | 0.1621 | 2.2583 | 22.6 | 10 | 0 |
-| P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2061 | -0.2567 | 0.1497 | -1.950 | 0.2227 | 18.1481 | 181.5 | 10 | 535 |
-| P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.1935 | -0.2416 | 0.2137 | -1.218 | 0.2492 | 7.2444 | 72.4 | 10 | 0 |
+| P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2296 | -0.2850 | 0.1373 | -2.421 | 0.2425 | 17.3660 | 173.7 | 10 | 542 |
+| P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.2334 | -0.2895 | 0.2078 | -1.572 | 0.2719 | 7.5611 | 75.6 | 10 | 0 |
 | P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.124 | 0.2072 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.3627 | 0.7168 | 196 |
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0461 | 0.0084 | 196 |
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -2.3303 | 0.0198 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.7184 | 0.4725 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0137 | 0.7646 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.3019 | 0.7628 | 196 |
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.0656 | 0.9477 | 196 |
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0535 | 0.0024 | 196 |
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -2.8092 | 0.0050 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -1.1593 | 0.2464 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0360 | 0.4516 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.7705 | 0.4410 | 196 |
+
+### llm_P2 — window P2, run 1
+
+- formation date: 2025-02-19
+- input database sha256: `fd4ad5f9ad619484cb572869a15fff4d9707e6a46112b8de4365233732f5ef88`
+- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
+- code version: `f9679ea`
+- warm-up refusals: 0
+- pre-formation decision refusals: 0
+
+| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| P2 | MARKOWITZ_BASE | 2025-02-19..2025-09-23 | 0.0688 | 0.1183 | 0.1284 | 0.542 | 0.0764 | 2.8108 | 28.1 | 8 | 0 |
+| P2 | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-09-23 | 0.0103 | 0.0174 | 0.1343 | -0.180 | 0.1199 | 10.8796 | 108.8 | 8 | 294 |
+| P2 | TOPN_MV_NOGUARD | 2025-02-19..2025-09-23 | 0.0288 | 0.0489 | 0.1639 | 0.066 | 0.1264 | 5.6470 | 56.5 | 8 | 0 |
+| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.277 | 0.1581 | — | — | — | — |
+| P2a | MARKOWITZ_BASE | 2025-02-19..2025-05-06 | 0.0172 | 0.0829 | 0.1783 | 0.252 | 0.0764 | 1.6588 | 16.6 | 3 | 0 |
+| P2a | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-05-06 | -0.0614 | -0.2561 | 0.1943 | -1.684 | 0.1199 | 5.6942 | 56.9 | 3 | 184 |
+| P2a | TOPN_MV_NOGUARD | 2025-02-19..2025-05-06 | -0.0515 | -0.2187 | 0.2466 | -1.084 | 0.1264 | 2.3424 | 23.4 | 3 | 0 |
+| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.977 | 0.1581 | — | — | — | — |
+| P2b | MARKOWITZ_BASE | 2025-05-07..2025-09-23 | 0.0507 | 0.1387 | 0.0902 | 0.925 | 0.0364 | 1.1520 | 11.5 | 5 | 0 |
+| P2b | TOPN_MV_GUARD_NO_NLP | 2025-05-07..2025-09-23 | 0.0764 | 0.2133 | 0.0831 | 1.762 | 0.0195 | 5.1853 | 51.9 | 5 | 110 |
+| P2b | TOPN_MV_NOGUARD | 2025-05-07..2025-09-23 | 0.0847 | 0.2380 | 0.0891 | 1.876 | 0.0208 | 3.3046 | 33.0 | 5 | 0 |
+| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.105 | 0.0327 | — | — | — | — |
+
+| Segment | A | B | Test | Statistic | p | n |
+|---|---|---|---|---|---|---|
+| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.1248 | 0.2607 | 150 |
+| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0154 | 0.1938 | 150 |
+| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.8620 | 0.3887 | 150 |
+| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.4840 | 0.6284 | 150 |
+| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0300 | 0.5422 | 150 |
+| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.5620 | 0.5741 | 150 |
+| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.6988 | 0.4847 | 54 |
+| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0378 | 0.0336 | 54 |
+| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -1.1993 | 0.2304 | 54 |
+| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -1.1058 | 0.2688 | 54 |
+| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0841 | 0.2710 | 54 |
+| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.9582 | 0.3380 | 54 |
+| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.3640 | 0.1726 | 96 |
+| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0071 | 0.5222 | 96 |
+| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.7515 | 0.4524 | 96 |
+| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | 0.8446 | 0.3983 | 96 |
+| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | 0.0599 | 0.4452 | 96 |
+| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | 0.9369 | 0.3488 | 96 |
+
+### llm_P3 — window P3, run 1
+
+- formation date: 2023-10-27
+- input database sha256: `1598f142c82495db9916013b9b6b943ce8f090660ad44375cfe45ccc90645690`
+- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
+- code version: `f9679ea`
+- warm-up refusals: 0
+- pre-formation decision refusals: 0
+
+| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| P3 | MARKOWITZ_BASE | 2023-10-27..2024-08-02 | 0.2105 | 0.2850 | 0.0872 | 2.342 | 0.0435 | 2.2260 | 22.3 | 10 | 0 |
+| P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1986 | 0.2685 | 0.1000 | 1.926 | 0.0749 | 12.0970 | 121.0 | 10 | 217 |
+| P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.2149 | 0.2911 | 0.1055 | 1.997 | 0.0787 | 8.0897 | 80.9 | 10 | 0 |
+| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.310 | 0.0594 | — | — | — | — |
+
+| Segment | A | B | Test | Statistic | p | n |
+|---|---|---|---|---|---|---|
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.5160 | 0.1295 | 192 |
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0045 | 0.4396 | 192 |
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.7871 | 0.4312 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | 0.0696 | 0.9445 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0218 | 0.7318 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.3641 | 0.7158 | 192 |
+
+## Robustness
+
+### rule_P1 — window P1, run 1
+
+- formation date: 2022-01-03
+- input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
+- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
+- code version: `f9679ea`
+- warm-up refusals: 1
+- pre-formation decision refusals: 0
+
+  - warm-up 2021-06-03: 30/496 universe members (6.0%) are unrankable, over the 6% limit: 28 unscored (no FUNDAMENTAL score at all) asset_ids [3, 42, 58, 79, 84, 108, 125, 151, 159, 228, 229, 238, 249, 252, 293, 339, 398, 401, 403, 405, 418, 429, 440, 465, 532, 557, 563, 564]; 2 unpriced (no close on the session) asset_ids [285, 575]
+
+| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| P1 | MARKOWITZ_BASE | 2022-01-03..2022-10-12 | -0.1150 | -0.1453 | 0.1520 | -1.001 | 0.1621 | 2.2583 | 22.6 | 10 | 0 |
+| P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2028 | -0.2528 | 0.1509 | -1.899 | 0.2196 | 18.3208 | 183.2 | 10 | 535 |
+| P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.1881 | -0.2351 | 0.2136 | -1.179 | 0.2492 | 7.2777 | 72.8 | 10 | 0 |
+| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.124 | 0.2072 | — | — | — | — |
+
+| Segment | A | B | Test | Statistic | p | n |
+|---|---|---|---|---|---|---|
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.4051 | 0.6854 | 196 |
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0454 | 0.0086 | 196 |
+| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -2.3140 | 0.0207 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.6611 | 0.5085 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0112 | 0.8080 | 196 |
+| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.2479 | 0.8042 | 196 |
 
 ### rule_P2 — window P2, run 1
 
 - formation date: 2025-02-19
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
+- code version: `f9679ea`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
@@ -91,120 +190,23 @@ from the run copy's own `risk_free_rate` rows (same curve, same carry-forward ru
 - formation date: 2023-10-27
 - input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
 - params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
+- code version: `f9679ea`
 - warm-up refusals: 0
 - pre-formation decision refusals: 0
 
 | Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | P3 | MARKOWITZ_BASE | 2023-10-27..2024-08-02 | 0.2105 | 0.2850 | 0.0872 | 2.342 | 0.0435 | 2.2260 | 22.3 | 10 | 0 |
-| P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1804 | 0.2432 | 0.1080 | 1.603 | 0.0678 | 11.3773 | 113.8 | 10 | 209 |
-| P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.1927 | 0.2603 | 0.1130 | 1.658 | 0.0713 | 7.3778 | 73.8 | 10 | 0 |
+| P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1953 | 0.2639 | 0.1090 | 1.741 | 0.0642 | 11.3819 | 113.8 | 10 | 207 |
+| P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.2089 | 0.2828 | 0.1134 | 1.810 | 0.0657 | 7.3575 | 73.6 | 10 | 0 |
 | P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.310 | 0.0594 | — | — | — | — |
 
 | Segment | A | B | Test | Statistic | p | n |
 |---|---|---|---|---|---|---|
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.2541 | 0.2098 | 192 |
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0035 | 0.5426 | 192 |
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.6439 | 0.5196 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.1821 | 0.8555 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0431 | 0.4378 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.6641 | 0.5066 | 192 |
-
-## Warm-up W = 6 (T5)
-
-### w6_P1 — window P1, run 1
-
-- formation date: 2022-01-03
-- input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
-- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
-- warm-up refusals: 0
-- pre-formation decision refusals: 0
-
-| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| P1 | MARKOWITZ_BASE | 2022-01-03..2022-10-12 | -0.1150 | -0.1453 | 0.1520 | -1.001 | 0.1621 | 2.2583 | 22.6 | 10 | 0 |
-| P1 | TOPN_MV_GUARD_NO_NLP | 2022-01-03..2022-10-12 | -0.2061 | -0.2567 | 0.1497 | -1.950 | 0.2227 | 18.1481 | 181.5 | 10 | 535 |
-| P1 | TOPN_MV_NOGUARD | 2022-01-03..2022-10-12 | -0.1935 | -0.2416 | 0.2137 | -1.218 | 0.2492 | 7.2444 | 72.4 | 10 | 0 |
-| P1 | SP500_EW_INTERNAL | 2022-01-03..2022-10-12 | -0.1959 | -0.2444 | 0.2314 | -1.124 | 0.2072 | — | — | — | — |
-
-| Segment | A | B | Test | Statistic | p | n |
-|---|---|---|---|---|---|---|
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.3627 | 0.7168 | 196 |
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0461 | 0.0084 | 196 |
-| P1 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -2.3303 | 0.0198 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.7184 | 0.4725 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0137 | 0.7646 | 196 |
-| P1 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.3019 | 0.7628 | 196 |
-
-### w6_P2 — window P2, run 1
-
-- formation date: 2025-02-19
-- input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
-- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
-- warm-up refusals: 0
-- pre-formation decision refusals: 0
-
-| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| P2 | MARKOWITZ_BASE | 2025-02-19..2025-09-23 | 0.0688 | 0.1183 | 0.1284 | 0.542 | 0.0764 | 2.8108 | 28.1 | 8 | 0 |
-| P2 | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-09-23 | 0.0080 | 0.0135 | 0.1385 | -0.197 | 0.1313 | 10.5873 | 105.9 | 8 | 279 |
-| P2 | TOPN_MV_NOGUARD | 2025-02-19..2025-09-23 | 0.0351 | 0.0596 | 0.1778 | 0.130 | 0.1463 | 5.7840 | 57.8 | 8 | 0 |
-| P2 | SP500_EW_INTERNAL | 2025-02-19..2025-09-23 | 0.0529 | 0.0905 | 0.2065 | 0.277 | 0.1581 | — | — | — | — |
-| P2a | MARKOWITZ_BASE | 2025-02-19..2025-05-06 | 0.0172 | 0.0829 | 0.1783 | 0.252 | 0.0764 | 1.6588 | 16.6 | 3 | 0 |
-| P2a | TOPN_MV_GUARD_NO_NLP | 2025-02-19..2025-05-06 | -0.0716 | -0.2929 | 0.1999 | -1.886 | 0.1313 | 5.6043 | 56.0 | 3 | 169 |
-| P2a | TOPN_MV_NOGUARD | 2025-02-19..2025-05-06 | -0.0545 | -0.2301 | 0.2702 | -1.021 | 0.1463 | 2.5425 | 25.4 | 3 | 0 |
-| P2a | SP500_EW_INTERNAL | 2025-02-19..2025-05-06 | -0.0606 | -0.2531 | 0.3040 | -0.977 | 0.1581 | — | — | — | — |
-| P2b | MARKOWITZ_BASE | 2025-05-07..2025-09-23 | 0.0507 | 0.1387 | 0.0902 | 0.925 | 0.0364 | 1.1520 | 11.5 | 5 | 0 |
-| P2b | TOPN_MV_GUARD_NO_NLP | 2025-05-07..2025-09-23 | 0.0858 | 0.2411 | 0.0858 | 1.973 | 0.0184 | 4.9830 | 49.8 | 5 | 110 |
-| P2b | TOPN_MV_NOGUARD | 2025-05-07..2025-09-23 | 0.0947 | 0.2681 | 0.0924 | 2.071 | 0.0200 | 3.2414 | 32.4 | 5 | 0 |
-| P2b | SP500_EW_INTERNAL | 2025-05-07..2025-09-23 | 0.1209 | 0.3492 | 0.1219 | 2.105 | 0.0327 | — | — | — | — |
-
-| Segment | A | B | Test | Statistic | p | n |
-|---|---|---|---|---|---|---|
-| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.0110 | 0.3120 | 150 |
-| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0206 | 0.1532 | 150 |
-| P2 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.9420 | 0.3462 | 150 |
-| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.3108 | 0.7559 | 150 |
-| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0259 | 0.6508 | 150 |
-| P2 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.4505 | 0.6523 | 150 |
-| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -0.7024 | 0.4824 | 54 |
-| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0545 | 0.0332 | 54 |
-| P2a | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -1.4135 | 0.1575 | 54 |
-| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.8936 | 0.3715 | 54 |
-| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0802 | 0.3688 | 54 |
-| P2a | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.8440 | 0.3987 | 54 |
-| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.7702 | 0.0767 | 96 |
-| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0062 | 0.3126 | 96 |
-| P2b | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.9024 | 0.3669 | 96 |
-| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | 0.9590 | 0.3376 | 96 |
-| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | 0.0722 | 0.4296 | 96 |
-| P2b | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | 1.0717 | 0.2838 | 96 |
-
-### w6_P3 — window P3, run 1
-
-- formation date: 2023-10-27
-- input database sha256: `8c97628db9fde0ea58e501b9b85b938d9ed530d79938e9484a482912f0f3eab3`
-- params sha256: `ee22f3529d7fd478fe7807e818df04da511cd3422c0b488384f587c79cbdf2b2`
-- code version: `c04cb38`
-- warm-up refusals: 0
-- pre-formation decision refusals: 0
-
-| Segment | Arm | Dates | Cumulative | Ann. return | Ann. vol | Sharpe | MDD | Turnover | Cost bps | Rebal. | GUARD actions |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| P3 | MARKOWITZ_BASE | 2023-10-27..2024-08-02 | 0.2105 | 0.2850 | 0.0872 | 2.342 | 0.0435 | 2.2260 | 22.3 | 10 | 0 |
-| P3 | TOPN_MV_GUARD_NO_NLP | 2023-10-27..2024-08-02 | 0.1804 | 0.2432 | 0.1080 | 1.603 | 0.0678 | 11.3773 | 113.8 | 10 | 209 |
-| P3 | TOPN_MV_NOGUARD | 2023-10-27..2024-08-02 | 0.1927 | 0.2603 | 0.1130 | 1.658 | 0.0713 | 7.3778 | 73.8 | 10 | 0 |
-| P3 | SP500_EW_INTERNAL | 2023-10-27..2024-08-02 | 0.2735 | 0.3734 | 0.1186 | 2.310 | 0.0594 | — | — | — | — |
-
-| Segment | A | B | Test | Statistic | p | n |
-|---|---|---|---|---|---|---|
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.2541 | 0.2098 | 192 |
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0035 | 0.5426 | 192 |
-| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.6439 | 0.5196 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | -0.1821 | 0.8555 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0431 | 0.4378 | 192 |
-| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.6641 | 0.5066 | 192 |
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | hac_mean_diff | -1.4729 | 0.1408 | 192 |
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | ledoit_wolf | -0.0043 | 0.4224 | 192 |
+| P3 | TOPN_MV_GUARD_NO_NLP | TOPN_MV_NOGUARD | memmel_jk | -0.8401 | 0.4009 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | hac_mean_diff | 0.0099 | 0.9921 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | ledoit_wolf | -0.0335 | 0.5466 | 192 |
+| P3 | TOPN_MV_NOGUARD | MARKOWITZ_BASE | memmel_jk | -0.5182 | 0.6043 | 192 |
 
