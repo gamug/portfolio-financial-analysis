@@ -25,9 +25,11 @@ import subprocess
 import sys
 import tomllib
 from bisect import bisect_right
+from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +42,7 @@ from cycle.backtest import core as v2core
 from cycle.backtest import engine
 from cycle.backtest import export as export_module
 from cycle.config import CycleSettings
-from cycle.guard import GuardParams, NewsCounts, NewsParams
+from cycle.guard import GuardParams, NewsCounts, NewsParams, basing
 from cycle.orchestrator import run_replay
 from cycle.scores import defensive
 from kg_schema import connect, connect_ro, queries, trading_calendar
@@ -83,6 +85,8 @@ V2_ARMS = (BASE_ARM, NOGUARD_ARM, GUARD_NO_NLP_ARM, BASE_GUARD_ARM)
 FULLY_INVESTED_TOL = 1e-4
 #: WP-E's paired tests need at least this many common sessions (BACKTEST_SPEC §6).
 MIN_TEST_OBS = 30
+#: GUARD's layer 1 (the stop-loss) id, for the core-stop report.
+STOP_LOSS_LAYER = 1
 
 
 class BacktestError(RuntimeError):
@@ -727,6 +731,7 @@ class PipelineResult:
     decisions_refused: list[dict[str, str]]
     trend_states: list[dict[str, str]] = field(default_factory=list)
     pool_records: list[dict[str, Any]] = field(default_factory=list)
+    rp_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipeline
@@ -746,6 +751,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     pool_m: int = 30,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    satellite_weighting: str = "minvar",
 ) -> PipelineResult:
     targets: dict[str, dict[str, dict[int, float]]] = {BASE_ARM: {}, NOGUARD_ARM: {}}
     rebalances: list[dict[str, Any]] = []
@@ -753,6 +759,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     decisions_refused: list[dict[str, str]] = []
     trend_records: list[dict[str, str]] = []
     pool_records: list[dict[str, Any]] = []
+    rp_records: list[dict[str, Any]] = []
     formation: str | None = None
 
     for warm_date in warmup:
@@ -859,6 +866,8 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
                 str(params.top_n),
                 "--pool-m",
                 str(pool_m),
+                "--satellite-weighting",
+                satellite_weighting,
                 "--cycle-run-id",
                 str(cycle_run_id),
                 "--risk-model-id",
@@ -880,6 +889,15 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
                 "final_n": int(topn.get("final_n", params.top_n)),
             }
         )
+        if satellite_weighting == "rp":
+            rp_records.append(
+                {
+                    "decision_date": decision,
+                    "names": int(topn.get("rp_names", 0)),
+                    "max_weight": topn.get("rp_max_weight"),
+                    "max_min_rrc": topn.get("rp_max_min_rrc"),
+                }
+            )
         config = v2core.config_targets(
             _positions(conn, base_portfolio, BASE_ARM),
             _positions(conn, topn_portfolio, NOGUARD_ARM),
@@ -925,6 +943,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         decisions_refused=decisions_refused,
         trend_states=trend_records,
         pool_records=pool_records,
+        rp_records=rp_records,
     )
 
 
@@ -947,6 +966,8 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     pool_m: int = 30,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    stop_rule: str = "kl",
+    satellite_weighting: str = "minvar",
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -960,6 +981,8 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "pool_m": pool_m,
         "core_source": core_source,
         "filter_exit": filter_exit,
+        "stop_rule": stop_rule,
+        "satellite_weighting": satellite_weighting,
         "core_asset_id": core_asset_id,
         "core_series_path": None if series is None else str(series.path),
         "core_series_sha256": None if series is None else series.sha256,
@@ -1469,21 +1492,215 @@ def resolve_arms(requested: Sequence[str] | None, params: BacktestParams) -> lis
 
 
 def _arm_specs(
-    codes: Sequence[str], params: BacktestParams, shadow_code: str | None
+    codes: Sequence[str],
+    params: BacktestParams,
+    shadow_code: str | None,
+    *,
+    stop_rule: str = "kl",
 ) -> list[engine.ArmSpec]:
+    """The arms of a run; round 4's ``stop_rule`` applies to TOPN_MV_GUARD_NO_NLP only.
+
+    The base GUARD arm keeps ``kl`` (V4 plan §2a), and so does the news arm if it is run.
+    """
     specs = [engine.ArmSpec(BASE_ARM, BASE_ARM), engine.ArmSpec(NOGUARD_ARM, NOGUARD_ARM)]
     shadow = params.guard.get(shadow_code) if shadow_code else None
+    if shadow is not None:
+        shadow = replace(shadow, stop_rule=stop_rule)
     specs[1] = engine.ArmSpec(NOGUARD_ARM, NOGUARD_ARM, shadow_guard=shadow)
     for code in GUARD_ARMS:
         if code in codes:
-            specs.append(engine.ArmSpec(code, NOGUARD_ARM, guard=params.guard[code]))
+            guard = params.guard[code]
+            if code == GUARD_NO_NLP_ARM:
+                guard = replace(guard, stop_rule=stop_rule)
+            specs.append(engine.ArmSpec(code, NOGUARD_ARM, guard=guard))
     if BASE_GUARD_ARM in codes:
-        # V2_PLAN §2d: the base book gets the same frozen layers 1/3/4 as the Top-N overlay.
-        guard = params.guard.get(GUARD_NO_NLP_ARM)
-        if guard is None:
+        # V2_PLAN §2d: the base book gets the same frozen layers 1/3/4 as the Top-N overlay,
+        # always under the v1-v3 K-L stop (V4 plan §2a).
+        base_guard = params.guard.get(GUARD_NO_NLP_ARM)
+        if base_guard is None:
             raise BacktestError(f"{BASE_GUARD_ARM} needs [guard.arms.{GUARD_NO_NLP_ARM}]")
-        specs.append(engine.ArmSpec(BASE_GUARD_ARM, BASE_ARM, guard=guard))
+        specs.append(
+            engine.ArmSpec(BASE_GUARD_ARM, BASE_ARM, guard=replace(base_guard, stop_rule="kl"))
+        )
     return specs
+
+
+# -- round 4: bars, betas and stop distances ------------------------------------------
+
+
+def load_bars(conn: Database, date_from: str, date_to: str) -> dict[str, dict[int, basing.Bar]]:
+    """High/low/close per session and asset from the run copy's ``price_daily``."""
+    rows = conn.execute(
+        "SELECT asset_id, date, high, low, close FROM price_daily "
+        "WHERE date >= ? AND date <= ? AND high IS NOT NULL AND low IS NOT NULL "
+        "AND close IS NOT NULL ORDER BY date",
+        (date_from, date_to),
+    ).fetchall()
+    out: dict[str, dict[int, basing.Bar]] = {}
+    for row in rows:
+        bar = basing.Bar(float(row["high"]), float(row["low"]), float(row["close"]))
+        if (
+            not all(math.isfinite(v) and v > 0.0 for v in (bar.high, bar.low, bar.close))
+            or bar.low > bar.high
+        ):
+            raise BacktestError(
+                f"price_daily has an invalid bar for asset {int(row['asset_id'])} on "
+                f"{row['date']}: {bar}"
+            )
+        out.setdefault(str(row["date"]), {})[int(row["asset_id"])] = bar
+    return out
+
+
+def load_closes(conn: Database, date_from: str, date_to: str) -> dict[int, dict[str, float]]:
+    """Split-adjusted closes per asset and session (for the beta and the raw-price rebuild)."""
+    rows = conn.execute(
+        "SELECT asset_id, date, close FROM price_daily "
+        "WHERE date >= ? AND date <= ? AND close IS NOT NULL ORDER BY date",
+        (date_from, date_to),
+    ).fetchall()
+    out: dict[int, dict[str, float]] = {}
+    for row in rows:
+        out.setdefault(int(row["asset_id"]), {})[str(row["date"])] = float(row["close"])
+    return out
+
+
+def load_splits(conn: Database) -> dict[int, list[tuple[str, float]]]:
+    """SPLIT rows (ex-date, ratio) per asset, oldest first."""
+    rows = conn.execute(
+        "SELECT asset_id, ex_date, value FROM corporate_action "
+        "WHERE action_type = 'SPLIT' ORDER BY ex_date"
+    ).fetchall()
+    out: dict[int, list[tuple[str, float]]] = {}
+    for row in rows:
+        out.setdefault(int(row["asset_id"]), []).append((str(row["ex_date"]), float(row["value"])))
+    return out
+
+
+def unadjusted_price(close: float, splits: Sequence[tuple[str, float]], decision: str) -> float:
+    """The stored (fully split-adjusted) close rebuilt to the decision's price class.
+
+    Multiply by the ratios of the splits whose ex-date is after the decision: those are
+    the splits the stored series has already removed from the price (a look-ahead
+    otherwise).
+    """
+    factor = 1.0
+    for ex_date, ratio in splits:
+        if ex_date > decision:
+            factor *= ratio
+    return close * factor
+
+
+def ols_beta(asset_returns: Sequence[float], market_returns: Sequence[float]) -> float | None:
+    """The OLS slope of the asset's daily simple returns on the market's, at least 200 pairs."""
+    pairs = [
+        (float(a), float(m))
+        for a, m in zip(asset_returns, market_returns, strict=True)
+        if math.isfinite(a) and math.isfinite(m)
+    ]
+    if len(pairs) < 200:  # noqa: PLR2004 - V4 plan §2a's minimum
+        return None
+    mean_a = math.fsum(p[0] for p in pairs) / len(pairs)
+    mean_m = math.fsum(p[1] for p in pairs) / len(pairs)
+    variance = math.fsum((p[1] - mean_m) ** 2 for p in pairs)
+    if variance <= 0.0:
+        return None
+    covariance = math.fsum((p[0] - mean_a) * (p[1] - mean_m) for p in pairs)
+    return covariance / variance
+
+
+def decision_betas(
+    names: Sequence[int],
+    closes: Mapping[int, Mapping[str, float]],
+    spy_returns: Mapping[str, float],
+    decision: str,
+    sessions: Sequence[str],
+) -> dict[int, float]:
+    """Per name, the 252-session OLS beta at ``decision``; 1.0 (median class) when unavailable."""
+    window = [session for session in sessions if session <= decision][-252:]
+    out: dict[int, float] = {}
+    for asset_id in names:
+        series = closes.get(asset_id, {})
+        asset_values: list[float] = []
+        market_values: list[float] = []
+        for previous, session in pairwise(window):
+            first = series.get(previous)
+            second = series.get(session)
+            market = spy_returns.get(session)
+            if first is None or second is None or market is None or first <= 0.0:
+                continue
+            asset_values.append(second / first - 1.0)
+            market_values.append(float(market))
+        beta = ols_beta(asset_values, market_values)
+        out[asset_id] = 1.0 if beta is None else beta
+    return out
+
+
+def build_stop_plan(  # noqa: PLR0913 - the plan's inputs, all named
+    *,
+    targets: Mapping[str, Mapping[int, float]],
+    core_asset_id: int | None,
+    closes: Mapping[int, Mapping[str, float]],
+    splits: Mapping[int, Sequence[tuple[str, float]]],
+    spy_returns: Mapping[str, float],
+    sessions: Sequence[str],
+) -> tuple[dict[str, dict[int, float]], dict[str, int]]:
+    """Per session, the stop distance ``d`` in force; plus the decision-name cell counts."""
+    per_decision: dict[str, dict[int, float]] = {}
+    cells: Counter[str] = Counter()
+    for decision, target in sorted(targets.items()):
+        names = [asset_id for asset_id in target if asset_id != core_asset_id]
+        betas = decision_betas(names, closes, spy_returns, decision, sessions)
+        distances: dict[int, float] = {}
+        for asset_id in names:
+            series = closes.get(asset_id, {})
+            available = [session for session in sorted(series) if session <= decision]
+            if available:
+                price = unadjusted_price(series[available[-1]], splits.get(asset_id, ()), decision)
+            else:
+                price = 1.0
+            beta = betas.get(asset_id, 1.0)
+            distances[asset_id] = basing.stop_distance(price, beta)
+            cells[basing.distance_cell(price, beta)] += 1
+        per_decision[decision] = distances
+    out: dict[str, dict[int, float]] = {}
+    decisions = sorted(per_decision)
+    index = 0
+    current: dict[int, float] = {}
+    for session in sessions:
+        while index < len(decisions) and decisions[index] <= session:
+            current = per_decision[decisions[index]]
+            index += 1
+        out[session] = dict(current)
+    return out, dict(sorted(cells.items()))
+
+
+def _bp_summary(result: engine.ArmResult, sessions: Sequence[str]) -> dict[str, Any]:
+    """Aggregate the Basing Points events of one arm: stop-outs, sessions out, BPs by rule."""
+    index = {session: position for position, session in enumerate(sessions)}
+    events = list(result.bp_events)
+    exits = [event for event in events if event.kind == "exit"]
+    entries = [event for event in events if event.kind == "entry"]
+    sessions_out: list[int] = []
+    for event in exits:
+        later = [
+            candidate
+            for candidate in entries
+            if candidate.asset_id == event.asset_id
+            and index[candidate.session] > index[event.session]
+        ]
+        end = index[later[0].session] if later else len(sessions) - 1
+        sessions_out.append(end - index[event.session])
+    return {
+        "stop_outs": len(exits),
+        "mean_sessions_out": (
+            math.fsum(sessions_out) / len(sessions_out) if sessions_out else None
+        ),
+        "bp3": sum(1 for event in events if event.kind == "bp3"),
+        "bp4": sum(1 for event in events if event.kind == "bp4"),
+        "fallbacks": sum(1 for event in events if event.kind == "fallback"),
+        "entries": len(entries),
+        "missing_bars": result.bp_missing,
+    }
 
 
 # -- the run --------------------------------------------------------------------------
@@ -1545,6 +1762,8 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     pool_m: int | None = None,
     core_source: str = "spy",
     filter_exit: float = 1.0,
+    stop_rule: str = "kl",
+    satellite_weighting: str = "minvar",
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1574,6 +1793,14 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         )
     if filter_exit not in (0.5, 1.0):
         raise BacktestError(f"filter_exit must be 0.5 or 1.0, got {filter_exit!r}")
+    if stop_rule not in basing.STOP_RULES:
+        raise BacktestError(
+            f"unknown stop_rule {stop_rule!r}: expected one of {list(basing.STOP_RULES)}"
+        )
+    if satellite_weighting not in ("minvar", "rp"):
+        raise BacktestError(
+            f"unknown satellite_weighting {satellite_weighting!r}: expected minvar or rp"
+        )
     series: v2core.CoreSeries | None = None
     if (core_weight > 0.0 and core_source == "spy") or trend_filter == v2core.FILTER_ON:
         if core_series_path is None:
@@ -1619,6 +1846,8 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             pool_m=pool_m,
             core_source=core_source,
             filter_exit=filter_exit,
+            stop_rule=stop_rule,
+            satellite_weighting=satellite_weighting,
         )
         payload: dict[str, Any] = {}
         try:
@@ -1678,6 +1907,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 pool_m=pool_m,
                 core_source=core_source,
                 filter_exit=filter_exit,
+                satellite_weighting=satellite_weighting,
             )
             decisions = {rebalance.decision_date for rebalance in schedule}
             tilt_triggers = [
@@ -1704,7 +1934,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 (json.dumps(run_params, sort_keys=True), run_id),
             )
             conn.commit()
-            sessions = _engine_sessions(pipeline.formation_date, window.d_end, params)
+            sessions = _engine_sessions(
+                pipeline.formation_date, window.d_end, params, stop_rule=stop_rule
+            )
             formation_index = sessions.index(pipeline.formation_date)
 
             shadow_code = params.shadow_from or (
@@ -1728,7 +1960,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                     codes = [code for code in codes if code != GUARD_ARM]
                     if shadow_code == GUARD_ARM:
                         shadow_code = GUARD_NO_NLP_ARM
-            specs = _arm_specs(codes, params, shadow_code)
+            specs = _arm_specs(codes, params, shadow_code, stop_rule=stop_rule)
 
             returns = load_returns(conn, params.returns_engine_version, sessions[0], window.d_end)
             if series is not None and core_asset_id is not None:
@@ -1737,6 +1969,24 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                     returns.setdefault(session, {})[core_asset_id] = value
             rf, carried = load_rf(conn, params.rf_curve, sessions)
             members = load_benchmark_members(conn, universe_conn, sessions, formation_index)
+            bars: dict[str, dict[int, basing.Bar]] = {}
+            stop_distances: dict[str, dict[int, float]] = {}
+            distance_cells: dict[str, int] = {}
+            if stop_rule != "kl":
+                beta_start = schedule[0].decision_date
+                for _ in range(252):
+                    beta_start = previous_session(beta_start)
+                bars = load_bars(conn, sessions[0], window.d_end)
+                closes = load_closes(conn, beta_start, window.d_end)
+                splits = load_splits(conn)
+                stop_distances, distance_cells = build_stop_plan(
+                    targets=pipeline.targets[NOGUARD_ARM],
+                    core_asset_id=core_asset_id,
+                    closes=closes,
+                    splits=splits,
+                    spy_returns=series.total_return if series is not None else {},
+                    sessions=sessions,
+                )
             engine_input = engine.EngineInput(
                 sessions=sessions,
                 returns=returns,
@@ -1748,6 +1998,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 cost_bps=params.cost_bps,
                 benchmark_members=members,
                 news=news,
+                bars=bars,
+                stop_distances=stop_distances,
+                core_asset_id=core_asset_id,
             )
             simulated = engine.simulate(engine_input)
 
@@ -1767,6 +2020,29 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 _insert_weights(conn, book_ids[code], result, tickers)
                 _insert_performance(conn, book_ids[code], result, simulated.benchmark)
             _insert_guard(conn, run_id, book_ids, simulated.arms)
+            run_row = conn.execute(
+                "SELECT params_json FROM backtest_run WHERE id = ?", (run_id,)
+            ).fetchone()
+            report_params = json.loads(str(run_row["params_json"]))
+            report_params["distance_cells"] = distance_cells
+            report_params["rp"] = pipeline.rp_records
+            guard_arm = simulated.arms.get(GUARD_NO_NLP_ARM)
+            if guard_arm is not None:
+                report_params["bp"] = (
+                    _bp_summary(guard_arm, sessions) if stop_rule != "kl" else None
+                )
+                report_params["core_stop_actions"] = [
+                    event.date
+                    for event in guard_arm.guard_events
+                    if event.alert.asset_id == core_asset_id
+                    and event.alert.layer == STOP_LOSS_LAYER
+                    and event.status == "APPLIED"
+                ]
+            conn.execute(
+                "UPDATE backtest_run SET params_json = ? WHERE id = ?",
+                (json.dumps(report_params, sort_keys=True), run_id),
+            )
+            conn.commit()
             _summaries_and_tests(
                 conn,
                 run_id,
@@ -1811,10 +2087,15 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         conn.close()
 
 
-def _engine_sessions(formation: str, d_end: str, params: BacktestParams) -> list[str]:
+def _engine_sessions(
+    formation: str, d_end: str, params: BacktestParams, *, stop_rule: str = "kl"
+) -> list[str]:
     """Sessions from ``formation - max(J, vol_window)`` to ``d_end``: the engine's lookbacks
-    need that much history for layer 1 / layer 3."""
+    need that much history for layer 1 / layer 3. The Basing Points machine also needs
+    the 63-session tracking start before the first decision."""
     longest = max([max(g.J, g.vol_window) for g in params.guard.values()] or [1])
+    if stop_rule != "kl":
+        longest = max(longest, basing.TRACKING_SESSIONS + 2)
     start = formation
     for _ in range(longest + 2):
         start = previous_session(start)
@@ -1904,6 +2185,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         choices=(1.0, 0.5),
         help="V3 plan section 2c: fraction of the target sold when the filter triggers (1.0 = v2)",
+    )
+    run.add_argument(
+        "--stop-rule",
+        default="kl",
+        choices=list(basing.STOP_RULES),
+        help="V4 plan section 2a: kl (today) or the Basing Points rules 1-3 / 1-4",
+    )
+    run.add_argument(
+        "--satellite-weighting",
+        default="minvar",
+        choices=("minvar", "rp"),
+        help="V4 plan section 2b: minvar (today) or risk parity on the minvar-held names",
     )
     run.add_argument(
         "--market-series",
@@ -2016,6 +2309,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             pool_m=args.pool_m,
             core_source=args.core_source,
             filter_exit=args.filter_exit,
+            stop_rule=args.stop_rule,
+            satellite_weighting=args.satellite_weighting,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)

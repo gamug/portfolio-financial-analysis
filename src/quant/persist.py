@@ -43,7 +43,7 @@ from quant.factors import (
 )
 from quant.manifest import QuantManifest, resolve_quant_manifest
 from quant.objective import ObjectiveContext, objective_param, resolve_objectives
-from quant.optimize import Constraints, efficient_frontier, min_variance
+from quant.optimize import Constraints, efficient_frontier, min_variance, risk_parity_slsqp
 from quant.panel import ReturnPanel, build_return_panel
 from quant.rates import load_risk_free
 from quant.risk import (
@@ -693,6 +693,10 @@ class TopnBookResult:
     pool_size: int = TOPN_SELECTION_COUNT
     first_pass_n: int = 0
     second_pass: bool = False
+    satellite_weighting: str = "minvar"
+    rp_names: int = 0
+    rp_max_weight: float | None = None
+    rp_max_min_rrc: float | None = None
 
 
 def _topn_selection(
@@ -749,6 +753,7 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
     cycle_run_id: int,
     risk_model_id: int,
     pool_size: int = TOPN_SELECTION_COUNT,
+    satellite_weighting: str = "minvar",
     conn: Database | None = None,
 ) -> TopnBookResult:
     """Min-variance over the 30 names a cycle run selected, on a stored risk model's covariance.
@@ -772,6 +777,10 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
     if not isinstance(pool_size, int) or pool_size < TOPN_SELECTION_COUNT:
         raise CycleSelectionError(
             f"pool_size must be an integer >= {TOPN_SELECTION_COUNT}, got {pool_size!r}"
+        )
+    if satellite_weighting not in ("minvar", "rp"):
+        raise CycleSelectionError(
+            f"satellite_weighting must be 'minvar' or 'rp', got {satellite_weighting!r}"
         )
     owns = conn is None
     conn = conn or connect(settings.db_path)
@@ -850,6 +859,50 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 :TOPN_SELECTION_COUNT
             ]
             res, held, caps = _solve(keep)
+        rp_record: dict[str, Any] | None = None
+        if satellite_weighting == "rp":
+            # V4 plan §2b: re-solve the minvar-held names to equal risk contributions.
+            held_ids = sorted(held)
+            rp_sigma = sigma_full[
+                np.ix_([index[a] for a in held_ids], [index[a] for a in held_ids])
+            ]
+            rp_sector = load_sector_of(conn, held_ids)
+            rp_caps = effective_caps(settings, held_ids, rp_sector)
+            rp_constraints = Constraints(
+                max_name_weight=rp_caps.max_name_weight,
+                min_name_weight=0.0,
+                max_sector_weight=rp_caps.max_sector_weight,
+                sector_of=rp_sector,
+                asset_ids=held_ids,
+            )
+            try:
+                rp_res = risk_parity_slsqp(rp_sigma, constraints=rp_constraints)
+            except ValueError as exc:
+                raise CycleSelectionError(f"risk parity did not converge: {exc}") from exc
+            rp_weights = {
+                held_ids[i]: float(w) for i, w in enumerate(rp_res.weights) if float(w) > _W_EPS
+            }
+            contributions = [
+                rp_weights[asset_id]
+                * float(np.dot(rp_sigma[i], np.asarray(rp_res.weights, dtype=float)))
+                for i, asset_id in enumerate(held_ids)
+                if asset_id in rp_weights
+            ]
+            total = float(sum(contributions))
+            count = len(contributions)
+            relative = [count * value / total for value in contributions] if total > 0 else []
+            rp_record = {
+                "names": len(rp_weights),
+                "max_weight": max(rp_weights.values()) if rp_weights else 0.0,
+                "max_min_rrc": (
+                    max(relative) / min(relative)
+                    if len(relative) > 1 and min(relative) > 0.0
+                    else None
+                ),
+            }
+            held = rp_weights
+            res = rp_res
+            caps = rp_caps
 
         stale_reason = stale_as_of_reason(conn, as_of)
         cv = code_version()
@@ -893,6 +946,8 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 "first_pass_n": first_pass_n,
                 "second_pass": second_pass,
                 "final_n": len(held),
+                "satellite_weighting": satellite_weighting,
+                "rp": rp_record,
                 "risk_model_id": risk_model_id,
                 "turnover": {
                     "cap_requested": None,
@@ -942,6 +997,10 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
             pool_size=pool_size,
             first_pass_n=first_pass_n,
             second_pass=second_pass,
+            satellite_weighting=satellite_weighting,
+            rp_names=len(held) if satellite_weighting == "rp" else 0,
+            rp_max_weight=(max(held.values()) if satellite_weighting == "rp" and held else None),
+            rp_max_min_rrc=(rp_record["max_min_rrc"] if rp_record is not None else None),
         )
     finally:
         if owns:

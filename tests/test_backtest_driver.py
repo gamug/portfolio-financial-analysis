@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,6 +28,7 @@ from cycle.backtest.driver import (
 from cycle.data import TooFewCandidates
 from fundamental_agent import db as fundamental_db
 from kg_schema import connect, queries
+from pricing_agent import db as pricing_db
 
 UNIVERSE_DDL = """
 CREATE TABLE universe_membership (
@@ -880,4 +881,64 @@ def test_the_driver_runs_the_v3_parameters_end_to_end(
     assert base_rows["CASH"] == pytest.approx(0.0, abs=1e-12)
     assert base_rows["AAA"] == pytest.approx(0.5, abs=1e-12)
     assert base_rows["BBB"] == pytest.approx(0.5, abs=1e-12)
+    conn.close()
+
+
+def test_the_driver_runs_the_v4_basing_points_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bp3 wiring: price_daily bars, stop distances, machine events and the report."""
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    spy_path = _spy_file(tmp_path)
+    conn = connect(db_path)
+    pricing_db.ensure_schema(conn)
+    day = date(2021, 9, 1)
+    while day <= date(2022, 3, 15):
+        if day.weekday() < 5:
+            for asset_id in (1, 2):
+                conn.execute(
+                    "INSERT INTO price_daily (asset_id, date, open, high, low, close, volume, "
+                    "source, event_time) VALUES (?, ?, 100.0, 101.0, 95.0, 97.5, 1000, "
+                    "'test', ?)",
+                    (asset_id, day.isoformat(), day.isoformat()),
+                )
+            conn.execute(
+                "INSERT OR IGNORE INTO risk_free_rate (curve, rate_date, annualized_rate, "
+                "source, engine_version, ingested_at) VALUES ('FF_RF_DAILY', ?, 0.0, "
+                "'test', 'rf-v2', ?)",
+                (day.isoformat(), day.isoformat()),
+            )
+        day += timedelta(days=1)
+    conn.commit()
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", _fake_replay(conn))
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+        arms=["MARKOWITZ_BASE", "TOPN_MV_NOGUARD", "TOPN_MV_GUARD_NO_NLP", "MARKOWITZ_BASE_GUARD"],
+        core_weight=0.5,
+        trend_filter="on",
+        core_series_path=spy_path,
+        pool_m=2,
+        stop_rule="bp3",
+    )
+    assert result["status"] == "completed"
+    run = conn.execute(
+        "SELECT * FROM backtest_run WHERE id = ?", (result["backtest_run_id"],)
+    ).fetchone()
+    params = json.loads(str(run["params_json"]))
+    assert params["stop_rule"] == "bp3"
+    assert params["satellite_weighting"] == "minvar"
+    assert params["bp"]["entries"] == 2  # the two satellite assets, each entering once
+    assert params["bp"]["missing_bars"] == 0
+    assert params["bp"]["stop_outs"] == 0
+    assert params["distance_cells"]  # the 5-<10 / median cell, two names per decision
+    assert isinstance(params["core_stop_actions"], list)
     conn.close()

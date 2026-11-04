@@ -258,6 +258,13 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
         "if the solution holds more than 30 names, the 30 largest are re-solved. The name cap "
         "stays 1.5 / --top-n (30)",
     )
+    op.add_argument(
+        "--satellite-weighting",
+        dest="satellite_weighting",
+        choices=("minvar", "rp"),
+        default="minvar",
+        help="V4 plan section 2b: minvar (default) or risk parity on the names minvar holds",
+    )
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
     op.add_argument("--risk-model-version", dest="risk_model_select", help=_RISK_MODEL_VERSION_HELP)
@@ -540,13 +547,14 @@ def _run_build_risk_model(settings: QuantSettings, as_of: str, *, store_cov: boo
     return 0
 
 
-def _run_optimize(
+def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
     settings: QuantSettings,
     as_of: str,
     *,
     cycle_run_id: int | None = None,
     risk_model_id: int | None = None,
     pool_size: int = 30,
+    satellite_weighting: str = "minvar",
 ) -> int:
     if (cycle_run_id is None) != (risk_model_id is None):
         print(
@@ -562,6 +570,7 @@ def _run_optimize(
                 cycle_run_id=cycle_run_id,
                 risk_model_id=risk_model_id,
                 pool_size=pool_size,
+                satellite_weighting=satellite_weighting,
             )
         except (
             VersionError,
@@ -588,6 +597,10 @@ def _run_optimize(
                 "first_pass_n": top.first_pass_n,
                 "second_pass": top.second_pass,
                 "final_n": top.n_positions,
+                "satellite_weighting": top.satellite_weighting,
+                "rp_names": top.rp_names,
+                "rp_max_weight": top.rp_max_weight,
+                "rp_max_min_rrc": top.rp_max_min_rrc,
             }
         )
         return 0
@@ -891,6 +904,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
             cycle_run_id=args.cycle_run_id,
             risk_model_id=args.risk_model_id,
             pool_size=args.pool_size,
+            satellite_weighting=args.satellite_weighting,
         )
 
     if args.command == "benchmark":

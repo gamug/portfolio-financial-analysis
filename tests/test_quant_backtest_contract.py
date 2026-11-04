@@ -125,6 +125,10 @@ def test_optimize_cycle_run_ends_with_the_topn_portfolio_id(
         "first_pass_n": 0,
         "second_pass": False,
         "final_n": 30,
+        "satellite_weighting": "minvar",
+        "rp_names": 0,
+        "rp_max_weight": None,
+        "rp_max_min_rrc": None,
     }
     assert _topn_portfolio_id(payload) == 21
     with pytest.raises(BacktestError, match="no portfolio_id"):
