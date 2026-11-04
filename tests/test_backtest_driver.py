@@ -808,3 +808,76 @@ def test_the_driver_runs_the_v2_core_and_trend_filter_end_to_end(
     )
     assert spy_id > 0
     conn.close()
+
+
+def test_the_driver_runs_the_v3_parameters_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-3 parameters through the whole driver: base core, half exit, pool 2 (the fixture)."""
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    spy_path = _spy_file(tmp_path)
+    conn = connect(db_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", _fake_replay(conn))
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+        arms=["MARKOWITZ_BASE", "TOPN_MV_NOGUARD", "TOPN_MV_GUARD_NO_NLP", "MARKOWITZ_BASE_GUARD"],
+        core_weight=0.5,
+        trend_filter="on",
+        core_series_path=spy_path,
+        pool_m=2,
+        core_source="base",
+        filter_exit=0.5,
+    )
+    assert result["status"] == "completed"
+    run = conn.execute(
+        "SELECT * FROM backtest_run WHERE id = ?", (result["backtest_run_id"],)
+    ).fetchone()
+    params = json.loads(str(run["params_json"]))
+    assert params["pool_m"] == 2
+    assert params["core_source"] == "base"
+    assert params["filter_exit"] == 0.5
+    assert params["core_asset_id"] is None  # no SPY holding: the core is the base book
+    assert conn.execute("SELECT COUNT(*) FROM assets WHERE ticker = 'SPY'").fetchone()[0] == 0
+    assert all(row["second_pass"] is False for row in params["pool_decisions"])
+    assert [row["first_pass_n"] for row in params["pool_decisions"]] == [2, 2, 2]
+    # normal target (c = 0.5, base = satellite = 0.5/0.5): {1: 0.5, 2: 0.5}
+    # the 2022-02-01 decision triggers the filter and exits half: {1: 0.25, 2: 0.25}, cash 0.5
+    book = conn.execute(
+        "SELECT id FROM strategy_book WHERE arm_code = 'TOPN_MV_NOGUARD'"
+    ).fetchone()["id"]
+    rows = {
+        row["holding_key"]: row["final_target_weight"]
+        for row in conn.execute(
+            "SELECT holding_key, final_target_weight FROM book_weight_daily "
+            "WHERE book_id = ? AND date = '2022-02-02'",
+            (book,),
+        )
+    }
+    assert rows["AAA"] == pytest.approx(0.25, abs=1e-12)
+    assert rows["BBB"] == pytest.approx(0.25, abs=1e-12)
+    assert rows["CASH"] == pytest.approx(0.5, abs=1e-12)
+    # MARKOWITZ_BASE is untouched by the three parameters
+    base = conn.execute(
+        "SELECT id FROM strategy_book WHERE arm_code = 'MARKOWITZ_BASE'"
+    ).fetchone()["id"]
+    base_rows = {
+        row["holding_key"]: row["final_target_weight"]
+        for row in conn.execute(
+            "SELECT holding_key, final_target_weight FROM book_weight_daily "
+            "WHERE book_id = ? AND date = '2022-02-02'",
+            (base,),
+        )
+    }
+    assert base_rows["CASH"] == pytest.approx(0.0, abs=1e-12)
+    assert base_rows["AAA"] == pytest.approx(0.5, abs=1e-12)
+    assert base_rows["BBB"] == pytest.approx(0.5, abs=1e-12)
+    conn.close()
