@@ -96,3 +96,5 @@ than `B0·T0` and `C*` may be deleted after export; each one's input sha256, par
 ## 7. Deviations
 
 Any change to §1–§6 after the commit is written here with its date and reason, before the result it affects is seen.
+
+2026-11-04 — Implementation readings of §3 (clarifications, not changes). Recorded after the selection (73db93f) and the H test; reviewer A had asked for this entry before the selection. The readings were fixed in code at 0f5df99 (2026-11-03 23:38 UTC), before any grid run, the selection or the H runs, so that commit is their timestamp. (1) z in S_def is the system's cross_sectional_z (DQ-02: floor(0.5%·n) trimmed per tail when n ≥ 200, population sd) and S_def is clamped to [0, 100] by z_to_score like every score; the clamp binds only at |z| > 5. (2) The tilt applies to the blended score before the soft-veto penalties, which are subtracted afterwards at full strength; hard vetoes are unchanged. (3) β uses population moments (ddof = 0) over the finite pairs within the last 252 sessions ≤ t; R63 and R126 are compounded over the sessions ≤ t.

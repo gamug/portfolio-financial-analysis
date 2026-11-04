@@ -11258,7 +11258,7 @@ run copy with no `risk_free_rate` rows.
 
 ### REPLAY-8 — the FUNDAMENTAL normalization cohort is the decision date's universe members
 
-**Status**: fixed 2026-11-04, this commit; used by every Round A-2 run.
+**Status**: fixed 2026-11-03 (commit `438584b`, 2026-11-03 23:32 UTC); used by every Round A-2 run.
 
 **Symptom**: `_fundamental_normalization` z-scored the FUNDAMENTAL totals over every asset that
 had a latest usable row, not only the decision date's universe members. At the P1/P2a decision
