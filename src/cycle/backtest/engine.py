@@ -50,6 +50,9 @@ ARMS: tuple[str, ...] = (
     ARM_TOPN_GUARD,
     ARM_TOPN_GUARD_NO_NLP,
 )
+#: V2_PLAN §2d: GUARD (layers 1, 3, 4) as an overlay on the base book, same mechanics as the
+#: Top-N overlay. It is not in :data:`ARMS` because it is not part of BACKTEST_SPEC §0.
+ARM_MARKOWITZ_BASE_GUARD = "MARKOWITZ_BASE_GUARD"
 #: The equal-weight benchmark is context, not an arm.
 BENCHMARK = "SP500_EW_INTERNAL"
 

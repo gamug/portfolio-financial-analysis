@@ -26,7 +26,7 @@ import sys
 import tomllib
 from bisect import bisect_right
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -36,6 +36,7 @@ from portfolio_common.db import Database
 import kg_schema
 from cycle import data as cycle_data
 from cycle.backtest import calibrate as guard_calibration
+from cycle.backtest import core as v2core
 from cycle.backtest import engine
 from cycle.backtest import export as export_module
 from cycle.config import CycleSettings
@@ -75,6 +76,9 @@ NOGUARD_ARM = engine.ARM_TOPN_NOGUARD
 GUARD_ARM = engine.ARM_TOPN_GUARD
 GUARD_NO_NLP_ARM = engine.ARM_TOPN_GUARD_NO_NLP
 GUARD_ARMS = (GUARD_ARM, GUARD_NO_NLP_ARM)
+BASE_GUARD_ARM = engine.ARM_MARKOWITZ_BASE_GUARD
+#: The four arms every V2_PLAN §3 run simulates.
+V2_ARMS = (BASE_ARM, NOGUARD_ARM, GUARD_NO_NLP_ARM, BASE_GUARD_ARM)
 #: |sum of a book's weights - 1| tolerated before the run refuses a not-fully-invested book.
 FULLY_INVESTED_TOL = 1e-4
 #: WP-E's paired tests need at least this many common sessions (BACKTEST_SPEC §6).
@@ -721,9 +725,10 @@ class PipelineResult:
     rebalances: list[dict[str, Any]]
     warmup_refused: list[dict[str, str]]
     decisions_refused: list[dict[str, str]]
+    trend_states: list[dict[str, str]] = field(default_factory=list)
 
 
-def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
+def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipeline
     conn: Database,
     *,
     db_path: Path,
@@ -733,11 +738,16 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
     schedule: Sequence[Rebalance],
     warmup: Sequence[str],
     settings: CycleSettings,
+    core_weight: float = 0.0,
+    core_asset_id: int | None = None,
+    trend_filter: str = v2core.FILTER_OFF,
+    core_close: Mapping[str, float] | None = None,
 ) -> PipelineResult:
     targets: dict[str, dict[str, dict[int, float]]] = {BASE_ARM: {}, NOGUARD_ARM: {}}
     rebalances: list[dict[str, Any]] = []
     warmup_refused: list[dict[str, str]] = []
     decisions_refused: list[dict[str, str]] = []
+    trend_records: list[dict[str, str]] = []
     formation: str | None = None
 
     for warm_date in warmup:
@@ -852,8 +862,21 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
         )
         base_portfolio = _min_var_portfolio_id(base)
         topn_portfolio = _topn_portfolio_id(topn)
-        targets[BASE_ARM][decision] = _positions(conn, base_portfolio, BASE_ARM)
-        targets[NOGUARD_ARM][decision] = _positions(conn, topn_portfolio, NOGUARD_ARM)
+        if core_weight > 0.0 and core_asset_id is None:
+            raise BacktestError("core_weight > 0 needs the SPY asset id")
+        config = v2core.config_targets(
+            _positions(conn, base_portfolio, BASE_ARM),
+            _positions(conn, topn_portfolio, NOGUARD_ARM),
+            core_weight=core_weight,
+            core_asset_id=core_asset_id,
+            trend_filter=trend_filter,
+            close=core_close,
+            decision=decision,
+        )
+        if config.trend_state is not None:
+            trend_records.append({"date": decision, "state": config.trend_state})
+        targets[BASE_ARM][decision] = config.base
+        targets[NOGUARD_ARM][decision] = config.topn
 
         if formation is None:
             formation = rebalance.execution_date
@@ -878,6 +901,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913 - spec §2's linear pipeline
         rebalances=rebalances,
         warmup_refused=warmup_refused,
         decisions_refused=decisions_refused,
+        trend_states=trend_records,
     )
 
 
@@ -893,6 +917,10 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     migrations_applied: Sequence[int],
     blend: str = "B0",
     tilt: str = "T0",
+    core_weight: float = 0.0,
+    trend_filter: str = v2core.FILTER_OFF,
+    series: v2core.CoreSeries | None = None,
+    core_asset_id: int | None = None,
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -901,6 +929,12 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "window": window.window_id,
         "blend": blend,
         "tilt": tilt,
+        "core_weight": core_weight,
+        "trend_filter": trend_filter,
+        "core_asset_id": core_asset_id,
+        "core_series_path": None if series is None else str(series.path),
+        "core_series_sha256": None if series is None else series.sha256,
+        "core_manifest_declared_sha256": None if series is None else series.declared_sha256,
         "migrations_applied": list(migrations_applied),
         "d_start": window.d_start,
         "d_end": window.d_end,
@@ -981,6 +1015,23 @@ def _update_run(conn: Database, run_id: int, *, status: str, extra: Mapping[str,
     conn.commit()
 
 
+def _ensure_core_asset(conn: Database) -> int:
+    """The run copy's ``assets`` id for SPY, inserted once when the core is requested.
+
+    The core is a real holding of the book, so it carries a real ``assets`` row (the FK on
+    ``book_weight_daily`` / ``guard_alert`` stays intact) with no CIK and no sector. Only the
+    *copy* is written: the production databases are never opened for writing.
+    """
+    row = conn.execute(
+        "SELECT id FROM assets WHERE upper(ticker) = ?", (v2core.CORE_TICKER,)
+    ).fetchone()
+    if row is not None:
+        return int(row["id"])
+    cursor = conn.execute("INSERT INTO assets (ticker) VALUES (?)", (v2core.CORE_TICKER,))
+    conn.commit()
+    return int(cursor.lastrowid or 0)
+
+
 def _insert_books(conn: Database, run_id: int, arms: Sequence[engine.ArmSpec]) -> dict[str, int]:
     ids: dict[str, int] = {}
     for arm in arms:
@@ -1040,6 +1091,18 @@ def _insert_rebalances(
                         "executed",
                     )
                 )
+        if BASE_GUARD_ARM in book_ids:
+            rows.append(
+                (
+                    book_ids[BASE_GUARD_ARM],
+                    rebalance["decision_date"],
+                    rebalance["execution_date"],
+                    rebalance["base_portfolio_id"],
+                    None,
+                    rebalance["risk_model_id"],
+                    "executed",
+                )
+            )
         conn.executemany(
             "INSERT INTO book_rebalance (book_id, decision_date, execution_date, "
             "quant_portfolio_id, cycle_run_id, risk_model_id, status) "
@@ -1308,6 +1371,30 @@ def _summaries_and_tests(  # noqa: PLR0913, PLR0917 - the run's outputs, all nam
                 "statistic, p_value, n_obs, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (run_id, segment, arm_a, arm_b, "hac_mean_diff", t_value, hac_p, len(dates), None),
             )
+            # V2_PLAN §2e: paired circular block bootstrap of the MDD difference (a - b).
+            mdd_diff, mdd_p = stats.bootstrap_mdd_diff(ra, rb)
+            conn.execute(
+                "INSERT INTO backtest_test (backtest_run_id, segment, arm_a, arm_b, test, "
+                "statistic, p_value, n_obs, params_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    segment,
+                    arm_a,
+                    arm_b,
+                    "bootstrap_mdd",
+                    mdd_diff,
+                    mdd_p,
+                    len(dates),
+                    json.dumps(
+                        {
+                            "block": 5,
+                            "n_boot": 4999,
+                            "seed": 20261104,
+                            "statistic": "max_drawdown_a_minus_b",
+                        }
+                    ),
+                ),
+            )
     conn.commit()
 
 
@@ -1317,6 +1404,10 @@ def _test_pairs(codes: set[str]) -> list[tuple[str, str]]:
         candidates.append((GUARD_ARM, NOGUARD_ARM))
     if GUARD_NO_NLP_ARM in codes:
         candidates.append((GUARD_NO_NLP_ARM, NOGUARD_ARM))
+    if BASE_GUARD_ARM in codes and BASE_ARM in codes:
+        candidates.append((BASE_GUARD_ARM, BASE_ARM))
+    if GUARD_NO_NLP_ARM in codes and BASE_ARM in codes:
+        candidates.append((GUARD_NO_NLP_ARM, BASE_ARM))
     if NOGUARD_ARM in codes and BASE_ARM in codes:
         candidates.append((NOGUARD_ARM, BASE_ARM))
     pairs: list[tuple[str, str]] = []
@@ -1331,7 +1422,7 @@ def _test_pairs(codes: set[str]) -> list[tuple[str, str]]:
 
 def resolve_arms(requested: Sequence[str] | None, params: BacktestParams) -> list[str]:
     """The arms a run simulates. ``None`` = BASE + NOGUARD + every guard arm the params define."""
-    known = {BASE_ARM, NOGUARD_ARM, GUARD_ARM, GUARD_NO_NLP_ARM}
+    known = {BASE_ARM, NOGUARD_ARM, GUARD_ARM, GUARD_NO_NLP_ARM, BASE_GUARD_ARM}
     if requested is None:
         arms = [BASE_ARM, NOGUARD_ARM] + [c for c in GUARD_ARMS if c in params.guard]
     else:
@@ -1357,6 +1448,12 @@ def _arm_specs(
     for code in GUARD_ARMS:
         if code in codes:
             specs.append(engine.ArmSpec(code, NOGUARD_ARM, guard=params.guard[code]))
+    if BASE_GUARD_ARM in codes:
+        # V2_PLAN §2d: the base book gets the same frozen layers 1/3/4 as the Top-N overlay.
+        guard = params.guard.get(GUARD_NO_NLP_ARM)
+        if guard is None:
+            raise BacktestError(f"{BASE_GUARD_ARM} needs [guard.arms.{GUARD_NO_NLP_ARM}]")
+        specs.append(engine.ArmSpec(BASE_GUARD_ARM, BASE_ARM, guard=guard))
     return specs
 
 
@@ -1408,6 +1505,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     blend: str = "B0",
     tilt: str = "T0",
     market_series_path: str | Path | None = None,
+    core_weight: float = 0.0,
+    trend_filter: str = v2core.FILTER_OFF,
+    core_series_path: str | Path | None = None,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1422,6 +1522,22 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(f"unknown blend {blend!r}: expected one of {sorted(defensive.BLENDS)}")
     if tilt not in defensive.TILTS:
         raise BacktestError(f"unknown tilt {tilt!r}: expected one of {sorted(defensive.TILTS)}")
+    if not math.isfinite(core_weight) or not 0.0 <= core_weight < 1.0:
+        raise BacktestError(f"core_weight must be in [0, 1), got {core_weight!r}")
+    if trend_filter not in v2core.FILTERS:
+        raise BacktestError(
+            f"unknown trend_filter {trend_filter!r}: expected one of {list(v2core.FILTERS)}"
+        )
+    series: v2core.CoreSeries | None = None
+    if core_weight > 0.0 or trend_filter == v2core.FILTER_ON:
+        if core_series_path is None:
+            raise BacktestError(
+                "--core-series is required when core_weight > 0 or the trend filter is on"
+            )
+        try:
+            series = v2core.load_core_series(core_series_path)
+        except v2core.CoreSeriesError as exc:
+            raise BacktestError(str(exc)) from exc
     codes = resolve_arms(arms, params)
     schedule = schedule_for(window)
     if not schedule:
@@ -1438,8 +1554,20 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         # in params_json) rather than running on old table shapes.
         applied = kg_schema.ensure(conn, run_migrations=True)
         require_migrated(conn)
+        core_asset_id = _ensure_core_asset(conn) if core_weight > 0.0 else None
         run_id = _open_run(
-            conn, window, params, warmup_steps, input_sha, applied, blend=blend, tilt=tilt
+            conn,
+            window,
+            params,
+            warmup_steps,
+            input_sha,
+            applied,
+            blend=blend,
+            tilt=tilt,
+            core_weight=core_weight,
+            trend_filter=trend_filter,
+            series=series,
+            core_asset_id=core_asset_id,
         )
         payload: dict[str, Any] = {}
         try:
@@ -1491,6 +1619,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 schedule=schedule,
                 warmup=warmup,
                 settings=settings,
+                core_weight=core_weight,
+                core_asset_id=core_asset_id,
+                trend_filter=trend_filter,
+                core_close=None if series is None else series.close,
             )
             decisions = {rebalance.decision_date for rebalance in schedule}
             tilt_triggers = [
@@ -1507,6 +1639,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             ).fetchone()
             run_params = json.loads(run_row["params_json"])
             run_params["tilt_triggers"] = tilt_triggers
+            run_params["trend_filter_dates"] = pipeline.trend_states
             if market_sha is not None:
                 run_params["market_series_sha256"] = market_sha
                 run_params["market_series_path"] = str(market_series_path)
@@ -1542,6 +1675,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             specs = _arm_specs(codes, params, shadow_code)
 
             returns = load_returns(conn, params.returns_engine_version, sessions[0], window.d_end)
+            if series is not None and core_asset_id is not None:
+                # The core's total return is the verified SPY file, never a database row.
+                for session, value in series.total_return.items():
+                    returns.setdefault(session, {})[core_asset_id] = value
             rf, carried = load_rf(conn, params.rf_curve, sessions)
             members = load_benchmark_members(conn, universe_conn, sessions, formation_index)
             engine_input = engine.EngineInput(
@@ -1676,6 +1813,23 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--blend", default="B0", choices=sorted(defensive.BLENDS))
     run.add_argument("--tilt", default="T0", choices=sorted(defensive.TILTS))
     run.add_argument(
+        "--core-weight",
+        type=float,
+        default=0.0,
+        help="V2_PLAN §2a: weight of the SPY core in the Top-N target (0 = v1)",
+    )
+    run.add_argument(
+        "--trend-filter",
+        default=v2core.FILTER_OFF,
+        choices=list(v2core.FILTERS),
+        help="V2_PLAN §2c: SPY close vs its 210-session mean at each decision date",
+    )
+    run.add_argument(
+        "--core-series",
+        default=None,
+        help="the verified SPY file (with manifest.json beside it); required when needed",
+    )
+    run.add_argument(
         "--market-series",
         default=None,
         help="a precomputed {session: EW member return} JSON (from `market-series`); "
@@ -1780,6 +1934,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             blend=args.blend,
             tilt=args.tilt,
             market_series_path=args.market_series,
+            core_weight=args.core_weight,
+            trend_filter=args.trend_filter,
+            core_series_path=args.core_series,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)

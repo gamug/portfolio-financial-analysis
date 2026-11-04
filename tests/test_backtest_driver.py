@@ -7,6 +7,7 @@ pipeline calls with the exact §8 arguments, the engine run and the m018 persist
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from datetime import UTC, datetime
@@ -288,7 +289,13 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
     assert conn.execute("SELECT COUNT(*) FROM book_weight_daily").fetchone()[0] > 0
     assert conn.execute("SELECT COUNT(*) FROM book_daily_performance").fetchone()[0] > 0
     assert conn.execute("SELECT COUNT(*) FROM backtest_summary").fetchone()[0] == 3
-    assert conn.execute("SELECT COUNT(*) FROM backtest_test").fetchone()[0] == 6
+    # three pairs (GUARD_NO_NLP/NOGUARD, GUARD_NO_NLP/BASE, NOGUARD/BASE) x four tests
+    # (memmel_jk, ledoit_wolf, hac_mean_diff, the v2 bootstrap_mdd)
+    assert conn.execute("SELECT COUNT(*) FROM backtest_test").fetchone()[0] == 12
+    assert [
+        str(row["test"])
+        for row in conn.execute("SELECT DISTINCT test FROM backtest_test ORDER BY test")
+    ] == ["bootstrap_mdd", "hac_mean_diff", "ledoit_wolf", "memmel_jk"]
 
     statuses = {
         str(r["status"]) for r in conn.execute("SELECT status FROM guard_action").fetchall()
@@ -712,3 +719,92 @@ def test_the_two_optional_run_keys_reach_cycle_and_params_json(
     payload = json.loads(str(run["params_json"]))
     assert payload["unscored_max_share"] == 0.06
     assert payload["exclude_tickers"] == ["AAA"]
+
+
+def _spy_file(tmp_path: Path) -> Path:
+    """A synthetic SPY series: 100 until mid-January 2022, then 90 (the filter's bear)."""
+    sessions = sessions_between("2021-01-04", "2022-03-15")
+    payload = {}
+    for index, session in enumerate(sessions):
+        close = 90.0 if session >= "2022-01-15" else 100.0
+        payload[session] = {
+            "close": close,
+            "div": 0.0,
+            "tr": None if index == 0 else 0.0,
+        }
+    path = tmp_path / "spy_tr.json"
+    path.write_text(json.dumps(payload))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    (tmp_path / "manifest.json").write_text(json.dumps({"spy_tr_sha256": digest}))
+    return path
+
+
+def test_the_driver_runs_the_v2_core_and_trend_filter_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db_path, universe_path = _fixture(tmp_path)
+    params_path = _params_file(tmp_path)
+    spy_path = _spy_file(tmp_path)
+    conn = connect(db_path)
+    monkeypatch.setitem(driver.WINDOWS, "PX", ("2022-01-03", "2022-03-15"))
+    monkeypatch.setattr(driver, "run_quant", _fake_quant(conn, []))
+    monkeypatch.setattr(driver, "run_replay", _fake_replay(conn))
+    monkeypatch.setattr(queries, "risk_model_asset_ids", lambda _c, _m: {1, 2}, raising=False)
+
+    result = run_backtest(
+        window_id="PX",
+        db_path=db_path,
+        universe_db_path=universe_path,
+        params_path=params_path,
+        warmup_steps=2,
+        arms=["MARKOWITZ_BASE", "TOPN_MV_NOGUARD", "TOPN_MV_GUARD_NO_NLP", "MARKOWITZ_BASE_GUARD"],
+        core_weight=0.5,
+        trend_filter="on",
+        core_series_path=spy_path,
+    )
+    assert result["status"] == "completed"
+    run = conn.execute(
+        "SELECT * FROM backtest_run WHERE id = ?", (result["backtest_run_id"],)
+    ).fetchone()
+    params = json.loads(str(run["params_json"]))
+    assert params["core_weight"] == 0.5
+    assert params["trend_filter"] == "on"
+    assert (
+        params["core_series_sha256"]
+        == json.loads((tmp_path / "manifest.json").read_text())["spy_tr_sha256"]
+    )
+    states = {row["date"]: row["state"] for row in params["trend_filter_dates"]}
+    assert states["2021-12-31"] == "invested"
+    assert states["2022-02-01"] == "cash"
+    assert states["2022-03-03"] == "cash"
+    # the core is a real asset of the copy, held at c = 0.5 on the first execution date
+    spy_id = conn.execute("SELECT id FROM assets WHERE ticker = 'SPY'").fetchone()["id"]
+    book = conn.execute(
+        "SELECT id FROM strategy_book WHERE arm_code = 'TOPN_MV_NOGUARD'"
+    ).fetchone()["id"]
+    first = conn.execute(
+        "SELECT final_target_weight FROM book_weight_daily "
+        "WHERE book_id = ? AND date = '2022-01-03' AND holding_key = 'SPY'",
+        (book,),
+    ).fetchone()
+    assert first["final_target_weight"] == pytest.approx(0.5, abs=1e-12)
+    # the second decision liquidates the whole Top-N book to cash
+    cash = conn.execute(
+        "SELECT final_target_weight FROM book_weight_daily "
+        "WHERE book_id = ? AND date = '2022-02-02' AND holding_key = 'CASH'",
+        (book,),
+    ).fetchone()
+    assert cash["final_target_weight"] == pytest.approx(1.0, abs=1e-12)
+    # the base book got neither the core nor the filter
+    base = conn.execute(
+        "SELECT id FROM strategy_book WHERE arm_code = 'MARKOWITZ_BASE'"
+    ).fetchone()["id"]
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM book_weight_daily WHERE book_id = ? AND holding_key = 'SPY'",
+            (base,),
+        ).fetchone()[0]
+        == 0
+    )
+    assert spy_id > 0
+    conn.close()
