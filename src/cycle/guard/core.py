@@ -60,9 +60,11 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
+
+from cycle.guard import basing
 
 _LAYER_STOP_LOSS = 1
 _LAYER_NEWS = 2
@@ -128,6 +130,10 @@ class GuardParams:
     vol_window: int = 21
     periods_per_year: int = 252
     news: NewsParams | None = None
+    #: Round 4: layer 1's rule. ``kl`` = Kaminski & Lo (the v1-v3 path); ``bp3`` /
+    #: ``bp4`` = the Basing Points machine of Edwards, Magee & Bassetti (2007),
+    #: rules 1-3 / 1-4.
+    stop_rule: str = "kl"
 
     def __post_init__(self) -> None:
         _validate_params(self)
@@ -161,6 +167,18 @@ class GuardInput:
     reference_returns: Sequence[float]
     nav: float
     news: Mapping[int, NewsCounts] | None = None
+    #: Round 4's Basing Points inputs. ``bars`` is the tracking window ending at ``date``
+    #: (oldest first, ``None`` for a session without a bar) per asset; ``stop_distances``
+    #: the per-asset ``d`` in force at this close; ``decision_date`` is True at the close
+    #: of a decision date (the reference is the new target); ``core_asset_id`` is the SPY
+    #: core, which takes no per-asset stop under bp3/bp4.
+    bars: Mapping[int, Sequence[basing.Bar | None]] | None = None
+    #: The real session of every entry in ``bars`` (same length, oldest first; a ``None``
+    #: bar keeps its session). Required when ``bars`` is used by bp3/bp4.
+    bar_sessions: Mapping[int, Sequence[str]] | None = None
+    stop_distances: Mapping[int, float] | None = None
+    decision_date: bool = False
+    core_asset_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +227,7 @@ class GuardState:
     l1_out: frozenset[int] = frozenset()
     l2: tuple[tuple[int, _L2State], ...] = ()
     nav_max: float | None = None
+    bp: tuple[tuple[int, basing.BasingPointState], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,6 +251,8 @@ class GuardOutput:
     s_sigma: float | None
     s_dd: float | None
     alerts: tuple[Alert, ...]
+    bp_events: tuple[basing.BasingPointEvent, ...] = ()
+    bp_missing: int = 0
 
 
 def initial_state() -> GuardState:
@@ -288,6 +309,10 @@ def _validate_params(params: GuardParams) -> None:
     _require(
         params.periods_per_year >= 1,
         f"GuardParams.periods_per_year must be >= 1, got {params.periods_per_year!r}",
+    )
+    _require(
+        params.stop_rule in basing.STOP_RULES,
+        f"GuardParams.stop_rule must be one of {basing.STOP_RULES}, got {params.stop_rule!r}",
     )
     if _LAYER_NEWS in params.layers:
         _require(
@@ -383,6 +408,136 @@ def _layer1(
                 )
             )
     return frozenset(out), alerts
+
+
+def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
+    state: GuardState,
+    reference: Mapping[int, float],
+    inp: GuardInput,
+    params: GuardParams,
+) -> tuple[
+    frozenset[int],
+    tuple[tuple[int, basing.BasingPointState], ...],
+    list[Alert],
+    list[basing.BasingPointEvent],
+    int,
+]:
+    """Basing Points layer 1 for the names in the reference (satellite names only).
+
+    The core's asset (``inp.core_asset_id``) is skipped. A name first seen in the reference
+    gets a machine built over the last 64 bars (with their real session dates); a name out at
+    a decision date and still in the reference re-enters with a fresh machine; a name that
+    leaves the reference drops its machine. A session without a bar neither updates nor
+    triggers. Bars and sessions are only required for a name that is actually entered,
+    reseeded or advanced.
+    """
+    machines = dict(state.bp)
+    out: set[int] = set()
+    alerts: list[Alert] = []
+    events: list[basing.BasingPointEvent] = []
+    missing = 0
+    distances = inp.stop_distances or {}
+    histories = inp.bars or {}
+    for asset_id in sorted(set(reference) | set(machines)):
+        if asset_id == inp.core_asset_id:
+            continue
+        in_reference = asset_id in reference
+        machine = machines.get(asset_id)
+        if machine is None and not in_reference:
+            machines.pop(asset_id, None)
+            continue
+        if machine is not None:
+            if machine.out:
+                if inp.decision_date and in_reference:
+                    history = histories.get(asset_id) or []
+                    sessions = _bp_sessions(inp, asset_id, history)
+                    machine, entry_events = basing.reseed(
+                        sessions,
+                        history,
+                        entry_session=inp.date,
+                        distance=distances.get(asset_id, 0.10),
+                        rule=params.stop_rule,
+                    )
+                    machines[asset_id] = machine
+                    events.extend(replace(event, asset_id=asset_id) for event in entry_events)
+                    alerts.append(
+                        Alert(
+                            layer=_LAYER_STOP_LOSS,
+                            asset_id=asset_id,
+                            rule_id="L1_BP_REENTRY",
+                            value=machine.stop,
+                            threshold=0.0,
+                            state=_EXIT,
+                        )
+                    )
+                    if machine.out:
+                        out.add(asset_id)
+                    continue
+                if inp.decision_date and not in_reference:
+                    machines.pop(asset_id, None)
+                    continue
+                out.add(asset_id)
+                continue
+            if not in_reference:
+                machines.pop(asset_id, None)
+                continue
+        if machine is None:
+            history = histories.get(asset_id) or []
+            if not any(bar is not None for bar in history):
+                # no bar at all at entry: fail open (no machine, not stopped), counted
+                missing += 1
+                continue
+            sessions = _bp_sessions(inp, asset_id, history)
+            machine, entry_events = basing.establish(
+                sessions,
+                history,
+                entry_session=inp.date,
+                distance=distances.get(asset_id, 0.10),
+                rule=params.stop_rule,
+            )
+            machines[asset_id] = machine
+            events.extend(replace(event, asset_id=asset_id) for event in entry_events)
+            if machine.out:
+                out.add(asset_id)
+            continue
+        history = histories.get(asset_id) or []
+        if not history or history[-1] is None:
+            missing += 1
+            continue
+        machine, day_events = basing.advance(
+            machine,
+            inp.date,
+            history[-1],
+            distance=distances.get(asset_id, 0.10),
+            rule=params.stop_rule,
+        )
+        machines[asset_id] = machine
+        events.extend(replace(event, asset_id=asset_id) for event in day_events)
+        if machine.out:
+            out.add(asset_id)
+            alerts.append(
+                Alert(
+                    layer=_LAYER_STOP_LOSS,
+                    asset_id=asset_id,
+                    rule_id="L1_BP_STOP",
+                    value=history[-1].close,
+                    threshold=machine.stop,
+                    state=_ENTER,
+                )
+            )
+    bp_state = tuple(sorted(machines.items()))
+    return frozenset(out), bp_state, alerts, events, missing
+
+
+def _bp_sessions(inp: GuardInput, asset_id: int, history: Sequence[basing.Bar | None]) -> list[str]:
+    """The real session dates aligned with *history* (required for an entry or a reseed)."""
+    sessions = (inp.bar_sessions or {}).get(asset_id)
+    if sessions is None or len(sessions) != len(history):
+        raise ValueError(
+            f"asset {asset_id}: bars and bar_sessions disagree "
+            f"({len(history)} bars, {0 if sessions is None else len(sessions)} sessions)"
+        )
+    return list(sessions)
 
 
 def _news_evidence(counts: NewsCounts | None, n_min: int) -> tuple[float, bool]:
@@ -580,9 +735,18 @@ def evaluate(state: GuardState, inp: GuardInput, params: GuardParams) -> GuardOu
     alerts: list[Alert] = []
 
     l1_out = state.l1_out
+    bp_state = state.bp
+    bp_events: list[basing.BasingPointEvent] = []
+    bp_missing = 0
     if _LAYER_STOP_LOSS in params.layers:
-        l1_out, layer1_alerts = _layer1(state.l1_out, reference, inp.asset_returns, params)
-        alerts.extend(layer1_alerts)
+        if params.stop_rule == "kl":
+            l1_out, layer1_alerts = _layer1(state.l1_out, reference, inp.asset_returns, params)
+            alerts.extend(layer1_alerts)
+        else:
+            l1_out, bp_state, layer1_alerts, bp_events, bp_missing = _layer1_bp(
+                state, reference, inp, params
+            )
+            alerts.extend(layer1_alerts)
 
     l2_state = state.l2
     l2_trimmed: frozenset[int] = frozenset()
@@ -620,7 +784,7 @@ def evaluate(state: GuardState, inp: GuardInput, params: GuardParams) -> GuardOu
         scale,
     )
     return GuardOutput(
-        state=GuardState(l1_out=l1_out, l2=l2_state, nav_max=nav_max),
+        state=GuardState(l1_out=l1_out, l2=l2_state, nav_max=nav_max, bp=bp_state),
         weights=weights,
         cut_assets=cut_assets,
         l1_out=l1_out if _LAYER_STOP_LOSS in params.layers else frozenset(),
@@ -628,4 +792,6 @@ def evaluate(state: GuardState, inp: GuardInput, params: GuardParams) -> GuardOu
         s_sigma=s_sigma,
         s_dd=s_dd,
         alerts=tuple(alerts),
+        bp_events=tuple(bp_events),
+        bp_missing=bp_missing,
     )

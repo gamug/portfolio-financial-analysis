@@ -265,6 +265,106 @@ def risk_parity(
     return _result("risk_parity", wv, ids, sig, mu, rf, used, prob.status, time.perf_counter() - t0)
 
 
+def risk_parity_slsqp(  # noqa: C901 - the plan's constrained objective, one linear solve
+    sigma: Mat, *, constraints: Constraints
+) -> OptResult:
+    """Equal-risk-contribution weights by the round-4 plan's SLSQP objective.
+
+    Minimize ``sum_i sum_j (w_i (Sigma w)_i - w_j (Sigma w)_j)^2`` subject to
+    ``w >= 0``, ``sum w = 1``, the name cap and the sector caps, with ``Sigma`` scaled by
+    ``1 / mean(diag Sigma)`` (the argmin is scale-free), from equal weights, SLSQP with
+    ``ftol=1e-12`` and ``maxiter=1000``. A solve that does not converge raises
+    :class:`ValueError`; so does a final point that violates a constraint beyond 1e-8.
+    """
+    from scipy.optimize import minimize  # noqa: PLC0415 - quant's numeric stack
+
+    sig = _sym_psd(np.asarray(sigma, dtype=np.float64))
+    n = sig.shape[0]
+    if n == 0:
+        raise ValueError("risk_parity_slsqp needs at least one asset")
+    t0 = time.perf_counter()
+    mean_var = float(np.mean(np.diag(sig)))
+    if not np.isfinite(mean_var) or mean_var <= 0.0:
+        raise ValueError(f"risk_parity_slsqp: degenerate covariance (mean variance {mean_var!r})")
+    scaled = sig / mean_var
+
+    def objective(w: npt.NDArray[np.float64]) -> float:
+        risk = w * (scaled @ w)
+        difference = risk[:, None] - risk[None, :]
+        return float(np.sum(difference * difference))
+
+    def objective_jac(w: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        # f = sum_i sum_j (rc_i - rc_j)^2 = 2n sum_i (rc_i - mean(rc))^2, rc_i = w_i (S w)_i
+        risk = w * (scaled @ w)
+        gradient = 4.0 * n * (risk - risk.mean())
+        return np.asarray(gradient * (scaled @ w) + scaled @ (gradient * w), dtype=np.float64)
+
+    cap = constraints.max_name_weight if constraints.max_name_weight is not None else 1.0
+    bounds = [(0.0, cap)] * n
+    cons: list[dict[str, object]] = [
+        {
+            "type": "eq",
+            "fun": lambda w: np.array([float(np.sum(w) - 1.0)]),
+            "jac": lambda w: np.ones((1, n)),
+        }
+    ]
+    sector_groups: dict[int | None, list[int]] = {}
+    if constraints.max_sector_weight is not None and constraints.sector_of is not None:
+        ids = constraints.asset_ids or list(range(n))
+        for index, asset_id in enumerate(ids):
+            sector_groups.setdefault(constraints.sector_of.get(int(asset_id)), []).append(index)
+        sector_cap = float(constraints.max_sector_weight)
+        matrix = np.zeros((len(sector_groups), n), dtype=np.float64)
+        for row, indices in enumerate(sector_groups.values()):
+            matrix[row, indices] = 1.0
+        cons.append(
+            {
+                "type": "ineq",
+                "fun": lambda w: sector_cap - matrix @ w,
+                "jac": lambda w: -matrix,
+            }
+        )
+    x0 = np.full(n, 1.0 / n, dtype=np.float64)
+    result = minimize(
+        objective,
+        x0,
+        jac=objective_jac,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=cons,
+        options={"ftol": 1e-12, "maxiter": 1000},
+    )
+    if not result.success:
+        raise ValueError(f"risk_parity_slsqp did not converge: {result.message}")
+    weights = np.clip(np.asarray(result.x, dtype=np.float64), 0.0, None)
+    total = float(weights.sum())
+    if total <= 0.0:
+        raise ValueError("risk_parity_slsqp returned an all-zero book")
+    weights = weights / total
+    tolerance = 1e-8
+    if abs(float(weights.sum()) - 1.0) > tolerance:
+        raise ValueError("risk_parity_slsqp: weights do not sum to one")
+    if cap < 1.0 and float(weights.max()) > cap + tolerance:
+        raise ValueError("risk_parity_slsqp: the name cap is violated")
+    sector_limit = constraints.max_sector_weight
+    if sector_limit is not None:
+        for indices in sector_groups.values():
+            if float(weights[indices].sum()) > float(sector_limit) + tolerance:
+                raise ValueError("risk_parity_slsqp: a sector cap is violated")
+    ids = constraints.asset_ids or list(range(n))
+    return _result(
+        "risk_parity_slsqp",
+        weights,
+        ids,
+        sig,
+        None,
+        0.0,
+        "SLSQP",
+        str(result.status),
+        time.perf_counter() - t0,
+    )
+
+
 def target_return_portfolio(  # noqa: PLR0913 - keyword-only optimizer knobs
     mu: Vec,
     sigma: Mat,

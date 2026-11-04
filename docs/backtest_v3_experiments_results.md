@@ -12,7 +12,7 @@ hand. Aggregates only: no per-asset value and no SPY price/return series appears
 - **Every result is in-sample**: all six windows were seen before round 3.
 - X0 identity: all six windows reproduce v2 V3 exactly
   (summaries, tests, weights and GUARD actions; max |delta| 0.0).
-- Configurations tried with LLM scores (ledger): exploratory sweep 2026-11-01/02 ~29
+- Configurations tried (ledger): exploratory sweep 2026-11-01/02 ~29
   configurations (OpenCode-simulated scores, chosen on P1; exploration only); CHAMPION
   (PR #188, pre-registered `56312fb`) 25 configurations including B0·T0, selection on
   P1 + P2a, H1–H3 used once as the test, and the defensive claim was not supported;

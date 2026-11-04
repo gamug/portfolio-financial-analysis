@@ -107,6 +107,7 @@ def test_interface_matches_spec_8_1() -> None:
         "vol_window",
         "periods_per_year",
         "news",
+        "stop_rule",
     ]
     assert [field.name for field in fields(NewsCounts)] == ["n_articles", "n_negative"]
     assert [field.name for field in fields(GuardInput)] == [
@@ -116,6 +117,11 @@ def test_interface_matches_spec_8_1() -> None:
         "reference_returns",
         "nav",
         "news",
+        "bars",
+        "bar_sessions",
+        "stop_distances",
+        "decision_date",
+        "core_asset_id",
     ]
     assert [field.name for field in fields(Alert)] == [
         "layer",
@@ -134,8 +140,10 @@ def test_interface_matches_spec_8_1() -> None:
         "s_sigma",
         "s_dd",
         "alerts",
+        "bp_events",
+        "bp_missing",
     ]
-    assert [field.name for field in fields(GuardState)] == ["l1_out", "l2", "nav_max"]
+    assert [field.name for field in fields(GuardState)] == ["l1_out", "l2", "nav_max", "bp"]
     assert list(inspect.signature(evaluate).parameters) == ["state", "inp", "params"]
     assert initial_state() == GuardState(l1_out=frozenset(), l2=(), nav_max=None)
     # The defaults and parameter order the spec fixes.
@@ -143,6 +151,7 @@ def test_interface_matches_spec_8_1() -> None:
         layers=frozenset(), J=1, gamma=0.1, delta=0.0, sigma_star=0.1, m=1.0, alpha=0.5
     )
     assert (minimal.vol_window, minimal.periods_per_year, minimal.news) == (21, 252, None)
+    assert minimal.stop_rule == "kl"
     assert _news().trim_fraction == 1.0
     instances: list[object] = [
         minimal,

@@ -38,6 +38,7 @@ from cycle.guard import (
     evaluate,
     initial_state,
 )
+from cycle.guard.basing import Bar, BasingPointEvent
 
 #: The four arms fixed by BACKTEST_SPEC §0, in persistence order.
 ARM_MARKOWITZ_BASE = "MARKOWITZ_BASE"
@@ -109,6 +110,11 @@ class EngineInput:
     cost_bps: float = 10.0
     benchmark_members: Mapping[str, Sequence[int]] = field(default_factory=dict)
     news: Mapping[str, Mapping[int, NewsCounts]] = field(default_factory=dict)
+    #: Round 4's Basing Points inputs: per session and asset the high/low/close bar, and
+    #: the stop distance in force (set at the latest decision date).
+    bars: Mapping[str, Mapping[int, Bar]] = field(default_factory=dict)
+    stop_distances: Mapping[str, Mapping[int, float]] = field(default_factory=dict)
+    core_asset_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +176,8 @@ class ArmResult:
     performance: tuple[DayPerformance, ...]
     executions: tuple[Execution, ...]
     guard_events: tuple[GuardEvent, ...]
+    bp_events: tuple[BasingPointEvent, ...] = ()
+    bp_missing: int = 0
 
 
 @dataclass(frozen=True)
@@ -208,6 +216,8 @@ class _Book:
 
     __slots__ = (
         "_session",
+        "bp_events_out",
+        "bp_missing",
         "cash",
         "events_out",
         "executions_out",
@@ -238,6 +248,8 @@ class _Book:
         self.performance_out: list[DayPerformance] = []
         self.executions_out: list[Execution] = []
         self.events_out: list[GuardEvent] = []
+        self.bp_events_out: list[BasingPointEvent] = []
+        self.bp_missing = 0
 
     @property
     def _guarded(self) -> bool:
@@ -294,6 +306,19 @@ def _aligned_returns(inp: EngineInput) -> dict[int, list[float]]:
                 series = [math.nan] * len(inp.sessions)
                 aligned[int(asset_id)] = series
             series[index] = float(ret)
+    return aligned
+
+
+def _aligned_bars(inp: EngineInput) -> dict[int, list[Bar | None]]:
+    """Per-asset high/low/close aligned to ``inp.sessions``; a missing bar is ``None``."""
+    aligned: dict[int, list[Bar | None]] = {}
+    for index, date in enumerate(inp.sessions):
+        for asset_id, bar in inp.bars.get(date, {}).items():
+            series = aligned.get(int(asset_id))
+            if series is None:
+                series = [None] * len(inp.sessions)
+                aligned[int(asset_id)] = series
+            series[index] = bar
     return aligned
 
 
@@ -385,10 +410,22 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
     date: str,
     index: int,
     aligned: Mapping[int, Sequence[float]],
+    aligned_bars: Mapping[int, Sequence[Bar | None]],
     inp: EngineInput,
     params: GuardParams,
 ) -> GuardInput:
     tracked = set(reference) | set(book.out_assets)
+    bars: dict[int, Sequence[Bar | None]] = {}
+    bar_sessions: dict[int, Sequence[str]] = {}
+    start = max(0, index - 63)
+    for asset_id in tracked:
+        series = aligned_bars.get(asset_id)
+        if series is None:
+            bars[asset_id] = []
+            bar_sessions[asset_id] = []
+        else:
+            bars[asset_id] = list(series[start : index + 1])
+            bar_sessions[asset_id] = list(inp.sessions[start : index + 1])
     return GuardInput(
         date=date,
         reference_weights=dict(reference),
@@ -399,6 +436,11 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
         reference_returns=_reference_returns(reference, aligned, index, params.vol_window),
         nav=book.nav,
         news=inp.news.get(date),
+        bars=bars,
+        bar_sessions=bar_sessions,
+        stop_distances=inp.stop_distances.get(date, {}),
+        decision_date=date in inp.decision_dates,
+        core_asset_id=inp.core_asset_id,
     )
 
 
@@ -408,19 +450,24 @@ def _apply_guard(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
     date: str,
     index: int,
     aligned: Mapping[int, Sequence[float]],
+    aligned_bars: Mapping[int, Sequence[Bar | None]],
     inp: EngineInput,
     params: GuardParams,
 ) -> dict[int, float]:
     """Evaluate the overlay and record its actions; returns the target for the next close."""
     assert book.guard_state is not None
     out = evaluate(
-        book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
+        book.guard_state,
+        _guard_input(book, reference, date, index, aligned, aligned_bars, inp, params),
+        params,
     )
     book.guard_state = out.state
     # Every name out under layer 1, not only the ones cut inside today's reference: a name
     # stopped before a rebalance dropped it must keep its return history so its delta
     # re-entry is still evaluated (BACKTEST_SPEC §4, §8.1).
     book.out_assets = out.l1_out
+    book.bp_events_out.extend(out.bp_events)
+    book.bp_missing += out.bp_missing
     final = dict(out.weights)
     for alert in out.alerts:
         status = _action_status(book.spec, alert, out.cut_assets, out.scale, reference)
@@ -435,16 +482,21 @@ def _record_shadow(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
     date: str,
     index: int,
     aligned: Mapping[int, Sequence[float]],
+    aligned_bars: Mapping[int, Sequence[Bar | None]],
     inp: EngineInput,
     params: GuardParams,
 ) -> None:
     """Evaluate the twin's overlay on a NOGUARD book without ever applying it."""
     assert book.guard_state is not None
     out = evaluate(
-        book.guard_state, _guard_input(book, reference, date, index, aligned, inp, params), params
+        book.guard_state,
+        _guard_input(book, reference, date, index, aligned, aligned_bars, inp, params),
+        params,
     )
     book.guard_state = out.state
     book.out_assets = out.l1_out
+    book.bp_events_out.extend(out.bp_events)
+    book.bp_missing += out.bp_missing
     for alert in out.alerts:
         before, after = _guard_event_weight(alert, reference, reference)
         book.events_out.append(GuardEvent(date, alert, "ARM_DISABLED", before, after))
@@ -498,6 +550,7 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
             raise EngineError(f"{code}: no targets")
 
     aligned = _aligned_returns(inp)
+    aligned_bars = _aligned_bars(inp)
     benchmark = _benchmark_returns(inp, sessions[formation_index:])
 
     # The formation order was formed at the close of the last decision before formation; the
@@ -531,6 +584,7 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                 first_decision,
                 decision_index,
                 aligned,
+                aligned_bars,
                 inp,
                 spec.guard,
             )
@@ -541,6 +595,7 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                 first_decision,
                 decision_index,
                 aligned,
+                aligned_bars,
                 inp,
                 spec.shadow_guard,
             )
@@ -616,7 +671,7 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                     )
                 ref = twin_book.weights_out[-1].final_target
                 pre_guard = dict(ref)
-                final = _apply_guard(book, ref, date, index, aligned, inp, spec.guard)
+                final = _apply_guard(book, ref, date, index, aligned, aligned_bars, inp, spec.guard)
                 current = dict(book.weights)
                 if (
                     any(
@@ -628,7 +683,9 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
                     book.pending = final
 
             if spec.shadow_guard is not None:
-                _record_shadow(book, final, date, index, aligned, inp, spec.shadow_guard)
+                _record_shadow(
+                    book, final, date, index, aligned, aligned_bars, inp, spec.shadow_guard
+                )
 
             book.weights_out.append(
                 DayWeights(
@@ -663,6 +720,8 @@ def simulate(inp: EngineInput) -> EngineResult:  # noqa: C901, PLR0912, PLR0915
             performance=tuple(book.performance_out),
             executions=tuple(book.executions_out),
             guard_events=tuple(book.events_out),
+            bp_events=tuple(book.bp_events_out),
+            bp_missing=book.bp_missing,
         )
         for code, book in books.items()
     }

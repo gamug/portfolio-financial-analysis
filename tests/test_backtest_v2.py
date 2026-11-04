@@ -220,7 +220,7 @@ def test_the_base_guard_arm_is_the_same_overlay_on_the_base_book() -> None:
     specs = driver._arm_specs([BASE, NOGUARD, GUARD, BASE_GUARD], params, GUARD)
     spec = next(s for s in specs if s.code == BASE_GUARD)
     assert spec.target_source == BASE
-    assert spec.guard is params.guard[GUARD]
+    assert spec.guard == params.guard[GUARD]
     assert driver.resolve_arms([BASE, NOGUARD, BASE_GUARD], params) == [BASE, NOGUARD, BASE_GUARD]
 
 

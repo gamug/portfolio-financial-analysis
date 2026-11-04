@@ -112,6 +112,8 @@ def test_the_topn_book_is_min_var_on_the_selected_names(ready: tuple[Database, s
     assert res.cycle_run_id == cyc
     assert res.pool_size == 30
     assert res.second_pass is False
+    assert res.satellite_weighting == "minvar"
+    assert res.rp_names == 0
     row = conn.execute(
         "SELECT kind, model_id, status, n_positions, params_json FROM quant_portfolio WHERE id = ?",
         (res.portfolio_id,),
@@ -430,6 +432,10 @@ def test_the_topn_cli_ends_with_the_exact_json_contract(
         "first_pass_n": 0,
         "second_pass": False,
         "final_n": 12,
+        "satellite_weighting": "minvar",
+        "rp_names": 0,
+        "rp_max_weight": None,
+        "rp_max_min_rrc": None,
     }
 
 
