@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +101,7 @@ def _actions(conn: Any) -> dict[tuple[Any, ...], tuple[float, float]]:
     return out
 
 
-def _max_error(left: dict[Any, tuple[float, ...]], right: dict[Any, tuple[float, ...]]) -> float:
+def _max_error(left: Mapping[Any, Sequence[float]], right: Mapping[Any, Sequence[float]]) -> float:
     errors = [
         abs(a - b)
         for key in set(left) & set(right)
