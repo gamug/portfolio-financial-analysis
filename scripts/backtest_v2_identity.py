@@ -87,15 +87,18 @@ def _weights(conn: Any, books: dict[int, str]) -> dict[tuple[str, str, str], tup
 
 def _actions(conn: Any, books: dict[int, str]) -> dict[tuple[Any, ...], tuple[float, float]]:
     out: dict[tuple[Any, ...], tuple[float, float]] = {}
-    for row in conn.execute("SELECT * FROM guard_action"):
+    for row in conn.execute(
+        "SELECT a.*, g.layer AS alert_layer, g.rule_id AS alert_rule "
+        "FROM guard_action a JOIN guard_alert g ON g.id = a.alert_id"
+    ):
         arm = books[int(row["book_id"])]
         if arm in V1_ARMS:
             key = (
                 arm,
                 str(row["decision_date"]),
-                int(row["layer"]),
+                int(row["alert_layer"]),
                 row["asset_id"],
-                str(row["rule_id"]),
+                str(row["alert_rule"]),
                 str(row["status"]),
             )
             out[key] = (float(row["weight_before"]), float(row["weight_after"]))
