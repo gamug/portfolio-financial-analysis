@@ -246,7 +246,17 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
         dest="risk_model_id",
         type=int,
         help="the stored quant_risk_model to read (with --cycle-run-id: its panel must cover the "
-        "30 selected names, and its stored covariance -- never a re-estimation -- is the input)",
+        "pool's names, and its stored covariance -- never a re-estimation -- is the input)",
+    )
+    op.add_argument(
+        "--pool-m",
+        dest="pool_size",
+        type=int,
+        choices=(30, 60, 100),
+        default=30,
+        help="V3 plan section 2a: the cycle's selected pool the min-variance reads (default 30); "
+        "if the solution holds more than 30 names, the 30 largest are re-solved. The name cap "
+        "stays 1.5 / --top-n (30)",
     )
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
@@ -536,6 +546,7 @@ def _run_optimize(
     *,
     cycle_run_id: int | None = None,
     risk_model_id: int | None = None,
+    pool_size: int = 30,
 ) -> int:
     if (cycle_run_id is None) != (risk_model_id is None):
         print(
@@ -546,7 +557,11 @@ def _run_optimize(
     if cycle_run_id is not None and risk_model_id is not None:
         try:
             top = run_optimize_topn(
-                settings, as_of=as_of, cycle_run_id=cycle_run_id, risk_model_id=risk_model_id
+                settings,
+                as_of=as_of,
+                cycle_run_id=cycle_run_id,
+                risk_model_id=risk_model_id,
+                pool_size=pool_size,
             )
         except (
             VersionError,
@@ -565,7 +580,15 @@ def _run_optimize(
             f"from cycle run {top.cycle_run_id}, {top.n_positions} positions, status {top.status}"
         )
         _print_final_json(
-            {"portfolio_id": top.portfolio_id, "model_id": top.model_id, "kind": top.kind}
+            {
+                "portfolio_id": top.portfolio_id,
+                "model_id": top.model_id,
+                "kind": top.kind,
+                "pool_size": top.pool_size,
+                "first_pass_n": top.first_pass_n,
+                "second_pass": top.second_pass,
+                "final_n": top.n_positions,
+            }
         )
         return 0
     try:
@@ -867,6 +890,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0911 - one
             analysis_date,
             cycle_run_id=args.cycle_run_id,
             risk_model_id=args.risk_model_id,
+            pool_size=args.pool_size,
         )
 
     if args.command == "benchmark":

@@ -690,11 +690,23 @@ class TopnBookResult:
     n_positions: int
     status: str
     weight_sum: float
+    pool_size: int = TOPN_SELECTION_COUNT
+    first_pass_n: int = 0
+    second_pass: bool = False
 
 
-def _topn_selection(conn: Database, cycle_run_id: int, as_of: str, model: Row) -> list[int]:
-    """The exactly-30 unique names ``cycle_ranking.selected = 1`` of run *cycle_run_id*, checked
-    against the cycle run (stored, completed, dated *as_of*) and against *model*'s asset set."""
+def _topn_selection(
+    conn: Database,
+    cycle_run_id: int,
+    as_of: str,
+    model: Row,
+    expected_count: int = TOPN_SELECTION_COUNT,
+) -> list[int]:
+    """The *expected_count* unique names ``cycle_ranking.selected = 1`` of run *cycle_run_id*.
+
+    Checked against the cycle run (stored, completed, dated *as_of*) and against *model*'s asset
+    set. ``expected_count`` is the round-3 candidate pool (30/60/100); 30 is the v1/v2 path.
+    """
     cycle = load_cycle_run(conn, cycle_run_id)
     if cycle is None:
         raise CycleSelectionError(f"cycle run {cycle_run_id} is not stored")
@@ -713,10 +725,10 @@ def _topn_selection(conn: Database, cycle_run_id: int, as_of: str, model: Row) -
         raise CycleSelectionError(
             f"cycle run {cycle_run_id} repeats an asset id among its selected rows"
         )
-    if len(selected) != TOPN_SELECTION_COUNT:
+    if len(selected) != expected_count:
         raise CycleSelectionError(
-            f"cycle run {cycle_run_id} selected {len(selected)} asset(s); the Top-"
-            f"{TOPN_SELECTION_COUNT} book needs exactly {TOPN_SELECTION_COUNT}"
+            f"cycle run {cycle_run_id} selected {len(selected)} asset(s); the pool needs "
+            f"exactly {expected_count}"
         )
     panel = set(load_panel_asset_ids(model))
     outside = sorted(set(selected) - panel)
@@ -730,12 +742,13 @@ def _topn_selection(conn: Database, cycle_run_id: int, as_of: str, model: Row) -
     return selected
 
 
-def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with explicit refusals
+def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orchestration
     settings: QuantSettings,
     *,
     as_of: str,
     cycle_run_id: int,
     risk_model_id: int,
+    pool_size: int = TOPN_SELECTION_COUNT,
     conn: Database | None = None,
 ) -> TopnBookResult:
     """Min-variance over the 30 names a cycle run selected, on a stored risk model's covariance.
@@ -755,6 +768,10 @@ def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with ex
     if settings.turnover_cap is not None:
         raise CycleSelectionError(
             "the Top-30 book has no turnover cap (BACKTEST_SPEC §0); drop --turnover-cap"
+        )
+    if not isinstance(pool_size, int) or pool_size < TOPN_SELECTION_COUNT:
+        raise CycleSelectionError(
+            f"pool_size must be an integer >= {TOPN_SELECTION_COUNT}, got {pool_size!r}"
         )
     owns = conn is None
     conn = conn or connect(settings.db_path)
@@ -777,7 +794,7 @@ def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with ex
                 "rebuild it with the same versions and --include-hard-vetoed, or drop "
                 "--risk-model-id"
             )
-        selected = _topn_selection(conn, cycle_run_id, as_of, model)
+        selected = _topn_selection(conn, cycle_run_id, as_of, model, expected_count=pool_size)
 
         ids, sigma_full = load_covariance(conn, risk_model_id)
         if not ids:
@@ -792,22 +809,47 @@ def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with ex
                 f"risk model {risk_model_id} stores no covariance for {len(missing)} selected "
                 f"asset(s): {missing[:10]}"
             )
-        sigma = sigma_full[np.ix_([index[a] for a in selected], [index[a] for a in selected])]
-        violation = psd_violation(sigma)
-        if violation is not None:
-            raise CycleSelectionError(
-                f"the stored covariance of risk model {risk_model_id} restricted to the "
-                f"{TOPN_SELECTION_COUNT} selected names is not positive semidefinite "
-                f"(smallest eigenvalue -{violation:.3g}): refusing to let the optimizer repair "
-                "a stored matrix silently"
-            )
 
         rf = (
             float(model["rf_annual"]) if model["rf_annual"] is not None else settings.risk_free_rate
         )
-        mu = _expected_return_vector(conn, model, risk_model_id, selected, settings.ret_estimator)
-        sector_of = load_sector_of(conn, selected)
-        caps = effective_caps(settings, selected, sector_of)
+
+        def _solve(assets: list[int]) -> tuple[Any, dict[int, float], Any]:
+            """Min-variance on *assets* with the unchanged caps (V3 plan §2a)."""
+            sigma = sigma_full[np.ix_([index[a] for a in assets], [index[a] for a in assets])]
+            violation = psd_violation(sigma)
+            if violation is not None:
+                raise CycleSelectionError(
+                    f"the stored covariance of risk model {risk_model_id} restricted to the "
+                    f"{len(assets)} names is not positive semidefinite (smallest eigenvalue "
+                    f"-{violation:.3g}): refusing to let the optimizer repair a stored matrix "
+                    "silently"
+                )
+            mu = _expected_return_vector(conn, model, risk_model_id, assets, settings.ret_estimator)
+            sector_of = load_sector_of(conn, assets)
+            caps = effective_caps(settings, assets, sector_of)
+            cons = Constraints(
+                max_name_weight=caps.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=sector_of,
+                asset_ids=assets,
+            )
+            res = min_variance(sigma, constraints=cons, mu=mu, rf=rf, solver=settings.solver)
+            held = {
+                assets[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS
+            }
+            return res, held, caps
+
+        res, held, caps = _solve(selected)
+        first_pass_n = len(held)
+        second_pass = first_pass_n > TOPN_SELECTION_COUNT
+        if second_pass:
+            # V3 plan §2a: keep the 30 largest (ties: lower asset id) and re-solve on those 30.
+            keep = sorted(held, key=lambda asset_id: (-held[asset_id], asset_id))[
+                :TOPN_SELECTION_COUNT
+            ]
+            res, held, caps = _solve(keep)
 
         stale_reason = stale_as_of_reason(conn, as_of)
         cv = code_version()
@@ -841,23 +883,16 @@ def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with ex
                     f"{stale_reason}; pass --allow-stale-prices for a deliberate run ahead "
                     "of the price spine"
                 )
-            cons = Constraints(
-                max_name_weight=caps.max_name_weight,
-                min_name_weight=settings.min_name_weight,
-                max_sector_weight=caps.max_sector_weight,
-                sector_of=sector_of,
-                asset_ids=selected,
-            )
-            res = min_variance(sigma, constraints=cons, mu=mu, rf=rf, solver=settings.solver)
-            held = {
-                selected[i]: float(v) for i, v in enumerate(res.weights) if abs(float(v)) > _W_EPS
-            }
             book_params: dict[str, Any] = {
                 **caps.record(),
                 "ret_estimator": settings.ret_estimator,
                 "cycle_run_id": cycle_run_id,
                 "cycle_date": as_of,
                 "selection_count": len(selected),
+                "pool_size": pool_size,
+                "first_pass_n": first_pass_n,
+                "second_pass": second_pass,
+                "final_n": len(held),
                 "risk_model_id": risk_model_id,
                 "turnover": {
                     "cap_requested": None,
@@ -904,6 +939,9 @@ def run_optimize_topn(  # noqa: C901, PLR0915 - one linear orchestration with ex
             n_positions=len(held),
             status=res.status,
             weight_sum=float(sum(held.values())),
+            pool_size=pool_size,
+            first_pass_n=first_pass_n,
+            second_pass=second_pass,
         )
     finally:
         if owns:

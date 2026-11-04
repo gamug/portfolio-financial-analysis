@@ -26,6 +26,8 @@ TREND_WINDOW: Final = 210
 FILTER_OFF: Final = "off"
 FILTER_ON: Final = "on"
 FILTERS: Final = (FILTER_OFF, FILTER_ON)
+#: The core's two sources (V3 plan §2b): the SPY ETF, or the MARKOWITZ_BASE target itself.
+CORE_SOURCES: Final = ("spy", "base")
 #: The manifest key the file's sha256 must equal.
 MANIFEST_KEY: Final = "spy_tr_sha256"
 #: A sha256 in hexadecimal.
@@ -188,6 +190,28 @@ class ConfigTargets:
     trend_state: str | None  # None when the filter is off; else cash/invested/not_evaluable
 
 
+def base_core_target(
+    core_weight: float, base: Mapping[int, float], satellite: Mapping[int, float]
+) -> dict[int, float]:
+    """``c`` times the base book plus ``(1 - c)`` times the satellite; overlaps add (§2b).
+
+    The combined weight is not re-capped (declared): the satellite's name and sector caps were
+    applied to its own weights, and the base book's own caps to the core.
+    """
+    if not math.isfinite(core_weight) or not 0.0 <= core_weight < 1.0:
+        raise ValueError(f"core_weight must be in [0, 1), got {core_weight!r}")
+    out: dict[int, float] = {}
+    for asset_id, weight in base.items():
+        value = core_weight * float(weight)
+        if value > 0.0:
+            out[int(asset_id)] = out.get(int(asset_id), 0.0) + value
+    for asset_id, weight in satellite.items():
+        value = (1.0 - core_weight) * float(weight)
+        if value > 0.0:
+            out[int(asset_id)] = out.get(int(asset_id), 0.0) + value
+    return out
+
+
 def config_targets(  # noqa: PLR0913 - the configuration's inputs, all named
     base: Mapping[int, float],
     satellite: Mapping[int, float],
@@ -197,6 +221,8 @@ def config_targets(  # noqa: PLR0913 - the configuration's inputs, all named
     trend_filter: str,
     close: Mapping[str, float] | None,
     decision: str,
+    core_source: str = "spy",
+    filter_exit: float = 1.0,
 ) -> ConfigTargets:
     """The base and Top-N targets at *decision* under the configuration's core and filter.
 
@@ -207,15 +233,30 @@ def config_targets(  # noqa: PLR0913 - the configuration's inputs, all named
     """
     if trend_filter not in FILTERS:
         raise ValueError(f"unknown trend_filter {trend_filter!r}: expected one of {FILTERS}")
-    topn = (
-        core_target(core_weight, satellite, core_asset_id)
-        if core_weight > 0.0 and core_asset_id is not None
-        else dict(satellite)
-    )
+    if core_source not in CORE_SOURCES:
+        raise ValueError(f"unknown core_source {core_source!r}: expected one of {CORE_SOURCES}")
+    if not math.isfinite(filter_exit) or not 0.0 <= filter_exit <= 1.0:
+        raise ValueError(f"filter_exit must be in [0, 1], got {filter_exit!r}")
+    if core_weight > 0.0:
+        if core_source == "spy":
+            if core_asset_id is None:
+                raise ValueError("core_source='spy' with core_weight > 0 needs the SPY asset id")
+            topn = core_target(core_weight, satellite, core_asset_id)
+        else:
+            topn = base_core_target(core_weight, base, satellite)
+    else:
+        topn = dict(satellite)
     state: str | None = None
     if trend_filter == FILTER_ON:
         trigger = trend_trigger(close or {}, decision)
         state = "not_evaluable" if trigger is None else ("cash" if trigger else "invested")
         if trigger:
-            topn = {}
+            if filter_exit >= 1.0:
+                topn = {}
+            else:
+                topn = {
+                    asset_id: value * (1.0 - filter_exit)
+                    for asset_id, value in topn.items()
+                    if value * (1.0 - filter_exit) > 0.0
+                }
     return ConfigTargets(base=dict(base), topn=topn, trend_state=state)

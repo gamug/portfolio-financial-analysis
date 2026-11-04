@@ -726,6 +726,7 @@ class PipelineResult:
     warmup_refused: list[dict[str, str]]
     decisions_refused: list[dict[str, str]]
     trend_states: list[dict[str, str]] = field(default_factory=list)
+    pool_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipeline
@@ -742,12 +743,16 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     core_asset_id: int | None = None,
     trend_filter: str = v2core.FILTER_OFF,
     core_close: Mapping[str, float] | None = None,
+    pool_m: int = 30,
+    core_source: str = "spy",
+    filter_exit: float = 1.0,
 ) -> PipelineResult:
     targets: dict[str, dict[str, dict[int, float]]] = {BASE_ARM: {}, NOGUARD_ARM: {}}
     rebalances: list[dict[str, Any]] = []
     warmup_refused: list[dict[str, str]] = []
     decisions_refused: list[dict[str, str]] = []
     trend_records: list[dict[str, str]] = []
+    pool_records: list[dict[str, Any]] = []
     formation: str | None = None
 
     for warm_date in warmup:
@@ -813,10 +818,10 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         if status != "completed":
             raise BacktestError(f"cycle_run {cycle_run_id} at {decision} is {status}")
         selected = _selected_ids(conn, cycle_run_id)
-        if len(selected) != params.top_n:
+        if len(selected) != pool_m:
             raise BacktestError(
                 f"cycle_run {cycle_run_id} at {decision} selected {len(selected)} names, "
-                f"expected {params.top_n}"
+                f"expected the pool's {pool_m}"
             )
         model_assets = queries.risk_model_asset_ids(conn, model_id)
         outside = selected - model_assets
@@ -852,6 +857,8 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
                 "--allow-missing-caps",
                 "--top-n",
                 str(params.top_n),
+                "--pool-m",
+                str(pool_m),
                 "--cycle-run-id",
                 str(cycle_run_id),
                 "--risk-model-id",
@@ -862,8 +869,17 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         )
         base_portfolio = _min_var_portfolio_id(base)
         topn_portfolio = _topn_portfolio_id(topn)
-        if core_weight > 0.0 and core_asset_id is None:
-            raise BacktestError("core_weight > 0 needs the SPY asset id")
+        if core_weight > 0.0 and core_source == "spy" and core_asset_id is None:
+            raise BacktestError("core_weight > 0 with core_source='spy' needs the SPY asset id")
+        pool_records.append(
+            {
+                "decision_date": decision,
+                "pool_m": pool_m,
+                "first_pass_n": int(topn.get("first_pass_n", pool_m)),
+                "second_pass": bool(topn.get("second_pass", False)),
+                "final_n": int(topn.get("final_n", params.top_n)),
+            }
+        )
         config = v2core.config_targets(
             _positions(conn, base_portfolio, BASE_ARM),
             _positions(conn, topn_portfolio, NOGUARD_ARM),
@@ -872,6 +888,8 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
             trend_filter=trend_filter,
             close=core_close,
             decision=decision,
+            core_source=core_source,
+            filter_exit=filter_exit,
         )
         if config.trend_state is not None:
             trend_records.append({"date": decision, "state": config.trend_state})
@@ -889,6 +907,10 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
                 "risk_model_id": model_id,
                 "base_portfolio_id": base_portfolio,
                 "topn_portfolio_id": topn_portfolio,
+                "pool_m": pool_m,
+                "second_pass": bool(topn.get("second_pass", False)),
+                "first_pass_n": int(topn.get("first_pass_n", pool_m)),
+                "final_n": int(topn.get("final_n", params.top_n)),
             }
         )
 
@@ -902,6 +924,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         warmup_refused=warmup_refused,
         decisions_refused=decisions_refused,
         trend_states=trend_records,
+        pool_records=pool_records,
     )
 
 
@@ -921,6 +944,9 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     trend_filter: str = v2core.FILTER_OFF,
     series: v2core.CoreSeries | None = None,
     core_asset_id: int | None = None,
+    pool_m: int = 30,
+    core_source: str = "spy",
+    filter_exit: float = 1.0,
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -931,6 +957,9 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "tilt": tilt,
         "core_weight": core_weight,
         "trend_filter": trend_filter,
+        "pool_m": pool_m,
+        "core_source": core_source,
+        "filter_exit": filter_exit,
         "core_asset_id": core_asset_id,
         "core_series_path": None if series is None else str(series.path),
         "core_series_sha256": None if series is None else series.sha256,
@@ -1508,6 +1537,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     core_weight: float = 0.0,
     trend_filter: str = v2core.FILTER_OFF,
     core_series_path: str | Path | None = None,
+    pool_m: int | None = None,
+    core_source: str = "spy",
+    filter_exit: float = 1.0,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1528,8 +1560,17 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(
             f"unknown trend_filter {trend_filter!r}: expected one of {list(v2core.FILTERS)}"
         )
+    pool_m = params.top_n if pool_m is None else pool_m
+    if pool_m < params.top_n:
+        raise BacktestError(f"pool_m must cover the book's {params.top_n} names, got {pool_m}")
+    if core_source not in v2core.CORE_SOURCES:
+        raise BacktestError(
+            f"unknown core_source {core_source!r}: expected one of {list(v2core.CORE_SOURCES)}"
+        )
+    if filter_exit not in (0.5, 1.0):
+        raise BacktestError(f"filter_exit must be 0.5 or 1.0, got {filter_exit!r}")
     series: v2core.CoreSeries | None = None
-    if core_weight > 0.0 or trend_filter == v2core.FILTER_ON:
+    if (core_weight > 0.0 and core_source == "spy") or trend_filter == v2core.FILTER_ON:
         if core_series_path is None:
             raise BacktestError(
                 "--core-series is required when core_weight > 0 or the trend filter is on"
@@ -1554,7 +1595,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         # in params_json) rather than running on old table shapes.
         applied = kg_schema.ensure(conn, run_migrations=True)
         require_migrated(conn)
-        core_asset_id = _ensure_core_asset(conn) if core_weight > 0.0 else None
+        core_asset_id = (
+            _ensure_core_asset(conn) if core_weight > 0.0 and core_source == "spy" else None
+        )
         run_id = _open_run(
             conn,
             window,
@@ -1568,6 +1611,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             trend_filter=trend_filter,
             series=series,
             core_asset_id=core_asset_id,
+            pool_m=pool_m,
+            core_source=core_source,
+            filter_exit=filter_exit,
         )
         payload: dict[str, Any] = {}
         try:
@@ -1623,6 +1669,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                 core_asset_id=core_asset_id,
                 trend_filter=trend_filter,
                 core_close=None if series is None else series.close,
+                pool_m=pool_m,
+                core_source=core_source,
+                filter_exit=filter_exit,
             )
             decisions = {rebalance.decision_date for rebalance in schedule}
             tilt_triggers = [
@@ -1640,6 +1689,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             run_params = json.loads(run_row["params_json"])
             run_params["tilt_triggers"] = tilt_triggers
             run_params["trend_filter_dates"] = pipeline.trend_states
+            run_params["pool_decisions"] = pipeline.pool_records
             if market_sha is not None:
                 run_params["market_series_sha256"] = market_sha
                 run_params["market_series_path"] = str(market_series_path)
@@ -1830,6 +1880,26 @@ def build_parser() -> argparse.ArgumentParser:
         help="the verified SPY file (with manifest.json beside it); required when needed",
     )
     run.add_argument(
+        "--pool-m",
+        type=int,
+        choices=(30, 60, 100),
+        default=None,
+        help="V3 plan section 2a: the cycle's candidate pool (default: the params' top_n, 30)",
+    )
+    run.add_argument(
+        "--core-source",
+        default="spy",
+        choices=list(v2core.CORE_SOURCES),
+        help="V3 plan section 2b: the core is SPY (v2) or the MARKOWITZ_BASE target",
+    )
+    run.add_argument(
+        "--filter-exit",
+        type=float,
+        default=1.0,
+        choices=(1.0, 0.5),
+        help="V3 plan section 2c: fraction of the target sold when the filter triggers (1.0 = v2)",
+    )
+    run.add_argument(
         "--market-series",
         default=None,
         help="a precomputed {session: EW member return} JSON (from `market-series`); "
@@ -1937,6 +2007,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             core_weight=args.core_weight,
             trend_filter=args.trend_filter,
             core_series_path=args.core_series,
+            pool_m=args.pool_m,
+            core_source=args.core_source,
+            filter_exit=args.filter_exit,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)

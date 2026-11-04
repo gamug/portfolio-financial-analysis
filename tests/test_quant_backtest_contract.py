@@ -117,7 +117,15 @@ def test_optimize_cycle_run_ends_with_the_topn_portfolio_id(
     assert _run_optimize(_settings(), "2026-01-02", cycle_run_id=5, risk_model_id=7) == 0
 
     payload = _last_json(capsys)
-    assert payload == {"portfolio_id": 21, "model_id": 7, "kind": "min_var_topn"}
+    assert payload == {
+        "portfolio_id": 21,
+        "model_id": 7,
+        "kind": "min_var_topn",
+        "pool_size": 30,
+        "first_pass_n": 0,
+        "second_pass": False,
+        "final_n": 30,
+    }
     assert _topn_portfolio_id(payload) == 21
     with pytest.raises(BacktestError, match="no portfolio_id"):
         _topn_portfolio_id({"portfolio_ids": {"min_var": 21}})

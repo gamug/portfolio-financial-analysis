@@ -110,6 +110,8 @@ def test_the_topn_book_is_min_var_on_the_selected_names(ready: tuple[Database, s
     assert res.kind == "min_var_topn"
     assert res.model_id == model_id
     assert res.cycle_run_id == cyc
+    assert res.pool_size == 30
+    assert res.second_pass is False
     row = conn.execute(
         "SELECT kind, model_id, status, n_positions, params_json FROM quant_portfolio WHERE id = ?",
         (res.portfolio_id,),
@@ -420,7 +422,15 @@ def test_the_topn_cli_ends_with_the_exact_json_contract(
     monkeypatch.setattr("quant.cli.run_optimize_topn", fake)
     assert _run_optimize(_book_settings(), "2026-01-02", cycle_run_id=3, risk_model_id=7) == 0
     last = capsys.readouterr().out.strip().splitlines()[-1]
-    assert json.loads(last) == {"portfolio_id": 21, "model_id": 7, "kind": "min_var_topn"}
+    assert json.loads(last) == {
+        "portfolio_id": 21,
+        "model_id": 7,
+        "kind": "min_var_topn",
+        "pool_size": 30,
+        "first_pass_n": 0,
+        "second_pass": False,
+        "final_n": 12,
+    }
 
 
 def test_the_cli_exits_1_on_a_refused_selection(
@@ -434,3 +444,50 @@ def test_the_cli_exits_1_on_a_refused_selection(
     monkeypatch.setattr("quant.cli.run_optimize_topn", refuse)
     assert _run_optimize(_book_settings(), "2026-01-02", cycle_run_id=3, risk_model_id=7) == 1
     assert "needs exactly 30" in capsys.readouterr().err
+
+
+def test_a_pool_over_30_keeps_the_30_largest_and_re_solves_on_them(
+    ready: tuple[Database, str, int],
+) -> None:
+    """V3_EXPERIMENTS_PLAN §2a, hand-computed: a diagonal covariance gives 32 equal weights,
+    so the second pass keeps the 30 lowest asset ids and the final book is 1/30 each."""
+    conn, as_of, model_id = ready
+    model = conn.execute(
+        "SELECT panel_spec_json FROM quant_risk_model WHERE id = ?", (model_id,)
+    ).fetchone()
+    panel = sorted(int(a) for a in json.loads(str(model["panel_spec_json"]))["asset_ids"])
+    assert len(panel) == 36
+    conn.execute("DELETE FROM quant_covariance WHERE model_id = ?", (model_id,))
+    for asset_id in panel:
+        conn.execute(
+            "INSERT INTO quant_covariance (model_id, asset_id_i, asset_id_j, value) "
+            "VALUES (?, ?, ?, ?)",
+            (model_id, asset_id, asset_id, 0.04),
+        )
+    conn.commit()
+    cyc = _add_cycle_run(conn, as_of, panel[:32])
+
+    res = run_optimize_topn(
+        _book_settings(),
+        as_of=as_of,
+        cycle_run_id=cyc,
+        risk_model_id=model_id,
+        pool_size=32,
+        conn=conn,
+    )
+
+    assert res.pool_size == 32
+    assert res.first_pass_n == 32
+    assert res.second_pass is True
+    assert res.n_positions == 30
+    weights = load_book_weights(conn, res.portfolio_id)
+    assert set(weights) == set(panel[:30])  # all 1/32 tie -> the 30 lowest ids
+    assert all(w == pytest.approx(1.0 / 30.0, abs=1e-6) for w in weights.values())
+    row = conn.execute(
+        "SELECT params_json FROM quant_portfolio WHERE id = ?", (res.portfolio_id,)
+    ).fetchone()
+    params = json.loads(str(row["params_json"]))
+    assert params["pool_size"] == 32
+    assert params["first_pass_n"] == 32
+    assert params["second_pass"] is True
+    assert params["final_n"] == 30
