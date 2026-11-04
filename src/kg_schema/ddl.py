@@ -342,6 +342,30 @@ CREATE TABLE IF NOT EXISTS filing_cover_shares (
 );
 CREATE INDEX IF NOT EXISTS ix_fcs_filing ON filing_cover_shares (filing_id);
 
+-- Audit F-A12 (MKT-01): the cover count of a company's last filing *before* its first stored one,
+-- from the SEC's own dei fact. Seeded from `kg_schema/data/audit_prior_cover_shares.csv`.
+CREATE TABLE IF NOT EXISTS audit_prior_cover_shares (
+    id integer primary key, asset_id integer not null, sec_accession text not null,
+    value real not null, as_of_date text not null, available_at text not null, source text not null
+);
+
+-- L-43 / D-21 (MKT-03): the rate at which an unlisted class converts into the traded one, as the
+-- filing itself prints it. Seeded from `kg_schema/data/cover_class_conversion.csv`.
+CREATE TABLE IF NOT EXISTS cover_class_conversion (
+    accession TEXT NOT NULL, class_member TEXT NOT NULL, rate REAL NOT NULL,
+    source_accession TEXT NOT NULL, source_text TEXT NOT NULL, rule TEXT,
+    PRIMARY KEY (accession, class_member)
+);
+
+-- D-20 (reviewer A): the log of every cover count corrected in place, with the EDGAR page it was
+-- read from. Append-only; seeded from `kg_schema/data/cover_corrections.csv`.
+CREATE TABLE IF NOT EXISTS audit_cover_corrections (
+    id INTEGER PRIMARY KEY, table_name TEXT NOT NULL, row_id INTEGER NOT NULL,
+    accession TEXT NOT NULL, class_member TEXT, as_of_date TEXT, old_value REAL NOT NULL,
+    new_value REAL, action TEXT NOT NULL, source_accession TEXT NOT NULL, edgar_page TEXT NOT NULL,
+    rule TEXT NOT NULL, corrected_at TEXT NOT NULL
+);
+
 -- Step 7: candidate shared-executive edges from news PER co-occurrence.
 CREATE TABLE IF NOT EXISTS shared_executive_edge (
     id              INTEGER PRIMARY KEY,

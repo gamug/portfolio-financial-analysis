@@ -11290,3 +11290,58 @@ P2a: NOGUARD cumulative **−0.0079**, MDD **0.0000**, Sharpe **−0.153**; GUAR
 **−0.0060**, MDD **0.0000**, Sharpe **−0.150**. The cohort fix therefore moves only the Top-N arms,
 as expected (the base book never reads FUNDAMENTAL scores), and by less than one percentage point
 of cumulative return in these two segments.
+## Final database — cover counts, added filings and class conversion (FIXES #12–#15, D-20, D-21, L-43, L-44)
+
+The pilot database `pilot_a3/financial.db` (sha256 `851b0e20…`, 14,639 filings, 512,683 metric rows) is the real,
+final database; it is not re-run. Rounds #1–#11 are produced by the engine in this branch. FIXES #12–#15 changed the
+stored data directly, on reviewer A's decisions, so this change gives a new run the same result: the engine now carries
+the data files and the write-time rule that were applied by hand.
+
+### Symptom
+
+The market cap is `close × the latest cover count` (MKT-01). Three defects sat in the covers, not in the formula:
+
+* **Wrong counts (FIXES #12, #13, D-20).** 17 cover rows printed a count that the filing's own EDGAR page contradicts:
+  an x1,000 scale (AJG, CCL, …), a lost digit (20,637,666 → 206,376,661), a shell's placeholder 100 (MKT-04, removed),
+  WFC's cover on a 10-Q/A (1,823,028,137 → 3,658,783,337), and SNDK, whose 10-Q/A states that it corrects the cover from
+  114,863,251 to 144,863,251. The 508 covers no selector could test were all read on EDGAR and print the stored count.
+* **Missing filings (FIXES #14, L-44).** 24 filings of 8 companies were absent (GAP 8, ICE 3, INCY 3, DELL 4 from the
+  gateway; BXP 2, DRE 2, ENPH 1, KVUE 1 rebuilt from the SEC's companyfacts). SKYD 2025-Q3 and FY2025 stay out under
+  PER-08 (successor stubs). ID-07 (`dei:DocumentPeriodEndDate` = EDGAR `periodOfReport`) holds for the 8 filings checked.
+* **Multi-class market caps (FIXES #15, L-43, D-21, MKT-03).** An unlisted class was counted one for one. Each filing
+  prints its own conversion rate; 861 rates for 31 companies change 3,510 metric rows (124 values, all Visa, +4.4 % to
+  +9.6 %). Market caps flagged `market_cap_incomplete_classes` fall from 1,148 to 446; 216 market caps of listed classes
+  valued at another class's price are declared.
+
+### The engine, after this change
+
+* `kg_schema/cover_audit.py` and three seed files in `kg_schema/data/` — `cover_class_conversion.csv` (861 rows, each
+  citing the accession that prints the rate), `audit_prior_cover_shares.csv` (503 rows, F-A12), `cover_corrections.csv`
+  (the 17 D-20 corrections, each with the EDGAR page). `kg_schema.ensure` creates the three tables (`ddl.py`) and seeds
+  them; it never changes a row it holds.
+* `fundamental_agent.db.insert_cover_shares` calls `cover_audit.correct_filing_covers`: a cover row that still holds the
+  recorded old value is corrected (or removed, for a shell) as it is written and logged in `audit_cover_corrections`.
+* `kg_schema.queries.cover_class_rates` and `market_cap.cover_total(..., rates=...)` (commit 719d30f) read the table.
+* The scripts that applied #11–#15 to the database are archived as they ran, outside the repository; `scripts/pilot_a/final_db/README.md` lists them with their sha256 and says why they are not here.
+
+### Availability of the two corrections that come from a 10-Q/A (D-20)
+
+`correct_filing_covers` applies a correction to the row of the **original** 10-Q, so the corrected count is available from
+the original's `available_at`, a few days before the amendment that states it was public. WFC 2023-Q2: the 10-Q was filed
+2023-08-01 (available 2023-08-02) and its 10-Q/A `0000072971-23-000142` was filed 2023-08-04 (available 2023-08-07), so the gap is
+2023-08-02 … 2023-08-06. SNDK, the 10-Q for 2024-12-27: filed 2025-03-07 (available 2025-03-10) and its 10-Q/A
+`0002023554-25-000016` filed 2025-03-17 (available 2025-03-18), so the gap is 2025-03-10 … 2025-03-17. No backtest decision
+date falls in either gap (P1 2021-12-31 … 2022-10-03, P3 2023-10-26 … 2024-07-30, P2 2025-02-18 … 2025-09-18 in 21-session steps;
+the P2 decision after 2025-02-18 is 2025-03-19), so no decision reads a count before the amendment was public (D-20, MKT-01,
+PER-01). The seed file records the amendment's accession as the source of each correction.
+
+### Not reproduced by a run
+
+The 24 filings of FIXES #14 come from the gateway or from companyfacts, outside the engine's fetch; a fresh run through the
+gateway still lacks them (L-44, declared). The listed classes valued at another class's price (216 market caps) and the 446
+flagged multi-class caps are declared limitations (L-43), not defects of the formula.
+
+### Tests
+
+`tests/test_cover_audit.py` (seeding, write-time correction and its log, the shell removal, an unrecorded count left
+alone) and `tests/test_audit_l43_class_rates.py`.

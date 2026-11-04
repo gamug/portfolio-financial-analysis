@@ -33,7 +33,7 @@ from fundamental_agent.statements import (
     CoverShares,
     Statements,
 )
-from kg_schema import identity, migrations, ticker_history
+from kg_schema import cover_audit, identity, migrations, ticker_history
 from kg_schema.company_profile import profile_as_of
 from kg_schema.queries import UniverseMember
 from kg_schema.trading_calendar import available_from
@@ -693,6 +693,7 @@ def insert_cover_shares(
         """,
         rows,
     )
+    cover_audit.correct_filing_covers(conn, filing_id)  # D-20: a count EDGAR's page contradicts
     conn.commit()
     return len(rows)
 
