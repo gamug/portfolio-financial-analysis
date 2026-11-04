@@ -553,3 +553,26 @@ def test_a_later_rule_four_point_supersedes_an_earlier_rule_three_point() -> Non
     assert machine.last_bp_session == "d008"
     assert machine.stop == pytest.approx(80.0 * 0.95)
     assert [event.kind for event in events] == ["entry"]
+
+
+def test_a_name_with_no_series_at_entry_fails_open_and_is_counted() -> None:
+    params = _bp_params()
+    out = evaluate(
+        initial_state(),
+        GuardInput(
+            date="d063",
+            reference_weights={1: 0.5},
+            asset_returns={1: [0.0, 0.0]},
+            reference_returns=[0.0, 0.0],
+            nav=1.0,
+            bars={1: []},
+            bar_sessions={1: [f"d{i:03d}" for i in range(64)]},
+            stop_distances={1: 0.05},
+            decision_date=True,
+        ),
+        params,
+    )
+    assert out.bp_missing == 1
+    assert out.state.bp == ()
+    assert out.l1_out == frozenset()
+    assert out.weights[1] == pytest.approx(0.5)

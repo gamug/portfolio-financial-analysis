@@ -420,8 +420,12 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
     start = max(0, index - 63)
     for asset_id in tracked:
         series = aligned_bars.get(asset_id)
-        bars[asset_id] = [] if series is None else list(series[start : index + 1])
-        bar_sessions[asset_id] = list(inp.sessions[start : index + 1])
+        if series is None:
+            bars[asset_id] = []
+            bar_sessions[asset_id] = []
+        else:
+            bars[asset_id] = list(series[start : index + 1])
+            bar_sessions[asset_id] = list(inp.sessions[start : index + 1])
     return GuardInput(
         date=date,
         reference_weights=dict(reference),

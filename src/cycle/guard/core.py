@@ -483,10 +483,11 @@ def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
                 continue
         if machine is None:
             history = histories.get(asset_id) or []
-            sessions = _bp_sessions(inp, asset_id, history)
             if not any(bar is not None for bar in history):
+                # no bar at all at entry: fail open (no machine, not stopped), counted
                 missing += 1
                 continue
+            sessions = _bp_sessions(inp, asset_id, history)
             machine, entry_events = basing.establish(
                 sessions,
                 history,
