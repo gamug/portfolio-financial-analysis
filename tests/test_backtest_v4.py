@@ -31,6 +31,7 @@ def _machine(**over: object) -> BasingPointState:
         "last_bp_session": "d010",
         "last_bp_low": None,
         "stop": 90.0,
+        "peak_high": 101.0,
         "peak_recognized": True,
         "peak_used": False,
         "out": False,
@@ -119,34 +120,72 @@ def test_the_stop_only_moves_up() -> None:
 
 
 def test_rule_four_fires_once_per_peak_and_only_under_bp4() -> None:
-    state = _machine(peak_recognized=True, peak_used=False)
+    state = _machine(
+        running_high=100.0,
+        running_high_session="d011",
+        peak_high=100.0,
+        peak_recognized=True,
+        peak_used=False,
+        stop=90.0,
+    )
+    # d012 makes a new high but its close (102) is below 1.03 x the peak (103): no fire
     state, events = advance(
-        state, "d012", Bar(high=99.0, low=95.0, close=104.5), distance=0.05, rule="bp4"
+        state, "d012", Bar(high=103.0, low=95.0, close=102.0), distance=0.05, rule="bp4"
+    )
+    assert events == []
+    assert state.running_high == 103.0 and state.peak_high == 100.0
+    # d013 makes a new high whose close (104) is above 1.03 x the recognized peak: fire
+    state, events = advance(
+        state, "d013", Bar(high=105.0, low=96.0, close=104.0), distance=0.05, rule="bp4"
     )
     assert [event.kind for event in events] == ["bp4"]
     assert state.peak_used is True
+    # d014 also makes a new high above 1.03 x the old peak; the same peak cannot fire twice
     state, events = advance(
-        state, "d013", Bar(high=99.0, low=96.0, close=105.0), distance=0.05, rule="bp4"
-    )
-    assert events == []  # the same peak is used
-    # a new running high (d014, 102) and its recognition (d015), then a close > 1.03 * 102
-    state, _ = advance(
-        state, "d014", Bar(high=102.0, low=97.0, close=101.0), distance=0.05, rule="bp4"
-    )
-    state, _ = advance(
-        state, "d015", Bar(high=100.0, low=95.0, close=104.0), distance=0.05, rule="bp4"
-    )
-    assert state.peak_recognized is True and state.peak_used is False
-    state, events = advance(
-        state, "d016", Bar(high=100.0, low=95.0, close=106.0), distance=0.05, rule="bp4"
-    )
-    assert [event.kind for event in events] == ["bp4"]
-    # bp3 never runs rule 4
-    bp3 = _machine(peak_recognized=True, peak_used=False)
-    _, events = advance(
-        bp3, "d012", Bar(high=99.0, low=95.0, close=110.0), distance=0.05, rule="bp3"
+        state, "d014", Bar(high=106.0, low=97.0, close=105.0), distance=0.05, rule="bp4"
     )
     assert events == []
+    # d015 does not make a new high, so the 106 peak is recognized (unused); d016 fires
+    state, events = advance(
+        state, "d015", Bar(high=106.0, low=98.0, close=102.0), distance=0.05, rule="bp4"
+    )
+    assert state.peak_high == 106.0 and state.peak_used is False and events == []
+    state, events = advance(
+        state, "d016", Bar(high=110.0, low=99.0, close=109.5), distance=0.05, rule="bp4"
+    )
+    assert [event.kind for event in events] == ["bp4"]
+    # bp3 never runs rule 4 on the same bars
+    bp3 = _machine(
+        running_high=100.0,
+        running_high_session="d011",
+        peak_high=100.0,
+        peak_recognized=True,
+        peak_used=False,
+        stop=90.0,
+    )
+    for session, bar in (
+        ("d012", Bar(high=103.0, low=95.0, close=102.0)),
+        ("d013", Bar(high=105.0, low=96.0, close=104.0)),
+    ):
+        bp3, events = advance(bp3, session, bar, distance=0.05, rule="bp3")
+        assert not any(event.kind == "bp4" for event in events)
+
+
+def test_a_new_high_below_the_rule_four_threshold_does_not_fire() -> None:
+    state = _machine(
+        running_high=100.0,
+        running_high_session="d011",
+        peak_high=100.0,
+        peak_recognized=True,
+        peak_used=False,
+        stop=90.0,
+    )
+    state, events = advance(
+        state, "d012", Bar(high=103.0, low=95.0, close=102.0), distance=0.05, rule="bp4"
+    )
+    assert events == []
+    assert state.running_high == 103.0
+    assert state.peak_used is False
 
 
 def _with_basing_point() -> list[Bar]:

@@ -97,6 +97,7 @@ class BasingPointState:
     last_bp_session: str
     last_bp_low: float | None
     stop: float
+    peak_high: float | None
     peak_recognized: bool
     peak_used: bool
     out: bool
@@ -154,6 +155,8 @@ def _check_bar(bar: Bar) -> None:
             raise ValueError(f"bar.{name} must be a finite positive price, got {value!r}")
     if bar.low > bar.high:
         raise ValueError(f"bar low {bar.low!r} > high {bar.high!r}")
+    if not bar.low <= bar.close <= bar.high:
+        raise ValueError(f"bar close {bar.close!r} is outside [low {bar.low!r}, high {bar.high!r}]")
 
 
 def _initial_machine(  # noqa: C901, PLR0912, PLR0915 - one linear rules transcript
@@ -183,6 +186,7 @@ def _initial_machine(  # noqa: C901, PLR0912, PLR0915 - one linear rules transcr
     away = 0
     last_bp_session = sessions[0]
     last_bp_low = None
+    peak_high: float | None = None
     peak_recognized = False
     peak_used = False
     latest_bp: tuple[str, float] | None = None
@@ -190,14 +194,31 @@ def _initial_machine(  # noqa: C901, PLR0912, PLR0915 - one linear rules transcr
         if bar is None:
             continue
         _check_bar(bar)
+        # (i) recognize a pending peak on a session that does not make a new high
+        if running_high > -math.inf and bar.high <= running_high and not peak_recognized:
+            peak_high = running_high
+            peak_recognized = True
+            peak_used = False
+        # (ii) rule 4 against the recognized peak's stored high
+        if (
+            rule == "bp4"
+            and peak_high is not None
+            and not peak_used
+            and bar.close > RULE4_THRESHOLD * peak_high
+        ):
+            latest_bp = (session, bar.low)
+            last_bp_session = session
+            last_bp_low = bar.low
+            peak_used = True
+            candidate_low = candidate_high = None
+            candidate_session = None
+            away = 0
+        # (iii) update the running high (a new pending peak; the recognized level stays)
         if bar.high > running_high:
             running_high = bar.high
             running_session = session
             peak_recognized = False
-            peak_used = False
-        elif running_high > -math.inf and not peak_recognized:
-            peak_recognized = True
-            peak_used = False
+        # (iv) candidate low / away days / rule 3
         after = running_session < session and last_bp_session < session
         if after and (candidate_low is None or bar.low < candidate_low):
             candidate_low = bar.low
@@ -220,20 +241,6 @@ def _initial_machine(  # noqa: C901, PLR0912, PLR0915 - one linear rules transcr
                 candidate_low = candidate_high = None
                 candidate_session = None
                 away = 0
-        if (
-            rule == "bp4"
-            and peak_recognized
-            and not peak_used
-            and running_high > -math.inf
-            and bar.close > RULE4_THRESHOLD * running_high
-        ):
-            latest_bp = (session, bar.low)
-            last_bp_session = session
-            last_bp_low = bar.low
-            peak_used = True
-            candidate_low = candidate_high = None
-            candidate_session = None
-            away = 0
     close_e = bars[-1].close if bars[-1] is not None else None
     if close_e is None:
         close_e = next((bar.close for bar in reversed(bars) if bar is not None), None)
@@ -260,6 +267,7 @@ def _initial_machine(  # noqa: C901, PLR0912, PLR0915 - one linear rules transcr
             last_bp_session=last_bp_session,
             last_bp_low=last_bp_low,
             stop=stop,
+            peak_high=peak_high,
             peak_recognized=peak_recognized,
             peak_used=peak_used,
             out=False,
@@ -303,16 +311,47 @@ def advance(  # noqa: C901 - one linear rules transcript
         return state, []
     events: list[BasingPointEvent] = []
     machine = state
+    # (i) recognize a pending peak on a session that does not make a new high
+    if (
+        machine.running_high > 0.0
+        and bar.high <= machine.running_high
+        and not machine.peak_recognized
+    ):
+        machine = replace(
+            machine,
+            peak_high=machine.running_high,
+            peak_recognized=True,
+            peak_used=False,
+        )
+    # (ii) rule 4 against the recognized peak's stored high
+    if (
+        rule == "bp4"
+        and machine.peak_high is not None
+        and not machine.peak_used
+        and bar.close > RULE4_THRESHOLD * machine.peak_high
+    ):
+        stop = max(machine.stop, bar.low * (1.0 - distance))
+        events.append(BasingPointEvent(session=session, kind="bp4", value=bar.low))
+        machine = replace(
+            machine,
+            stop=stop,
+            last_bp_session=session,
+            last_bp_low=bar.low,
+            peak_used=True,
+            candidate_low=None,
+            candidate_high=None,
+            candidate_session=None,
+            away_days=0,
+        )
+    # (iii) update the running high (a new pending peak; the recognized level stays)
     if bar.high > machine.running_high:
         machine = replace(
             machine,
             running_high=bar.high,
             running_high_session=session,
             peak_recognized=False,
-            peak_used=False,
         )
-    elif not machine.peak_recognized:
-        machine = replace(machine, peak_recognized=True, peak_used=False)
+    # (iv) candidate low / away days / rule 3
     after = machine.running_high_session < session and machine.last_bp_session < session
     if after and (machine.candidate_low is None or bar.low < machine.candidate_low):
         machine = replace(
@@ -346,26 +385,6 @@ def advance(  # noqa: C901 - one linear rules transcript
                 candidate_session=None,
                 away_days=0,
             )
-    if (
-        rule == "bp4"
-        and machine.peak_recognized
-        and not machine.peak_used
-        and machine.running_high > 0.0
-        and bar.close > RULE4_THRESHOLD * machine.running_high
-    ):
-        stop = max(machine.stop, bar.low * (1.0 - distance))
-        events.append(BasingPointEvent(session=session, kind="bp4", value=bar.low))
-        machine = replace(
-            machine,
-            stop=stop,
-            last_bp_session=session,
-            last_bp_low=bar.low,
-            peak_used=True,
-            candidate_low=None,
-            candidate_high=None,
-            candidate_session=None,
-            away_days=0,
-        )
     if bar.close < machine.stop:
         machine = replace(machine, out=True)
         events.append(BasingPointEvent(session=session, kind="exit", value=machine.stop))
