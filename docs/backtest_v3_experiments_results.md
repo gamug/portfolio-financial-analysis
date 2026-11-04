@@ -12,11 +12,14 @@ hand. Aggregates only: no per-asset value and no SPY price/return series appears
 - **Every result is in-sample**: all six windows were seen before round 3.
 - X0 identity: all six windows reproduce v2 V3 exactly
   (summaries, tests, weights and GUARD actions; max |delta| 0.0).
-- Declared count: **17** configurations tried after v1 (6 in v2 + 11 new here), as
-  the plan states. **Discrepancy:** v2's own record is a 25-configuration 5 x 5 grid
-  (`docs/champion_results.md`), so the measured cumulative count is 25 + 11 = **36**.
-  The plan's 17 is reported as declared; the adoption rule and the choice do not depend
-  on it (see PROGRESS.md, OPEN QUESTIONS).
+- Configurations tried with LLM scores (ledger): exploratory sweep 2026-11-01/02 ~29
+  configurations (OpenCode-simulated scores, chosen on P1; exploration only); CHAMPION
+  (PR #188, pre-registered `56312fb`) 25 configurations including B0·T0, selection on
+  P1 + P2a, H1–H3 used once as the test, and the defensive claim was not supported;
+  v2 (PR #190) 6 configurations, 5 new (V0 = B0·T0), its selection read all six windows,
+  so from v2 on H1–H3 are no longer held out and every result is in-sample; round 3
+  (this PR) 12 configurations, 11 new (X0 = V3). Distinct configurations evaluated with
+  LLM scores: **25 + 5 + 11 = 41**. The plan's "17" counted v2 and round 3 only.
 - Adoption: **X5**
 
 ## 1. Per configuration (TOPN_MV_GUARD_NO_NLP, six windows)
