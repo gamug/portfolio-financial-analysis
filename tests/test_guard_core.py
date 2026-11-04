@@ -118,6 +118,7 @@ def test_interface_matches_spec_8_1() -> None:
         "nav",
         "news",
         "bars",
+        "bar_sessions",
         "stop_distances",
         "decision_date",
         "core_asset_id",

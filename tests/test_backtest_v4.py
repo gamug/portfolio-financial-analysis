@@ -271,6 +271,7 @@ def test_exit_out_until_the_next_decision_and_fresh_machine_on_reentry() -> None
         reference_returns=[0.0, 0.0],
         nav=1.0,
         bars={1: history},
+        bar_sessions={1: [f"d{i:03d}" for i in range(64)]},
         stop_distances={1: 0.05},
         decision_date=True,
     )
@@ -286,6 +287,7 @@ def test_exit_out_until_the_next_decision_and_fresh_machine_on_reentry() -> None
             reference_returns=[0.0, -0.2],
             nav=0.9,
             bars={1: [*history, crash]},
+            bar_sessions={1: [f"d{i:03d}" for i in range(65)]},
             stop_distances={1: 0.05},
             decision_date=False,
         ),
@@ -302,6 +304,7 @@ def test_exit_out_until_the_next_decision_and_fresh_machine_on_reentry() -> None
             reference_returns=[0.0, 0.1],
             nav=0.9,
             bars={1: [*history, crash, good]},
+            bar_sessions={1: [f"d{i:03d}" for i in range(66)]},
             stop_distances={1: 0.05},
             decision_date=False,
         ),
@@ -317,6 +320,7 @@ def test_exit_out_until_the_next_decision_and_fresh_machine_on_reentry() -> None
             reference_returns=[0.1, 0.0],
             nav=0.9,
             bars={1: [*history, crash, good, good]},
+            bar_sessions={1: [f"d{i:03d}" for i in range(67)]},
             stop_distances={1: 0.05},
             decision_date=True,
         ),
@@ -337,6 +341,7 @@ def test_a_missing_bar_neither_updates_nor_triggers() -> None:
         reference_returns=[0.0, 0.0],
         nav=1.0,
         bars={1: history},
+        bar_sessions={1: [f"d{i:03d}" for i in range(64)]},
         stop_distances={1: 0.05},
         decision_date=True,
     )
@@ -351,6 +356,7 @@ def test_a_missing_bar_neither_updates_nor_triggers() -> None:
             reference_returns=[0.0, 0.0],
             nav=1.0,
             bars={1: [None]},
+            bar_sessions={1: ["d064"]},
             stop_distances={1: 0.05},
             decision_date=False,
         ),
@@ -403,3 +409,147 @@ def test_the_v4_defaults_leave_the_kl_and_minvar_paths_unchanged() -> None:
     )
     assert all(spec.guard is None or spec.guard.stop_rule == "kl" for spec in specs)
     assert all(spec.shadow_guard is None or spec.shadow_guard.stop_rule == "kl" for spec in specs)
+
+
+def _bp_history() -> tuple[list[str], list[Bar]]:
+    """64 bars: 44 flat, then a clear rule-3 Basing Point (low 90 at pattern day 7)."""
+    bars = [Bar(high=100.0, low=95.0, close=97.5) for _ in range(44)]
+    for index in range(20):
+        if index < 2:
+            bars.append(Bar(high=100.0, low=95.0, close=97.5))
+        elif index == 2:
+            bars.append(Bar(high=99.0, low=90.0, close=92.0))
+        elif index == 3:
+            bars.append(Bar(high=104.0, low=103.0, close=103.5))
+        elif index == 4:
+            bars.append(Bar(high=98.0, low=96.0, close=97.0))
+        elif index == 5:
+            bars.append(Bar(high=106.0, low=105.0, close=105.5))
+        elif index == 6:
+            bars.append(Bar(high=98.0, low=96.0, close=97.0))
+        elif index == 7:
+            bars.append(Bar(high=108.0, low=107.0, close=107.5))
+        else:
+            bars.append(Bar(high=95.0, low=92.0, close=93.0))
+    return [f"b{i:03d}" for i in range(len(bars))], bars
+
+
+def test_the_entry_history_carries_real_sessions_and_finds_a_rule_three_point() -> None:
+    sessions, history = _bp_history()
+    params = _bp_params()
+    out = evaluate(
+        initial_state(),
+        GuardInput(
+            date=sessions[-1],
+            reference_weights={1: 0.5},
+            asset_returns={1: [0.0, 0.0]},
+            reference_returns=[0.0, 0.0],
+            nav=1.0,
+            bars={1: history},
+            bar_sessions={1: sessions},
+            stop_distances={1: 0.05},
+            decision_date=True,
+        ),
+        params,
+    )
+    machine = dict(out.state.bp)[1]
+    assert machine.fallback is False
+    assert machine.last_bp_session == sessions[44 + 7]
+    assert machine.stop == pytest.approx(90.0 * 0.95)
+    assert [event.kind for event in out.bp_events] == ["entry"]
+
+
+def test_a_decision_reentry_reseeds_from_the_real_sessions() -> None:
+    sessions, history = _bp_history()
+    params = _bp_params()
+    flat_sessions = sessions[:64]
+    flat = [Bar(high=100.0, low=95.0, close=97.5) for _ in range(64)]
+    out = evaluate(
+        initial_state(),
+        GuardInput(
+            date="b063",
+            reference_weights={1: 0.5},
+            asset_returns={1: [0.0, 0.0]},
+            reference_returns=[0.0, 0.0],
+            nav=1.0,
+            bars={1: flat},
+            bar_sessions={1: flat_sessions},
+            stop_distances={1: 0.05},
+            decision_date=True,
+        ),
+        params,
+    )
+    assert dict(out.state.bp)[1].fallback is True  # the flat history has no Basing Point
+    crash = Bar(high=81.0, low=79.0, close=80.0)
+    out = evaluate(
+        out.state,
+        GuardInput(
+            date="b064",
+            reference_weights={1: 0.5},
+            asset_returns={1: [0.0, -0.2]},
+            reference_returns=[0.0, -0.2],
+            nav=0.9,
+            bars={1: [*flat, crash]},
+            bar_sessions={1: [*flat_sessions, "b064"]},
+            stop_distances={1: 0.05},
+            decision_date=False,
+        ),
+        params,
+    )
+    assert out.l1_out == frozenset({1})
+    # re-entry at the next decision: the BP history (65 bars ending at b065) is used
+    bars65 = [*history, Bar(high=95.0, low=92.0, close=93.0)]
+    sessions65 = [*sessions, "b065"]
+    out = evaluate(
+        out.state,
+        GuardInput(
+            date="b065",
+            reference_weights={1: 0.5},
+            asset_returns={1: [0.0, 0.1]},
+            reference_returns=[0.0, 0.1],
+            nav=0.9,
+            bars={1: bars65},
+            bar_sessions={1: sessions65},
+            stop_distances={1: 0.05},
+            decision_date=True,
+        ),
+        params,
+    )
+    machine = dict(out.state.bp)[1]
+    assert machine.out is False
+    assert machine.fallback is False
+    assert machine.stop == pytest.approx(90.0 * 0.95)
+
+
+def test_a_later_rule_four_point_supersedes_an_earlier_rule_three_point() -> None:
+    # the 20-bar rule-3 series, then a rule-4 day at d008 with a lower low (80)
+    bars = []
+    for index in range(20):
+        if index < 2:
+            bars.append(Bar(high=100.0, low=95.0, close=97.5))
+        elif index == 2:
+            bars.append(Bar(high=99.0, low=90.0, close=92.0))
+        elif index == 3:
+            bars.append(Bar(high=104.0, low=103.0, close=103.5))
+        elif index == 4:
+            bars.append(Bar(high=98.0, low=96.0, close=97.0))
+        elif index == 5:
+            bars.append(Bar(high=106.0, low=105.0, close=105.5))
+        elif index == 6:
+            bars.append(Bar(high=98.0, low=96.0, close=97.0))
+        elif index == 7:
+            bars.append(Bar(high=108.0, low=107.0, close=107.5))
+        elif index == 8:
+            bars.append(Bar(high=112.0, low=80.0, close=111.0))  # rule 4, latest BP
+        else:
+            bars.append(Bar(high=95.0, low=92.0, close=93.0))
+    sessions = [f"d{i:03d}" for i in range(8)] + [
+        "d008",
+        *[f"d{i:03d}" for i in range(9, 20)],
+    ]
+    machine, events = establish(
+        sessions, bars, entry_session=sessions[-1], distance=0.05, rule="bp4"
+    )
+    assert machine.last_bp_session == "d008"
+    assert machine.stop == pytest.approx(80.0 * 0.95)
+    assert [event.kind for event in events] == ["entry"]

@@ -173,6 +173,9 @@ class GuardInput:
     #: of a decision date (the reference is the new target); ``core_asset_id`` is the SPY
     #: core, which takes no per-asset stop under bp3/bp4.
     bars: Mapping[int, Sequence[basing.Bar | None]] | None = None
+    #: The real session of every entry in ``bars`` (same length, oldest first; a ``None``
+    #: bar keeps its session). Required when ``bars`` is used by bp3/bp4.
+    bar_sessions: Mapping[int, Sequence[str]] | None = None
     stop_distances: Mapping[int, float] | None = None
     decision_date: bool = False
     core_asset_id: int | None = None
@@ -421,11 +424,12 @@ def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
 ]:
     """Basing Points layer 1 for the names in the reference (satellite names only).
 
-    The core's asset (``inp.core_asset_id``) is skipped: the procedure is for individual
-    stocks, and the SPY core has no daily high/low in the run. A name first seen in the
-    reference gets a machine built over the last 64 bars; a name out at a decision date
-    and still in the reference re-enters with a fresh machine; a name that leaves the
-    reference drops its machine. A session without a bar neither updates nor triggers.
+    The core's asset (``inp.core_asset_id``) is skipped. A name first seen in the reference
+    gets a machine built over the last 64 bars (with their real session dates); a name out at
+    a decision date and still in the reference re-enters with a fresh machine; a name that
+    leaves the reference drops its machine. A session without a bar neither updates nor
+    triggers. Bars and sessions are only required for a name that is actually entered,
+    reseeded or advanced.
     """
     machines = dict(state.bp)
     out: set[int] = set()
@@ -437,23 +441,57 @@ def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
     for asset_id in sorted(set(reference) | set(machines)):
         if asset_id == inp.core_asset_id:
             continue
-        history = histories.get(asset_id) or []
         in_reference = asset_id in reference
         machine = machines.get(asset_id)
-        if machine is None:
+        if machine is None and not in_reference:
+            machines.pop(asset_id, None)
+            continue
+        if machine is not None:
+            if machine.out:
+                if inp.decision_date and in_reference:
+                    history = histories.get(asset_id) or []
+                    sessions = _bp_sessions(inp, asset_id, history)
+                    machine, entry_events = basing.reseed(
+                        sessions,
+                        history,
+                        entry_session=inp.date,
+                        distance=distances.get(asset_id, 0.10),
+                        rule=params.stop_rule,
+                    )
+                    machines[asset_id] = machine
+                    events.extend(replace(event, asset_id=asset_id) for event in entry_events)
+                    alerts.append(
+                        Alert(
+                            layer=_LAYER_STOP_LOSS,
+                            asset_id=asset_id,
+                            rule_id="L1_BP_REENTRY",
+                            value=machine.stop,
+                            threshold=0.0,
+                            state=_EXIT,
+                        )
+                    )
+                    if machine.out:
+                        out.add(asset_id)
+                    continue
+                if inp.decision_date and not in_reference:
+                    machines.pop(asset_id, None)
+                    continue
+                out.add(asset_id)
+                continue
             if not in_reference:
                 machines.pop(asset_id, None)
                 continue
+        if machine is None:
+            history = histories.get(asset_id) or []
+            sessions = _bp_sessions(inp, asset_id, history)
             if not any(bar is not None for bar in history):
-                # a name with no bar at all at entry: fail open, no machine, counted
                 missing += 1
                 continue
-            distance = distances.get(asset_id, 0.10)
             machine, entry_events = basing.establish(
-                [inp.date] * len(history),
-                list(history),
+                sessions,
+                history,
                 entry_session=inp.date,
-                distance=distance,
+                distance=distances.get(asset_id, 0.10),
                 rule=params.stop_rule,
             )
             machines[asset_id] = machine
@@ -461,45 +499,16 @@ def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
             if machine.out:
                 out.add(asset_id)
             continue
-        if machine.out:
-            if inp.decision_date and in_reference:
-                distance = distances.get(asset_id, 0.10)
-                machine, entry_events = basing.reseed(
-                    [inp.date] * len(history),
-                    list(history),
-                    entry_session=inp.date,
-                    distance=distance,
-                    rule=params.stop_rule,
-                )
-                machines[asset_id] = machine
-                events.extend(replace(event, asset_id=asset_id) for event in entry_events)
-                alerts.append(
-                    Alert(
-                        layer=_LAYER_STOP_LOSS,
-                        asset_id=asset_id,
-                        rule_id="L1_BP_REENTRY",
-                        value=machine.stop,
-                        threshold=0.0,
-                        state=_EXIT,
-                    )
-                )
-                if machine.out:
-                    out.add(asset_id)
-                continue
-            if inp.decision_date and not in_reference:
-                machines.pop(asset_id, None)
-                continue
-            out.add(asset_id)
-            continue
-        if not in_reference:
-            machines.pop(asset_id, None)
-            continue
+        history = histories.get(asset_id) or []
         if not history or history[-1] is None:
             missing += 1
             continue
-        distance = distances.get(asset_id, 0.10)
         machine, day_events = basing.advance(
-            machine, inp.date, history[-1], distance=distance, rule=params.stop_rule
+            machine,
+            inp.date,
+            history[-1],
+            distance=distances.get(asset_id, 0.10),
+            rule=params.stop_rule,
         )
         machines[asset_id] = machine
         events.extend(replace(event, asset_id=asset_id) for event in day_events)
@@ -515,9 +524,19 @@ def _layer1_bp(  # noqa: C901, PLR0912, PLR0915 - one linear machine dispatch
                     state=_ENTER,
                 )
             )
-    # Machines of names no longer tracked are already dropped above; sort for determinism.
     bp_state = tuple(sorted(machines.items()))
     return frozenset(out), bp_state, alerts, events, missing
+
+
+def _bp_sessions(inp: GuardInput, asset_id: int, history: Sequence[basing.Bar | None]) -> list[str]:
+    """The real session dates aligned with *history* (required for an entry or a reseed)."""
+    sessions = (inp.bar_sessions or {}).get(asset_id)
+    if sessions is None or len(sessions) != len(history):
+        raise ValueError(
+            f"asset {asset_id}: bars and bar_sessions disagree "
+            f"({len(history)} bars, {0 if sessions is None else len(sessions)} sessions)"
+        )
+    return list(sessions)
 
 
 def _news_evidence(counts: NewsCounts | None, n_min: int) -> tuple[float, bool]:

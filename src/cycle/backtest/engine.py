@@ -416,9 +416,12 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
 ) -> GuardInput:
     tracked = set(reference) | set(book.out_assets)
     bars: dict[int, Sequence[Bar | None]] = {}
+    bar_sessions: dict[int, Sequence[str]] = {}
+    start = max(0, index - 63)
     for asset_id in tracked:
         series = aligned_bars.get(asset_id)
-        bars[asset_id] = [] if series is None else list(series[max(0, index - 63) : index + 1])
+        bars[asset_id] = [] if series is None else list(series[start : index + 1])
+        bar_sessions[asset_id] = list(inp.sessions[start : index + 1])
     return GuardInput(
         date=date,
         reference_weights=dict(reference),
@@ -430,6 +433,7 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
         nav=book.nav,
         news=inp.news.get(date),
         bars=bars,
+        bar_sessions=bar_sessions,
         stop_distances=inp.stop_distances.get(date, {}),
         decision_date=date in inp.decision_dates,
         core_asset_id=inp.core_asset_id,
