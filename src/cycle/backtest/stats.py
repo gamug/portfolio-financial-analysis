@@ -8,6 +8,8 @@ mutated. The four public functions are the fixed interface WP-A calls:
 * :func:`ledoit_wolf_sharpe_diff` -- a studentized circular block bootstrap in the structure of
   Ledoit & Wolf (2008), with a Newey-West HAC standard error.
 * :func:`hac_mean_diff` -- Newey & West (1987) HAC t-test on the mean return difference.
+* :func:`bootstrap_mdd_diff` -- paired circular block bootstrap of the maximum-drawdown
+  difference (V2_PLAN §2e).
 
 Conventions that hold everywhere in this module
 -----------------------------------------------
@@ -36,6 +38,8 @@ from scipy.stats import norm
 # The validation floor BACKTEST_PLAN WP-E fixes for every function here. The shortest reporting
 # cut (P2a) is far above it, so the floor never binds on real output.
 MIN_OBS = 30
+#: The bootstrap's own floor: a drawdown is defined on any path of two or more sessions.
+MIN_BOOT_OBS = 2
 _BPS = 10_000.0
 
 # BACKTEST_SPEC §8.4 writes the parameters as ``Sequence[float]``. It also says WP-A passes numpy
@@ -424,3 +428,70 @@ def hac_mean_diff(
 
     t = mean / math.sqrt(variance / n)
     return t, float(2.0 * norm.sf(abs(t)))
+
+
+# -- paired block bootstrap of the MDD difference ------------------------------------------------
+
+
+def _max_drawdown(returns: np.ndarray) -> float:
+    """``max_t (1 - NAV_t / max(1, NAV_1..NAV_t))`` on a simple-return path (positive)."""
+    nav = np.cumprod(1.0 + returns)
+    peak = np.maximum.accumulate(np.maximum(nav, 1.0))
+    return float(np.max(1.0 - nav / peak))
+
+
+def bootstrap_mdd_diff(
+    r_a: FloatSeries,
+    r_b: FloatSeries,
+    *,
+    block: int = 5,
+    n_boot: int = 4999,
+    seed: int = 20261104,
+) -> tuple[float, float]:
+    """Paired circular block bootstrap of the maximum-drawdown difference (V2_PLAN §2e).
+
+    ``observed = MDD_a - MDD_b`` (positive = arm *a* drew down more), with each MDD computed on
+    the arm's own simple-return path and the same definition as :func:`summarize` (the initial
+    NAV of 1.0 is the first peak).
+
+    Each replication draws **one** circular block index (blocks of *block* consecutive sessions,
+    wrapping, truncated to ``n``) and applies it to both arms, so the contemporaneous pairing is
+    preserved; it recomputes ``MDD_a* - MDD_b*`` on the resampled paths. The p-value is the
+    add-one centred bootstrap frequency
+
+        ``p = (1 + #{|diff* - observed| >= |observed|}) / (1 + n_boot)``
+
+    the same structure as :func:`ledoit_wolf_sharpe_diff` (centred null, add-one), two-sided.
+    Identical arms have ``observed = 0`` and return exactly ``(0.0, 1.0)``; a strictly dominating
+    arm returns ``1 / (1 + n_boot)`` because no replicate reaches the observed gap.
+
+    Deterministic for a given *seed* (``numpy.random.default_rng(seed)``, PCG64). *block* in
+    ``[1, n]`` and ``n_boot >= 1``; two finite series of equal length with ``n >= 2``.
+    """
+    a = np.asarray(r_a, dtype=float)
+    b = np.asarray(r_b, dtype=float)
+    if a.ndim != 1 or b.ndim != 1:
+        raise ValueError("the return series must be one-dimensional")
+    if a.size != b.size:
+        raise ValueError(f"r_b has {b.size} observations, expected {a.size}")
+    if a.size < MIN_BOOT_OBS:
+        raise ValueError(f"at least {MIN_BOOT_OBS} observations are needed, got {a.size}")
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+        raise ValueError("a return series contains a non-finite value (nan or inf)")
+    n = a.size
+    if not isinstance(block, int) or not 1 <= block <= n:
+        raise ValueError(f"block must be an integer in [1, {n}], got {block!r}")
+    if not isinstance(n_boot, int) or n_boot < 1:
+        raise ValueError(f"n_boot must be a positive integer, got {n_boot!r}")
+
+    observed = _max_drawdown(a) - _max_drawdown(b)
+    if observed == 0.0:
+        return 0.0, 1.0
+    rng = np.random.default_rng(seed)
+    exceed = 0
+    for _ in range(n_boot):
+        idx = _circular_indices(rng, n, block)
+        difference = _max_drawdown(a[idx]) - _max_drawdown(b[idx])
+        if abs(difference - observed) >= abs(observed):
+            exceed += 1
+    return observed, (1.0 + exceed) / (1.0 + n_boot)

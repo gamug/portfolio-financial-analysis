@@ -288,7 +288,13 @@ def test_the_driver_runs_the_pipeline_and_persists_every_m018_table(
     assert conn.execute("SELECT COUNT(*) FROM book_weight_daily").fetchone()[0] > 0
     assert conn.execute("SELECT COUNT(*) FROM book_daily_performance").fetchone()[0] > 0
     assert conn.execute("SELECT COUNT(*) FROM backtest_summary").fetchone()[0] == 3
-    assert conn.execute("SELECT COUNT(*) FROM backtest_test").fetchone()[0] == 6
+    # three pairs (GUARD_NO_NLP/NOGUARD, GUARD_NO_NLP/BASE, NOGUARD/BASE) x four tests
+    # (memmel_jk, ledoit_wolf, hac_mean_diff, the v2 bootstrap_mdd)
+    assert conn.execute("SELECT COUNT(*) FROM backtest_test").fetchone()[0] == 12
+    assert [
+        str(row["test"])
+        for row in conn.execute("SELECT DISTINCT test FROM backtest_test ORDER BY test")
+    ] == ["bootstrap_mdd", "hac_mean_diff", "ledoit_wolf", "memmel_jk"]
 
     statuses = {
         str(r["status"]) for r in conn.execute("SELECT status FROM guard_action").fetchall()
