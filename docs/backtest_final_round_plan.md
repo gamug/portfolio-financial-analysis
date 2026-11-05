@@ -237,6 +237,13 @@ exported. Check that the free disk space is enough before every batch.
 No new data and no new calibration. The run-copy checks of round 4 §5 (amended) run again, counts only. No model
 call. Only aggregates are committed.
 
+2026-11-05 — §5 check (a) is non-empty in P2: 1 name-session (CNC, 2025-07-02), held by B5's minimum-CVaR satellite and never tracked by Y2. This entry was written after the stage-B and FINAL results were seen. Investigated after the stage-B and FINAL resolutions were committed:
+- no SPLIT row on that date (CNC's only split is 2019-02-07);
+- no corporate action;
+- the level persists in the following sessions;
+- the date matches the issuer's public withdrawal of its 2025 guidance after the previous close (Fierce Healthcare, 2025-07-02).
+It is treated as a genuine market move, not a missing split. No run, resolution or selection changes.
+
 ## 8. References (PDFs in `documentacion/documentacion_portafolios/faltantes prioritarios`, read by reviewer A)
 
 Methods:
