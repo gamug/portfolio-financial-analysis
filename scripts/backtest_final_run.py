@@ -280,13 +280,16 @@ def main() -> int:
     parser.add_argument("--mode", required=True)
     parser.add_argument("--out", default=str(OUT))
     parser.add_argument("--keep-db", action="store_true")
+    parser.add_argument("--windows", default=None, help="optional comma-separated subset")
     args = parser.parse_args()
     out = Path(args.out).expanduser().resolve()
     (out / "runs").mkdir(parents=True, exist_ok=True)
+    wanted = None if args.windows is None else set(args.windows.split(","))
     jobs = [
         job
         for job in _jobs(args.mode, out)
-        if not (out / "runs" / f"{job[0]}_{job[1]}.json").is_file()
+        if (wanted is None or job[1] in wanted)
+        and not (out / "runs" / f"{job[0]}_{job[1]}.json").is_file()
     ]
     results: list[dict[str, Any]] = []
     for start in range(0, len(jobs), MAX_WORKERS):
