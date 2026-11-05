@@ -343,10 +343,10 @@ Any change to §2–§7 after the commit is written here with its date and reaso
 | config | guard_layers | vol_target | mean MDD | mean cumulative | R | windows with lower MDD than Z0 |
 |---|---|---|---|---|---|---|
 | Z0 | [1, 3, 4] | fixed | 0.076108 | 0.064284 | 0.8446 | - |
-| Z1 | [1] | fixed | 0.081019 | 0.063963 | 0.7895 | 2 |
+| Z1 | [1] | fixed | 0.081019 | 0.063963 | 0.7895 | 0 |
 | Z2 | [1, 4] | fixed | 0.076108 | 0.064284 | 0.8446 | 0 |
-| Z3 | [1, 3] | trailing | 0.072721 | 0.057918 | 0.7964 | 4 |
-| Z4 | [1, 3, 4] | trailing | 0.071552 | 0.056444 | 0.7889 | 6 |
+| Z3 | [1, 3] | trailing | 0.072721 | 0.057918 | 0.7964 | 3 |
+| Z4 | [1, 3, 4] | trailing | 0.071552 | 0.056444 | 0.7889 | 4 |
 
 Z2 is identical to Z0 on every arm and session, as expected (layer 3 never acted in Y2). No configuration has R > 0.8446 with mean MDD <= 0.0831, so **A\* = Z0 = Y2** (`[1, 3, 4]`, fixed); the adoption rule (§2) is unchanged. Stage B therefore weights Z0's min-variance set. The NOGUARD arm's shadow alerts are context only and no stage-A result uses them.
 
