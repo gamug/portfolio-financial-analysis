@@ -79,6 +79,17 @@ GUARD_ARM = engine.ARM_TOPN_GUARD
 GUARD_NO_NLP_ARM = engine.ARM_TOPN_GUARD_NO_NLP
 GUARD_ARMS = (GUARD_ARM, GUARD_NO_NLP_ARM)
 BASE_GUARD_ARM = engine.ARM_MARKOWITZ_BASE_GUARD
+#: Final-round section 3: the satellite weighting methods (``minvar`` is the default).
+SATELLITE_WEIGHTINGS = (
+    "minvar",
+    "rp",
+    "ew",
+    "vt",
+    "maxdiv",
+    "hrp",
+    "mincvar",
+    "ensemble",
+)
 #: The four arms every V2_PLAN §3 run simulates.
 V2_ARMS = (BASE_ARM, NOGUARD_ARM, GUARD_NO_NLP_ARM, BASE_GUARD_ARM)
 #: |sum of a book's weights - 1| tolerated before the run refuses a not-fully-invested book.
@@ -732,6 +743,7 @@ class PipelineResult:
     trend_states: list[dict[str, str]] = field(default_factory=list)
     pool_records: list[dict[str, Any]] = field(default_factory=list)
     rp_records: list[dict[str, Any]] = field(default_factory=list)
+    weighting_records: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipeline
@@ -760,6 +772,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
     trend_records: list[dict[str, str]] = []
     pool_records: list[dict[str, Any]] = []
     rp_records: list[dict[str, Any]] = []
+    weighting_records: list[dict[str, Any]] = []
     formation: str | None = None
 
     for warm_date in warmup:
@@ -898,6 +911,10 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
                     "max_min_rrc": topn.get("rp_max_min_rrc"),
                 }
             )
+        if satellite_weighting != "minvar":
+            record = dict(topn.get("weighting") or {})
+            record["decision_date"] = decision
+            weighting_records.append(record)
         config = v2core.config_targets(
             _positions(conn, base_portfolio, BASE_ARM),
             _positions(conn, topn_portfolio, NOGUARD_ARM),
@@ -944,6 +961,7 @@ def _pipeline(  # noqa: C901, PLR0912, PLR0913, PLR0915 - spec §2's linear pipe
         trend_states=trend_records,
         pool_records=pool_records,
         rp_records=rp_records,
+        weighting_records=weighting_records,
     )
 
 
@@ -968,6 +986,8 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
     filter_exit: float = 1.0,
     stop_rule: str = "kl",
     satellite_weighting: str = "minvar",
+    guard_layers: Sequence[int] | None = None,
+    vol_target: str = "fixed",
 ) -> int:
     created = datetime.now(tz=UTC).isoformat(timespec="seconds")
     params_json = {
@@ -983,6 +1003,8 @@ def _open_run(  # noqa: PLR0913, PLR0917 - the run row's fields, all named
         "filter_exit": filter_exit,
         "stop_rule": stop_rule,
         "satellite_weighting": satellite_weighting,
+        "guard_layers": None if guard_layers is None else sorted(guard_layers),
+        "vol_target": vol_target,
         "core_asset_id": core_asset_id,
         "core_series_path": None if series is None else str(series.path),
         "core_series_sha256": None if series is None else series.sha256,
@@ -1491,16 +1513,20 @@ def resolve_arms(requested: Sequence[str] | None, params: BacktestParams) -> lis
     return arms
 
 
-def _arm_specs(
+def _arm_specs(  # noqa: PLR0913 - the knobs that select each arm's guard
     codes: Sequence[str],
     params: BacktestParams,
     shadow_code: str | None,
     *,
     stop_rule: str = "kl",
+    guard_layers: frozenset[int] | None = None,
+    vol_target: str = "fixed",
 ) -> list[engine.ArmSpec]:
-    """The arms of a run; round 4's ``stop_rule`` applies to TOPN_MV_GUARD_NO_NLP only.
+    """The arms of a run; round 4's ``stop_rule`` and the final round's ``guard_layers`` /
+    ``vol_target`` apply to TOPN_MV_GUARD_NO_NLP only.
 
-    The base GUARD arm keeps ``kl`` (V4 plan §2a), and so does the news arm if it is run.
+    The base GUARD arm keeps ``kl`` (V4 plan §2a) and its frozen layers, and so does the news
+    arm if it is run (final round §1: MARKOWITZ_BASE_GUARD is untouched by stage A).
     """
     specs = [engine.ArmSpec(BASE_ARM, BASE_ARM), engine.ArmSpec(NOGUARD_ARM, NOGUARD_ARM)]
     shadow = params.guard.get(shadow_code) if shadow_code else None
@@ -1511,7 +1537,12 @@ def _arm_specs(
         if code in codes:
             guard = params.guard[code]
             if code == GUARD_NO_NLP_ARM:
-                guard = replace(guard, stop_rule=stop_rule)
+                guard = replace(
+                    guard,
+                    layers=guard.layers if guard_layers is None else guard_layers,
+                    stop_rule=stop_rule,
+                    vol_target=vol_target,
+                )
             specs.append(engine.ArmSpec(code, NOGUARD_ARM, guard=guard))
     if BASE_GUARD_ARM in codes:
         # V2_PLAN §2d: the base book gets the same frozen layers 1/3/4 as the Top-N overlay,
@@ -1764,6 +1795,9 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     filter_exit: float = 1.0,
     stop_rule: str = "kl",
     satellite_weighting: str = "minvar",
+    guard_layers: Sequence[int] | None = None,
+    vol_target: str = "fixed",
+    cost_bps: float | None = None,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1774,6 +1808,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     if not universe.is_file():
         raise BacktestError(f"--universe-db {universe} does not exist")
     params = load_params(params_path)
+    if cost_bps is not None:
+        if not math.isfinite(cost_bps) or cost_bps < 0.0:
+            raise BacktestError(f"cost_bps must be a finite non-negative number, got {cost_bps!r}")
+        params = replace(params, cost_bps=float(cost_bps))
     if blend not in defensive.BLENDS:
         raise BacktestError(f"unknown blend {blend!r}: expected one of {sorted(defensive.BLENDS)}")
     if tilt not in defensive.TILTS:
@@ -1797,10 +1835,23 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
         raise BacktestError(
             f"unknown stop_rule {stop_rule!r}: expected one of {list(basing.STOP_RULES)}"
         )
-    if satellite_weighting not in ("minvar", "rp"):
+    if satellite_weighting not in SATELLITE_WEIGHTINGS:
         raise BacktestError(
-            f"unknown satellite_weighting {satellite_weighting!r}: expected minvar or rp"
+            f"unknown satellite_weighting {satellite_weighting!r}: expected one of "
+            f"{SATELLITE_WEIGHTINGS}"
         )
+    effective_layers = (
+        None if guard_layers is None else frozenset(int(layer) for layer in guard_layers)
+    )
+    if effective_layers is not None:
+        unknown = sorted(effective_layers - {1, 3, 4})
+        if unknown or 1 not in effective_layers:
+            raise BacktestError(
+                "guard_layers must be a subset of {1, 3, 4} that contains 1, "
+                f"got {sorted(effective_layers)}"
+            )
+    if vol_target not in ("fixed", "trailing"):
+        raise BacktestError(f"vol_target must be 'fixed' or 'trailing', got {vol_target!r}")
     series: v2core.CoreSeries | None = None
     if (core_weight > 0.0 and core_source == "spy") or trend_filter == v2core.FILTER_ON:
         if core_series_path is None:
@@ -1848,6 +1899,8 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             filter_exit=filter_exit,
             stop_rule=stop_rule,
             satellite_weighting=satellite_weighting,
+            guard_layers=None if effective_layers is None else sorted(effective_layers),
+            vol_target=vol_target,
         )
         payload: dict[str, Any] = {}
         try:
@@ -1935,7 +1988,11 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             )
             conn.commit()
             sessions = _engine_sessions(
-                pipeline.formation_date, window.d_end, params, stop_rule=stop_rule
+                pipeline.formation_date,
+                window.d_end,
+                params,
+                stop_rule=stop_rule,
+                vol_target=vol_target,
             )
             formation_index = sessions.index(pipeline.formation_date)
 
@@ -1960,7 +2017,14 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
                     codes = [code for code in codes if code != GUARD_ARM]
                     if shadow_code == GUARD_ARM:
                         shadow_code = GUARD_NO_NLP_ARM
-            specs = _arm_specs(codes, params, shadow_code, stop_rule=stop_rule)
+            specs = _arm_specs(
+                codes,
+                params,
+                shadow_code,
+                stop_rule=stop_rule,
+                guard_layers=effective_layers,
+                vol_target=vol_target,
+            )
 
             returns = load_returns(conn, params.returns_engine_version, sessions[0], window.d_end)
             if series is not None and core_asset_id is not None:
@@ -2026,6 +2090,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
             report_params = json.loads(str(run_row["params_json"]))
             report_params["distance_cells"] = distance_cells
             report_params["rp"] = pipeline.rp_records
+            report_params["weighting"] = pipeline.weighting_records
             guard_arm = simulated.arms.get(GUARD_NO_NLP_ARM)
             if guard_arm is not None:
                 report_params["bp"] = (
@@ -2088,14 +2153,22 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
 
 
 def _engine_sessions(
-    formation: str, d_end: str, params: BacktestParams, *, stop_rule: str = "kl"
+    formation: str,
+    d_end: str,
+    params: BacktestParams,
+    *,
+    stop_rule: str = "kl",
+    vol_target: str = "fixed",
 ) -> list[str]:
-    """Sessions from ``formation - max(J, vol_window)`` to ``d_end``: the engine's lookbacks
+    """Sessions from ``formation - the longest look-back`` to ``d_end``: the engine's lookbacks
     need that much history for layer 1 / layer 3. The Basing Points machine also needs
-    the 63-session tracking start before the first decision."""
+    the 63-session tracking start before the first decision; the trailing volatility target
+    needs 252 returns at the first decision (final round §2b)."""
     longest = max([max(g.J, g.vol_window) for g in params.guard.values()] or [1])
     if stop_rule != "kl":
         longest = max(longest, basing.TRACKING_SESSIONS + 2)
+    if vol_target == "trailing":
+        longest = max(longest, 252)
     start = formation
     for _ in range(longest + 2):
         start = previous_session(start)
@@ -2195,8 +2268,28 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--satellite-weighting",
         default="minvar",
-        choices=("minvar", "rp"),
-        help="V4 plan section 2b: minvar (today) or risk parity on the minvar-held names",
+        choices=SATELLITE_WEIGHTINGS,
+        help="V4 plan section 2b / final round section 3: minvar (today), rp, ew, vt, maxdiv, "
+        "hrp, mincvar or ensemble on the minvar-held names",
+    )
+    run.add_argument(
+        "--guard-layers",
+        default=None,
+        help="final round section 2a: comma-separated subset of {1,3,4} containing 1 "
+        "(default: the params file's layers)",
+    )
+    run.add_argument(
+        "--vol-target",
+        default="fixed",
+        choices=("fixed", "trailing"),
+        help="final round section 2b: layer 3's target (fixed sigma_star or the book's trailing vol)",
+    )
+    run.add_argument(
+        "--cost-bps",
+        type=float,
+        default=None,
+        help="final round section 5: override the params file's round-trip cost (default: its "
+        "own cost_bps, 10)",
     )
     run.add_argument(
         "--market-series",
@@ -2311,6 +2404,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             filter_exit=args.filter_exit,
             stop_rule=args.stop_rule,
             satellite_weighting=args.satellite_weighting,
+            guard_layers=None
+            if args.guard_layers is None
+            else [int(part) for part in args.guard_layers.split(",") if part.strip()],
+            vol_target=args.vol_target,
+            cost_bps=args.cost_bps,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)

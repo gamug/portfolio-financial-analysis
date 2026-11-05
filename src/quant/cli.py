@@ -261,9 +261,10 @@ def _add_optimize_parser(sub: argparse._SubParsersAction[argparse.ArgumentParser
     op.add_argument(
         "--satellite-weighting",
         dest="satellite_weighting",
-        choices=("minvar", "rp"),
+        choices=("minvar", "rp", "ew", "vt", "maxdiv", "hrp", "mincvar", "ensemble"),
         default="minvar",
-        help="V4 plan section 2b: minvar (default) or risk parity on the names minvar holds",
+        help="V4 plan section 2b / final round section 3: the satellite weighting on the "
+        "names minvar holds (default minvar)",
     )
     op.add_argument("--metrics-version", dest="metrics_version", help=_METRICS_VERSION_HELP)
     op.add_argument("--returns-version", dest="returns_version", help=_RETURNS_VERSION_HELP)
@@ -588,21 +589,22 @@ def _run_optimize(  # noqa: PLR0913 - the run inputs, all named
             f"optimize @ {top.as_of} (model {top.model_id}): min_var_topn #{top.portfolio_id} "
             f"from cycle run {top.cycle_run_id}, {top.n_positions} positions, status {top.status}"
         )
-        _print_final_json(
-            {
-                "portfolio_id": top.portfolio_id,
-                "model_id": top.model_id,
-                "kind": top.kind,
-                "pool_size": top.pool_size,
-                "first_pass_n": top.first_pass_n,
-                "second_pass": top.second_pass,
-                "final_n": top.n_positions,
-                "satellite_weighting": top.satellite_weighting,
-                "rp_names": top.rp_names,
-                "rp_max_weight": top.rp_max_weight,
-                "rp_max_min_rrc": top.rp_max_min_rrc,
-            }
-        )
+        payload = {
+            "portfolio_id": top.portfolio_id,
+            "model_id": top.model_id,
+            "kind": top.kind,
+            "pool_size": top.pool_size,
+            "first_pass_n": top.first_pass_n,
+            "second_pass": top.second_pass,
+            "final_n": top.n_positions,
+            "satellite_weighting": top.satellite_weighting,
+            "rp_names": top.rp_names,
+            "rp_max_weight": top.rp_max_weight,
+            "rp_max_min_rrc": top.rp_max_min_rrc,
+        }
+        if top.weighting is not None:
+            payload["weighting"] = top.weighting
+        _print_final_json(payload)
         return 0
     try:
         opt = run_optimize(settings, as_of=as_of)

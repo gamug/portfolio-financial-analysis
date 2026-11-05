@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -43,7 +44,20 @@ from quant.factors import (
 )
 from quant.manifest import QuantManifest, resolve_quant_manifest
 from quant.objective import ObjectiveContext, objective_param, resolve_objectives
-from quant.optimize import Constraints, efficient_frontier, min_variance, risk_parity_slsqp
+from quant.optimize import (
+    Constraints,
+    OptResult,
+    efficient_frontier,
+    ensemble,
+    equal_weight,
+    hierarchical_risk_parity,
+    max_diversification,
+    min_cvar,
+    min_variance,
+    project_onto_caps,
+    risk_parity_slsqp,
+    volatility_timing,
+)
 from quant.panel import ReturnPanel, build_return_panel
 from quant.rates import load_risk_free
 from quant.risk import (
@@ -697,6 +711,7 @@ class TopnBookResult:
     rp_names: int = 0
     rp_max_weight: float | None = None
     rp_max_min_rrc: float | None = None
+    weighting: dict[str, Any] | None = None
 
 
 def _topn_selection(
@@ -746,6 +761,77 @@ def _topn_selection(
     return selected
 
 
+def _book_result(  # noqa: PLR0913 - one constructed result
+    name: str,
+    weights: np.ndarray,
+    sigma: np.ndarray,
+    constraints: Constraints,
+    *,
+    projected: bool,
+    solver: str,
+    elapsed: float = 0.0,
+) -> OptResult:
+    vector = np.asarray(weights, dtype=np.float64)
+    variance = float(vector @ sigma @ vector)
+    return OptResult(
+        weights=vector,
+        asset_ids=list(constraints.asset_ids or range(vector.size)),
+        expected_return=None,
+        expected_vol=float(np.sqrt(variance)) if variance > 0.0 else 0.0,
+        sharpe=None,
+        objective=name,
+        solver=solver,
+        status="optimal",
+        solve_time_s=elapsed,
+        projected=projected,
+    )
+
+
+def _projected_book(  # noqa: PLR0913, PLR0917 - one method's raw vector and its caps
+    name: str,
+    raw: np.ndarray,
+    sigma: np.ndarray,
+    constraints: Constraints,
+    solver: str,
+    elapsed: float,
+) -> OptResult:
+    projected = project_onto_caps(raw, constraints, solver)
+    moved = not np.allclose(projected, raw, atol=1e-12, rtol=0.0)
+    return _book_result(
+        name, projected, sigma, constraints, projected=moved, solver=solver, elapsed=elapsed
+    )
+
+
+def _scenario_returns(
+    conn: Database,
+    settings: QuantSettings,
+    manifest: QuantManifest,
+    as_of: str,
+    asset_ids: list[int],
+) -> np.ndarray:
+    """The risk model's own 756-session return window, restricted to *asset_ids*.
+
+    ``build_return_panel`` is the builder the risk model itself used: the same calendar,
+    coverage gate, one-day-gap fill and residual zero-fill. Every id is already in the
+    model's panel, so restricting to them keeps every column.
+    """
+    panel = build_return_panel(
+        conn,
+        as_of=as_of,
+        lookback_days=settings.lookback_days,
+        min_history_days=settings.min_history_days,
+        universe_asset_ids=asset_ids,
+        return_engine_version=manifest.return_engine_version,
+        min_coverage=settings.min_coverage,
+    )
+    if panel.asset_ids != sorted(asset_ids):
+        raise CycleSelectionError(
+            "the CVaR scenario panel lost a name the risk model holds: "
+            f"{sorted(set(asset_ids) - set(panel.asset_ids))}"
+        )
+    return panel.returns
+
+
 def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orchestration
     settings: QuantSettings,
     *,
@@ -778,9 +864,19 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
         raise CycleSelectionError(
             f"pool_size must be an integer >= {TOPN_SELECTION_COUNT}, got {pool_size!r}"
         )
-    if satellite_weighting not in ("minvar", "rp"):
+    if satellite_weighting not in (
+        "minvar",
+        "rp",
+        "ew",
+        "vt",
+        "maxdiv",
+        "hrp",
+        "mincvar",
+        "ensemble",
+    ):
         raise CycleSelectionError(
-            f"satellite_weighting must be 'minvar' or 'rp', got {satellite_weighting!r}"
+            f"satellite_weighting must be minvar, rp, ew, vt, maxdiv, hrp, mincvar or "
+            f"ensemble, got {satellite_weighting!r}"
         )
     owns = conn is None
     conn = conn or connect(settings.db_path)
@@ -860,49 +956,161 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
             ]
             res, held, caps = _solve(keep)
         rp_record: dict[str, Any] | None = None
-        if satellite_weighting == "rp":
-            # V4 plan §2b: re-solve the minvar-held names to equal risk contributions.
+        weighting_record: dict[str, Any] = {
+            "method": satellite_weighting,
+            "names": len(held),
+            "max_weight": max(held.values()) if held else 0.0,
+            "projected": False,
+        }
+        if satellite_weighting != "minvar":
+            # Final-round §3: weight the minvar-held set S with the chosen method, under the
+            # same caps the min-variance second pass used (effective_caps over S).
             held_ids = sorted(held)
-            rp_sigma = sigma_full[
+            method_sigma = sigma_full[
                 np.ix_([index[a] for a in held_ids], [index[a] for a in held_ids])
             ]
-            rp_sector = load_sector_of(conn, held_ids)
-            rp_caps = effective_caps(settings, held_ids, rp_sector)
-            rp_constraints = Constraints(
-                max_name_weight=rp_caps.max_name_weight,
-                min_name_weight=0.0,
-                max_sector_weight=rp_caps.max_sector_weight,
-                sector_of=rp_sector,
+            method_sector = load_sector_of(conn, held_ids)
+            caps = effective_caps(settings, held_ids, method_sector)
+            method_constraints = Constraints(
+                max_name_weight=caps.max_name_weight,
+                min_name_weight=settings.min_name_weight,
+                max_sector_weight=caps.max_sector_weight,
+                sector_of=method_sector,
                 asset_ids=held_ids,
             )
-            try:
-                rp_res = risk_parity_slsqp(rp_sigma, constraints=rp_constraints)
-            except ValueError as exc:
-                raise CycleSelectionError(f"risk parity did not converge: {exc}") from exc
-            rp_weights = {
-                held_ids[i]: float(w) for i, w in enumerate(rp_res.weights) if float(w) > _W_EPS
+            started = time.perf_counter()
+            minvar_vector = np.asarray([held[a] for a in held_ids], dtype=np.float64)
+            solver = settings.solver
+            if satellite_weighting == "rp":
+                try:
+                    res = risk_parity_slsqp(method_sigma, constraints=method_constraints)
+                except ValueError as exc:
+                    raise CycleSelectionError(f"risk parity did not converge: {exc}") from exc
+            elif satellite_weighting == "ew":
+                res = _projected_book(
+                    "equal_weight",
+                    equal_weight(len(held_ids)),
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "vt":
+                res = _projected_book(
+                    "volatility_timing",
+                    volatility_timing(method_sigma, eta=1.0),
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "maxdiv":
+                res = max_diversification(
+                    method_sigma, constraints=method_constraints, solver=solver
+                )
+            elif satellite_weighting == "hrp":
+                res = _projected_book(
+                    "hrp",
+                    hierarchical_risk_parity(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    method_sigma,
+                    method_constraints,
+                    solver,
+                    time.perf_counter() - started,
+                )
+            elif satellite_weighting == "mincvar":
+                scenarios = _scenario_returns(conn, settings, manifest, as_of, held_ids)
+                res = min_cvar(
+                    scenarios,
+                    method_sigma,
+                    beta=0.95,
+                    constraints=method_constraints,
+                    solver=solver,
+                )
+            elif satellite_weighting == "ensemble":
+                components = [
+                    minvar_vector,
+                    project_onto_caps(equal_weight(len(held_ids)), method_constraints, solver),
+                    project_onto_caps(
+                        volatility_timing(method_sigma, eta=1.0), method_constraints, solver
+                    ),
+                    max_diversification(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    hierarchical_risk_parity(
+                        method_sigma, constraints=method_constraints, solver=solver
+                    ).weights,
+                    min_cvar(
+                        _scenario_returns(conn, settings, manifest, as_of, held_ids),
+                        method_sigma,
+                        beta=0.95,
+                        constraints=method_constraints,
+                        solver=solver,
+                    ).weights,
+                    risk_parity_slsqp(method_sigma, constraints=method_constraints).weights,
+                ]
+                averaged = ensemble(components)
+                if np.any(averaged < -_W_EPS):
+                    raise CycleSelectionError("the ensemble average has a negative weight")
+                total = float(averaged.sum())
+                if not np.isfinite(total) or total <= 0.0:
+                    raise CycleSelectionError("the ensemble average does not sum to one")
+                averaged = averaged / total
+                if (
+                    caps.max_name_weight is not None
+                    and float(averaged.max()) > caps.max_name_weight + 1e-7
+                ):
+                    raise CycleSelectionError("the ensemble average violates the name cap")
+                sectors: dict[int, list[int]] = {}
+                for position, asset_id in enumerate(held_ids):
+                    sector = method_sector.get(int(asset_id))
+                    if sector is not None:
+                        sectors.setdefault(int(sector), []).append(position)
+                if caps.max_sector_weight is not None:
+                    for members in sectors.values():
+                        if float(averaged[members].sum()) > caps.max_sector_weight + 1e-7:
+                            raise CycleSelectionError("the ensemble average violates a sector cap")
+                res = _book_result(
+                    "ensemble",
+                    averaged,
+                    method_sigma,
+                    method_constraints,
+                    projected=False,
+                    solver="average",
+                    elapsed=time.perf_counter() - started,
+                )
+            else:  # pragma: no cover - validated by the CLI and the caller
+                raise CycleSelectionError(f"unknown satellite_weighting {satellite_weighting!r}")
+            method_weights = {
+                held_ids[i]: float(w) for i, w in enumerate(res.weights) if float(w) > _W_EPS
             }
-            contributions = [
-                rp_weights[asset_id]
-                * float(np.dot(rp_sigma[i], np.asarray(rp_res.weights, dtype=float)))
-                for i, asset_id in enumerate(held_ids)
-                if asset_id in rp_weights
-            ]
-            total = float(sum(contributions))
-            count = len(contributions)
-            relative = [count * value / total for value in contributions] if total > 0 else []
-            rp_record = {
-                "names": len(rp_weights),
-                "max_weight": max(rp_weights.values()) if rp_weights else 0.0,
-                "max_min_rrc": (
-                    max(relative) / min(relative)
-                    if len(relative) > 1 and min(relative) > 0.0
-                    else None
-                ),
+            if satellite_weighting == "rp":
+                contributions = [
+                    method_weights[asset_id]
+                    * float(np.dot(method_sigma[i], np.asarray(res.weights, dtype=float)))
+                    for i, asset_id in enumerate(held_ids)
+                    if asset_id in method_weights
+                ]
+                total = float(sum(contributions))
+                count = len(contributions)
+                relative = [count * value / total for value in contributions] if total > 0 else []
+                rp_record = {
+                    "names": len(method_weights),
+                    "max_weight": max(method_weights.values()) if method_weights else 0.0,
+                    "max_min_rrc": (
+                        max(relative) / min(relative)
+                        if len(relative) > 1 and min(relative) > 0.0
+                        else None
+                    ),
+                }
+            held = method_weights
+            weighting_record = {
+                "method": satellite_weighting,
+                "names": len(held),
+                "max_weight": max(held.values()) if held else 0.0,
+                "projected": bool(res.projected),
             }
-            held = rp_weights
-            res = rp_res
-            caps = rp_caps
 
         stale_reason = stale_as_of_reason(conn, as_of)
         cv = code_version()
@@ -948,6 +1156,7 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
                 "final_n": len(held),
                 "satellite_weighting": satellite_weighting,
                 "rp": rp_record,
+                "weighting": None if satellite_weighting == "minvar" else weighting_record,
                 "risk_model_id": risk_model_id,
                 "turnover": {
                     "cap_requested": None,
@@ -1001,6 +1210,7 @@ def run_optimize_topn(  # noqa: C901, PLR0912, PLR0913, PLR0915 - one linear orc
             rp_names=len(held) if satellite_weighting == "rp" else 0,
             rp_max_weight=(max(held.values()) if satellite_weighting == "rp" and held else None),
             rp_max_min_rrc=(rp_record["max_min_rrc"] if rp_record is not None else None),
+            weighting=weighting_record if satellite_weighting != "minvar" else None,
         )
     finally:
         if owns:
