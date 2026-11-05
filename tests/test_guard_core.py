@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import FrozenInstanceError, fields, is_dataclass
 from typing import Any, cast
 
+import numpy as np
 import pytest
 
 from cycle.guard import (
@@ -108,6 +109,7 @@ def test_interface_matches_spec_8_1() -> None:
         "periods_per_year",
         "news",
         "stop_rule",
+        "vol_target",
     ]
     assert [field.name for field in fields(NewsCounts)] == ["n_articles", "n_negative"]
     assert [field.name for field in fields(GuardInput)] == [
@@ -910,3 +912,66 @@ def test_invariants_hold_over_random_multi_session_arms() -> None:
             assert 2 in layers or out.state.l2 == state.l2
             assert out.state.nav_max == pytest.approx(max(nav, state.nav_max or nav))
             state = out.state
+
+
+def test_layer3_trailing_uses_the_books_252_session_volatility() -> None:
+    # 252 returns ending at t: the last 21 are +/-0.02, the previous 231 are +/-0.01.
+    span = [0.01 if i % 2 == 0 else -0.01 for i in range(231)]
+    span += [0.02 if i % 2 == 0 else -0.02 for i in range(21)]
+    params = _params(layers=(3,), vol_target="trailing", vol_window=21)
+    out = evaluate(initial_state(), _input(reference_returns=span), params)
+    sigma_long = np.std(span[-252:], ddof=1) * math.sqrt(252)
+    sigma_hat = np.std(span[-21:], ddof=1) * math.sqrt(252)
+    assert out.s_sigma == pytest.approx(min(1.0, sigma_long / sigma_hat))
+    assert out.s_sigma is not None and out.s_sigma < 1.0
+
+
+def test_layer3_trailing_fails_open_on_every_declared_case() -> None:
+    params = _params(layers=(3,), vol_target="trailing", vol_window=21)
+    # fewer than 63 returns: no signal
+    short = [0.01 if i % 2 == 0 else -0.01 for i in range(62)]
+    assert evaluate(initial_state(), _input(reference_returns=short), params).s_sigma == 1.0
+    # exactly 63 finite returns: the target can be computed
+    enough = [*short, 0.01]
+    assert evaluate(initial_state(), _input(reference_returns=enough), params).s_sigma is not None
+    # a non-finite return anywhere in the span: fail open
+    broken = [0.01 if i % 2 == 0 else -0.01 for i in range(251)] + [math.nan]
+    assert evaluate(initial_state(), _input(reference_returns=broken), params).s_sigma == 1.0
+    # a constant book has no volatility target: fail open
+    flat = [0.0] * 252
+    assert evaluate(initial_state(), _input(reference_returns=flat), params).s_sigma == 1.0
+
+
+def test_the_default_vol_target_is_the_fixed_sigma_star() -> None:
+    params = _params(layers=(3,), vol_window=21)
+    assert params.vol_target == "fixed"
+    span = [0.01 if i % 2 == 0 else -0.01 for i in range(252)]
+    out = evaluate(initial_state(), _input(reference_returns=span), params)
+    expected = min(1.0, 0.10 / (np.std(span[-21:], ddof=1) * math.sqrt(252)))
+    assert out.s_sigma == pytest.approx(expected)
+
+
+def test_guard_layers_on_off_controls_vol_and_drawdown_scaling() -> None:
+    # A drawdown and a high-volatility reference would both scale the book under [1, 3, 4];
+    # with layer 1 only neither scaler acts.
+    returns = [0.05, -0.05] * 30
+    params = _params(layers=(1, 3, 4), vol_window=21)
+    state = evaluate(initial_state(), _input(reference_returns=returns, nav=100.0), params).state
+    with_all = evaluate(
+        state,
+        _input(reference_returns=returns, nav=70.0),
+        params,
+    )
+    assert with_all.s_sigma is not None and with_all.s_sigma < 1.0
+    assert with_all.s_dd is not None and with_all.s_dd < 1.0
+    assert {alert.layer for alert in with_all.alerts} == {3, 4}
+    only_stop = evaluate(
+        state,
+        _input(reference_returns=returns, nav=70.0),
+        _params(layers=(1,)),
+    )
+    assert only_stop.s_sigma is None
+    assert only_stop.s_dd is None
+    assert only_stop.scale == 1.0
+    assert only_stop.alerts == ()
+    assert only_stop.weights == {1: 0.5, 2: 0.5}

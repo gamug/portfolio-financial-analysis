@@ -61,6 +61,9 @@ BENCHMARK = "SP500_EW_INTERNAL"
 WEIGHT_TOL = 1e-12
 #: The news layer's number in ``GuardParams.layers``.
 NEWS_LAYER = 2
+#: The volatility layer's number and its trailing look-back (final round §2b).
+VOL_LAYER = 3
+_LONG_VOL_WINDOW = 252
 
 Weights = Mapping[int, float]
 
@@ -323,12 +326,19 @@ def _aligned_bars(inp: EngineInput) -> dict[int, list[Bar | None]]:
 
 
 def _reference_returns(
-    ref: Mapping[int, float], aligned: Mapping[int, Sequence[float]], index: int, window: int
+    ref: Mapping[int, float],
+    aligned: Mapping[int, Sequence[float]],
+    index: int,
+    window: int,
+    *,
+    strict: bool = False,
 ) -> list[float]:
     """The last ``window`` returns of the reference book held fixed.
 
     A held name with no return on a session contributes 0.0 (its weight is moved to cash at
-    that close), so this series stays finite even though the per-asset windows carry NaN."""
+    that close), so this series stays finite even though the per-asset windows carry NaN.
+    With ``strict`` a missing return makes the session's book return non-finite instead: the
+    trailing layer-3 target declares a missing input as no signal (fail open)."""
     start = max(0, index - window + 1)
     out: list[float] = []
     for i in range(start, index + 1):
@@ -336,10 +346,17 @@ def _reference_returns(
         for asset_id, weight in ref.items():
             series = aligned.get(asset_id)
             if series is None:
+                if strict:
+                    total = math.nan
+                    break
                 continue
             value = float(series[i])
-            if math.isfinite(value):
-                total += weight * value
+            if not math.isfinite(value):
+                if strict:
+                    total = math.nan
+                    break
+                continue
+            total += weight * value
         out.append(total)
     return out
 
@@ -433,7 +450,15 @@ def _guard_input(  # noqa: PLR0913, PLR0917 - the overlay's inputs, all named
             asset_id: _asset_return_window(asset_id, aligned, index, params.J)
             for asset_id in tracked
         },
-        reference_returns=_reference_returns(reference, aligned, index, params.vol_window),
+        reference_returns=_reference_returns(
+            reference,
+            aligned,
+            index,
+            _LONG_VOL_WINDOW
+            if params.vol_target == "trailing" and VOL_LAYER in params.layers
+            else params.vol_window,
+            strict=params.vol_target == "trailing",
+        ),
         nav=book.nav,
         news=inp.news.get(date),
         bars=bars,

@@ -72,6 +72,8 @@ _LAYER_VOL = 3
 _LAYER_DD = 4
 _LAYER_IDS = frozenset({_LAYER_STOP_LOSS, _LAYER_NEWS, _LAYER_VOL, _LAYER_DD})
 _MIN_VOL_WINDOW = 2  # ddof=1 needs two observations
+_MIN_LONG_VOL_WINDOW = 63  # the trailing target needs at least this many returns
+_LONG_VOL_WINDOW = 252  # its full look-back, in sessions
 
 _L1_STOP_LOSS = "L1_STOP_LOSS"
 _L1_REENTRY = "L1_REENTRY"
@@ -134,6 +136,10 @@ class GuardParams:
     #: ``bp4`` = the Basing Points machine of Edwards, Magee & Bassetti (2007),
     #: rules 1-3 / 1-4.
     stop_rule: str = "kl"
+    #: Final round: layer 3's target. ``fixed`` = ``sigma_star`` (the frozen calibration
+    #: proxy); ``trailing`` = the book's own long-run volatility over the last 252 returns
+    #: (or all available if fewer than 252 but at least 63).
+    vol_target: str = "fixed"
 
     def __post_init__(self) -> None:
         _validate_params(self)
@@ -313,6 +319,10 @@ def _validate_params(params: GuardParams) -> None:
     _require(
         params.stop_rule in basing.STOP_RULES,
         f"GuardParams.stop_rule must be one of {basing.STOP_RULES}, got {params.stop_rule!r}",
+    )
+    _require(
+        params.vol_target in ("fixed", "trailing"),
+        f"GuardParams.vol_target must be 'fixed' or 'trailing', got {params.vol_target!r}",
     )
     if _LAYER_NEWS in params.layers:
         _require(
@@ -639,12 +649,26 @@ def _layer2(
     return state, frozenset(trimmed), alerts
 
 
+def _trailing_target(reference_returns: Sequence[float], params: GuardParams) -> float | None:
+    """The book's own annualised ``ddof=1`` volatility over the last 252 returns, or None."""
+    if len(reference_returns) < _MIN_LONG_VOL_WINDOW:
+        return None
+    span = np.asarray(reference_returns[-_LONG_VOL_WINDOW:], dtype=float)
+    if not bool(np.all(np.isfinite(span))):
+        return None
+    target = float(np.std(span, ddof=1)) * math.sqrt(params.periods_per_year)
+    return target if math.isfinite(target) and target > 0.0 else None
+
+
 def _layer3(reference_returns: Sequence[float], params: GuardParams) -> tuple[float, Alert | None]:
     """Moreira-Muir scaling of the reference book; 1.0 (no alert) on a degenerate estimate.
 
-    Moreira & Muir (2017), *inspired by*: ``min(1, sigma_star / sigma_hat)`` with
-    ``sigma_hat`` the annualised ``ddof=1`` standard deviation of the last
-    ``vol_window`` returns of the reference weights held fixed.
+    Moreira & Muir (2017), *inspired by*: ``min(1, target / sigma_hat)`` with ``sigma_hat``
+    the annualised ``ddof=1`` standard deviation of the last ``vol_window`` returns of the
+    reference weights held fixed. ``target`` is the frozen ``sigma_star`` (``fixed``) or the
+    book's own annualised volatility over the last 252 returns (``trailing``; all available
+    if fewer than 252 but at least 63, else no signal). A non-finite return in the trailing
+    span is no signal (fail open), as is a degenerate estimate.
     """
     if len(reference_returns) < params.vol_window:
         return 1.0, None
@@ -652,7 +676,13 @@ def _layer3(reference_returns: Sequence[float], params: GuardParams) -> tuple[fl
     sigma_hat = float(np.std(window, ddof=1)) * math.sqrt(params.periods_per_year)
     if not math.isfinite(sigma_hat) or sigma_hat <= 0.0:
         return 1.0, None
-    scale = min(1.0, params.sigma_star / sigma_hat)
+    target = params.sigma_star
+    if params.vol_target == "trailing":
+        trailing = _trailing_target(reference_returns, params)
+        if trailing is None:
+            return 1.0, None
+        target = trailing
+    scale = min(1.0, target / sigma_hat)
     if scale >= 1.0:
         return 1.0, None
     return scale, Alert(
