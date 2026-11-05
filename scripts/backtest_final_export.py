@@ -289,14 +289,21 @@ def _tests_md(rows: list[dict[str, Any]]) -> list[str]:
 
 
 def _chained_cagr(runs: dict[str, dict[str, dict[str, Any]]], config: str) -> tuple[float, float]:
+    """Full-period CAGR and excess Sharpe of the six chained windows."""
     returns: list[float] = []
+    rf: list[float] = []
     for window in WINDOWS:
-        daily = runs[config][window]["daily"][GUARD]
-        returns.extend(daily[day] for day in sorted(daily))
+        run = runs[config][window]
+        curve = run["rf"]
+        daily = run["daily"][GUARD]
+        for day in sorted(daily):
+            returns.append(daily[day])
+            rf.append(float(curve.get(day, 0.0)))
     array = np.asarray(returns, dtype=float)
+    excess = array - np.asarray(rf, dtype=float)
     equity = np.concatenate([[1.0], np.cumprod(1.0 + array)])
     cagr = float(equity[-1] ** (252.0 / array.size) - 1.0)
-    sharpe = float(np.mean(array) / np.std(array, ddof=1) * (252.0**0.5))
+    sharpe = float(np.mean(excess) / np.std(excess, ddof=1) * (252.0**0.5))
     return cagr, sharpe
 
 

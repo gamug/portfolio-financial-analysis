@@ -578,8 +578,8 @@ Control: FINAL. `k` counts the windows whose MDD is strictly lower than the cont
 
 | configuration | cost bps | mean MDD | mean cumulative | R | full-period Sharpe | full-period CAGR |
 |---|---|---|---|---|---|---|
-| FINAL | 10 | 0.074425 | 0.066012 | 0.8870 | 0.861 | 7.46% |
-| FINAL_D20 | 20 | 0.076013 | 0.058843 | 0.7741 | 0.767 | 6.56% |
+| FINAL | 10 | 0.074425 | 0.066012 | 0.8870 | 0.411 | 7.46% |
+| FINAL_D20 | 20 | 0.076013 | 0.058843 | 0.7741 | 0.316 | 6.56% |
 
 ## 7. Identity controls
 
