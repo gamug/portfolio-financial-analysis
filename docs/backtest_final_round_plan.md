@@ -342,3 +342,17 @@ Any change to §2–§7 after the commit is written here with its date and reaso
 | Z4 | [1, 3, 4] | trailing | 0.071552 | 0.056444 | 0.7889 | 6 |
 
 Z2 is identical to Z0 on every arm and session, as expected (layer 3 never acted in Y2). No configuration has R > 0.8446 with mean MDD <= 0.0831, so **A\* = Z0 = Y2** (`[1, 3, 4]`, fixed); the adoption rule (§2) is unchanged. Stage B therefore weights Z0's min-variance set. The NOGUARD arm's shadow alerts are context only and no stage-A result uses them.
+
+2026-11-05 — FINAL resolution, committed before stage D. Stage B was run on A* = Z0 (`[1, 3, 4]`, fixed, min-variance set S). The stage-B table (TOPN_MV_GUARD_NO_NLP, six windows):
+
+| config | satellite weighting | mean MDD | mean cumulative | R |
+|---|---|---|---|---|
+| B0 | minvar (= A*) | 0.076108 | 0.064284 | 0.8446 |
+| B1 | equal weight | 0.079442 | 0.062404 | 0.7855 |
+| B2 | volatility timing | 0.077823 | 0.062732 | 0.8061 |
+| B3 | max diversification | 0.079648 | 0.061068 | 0.7667 |
+| B4 | HRP | 0.078349 | 0.060478 | 0.7719 |
+| B5 | minimum CVaR | 0.074425 | 0.066012 | 0.8870 |
+| B6 | ensemble | 0.077620 | 0.062831 | 0.8095 |
+
+B0 reproduces A* exactly (the P1 control is identical to Y2's summaries, tests, weights and GUARD actions; `verify/identity_B0_P1.json`). B5 is the only configuration with R > 0.8446 and mean MDD <= 0.0831, so **FINAL = B5 (minimum CVaR, beta = 0.95)**; the adoption rule (§3) is unchanged. The FINAL runs are a fresh six-window run of B5, kept for reviewer A's replay; stage D repeats it at 20 bps.
