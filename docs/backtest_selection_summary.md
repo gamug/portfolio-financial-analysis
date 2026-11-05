@@ -158,7 +158,7 @@ All metrics use the six windows' chained daily net returns; Sharpe is of excess 
 | PBO | 0.888 | 0.877 |
 | mean IS / OOS Sharpe | 0.65 / 0.03 | 0.66 / 0.03 |
 | E[max] N | 1.922 / 2.313 | 2.073 / 2.313 |
-| DSR FINAL (N = |T|) | 0.679 | 0.701 |
+| DSR of the adopted configuration (Y2 at N = 21; FINAL at N = 30) | 0.679 | 0.701 |
 
 ## Data checks
 

@@ -348,7 +348,7 @@ Any change to §2–§7 after the commit is written here with its date and reaso
 | Z3 | [1, 3] | trailing | 0.072721 | 0.057918 | 0.7964 | 3 |
 | Z4 | [1, 3, 4] | trailing | 0.071552 | 0.056444 | 0.7889 | 4 |
 
-Z2 is identical to Z0 on every arm and session, as expected (layer 3 never acted in Y2). No configuration has R > 0.8446 with mean MDD <= 0.0831, so **A\* = Z0 = Y2** (`[1, 3, 4]`, fixed); the adoption rule (§2) is unchanged. Stage B therefore weights Z0's min-variance set. The NOGUARD arm's shadow alerts are context only and no stage-A result uses them.
+Z2 is identical to Z0 on every arm and session, as expected (layer 3 never acted in Y2). No configuration has R > 0.8446 with mean MDD <= 0.0831, so **A\* = Z0 = Y2** (`[1, 3, 4]`, fixed); the adoption rule (§2) is unchanged. Stage B therefore weights Z0's min-variance set. The NOGUARD arm's shadow alerts are context only and no stage-A result uses them. (The last column was corrected on 2026-11-05 in f8a7c29, after the stage-B and FINAL results were seen; the resolution uses only R and mean MDD and is unaffected.)
 
 2026-11-05 — FINAL resolution, committed before stage D. Stage B was run on A* = Z0 (`[1, 3, 4]`, fixed, min-variance set S). The stage-B table (TOPN_MV_GUARD_NO_NLP, six windows):
 

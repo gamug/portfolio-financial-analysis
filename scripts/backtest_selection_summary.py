@@ -759,7 +759,8 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
             f"| E[max] N | {diagnostics['emax'][_ROUND24_TRIALS]:.3f} / "
             f"{diagnostics['emax'][_DECLARED_TRIALS]:.3f} | "
             f"{ext_diag['emax'][len(names_ext)]:.3f} / {ext_diag['emax'][_DECLARED_TRIALS]:.3f} |",
-            f"| DSR FINAL (N = |T|) | {diagnostics['dsr'][_ROUND24_TRIALS]['dsr']:.3f} | "
+            f"| DSR of the adopted configuration (Y2 at N = 21; FINAL at N = 30) | "
+            f"{diagnostics['dsr'][_ROUND24_TRIALS]['dsr']:.3f} | "
             f"{ext_diag['dsr'][len(names_ext)]['dsr']:.3f} |",
             "",
         ]
