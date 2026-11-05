@@ -230,21 +230,29 @@ def _reproduce(series: dict[str, tuple[list[str], np.ndarray, np.ndarray]]) -> l
     lines = [
         "### (f1) Reviewer A's §10 point estimates, recomputed",
         "",
-        "| series | CAGR | Vol | Sharpe | Sortino | Calmar | MDD | days UW | CVaR95 | Beta | Alpha/yr (t OLS / t NW) | up/down (geo) |",
+        "| series | CAGR (rev / ours) | Vol | Sharpe | Sortino | Calmar | MDD | days UW | CVaR95 | Beta | Alpha/yr (t OLS / t NW) | up/down (geo) |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     failures: list[str] = []
     for name, expected in REVIEWER.items():
         _, returns, own_rf = series[name]
         metrics = sel.performance(returns, own_rf, spy, ew)
-        alpha_t = f"{metrics['alpha'] * 100:.2f}% ({metrics['alpha_t_ols']:.2f} / {metrics['alpha_t_nw']:.2f})"
+        alpha_text = (
+            f"{expected['alpha']:.2f}% ({expected['t']:.2f}) / "
+            f"{metrics['alpha'] * 100:.2f}% ({metrics['alpha_t_ols']:.2f} / {metrics['alpha_t_nw']:.2f})"
+        )
         lines.append(
-            f"| {name} | {metrics['cagr'] * 100:.2f}% | {metrics['vol'] * 100:.2f}% | "
-            f"{metrics['sharpe']:.2f} | {metrics['sortino']:.2f} | {metrics['calmar']:.2f} | "
-            f"{metrics['mdd'] * 100:.2f}% | {metrics['longest_under_water']} | "
-            f"{metrics['cvar95'] * 100:.2f}% | {metrics['beta']:.2f} | {alpha_t} | "
-            f"{metrics['up_capture_geo'] * 100:.0f}% / {metrics['down_capture_geo'] * 100:.0f}% "
-            f"(arith {metrics['up_capture_arith'] * 100:.0f}% / {metrics['down_capture_arith'] * 100:.0f}%) |"
+            f"| {name} | {expected['cagr']:.2f}% / {metrics['cagr'] * 100:.2f}% | "
+            f"{expected['vol']:.2f}% / {metrics['vol'] * 100:.2f}% | "
+            f"{expected['sharpe']:.2f} / {metrics['sharpe']:.2f} | "
+            f"{expected['sortino']:.2f} / {metrics['sortino']:.2f} | "
+            f"{expected['calmar']:.2f} / {metrics['calmar']:.2f} | "
+            f"{expected['mdd']:.2f}% / {metrics['mdd'] * 100:.2f}% | "
+            f"{expected['days']} / {metrics['longest_under_water']} | "
+            f"{expected['cvar']:.2f}% / {metrics['cvar95'] * 100:.2f}% | "
+            f"{expected['beta']:.2f} / {metrics['beta']:.2f} | {alpha_text} | "
+            f"{expected['up']}% / {expected['down']}% / "
+            f"{metrics['up_capture_geo'] * 100:.0f}% / {metrics['down_capture_geo'] * 100:.0f}% |"
         )
         checks = {
             "cagr": (metrics["cagr"] * 100, expected["cagr"]),
@@ -268,8 +276,9 @@ def _reproduce(series: dict[str, tuple[list[str], np.ndarray, np.ndarray]]) -> l
         "",
         "Capture is the geometric (compound) mean on SPY-up / SPY-down sessions; the arithmetic",
         "mean is shown in parentheses. The reviewer's figures reproduce with the geometric mean.",
-        "The alpha t is shown both plain OLS (the reviewer's §10 convention) and Newey-West (this",
-        "report's convention).",
+        "SP500_EW_INTERNAL's MDD is shown in the plan at one decimal (22.1%); ours is 22.06%,",
+        "which rounds to 22.1%. The alpha t is shown both plain OLS (the reviewer's §10 convention)",
+        "and Newey-West (this report's convention).",
         "",
     ]
     if failures:
@@ -282,7 +291,7 @@ def _tests_reproduction(series: dict[str, tuple[list[str], np.ndarray, np.ndarra
     lines = [
         "### (f2) Reviewer A's §10 tests, recomputed (Y2 against each series)",
         "",
-        "| Y2 vs | mean diff (pp/yr) | HAC p | JK-Memmel p | ΔMDD (pp) | bootstrap p | min. detectable (pp/yr) |",
+        "| Y2 vs | mean diff (pp/yr, rev / ours) | HAC p (rev / ours) | JK-Memmel p (rev / ours) | ΔMDD (pp, rev / ours) | bootstrap p (rev / ours) | min. detectable (pp/yr, rev / ours) |",
         "|---|---|---|---|---|---|---|",
     ]
     failures: list[str] = []
@@ -290,9 +299,12 @@ def _tests_reproduction(series: dict[str, tuple[list[str], np.ndarray, np.ndarra
         _, other, _ = series[name]
         table = sel.test_table(y2, other, rf)
         lines.append(
-            f"| {name} | {table['mean_diff_annual'] * 100:+.2f} | {table['hac_p']:.3f} | "
-            f"{table['jk_p']:.3f} | {table['mdd_diff'] * 100:+.2f} | {table['bootstrap_p']:.3f} | "
-            f"±{table['min_detectable_annual'] * 100:.1f} |"
+            f"| {name} | {expected['mean']:+.2f} / {table['mean_diff_annual'] * 100:+.2f} | "
+            f"{expected['hac']:.3f} / {table['hac_p']:.3f} | "
+            f"{expected['jk']:.3f} / {table['jk_p']:.3f} | "
+            f"{expected['dmdd']:+.2f} / {table['mdd_diff'] * 100:+.2f} | "
+            f"{expected['boot']:.3f} / {table['bootstrap_p']:.3f} | "
+            f"±{expected['detectable']:.1f} / ±{table['min_detectable_annual'] * 100:.1f} |"
         )
         for key, got, want in (
             ("mean", table["mean_diff_annual"] * 100, expected["mean"]),
@@ -329,12 +341,14 @@ def _trial_matrix(
     return names, rf, np.column_stack(columns)
 
 
-def _overfitting(
+def _overfitting(  # noqa: PLR0913, PLR0917 - the report inputs
     series: dict[str, tuple[list[str], np.ndarray, np.ndarray]],
     trial_names: list[str],
     trial_matrix: np.ndarray,
     rf: np.ndarray,
     final_name: str,
+    heading: str = "### (e) Overfitting diagnostics",
+    compare_reviewer: bool = True,
 ) -> tuple[list[str], dict[str, Any]]:
     dates, _, _ = series["Y2"]
     pbo = sel.cscv_pbo(trial_matrix)
@@ -356,30 +370,66 @@ def _overfitting(
     rc_spy = sel.reality_check(trial_matrix - (spy - rf)[:, None], q=0.1)
     rc_spy_iid = sel.reality_check(trial_matrix - (spy - rf)[:, None], q=1.0)
     lines = [
-        "### (e) Overfitting diagnostics",
+        heading,
         "",
         f"The trial set T has **{len(trial_names)}** configurations: {', '.join(trial_names)}.",
         "All metrics use the six windows' chained daily net returns; Sharpe is of excess returns.",
         "",
-        "| diagnostic | value |",
-        "|---|---|",
-        f"| PBO (CSCV, S = 16, Sharpe) | {pbo['pbo']:.3f} |",
-        f"| mean annualised Sharpe of the in-sample best | {pbo['mean_is_sharpe']:.2f} in-sample / {pbo['mean_oos_sharpe']:.2f} out-of-sample |",
-        f"| PBO (secondary, Calmar) | {pbo_calmar['pbo']:.3f} |",
-        f"| E[max] N = {len(trial_names)} / 55 | {emax[len(trial_names)]:.3f} / {emax[55]:.3f} |",
-        f"| implied annualised luck threshold | {luck[len(trial_names)]:.2f} / {luck[55]:.2f} |",
-        f"| MinBTL for annualised SR 1 | {btl[len(trial_names)]:.2f} / {btl[55]:.2f} years |",
-        f"| DSR of {final_name} (N = {len(trial_names)}) | SRhat {dsr[len(trial_names)]['sr_daily']:.5f} daily, "
-        f"skew {dsr[len(trial_names)]['skew']:.3f}, kurtosis {dsr[len(trial_names)]['kurtosis']:.3f}, "
-        f"SR0 {dsr[len(trial_names)]['sr_zero_daily']:.5f}, DSR {dsr[len(trial_names)]['dsr']:.3f} |",
-        f"| DSR of {final_name} (N = 55) | SR0 {dsr[55]['sr_zero_daily']:.5f}, DSR {dsr[55]['dsr']:.3f} |",
-        f"| White Reality Check vs MARKOWITZ_BASE | best {trial_names[int(rc_mkt['best_model'])]}, "
-        f"mean {rc_mkt['best_mean_annual'] * 100:+.2f} pp/yr, p {rc_mkt['p_value']:.3f} "
-        f"(q = 1: {rc_mkt_iid['p_value']:.3f}) |",
-        f"| White Reality Check vs SPY | best {trial_names[int(rc_spy['best_model'])]}, "
-        f"mean {rc_spy['best_mean_annual'] * 100:+.2f} pp/yr, p {rc_spy['p_value']:.3f} "
-        f"(q = 1: {rc_spy_iid['p_value']:.3f}) |",
-        "",
+        *(
+            [
+                "| diagnostic | reviewer | ours |",
+                "|---|---|---|",
+                f"| PBO (CSCV, S = 16, Sharpe) | {REVIEWER_OVERFIT['pbo']:.3f} | {pbo['pbo']:.3f} |",
+                f"| mean annualised Sharpe of the in-sample best | {REVIEWER_OVERFIT['is_sharpe']:.2f} / "
+                f"{REVIEWER_OVERFIT['oos_sharpe']:.2f} | {pbo['mean_is_sharpe']:.2f} / {pbo['mean_oos_sharpe']:.2f} |",
+                f"| PBO (secondary, Calmar) | - | {pbo_calmar['pbo']:.3f} |",
+                f"| E[max] N = {len(trial_names)} | {REVIEWER_OVERFIT['emax21']:.3f} | {emax[len(trial_names)]:.3f} |",
+                f"| E[max] N = 55 | {REVIEWER_OVERFIT['emax55']:.3f} | {emax[55]:.3f} |",
+                f"| implied annualised luck threshold, N = {len(trial_names)} / 55 | "
+                f"{REVIEWER_OVERFIT['luck21']:.2f} / {REVIEWER_OVERFIT['luck55']:.2f} | "
+                f"{luck[len(trial_names)]:.2f} / {luck[55]:.2f} |",
+                f"| MinBTL for annualised SR 1, N = {len(trial_names)} / 55 | "
+                f"{REVIEWER_OVERFIT['btl21']:.2f} / {REVIEWER_OVERFIT['btl55']:.2f} years | "
+                f"{btl[len(trial_names)]:.2f} / {btl[55]:.2f} years |",
+                f"| DSR of {final_name} (N = {len(trial_names)}) | {REVIEWER_OVERFIT['dsr21']:.3f} | "
+                f"{dsr[len(trial_names)]['dsr']:.3f} (SRhat {dsr[len(trial_names)]['sr_daily']:.5f} daily, "
+                f"skew {dsr[len(trial_names)]['skew']:.3f}, kurtosis {dsr[len(trial_names)]['kurtosis']:.3f}, "
+                f"SR0 {dsr[len(trial_names)]['sr_zero_daily']:.5f}) |",
+                f"| DSR of {final_name} (N = 55) | {REVIEWER_OVERFIT['dsr55']:.3f} | "
+                f"{dsr[55]['dsr']:.3f} (SR0 {dsr[55]['sr_zero_daily']:.5f}) |",
+                f"| White Reality Check vs MARKOWITZ_BASE | best v2 V4, mean {REVIEWER_OVERFIT['rc_mkt_mean']:+.2f} pp/yr, "
+                f"p {REVIEWER_OVERFIT['rc_mkt_p']:.3f} (q = 1: {REVIEWER_OVERFIT['rc_mkt_p_iid']:.3f}) | "
+                f"best {trial_names[int(rc_mkt['best_model'])]}, mean {rc_mkt['best_mean_annual'] * 100:+.2f} pp/yr, "
+                f"p {rc_mkt['p_value']:.3f} (q = 1: {rc_mkt_iid['p_value']:.3f}) |",
+                f"| White Reality Check vs SPY | best v2 V4, mean {REVIEWER_OVERFIT['rc_spy_mean']:+.2f} pp/yr, "
+                f"p {REVIEWER_OVERFIT['rc_spy_p']:.3f} (q = 1: {REVIEWER_OVERFIT['rc_spy_p_iid']:.3f}) | "
+                f"best {trial_names[int(rc_spy['best_model'])]}, mean {rc_spy['best_mean_annual'] * 100:+.2f} pp/yr, "
+                f"p {rc_spy['p_value']:.3f} (q = 1: {rc_spy_iid['p_value']:.3f}) |",
+                "",
+            ]
+            if compare_reviewer
+            else [
+                "| diagnostic | value |",
+                "|---|---|",
+                f"| PBO (CSCV, S = 16, Sharpe) | {pbo['pbo']:.3f} |",
+                f"| mean annualised Sharpe of the in-sample best | {pbo['mean_is_sharpe']:.2f} in-sample / {pbo['mean_oos_sharpe']:.2f} out-of-sample |",
+                f"| PBO (secondary, Calmar) | {pbo_calmar['pbo']:.3f} |",
+                f"| E[max] N = {len(trial_names)} / 55 | {emax[len(trial_names)]:.3f} / {emax[55]:.3f} |",
+                f"| implied annualised luck threshold | {luck[len(trial_names)]:.2f} / {luck[55]:.2f} |",
+                f"| MinBTL for annualised SR 1 | {btl[len(trial_names)]:.2f} / {btl[55]:.2f} years |",
+                f"| DSR of {final_name} (N = {len(trial_names)}) | SRhat {dsr[len(trial_names)]['sr_daily']:.5f} daily, "
+                f"skew {dsr[len(trial_names)]['skew']:.3f}, kurtosis {dsr[len(trial_names)]['kurtosis']:.3f}, "
+                f"SR0 {dsr[len(trial_names)]['sr_zero_daily']:.5f}, DSR {dsr[len(trial_names)]['dsr']:.3f} |",
+                f"| DSR of {final_name} (N = 55) | SR0 {dsr[55]['sr_zero_daily']:.5f}, DSR {dsr[55]['dsr']:.3f} |",
+                f"| White Reality Check vs MARKOWITZ_BASE | best {trial_names[int(rc_mkt['best_model'])]}, "
+                f"mean {rc_mkt['best_mean_annual'] * 100:+.2f} pp/yr, p {rc_mkt['p_value']:.3f} "
+                f"(q = 1: {rc_mkt_iid['p_value']:.3f}) |",
+                f"| White Reality Check vs SPY | best {trial_names[int(rc_spy['best_model'])]}, "
+                f"mean {rc_spy['best_mean_annual'] * 100:+.2f} pp/yr, p {rc_spy['p_value']:.3f} "
+                f"(q = 1: {rc_spy_iid['p_value']:.3f}) |",
+                "",
+            ]
+        ),
     ]
     diagnostics = dict(
         pbo=pbo,
@@ -447,10 +497,11 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         "MARKOWITZ_BASE": (OUT / "v4x/runs", "Y2", "MARKOWITZ_BASE"),
         "MARKOWITZ_BASE_GUARD": (OUT / "v4x/runs", "Y2", "MARKOWITZ_BASE_GUARD"),
         "SP500_EW_INTERNAL": (OUT / "v4x/runs", "Y2", "__benchmark__"),
-        "A*": (out / "runs", star["config"], GUARD),
         "FINAL": (out / "runs", "FINAL", GUARD),
         "FINAL NOGUARD": (out / "runs", "FINAL", NOGUARD),
     }
+    if star["config"] != "Z0":  # A* = Z0 = Y2 here, so the plan's "A* if != Y2" omits it
+        paths["A*"] = (out / "runs", star["config"], GUARD)
     series: dict[str, tuple[list[str], np.ndarray, np.ndarray]] = {}
     for name, (root, config, arm) in paths.items():
         if arm == "__benchmark__":
@@ -473,8 +524,6 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         *_reproduce(series),
         *_tests_reproduction(series),
         "",
-        "### (f3) Reviewer A's overfitting diagnostics, recomputed on the 21 round-2..4 configs",
-        "",
     ]
     # The extra 21 series are loaded from the round-2/3/4 JSONs in their own roots.
     round24 = (
@@ -486,7 +535,14 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
     for name, (root, config) in round24.items():
         extra[name] = _load_chain(root, config, GUARD)
     trial_names, rf, trial_matrix = _trial_matrix(series, extra)
-    overfit_lines, diagnostics = _overfitting(series, trial_names, trial_matrix, rf, "Y2")
+    overfit_lines, diagnostics = _overfitting(
+        series,
+        trial_names,
+        trial_matrix,
+        rf,
+        "Y2",
+        heading="### (f3) Reviewer A's overfitting diagnostics, recomputed on the 21 round-2..4 configs",
+    )
     lines += overfit_lines
     wf_paths = {name: (OUT / "v2/runs", name) for name in [f"V{i}" for i in range(6)]}
     wf_paths |= {name: (OUT / "v3x/runs", name) for name in [f"X{i}" for i in range(1, 12)]}
@@ -536,18 +592,35 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
     header = "| series | " + " | ".join(WINDOWS) + " | mean cumulative | mean MDD | R |"
     lines += [header, "|" + "---|" * (len(WINDOWS) + 4)]
     for name in all_series:
-        _, returns, _ = series[name]
-        # Split the chained series back into the six windows by their known lengths.
         pieces = []
-        start = 0
-        for length in _window_lengths():
-            piece = returns[start : start + length]
-            start += length
-            equity = np.concatenate([[1.0], np.cumprod(1.0 + piece)])
-            mdd, _ = sel._drawdown(equity)
-            pieces.append(f"{equity[-1] - 1.0:.4f} / {mdd:.4f}")
-        mean_cum = float(np.mean([float(p.split(" / ")[0]) for p in pieces]))
-        mean_mdd = float(np.mean([float(p.split(" / ")[1]) for p in pieces]))
+        cum_values: list[float] = []
+        mdd_values: list[float] = []
+        if name in paths and paths[name][2] != "__benchmark__":
+            root, config, arm = paths[name]
+            for window in WINDOWS:
+                run = _run(root / f"{config}_{window}.json")
+                summary = next(
+                    row
+                    for row in run["summaries"]
+                    if str(row["segment"]) == window and row["arm"] == arm
+                )
+                cum_values.append(float(summary["cumulative_return"]))
+                mdd_values.append(float(summary["max_drawdown"]))
+                pieces.append(f"{cum_values[-1]:.4f} / {mdd_values[-1]:.4f}")
+        else:
+            # SPY and the EW benchmark have no run summary: split the chained series.
+            _, returns, _ = series[name]
+            start = 0
+            for length in _window_lengths():
+                piece = returns[start : start + length]
+                start += length
+                equity = np.concatenate([[1.0], np.cumprod(1.0 + piece)])
+                mdd, _ = sel._drawdown(equity)
+                cum_values.append(float(equity[-1] - 1.0))
+                mdd_values.append(mdd)
+                pieces.append(f"{cum_values[-1]:.4f} / {mdd_values[-1]:.4f}")
+        mean_cum = float(np.mean(cum_values))
+        mean_mdd = float(np.mean(mdd_values))
         ratio = mean_cum / mean_mdd if mean_mdd else float("nan")
         lines.append(
             f"| {name} | "
@@ -556,14 +629,28 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         )
     lines += ["", "### (b) Full period", ""]
     lines += [
-        "| series | CAGR | Vol | Sharpe | Sortino | Calmar | MDD | max days UW | CVaR95 | Beta | Alpha/yr (t NW) | IR vs SPY | IR vs EW | up/down (geo) |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| series | CAGR | Vol | Sharpe | Sortino | Calmar | MDD | max days UW | CVaR95 | Beta | Alpha/yr (t NW) | IR vs SPY | IR vs EW | up/down (geo) | turnover | cost bps |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     full: dict[str, dict[str, float | int]] = {}
     for name in all_series:
         _, returns, own_rf = series[name]
         metrics = sel.performance(returns, own_rf, series["SPY"][1], series["SP500_EW_INTERNAL"][1])
         full[name] = metrics
+        turnover = cost = None
+        if name in paths and paths[name][2] != "__benchmark__":
+            root, config, arm = paths[name]
+            turnover = 0.0
+            cost = 0.0
+            for window in WINDOWS:
+                run = _run(root / f"{config}_{window}.json")
+                summary = next(
+                    row
+                    for row in run["summaries"]
+                    if str(row["segment"]) == window and row["arm"] == arm
+                )
+                turnover += float(summary["total_turnover"])
+                cost += float(summary["total_cost_bps"])
         lines.append(
             f"| {name} | {metrics['cagr'] * 100:.2f}% | {metrics['vol'] * 100:.2f}% | "
             f"{metrics['sharpe']:.2f} | {metrics['sortino']:.2f} | {metrics['calmar']:.2f} | "
@@ -571,7 +658,9 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
             f"{metrics['cvar95'] * 100:.2f}% | {metrics['beta']:.2f} | "
             f"{metrics['alpha'] * 100:+.2f}% ({metrics['alpha_t_nw']:.2f}) | "
             f"{metrics['ir_spy']:.2f} | {metrics['ir_ew']:.2f} | "
-            f"{metrics['up_capture_geo'] * 100:.0f}% / {metrics['down_capture_geo'] * 100:.0f}% |"
+            f"{metrics['up_capture_geo'] * 100:.0f}% / {metrics['down_capture_geo'] * 100:.0f}% | "
+            f"{'-' if turnover is None else f'{turnover:.2f}'} | "
+            f"{'-' if cost is None else f'{cost:.1f}'} |"
         )
     lines += ["", "### (c) Full-period tests, FINAL against every other series", ""]
     lines += [
@@ -618,13 +707,8 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         lines.append(
             f"| {name} | {', '.join(wins) or '-'} | {', '.join(loses) or '-'} | {dominates} |"
         )
-    lines += ["", "### This round's trial count", ""]
-    lines += [
-        f"|T| with this round's configurations = **{diagnostics['n_trials']}**. The declared count of",
-        "configurations tried after v1 is **55**: 45 after round 4 + 4 stage-A + 6 stage-B.",
-        "",
-    ]
-    # Add the diagnostics over the extended trial set.
+    # Build the extended trial set before reporting its size: Z1, Z3, Z4 and B1-B6;
+    # Z2 is identical to Z0 and is excluded by the plan's rule.
     extra_trials: dict[str, tuple[list[str], np.ndarray, np.ndarray]] = {}
     for config in ("Z1", "Z2", "Z3", "Z4"):
         path = out / "runs" / f"{config}_P1.json"
@@ -634,6 +718,11 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         path = out / "runs" / f"{config}_P1.json"
         if path.is_file():
             extra_trials[config] = _load_chain(out / "runs", config, GUARD)
+    extended_n = 0
+    names_ext: list[str] = []
+    rf_ext = rf
+    matrix_ext = trial_matrix
+    ext_diag: dict[str, Any] | None = None
     if extra_trials:
         z0 = _load_chain(out / "runs", "Z0", GUARD)[1]
         if "Z2" in extra_trials and np.array_equal(extra_trials["Z2"][1], z0):
@@ -641,8 +730,25 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
         extended = dict(extra)
         extended.update(extra_trials)
         names_ext, rf_ext, matrix_ext = _trial_matrix(series, extended)
-        ext_lines, ext_diag = _overfitting(series, names_ext, matrix_ext, rf_ext, "FINAL")
-        lines += ["### (e2) Overfitting diagnostics over the extended trial set", "", *ext_lines]
+        extended_n = len(names_ext)
+    lines += ["", "### This round's trial count", ""]
+    lines += [
+        f"|T| with this round's configurations = **{extended_n}** (21 + Z1, Z3, Z4 and B1-B6;",
+        "Z2 is identical to Z0 on every arm and session, so the plan excludes it). The declared",
+        "count of configurations tried after v1 is **55**: 45 after round 4 + 4 stage-A + 6 stage-B.",
+        "",
+    ]
+    if extra_trials and ext_diag is None:
+        ext_lines, ext_diag = _overfitting(
+            series,
+            names_ext,
+            matrix_ext,
+            rf_ext,
+            "FINAL",
+            heading="### (e2) Overfitting diagnostics over the extended trial set",
+            compare_reviewer=False,
+        )
+        lines += ext_lines
         lines += [
             "| diagnostic | round-2..4 (21) | extended |",
             "|---|---|---|",
@@ -657,6 +763,20 @@ def main() -> int:  # noqa: C901, PLR0912, PLR0915 - one linear report builder
             f"{ext_diag['dsr'][len(names_ext)]['dsr']:.3f} |",
             "",
         ]
+    lines += [
+        "## Data checks",
+        "",
+        "Round-4 §5 counts: 0 missing tracking-span pairs in every window; jumps without a SPLIT",
+        "row 0 in P1, P3, H1, H2 and H3, and 1 in P2; known splits 10/10 present.",
+        "",
+        "The P2 count is a declared genuine market move, not a missing split: 1 name-session",
+        "(CNC, 2025-07-02), held by B5's minimum-CVaR satellite and never tracked by Y2. There is",
+        "no SPLIT row on that date (CNC's only split is 2019-02-07), no corporate action, the level",
+        "persists in the following sessions, and the date matches the issuer's public withdrawal of",
+        "its 2025 guidance after the previous close (Fierce Healthcare, 2025-07-02). No run,",
+        "resolution or selection changes. See the plan's §7 entry.",
+        "",
+    ]
     Path(args.docs).expanduser().resolve().write_text("\n".join(lines) + "\n")
     (out / "selection_summary.json").write_text(
         json.dumps(

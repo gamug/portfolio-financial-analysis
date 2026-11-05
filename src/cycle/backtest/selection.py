@@ -20,6 +20,7 @@ PERIODS = 252
 _BLOCK = 16
 _CHOOSE = 8
 _TWO = 2
+_SE_FLOOR = 1e-15  # a zero standard error means the regression is exact
 
 
 def chain(
@@ -64,7 +65,8 @@ def _ols_alpha_beta(y: np.ndarray, x: np.ndarray) -> tuple[float, float, float, 
     residuals = y - design @ coefficients
     sigma2 = float(residuals @ residuals) / (n - 2)
     covariance = sigma2 * np.linalg.inv(design.T @ design)
-    t_plain = float(coefficients[0] / math.sqrt(covariance[0, 0]))
+    se_plain = math.sqrt(max(covariance[0, 0], 0.0))
+    t_plain = float(coefficients[0] / se_plain) if se_plain > _SE_FLOOR else 0.0
     lags = max(1, math.floor(4.0 * (n / 100.0) ** (2.0 / 9.0)))
     meat = (design * residuals[:, None]).T @ (design * residuals[:, None])
     for lag in range(1, lags + 1):
@@ -74,7 +76,8 @@ def _ols_alpha_beta(y: np.ndarray, x: np.ndarray) -> tuple[float, float, float, 
         )
         meat += weight * (product + product.T)
     nw = np.linalg.inv(design.T @ design) @ meat @ np.linalg.inv(design.T @ design)
-    t_nw = float(coefficients[0] / math.sqrt(max(nw[0, 0], 0.0)))
+    se_nw = math.sqrt(max(nw[0, 0], 0.0))
+    t_nw = float(coefficients[0] / se_nw) if se_nw > _SE_FLOOR else 0.0
     return float(coefficients[0]), float(coefficients[1]), t_plain, t_nw
 
 
