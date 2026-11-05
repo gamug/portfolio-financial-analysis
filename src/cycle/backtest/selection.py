@@ -369,9 +369,9 @@ def walk_forward(
             ),
             reverse=True,
         )
-        chosen_rank = next(
-            index for index, (_, name) in enumerate(next_scores, start=1) if name == chosen
-        )
+        chosen_score = next(score for score, name in next_scores if name == chosen)
+        # Competition rank: a tie for first is rank 1, not an arbitrary alphabetical order.
+        chosen_rank = 1 + sum(score > chosen_score for score, _ in next_scores)
         rows.append(
             {
                 "after_window": k,
