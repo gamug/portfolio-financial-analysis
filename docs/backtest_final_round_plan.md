@@ -330,3 +330,15 @@ Any change to §2–§7 after the commit is written here with its date and reaso
 **Solver tolerances.** New projection: CLARABEL 1e-12 (above). Max-div and min-CVaR: CLARABEL 1e-10 (above). The existing risk-parity SLSQP keeps `ftol = 1e-12`, `maxiter = 1000`. Fallbacks, if CLARABEL fails, are OSQP then SCS with their library defaults (the existing `_solve` order); a method that still fails to solve raises and the run fails — it is a STOP AND ASK, never a silent fallback.
 
 **Stage B reporting.** Each decision records `method`, `names`, `max_weight` and `projected` (whether the Euclidean projection moved the raw B1/B2/B4 vector by more than 1e-12); the run's params JSON keeps the list, and the generated report aggregates it. No per-asset value is written.
+
+2026-11-05 — A* resolution, committed before any stage-B run. Stage A was run on the fixed implementation (`scripts/backtest_final_run.py`, six windows per configuration); Z0 reproduces round-4 Y2 on all six windows (summaries, tests, weights and GUARD actions equal, max |delta| 0.0; `verify/identity_Z0_*.json`). The stage-A table (TOPN_MV_GUARD_NO_NLP, six windows):
+
+| config | guard_layers | vol_target | mean MDD | mean cumulative | R | windows with lower MDD than Z0 |
+|---|---|---|---|---|---|---|
+| Z0 | [1, 3, 4] | fixed | 0.076108 | 0.064284 | 0.8446 | - |
+| Z1 | [1] | fixed | 0.081019 | 0.063963 | 0.7895 | 2 |
+| Z2 | [1, 4] | fixed | 0.076108 | 0.064284 | 0.8446 | 0 |
+| Z3 | [1, 3] | trailing | 0.072721 | 0.057918 | 0.7964 | 4 |
+| Z4 | [1, 3, 4] | trailing | 0.071552 | 0.056444 | 0.7889 | 6 |
+
+Z2 is identical to Z0 on every arm and session, as expected (layer 3 never acted in Y2). No configuration has R > 0.8446 with mean MDD <= 0.0831, so **A\* = Z0 = Y2** (`[1, 3, 4]`, fixed); the adoption rule (§2) is unchanged. Stage B therefore weights Z0's min-variance set. The NOGUARD arm's shadow alerts are context only and no stage-A result uses them.
