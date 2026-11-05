@@ -319,11 +319,10 @@ def _trial_matrix(
     extra: dict[str, tuple[list[str], np.ndarray, np.ndarray]],
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
     dates, _, rf = series["Y2"]
-    names = [name for name in series if name in {"v1 (V0) GUARD", "V3", "X5", "Y2"}]
-    names += [name for name in extra]
+    names = [name for name in extra]
     columns = []
     for name in names:
-        other_dates, returns, _ = extra.get(name, series[name])
+        other_dates, returns, _ = extra[name] if name in extra else series[name]
         if other_dates != dates:
             raise SystemExit(f"trial {name} is not aligned with the chained calendar")
         columns.append(returns - rf)

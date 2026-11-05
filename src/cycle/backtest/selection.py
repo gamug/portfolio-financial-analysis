@@ -120,8 +120,18 @@ def performance(
     cvar = float(-np.mean(returns[returns <= quantile]))
     alpha, beta, t_plain, t_nw = _ols_alpha_beta(excess, spy - rf)
     up_geo, down_geo, up_arith, down_arith = _capture(returns, spy)
-    ir_spy = float(np.mean(returns - spy) / np.std(returns - spy, ddof=1) * math.sqrt(PERIODS))
-    ir_ew = float(np.mean(returns - ew) / np.std(returns - ew, ddof=1) * math.sqrt(PERIODS))
+    spy_diff = returns - spy
+    ew_diff = returns - ew
+    ir_spy = (
+        float(np.mean(spy_diff) / np.std(spy_diff, ddof=1) * math.sqrt(PERIODS))
+        if np.std(spy_diff, ddof=1) > 0.0
+        else 0.0
+    )
+    ir_ew = (
+        float(np.mean(ew_diff) / np.std(ew_diff, ddof=1) * math.sqrt(PERIODS))
+        if np.std(ew_diff, ddof=1) > 0.0
+        else 0.0
+    )
     return {
         "sessions": n,
         "years": n / PERIODS,
