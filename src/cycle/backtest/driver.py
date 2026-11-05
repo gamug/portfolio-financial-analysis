@@ -1797,6 +1797,7 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     satellite_weighting: str = "minvar",
     guard_layers: Sequence[int] | None = None,
     vol_target: str = "fixed",
+    cost_bps: float | None = None,
 ) -> dict[str, Any]:
     window = window_spec(window_id)
     database = Path(db_path).expanduser().resolve()
@@ -1807,6 +1808,10 @@ def run_backtest(  # noqa: C901, PLR0912, PLR0913, PLR0915 - the run's inputs, o
     if not universe.is_file():
         raise BacktestError(f"--universe-db {universe} does not exist")
     params = load_params(params_path)
+    if cost_bps is not None:
+        if not math.isfinite(cost_bps) or cost_bps < 0.0:
+            raise BacktestError(f"cost_bps must be a finite non-negative number, got {cost_bps!r}")
+        params = replace(params, cost_bps=float(cost_bps))
     if blend not in defensive.BLENDS:
         raise BacktestError(f"unknown blend {blend!r}: expected one of {sorted(defensive.BLENDS)}")
     if tilt not in defensive.TILTS:
@@ -2280,6 +2285,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="final round section 2b: layer 3's target (fixed sigma_star or the book's trailing vol)",
     )
     run.add_argument(
+        "--cost-bps",
+        type=float,
+        default=None,
+        help="final round section 5: override the params file's round-trip cost (default: its "
+        "own cost_bps, 10)",
+    )
+    run.add_argument(
         "--market-series",
         default=None,
         help="a precomputed {session: EW member return} JSON (from `market-series`); "
@@ -2396,6 +2408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.guard_layers is None
             else [int(part) for part in args.guard_layers.split(",") if part.strip()],
             vol_target=args.vol_target,
+            cost_bps=args.cost_bps,
         )
     except BacktestError as exc:
         print(f"cycle.backtest: {exc}", file=sys.stderr)
