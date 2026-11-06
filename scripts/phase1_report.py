@@ -981,9 +981,11 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
             _table(["series", "N", "SR annual", "skew", "kurtosis", "SR0 daily", "DSR"], rows)
         )
         lines.append(
-            "The DSR is computed on **FINAL (B5)**'s daily excess returns; FINAL is also the "
-            "family's highest annual Sharpe (0.917), so the best-configuration row is the same "
-            "series."
+            "The family matrix is the net return minus that session's French RF; the trial "
+            "Sharpes, SR0, DSR and the PBO Sharpe variants use that excess matrix. FINAL (B5)'s "
+            "excess Sharpe is **0.476** annual, and it is still the family's highest (B0 is next "
+            "at 0.434), so the best-configuration row is the same series. The Calmar PBO remains "
+            "on net returns, and the White RC differentials are unchanged."
         )
         lines.append("")
         rows = []

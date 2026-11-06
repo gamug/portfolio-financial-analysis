@@ -529,11 +529,20 @@ def main(argv: list[str] | None = None) -> int:
     names, series = family_series(out, "TOPN_MV_GUARD_NO_NLP")
     days = sorted(set.intersection(*(set(series[name]) for name in names)))
     matrix = np.asarray([[series[name][day] for name in names] for day in days])
+    # The family's Sharpe must be the same excess Sharpe the report's metrics() uses: net
+    # return minus that session's French RF.  RF is common to every configuration; take it
+    # from the B0 run (the same curve/dates for all runs).
+    rf_family = concatenate([load_run(out, f"R1-B0-{window}")["rf"] for window in WINDOWS])
+    excess_matrix = np.asarray(
+        [[series[name][day] - float(rf_family.get(day, 0.0)) for name in names] for day in days]
+    )
     windows = {
         window: sorted(load_run(out, f"R1-B0-{window}")["daily"]["TOPN_MV_GUARD_NO_NLP"])
         for window in WINDOWS
     }
-    sharpes = np.asarray([_sharpe_vector(matrix[:, i]) for i in range(matrix.shape[1])])
+    sharpes = np.asarray(
+        [_sharpe_vector(excess_matrix[:, i]) for i in range(excess_matrix.shape[1])]
+    )
     # The DSR / E[max] algebra is in daily Sharpe units; the family table reports annualised.
     sharpes_daily = sharpes / math.sqrt(PERIODS)
     trial_variance = float(np.var(sharpes_daily, ddof=1))
@@ -545,19 +554,22 @@ def main(argv: list[str] | None = None) -> int:
         "trial_variance_daily": trial_variance,
         "effective_trials": effective_trials(series),
         "dsr": {
-            "N30": deflated_sharpe(matrix[:, names.index("R1-B5")], len(names), sharpes_daily),
-            "N55": deflated_sharpe(matrix[:, names.index("R1-B5")], 55, sharpes_daily),
+            "N30": deflated_sharpe(
+                excess_matrix[:, names.index("R1-B5")], len(names), sharpes_daily
+            ),
+            "N55": deflated_sharpe(excess_matrix[:, names.index("R1-B5")], 55, sharpes_daily),
         },
         "expected_max": {
             "N30": expected_max(len(names), trial_variance),
             "N55": expected_max(55, trial_variance),
         },
         "pbo": {
-            "S16_sharpe": pbo_cscv(matrix, "sharpe", 16),
-            "S8_sharpe": pbo_cscv(matrix, "sharpe", 8),
-            "S10_sharpe": pbo_cscv(matrix, "sharpe", 10),
-            "S12_sharpe": pbo_cscv(matrix, "sharpe", 12),
-            "S20_sharpe": pbo_cscv(matrix, "sharpe", 20),
+            "S16_sharpe": pbo_cscv(excess_matrix, "sharpe", 16),
+            "S8_sharpe": pbo_cscv(excess_matrix, "sharpe", 8),
+            "S10_sharpe": pbo_cscv(excess_matrix, "sharpe", 10),
+            "S12_sharpe": pbo_cscv(excess_matrix, "sharpe", 12),
+            "S20_sharpe": pbo_cscv(excess_matrix, "sharpe", 20),
+            # Calmar is on total (net) returns, as before.
             "S16_calmar": pbo_cscv(matrix, "calmar", 16),
         },
         "walk_forward": {
