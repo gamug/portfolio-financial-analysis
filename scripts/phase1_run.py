@@ -166,6 +166,7 @@ def jobs_for(  # noqa: C901, PLR0911 - one branch per block
                     "trend_filter": filt,
                     "pool_m": "30",
                     "filter_exit": "1.0",
+                    "stop_rule": "kl",
                 },
                 10.0,
             )
@@ -177,7 +178,15 @@ def jobs_for(  # noqa: C901, PLR0911 - one branch per block
                 "R2",
                 config,
                 window,
-                {**V2, "pool_m": pool, "core_source": source, "filter_exit": exit_fraction},
+                {
+                    **V2,
+                    "pool_m": pool,
+                    "core_source": source,
+                    "filter_exit": exit_fraction,
+                    # The v3 grid predates round 4's Basing Points stop: its GUARD is the
+                    # frozen K-L parameter set.
+                    "stop_rule": "kl",
+                },
                 10.0,
             )
             for config, (pool, source, exit_fraction) in X_GRID.items()
@@ -498,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs = jobs[: args.limit]
     print(json.dumps({"block": args.block, "jobs": len(jobs), "workers": args.workers}))
 
-    manifest = out / "runs_manifest.csv"
+    manifest = out / f"runs_manifest_{args.block}.csv"
     fields = [
         "run_id",
         "block",
@@ -525,8 +534,12 @@ def main(argv: list[str] | None = None) -> int:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = {}
             for job in jobs:
-                keep = (job["block"] == "R1" and job["config"] == "B5") or (
-                    job["block"] == "R8" and job["config"] == "FINAL"
+                keep = (
+                    (job["block"] == "R1" and job["config"] == "B5")
+                    or (job["block"] == "R8" and job["config"] == "FINAL")
+                    # L1/L2 keep their copy only until the CVaR diagnostic reads the
+                    # per-decision scenario matrices; the diagnostic deletes them.
+                    or (job["block"] in {"L1", "L2"} and job["config"] == "FINAL")
                 )
                 futures[pool.submit(run_one, job, out, keep)] = job
             for future in concurrent.futures.as_completed(futures):
@@ -547,7 +560,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if row["exit"] != 0:
                     print(json.dumps(row, indent=1), file=sys.stderr)
-    previous = out / "run_index.json"
+    previous = out / f"run_index_{args.block}.json"
     old = json.loads(previous.read_text()) if previous.is_file() else []
     previous.write_text(json.dumps(old + index, indent=1) + "\n")
     failures = [row for row in index if row["exit"] != 0]

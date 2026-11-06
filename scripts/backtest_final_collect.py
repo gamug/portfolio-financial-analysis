@@ -236,6 +236,21 @@ def main(db: str, out: str) -> int:
                 row["final_target_weight"]
             )
         exits = _exit_records(conn, books, params)
+        optimizer_weights: dict[str, dict[str, float]] = {}
+        for row in conn.execute(
+            "SELECT r.decision_date, r.quant_portfolio_id FROM book_rebalance r "
+            "JOIN strategy_book b ON b.id = r.book_id "
+            "WHERE b.arm_code = 'TOPN_MV_NOGUARD' AND r.quant_portfolio_id IS NOT NULL "
+            "ORDER BY r.decision_date"
+        ):
+            positions = conn.execute(
+                "SELECT asset_id, weight FROM quant_position WHERE portfolio_id = ? "
+                "AND valid_to IS NULL ORDER BY asset_id",
+                (int(row["quant_portfolio_id"]),),
+            ).fetchall()
+            optimizer_weights[str(row["decision_date"])] = {
+                str(int(pos["asset_id"])): float(pos["weight"]) for pos in positions
+            }
         sessions = sorted({day for series in daily.values() for day in series})
         rf, carried = load_rf(conn, str(params["rf_curve"]), sessions)
         payload: dict[str, Any] = {
@@ -257,6 +272,7 @@ def main(db: str, out: str) -> int:
             "daily_detail": daily_detail,
             "target_cash": target_cash,
             "exits": exits,
+            "optimizer_weights": optimizer_weights,
             "rf": rf,
             "benchmark": benchmark,
             "equity": _equity(conn, books),
