@@ -1193,7 +1193,9 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
         guard_rows.append(
             [
                 label,
-                str(payload["params"].get("guard_layers")),
+                "none"
+                if "NOGUARD" in label or label == "MB"
+                else str(payload["params"].get("guard_layers")),
                 str(actions),
                 _num(sum(mdds) / len(mdds) if mdds else 0.0),
                 _pct(sum(rs) / len(rs) if rs else 0.0),
@@ -1211,7 +1213,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
     for label, guard_run, guard_arm, noguard_run, noguard_arm in (
         ("FINAL", FINAL, "TOPN_MV_GUARD_NO_NLP", FINAL, "TOPN_MV_NOGUARD"),
         ("B0", B0, "TOPN_MV_GUARD_NO_NLP", B0, "TOPN_MV_NOGUARD"),
-        ("MARKOWITZ_BASE", B0, "MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE"),
+        ("MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE_GUARD", B0, "MARKOWITZ_BASE"),
         ("MCF", "R6-MCF", "TOPN_MV_GUARD_NO_NLP", "R6-MCF", "TOPN_MV_NOGUARD"),
     ):
         if label == "MCF":
@@ -1238,7 +1240,7 @@ def build(out: Path) -> str:  # noqa: C901, PLR0912, PLR0915 - one section per b
                 ]
             )
     lines.append("")
-    lines.append("Measured GUARD contribution (GUARD - NOGUARD):")
+    lines.append("Measured GUARD contribution (GUARD - NOGUARD), concatenated series:")
     lines.append(_table(["config", "delta R", "delta MDD"], contribution))
     if (out / "runs" / "R8-FINAL-C1.json").is_file():
         c1_payload = load_run(out, "R8-FINAL-C1")
