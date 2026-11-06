@@ -305,6 +305,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="build even though no clean gateway backfill-actions covers the window: the "
         "series is price-only and locks in under the return engine version (T-086)",
     )
+    br.add_argument(
+        "--pit-members",
+        action="store_true",
+        help="select every asset whose point-in-time membership stint intersects the window "
+        "(leavers included); default: members as of --to",
+    )
     br.add_argument("--corpact-version", dest="corpact_version", help=_CORPACT_VERSION_HELP)
     br.add_argument("--allow-dirty", action="store_true", help=_ALLOW_DIRTY_HELP)
     _add_profile(br)
@@ -693,6 +699,7 @@ def _run_build_returns(settings: QuantSettings, args: argparse.Namespace, date_t
             date_from=args.date_from,
             date_to=date_to,
             allow_no_dividends=args.allow_no_dividends,
+            pit_members=getattr(args, "pit_members", False),
         )
     except (VersionError, DirtyTree) as exc:
         print(f"build-returns: {exc}", file=sys.stderr)

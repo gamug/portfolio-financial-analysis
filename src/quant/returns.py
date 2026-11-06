@@ -28,6 +28,7 @@ from quant.db import (
     line_vendor,
     load_actions,
     load_assets,
+    load_assets_over_range,
     load_daily_closes,
     upsert_return_daily,
 )
@@ -107,15 +108,20 @@ class ReturnsReport:
         self.dirty_tree_bypassed: str | None = None
 
 
-def run_build_returns(
+def run_build_returns(  # noqa: PLR0913 - the window plus its two explicit overrides
     settings: QuantSettings,
     *,
     date_from: str,
     date_to: str,
     conn: Database | None = None,
     allow_no_dividends: bool = False,
+    pit_members: bool = False,
 ) -> ReturnsReport:
     """Build the total-return series into ``quant_return_daily``.
+
+    *pit_members* selects every asset whose point-in-time membership stint intersects
+    ``[date_from, date_to]`` (leavers included) instead of the members as of *date_to*; the
+    backtest driver passes it, the generic CLI keeps the old as-of-date default.
 
     Raises :class:`DividendsNotReady` (T-086) unless a clean gateway ``backfill-actions``
     covers the window: the table is ``INSERT OR IGNORE`` per ``(asset, day,
@@ -152,6 +158,7 @@ def run_build_returns(
                 "date_from": date_from,
                 "date_to": date_to,
                 "allow_no_dividends": allow_no_dividends,
+                "pit_members": pit_members,
                 "dividends_guard_bypassed": reason,
                 "corpact_version": settings.corpact_version,
                 "corpact_engine": report.corpact_engine,
@@ -161,12 +168,23 @@ def run_build_returns(
             code_version=cv,
         )
         try:
-            for asset_id, _ticker in load_assets(
-                conn,
-                universe=settings.universe,
-                as_of=date_to,
-                universe_db_path=settings.universe_db_path,
-            ):
+            assets = (
+                load_assets_over_range(
+                    conn,
+                    universe=settings.universe,
+                    date_from=date_from,
+                    date_to=date_to,
+                    universe_db_path=settings.universe_db_path,
+                )
+                if pit_members
+                else load_assets(
+                    conn,
+                    universe=settings.universe,
+                    as_of=date_to,
+                    universe_db_path=settings.universe_db_path,
+                )
+            )
+            for asset_id, _ticker in assets:
                 closes = load_daily_closes(conn, asset_id, start=date_from, end=date_to)
                 if not closes:
                     continue

@@ -182,6 +182,43 @@ def load_universe_asset_ids(
     return sorted(mapping.values())
 
 
+def load_universe_asset_ids_over_range(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> list[int]:
+    """``assets.id`` for every universe line whose PIT stint intersects ``[date_from, date_to]``.
+
+    :func:`load_universe_asset_ids` keeps only the members on one date. A return panel needs
+    every name that was a member on any session of the window -- including the names that
+    leave before its end -- or the risk model and the optimizer can never hold a leaver
+    (survivorship / look-ahead bias). The selection is :func:`kg_schema.queries.members_over_range`
+    (one entry per CIK line, so a rename keeps one asset); *universe_db_path* is the test seam.
+    """
+    upath = universe_database_path(str(universe_db_path) if universe_db_path else None)
+    uconn = connect_ro(upath)
+    try:
+        window = members_over_range(uconn, conn, date_from, date_to, universe=universe)
+    finally:
+        uconn.close()
+    if not window:
+        raise RuntimeError(
+            f"universe.db ({upath}) has no {universe} members in [{date_from}, {date_to}]"
+        )
+    mapping, _missing = resolve_asset_ids(
+        conn, [(w.member.symbol, w.member.cik) for w in window], as_of=date_to
+    )
+    if not mapping:
+        raise RuntimeError(
+            f"none of the {len(window)} {universe} lines in [{date_from}, {date_to}] exist in "
+            f"assets yet -- run fundamental_agent / pricing_agent for this date first"
+        )
+    return sorted(mapping.values())
+
+
 def load_assets(
     conn: Database,
     *,
@@ -193,6 +230,31 @@ def load_assets(
     ids = set(
         load_universe_asset_ids(
             conn, universe=universe, as_of=as_of, universe_db_path=universe_db_path
+        )
+    )
+    return [
+        (int(r["id"]), str(r["ticker"]))
+        for r in conn.execute("SELECT id, ticker FROM assets ORDER BY ticker")
+        if int(r["id"]) in ids
+    ]
+
+
+def load_assets_over_range(
+    conn: Database,
+    *,
+    universe: str,
+    date_from: str,
+    date_to: str,
+    universe_db_path: str | Path | None = None,
+) -> list[tuple[int, str]]:
+    """``(asset_id, ticker)`` for every universe line whose stint intersects ``[date_from, date_to]``."""
+    ids = set(
+        load_universe_asset_ids_over_range(
+            conn,
+            universe=universe,
+            date_from=date_from,
+            date_to=date_to,
+            universe_db_path=universe_db_path,
         )
     )
     return [

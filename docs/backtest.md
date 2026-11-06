@@ -135,8 +135,11 @@ is never cancelled or recomputed.
   2026-08-31; a later session carries the last value, and the number of carried sessions is
   recorded on each run (`rf_carried_sessions`, 0 in every window here).
 - **Exits from the panel**: a held asset with no total return on `t` (delisted, halted, left the
-  data) is valued at its last close and its weight moves to cash at that close. There is no
-  Shumway delisting adjustment (limitation 3).
+  data) is valued at its last close and its weight moves to cash at that close. The return panel
+  now contains every point-in-time member on any session of the window, leavers included, so a
+  name that leaves inside a window has a return series up to its exit (before the fix it had
+  none and could never be held). There is no Shumway delisting adjustment (limitation 3); the
+  corrective batch is superseded and no sensitivity from it is used here.
 
 ## 5. GUARD
 
@@ -377,7 +380,11 @@ members of limitation 16 that the count contains; the number itself is the full 
 
 ## 9. Reproduction
 
-From the input database's sha256 (`851b0e20…50e90`), inside the dev container, in the worktree:
+From the input database's sha256 (`851b0e20…50e90`), inside the dev container, in the worktree.
+`quant build-returns --pit-members` selects every line whose point-in-time membership stint
+intersects `[--from, --to]` (leavers included); without the flag the command keeps the old
+members-as-of-`--to` panel. The backtest driver passes it by default; `cycle.backtest run
+--returns-members asof` is kept only for an identity replay against an old run.
 
 ```bash
 # 1. the base copy, migrated, with returns and the risk-free curve
@@ -388,7 +395,8 @@ uv run python -c "import sqlite3; c = sqlite3.connect('base.db'); \
     c.commit(); c.close()"
 uv run python -m quant load-rf --db base.db
 uv run python -m quant build-returns --db base.db \
-    --universe-db /workspaces/thesis/data/universe_history_gics.db --from 2019-01-02 --to 2026-10-15
+    --universe-db /workspaces/thesis/data/universe_history_gics.db --from 2019-01-02 --to 2026-10-15 \
+    --pit-members
 
 # 2. the two FUNDAMENTAL score sets
 cp base.db scored_rule.db
@@ -446,10 +454,15 @@ uv run python -m cycle.backtest export \
    LW's prewhitened version. The p-value is therefore that of a slightly different (more
    conservative in long-memory cases) studentization; the sign and size of the statistic are
    unaffected.
-3. **No Shumway delisting adjustment.** An asset that leaves the panel is valued at its last close
-   and its weight moves to cash; a delisting return (often very negative) is not added. This biases
-   every arm upward by the missing delisting return on the names that leave during a window. The
-   count of such exits per run is in `backtest_results.md` (the runs' own notes).
+3. **No Shumway delisting adjustment.** The return panel now contains every point-in-time member
+   on any session of a window, leavers included, so a held asset that leaves is valued at its
+   last stored close and its weight moves to cash; before this fix a leaver had no return series
+   in the window and could never be held (survivorship / look-ahead bias; the correction is
+   documented in `docs/model_fixes.md`). A delisting return (often very negative) is still not
+   added, which biases every arm upward by the missing delisting return on the names that leave
+   during a window. A corrective 18-run batch was kept under
+   `/workspaces/thesis/scratch/final/out/pitfix/runs/`, but reviewer A's 2026-11-06 scope change
+   supersedes it before any interpretation; no Shumway sensitivity is applied here.
 4. **Layer 2 (news) is off.** `nlp.db`'s labels come from `gamug/FinBERT-financial-news`, whose
    training pool includes 2022–2026 (F1), so the model cannot be used for a 2022–2025 backtest; arm
    3 is not run and `TOPN_MV_GUARD_NO_NLP` is the GUARD result. Leavers have no news at all (F2).
